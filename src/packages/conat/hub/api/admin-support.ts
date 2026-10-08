@@ -89,6 +89,18 @@ export interface AdminSupportImageReference {
   inline?: boolean;
 }
 
+/**
+ * A PDF or DOCX uploaded through the CoCalc support form, stored as a CoCalc
+ * blob. The customer's filename is not repeated here; download it with the
+ * fresh-auth attachment endpoint using blob_uuid.
+ */
+export interface AdminSupportBlobDocumentReference {
+  source: "cocalc_blob";
+  blob_uuid: string;
+  filename: string;
+  content_type: string;
+}
+
 export interface AdminSupportTicketComment {
   id: number;
   author: "requester" | "staff_or_system";
@@ -98,6 +110,8 @@ export interface AdminSupportTicketComment {
   images: AdminSupportImageReference[];
   /** Downloadable Zendesk attachments; names are generated, URLs omitted. */
   attachments?: AdminSupportAttachmentReference[];
+  /** PDF/DOCX files uploaded through the CoCalc support form. */
+  documents?: AdminSupportBlobDocumentReference[];
   attachment_count: number;
   attachment_bytes: number;
 }
@@ -142,6 +156,7 @@ export interface AdminSupportShowResponse {
   ticket: AdminSupportTicketSummary & {
     description: string;
     images: AdminSupportImageReference[];
+    documents?: AdminSupportBlobDocumentReference[];
   };
   comments: AdminSupportTicketComment[];
   crm_context?: CrmSupportCustomerContext;
@@ -169,8 +184,22 @@ export interface AdminSupportGetImageResponse {
   data_base64: string;
 }
 
-export type AdminSupportGetAttachmentRequest = AdminSupportGetImageRequest;
-export type AdminSupportGetAttachmentResponse = AdminSupportGetImageResponse;
+/** Exactly one of attachment_id (Zendesk) or blob_uuid (CoCalc blob). */
+export interface AdminSupportGetAttachmentRequest extends Omit<
+  AdminSupportGetImageRequest,
+  "attachment_id"
+> {
+  attachment_id?: number;
+  blob_uuid?: string;
+}
+
+export interface AdminSupportGetAttachmentResponse extends Omit<
+  AdminSupportGetImageResponse,
+  "attachment_id"
+> {
+  attachment_id?: number;
+  blob_uuid?: string;
+}
 
 export interface AdminSupportTriageRequest extends AdminSupportListRequest {}
 

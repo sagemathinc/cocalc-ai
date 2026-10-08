@@ -807,6 +807,87 @@ test("admin support attachment rejects integrity, identity, size and filename er
   }
 });
 
+test("admin support attachment downloads a support-form blob by uuid", async () => {
+  const blob = "5f0d3a52-7d8e-4c1b-9a6e-2b4c8d9e0f11";
+  const data = Buffer.from("%PDF-1.7\n%%EOF\n");
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-support-blob-"));
+  const outputPath = join(dir, "chat.pdf");
+  const response = (change: Record<string, unknown> = {}) => ({
+    ticket_id: 123,
+    blob_uuid: blob,
+    filename: `ticket-123-blob-${blob}.pdf`,
+    size: data.length,
+    data_base64: data.toString("base64"),
+    sha256: createHash("sha256").update(data).digest("hex"),
+    ...change,
+  });
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminSupport: {
+        getAttachment: async (opts: any) => {
+          capturedArgs = opts;
+          return response();
+        },
+      },
+    }) as any,
+  );
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "support",
+    "attachment",
+    "123",
+    blob.toUpperCase(),
+    "--output",
+    outputPath,
+    "--reason",
+    "read attached transcript",
+  ]);
+  assert.deepEqual(capturedArgs, {
+    ticket_id: 123,
+    blob_uuid: blob,
+    max_bytes: 8 * 1024 * 1024,
+    reason: "read attached transcript",
+  });
+  assert.deepEqual(await readFile(outputPath), data);
+
+  for (const change of [
+    { blob_uuid: "11111111-1111-4111-8111-111111111111" },
+    { filename: `ticket-123-attachment-987.pdf` },
+    { filename: `ticket-123-blob-${blob}.exe` },
+  ]) {
+    const output = join(dir, "must-not-exist.pdf");
+    const bad = new Command();
+    registerAdminCommand(
+      bad,
+      adminDeps({
+        adminSupport: { getAttachment: async () => response(change) },
+      }) as any,
+    );
+    await assert.rejects(
+      bad.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "support",
+        "attachment",
+        "123",
+        blob,
+        "--output",
+        output,
+        "--reason",
+        "read attached transcript",
+      ]),
+      /integrity|filename/,
+    );
+    await assert.rejects(readFile(output), /ENOENT/);
+  }
+});
+
 test("admin support triage forwards deterministic grouping options", async () => {
   let capturedArgs: any;
   const program = new Command();

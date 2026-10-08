@@ -191,6 +191,7 @@ export class ProjectClient {
     options?: CopyOptions;
     request_id?: string;
     timeout?: number;
+    allow_oversized_skip?: boolean;
   }): Promise<{
     op_id: string;
     scope_type: "project";

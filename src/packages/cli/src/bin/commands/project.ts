@@ -79,6 +79,7 @@ export type ProjectCommandDeps = {
   projectCodexAuthUploadFileData: any;
   resolveProjectConatClient: any;
   projectChatThreadCreateData: any;
+  projectChatThreadForkData: any;
   projectChatArtifactData: any;
   projectChatThreadStatusData: any;
   projectChatSendData: any;

@@ -200,8 +200,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       if (
         process.argv.includes("--expect-skill") &&
-        message.params._meta?.systemPrompt?.append !==
-          "CoCalc skill fixture: use project_exec for CLI commands."
+        !(
+          message.params._meta?.systemPrompt?.append?.startsWith(
+            "CoCalc skill fixture: use project_exec for CLI commands.\n\n[CoCalc session guidance]",
+          ) &&
+          message.params._meta.systemPrompt.append.endsWith(
+            "[/CoCalc session guidance]",
+          )
+        )
       )
         return send({
           id: message.id,
@@ -212,8 +218,21 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         if (
           message.params.cwd !== "/workspace" ||
           !options ||
-          !Array.isArray(options.tools) ||
-          options.tools.length ||
+          JSON.stringify(options.tools) !==
+            JSON.stringify([
+              "WebSearch",
+              "WebFetch",
+              "TaskCreate",
+              "TaskUpdate",
+              "TaskList",
+              "TaskGet",
+            ]) ||
+          JSON.stringify(options.allowedTools) !==
+            JSON.stringify([
+              "WebSearch",
+              "WebFetch",
+              `mcp__${message.params.mcpServers[0]?.name}`,
+            ]) ||
           !Array.isArray(options.settingSources) ||
           options.settingSources.length ||
           !Array.isArray(options.skills) ||
@@ -331,10 +350,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       return result(message.id, {});
     case "session/prompt": {
       const rawText = message.params.prompt[0].text;
-      const contextEnd = "[/CoCalc project context]\n\n";
-      const contextualText = rawText.startsWith("[CoCalc project context]\n")
-        ? rawText.slice(rawText.indexOf(contextEnd) + contextEnd.length)
-        : rawText;
+      const contextEnd = "[/CoCalc turn context]\n\n";
+      const contextualText =
+        /^(\[CoCalc session guidance\][^]*?\n)?\[CoCalc turn context\]\n/.test(
+          rawText,
+        )
+          ? rawText.slice(rawText.indexOf(contextEnd) + contextEnd.length)
+          : rawText;
       const text = contextualText.replace(
         /^System note: this message was queued for [^\n]+ while another turn was active, and is being sent automatically now\.\n\n/,
         "",
@@ -363,7 +385,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (text === "turn-context") {
         const contextLine = rawText
           .split("\n")
-          .find((line) => line.startsWith('{"project_id":'));
+          .find((line) =>
+            line.startsWith('Publication context: {"project_id":'),
+          )
+          ?.slice("Publication context: ".length);
         update(contextLine ?? "No publication context");
         return result(message.id, { stopReason: "end_turn" });
       }
@@ -508,6 +533,20 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           id: message.id,
           error: { code: -32000, message: "secret rejection details" },
         });
+      if (text === "killed") {
+        // As the Claude adapter reports its child being OOM-killed.
+        process.stderr.write(
+          "Claude Code process terminated by signal SIGKILL\n",
+        );
+        return setTimeout(
+          () =>
+            send({
+              id: message.id,
+              error: { code: -32603, message: "Internal error" },
+            }),
+          50,
+        );
+      }
       if (text === "diagnostic-reject") {
         process.stderr.write(
           "Authorization: Bearer private-stderr; HTTP 503 overloaded\n",
@@ -631,7 +670,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           reason: "noRunningTurn",
         });
       result(message.id, { outcome: "injected" });
-      update(`steered: ${message.params.prompt[0].text}`);
+      {
+        const images = message.params.prompt.filter(
+          (block) => block.type === "image",
+        ).length;
+        update(
+          `steered: ${message.params.prompt[0].text}${images ? ` [${images} image]` : ""}`,
+        );
+      }
       result(pendingPrompt, { stopReason: "end_turn" });
       pendingPrompt = undefined;
       return;

@@ -62,6 +62,9 @@ export async function createTestMembershipTier(opts: {
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  instructor_purchase_visible?: boolean;
+  instructor_term_price?: number;
+  instructor_term_days?: number;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -74,8 +77,10 @@ export async function createTestMembershipTier(opts: {
        price_monthly, price_yearly, trial_days, course_price, course_duration_days,
        course_grace_days,
        project_defaults, ai_limits, features, usage_limits,
-       disabled, notes, history, created, updated)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::JSONB,$14::JSONB,$15::JSONB,$16::JSONB,$17,$18,$19::JSONB,NOW(),NOW())
+       disabled, notes, history,
+       instructor_purchase_visible, instructor_term_price, instructor_term_days,
+       created, updated)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::JSONB,$14::JSONB,$15::JSONB,$16::JSONB,$17,$18,$19::JSONB,$20,$21,$22,NOW(),NOW())
      ON CONFLICT (id) DO UPDATE SET
        label=EXCLUDED.label,
        store_visible=EXCLUDED.store_visible,
@@ -94,6 +99,9 @@ export async function createTestMembershipTier(opts: {
        usage_limits=EXCLUDED.usage_limits,
        disabled=EXCLUDED.disabled,
        notes=EXCLUDED.notes,
+       instructor_purchase_visible=EXCLUDED.instructor_purchase_visible,
+       instructor_term_price=EXCLUDED.instructor_term_price,
+       instructor_term_days=EXCLUDED.instructor_term_days,
        updated=NOW()`,
     [
       opts.id,
@@ -115,6 +123,9 @@ export async function createTestMembershipTier(opts: {
       false,
       null,
       [],
+      opts.instructor_purchase_visible ?? false,
+      opts.instructor_term_price ?? null,
+      opts.instructor_term_days ?? null,
     ],
   );
 }

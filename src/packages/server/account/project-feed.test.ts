@@ -279,13 +279,16 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
       remove: remoteRemove,
     });
 
-    const { publishProjectAccountFeedEventsBestEffort } =
-      await import("./project-feed");
+    const {
+      publishProjectAccountFeedEventsBestEffort,
+      flushRemoteProjectFeedForwards,
+    } = await import("./project-feed");
 
     await publishProjectAccountFeedEventsBestEffort({
       project_id: "p1",
       default_bay_id: "bay-0",
     });
+    await flushRemoteProjectFeedForwards();
 
     expect(createInterBayAccountProjectFeedClientMock).toHaveBeenCalledWith({
       client: { tag: "fabric" },
@@ -327,8 +330,10 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
       remove: remoteRemove,
     });
 
-    const { publishProjectRemoveFeedEventsBestEffort } =
-      await import("./project-feed");
+    const {
+      publishProjectRemoveFeedEventsBestEffort,
+      flushRemoteProjectFeedForwards,
+    } = await import("./project-feed");
 
     await publishProjectRemoveFeedEventsBestEffort({
       project_id: "33333333-3333-4333-8333-333333333333",
@@ -336,6 +341,7 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
       default_bay_id: "bay-0",
       event_ts: new Date("2026-06-29T00:00:00.000Z"),
     });
+    await flushRemoteProjectFeedForwards();
 
     expect(publishAccountFeedEventBestEffortMock).toHaveBeenCalledWith({
       account_id: LOCAL_ACCOUNT_ID,
@@ -403,5 +409,145 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
     expect(
       applyProjectEventToAccountCollaboratorIndexMock,
     ).not.toHaveBeenCalled();
+  });
+
+  describe("forwarding to other bays", () => {
+    const REMOTE_A = "11111111-1111-4111-8111-111111111111";
+    const REMOTE_B = "22222222-2222-4222-8222-222222222222";
+
+    // One outbox event per publish call: [latest event, previous event].
+    function outboxClient(
+      events: { title: string; users: string[]; created_at: string }[],
+    ) {
+      const query = jest.fn();
+      for (let i = 0; i < events.length; i++) {
+        const row = (e: (typeof events)[number], id: string) => ({
+          event_id: id,
+          project_id: "p1",
+          owning_bay_id: "bay-0",
+          event_type: "project.summary_changed",
+          payload_json: {
+            project_id: "p1",
+            owning_bay_id: "bay-0",
+            title: e.title,
+            users_summary: Object.fromEntries(
+              e.users.map((id) => [id, { group: "collaborator" }]),
+            ),
+          },
+          created_at: new Date(e.created_at),
+        });
+        query.mockResolvedValueOnce({ rows: [row(events[i], `e${i}`)] });
+        query.mockResolvedValueOnce({
+          rows: i > 0 ? [row(events[i - 1], `e${i - 1}`)] : [],
+        });
+      }
+      return { query, release: jest.fn() };
+    }
+
+    function deferred() {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => (resolve = r));
+      return { promise, resolve };
+    }
+
+    beforeEach(() => {
+      isMultiBayClusterMock.mockReturnValue(true);
+      computeAccountProjectFeedEventsMock.mockResolvedValue([]);
+      getClusterAccountsByIdsMock.mockImplementation(async (ids: string[]) =>
+        ids.map((account_id) => ({ account_id, home_bay_id: "bay-1" })),
+      );
+    });
+
+    it("returns without waiting for a stalled peer, then delivers in order", async () => {
+      const stalled = deferred();
+      const sent: string[] = [];
+      createInterBayAccountProjectFeedClientMock.mockReturnValue({
+        upsert: jest.fn(async (event: any) => {
+          sent.push(`upsert:${event.project.title}`);
+          if (sent.length === 1) await stalled.promise;
+        }),
+        remove: jest.fn(async () => undefined),
+      });
+      connectMock.mockResolvedValue(
+        outboxClient([
+          {
+            title: "one",
+            users: [REMOTE_A],
+            created_at: "2026-10-05T00:00:01Z",
+          },
+          {
+            title: "two",
+            users: [REMOTE_A],
+            created_at: "2026-10-05T00:00:02Z",
+          },
+        ]),
+      );
+      const {
+        publishProjectAccountFeedEventsBestEffort,
+        flushRemoteProjectFeedForwards,
+      } = await import("./project-feed");
+
+      // Both calls return although the first delivery never completes.
+      await publishProjectAccountFeedEventsBestEffort({ project_id: "p1" });
+      await publishProjectAccountFeedEventsBestEffort({ project_id: "p1" });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(sent).toEqual(["upsert:one"]);
+
+      stalled.resolve();
+      await flushRemoteProjectFeedForwards();
+      expect(sent).toEqual(["upsert:one", "upsert:two"]);
+    });
+
+    it("coalesces queued snapshots but still removes accounts that lost access", async () => {
+      const stalled = deferred();
+      const sent: string[] = [];
+      createInterBayAccountProjectFeedClientMock.mockReturnValue({
+        upsert: jest.fn(async (event: any) => {
+          sent.push(`upsert:${event.project.title}:${event.account_id}`);
+          if (sent.length === 1) await stalled.promise;
+        }),
+        remove: jest.fn(async (event: any) => {
+          sent.push(`remove:${event.account_id}`);
+        }),
+      });
+      connectMock.mockResolvedValue(
+        outboxClient([
+          {
+            title: "one",
+            users: [REMOTE_A],
+            created_at: "2026-10-05T00:00:01Z",
+          },
+          // B is added, then A is removed, while "one" is still in flight.
+          {
+            title: "two",
+            users: [REMOTE_A, REMOTE_B],
+            created_at: "2026-10-05T00:00:02Z",
+          },
+          {
+            title: "three",
+            users: [REMOTE_B],
+            created_at: "2026-10-05T00:00:03Z",
+          },
+        ]),
+      );
+      const {
+        publishProjectAccountFeedEventsBestEffort,
+        flushRemoteProjectFeedForwards,
+      } = await import("./project-feed");
+
+      await publishProjectAccountFeedEventsBestEffort({ project_id: "p1" });
+      await publishProjectAccountFeedEventsBestEffort({ project_id: "p1" });
+      await publishProjectAccountFeedEventsBestEffort({ project_id: "p1" });
+      stalled.resolve();
+      await flushRemoteProjectFeedForwards();
+
+      // "two" was superseded before it was sent; A, visible in "two", is
+      // still told it lost access.
+      expect(sent).toEqual([
+        `upsert:one:${REMOTE_A}`,
+        `upsert:three:${REMOTE_B}`,
+        `remove:${REMOTE_A}`,
+      ]);
+    });
   });
 });

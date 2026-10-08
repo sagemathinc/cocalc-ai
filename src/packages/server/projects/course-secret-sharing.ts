@@ -37,6 +37,16 @@ function pool(): Queryable {
 }
 
 async function transaction<T>(fn: (db: Queryable) => Promise<T>): Promise<T> {
+  // Finish the one-time setup before the transaction begins (see below).
+  if (!courseSecretSharingSchemaReady) {
+    await courseSecretSharingSchemaSetupOnPool();
+  }
+  return await runInTransaction(fn);
+}
+
+async function runInTransaction<T>(
+  fn: (db: Queryable) => Promise<T>,
+): Promise<T> {
   const client = await (getPool() as any).connect();
   try {
     await client.query("BEGIN");
@@ -157,9 +167,62 @@ function syncResult(row: any): CourseSecretSyncResult {
   };
 }
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let courseSecretSharingSchemaReady = false;
+const COURSE_SECRET_SHARING_TABLES = [
+  "course_secret_policies",
+  "course_secret_grants",
+  "course_secret_recipients",
+  "course_secret_sync_runs",
+  "course_secret_sync_results",
+  "course_secret_audit_events",
+];
+let courseSecretSharingSchemaSetup: Promise<void> | undefined;
+
+function courseSecretSharingSchemaSetupOnPool(): Promise<void> {
+  // Shared by concurrent callers; retried after a failure.
+  courseSecretSharingSchemaSetup ??= runInTransaction(
+    createCourseSecretSharingSchema,
+  ).then(
+    () => {
+      courseSecretSharingSchemaReady = true;
+    },
+    (err) => {
+      courseSecretSharingSchemaSetup = undefined;
+      throw err;
+    },
+  );
+  return courseSecretSharingSchemaSetup;
+}
+
 export async function ensureCourseSecretSharingSchema(
   db: Queryable = pool(),
 ): Promise<void> {
+  if (courseSecretSharingSchemaReady) return;
+  if (db === pool()) return await courseSecretSharingSchemaSetupOnPool();
+  // Inside another module's transaction (this module's own finish the setup
+  // before they begin). Only a new database lacks the tables: create them
+  // there (that may still roll back). Never start or wait for the full setup
+  // here: the transaction may hold locks that it needs.
+  const { rows } = await db.query(
+    `SELECT ${COURSE_SECRET_SHARING_TABLES.map(
+      (table) => `to_regclass('${table}') IS NOT NULL`,
+    ).join(" AND ")} AS exists`,
+  );
+  if (!rows[0]?.exists) {
+    await createCourseSecretSharingSchema(db);
+  }
+}
+
+async function createCourseSecretSharingSchema(db: Queryable): Promise<void> {
+  // Serialize setups (this process's pool setup, callers' transactions and
+  // other processes): concurrent CREATE ... IF NOT EXISTS of the same table
+  // fails with a unique violation in pg_type. Held until the transaction ends.
+  await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    "cocalc:course-secret-sharing-schema",
+  ]);
   await db.query(`CREATE TABLE IF NOT EXISTS course_secret_policies (
     policy_id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -167,8 +230,8 @@ export async function ensureCourseSecretSharingSchema(
     course_path TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     generation BIGINT NOT NULL DEFAULT 1,
-    created_by UUID NOT NULL REFERENCES accounts(account_id),
-    updated_by UUID NOT NULL REFERENCES accounts(account_id),
+    created_by UUID NOT NULL,
+    updated_by UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at TIMESTAMPTZ,
@@ -182,8 +245,8 @@ export async function ensureCourseSecretSharingSchema(
     policy_id UUID NOT NULL REFERENCES course_secret_policies(policy_id) ON DELETE CASCADE,
     source_secret_name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by UUID NOT NULL REFERENCES accounts(account_id),
-    updated_by UUID NOT NULL REFERENCES accounts(account_id),
+    created_by UUID NOT NULL,
+    updated_by UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at TIMESTAMPTZ,
@@ -194,9 +257,9 @@ export async function ensureCourseSecretSharingSchema(
     policy_id UUID NOT NULL REFERENCES course_secret_policies(policy_id) ON DELETE CASCADE,
     target_project_id UUID NOT NULL,
     student_account_id UUID,
-    approved_by UUID NOT NULL REFERENCES accounts(account_id),
+    approved_by UUID NOT NULL,
     approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_by UUID REFERENCES accounts(account_id),
+    revoked_by UUID,
     revoked_at TIMESTAMPTZ,
     PRIMARY KEY(policy_id, target_project_id)
   )`);
@@ -205,7 +268,7 @@ export async function ensureCourseSecretSharingSchema(
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     policy_id UUID NOT NULL REFERENCES course_secret_policies(policy_id) ON DELETE CASCADE,
     policy_generation BIGINT NOT NULL,
-    actor_account_id UUID NOT NULL REFERENCES accounts(account_id),
+    actor_account_id UUID NOT NULL,
     mode TEXT NOT NULL CHECK(mode IN ('sync', 'cleanup')),
     status TEXT NOT NULL CHECK(status IN ('pending','running','completed','partial','failed','cancelled')),
     requested_secret_names TEXT[] NOT NULL DEFAULT '{}',
@@ -242,11 +305,36 @@ export async function ensureCourseSecretSharingSchema(
     event_id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     policy_id UUID,
-    actor_account_id UUID NOT NULL REFERENCES accounts(account_id),
+    actor_account_id UUID NOT NULL,
     event_type TEXT NOT NULL,
     target_project_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  // These rows name the acting account, which may be homed on another bay
+  // and have no local `accounts` row, so they must not reference accounts.
+  await db.query(`
+    ALTER TABLE course_secret_policies
+      DROP CONSTRAINT IF EXISTS course_secret_policies_created_by_fkey,
+      DROP CONSTRAINT IF EXISTS course_secret_policies_updated_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_grants
+      DROP CONSTRAINT IF EXISTS course_secret_grants_created_by_fkey,
+      DROP CONSTRAINT IF EXISTS course_secret_grants_updated_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_recipients
+      DROP CONSTRAINT IF EXISTS course_secret_recipients_approved_by_fkey,
+      DROP CONSTRAINT IF EXISTS course_secret_recipients_revoked_by_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_sync_runs
+      DROP CONSTRAINT IF EXISTS course_secret_sync_runs_actor_account_id_fkey
+  `);
+  await db.query(`
+    ALTER TABLE course_secret_audit_events
+      DROP CONSTRAINT IF EXISTS course_secret_audit_events_actor_account_id_fkey
+  `);
 }
 
 async function audit(

@@ -127,7 +127,15 @@ async function rename(c, project_id, title) {
 
 /** A change made through one bay is visible to an account homed on the other. */
 async function assertCrossBayRename(actor, viewer, project_id, title) {
-  await rename(actor, project_id, title);
+  // Right after a fabric fault a call may time out while the bays reconnect;
+  // what must hold is that the change lands without restarting anything.
+  await eventually(
+    async () => {
+      await rename(actor, project_id, title);
+      return true;
+    },
+    { timeoutMs: 120_000, intervalMs: 1_000, what: `the rename to ${title}` },
+  );
   await eventually(
     async () => (await listed(viewer, project_id))?.title === title,
     {
@@ -213,7 +221,391 @@ describe("cross-bay collaboration", () => {
   });
 });
 
+describe("a project managed from the other bay", () => {
+  // Every call below is made by an account homed on the bay that does NOT
+  // own the project, so each one crosses the fabric to the owner.
+  let project;
+
+  it("lets a collaborator on the other bay rename it", async () => {
+    project = await createProject(alice.client, "shared");
+    await invite(alice, bob, project);
+    await eventually(() => listed(bob.client, project), {
+      what: "the shared project in bob's list",
+    });
+    await rename(bob.client, project, "renamed by bob");
+    for (const c of [alice.client, bob.client]) {
+      await eventually(
+        async () => (await listed(c, project))?.title === "renamed by bob",
+        { what: "bob's rename in every list" },
+      );
+    }
+  });
+
+  it("transfers ownership to an account on the other bay", async () => {
+    await alice.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: alice.account_id,
+      to_account_id: bob.account_id,
+    });
+    await eventually(
+      async () =>
+        (await listed(bob.client, project))?.users_summary?.[bob.account_id]
+          ?.group === "owner",
+      { what: "bob to be the owner in his list" },
+    );
+    // Ownership moves; the project stays on its owning bay.
+    assert.equal(await owningBay(project), SEED);
+  });
+
+  it("lets the new owner on the other bay protect it from deletion", async () => {
+    const result = await bob.client.call(
+      "projects.setProjectDeletionProtection",
+      {
+        project_id: project,
+        enabled: true,
+      },
+    );
+    assert.equal(result.deletion_protection, true);
+    await eventually(
+      async () => (await listed(alice.client, project))?.deletion_protection,
+      { what: "deletion protection in alice's list" },
+    );
+  });
+
+  it("lets the new owner on the other bay lift deletion protection (fresh auth)", async () => {
+    // Lifting protection needs a freshly authenticated session, which lives on
+    // the caller's home bay, not on the bay that owns the project.
+    const result = await bob.client.call(
+      "projects.setProjectDeletionProtection",
+      {
+        project_id: project,
+        enabled: false,
+      },
+    );
+    assert.equal(result.deletion_protection, false);
+  });
+
+  it("lets the new owner on the other bay change a member's role", async () => {
+    await bob.client.call("projects.setProjectUserRole", {
+      opts: {
+        project_id: project,
+        target_account_id: alice.account_id,
+        role: "viewer",
+      },
+    });
+    await eventually(
+      async () =>
+        (await listed(alice.client, project))?.users_summary?.[alice.account_id]
+          ?.group === "viewer",
+      { what: "alice to be a viewer in her list" },
+    );
+  });
+
+  it("lets the new owner on the other bay restrict member management", async () => {
+    await bob.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: project,
+      manage_users_owner_only: true,
+    });
+    const owner = await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT manage_users_owner_only FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project)}]);
+       return rows[0]?.manage_users_owner_only ?? null;`,
+    );
+    assert.equal(owner, true);
+  });
+
+  it("does not let a viewer on the other bay rename it", async () => {
+    await assert.rejects(rename(alice.client, project, "viewer rename"));
+    assert.equal((await listed(bob.client, project))?.title, "renamed by bob");
+  });
+});
+
+describe("project secrets across bays", () => {
+  // bob's project lives on the attached bay; alice (a collaborator) is homed
+  // on the seed, so every call below crosses bays.
+  const NAME = "MULTIBAY_TOKEN";
+  const names = async (c) =>
+    (
+      await c.call("projects.listProjectSecrets", { project_id: bob.project })
+    ).map((secret) => secret.name);
+
+  it("lets a collaborator on the other bay set and list a secret", async () => {
+    const set = await alice.client.call("projects.setProjectSecret", {
+      project_id: bob.project,
+      name: NAME,
+      value: "s3cr3t",
+    });
+    assert.equal(set.name, NAME);
+    assert.ok((await names(alice.client)).includes(NAME));
+    assert.ok((await names(bob.client)).includes(NAME));
+    const refresh = await alice.client.call(
+      "projects.refreshProjectSecretsRuntime",
+      { project_id: bob.project },
+    );
+    assert.ok(refresh?.status);
+  });
+
+  it("refuses a non-member on the other bay", async () => {
+    const gina = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "gina",
+    });
+    gina.client = await client(gina);
+    await assert.rejects(names(gina.client));
+    await assert.rejects(
+      gina.client.call("projects.setProjectSecret", {
+        project_id: bob.project,
+        name: NAME,
+        value: "nope",
+      }),
+    );
+    await assert.rejects(
+      gina.client.call("projects.deleteProjectSecret", {
+        project_id: bob.project,
+        name: NAME,
+      }),
+    );
+    assert.ok((await names(bob.client)).includes(NAME));
+  });
+
+  it("lets a collaborator on the other bay delete a secret", async () => {
+    const { deleted } = await alice.client.call(
+      "projects.deleteProjectSecret",
+      {
+        project_id: bob.project,
+        name: NAME,
+      },
+    );
+    assert.equal(deleted, true);
+    assert.ok(!(await names(bob.client)).includes(NAME));
+  });
+});
+
+describe("access requests across bays", () => {
+  // The project lives on the seed; its owner (bob) and the requesters are
+  // homed on either bay, so requests and their management cross bays.
+  let project;
+
+  async function request(account) {
+    return await account.client.call("projects.requestProjectAccess", {
+      project_id: project,
+      requested_role: "collaborator",
+      message: `from ${account.home_bay_id}`,
+      source: "api",
+    });
+  }
+
+  it("lets an owner on the other bay approve a request", async () => {
+    project = await createProject(alice.client, "requests");
+    await invite(alice, bob, project);
+    await alice.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: alice.account_id,
+      to_account_id: bob.account_id,
+    });
+    const erin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "erin",
+    });
+    erin.client = await client(erin);
+    const { request_id } = await request(erin);
+    const pending = await eventually(
+      async () =>
+        (
+          await bob.client.call("projects.listProjectAccessRequests", {
+            project_id: project,
+            status: "pending",
+          })
+        ).find((row) => row.request_id === request_id),
+      { what: "erin's request in the owner's list" },
+    );
+    assert.equal(pending.requester_account_id, erin.account_id);
+    await bob.client.call("projects.respondProjectAccessRequest", {
+      project_id: project,
+      request_id,
+      action: "approve",
+      role: "collaborator",
+    });
+    await eventually(() => listed(erin.client, project), {
+      what: "the project in erin's list",
+    });
+  });
+
+  it("lets an owner on the other bay block and unblock a requester", async () => {
+    const frank = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "frank",
+    });
+    frank.client = await client(frank);
+    const { request_id } = await request(frank);
+    await bob.client.call("projects.respondProjectAccessRequest", {
+      project_id: project,
+      request_id,
+      action: "block",
+    });
+    const blocked = async () =>
+      (
+        await bob.client.call("projects.listProjectAccessRequestBlocks", {
+          project_id: project,
+        })
+      ).some((row) => row.blocked_account_id === frank.account_id);
+    assert.equal(await blocked(), true);
+    await assert.rejects(request(frank));
+    await bob.client.call("projects.unblockProjectAccessRequester", {
+      project_id: project,
+      blocked_account_id: frank.account_id,
+    });
+    assert.equal(await blocked(), false);
+  });
+
+  it("reports collaborator invite usage to a member on the other bay", async () => {
+    const usage = await bob.client.call(
+      "projects.getProjectCollaboratorInviteUsage",
+      { project_id: project },
+    );
+    assert.ok(usage != null && typeof usage === "object");
+  });
+});
+
+describe("account-home facts on the owning bay", () => {
+  // Admin status lives on the account's home bay. The owning bay of a
+  // project must ask it, not its own (missing) copy of the account.
+  let carol; // an admin homed on the seed
+
+  it("recognizes an admin homed on the other bay", async () => {
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(carol.account_id)}]);`,
+    );
+    carol.client = await client(carol);
+    // Owners and admins may change this policy; carol is not a member.
+    await carol.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: bob.project,
+      manage_users_owner_only: true,
+    });
+    await carol.client.call("projects.setProjectManageUsersOwnerOnly", {
+      project_id: bob.project,
+      manage_users_owner_only: false,
+    });
+  });
+
+  it("still refuses a non-admin, non-owner on the other bay", async () => {
+    await assert.rejects(
+      alice.client.call("projects.setProjectManageUsersOwnerOnly", {
+        project_id: bob.project,
+        manage_users_owner_only: true,
+      }),
+      /Only project owners and administrators/,
+    );
+  });
+});
+
 describe("fabric faults", () => {
+  it("answers a change on the owning bay while the other bay is frozen", async () => {
+    // alice (homed on the seed) collaborates on bob's project. With the seed
+    // frozen, bob's rename on the bay that owns the project must still answer
+    // promptly; the new title reaches alice once the seed resumes.
+    const title = "while the seed is frozen";
+    let elapsed;
+    cluster.signal(SEED, "SIGSTOP");
+    try {
+      const start = Date.now();
+      await rename(bob.client, bob.project, title);
+      elapsed = Date.now() - start;
+    } finally {
+      cluster.signal(SEED, "SIGCONT");
+    }
+    assert.ok(elapsed < 5_000, `the rename took ${elapsed}ms`);
+    await eventually(
+      async () => (await listed(alice.client, bob.project))?.title === title,
+      { timeoutMs: 60_000, what: `${title} to reach the seed` },
+    );
+  });
+
+  it("creates a mention for an account on a frozen bay without waiting for it", async () => {
+    // bob (homed on the attached bay) is a collaborator on alice's seed-owned
+    // project again. With his bay frozen, alice's mention is recorded on the
+    // seed and delivered once his bay resumes.
+    await invite(alice, bob, alice.project);
+    await eventually(() => listed(bob.client, alice.project), {
+      what: "alice's project back in bob's list",
+    });
+    const description = "mentioned while bob's bay is frozen";
+    let elapsed;
+    cluster.signal(ATTACHED, "SIGSTOP");
+    try {
+      const start = Date.now();
+      await alice.client.call("notifications.createMention", {
+        source_project_id: alice.project,
+        source_path: "notes.md",
+        description,
+        target_account_ids: [bob.account_id],
+      });
+      elapsed = Date.now() - start;
+    } finally {
+      cluster.signal(ATTACHED, "SIGCONT");
+    }
+    assert.ok(elapsed < 5_000, `the mention took ${elapsed}ms`);
+    await eventually(
+      async () =>
+        (await bob.client.call("notifications.list", { limit: 50 })).some(
+          (row) => row.summary?.description === description,
+        ),
+      { timeoutMs: 60_000, what: "the mention to reach bob" },
+    );
+  });
+
+  it("keeps the attached bay working for its own accounts while the seed is frozen", async () => {
+    // Everything here concerns only bob and his own bay. The seed holds the
+    // cluster directory and global configuration, but bay-1 must not need it
+    // for its own accounts.
+    const timed = async (what, limitMs, fn) => {
+      const start = Date.now();
+      const result = await fn();
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < limitMs, `${what} took ${elapsed}ms`);
+      return result;
+    };
+    let project_id;
+    cluster.signal(SEED, "SIGSTOP");
+    try {
+      const bay = await timed("looking up his home bay", 5_000, () =>
+        bob.client.call("system.getAccountBay", {}),
+      );
+      assert.equal(bay.home_bay_id, ATTACHED);
+      project_id = await timed("creating a project", 10_000, () =>
+        createProject(bob.client, "created while the seed is frozen"),
+      );
+      await timed("renaming it", 5_000, () =>
+        rename(bob.client, project_id, "renamed while the seed is frozen"),
+      );
+      await eventually(
+        async () =>
+          (await listed(bob.client, project_id))?.title ===
+          "renamed while the seed is frozen",
+        { timeoutMs: 20_000, what: "the renamed project in bob's list" },
+      );
+    } finally {
+      cluster.signal(SEED, "SIGCONT");
+    }
+    // Once the seed is back, the project works across bays like any other.
+    assert.equal(await owningBay(project_id), ATTACHED);
+    await invite(bob, alice, project_id);
+    await eventually(() => listed(alice.client, project_id), {
+      timeoutMs: 60_000,
+      what: "bob's new project in alice's list",
+    });
+  });
+
   it("recovers after the seed's event loop stalls", async () => {
     cluster.signal(SEED, "SIGSTOP");
     await sleep(8_000);
@@ -259,6 +651,22 @@ describe("fabric faults", () => {
       bob.client,
       bob.project,
       "after an attached bay restart",
+    );
+  });
+  it("starts an attached bay while the seed's registry is unreadable", async () => {
+    // The bay's fabric handshakes are rejected until the registry answers;
+    // startup must wait for them rather than exit.
+    await cluster.stopBay(ATTACHED);
+    const locked = lockCredentialRegistry(20);
+    await sleep(2_000);
+    cluster.startBay(ATTACHED);
+    await locked;
+    await cluster.waitReady(ATTACHED);
+    await assertCrossBayRename(
+      alice.client,
+      bob.client,
+      bob.project,
+      "after starting during a registry outage",
     );
   });
 });

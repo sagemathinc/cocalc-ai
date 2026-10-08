@@ -117,7 +117,10 @@ async function buildMembershipCandidates(
       tiers[membershipClass] ??
       (client
         ? undefined
-        : await getSeedMembershipTierById({ id: membershipClass }));
+        : await getSeedMembershipTierById({
+            id: membershipClass,
+            allowStale: true,
+          }));
     candidates.push({
       class: membershipClass,
       source: "subscription",
@@ -142,7 +145,10 @@ async function buildMembershipCandidates(
       tiers[membershipClass] ??
       (client
         ? undefined
-        : await getSeedMembershipTierById({ id: membershipClass }));
+        : await getSeedMembershipTierById({
+            id: membershipClass,
+            allowStale: true,
+          }));
     candidates.push({
       class: membershipClass,
       source: "admin",
@@ -172,7 +178,10 @@ async function buildMembershipCandidates(
       tiers[membershipClass] ??
       (client
         ? undefined
-        : await getSeedMembershipTierById({ id: membershipClass }));
+        : await getSeedMembershipTierById({
+            id: membershipClass,
+            allowStale: true,
+          }));
     const siteLicenseId = getMetadataString(grant.metadata, "site_license_id");
     const siteLicenseDisplayName =
       siteLicenseId == null
@@ -362,7 +371,10 @@ async function buildMembershipResolutionForAccount(
 }> {
   const tiers =
     options?.tiers ??
-    (await getSeedMembershipTierMap({ includeDisabled: true }));
+    (await getSeedMembershipTierMap({
+      includeDisabled: true,
+      allowStale: true,
+    }));
   const candidates = await buildMembershipCandidates(
     account_id,
     tiers,

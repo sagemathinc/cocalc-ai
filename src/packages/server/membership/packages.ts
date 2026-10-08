@@ -229,11 +229,13 @@ async function getPurchasableMembershipTierForPackageKind({
   membership_class,
   client,
   allow_course_tier_for_team = false,
+  allow_instructor_tier_for_team = false,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
   client?: PoolClient;
   allow_course_tier_for_team?: boolean;
+  allow_instructor_tier_for_team?: boolean;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
     throw Error(
@@ -252,6 +254,11 @@ async function getPurchasableMembershipTierForPackageKind({
         allow_course_tier_for_team &&
         kind === "team" &&
         tier.course_store_visible === true
+      ) &&
+      !(
+        allow_instructor_tier_for_team &&
+        kind === "team" &&
+        tier.id === "instructor"
       ))
   ) {
     throw Error(
@@ -1367,12 +1374,13 @@ async function getCourseInfoForSeatProject({
   ).course;
 }
 
-async function getVerifiedSeatAccountEmails({
+// Verified email addresses of an account, read from its home bay.
+export async function getVerifiedSeatAccountEmails({
   account_id,
   client,
 }: {
   account_id: string;
-  client: PoolClient;
+  client?: PoolClient;
 }): Promise<string[]> {
   const homeBayId = await getHomeBayForAccount(account_id, client);
   const emailAddresses =
@@ -1704,6 +1712,70 @@ async function getCourseSeatQuote({
   };
 }
 
+/** True for a one-seat educator term purchase (tier "available for instructor purchase"). */
+export function isEducatorTermProduct(
+  value: { metadata?: Record<string, unknown> | null } | null | undefined,
+): boolean {
+  return value?.metadata?.educator_term === true;
+}
+
+async function getEducatorTermQuote({
+  product,
+  client,
+}: {
+  product: MembershipPackageProduct;
+  client?: PoolClient;
+}): Promise<MembershipPackageQuote> {
+  const membership_class = `${product.membership_class ?? ""}`.trim();
+  if (!membership_class) {
+    throw Error("membership_class is required");
+  }
+  if (Number(product.seat_count) !== 1) {
+    throw Error("an educator term covers exactly one person");
+  }
+  const tier = await getSeedMembershipTierById({
+    id: membership_class,
+    client,
+  });
+  if (!tier || tier.disabled || tier.instructor_purchase_visible !== true) {
+    throw Error(
+      `membership tier "${membership_class}" is not available for instructor purchase`,
+    );
+  }
+  const seat_price =
+    tier.instructor_term_price == null || tier.instructor_term_price === ""
+      ? NaN
+      : toDecimal(tier.instructor_term_price).toNumber();
+  if (!Number.isFinite(seat_price) || seat_price < 0) {
+    throw Error(
+      `membership tier "${membership_class}" has no instructor term price`,
+    );
+  }
+  const duration_days = Number(tier.instructor_term_days);
+  if (!Number.isInteger(duration_days) || duration_days <= 0) {
+    throw Error(
+      `membership tier "${membership_class}" has no instructor term length`,
+    );
+  }
+  const starts_at = new Date();
+  const expires_at = dayjs(starts_at).add(duration_days, "day").toDate();
+  return {
+    kind: "team",
+    membership_class,
+    seat_count: 1,
+    seat_price,
+    total_price: moneyRound2Up(toDecimal(seat_price)).toNumber(),
+    starts_at,
+    expires_at,
+    metadata: {
+      ...normalizeMetadata(product.metadata),
+      educator_term: true,
+      educator_term_days: duration_days,
+      seat_price,
+    },
+  };
+}
+
 async function getTierSeatQuote({
   product,
   membership_class,
@@ -1712,6 +1784,7 @@ async function getTierSeatQuote({
   expires_at,
   client,
   allow_course_tier_for_team = false,
+  allow_instructor_tier_for_team = false,
 }: {
   product: MembershipPackageProduct;
   membership_class: MembershipClass;
@@ -1720,6 +1793,7 @@ async function getTierSeatQuote({
   expires_at?: Date;
   client?: PoolClient;
   allow_course_tier_for_team?: boolean;
+  allow_instructor_tier_for_team?: boolean;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
@@ -1727,6 +1801,7 @@ async function getTierSeatQuote({
     membership_class,
     client,
     allow_course_tier_for_team,
+    allow_instructor_tier_for_team,
   });
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
@@ -1784,6 +1859,9 @@ async function resolveMembershipPackageQuoteInternal(
       throw Error("membership package not found");
     }
     assertMembershipPackageCanExpand(existing);
+    if (isEducatorTermProduct(existing)) {
+      throw Error("cannot add seats to an educator term membership");
+    }
     await getPurchasableMembershipTierForPackageKind({
       kind: existing.kind,
       membership_class: existing.membership_class,
@@ -1840,6 +1918,13 @@ async function resolveMembershipPackageQuoteInternal(
     };
   }
 
+  if (isEducatorTermProduct(product)) {
+    if (product.starts_at != null || product.expires_at != null) {
+      throw Error("educator term periods are set by the membership tier");
+    }
+    return await getEducatorTermQuote({ product, client });
+  }
+
   const kind = normalizePackageKind(product.kind);
   if (kind === "course") {
     const course_project_id = `${product.course_project_id ?? ""}`.trim();
@@ -1862,6 +1947,23 @@ async function resolveMembershipPackageQuoteInternal(
   if (!membership_class) {
     throw Error("membership_class is required");
   }
+  const instructorTeam =
+    allow_custom_period && kind === "team" && membership_class === "instructor";
+  if (instructorTeam) {
+    const start = asDate(product.starts_at);
+    const end = asDate(product.expires_at);
+    if (
+      !start ||
+      !end ||
+      !Number.isFinite(start.valueOf()) ||
+      !Number.isFinite(end.valueOf()) ||
+      end <= start
+    ) {
+      throw Error(
+        "Instructor team packages require explicit valid start and expiry dates",
+      );
+    }
+  }
   return await getTierSeatQuote({
     client,
     product: { ...product, kind, seat_count },
@@ -1872,6 +1974,9 @@ async function resolveMembershipPackageQuoteInternal(
     // Only the authenticated admin quote/purchase path permits custom periods.
     // Do not accept this exception from product metadata or public expansion.
     allow_course_tier_for_team: allow_custom_period,
+    // Admin quotes show the reference price; order creation separately requires
+    // a free, zero-cost purchase. Never derive this exception from metadata.
+    allow_instructor_tier_for_team: instructorTeam,
   });
 }
 
@@ -2621,6 +2726,7 @@ export async function assignMembershipPackageSeat(
     assigned_by_account_id,
     trusted_admin = false,
     metadata,
+    educator_term_initial_assignment = false,
   }: {
     package_id: string;
     account_id?: string;
@@ -2628,6 +2734,9 @@ export async function assignMembershipPackageSeat(
     assigned_by_account_id: string;
     trusted_admin?: boolean;
     metadata?: Record<string, unknown> | null;
+    // Internal only (never exposed through an API): the purchase transaction
+    // giving an educator term buyer their own seat.
+    educator_term_initial_assignment?: boolean;
   },
   client?: PoolClient,
 ): Promise<MembershipPackageAssignment> {
@@ -2642,6 +2751,23 @@ export async function assignMembershipPackageSeat(
       const normalizedEmailAddress = normalizeEmailAddress(email_address);
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
+      }
+      if (isEducatorTermProduct(pkg)) {
+        // An educator term is a personal, fixed-term membership: its one seat
+        // goes to the buyer when it is purchased and can never be reassigned.
+        const everAssigned = await listMembershipPackageAssignments({
+          package_id,
+          include_revoked: true,
+          client: dbClient,
+        });
+        if (
+          !educator_term_initial_assignment ||
+          normalizedEmailAddress ||
+          normalizedAccountId !== pkg.owner_account_id ||
+          everAssigned.length > 0
+        ) {
+          throw Error("educator term memberships cannot be reassigned");
+        }
       }
       const requestedCourseValidation = await assertValidCourseSeatProject({
         pkg,
@@ -2835,10 +2961,12 @@ export async function revokeMembershipPackageSeat(
     package_id,
     account_id,
     email_address,
+    trusted_admin = false,
   }: {
     package_id: string;
     account_id?: string;
     email_address?: string;
+    trusted_admin?: boolean;
   },
   client?: PoolClient,
 ): Promise<boolean> {
@@ -2847,6 +2975,9 @@ export async function revokeMembershipPackageSeat(
     action: "revoke membership package seat",
     client,
     fn: async ({ client: dbClient, pkg }) => {
+      if (isEducatorTermProduct(pkg) && !trusted_admin) {
+        throw Error("educator term memberships cannot be revoked by the owner");
+      }
       const pool = getQueryClient(dbClient);
       const normalizedAccountId = `${account_id ?? ""}`.trim() || undefined;
       const normalizedEmailAddress = normalizeEmailAddress(email_address);
@@ -3309,7 +3440,13 @@ async function listClaimableMembershipPackagesAcrossCluster({
       site_only,
       verified_email_addresses,
     });
-    addClaimables(seedRows, seedBayId, (row) => row.kind === "site");
+    // The seed owns every site license, and is also an ordinary bay owning
+    // team and course packages (the loop below skips it).
+    addClaimables(
+      seedRows,
+      seedBayId,
+      (row) => !site_only || row.kind === "site",
+    );
   }
   if (site_only) {
     return sortClaimableMembershipPackages(Array.from(claimables.values()));

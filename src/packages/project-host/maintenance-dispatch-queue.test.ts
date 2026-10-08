@@ -94,6 +94,7 @@ it("coalesces pending rows using the newest inventory and completes all submitte
   expect(fresh).toHaveBeenCalledTimes(1);
   expect(fresh).toHaveBeenCalledWith(
     expect.objectContaining({ storage_service_class: "paying" }),
+    { afterRunning: false },
   );
 });
 
@@ -214,4 +215,95 @@ it("shares the configured concurrency across overlapping submissions", async () 
   held.release();
   await Promise.all([first, second]);
   expect(peak).toBe(2);
+});
+
+it("marks work submitted while the same project runs for a fresh read", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const held = gate();
+  const calls: { project_id: string; afterRunning: boolean }[] = [];
+  const run = async (
+    row: HostProjectMaintenanceSchedule,
+    { afterRunning }: { afterRunning: boolean },
+  ) => {
+    calls.push({ project_id: row.project_id, afterRunning });
+    if (calls.length === 1) await held.promise;
+  };
+  const first = queue.submit({
+    rows: [row("a")],
+    observedAt: 1,
+    parallelism: 2,
+    due,
+    run,
+  });
+  await flush();
+  const later = queue.submit({
+    rows: [row("a"), row("b")],
+    observedAt: 2,
+    parallelism: 2,
+    due,
+    run,
+  });
+  await flush();
+  held.release();
+  await Promise.all([first, later]);
+  expect(calls).toEqual([
+    { project_id: "a", afterRunning: false },
+    { project_id: "b", afterRunning: false },
+    { project_id: "a", afterRunning: true },
+  ]);
+});
+
+it("returns detached submissions once queued without holding waiters", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const held = gate();
+  const started: string[] = [];
+  const run = async (row: HostProjectMaintenanceSchedule) => {
+    started.push(row.project_id);
+    await held.promise;
+  };
+  // Repeated sweeps over the same backlog, as while a long backup runs.
+  for (let observedAt = 1; observedAt <= 5; observedAt++) {
+    await queue.submit({
+      rows: [row("a"), row("b")],
+      observedAt,
+      parallelism: 1,
+      due,
+      run,
+      detach: true,
+    });
+  }
+  await flush();
+  expect(started).toEqual(["a"]);
+  const internal = queue as unknown as {
+    active: Map<string, { waiters: unknown[] }>;
+    pending: Map<string, { waiters: unknown[] }>;
+  };
+  expect(internal.active.get("a")?.waiters).toEqual([]);
+  expect(internal.pending.get("b")?.waiters).toEqual([]);
+  held.release();
+  await flush();
+  await flush();
+  // The newer row for "a" still runs once after the operation it queued behind.
+  expect([...started].sort()).toEqual(["a", "a", "b"]);
+});
+
+it("reports failures of detached work to onError", async () => {
+  const queue = new MaintenanceDispatchQueue();
+  const onError = jest.fn();
+  await queue.submit({
+    rows: [row("a")],
+    observedAt: 1,
+    parallelism: 1,
+    due,
+    run: async () => {
+      throw new Error("boom");
+    },
+    detach: true,
+    onError,
+  });
+  await flush();
+  expect(onError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "boom" }),
+    expect.objectContaining({ project_id: "a" }),
+  );
 });

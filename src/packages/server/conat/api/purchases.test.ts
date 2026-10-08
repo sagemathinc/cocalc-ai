@@ -2268,45 +2268,69 @@ describe("purchases membership packages", () => {
     ).rejects.toThrow("must own membership package");
   });
 
-  it("assigns a package seat for the owner", async () => {
+  it.each(["member", "instructor"])(
+    "assigns a %s package seat for the owner",
+    async (membership_class) => {
+      getMembershipPackageMock.mockResolvedValue({
+        id: "package-1",
+        owner_account_id: "owner-1",
+        kind: "team",
+        membership_class,
+        seat_count: 3,
+      });
+      assignMembershipPackageSeatMock.mockResolvedValue({
+        id: "assignment-1",
+        package_id: "package-1",
+        account_id: "student-1",
+        assigned_by_account_id: "owner-1",
+      });
+
+      const { assignMembershipPackageSeat } = await import("./purchases");
+      const result = await assignMembershipPackageSeat({
+        account_id: "owner-1",
+        session_hash: "session-1",
+        package_id: "package-1",
+        target_account_id: "student-1",
+      });
+
+      expect(assignMembershipPackageSeatMock).toHaveBeenCalledWith({
+        package_id: "package-1",
+        account_id: "student-1",
+        assigned_by_account_id: "owner-1",
+        metadata: null,
+      });
+      expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+        "owner-1",
+        "assign membership seats",
+      );
+      expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+        account_id: "owner-1",
+        allow_actor_impersonation: false,
+        session_hash: "session-1",
+      });
+      expect(result.id).toBe("assignment-1");
+    },
+  );
+
+  it("does not let an unrelated account assign an Instructor package seat", async () => {
     getMembershipPackageMock.mockResolvedValue({
       id: "package-1",
       owner_account_id: "owner-1",
       kind: "team",
-      membership_class: "member",
+      membership_class: "instructor",
       seat_count: 3,
     });
-    assignMembershipPackageSeatMock.mockResolvedValue({
-      id: "assignment-1",
-      package_id: "package-1",
-      account_id: "student-1",
-      assigned_by_account_id: "owner-1",
-    });
-
+    isAdminMock.mockResolvedValue(false);
     const { assignMembershipPackageSeat } = await import("./purchases");
-    const result = await assignMembershipPackageSeat({
-      account_id: "owner-1",
-      session_hash: "session-1",
-      package_id: "package-1",
-      target_account_id: "student-1",
-    });
-
-    expect(assignMembershipPackageSeatMock).toHaveBeenCalledWith({
-      package_id: "package-1",
-      account_id: "student-1",
-      assigned_by_account_id: "owner-1",
-      metadata: null,
-    });
-    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
-      "owner-1",
-      "assign membership seats",
-    );
-    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
-      account_id: "owner-1",
-      allow_actor_impersonation: false,
-      session_hash: "session-1",
-    });
-    expect(result.id).toBe("assignment-1");
+    await expect(
+      assignMembershipPackageSeat({
+        account_id: "viewer-1",
+        session_hash: "session-1",
+        package_id: "package-1",
+        target_account_id: "student-1",
+      }),
+    ).rejects.toThrow("must own membership package");
+    expect(assignMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 
   it("carries locally verified admin authority into seat assignment", async () => {
@@ -2691,6 +2715,7 @@ describe("purchases membership packages", () => {
       package_id: "package-1",
       account_id: "student-1",
       email_address: undefined,
+      trusted_admin: false,
     });
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "owner-1",

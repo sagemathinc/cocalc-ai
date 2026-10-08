@@ -2130,6 +2130,7 @@ describe("snapshot-backup-maintenance", () => {
   it.each(["snapshot", "backup"])(
     "rearms %s work postponed by a queued schedule refresh",
     async (kind) => {
+      process.env.COCALC_PROJECT_HOST_BACKUP_PARALLELISM = "1";
       jest.useFakeTimers();
       jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
       const original = ["a", "b"].map((project_id) => ({
@@ -2196,6 +2197,7 @@ describe("snapshot-backup-maintenance", () => {
   );
 
   it("bounds refresh RPCs across a large stale backlog and leaves non-due inventory out of both queues", async () => {
+    process.env.COCALC_PROJECT_HOST_BACKUP_PARALLELISM = "1";
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
     const observedAt = new Date().toISOString();
@@ -2434,6 +2436,7 @@ describe("snapshot-backup-maintenance", () => {
   });
 
   it("queues paid backup work behind an active free operation without another sweep", async () => {
+    process.env.COCALC_PROJECT_HOST_BACKUP_PARALLELISM = "1";
     let finishFreeBackup!: (value: { created: boolean }) => void;
     const freeBackupRunning = new Promise<{ created: boolean }>((resolve) => {
       finishFreeBackup = resolve;
@@ -2481,5 +2484,216 @@ describe("snapshot-backup-maintenance", () => {
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({ project_id: "paid-project" }),
     );
+  });
+
+  const settle = async (done: () => boolean) => {
+    for (let i = 0; i < 100 && !done(); i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+
+  const dueBackupRow = (project_id: string) => ({
+    project_id,
+    storage_service_class: "paying",
+    storage_account_id: `account-${project_id}`,
+    backup_due_since: "2026-04-01T00:00:00.000Z",
+    snapshots: { disabled: true },
+    backups: { daily: 1 },
+  });
+
+  it("runs up to three backups at once by default", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue(
+      ["a", "b", "c", "d"].map(dueBackupRow),
+    );
+    const finish: Array<() => void> = [];
+    runScheduledBackupMaintenanceMock.mockImplementation(
+      () =>
+        new Promise((resolve) => finish.push(() => resolve({ created: true }))),
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+    });
+    await settle(
+      () => runScheduledBackupMaintenanceMock.mock.calls.length >= 3,
+    );
+    await settle(() => false);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(3);
+
+    finish.shift()!();
+    await settle(
+      () => runScheduledBackupMaintenanceMock.mock.calls.length >= 4,
+    );
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(4);
+    while (finish.length) finish.shift()!();
+    await expect(sweep).resolves.toBe(true);
+  });
+
+  it("runs one backup at a time below preferred memory", async () => {
+    delete process.env
+      .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES;
+    listProjectMaintenanceSchedulesMock.mockResolvedValue(
+      ["a", "b"].map(dueBackupRow),
+    );
+    let finishFirst!: () => void;
+    runScheduledBackupMaintenanceMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishFirst = () => resolve({ created: true });
+        }),
+      )
+      .mockResolvedValue({ created: true });
+    const readFileSyncSpy = jest
+      .spyOn(require("node:fs"), "readFileSync")
+      .mockImplementation((path: unknown) =>
+        `${path}` === "/proc/pressure/memory"
+          ? "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n"
+          : "MemTotal:       65536000 kB\nMemAvailable:    6291456 kB\n",
+      );
+    try {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+      });
+      await settle(
+        () => runScheduledBackupMaintenanceMock.mock.calls.length >= 1,
+      );
+      await settle(() => false);
+      expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+      finishFirst();
+      await expect(sweep).resolves.toBe(true);
+      expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(2);
+    } finally {
+      readFileSyncSpy.mockRestore();
+    }
+  });
+
+  it("follows an explicit shared parallelism setting for backups", async () => {
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM = "1";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue(
+      ["a", "b"].map(dueBackupRow),
+    );
+    let finishFirst!: () => void;
+    runScheduledBackupMaintenanceMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishFirst = () => resolve({ created: true });
+        }),
+      )
+      .mockResolvedValue({ created: true });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const sweep = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+    });
+    await settle(
+      () => runScheduledBackupMaintenanceMock.mock.calls.length >= 1,
+    );
+    await settle(() => false);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    finishFirst();
+    await expect(sweep).resolves.toBe(true);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a detached sweep once its work is queued", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      dueBackupRow("held"),
+    ]);
+    let finish!: () => void;
+    runScheduledBackupMaintenanceMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = () => resolve({ created: true });
+      }),
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    await expect(
+      runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-detached",
+        detach: true,
+      }),
+    ).resolves.toBe(true);
+    await settle(
+      () => runScheduledBackupMaintenanceMock.mock.calls.length >= 1,
+    );
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
+  it("re-lists on the next periodic sweep while dispatched work still drains", async () => {
+    jest.useFakeTimers();
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = "1000";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      dueBackupRow("slow"),
+    ]);
+    // A backup that outlasts many sweep intervals.
+    runScheduledBackupMaintenanceMock.mockReturnValue(new Promise(() => {}));
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(2000);
+    // Each later sweep re-lists current schedules; the running backup is not
+    // started twice.
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(3);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("re-reads a backup queued behind the same project's running backup", async () => {
+    jest.useFakeTimers();
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = "1000";
+    let backedUp = false;
+    listProjectMaintenanceSchedulesMock.mockImplementation(async () => [
+      backedUp
+        ? {
+            ...dueBackupRow("again"),
+            backup_due_since: null,
+            last_backup: new Date().toISOString(),
+          }
+        : dueBackupRow("again"),
+    ]);
+    let finish!: () => void;
+    runScheduledBackupMaintenanceMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = () => resolve({ created: true });
+        }),
+      )
+      .mockResolvedValue({ created: true });
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({
+      // Earlier tests leave operations running in host-1's queues.
+      hostId: "host-requeue",
+    });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    // The next sweep still lists the project as due and queues it behind the
+    // running backup.
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
+
+    backedUp = true;
+    finish();
+    await jest.advanceTimersByTimeAsync(0);
+    // Within the shared refresh window the cached row still says due; the
+    // queued copy must re-read it instead of backing up again.
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_ids: ["again"] }),
+    );
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    stop();
   });
 });

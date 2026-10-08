@@ -11,7 +11,9 @@ import {
 } from "antd";
 import { useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { OversizedFilesNotice } from "@cocalc/frontend/project/backups/oversized-files";
+import { hasOversizedFiles } from "@cocalc/util/consts/backups";
 import {
   LRO_TERMINAL_STATUSES,
   progressBarStatus,
@@ -81,13 +83,19 @@ export default function BackupOps({ project_id }: { project_id: string }) {
         Backup operations
       </div>
       {active.map((op) => (
-        <BackupOpRow key={op.op_id} op={op} />
+        <BackupOpRow key={op.op_id} op={op} project_id={project_id} />
       ))}
     </div>
   );
 }
 
-function BackupOpRow({ op }: { op: BackupLroState }) {
+function BackupOpRow({
+  op,
+  project_id,
+}: {
+  op: BackupLroState;
+  project_id: string;
+}) {
   const summary = op.summary;
   const lastDetailRef = useRef<string | undefined>(undefined);
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
@@ -103,6 +111,8 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
   const statusText = formatStatusLine(op, detail ?? lastDetailRef.current);
   const progressStatus = progressBarStatus(summary?.status);
   const canCancel = summary && !LRO_TERMINAL_STATUSES.has(summary.status);
+  const canDismiss = summary && LRO_TERMINAL_STATUSES.has(summary.status);
+  const oversizedFiles = summary?.result?.oversized_files;
 
   return (
     <div style={{ marginBottom: "6px" }}>
@@ -148,7 +158,25 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
             </Button>
           </Popconfirm>
         ) : null}
+        {canDismiss ? (
+          <Button
+            type="link"
+            size="small"
+            onClick={() =>
+              redux.getProjectActions(project_id)?.dismissBackupLro(op.op_id)
+            }
+          >
+            Dismiss
+          </Button>
+        ) : null}
       </Space>
+      {hasOversizedFiles(oversizedFiles) ? (
+        <OversizedFilesNotice
+          report={oversizedFiles}
+          title="Some files are not in this backup"
+          style={{ marginTop: "6px" }}
+        />
+      ) : null}
     </div>
   );
 }

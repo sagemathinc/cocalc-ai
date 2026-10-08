@@ -56,6 +56,10 @@ const DEFAULT_SWEEP_MS = 15 * 60 * 1000;
 // scans amplify latency without increasing useful mutation throughput (the
 // mutation lock is global). Operators can raise this only after qualification.
 const DEFAULT_PARALLELISM = 1;
+// Backups mostly wait on reading a read-only snapshot and uploading it, and
+// each one still passes per-operation I/O admission and the host backup slot
+// limit. Running them one at a time let a large backlog take most of a day.
+const DEFAULT_BACKUP_PARALLELISM = 3;
 const DEFAULT_INITIAL_DELAY_MS = 60_000;
 const INITIAL_DELAY_JITTER_MS = 60_000;
 const FULL_SWEEP_RETRY_MS = 60_000;
@@ -751,12 +755,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   onFutureDue,
   shadow = false,
   onDispatched,
+  detach = false,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
   shadow?: boolean;
   onDispatched?: () => void;
+  /** Return once the work is queued instead of when it finishes. */
+  detach?: boolean;
 }): Promise<boolean> {
   const admission = getStorageAdmissionStatus();
   const sweepRestricted =
@@ -776,9 +783,22 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       policy: "per-operation-admission",
     });
   }
-  const configuredParallelism = parsePositiveInteger(
+  const configuredSnapshotParallelism = parsePositiveInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM,
     DEFAULT_PARALLELISM,
+  );
+  // An explicit shared setting still governs backups unless the backup lane
+  // has its own.
+  const configuredBackupParallelism = parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_BACKUP_PARALLELISM,
+    parsePositiveInteger(
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM,
+      DEFAULT_BACKUP_PARALLELISM,
+    ),
+  );
+  const configuredParallelism = Math.max(
+    configuredSnapshotParallelism,
+    configuredBackupParallelism,
   );
   const memoryDecision = maintenanceMemoryDecision({ configuredParallelism });
   setSnapshotBackupMaintenanceGate({
@@ -854,12 +874,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_INTERVAL_MS,
     DEFAULT_STARVATION_INTERVAL_MS,
   );
-  const parallelism = memoryDecision.parallelism;
-  if (parallelism < configuredParallelism) {
+  // Memory pressure reduces both lanes to one operation.
+  const parallelism = Math.min(
+    memoryDecision.parallelism,
+    configuredSnapshotParallelism,
+  );
+  const backupParallelism = Math.min(
+    memoryDecision.parallelism,
+    configuredBackupParallelism,
+  );
+  if (memoryDecision.parallelism < configuredParallelism) {
     logger.info("reducing snapshot/backup maintenance parallelism", {
       hostId,
       configured_parallelism: configuredParallelism,
-      effective_parallelism: parallelism,
+      effective_parallelism: memoryDecision.parallelism,
       memory_available_bytes: memoryDecision.availableBytes,
       preferred_bytes: memoryDecision.preferredBytes,
       hard_min_bytes: memoryDecision.hardMinBytes,
@@ -1173,11 +1201,17 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       );
     },
   );
-  const refreshQueuedRow = async (row: HostProjectMaintenanceSchedule) => {
+  const refreshQueuedRow = async (
+    row: HostProjectMaintenanceSchedule,
+    { afterRunning }: { afterRunning: boolean },
+  ) => {
     const refreshed = await (usedOwnershipLease
       ? Promise.resolve(row)
       : queues.refresh.get({
           row,
+          // Queued behind this project's previous operation: the cached row
+          // still shows the work that operation just did as due.
+          fresh: afterRunning,
           pendingProjectIds: () => [
             ...queues.snapshot.pendingProjectIds(100),
             ...queues.backup.pendingProjectIds(100),
@@ -1199,8 +1233,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     if (refreshed && refreshed !== row) rememberRowFutureDue(refreshed);
     return refreshed;
   };
+  // Nothing awaits detached work, so log its failures here.
+  const onDetachedError =
+    (kind: "snapshot" | "backup") =>
+    (err: unknown, row: HostProjectMaintenanceSchedule) =>
+      logger.warn("queued maintenance operation failed", {
+        hostId,
+        project_id: row.project_id,
+        kind,
+        err: `${err}`,
+      });
   const snapshotLane = async () => {
     await queues.snapshot.submit({
+      detach,
+      onError: onDetachedError("snapshot"),
       rows: snapshotRows.filter((row) =>
         actionableMaintenance(row, "snapshot", queuedAt),
       ),
@@ -1213,8 +1259,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         );
         return at == null ? null : new Date(at).toISOString();
       },
-      run: async (candidate) => {
-        const row = await refreshQueuedRow(candidate);
+      run: async (candidate, opts) => {
+        const row = await refreshQueuedRow(candidate, opts);
         if (!row) return;
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
@@ -1393,14 +1439,16 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   };
   const backupLane = async () => {
     await queues.backup.submit({
+      detach,
+      onError: onDetachedError("backup"),
       rows: backupRows.filter((row) =>
         actionableMaintenance(row, "backup", queuedAt),
       ),
       observedAt: listingVersion,
-      parallelism,
+      parallelism: backupParallelism,
       due: (row) => row.backup_due_since,
-      run: async (candidate) => {
-        const row = await refreshQueuedRow(candidate);
+      run: async (candidate, opts) => {
+        const row = await refreshQueuedRow(candidate, opts);
         if (!row) return;
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
@@ -1612,12 +1660,14 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   onFutureDue,
   shadow = false,
   onDispatched,
+  detach = false,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
   shadow?: boolean;
   onDispatched?: () => void;
+  detach?: boolean;
 }) {
   return await runProjectSnapshotBackupMaintenanceSweepUnlocked({
     hostId,
@@ -1625,6 +1675,7 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
     onFutureDue,
     shadow,
     onDispatched,
+    detach,
   });
 }
 
@@ -1759,6 +1810,11 @@ export function startProjectSnapshotBackupMaintenance({
         hostId,
         onFutureDue: rememberFutureDue,
         shadow,
+        // The persistent per-host queues drain the dispatched work, so finish
+        // once it is queued: waiting for a long backlog to drain kept
+        // dispatching from an hours-old inventory and hid changes made since.
+        // Detached, sweeps never overlap and hold no waiters on the backlog.
+        detach: true,
       });
     } catch (err) {
       logger.warn("snapshot/backup maintenance sweep failed", {

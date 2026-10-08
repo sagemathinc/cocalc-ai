@@ -202,3 +202,27 @@ test("streaming output re-parses only the changed row", () => {
     parse.mockRestore();
   }
 });
+
+test("thinking is one muted line that opens to the full reasoning", () => {
+  render(
+    <Timeline
+      blocks={[
+        { kind: "agent", text: "Starting the sleep now." },
+        {
+          kind: "thinking",
+          text: "The image is a banner.\n\nThe sleep is still running.",
+        },
+      ]}
+    />,
+  );
+  const toggle = screen.getByRole("button", { name: /Thinking/ });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  // Collapsed: the label and a one-line excerpt, no actions or rendered body.
+  expect(toggle.textContent).toContain(
+    "The image is a banner. The sleep is still running.",
+  );
+  expect(screen.getAllByRole("button", { name: "Copy block" })).toHaveLength(1);
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("The sleep is still running.")).toBeTruthy();
+});

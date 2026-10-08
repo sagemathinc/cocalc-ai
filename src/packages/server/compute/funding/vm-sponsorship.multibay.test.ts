@@ -17,6 +17,7 @@ import { handleProjectReferenceGet } from "@cocalc/server/inter-bay/project-cont
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
+  finalizeAccountRehome,
   getAccountRehomeOperation,
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
@@ -446,6 +447,10 @@ describePg(
           "activate-financial-rehome": {
             activateFinancialRehome: (opts) =>
               onBay(bay, () => activateAccountFinancialState(opts)),
+          },
+          "finalize-rehome": {
+            finalizeRehome: (opts) =>
+              onBay(bay, () => finalizeAccountRehome(opts)),
           },
         }))
           handlers.push(

@@ -185,4 +185,42 @@ describe("maintenance schedule refresh", () => {
       }),
     ).toEqual(original);
   });
+
+  it("re-reads one row on request, even inside the refresh window", async () => {
+    const refresh = new MaintenanceScheduleRefresh();
+    refresh.observe({ rows: [row("a"), row("b")], version: 1, at: Date.now() });
+    const updated = { ...row("a"), backup_due_since: null };
+    const list = jest.fn(async (_projectIds: string[]) => [updated]);
+    const options = {
+      pendingProjectIds: () => ["a", "b"],
+      list,
+      onError: jest.fn(),
+    };
+    // Inside the window the cached row is used without an RPC.
+    expect(await refresh.get({ row: row("a"), ...options })).toEqual(row("a"));
+    expect(list).not.toHaveBeenCalled();
+    expect(
+      await refresh.get({ row: row("a"), ...options, fresh: true }),
+    ).toEqual(updated);
+    expect(list).toHaveBeenCalledWith(["a"]);
+    // The fresh row is shared with later readers.
+    expect(await refresh.get({ row: row("a"), ...options })).toEqual(updated);
+  });
+
+  it("skips rather than reusing a cached row when a requested re-read fails", async () => {
+    const refresh = new MaintenanceScheduleRefresh();
+    refresh.observe({ rows: [row("a")], version: 1, at: Date.now() });
+    const onError = jest.fn();
+    const result = await refresh.get({
+      row: row("a"),
+      pendingProjectIds: () => [],
+      list: async () => {
+        throw Error("bay unavailable");
+      },
+      onError,
+      fresh: true,
+    });
+    expect(result).toBeUndefined();
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
 });

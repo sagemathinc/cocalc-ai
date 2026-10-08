@@ -18,6 +18,10 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import type { AcpImageAttachment } from "./types";
 import { harnessQuestionForm } from "./harness-questions";
+import {
+  harnessHasSessionGuidance,
+  harnessSessionGuidance,
+} from "./harness-context";
 import type { Readable, Writable } from "node:stream";
 import {
   parseAcpHarnessCredential,
@@ -29,6 +33,7 @@ import type {
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
 import {
+  diagnosticError,
   HarnessStderrDiagnostics,
   recordHarnessDiagnostic,
 } from "./harness-diagnostics";
@@ -72,6 +77,8 @@ export interface HarnessProcess {
   closed: Promise<void>;
   cancelTools?(): Promise<void>;
   resumeTools?(): void;
+  /** End pending project job waits early so queued guidance is delivered. */
+  releaseToolWaits?(): void;
   /** Trusted tool bridge callback, scoped to this process's admitted conversation. */
   setAsyncQuestionHandler?(handler: HarnessAsyncQuestionHandler): void;
   /**
@@ -136,8 +143,13 @@ type RequestMethod = keyof typeof REQUEST_ACTIONS;
 
 const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
 
-export function claudeAccountApiKeySessionMeta(): Record<string, unknown> {
+export function claudeAccountApiKeySessionMeta(
+  systemPromptAppend?: string,
+): Record<string, unknown> {
   return {
+    ...(systemPromptAppend
+      ? { systemPrompt: { append: systemPromptAppend } }
+      : {}),
     claudeCode: {
       options: {
         // The pinned adapter resets Bedrock/Vertex when pinning a provider,
@@ -148,8 +160,25 @@ export function claudeAccountApiKeySessionMeta(): Record<string, unknown> {
   };
 }
 
+/**
+ * Built-in Claude Code tools the isolated controller may use. None of them
+ * touch the controller filesystem or run commands. WebSearch runs on
+ * Anthropic's side; WebFetch downloads pages from the controller (through the
+ * public-host egress proxy in projects without internet access). The Task*
+ * tools keep Claude's task list, which the adapter reports as ACP plan updates.
+ */
+export const CLAUDE_CONTROLLER_TOOLS = [
+  "WebSearch",
+  "WebFetch",
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskList",
+  "TaskGet",
+] as const;
+
 export function claudeSubscriptionSessionMeta(
   systemPromptAppend?: string,
+  options: { projectToolServerName?: string } = {},
 ): Record<string, unknown> {
   return {
     ...(systemPromptAppend
@@ -157,7 +186,16 @@ export function claudeSubscriptionSessionMeta(
       : {}),
     claudeCode: {
       options: {
-        tools: [],
+        tools: [...CLAUDE_CONTROLLER_TOOLS],
+        // CoCalc approves every call to these anyway. Pre-approving them
+        // saves a permission round trip and a persisted event per call.
+        allowedTools: [
+          "WebSearch",
+          "WebFetch",
+          ...(options.projectToolServerName
+            ? [`mcp__${options.projectToolServerName}`]
+            : []),
+        ],
         settingSources: [],
         skills: [],
         plugins: [],
@@ -187,6 +225,8 @@ export class HarnessError extends Error {
       | "unsupported"
       | "rejected",
     message: string,
+    // The agent's process was killed (SIGKILL), e.g. at a memory limit.
+    public readonly killed = false,
   ) {
     super(message);
   }
@@ -209,6 +249,48 @@ export async function disposeFailedHarness(
 }
 
 /** One principal/profile-bound native session, independent of Codex auth/recovery. */
+function assertValidImages(images: readonly AcpImageAttachment[]): void {
+  if (
+    images.length > ACP_MAX_IMAGES ||
+    images.some(
+      ({ data, mimeType }) =>
+        !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+          mimeType,
+        ) ||
+        typeof data !== "string" ||
+        data.length > Math.ceil(ACP_MAX_IMAGE_BYTES / 3) * 4 ||
+        data.length % 4 !== 0 ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(data) ||
+        Buffer.byteLength(data, "base64") > ACP_MAX_IMAGE_BYTES,
+    )
+  )
+    throw new HarnessError(
+      "rejected",
+      "ACP accepts up to 8 PNG, JPEG, GIF or WebP images, at most 5 MiB each",
+    );
+  if (
+    images.reduce(
+      (bytes, { data }) => bytes + Buffer.byteLength(data, "base64"),
+      0,
+    ) > ACP_MAX_TOTAL_IMAGE_BYTES
+  )
+    throw new HarnessError(
+      "rejected",
+      "ACP images exceed the 10 MiB total limit",
+    );
+}
+
+function promptBlocks(text: string, images: readonly AcpImageAttachment[]) {
+  return [
+    { type: "text" as const, text },
+    ...images.map(({ data, mimeType }) => ({
+      type: "image" as const,
+      data,
+      mimeType,
+    })),
+  ];
+}
+
 export class AcpHarnessClient {
   private connection: ClientSideConnection;
   private session?: NewSessionResponse;
@@ -607,7 +689,20 @@ export class AcpHarnessClient {
         startedAt,
         protocolRejection,
       );
+      // An adapter whose agent process was SIGKILLed (e.g. by the kernel at
+      // the project's memory limit) reports a generic internal error; the
+      // kill shows in its stderr. Say so, and let the host recover.
+      const killed = [
+        ...diagnosticError(error).signals,
+        ...this.stderrDiagnostics.snapshot().signals,
+      ].includes("killed");
       this.fail(Error("ACP operation failed"));
+      if (killed)
+        throw new HarnessError(
+          prompt || mutation ? "outcome_unknown" : "unavailable",
+          `${this.agentName()}'s process was killed (SIGKILL) while it was working. [Diagnostic ID: ${diagnosticId}]`,
+          true,
+        );
       throw new HarnessError(
         protocolRejection
           ? "rejected"
@@ -629,14 +724,18 @@ export class AcpHarnessClient {
     }
   }
 
+  private agentName(): string {
+    return this.binding.profile.id === "claude-code" ||
+      this.sessionPolicy === "claude-subscription-controller"
+      ? "Claude"
+      : "The agent";
+  }
+
   private rejectionMessage(error: unknown, method: RequestMethod): string {
     const { code, data } = error as { code: number; data?: { cwd?: unknown } };
     const subscription =
       this.sessionPolicy === "claude-subscription-controller";
-    const agent =
-      this.binding.profile.id === "claude-code" || subscription
-        ? "Claude"
-        : "The agent";
+    const agent = this.agentName();
     let recovery: string;
     if (code === -32000) {
       recovery = subscription
@@ -678,6 +777,8 @@ export class AcpHarnessClient {
       throw Error("ACP session is already open or opening");
     this.opening = true;
     try {
+      const projectToolServerName =
+        this.process.projectToolServerName ?? "cocalc_project";
       const params = {
         cwd:
           this.sessionPolicy === "claude-subscription-controller"
@@ -687,7 +788,7 @@ export class AcpHarnessClient {
           this.sessionPolicy === "claude-subscription-controller"
             ? [
                 {
-                  name: this.process.projectToolServerName ?? "cocalc_project",
+                  name: projectToolServerName,
                   command: "/opt/cocalc/bin/node",
                   args: ["/run/cocalc/agent-tools/bridge.cjs"],
                   env: [],
@@ -697,12 +798,27 @@ export class AcpHarnessClient {
         ...(this.sessionPolicy === "claude-subscription-controller"
           ? {
               _meta: claudeSubscriptionSessionMeta(
-                this.process.systemPromptAppend,
+                [this.process.systemPromptAppend, harnessSessionGuidance(true)]
+                  .filter(Boolean)
+                  .join("\n\n"),
+                { projectToolServerName },
               ),
             }
           : this.binding.credential.mode === "account-api-key"
-            ? { _meta: claudeAccountApiKeySessionMeta() }
-            : {}),
+            ? {
+                _meta: claudeAccountApiKeySessionMeta(
+                  harnessHasSessionGuidance(this.binding.profile)
+                    ? harnessSessionGuidance(false)
+                    : undefined,
+                ),
+              }
+            : harnessHasSessionGuidance(this.binding.profile)
+              ? {
+                  _meta: {
+                    systemPrompt: { append: harnessSessionGuidance(false) },
+                  },
+                }
+              : {}),
       };
       if (sessionId) {
         if (!this.info.agentCapabilities?.loadSession)
@@ -757,44 +873,10 @@ export class AcpHarnessClient {
       Buffer.byteLength(text) > ACP_MAX_PROMPT_BYTES
     )
       throw Error("Invalid ACP prompt size");
-    if (
-      images.length > ACP_MAX_IMAGES ||
-      images.some(
-        ({ data, mimeType }) =>
-          !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
-            mimeType,
-          ) ||
-          typeof data !== "string" ||
-          data.length > Math.ceil(ACP_MAX_IMAGE_BYTES / 3) * 4 ||
-          data.length % 4 !== 0 ||
-          !/^[A-Za-z0-9+/]*={0,2}$/.test(data) ||
-          Buffer.byteLength(data, "base64") > ACP_MAX_IMAGE_BYTES,
-      )
-    )
-      throw new HarnessError(
-        "rejected",
-        "ACP accepts up to 8 PNG, JPEG, GIF or WebP images, at most 5 MiB each",
-      );
-    if (
-      images.reduce(
-        (bytes, { data }) => bytes + Buffer.byteLength(data, "base64"),
-        0,
-      ) > ACP_MAX_TOTAL_IMAGE_BYTES
-    )
-      throw new HarnessError(
-        "rejected",
-        "ACP images exceed the 10 MiB total limit",
-      );
+    assertValidImages(images);
     const params = {
       sessionId: this.session.sessionId,
-      prompt: [
-        { type: "text" as const, text },
-        ...images.map(({ data, mimeType }) => ({
-          type: "image" as const,
-          data,
-          mimeType,
-        })),
-      ],
+      prompt: promptBlocks(text, images),
     };
     // Reject before handing the request to the SDK or granting tool execution.
     // Reserve space for the SDK's JSON-RPC method, ID and envelope.
@@ -892,7 +974,10 @@ export class AcpHarnessClient {
   }
 
   /** Only inject into a running prompt; never let an idle steer start a detached turn. */
-  async steer(text: string): Promise<"injected" | "idle"> {
+  async steer(
+    text: string,
+    images: readonly AcpImageAttachment[] = [],
+  ): Promise<"injected" | "idle"> {
     if (
       !this.supportsSteering ||
       !this.active ||
@@ -906,16 +991,30 @@ export class AcpHarnessClient {
       Buffer.byteLength(text) > 512 * 1024
     )
       throw Error("Invalid ACP guidance size");
+    assertValidImages(images);
+    const params = {
+      sessionId: this.session.sessionId,
+      prompt: promptBlocks(text, images),
+      _meta: { steering: { idleBehavior: "promptRequired" } },
+    };
+    if (
+      Buffer.byteLength(JSON.stringify(params)) >
+      ACP_MAX_OUTBOUND_FRAME_BYTES - 1024
+    )
+      throw new HarnessError(
+        "rejected",
+        "ACP guidance exceeds the outgoing message limit",
+      );
     const response = (await this.request(
-      this.connection.extMethod("_session/steering", {
-        sessionId: this.session.sessionId,
-        prompt: [{ type: "text", text }],
-        _meta: { steering: { idleBehavior: "promptRequired" } },
-      }),
+      this.connection.extMethod("_session/steering", params),
       "session/steering",
       true,
     )) as { outcome?: string };
-    if (response.outcome === "injected") return "injected";
+    if (response.outcome === "injected") {
+      // Claude reads guidance at its next step, which a long job wait delays.
+      this.process.releaseToolWaits?.();
+      return "injected";
+    }
     if (response.outcome === "promptRequired") return "idle";
     throw new HarnessError("outcome_unknown", "Unexpected ACP guidance result");
   }

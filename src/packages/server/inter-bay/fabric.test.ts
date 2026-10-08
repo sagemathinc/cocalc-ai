@@ -155,4 +155,32 @@ describe("inter-bay fabric config", () => {
       "attached bay requires COCALC_CLUSTER_SEED_CONAT_SERVER",
     );
   });
+
+  it("serves every inter-bay service over one shared connection", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = "https://seed-fabric";
+    process.env.COCALC_BAY_CREDENTIAL = "bay-secret";
+    const { connect } = await import("@cocalc/conat/core/client");
+    (connect as jest.Mock).mockClear();
+    (connect as jest.Mock).mockImplementation(() => ({ state: "connected" }));
+    const { getInterBayFabricServiceClient } = await import("./fabric");
+    const first = getInterBayFabricServiceClient();
+    expect(getInterBayFabricServiceClient()).toBe(first);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ noCache: true }),
+    );
+  });
+
+  it("replaces the shared service connection once it is closed", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = "https://seed-fabric";
+    process.env.COCALC_BAY_CREDENTIAL = "bay-secret";
+    const { connect } = await import("@cocalc/conat/core/client");
+    (connect as jest.Mock).mockImplementation(() => ({ state: "connected" }));
+    const { getInterBayFabricServiceClient } = await import("./fabric");
+    const first = getInterBayFabricServiceClient() as any;
+    first.state = "closed";
+    expect(getInterBayFabricServiceClient()).not.toBe(first);
+  });
 });

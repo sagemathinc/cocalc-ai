@@ -59,11 +59,14 @@ export class MaintenanceScheduleRefresh {
     pendingProjectIds,
     list,
     onError,
+    fresh: requireFresh = false,
   }: {
     row: Row;
     pendingProjectIds: () => string[];
     list: (projectIds: string[]) => Promise<Row[]>;
     onError: (err: unknown) => void;
+    /** Re-read this row even inside the shared refresh budget. */
+    fresh?: boolean;
   }): Promise<Row | undefined> {
     const current = () => {
       return this.observations.get(row.project_id)?.row;
@@ -71,6 +74,28 @@ export class MaintenanceScheduleRefresh {
     const now = Date.now();
     const observed = this.observations.get(row.project_id);
     if (!observed?.row) return undefined;
+    if (requireFresh) {
+      // Every cached observation (and any refresh already in flight) may
+      // predate the caller's reason for needing a fresh row, so read it alone.
+      try {
+        const rows = await list([row.project_id]);
+        if (this.observations.get(row.project_id) === observed) {
+          this.observations.set(row.project_id, {
+            row: rows.find(
+              (candidate) => candidate.project_id === row.project_id,
+            ),
+            version: observed.version,
+            at: Date.now(),
+          });
+        }
+        return current();
+      } catch (err) {
+        // A stale row would repeat work that just finished; skip, and let the
+        // next inventory decide.
+        onError(err);
+        return undefined;
+      }
+    }
     if (observed && now - observed.at < REFRESH_INTERVAL_MS) return current();
     if (this.flight) {
       await this.flight;

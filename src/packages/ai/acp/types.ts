@@ -72,6 +72,8 @@ export interface AcpSteerRequest {
   account_id: string;
   prompt: string;
   local_images?: string[];
+  // Internal: images the host materialized for a harness agent's guidance.
+  image_attachments?: AcpImageAttachment[];
   session_id?: string;
   runtime_env?: Record<string, string>;
   config?: CodexSessionConfig;

@@ -3916,6 +3916,7 @@ export async function createBackup({
         project_id,
         limit,
         lro: { op_id, scope_type: "project", scope_id: project_id },
+        skip_oversized_files: true,
       });
       const duration_ms = Date.now() - started;
       const finished = new Date();
@@ -3933,6 +3934,9 @@ export async function createBackup({
                 : backup.time,
             generation: backup.generation,
             duration_ms,
+            ...(backup.oversized_files
+              ? { oversized_files: backup.oversized_files }
+              : {}),
           },
           progress_summary: {
             phase: "done",

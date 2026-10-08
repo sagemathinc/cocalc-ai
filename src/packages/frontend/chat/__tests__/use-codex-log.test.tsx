@@ -104,6 +104,8 @@ class FakeDstream extends EventEmitter {
   recoverNow = jest.fn(async () => {
     this.setRecoveryState("ready");
   });
+  // Over the existing connection: no recovery-state events.
+  catchUp = jest.fn(async () => {});
 
   push(message: any, transportSeq = message?.seq) {
     this.messages = [...this.messages, message];
@@ -581,6 +583,54 @@ describe("useCodexLog", () => {
     });
     expect(screen.getByTestId("live-response").textContent).toBe(
       "Visible without another token.",
+    );
+  });
+
+  it("catches up a running preview whose live update never arrived", async () => {
+    jest.useFakeTimers();
+    const stream = new FakeDstream();
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get: jest.fn(() => new Promise(() => {})) }),
+      },
+    });
+    render(
+      <LiveResponseComponent
+        logKey="log-key-preview-catch-up"
+        liveLogStream="preview-stream-catch-up"
+        liveStreamIsProjection
+        generating
+      />,
+    );
+    await waitFor(() => expect(stream.listenerCount("change")).toBe(1));
+    // Published, but the subscription is not told (seen after reconnects).
+    act(() => {
+      stream.pushSilently({
+        type: "event",
+        seq: 1,
+        time: 10,
+        event: {
+          type: "message",
+          text: "Starting the sleep now.",
+          delta: false,
+        },
+      });
+    });
+    expect(screen.getByTestId("live-response").textContent).toBe("");
+    await act(async () => {
+      jest.advanceTimersByTime(6_000);
+      await Promise.resolve();
+    });
+    expect(stream.catchUp).toHaveBeenCalled();
+    // A quiet agent is normal: never a forced re-subscribe, which showed
+    // "Stream reconnecting" every few seconds while the agent was thinking.
+    expect(stream.recoverNow).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByTestId("live-response").textContent).toBe(
+        "Starting the sleep now.",
+      ),
     );
   });
 

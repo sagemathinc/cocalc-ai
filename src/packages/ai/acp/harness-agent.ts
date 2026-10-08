@@ -17,7 +17,11 @@ import {
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
-import { harnessPrompt, joinTurnContext } from "./harness-context";
+import {
+  harnessHasSessionGuidance,
+  harnessPrompt,
+  joinTurnContext,
+} from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
@@ -251,13 +255,20 @@ export class HarnessAgent implements AcpAgent {
           (await client.beginConnectorTurn(request.chat)) || undefined;
       }
       const result = await client.prompt(
-        harnessPrompt({
-          ...request,
-          agent_memory_context: joinTurnContext(
-            request.agent_memory_context,
-            connectorContext,
-          ),
-        }),
+        harnessPrompt(
+          {
+            ...request,
+            agent_memory_context: joinTurnContext(
+              request.agent_memory_context,
+              connectorContext,
+            ),
+          },
+          {
+            inlineSessionGuidance: !harnessHasSessionGuidance(
+              this.binding.profile,
+            ),
+          },
+        ),
         async (event) => {
           if (event.type === "message") {
             if (!event.text) return;
@@ -415,11 +426,16 @@ export class HarnessAgent implements AcpAgent {
       !this.client?.running ||
       !this.client.supportsSteering ||
       request.local_images?.length ||
+      // Images arrive as image_attachments, with their references rewritten;
+      // a remaining blob reference was not materialized.
       /(?:<img\b[^>]*\bsrc=|!\[[^\]]*\]\()[^\n]*\/blobs\//i.test(request.prompt)
     )
       return { state: "not_steerable", threadId };
     await this.validateAuthority?.(this.binding);
-    const outcome = await this.client.steer(request.prompt);
+    const outcome = await this.client.steer(
+      request.prompt,
+      request.image_attachments ?? [],
+    );
     return {
       state: outcome === "injected" ? "steered" : "not_steerable",
       threadId,

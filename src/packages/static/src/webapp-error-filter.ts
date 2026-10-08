@@ -49,6 +49,30 @@ function rejectionStack(reason: unknown): string {
   return typeof stack === "string" ? stack : "";
 }
 
+function rejectionName(reason: unknown): string {
+  if (reason == null || typeof reason !== "object") {
+    return "";
+  }
+  const name = (reason as { name?: unknown }).name;
+  return typeof name === "string" ? name : "";
+}
+
+// Browsers reject a view transition's promises when they skip or abort its
+// animation, e.g. "Skipping view transition because viewport size changed"
+// (Safari) or "Transition was aborted because of invalid state" (Chrome).
+// Require the DOMException name the browser uses: strings and plain objects
+// that merely mention a view transition are still reported.
+function isSkippedViewTransition(reason: unknown, message: string): boolean {
+  const name = rejectionName(reason);
+  if (name !== "InvalidStateError" && name !== "AbortError") {
+    return false;
+  }
+  return (
+    message.startsWith("skipping view transition") ||
+    /^transition was (?:aborted|skipped)\b/.test(message)
+  );
+}
+
 function rejectionCode(reason: unknown): string {
   if (reason == null || typeof reason !== "object") {
     return "";
@@ -98,6 +122,7 @@ export function isIgnorableUnhandledRejection(reason: unknown): boolean {
   const staleCollaboratorAccess =
     message.includes("account '") &&
     message.includes("' is not a collaborator on project '");
+  const skippedViewTransition = isSkippedViewTransition(reason, message);
   const injectedMetaMaskFailure =
     message === "failed to connect to metamask" &&
     /(?:chrome|moz)-extension:\/\//i.test(rejectionStack(reason));
@@ -111,6 +136,7 @@ export function isIgnorableUnhandledRejection(reason: unknown): boolean {
     conatRequestTimedOut ||
     filesystemServerStarting ||
     staleCollaboratorAccess ||
+    skippedViewTransition ||
     injectedMetaMaskFailure
   );
 }

@@ -259,6 +259,33 @@ describe("auth/impersonate", () => {
     );
   });
 
+  it("limits the session to a grant's shorter session TTL", async () => {
+    process.env.COCALC_BAY_ID = "bay-2";
+    verifyHomeBayRetryTokenMock = jest.fn(() => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-2",
+      purpose: "impersonate",
+    }));
+    consumeImpersonationGrantLocalMock = jest.fn(async () => ({
+      id: "22222222-2222-4222-8222-222222222222",
+      actor_account_id: "33333333-3333-4333-8333-333333333333",
+      metadata: { session_ttl_seconds: 180 },
+    }));
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        retry_token: "retry-token",
+        grant_id: "22222222-2222-4222-8222-222222222222",
+      },
+      protocol: "https",
+      headers: { host: "bay-2-lite4b.cocalc.ai" },
+    };
+    await signInUsingImpersonateToken({ req, res: { send: jest.fn() } });
+    expect(setSignInCookiesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAge: 180_000 }),
+    );
+  });
+
   it("sets cookies locally when redeeming an impersonation retry token", async () => {
     process.env.COCALC_BAY_ID = "bay-2";
     getClusterAccountByIdMock = jest.fn(async () => ({

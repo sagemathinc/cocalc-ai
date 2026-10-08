@@ -309,6 +309,7 @@ import {
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import {
   impersonationReason,
+  impersonationSessionTtlSeconds,
   impersonationSupportContext,
 } from "@cocalc/util/impersonation-audit";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
@@ -5573,6 +5574,7 @@ export async function createImpersonationGrant({
   support_ticket_id,
   consent_reference,
   lang_temp,
+  session_ttl_seconds,
 }: {
   account_id?: string;
   browser_id?: string;
@@ -5582,6 +5584,7 @@ export async function createImpersonationGrant({
   support_ticket_id?: number;
   consent_reference?: string;
   lang_temp?: string | null;
+  session_ttl_seconds?: number;
 }): Promise<{
   grant_id: string;
   subject_account_id: string;
@@ -5611,6 +5614,7 @@ export async function createImpersonationGrant({
     support_ticket_id,
     consent_reference,
   });
+  const sessionTtlSeconds = impersonationSessionTtlSeconds(session_ttl_seconds);
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: subjectAccountId,
@@ -5636,6 +5640,9 @@ export async function createImpersonationGrant({
             ? "admin-ui"
             : "admin-cli",
       ...supportContext,
+      ...(sessionTtlSeconds != null
+        ? { session_ttl_seconds: sessionTtlSeconds }
+        : {}),
       browser_id: cleanedBrowserId || undefined,
       cli_session_hash: cleanedSessionHash || undefined,
     },

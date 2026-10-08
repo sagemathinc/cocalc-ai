@@ -16,6 +16,7 @@ import {
   buildAcpChatContext,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  messagesSinceContextCleared,
   resolveHarnessSessionId,
   type CodexThreadConfig,
 } from "@cocalc/chat";
@@ -431,8 +432,12 @@ export async function processAcpLLM({
   // If thread_config.sessionId has not been persisted yet, recover it from the
   // most recent ACP assistant message in this thread so follow-up turns still
   // resume the same Codex session.
+  // Nothing before a "Context cleared" line counts.
+  const sinceCleared = messagesSinceContextCleared(
+    actions.getMessagesInThread?.(thread_id) ?? [],
+  );
   const inferredSessionId = (() => {
-    const threadMessages = actions.getMessagesInThread?.(thread_id) ?? [];
+    const threadMessages = sinceCleared.messages;
     for (let i = threadMessages.length - 1; i >= 0; i--) {
       if (isAcpAutomationMessage(threadMessages[i])) continue;
       const sessionId = field<string>(threadMessages[i], "acp_thread_id");
@@ -493,7 +498,7 @@ export async function processAcpLLM({
 
   const sessionKey = runtime
     ? effectiveSessionId
-    : (effectiveSessionId ?? thread_id);
+    : (effectiveSessionId ?? sinceCleared.clearedMessageId ?? thread_id);
   const ensureChatStatePersisted = async (): Promise<void> => {
     if (typeof syncdb?.save !== "function") return;
     await syncdb.save();
@@ -775,6 +780,31 @@ export async function sendQueuedAcpTurnImmediately({
     });
     throw err;
   }
+}
+
+// "Resubmit to Agent": send the request again as a new turn, exactly as if the
+// user had typed it now, so it uses the conversation's current agent, model and
+// payment setup. Replaying the stored request would reuse the original turn's
+// funding, and is not possible after a turn's outcome became unknown.
+export function resubmitAcpTurnAsNew({
+  actions,
+  message,
+}: {
+  actions: ChatActions;
+  message: ChatMessage;
+}): boolean {
+  const threadId = field<string>(message, "thread_id");
+  const input = latestMessageContent(message).trim();
+  if (!threadId || !input) return false;
+  const sent = actions.sendChat({
+    input,
+    acp_prompt:
+      `${field<string>(message, "acp_prompt") ?? ""}`.trim() || undefined,
+    reply_thread_id: threadId,
+    preserveSelectedThread: true,
+    skipDraftDelete: true,
+  });
+  return !!sent;
 }
 
 export async function resendCanceledAcpTurn({

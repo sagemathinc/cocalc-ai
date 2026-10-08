@@ -122,6 +122,11 @@ export default function CreateBackup({
             hosts. Creating a backup runs in the background and does not
             interrupt your work.
           </p>
+          <p>
+            Files larger than this project&apos;s disk quota are not backed up,
+            so they are also left out of moves, archives, and copies to projects
+            on other hosts. Only sparse or compressed files can be that large.
+          </p>
           <ShowError
             style={{ marginTop: "10px" }}
             error={error}

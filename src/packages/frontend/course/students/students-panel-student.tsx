@@ -59,6 +59,7 @@ import * as util from "../util";
 import { useButtonSize } from "../util";
 import DeletedAccount from "./deleted-account";
 import { CourseInviteLinkField } from "./invite-link-field";
+import { StudentNotJoinedLabel } from "./not-joined-label";
 
 export interface StudentNameDescription {
   full: string;
@@ -357,13 +358,12 @@ export function Student({
     }
     if (!hasLinkedAccount) {
       return (
-        <span style={{ color: UI_COLORS.secondary }}>
-          <FormattedMessage
-            id="course.students-panel-student.last_active.no_account"
-            defaultMessage="(has not created account yet)"
-            description="The student in the online course has no account yet"
-          />
-        </span>
+        <StudentNotJoinedLabel
+          invitePending={
+            courseInvite?.status === "pending" ||
+            (courseInvite == null && !!student.get("last_email_invite"))
+          }
+        />
       );
     }
     const student_project_id = student.get("project_id");

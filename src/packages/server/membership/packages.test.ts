@@ -2556,6 +2556,68 @@ describe("membership packages", () => {
     );
   });
 
+  it("discovers and claims email-reserved team seats owned on the seed", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-1";
+    const claimant_account_id = uuid();
+    const seed_package_id = uuid();
+    const verifiedEmail = `ada-${uuid()}@example.edu`;
+    await createTestAccount(claimant_account_id);
+    await markVerifiedEmail(claimant_account_id, verifiedEmail);
+    const teamSeat = {
+      package_id: seed_package_id,
+      assignment_id: uuid(),
+      kind: "team",
+      membership_class: teamTier,
+      owner_account_id: uuid(),
+      starts_at: new Date("2026-05-07T00:00:00.000Z"),
+      expires_at: null,
+      available_seat_count: 3,
+      matched_email_address: verifiedEmail,
+      reason: "email-assignment",
+      seat_status: "claimable",
+    };
+    const remoteClaimMock = jest.fn(async () => ({ id: uuid() }));
+    createInterBayAccountLocalClientMock = jest.fn(
+      ({ dest_bay }: { dest_bay: string }) => ({
+        getClaimableMembershipPackages: jest.fn(async () => {
+          expect(dest_bay).toBe("bay-1");
+          return [teamSeat];
+        }),
+        claimMembershipPackageSeat: remoteClaimMock,
+      }),
+    );
+
+    expect(
+      await listClaimableMembershipPackagesForAccount({
+        account_id: claimant_account_id,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        package_id: seed_package_id,
+        kind: "team",
+        reason: "email-assignment",
+      }),
+    ]);
+    // Site-only discovery still excludes it.
+    expect(
+      await listClaimableMembershipPackagesForAccount({
+        account_id: claimant_account_id,
+        site_only: true,
+      }),
+    ).toEqual([]);
+
+    await claimMembershipPackageSeat({
+      package_id: seed_package_id,
+      account_id: claimant_account_id,
+    });
+    expect(remoteClaimMock).toHaveBeenCalledWith({
+      package_id: seed_package_id,
+      account_id: claimant_account_id,
+      verified_email_addresses: [verifiedEmail],
+    });
+  });
+
   it("forwards remote site-license claims to the seed bay with verified emails", async () => {
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
     process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-1";

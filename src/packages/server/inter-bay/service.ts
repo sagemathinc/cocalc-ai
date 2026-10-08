@@ -5,6 +5,12 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
  */
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
+import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
+import { createInterBaySessionAuthHandler } from "@cocalc/conat/inter-bay/session-auth";
+import { createInterBayAccountFactsHandler } from "@cocalc/conat/inter-bay/account-facts";
+import { accountFactsHome } from "@cocalc/server/accounts/account-facts-service";
+import { handleDelegatedSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import { handleForwardedHubApiCall } from "@cocalc/server/conat/api/edge-routing";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
 import { createAgentPaymentSelectionsHandler } from "@cocalc/conat/inter-bay/agent-payment-selections";
 import { paymentSelectionsHome } from "@cocalc/server/agents/payment-selections";
@@ -214,6 +220,7 @@ import {
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
+  finalizeAccountRehome,
   getMembershipPortableState,
   getAccountRehomeOperation,
   replaceMembershipPortableState,
@@ -406,7 +413,10 @@ import {
   resolveProjectCollabInviteDirectoryDirect,
   upsertProjectCollabInviteDirectoryDirect,
 } from "@cocalc/server/projects/collab-invite-directory";
-import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  getInterBayFabricClient,
+  getInterBayFabricServiceClient,
+} from "@cocalc/server/inter-bay/fabric";
 import { createBillingAuthorityInterBayService } from "@cocalc/server/purchases/billing-authority/inter-bay";
 import { handleBillingAuthorityTransportRequest } from "@cocalc/server/purchases/billing-authority/service";
 import { applyRemoteNotificationTargetOnHomeBay } from "@cocalc/server/notifications/remote-feed";
@@ -437,21 +447,16 @@ import {
 import {
   handleProjectSecretsApproveCourseRecipients,
   handleProjectSecretsCopy,
-  handleProjectSecretsDelete,
   handleProjectSecretsExportForCopy,
-  handleProjectSecretsGenerateSshKeySecret,
   handleProjectSecretsGetCoursePolicy,
   handleProjectSecretsGetCourseSyncStatus,
   handleProjectSecretsImportForCopy,
   handleProjectSecretsInstallCourseManaged,
-  handleProjectSecretsList,
   handleProjectSecretsListCourseShareable,
   handleProjectSecretsPreviewCourseSync,
   handleProjectSecretsRemoveCourseManaged,
-  handleProjectSecretsRefreshRuntime,
   handleProjectSecretsRevokeCoursePolicy,
   handleProjectSecretsRevokeCourseRecipients,
-  handleProjectSecretsSet,
   handleProjectSecretsSetCourseGrants,
   handleProjectSecretsSetCoursePolicy,
   handleProjectSecretsSetCourseSharing,
@@ -546,7 +551,6 @@ import {
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import * as computeFunding from "@cocalc/server/conat/api/compute-funding";
 import { checkFundingApprovalRecipientsOnHome } from "@cocalc/server/compute/funding/approval-recipients";
 import {
@@ -579,28 +583,20 @@ import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/so
 import {
   copyEmailProjectInviteLink,
   createCollabInvite,
-  getProjectAccessLandingInfo,
   inviteCollaboratorWithoutAccount,
-  listProjectAccessRequestBlocks,
-  listProjectAccessRequests,
   listCollabInvites,
   previewEmailProjectInvite,
   redeemEmailProjectInvite,
   removeCollaborator,
   repairAcceptedCourseStudentInviteAccountsLocal,
-  requestProjectAccess,
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
-  respondProjectAccessRequest,
-  setProjectUserRole,
-  unblockProjectAccessRequester,
 } from "@cocalc/server/projects/collaborators";
 import { ensureCourseManagerAccessLocal } from "@cocalc/server/projects/course/ensure-manager-access";
 import {
   getCourseManagedProjectStatesLocal,
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
-import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
 import {
   leaveOrDeleteProjectsForAccount,
   transferProjectOwnershipExplicitly,
@@ -629,9 +625,6 @@ import {
   cancelCourseReconfigureOperationLocal,
   getCourseReconfigureOperationLocal,
   reconfigureCourseProjectsLocal,
-  setLocalProjectDeletionProtection,
-  setLocalProjectManageUsersOwnerOnly,
-  setLocalProjectMetadata,
   setLocalProjectsHidden,
 } from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
@@ -704,52 +697,70 @@ export async function initInterBayServices(): Promise<void> {
         getConfiguredBayId(),
         agentConnectorControl,
         {
-          client: getInterBayFabricClient({ noCache: true }),
+          client: getInterBayFabricServiceClient(),
           parallel: true,
         },
       ),
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         parallel: true,
       }),
-      createInterBayAgentIdentityHandler({
+      createInterBayAccountFactsHandler({
         client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: accountFactsHome,
+      }),
+      createInterBaySessionAuthHandler({
+        client: getInterBayFabricServiceClient(),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: { requireDangerousSessionAuth: handleDelegatedSessionAuth },
+      }),
+      createInterBayHubApiHandler({
+        client: getInterBayFabricServiceClient(),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: { call: handleForwardedHubApiCall },
+      }),
+      createInterBayAgentIdentityHandler({
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: agentIdentityControl,
       }),
       createAgentPaymentSelectionsHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: paymentSelectionsHome,
       }),
       createInterBayArtifactCatalogHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: catalogOwnerControl,
       }),
       createInterBayPeopleHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: peopleControl,
       }),
       createInterBayPersonalLibraryHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalLibraryHomeControl,
       }),
       createInterBayUsernamesHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: usernameSeedControl,
       }),
       createInterBayPersonalUrlAliasesHandler({
-        client: getInterBayFabricClient({ noCache: true }),
+        client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalUrlAliasHomeControl,
@@ -783,7 +794,7 @@ async function startBayRegistryService(): Promise<void> {
   if (role === "attached") {
     return;
   }
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayBayRegistryApi = {
     register: async (opts) => await registerBayPresenceLocal(opts),
     list: async (opts) => await listBayRegistryLocal(opts),
@@ -798,7 +809,7 @@ async function startBayRegistryService(): Promise<void> {
 }
 
 async function startBayOpsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const bay_id = getConfiguredBayId();
   const impl: InterBayBayOpsApi = {
     getLoad: async ({ account_id }) =>
@@ -1064,7 +1075,7 @@ async function startAuthTokenService(): Promise<void> {
   if (role === "attached") {
     return;
   }
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAuthTokenApi = {
     requiresToken: async () => await getRequiresTokensDirect(),
     validate: async ({ token }) =>
@@ -1088,7 +1099,7 @@ async function startAuthTokenService(): Promise<void> {
 }
 
 async function startDirectoryService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayDirectoryApi = {
     resolveProjectBay: async ({ project_id }) =>
       await resolveProjectBayDirect(`${project_id ?? ""}`),
@@ -1148,7 +1159,7 @@ async function startAccountDirectoryService(): Promise<void> {
   if (role === "attached") {
     return;
   }
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountDirectoryApi = {
     get: async ({ account_id }) =>
       await getClusterAccountById(`${account_id ?? ""}`),
@@ -1264,7 +1275,7 @@ async function startAccountDirectoryService(): Promise<void> {
 }
 
 async function startAccountLocalService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountLocalApi = {
     reserveComputeVmFunding: reserveComputeVmFundingLocal,
     lookupComputeVmFunding: lookupComputeVmFundingLocal,
@@ -1351,6 +1362,7 @@ async function startAccountLocalService(): Promise<void> {
     rehome: async (opts) => await rehomeAccountOnHomeBay(opts),
     acceptRehome: async (opts) => await acceptAccountRehome(opts),
     copyRehomeState: async (opts) => await copyAccountRehomeState(opts),
+    finalizeRehome: async (opts) => await finalizeAccountRehome(opts),
     activateFinancialRehome: async (opts) =>
       await (
         await import("@cocalc/server/accounts/financial-rehome")
@@ -2323,7 +2335,7 @@ async function startAccountLocalService(): Promise<void> {
 }
 
 async function startAccountProjectFeedService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountProjectFeedApi = {
     upsert: async (event) =>
       await applyAccountProjectFeedUpsertOnHomeBay(event),
@@ -2341,7 +2353,7 @@ async function startAccountProjectFeedService(): Promise<void> {
 }
 
 async function startAccountNotificationFeedService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const bay_id = getConfiguredBayId();
   const impl: InterBayAccountNotificationFeedApi = {
     upsert: async (opts) =>
@@ -2361,7 +2373,7 @@ async function startAccountNotificationFeedService(): Promise<void> {
 }
 
 async function startProjectControlStartService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectControlApi = {
     create: async (request) => await createProjectOnOwningBay(request),
     createStatus: async (request) => await getProjectCreationStatus(request),
@@ -2530,7 +2542,7 @@ async function startProjectControlStartService(): Promise<void> {
 }
 
 async function startProjectReferenceService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectReferenceApi = {
     get: async (opts) => await handleProjectReferenceGet(opts),
   };
@@ -2545,7 +2557,7 @@ async function startProjectReferenceService(): Promise<void> {
 }
 
 async function startProjectDetailsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectDetailsApi = {
     get: async (opts) => await handleProjectDetailsGet(opts),
   };
@@ -2560,22 +2572,15 @@ async function startProjectDetailsService(): Promise<void> {
 }
 
 async function startProjectSecretsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectSecretsApi = {
-    list: async (opts) => await handleProjectSecretsList(opts),
-    refreshRuntime: async (opts) =>
-      await handleProjectSecretsRefreshRuntime(opts),
     validateCourseTarget: async (opts) =>
       await handleProjectSecretsValidateCourseTarget(opts),
-    set: async (opts) => await handleProjectSecretsSet(opts),
-    delete: async (opts) => await handleProjectSecretsDelete(opts),
     copy: async (opts) => await handleProjectSecretsCopy(opts),
     exportForCopy: async (opts) =>
       await handleProjectSecretsExportForCopy(opts),
     importForCopy: async (opts) =>
       await handleProjectSecretsImportForCopy(opts),
-    generateSshKeySecret: async (opts) =>
-      await handleProjectSecretsGenerateSshKeySecret(opts),
     listCourseShareable: async (opts) =>
       await handleProjectSecretsListCourseShareable(opts),
     getCoursePolicy: async (opts) =>
@@ -2616,7 +2621,7 @@ async function startProjectSecretsService(): Promise<void> {
 }
 
 async function startExternalCredentialsService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayExternalCredentialsApi = {
     upsert: async ({ selector, payload, metadata }) =>
       await upsertExternalCredential({ selector, payload, metadata }),
@@ -2719,7 +2724,7 @@ async function startExternalCredentialsService(): Promise<void> {
 }
 
 async function startProjectLroService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectLroApi = {
     publishProgress: async (opts) =>
       await handleProjectLroPublishProgress(opts),
@@ -2743,7 +2748,7 @@ async function startProjectLroService(): Promise<void> {
 }
 
 async function startProjectCollabInviteService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectCollabInviteApi = {
     upsertInbox: async ({ source_bay_id, invite }) => {
       await upsertProjectedCollabInviteDirect({ source_bay_id, invite });
@@ -2818,26 +2823,8 @@ async function startProjectCollabInviteService(): Promise<void> {
       await getCourseReconfigureOperationLocal(opts),
     cancelCourseReconfigureOperation: async (opts) =>
       await cancelCourseReconfigureOperationLocal(opts),
-    getProjectAccessLandingInfo: async (opts) =>
-      await getProjectAccessLandingInfo(opts),
-    requestProjectAccess: async (opts) => await requestProjectAccess(opts),
-    listProjectAccessRequests: async (opts) =>
-      await listProjectAccessRequests(opts),
-    respondProjectAccessRequest: async (opts) =>
-      await respondProjectAccessRequest(opts),
-    listProjectAccessRequestBlocks: async (opts) =>
-      await listProjectAccessRequestBlocks(opts),
-    unblockProjectAccessRequester: async (opts) =>
-      await unblockProjectAccessRequester(opts),
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
-    },
-    setProjectUserRole: async (opts) => {
-      await setProjectUserRole(opts);
-    },
-    getUsage: async (opts) => {
-      await assertLocalProjectCollaborator(opts);
-      return await getProjectCollaboratorInviteUsage(opts.project_id);
     },
     leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
       await leaveOrDeleteProjectsForAccount({
@@ -2852,11 +2839,6 @@ async function startProjectCollabInviteService(): Promise<void> {
         project_ids,
         hide,
       }),
-    setProjectMetadata: async (opts) => await setLocalProjectMetadata(opts),
-    setManageUsersOwnerOnly: async (opts) =>
-      await setLocalProjectManageUsersOwnerOnly(opts),
-    setDeletionProtection: async (opts) =>
-      await setLocalProjectDeletionProtection(opts),
     respond: async ({
       account_id,
       invite_id,
@@ -2885,7 +2867,7 @@ async function startProjectCollabInviteService(): Promise<void> {
 }
 
 async function startHostConnectionService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayHostConnectionApi = {
     getApiRelayTarget: resolveLocalProjectApiRelayTarget,
     getApiRelayHostUrl: resolveLocalApiRelayHostUrl,
@@ -3438,7 +3420,7 @@ async function startHostConnectionService(): Promise<void> {
 }
 
 async function startHostControlService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const getHostClient = async (host_id: string, timeout: number) =>
     await getRoutedHostControlClient({
       host_id,
@@ -3636,7 +3618,7 @@ async function startHostControlService(): Promise<void> {
 }
 
 async function startProjectHostAuthTokenService(): Promise<void> {
-  const client = getInterBayFabricClient({ noCache: true });
+  const client = getInterBayFabricServiceClient();
   const impl: InterBayProjectHostAuthTokenApi = {
     issue: async ({
       account_id,

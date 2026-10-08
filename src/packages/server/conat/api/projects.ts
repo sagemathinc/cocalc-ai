@@ -539,6 +539,7 @@ export async function copyPathBetweenProjects({
   options,
   request_id,
   account_id,
+  allow_oversized_skip,
 }: {
   src: ProjectCopySource;
   src_home?: string;
@@ -547,6 +548,7 @@ export async function copyPathBetweenProjects({
   options?: CopyOptions;
   request_id?: string;
   account_id?: string;
+  allow_oversized_skip?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -577,6 +579,7 @@ export async function copyPathBetweenProjects({
       ...(src_home ? { src_home } : {}),
       dests: normalizedDests,
       options,
+      ...(allow_oversized_skip === true ? { allow_oversized_skip: true } : {}),
     },
     ...(request_id
       ? {
@@ -2428,18 +2431,8 @@ export async function setProjectMetadata({
   if (!isValidUUID(project_id)) {
     throw new Error("invalid project_id");
   }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const normalized = normalizeProjectMetadataPatch(patch);
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .setProjectMetadata({
-        account_id: actor,
-        project_id,
-        patch: normalized,
-      });
-    return;
-  }
   await setLocalProjectMetadata({
     account_id: actor,
     project_id,
@@ -2447,7 +2440,7 @@ export async function setProjectMetadata({
   });
 }
 
-export async function setLocalProjectMetadata({
+async function setLocalProjectMetadata({
   account_id,
   project_id,
   patch,
@@ -2515,17 +2508,7 @@ export async function setProjectManageUsersOwnerOnly({
   if (typeof manage_users_owner_only !== "boolean") {
     throw new Error("manage_users_owner_only must be a boolean");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .setManageUsersOwnerOnly({
-        account_id: actor,
-        project_id,
-        manage_users_owner_only,
-      });
-    return;
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await setLocalProjectManageUsersOwnerOnly({
     account_id: actor,
     project_id,
@@ -2533,7 +2516,7 @@ export async function setProjectManageUsersOwnerOnly({
   });
 }
 
-export async function setLocalProjectManageUsersOwnerOnly({
+async function setLocalProjectManageUsersOwnerOnly({
   account_id,
   project_id,
   manage_users_owner_only,
@@ -2624,15 +2607,8 @@ export async function listProjectSecrets({
   account_id?: string;
   project_id: string;
 }): Promise<ProjectSecretMetadata[]> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge().projectSecrets(ownership.bay_id).list({
-      account_id: actor,
-      project_id,
-      epoch: ownership.epoch,
-    });
-  }
   await assertCollab({ account_id: actor, project_id });
   return await listProjectSecretsInDb({ project_id });
 }
@@ -2644,17 +2620,8 @@ export async function refreshProjectSecretsRuntime({
   account_id?: string;
   project_id: string;
 }): Promise<ProjectSecretsRuntimeRefreshResult> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .refreshRuntime({
-        account_id: actor,
-        project_id,
-        epoch: ownership.epoch,
-      });
-  }
   await assertCollab({ account_id: actor, project_id });
   return await syncProjectSecretsRuntimeOnAssignedHost({ project_id });
 }
@@ -3036,20 +3003,8 @@ export async function setProjectSecret({
   name: string;
   value: string;
 }): Promise<ProjectSecretMetadata> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    const result = await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .set({
-        account_id: actor,
-        project_id,
-        name,
-        value,
-        epoch: ownership.epoch,
-      });
-    return result;
-  }
   await assertCollab({ account_id: actor, project_id });
   const result = await setProjectSecretInDb({
     project_id,
@@ -3079,16 +3034,8 @@ export async function deleteProjectSecret({
   deleted: boolean;
   runtime_refresh?: ProjectSecretsRuntimeRefreshResult;
 }> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const actor = requireAccountId(account_id);
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge().projectSecrets(ownership.bay_id).delete({
-      account_id: actor,
-      project_id,
-      name,
-      epoch: ownership.epoch,
-    });
-  }
   await assertCollab({ account_id: actor, project_id });
   const deleted = await deleteProjectSecretInDb({
     project_id,
@@ -3231,24 +3178,13 @@ export async function generateProjectSshKeySecret({
 }): Promise<GenerateProjectSshKeySecretResult> {
   assertProjectRuntimeCapability("ssh");
   const actor = requireAccountId(account_id);
-  const authSession = await requireDangerousProjectMutationAuth({
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes);
+  // the fresh-auth check runs on the caller's home bay.
+  await requireDangerousProjectMutationAuth({
     account_id: actor,
     browser_id,
     session_hash,
   });
-  const actorSessionHash = authSession?.session_hash ?? session_hash;
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectSecrets(ownership.bay_id)
-      .generateSshKeySecret({
-        account_id: actor,
-        session_hash: actorSessionHash,
-        project_id,
-        secret_name,
-        epoch: ownership.epoch,
-      });
-  }
   await assertCollab({ account_id: actor, project_id });
   const result = await generateProjectSshKeySecretLocal({
     project_id,
@@ -4475,13 +4411,8 @@ export async function setProjectUserRole({
   account_id?: string;
   opts: Parameters<typeof setProjectUserRoleLocal>[0]["opts"];
 }) {
-  const ownership = await resolveProjectBay(opts.project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await setProjectUserRoleLocal({ account_id: account_id!, opts });
-  }
-  await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .setProjectUserRole({ account_id: account_id!, opts });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await setProjectUserRoleLocal({ account_id: account_id!, opts });
 }
 
 function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
@@ -4532,17 +4463,9 @@ export async function getProjectCollaboratorInviteUsage({
   if (!account_id) {
     throw new Error("user must be signed in");
   }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  if (ownership.bay_id === getConfiguredBayId()) {
-    return await getProjectCollaboratorInviteUsageLocal(project_id);
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .getUsage({ account_id, project_id });
+  return await getProjectCollaboratorInviteUsageLocal(project_id);
 }
 
 export async function respondCollabInvite({
@@ -4598,16 +4521,11 @@ export async function getProjectAccessLandingInfo({
   account_id,
   project_id,
 }: Parameters<typeof getProjectAccessLandingInfoLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await getProjectAccessLandingInfoLocal({ account_id, project_id });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .getProjectAccessLandingInfo({
-      account_id: account_id!,
-      project_id,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await getProjectAccessLandingInfoLocal({
+    account_id,
+    project_id,
+  });
 }
 
 export async function requestProjectAccess({
@@ -4618,27 +4536,15 @@ export async function requestProjectAccess({
   message,
   source,
 }: Parameters<typeof requestProjectAccessLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await requestProjectAccessLocal({
-      account_id,
-      project_id,
-      requested_role,
-      read_policy,
-      message,
-      source,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .requestProjectAccess({
-      account_id: account_id!,
-      project_id,
-      requested_role,
-      read_policy,
-      message,
-      source,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await requestProjectAccessLocal({
+    account_id,
+    project_id,
+    requested_role,
+    read_policy,
+    message,
+    source,
+  });
 }
 
 export async function listProjectAccessRequests({
@@ -4647,23 +4553,13 @@ export async function listProjectAccessRequests({
   status,
   limit,
 }: Parameters<typeof listProjectAccessRequestsLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await listProjectAccessRequestsLocal({
-      account_id,
-      project_id,
-      status,
-      limit,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .listProjectAccessRequests({
-      account_id: account_id!,
-      project_id,
-      status,
-      limit,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await listProjectAccessRequestsLocal({
+    account_id,
+    project_id,
+    status,
+    limit,
+  });
 }
 
 export async function respondProjectAccessRequest({
@@ -4675,29 +4571,16 @@ export async function respondProjectAccessRequest({
   read_policy,
   message,
 }: Parameters<typeof respondProjectAccessRequestLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await respondProjectAccessRequestLocal({
-      account_id,
-      project_id,
-      request_id,
-      action,
-      role,
-      read_policy,
-      message,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .respondProjectAccessRequest({
-      account_id: account_id!,
-      project_id,
-      request_id,
-      action,
-      role,
-      read_policy,
-      message,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await respondProjectAccessRequestLocal({
+    account_id,
+    project_id,
+    request_id,
+    action,
+    role,
+    read_policy,
+    message,
+  });
 }
 
 export async function listProjectAccessRequestBlocks({
@@ -4705,21 +4588,12 @@ export async function listProjectAccessRequestBlocks({
   project_id,
   limit,
 }: Parameters<typeof listProjectAccessRequestBlocksLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await listProjectAccessRequestBlocksLocal({
-      account_id,
-      project_id,
-      limit,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .listProjectAccessRequestBlocks({
-      account_id: account_id!,
-      project_id,
-      limit,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await listProjectAccessRequestBlocksLocal({
+    account_id,
+    project_id,
+    limit,
+  });
 }
 
 export async function unblockProjectAccessRequester({
@@ -4727,21 +4601,12 @@ export async function unblockProjectAccessRequester({
   project_id,
   blocked_account_id,
 }: Parameters<typeof unblockProjectAccessRequesterLocal>[0]) {
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
-    return await unblockProjectAccessRequesterLocal({
-      account_id,
-      project_id,
-      blocked_account_id,
-    });
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .unblockProjectAccessRequester({
-      account_id: account_id!,
-      project_id,
-      blocked_account_id,
-    });
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  return await unblockProjectAccessRequesterLocal({
+    account_id,
+    project_id,
+    blocked_account_id,
+  });
 }
 
 export async function copyEmailProjectInviteLink({
@@ -5661,9 +5526,11 @@ export async function stop({
 export async function archiveProject({
   account_id,
   project_id,
+  allow_oversized_skip,
 }: {
   account_id?: string;
   project_id: string;
+  allow_oversized_skip?: boolean;
 }): Promise<void> {
   assertProjectRuntimeCapability("archive");
   await assertCanPerformDestructiveStorageAction({
@@ -5675,6 +5542,7 @@ export async function archiveProject({
     project_id,
     mode: "manual",
     actor_account_id: account_id,
+    allow_oversized_skip: allow_oversized_skip === true,
   });
 }
 
@@ -5918,18 +5786,8 @@ export async function setProjectDeletionProtection({
   if (typeof enabled !== "boolean") {
     throw new Error("enabled must be a boolean");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectCollabInvite(ownership.bay_id)
-      .setDeletionProtection({
-        account_id: actor,
-        browser_id,
-        session_hash,
-        project_id,
-        enabled,
-      });
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes);
+  // its fresh-auth check runs on the caller's home bay.
   return await setLocalProjectDeletionProtection({
     account_id: actor,
     browser_id,
@@ -5939,7 +5797,7 @@ export async function setProjectDeletionProtection({
   });
 }
 
-export async function setLocalProjectDeletionProtection({
+async function setLocalProjectDeletionProtection({
   account_id,
   browser_id,
   session_hash,
@@ -6588,6 +6446,7 @@ export async function moveProject({
   dest_host_id,
   allow_offline,
   backup_region_cutover,
+  allow_oversized_skip,
 }: {
   account_id: string;
   browser_id?: string | null;
@@ -6597,6 +6456,7 @@ export async function moveProject({
   dest_host_id?: string;
   allow_offline?: boolean;
   backup_region_cutover?: boolean;
+  allow_oversized_skip?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -6625,6 +6485,7 @@ export async function moveProject({
       dest_host_id,
       allow_offline,
       backup_region_cutover,
+      allow_oversized_skip,
       epoch: ownership.epoch,
     });
   }
@@ -6660,6 +6521,7 @@ export async function moveProject({
     project_id,
     allow_offline,
     backup_region_cutover,
+    allow_oversized_skip: allow_oversized_skip === true,
     source_host_id: movePrecheck.source_host_id,
     runtime_slot: {
       sponsor_account_id: sponsor.sponsor_account_id,

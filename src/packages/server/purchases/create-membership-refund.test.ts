@@ -773,6 +773,59 @@ describe("membership admin refund", () => {
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
+  it("refunds an educator term and revokes its seat", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const packageId = await createTestMembershipPackage({
+      owner_account_id: account_id,
+      kind: "team",
+      membership_class: "member",
+      seat_count: 1,
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      metadata: { educator_term: true, educator_term_days: 30 },
+    });
+    const purchaseId = await createPurchase({
+      account_id,
+      service: "membership",
+      cost: 30,
+      description: {
+        type: "membership-package",
+        package_id: packageId,
+        kind: "team",
+        membership_class: "member",
+        seat_count: 1,
+        seat_price: 30,
+        total_price: 30,
+        expanded_existing_package: false,
+      },
+      client: null,
+    });
+    await getPool().query(
+      "UPDATE membership_packages SET purchase_id=$2 WHERE id=$1",
+      [packageId, purchaseId],
+    );
+    await assignMembershipPackageSeat({
+      package_id: packageId,
+      account_id,
+      assigned_by_account_id: account_id,
+      educator_term_initial_assignment: true,
+    });
+
+    await createRefund({
+      account_id: uuid(),
+      purchase_id: purchaseId,
+      reason: "requested_by_customer",
+      notes: "Educator term refund",
+    });
+    const assignments = await listMembershipPackageAssignments({
+      package_id: packageId,
+      include_revoked: true,
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]?.revoked_at).toBeInstanceOf(Date);
+    expect(Number(await getBalance({ account_id }))).toBe(0);
+  });
+
   it("refunds an unassigned package seat expansion", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);

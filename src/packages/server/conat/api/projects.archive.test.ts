@@ -53,6 +53,13 @@ jest.mock("@cocalc/backend/conat", () => ({
   conat: jest.fn(() => ({ name: "test-conat-client" })),
 }));
 
+const assertOversizedFilesAllowedMock = jest.fn(async (_opts: any) => {});
+jest.mock("@cocalc/server/projects/oversized-files", () => ({
+  ...jest.requireActual("@cocalc/server/projects/oversized-files"),
+  assertOversizedFilesAllowed: (opts: any) =>
+    assertOversizedFilesAllowedMock(opts),
+}));
+
 jest.mock("@cocalc/server/conat/api/project-backups", () => ({
   __esModule: true,
   createBackup: (...args: any[]) => createBackupMock(...args),
@@ -371,6 +378,66 @@ describe("projects.archiveProject", () => {
       default_bay_id: expect.any(String),
     });
     expect(routedClientCloseMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses before stopping when unconfirmed files would be lost", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "running" },
+          host_status: "running",
+          last_backup: new Date("2026-06-15T04:32:34.102Z"),
+        },
+      ],
+    });
+    const { OversizedFilesError } = jest.requireActual(
+      "@cocalc/server/projects/oversized-files",
+    );
+    assertOversizedFilesAllowedMock.mockImplementationOnce(async (opts) => {
+      expect(opts).toMatchObject({
+        project_id: "proj-1",
+        action: "archive this project",
+        allow_oversized_skip: false,
+      });
+      throw new OversizedFilesError(opts.action, {
+        max_file_bytes: 10_000_000_000,
+        count: 1,
+        files: [{ path: "huge.img", size: 1_000_000_000_000 }],
+      });
+    });
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+    ).rejects.toThrow("huge.img");
+    expect(interBayStopMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the user's confirmation to the oversized file check", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "running" },
+          host_status: "running",
+          last_backup: new Date("2026-06-15T04:32:34.102Z"),
+        },
+      ],
+    });
+    const { archiveProject } = await import("./projects");
+    await archiveProject({
+      account_id: "owner-1",
+      project_id: "proj-1",
+      allow_oversized_skip: true,
+    });
+    expect(assertOversizedFilesAllowedMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allow_oversized_skip: true }),
+    );
   });
 
   it("refuses to archive when no backups exist yet", async () => {

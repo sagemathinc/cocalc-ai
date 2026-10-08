@@ -81,6 +81,7 @@ import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resendCanceledAcpTurn,
+  resubmitAcpTurnAsNew,
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
@@ -177,6 +178,7 @@ import {
 import type { TurnTimelineRow } from "./turn-timeline";
 import {
   EMPTY_TURN_ACTIVITY,
+  showArtifactCardsBelowMessage,
   useFedTurnActivity,
   useTurnActivity,
 } from "./turn-activity";
@@ -1119,10 +1121,9 @@ export default function Message({
     }
     setResubmittingAgentParentId(acpResubmitParentMessageId);
     try {
-      const ok = await resendCanceledAcpTurn({
+      const ok = resubmitAcpTurnAsNew({
         actions,
         message: acpResubmitParentMessage,
-        useCurrentPayment: true,
       });
       if (!ok) {
         throw Error("Unable to resubmit this request to Agent.");
@@ -2377,6 +2378,27 @@ export default function Message({
     return (
       <>
         {renderForkNotice()}
+        {/* How this turn began: above its activity, not under it as it grows. */}
+        {showCodexActivity && acpRecoveryCount ? (
+          <div
+            style={{
+              color: UI_COLORS.muted,
+              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
+              marginBottom: "8px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              flexWrap: "wrap",
+            }}
+          >
+            <Icon name="history" />
+            <span>
+              Resumed automatically
+              {acpRecoveryReason ? `: ${acpRecoveryReason}` : ""}. Attempt{" "}
+              {acpRecoveryCount}.
+            </span>
+          </div>
+        ) : null}
         <AgentMessageStatus
           show={showCodexActivity && !suppressInlineCodexActivity}
           activityToggle={getCodexActivityToggle()}
@@ -2431,26 +2453,6 @@ export default function Message({
         />
         {suppressInlineCodexActivity ? (
           <AttachedSteerStatusList attachedSteers={attachedSteers} />
-        ) : null}
-        {showCodexActivity && acpRecoveryCount ? (
-          <div
-            style={{
-              color: UI_COLORS.muted,
-              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
-              marginBottom: "8px",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              flexWrap: "wrap",
-            }}
-          >
-            <Icon name="history" />
-            <span>
-              Recovered automatically after restart
-              {acpRecoveryReason ? `: ${acpRecoveryReason}` : ""}. Attempt{" "}
-              {acpRecoveryCount}.
-            </span>
-          </div>
         ) : null}
         {shouldRenderInterleavedCodexActivityBody && !activityFeed
           ? renderInterleavedCodexBody({
@@ -2753,7 +2755,7 @@ export default function Message({
             : withMessageFileContext(renderMessageBody({ message_class }))}
           {renderEditingMeta()}
           <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
-          {turnActivity.artifactsInline ? null : (
+          {!showArtifactCardsBelowMessage(turnActivity) ? null : (
             <ArtifactCards
               actions={actions}
               threadId={field<string>(message, "thread_id")}

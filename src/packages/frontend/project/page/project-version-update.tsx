@@ -25,6 +25,34 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectState } from "./project-state-hook";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+// After a restart, a browser can still hold the previous run's versions for
+// about half a minute, until the new project reports its own. Showing the pill
+// then makes it look as if the update did nothing, and invites more restarts.
+// Two upgrades within this window are very unlikely.
+export const UPDATE_QUIET_MS = 3 * 60 * 1000;
+
+// When this browser last asked each project to restart for an update.
+const restartRequestedAt = new Map<string, number>();
+
+function timeMs(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  const ms = new Date(value as string | number | Date).valueOf();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** Until when to hide the update pill after a restart was requested or began. */
+export function updateQuietUntil({
+  requestedAt,
+  startedAt,
+}: {
+  requestedAt?: number;
+  startedAt?: unknown;
+}): number {
+  return Math.max(
+    (requestedAt ?? -Infinity) + UPDATE_QUIET_MS,
+    (timeMs(startedAt) ?? -Infinity) + UPDATE_QUIET_MS,
+  );
+}
 
 interface LiveProjectStatus {
   state?: string;
@@ -108,6 +136,7 @@ export function useProjectUpdate(project_id: string): {
   const hostInfo = useHostInfo(host_id);
   const minProject = useTypedRedux("customize", "version_min_project") ?? 0;
   const [liveStatus, setLiveStatus] = useState<LiveProjectStatus>();
+  const [, setTick] = useState(0);
 
   // The project's own state record is live; liveStatus is a periodic fetch
   // that is only a fallback for versions and must never outlive its run.
@@ -144,8 +173,25 @@ export function useProjectUpdate(project_id: string): {
     };
   }, [actions, host_id, project_id, publicDirectoryShareProjection, run]);
 
-  const restart = () => void actions?.restart_project(project_id);
-  if (publicDirectoryShareProjection || state !== "running") return { restart };
+  const quietUntil = updateQuietUntil({
+    requestedAt: restartRequestedAt.get(project_id),
+    startedAt: projectState?.get?.("started_at"),
+  });
+  const quietMs = quietUntil - Date.now();
+  useEffect(() => {
+    if (!(quietMs > 0)) return;
+    // Re-check once the quiet period ends.
+    const timer = setTimeout(() => setTick((n) => n + 1), quietMs + 100);
+    return () => clearTimeout(timer);
+  }, [quietUntil]);
+
+  const restart = () => {
+    restartRequestedAt.set(project_id, Date.now());
+    setTick((n) => n + 1);
+    void actions?.restart_project(project_id);
+  };
+  if (publicDirectoryShareProjection || state !== "running" || quietMs > 0)
+    return { restart };
   return {
     status: projectUpdateStatus({
       runningBundle:

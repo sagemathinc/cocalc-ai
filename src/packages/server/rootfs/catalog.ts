@@ -45,6 +45,7 @@ import {
   normalizeRootfsEntry,
   rootfsEntryRequiresPrepull,
   ROOTFS_IMAGE_MANIFEST_VERSION,
+  ROOTFS_TAG_ONBOARDING_PREFIX,
   ROOTFS_TAG_PROJECT_PUBLISH,
   ROOTFS_TAG_SNAPSHOT_PREFIX,
   validateRootfsSlug,
@@ -214,6 +215,20 @@ function normalizeTags(tags?: unknown): string[] {
   if (!Array.isArray(tags)) return [];
   return Array.from(
     new Set(tags.map((tag) => trimString(tag)).filter(Boolean) as string[]),
+  );
+}
+
+/**
+ * The tags an account may store on an image. `onboarding:` tags choose new
+ * projects' images and one-click choices, so only admins may set them; they
+ * are dropped (not rejected) for others, so an image that already carries
+ * one stays editable.
+ */
+export function rootfsTagsForAccount(tags: unknown, admin: boolean): string[] {
+  const normalized = normalizeTags(tags);
+  if (admin) return normalized;
+  return normalized.filter(
+    (tag) => !tag.toLowerCase().startsWith(ROOTFS_TAG_ONBOARDING_PREFIX),
   );
 }
 
@@ -1609,7 +1624,7 @@ async function upsertRootfsRow({
   const supersedes_image_id = trimString(body.supersedes_image_id) ?? null;
   const default_jupyter_kernel =
     trimString(body.default_jupyter_kernel) ?? null;
-  const tags = normalizeTags(body.tags);
+  const tags = rootfsTagsForAccount(body.tags, admin);
   const description = trimString(body.description) ?? null;
   const theme = normalizeTheme(body.theme);
   const arch = normalizeArch(body.arch);
@@ -1872,7 +1887,7 @@ export async function saveRootfsImage({
   const image = trimString(body.image)!;
   const label = trimString(body.label)!;
   const visibility = normalizeVisibility(body.visibility);
-  const tags = normalizeTags(body.tags);
+  const tags = rootfsTagsForAccount(body.tags, await isAdmin(account_id));
   const description = trimString(body.description);
   const theme = normalizeTheme(body.theme);
   const arch = normalizeArch(body.arch);

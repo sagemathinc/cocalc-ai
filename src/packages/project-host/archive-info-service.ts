@@ -13,10 +13,12 @@ import type {
   BackupSummary,
 } from "@cocalc/conat/project/archive-info";
 import type { FileTextPreview } from "@cocalc/conat/files/file-server";
+import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import { fileServerClient } from "./file-server";
 
 const logger = getLogger("project-host:archive-info");
 const BACKUP_SEARCH_TIMEOUT_MS = 2 * 60_000;
+const OVERSIZED_FILES_TIMEOUT_MS = 10 * 60_000;
 
 export const PROJECT_ARCHIVE_INFO_SUBJECT = "project.*.archive-info.-";
 
@@ -220,6 +222,29 @@ export async function handleProjectGetSnapshotFileTextRequest(
   });
 }
 
+export async function handleProjectGetOversizedFilesRequest(
+  this: { subject?: string },
+  opts: { paths?: string[] } | undefined,
+  client?: Client,
+): Promise<OversizedFilesReport | null> {
+  const paths = opts?.paths;
+  if (
+    paths != null &&
+    (!Array.isArray(paths) ||
+      paths.length > 1000 ||
+      paths.some((path) => typeof path !== "string"))
+  ) {
+    throw new Error("paths must be an array of at most 1000 strings");
+  }
+  return await fileServerClient(
+    requireClient(client),
+    OVERSIZED_FILES_TIMEOUT_MS,
+  ).getOversizedFiles({
+    project_id: extractProjectId(this?.subject),
+    paths,
+  });
+}
+
 export async function initProjectArchiveInfoService(client: Client) {
   logger.debug("starting project archive info service", {
     subject: PROJECT_ARCHIVE_INFO_SUBJECT,
@@ -250,6 +275,9 @@ export async function initProjectArchiveInfoService(client: Client) {
       max_bytes?: number;
     }) {
       return handleProjectGetSnapshotFileTextRequest.call(this, opts, client);
+    },
+    getOversizedFiles(opts?: { paths?: string[] }) {
+      return handleProjectGetOversizedFilesRequest.call(this, opts, client);
     },
   });
 }

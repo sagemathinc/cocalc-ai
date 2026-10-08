@@ -238,6 +238,13 @@ export default function MoveProject({
           </div>
         )}
         <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
+          Moving stops the project and restores it on the new host from a final
+          backup, a single point-in-time snapshot. Changes made after that
+          backup, for example by code, collaborators, or agents still writing
+          files, are not moved. Files larger than the project&apos;s disk quota
+          are not backed up; CoCalc lists any such files and asks before moving.
+        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary">
           Click Move to choose a different destination host.
         </Typography.Paragraph>
       </Modal>

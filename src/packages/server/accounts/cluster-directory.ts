@@ -201,7 +201,22 @@ export function canonicalEmailForBanEquivalence(
   return banEmailEquivalenceRule(email_address)?.canonical;
 }
 
+// Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
+// EXCLUSIVE lock even when nothing changes and queues every later query on the
+// table behind any open transaction (production outage 2026-10-06).
+let clusterAccountDirectorySchemaReady: Promise<void> | undefined;
+
 export async function ensureClusterAccountDirectorySchema(): Promise<void> {
+  // Share one setup among concurrent callers; retry after a failure.
+  clusterAccountDirectorySchemaReady ??=
+    createClusterAccountDirectorySchema().catch((err) => {
+      clusterAccountDirectorySchemaReady = undefined;
+      throw err;
+    });
+  await clusterAccountDirectorySchemaReady;
+}
+
+async function createClusterAccountDirectorySchema(): Promise<void> {
   const pool = getPool();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (

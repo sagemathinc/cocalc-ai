@@ -32,6 +32,7 @@ import {
   runAccountRehomeOperation,
   acceptAccountRehome,
   copyAccountRehomeState,
+  finalizeAccountRehome,
   getAccountRehomeOperation,
 } from "@cocalc/server/accounts/rehome";
 import {
@@ -745,6 +746,10 @@ describePg(
           "get-rehome-operation": {
             getRehomeOperation: (opts) =>
               onBay(bay, () => getAccountRehomeOperation(opts.op_id)),
+          },
+          "finalize-rehome": {
+            finalizeRehome: (opts) =>
+              onBay(bay, () => finalizeAccountRehome(opts)),
           },
           "activate-financial-rehome": {
             activateFinancialRehome: (opts) =>

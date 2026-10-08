@@ -92,6 +92,33 @@ describe("isIgnorableUnhandledRejection", () => {
   });
 
   test.each([
+    new DOMException(
+      "Skipping view transition because viewport size changed.",
+      "InvalidStateError",
+    ),
+    new DOMException(
+      "Transition was aborted because of invalid state. Viewport size changed",
+      "InvalidStateError",
+    ),
+    new DOMException("Transition was skipped", "AbortError"),
+  ])("ignores a skipped page transition %p", (reason) => {
+    expect(isIgnorableUnhandledRejection(reason)).toBe(true);
+  });
+
+  test.each([
+    new TypeError("view transition handler is not a function"),
+    "Skipping view transition because viewport size changed.",
+    { message: "view transition handler failed" },
+    { message: "Transition was aborted because of invalid state." },
+    new DOMException("Failed to start a view transition", "InvalidStateError"),
+  ])(
+    "still reports other errors that mention view transitions %p",
+    (reason) => {
+      expect(isIgnorableUnhandledRejection(reason)).toBe(false);
+    },
+  );
+
+  test.each([
     new Error("permission denied"),
     new Error("unable to route billing request"),
     new Error('once: timeout of 4000ms waiting for "ready"'),

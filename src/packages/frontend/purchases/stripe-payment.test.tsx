@@ -162,7 +162,12 @@ jest.mock("@cocalc/frontend/components", () => ({
   Tooltip: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
 
-jest.mock("@cocalc/frontend/components/error", () => () => null);
+jest.mock(
+  "@cocalc/frontend/components/error",
+  () =>
+    ({ error }: { error?: string }) =>
+      error ? <div role="alert">{error}</div> : null,
+);
 
 jest.mock("@cocalc/frontend/app/verify-email-banner", () => ({
   useEmailVerificationRequired: () => mockEmailVerificationRequired,
@@ -275,6 +280,29 @@ describe("StripePayment", () => {
     expect(
       screen.getByText(/Amount due \(excluding tax\) \$72\.00/),
     ).toBeTruthy();
+  });
+
+  it("shows why payment methods could not be loaded instead of spinning", async () => {
+    mockStripeEnabled = true;
+    jest
+      .mocked(getPaymentMethods)
+      .mockRejectedValue(
+        new Error(
+          "Stripe provider access is seed-only; route billing through the billing authority",
+        ),
+      );
+    render(
+      <StripePayment
+        description="Membership change"
+        lineItems={[{ description: "Pro membership, monthly", amount: 75 }]}
+        purpose="membership-change"
+      />,
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /Unable to load your payment methods: .*seed-only/,
+    );
+    expect(screen.getByText("Choose Payment Method")).toBeTruthy();
   });
 
   it("keeps one-click purchase disabled while fresh-auth workflow is pending", async () => {

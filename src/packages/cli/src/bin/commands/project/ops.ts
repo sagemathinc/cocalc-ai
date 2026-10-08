@@ -741,6 +741,10 @@ export function registerProjectOpsCommands(
     .description(
       "move a project to another host (use --cutover-backup-region for cross-region moves)",
     )
+    .addHelpText(
+      "after",
+      "\nThe destination is restored from a final backup, a point-in-time snapshot;\nchanges made after it (by running code, collaborators, or agents) are not moved.\nFiles larger than the project's disk quota are not backed up, so moving is\nrefused while any exist unless --allow-oversized-skip is given.",
+    )
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--host <host>", "destination host id or name")
     .option(
@@ -748,6 +752,10 @@ export function registerProjectOpsCommands(
       "allow a cross-region move and cut over the project's backup region after the first successful destination backup",
     )
     .option("--wait", "wait for completion")
+    .option(
+      "--allow-oversized-skip",
+      "move even if files over the backup file size limit cannot be included; those files are deleted",
+    )
     .action(
       async (
         opts: {
@@ -755,6 +763,7 @@ export function registerProjectOpsCommands(
           host: string;
           wait?: boolean;
           cutoverBackupRegion?: boolean;
+          allowOversizedSkip?: boolean;
         },
         command: Command,
       ) => {
@@ -765,6 +774,7 @@ export function registerProjectOpsCommands(
             project_id: ws.project_id,
             dest_host_id: host.id,
             backup_region_cutover: !!opts.cutoverBackupRegion,
+            ...(opts.allowOversizedSkip ? { allow_oversized_skip: true } : {}),
           });
 
           if (!opts.wait) {
@@ -965,11 +975,19 @@ export function registerProjectOpsCommands(
   project
     .command("copy-path")
     .description("copy a path between projects")
+    .addHelpText(
+      "after",
+      "\nA copy to a project on another host is made from a backup taken when the copy\nstarts, a point-in-time snapshot. It cannot include files larger than the\nsource project's disk quota, so it is refused while any are selected unless\n--allow-oversized-skip is given.",
+    )
     .requiredOption("--src-project <project>", "source project")
     .requiredOption("--src <path>", "source path")
     .requiredOption("--dest-project <project>", "destination project")
     .requiredOption("--dest <path>", "destination path")
     .option("--wait", "wait for completion")
+    .option(
+      "--allow-oversized-skip",
+      "copy even if files over the source's backup file size limit are left out (copies to another host only)",
+    )
     .action(
       async (
         opts: {
@@ -978,6 +996,7 @@ export function registerProjectOpsCommands(
           destProject: string;
           dest: string;
           wait?: boolean;
+          allowOversizedSkip?: boolean;
         },
         command: Command,
       ) => {
@@ -987,6 +1006,7 @@ export function registerProjectOpsCommands(
           const op = await ctx.hub.projects.copyPathBetweenProjects({
             src: { project_id: srcWs.project_id, path: opts.src },
             dest: { project_id: destWs.project_id, path: opts.dest },
+            ...(opts.allowOversizedSkip ? { allow_oversized_skip: true } : {}),
           });
 
           if (!opts.wait) {

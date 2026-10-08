@@ -30,6 +30,12 @@ const LIVE_LOG_FLUSH_MS = 1000;
 const LIVE_ACTIVITY_STATUS_FLUSH_MS = 1000;
 const LIVE_STREAM_STALE_AFTER_MS = 30_000;
 const LIVE_STREAM_WATCHDOG_INTERVAL_MS = 10_000;
+// A live subscription can stay "connected" yet miss updates (seen right after
+// a browser reconnect), and a turn's inline transcript then stays frozen until
+// the agent next writes, or the 30s watchdog. The preview stream is small and
+// quiet while a tool runs, so while a turn is generating, a quiet spell this
+// long cheaply asks for anything after the last received message.
+const LIVE_PREVIEW_CATCH_UP_MS = 4_000;
 const RECENT_ACTIVITY_LOG_CACHE_SIZE = 5;
 const RECENT_PREVIEW_LOG_CACHE_SIZE = 20;
 
@@ -717,6 +723,7 @@ export function useCodexLog({
       | undefined;
     let liveStreamDisconnected: (() => void) | undefined;
     let liveStreamRecovered: (() => void) | undefined;
+    let catchUpTimer: ReturnType<typeof setInterval> | undefined;
     let stopped = false;
     const scheduleBufferedFlush = (immediate: boolean = false) => {
       if (immediate) {
@@ -819,6 +826,50 @@ export function useCodexLog({
           // Register the listener before reading the snapshot so local hook state
           // can't miss a late event that arrives between these two steps.
           liveStream.on("change", liveStreamListener);
+          if (liveStreamIsProjection) {
+            let catchingUp = false;
+            let lastCatchUpAt = 0;
+            catchUpTimer = setInterval(() => {
+              const stream = liveStream;
+              if (stopped || catchingUp || stream == null) return;
+              const now = Date.now();
+              // Quiet is normal while a tool runs: at most one check per interval.
+              if (
+                now - lastLiveReceiptAtRef.current < LIVE_PREVIEW_CATCH_UP_MS ||
+                now - lastCatchUpAt < LIVE_PREVIEW_CATCH_UP_MS
+              )
+                return;
+              catchingUp = true;
+              lastCatchUpAt = now;
+              // Fetches anything after the last received message over the
+              // existing connection; normally finds nothing. Never a forced
+              // recovery: that re-subscribed every few seconds and showed
+              // "Stream reconnecting" whenever the agent was quiet.
+              void stream
+                .catchUp()
+                .then(() => {
+                  if (stopped || liveStreamRef.current !== stream) return;
+                  flushBufferedLiveLog();
+                  const missed = liveReplayRef.current
+                    .read(stream)
+                    .payloads.flatMap((payload) =>
+                      normalizeLiveStreamPayload(payload as any),
+                    );
+                  if (missed.length > 0) {
+                    setLiveLog(
+                      (prev) => mergeLogs(prev ?? [], missed),
+                      liveReplayRef.current.snapshot(),
+                    );
+                  }
+                })
+                .catch(() => {
+                  // The reconnect resource and watchdog handle real failures.
+                })
+                .finally(() => {
+                  catchingUp = false;
+                });
+            }, LIVE_PREVIEW_CATCH_UP_MS / 2);
+          }
           flushBufferedLiveLog();
           const unseen = liveReplayRef.current.read(liveStream);
           const initial = unseen.payloads.flatMap((payload) =>
@@ -885,6 +936,7 @@ export function useCodexLog({
     return () => {
       flushBufferedLiveLog();
       stopped = true;
+      if (catchUpTimer != null) clearInterval(catchUpTimer);
       liveConnectedRef.current = false;
       if (liveStreamRef.current === liveStream) {
         liveStreamRef.current = null;

@@ -209,6 +209,9 @@ interface Tier {
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  instructor_purchase_visible?: boolean;
+  instructor_term_price?: number;
+  instructor_term_days?: number;
   project_defaults?: any;
   ai_limits?: any;
   features?: any;
@@ -700,6 +703,9 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
       "course_price",
       "course_duration_days",
       "course_grace_days",
+      "instructor_purchase_visible",
+      "instructor_term_price",
+      "instructor_term_days",
       "project_defaults",
       "ai_limits",
       "features",
@@ -1707,6 +1713,43 @@ export function MembershipTiers() {
                     >
                       <InputNumber
                         min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="instructor_purchase_visible"
+                      label="Instructor purchase"
+                      valuePropName="checked"
+                      extra="Educational offer: educators with a verified academic email (or an address on the Educator email allow list in site settings) can buy this tier for themselves, by subscription or for one term, even if it is not shown in the public store."
+                    >
+                      <Checkbox>Available for instructor purchase</Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="instructor_term_price"
+                      label="Instructor term price"
+                      extra="Leave empty to offer subscriptions only."
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        prefix="$"
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="instructor_term_days"
+                      label="Instructor term days"
+                    >
+                      <InputNumber
+                        min={1}
                         step={1}
                         precision={0}
                         style={compactInputStyle}

@@ -28,6 +28,7 @@ import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { ConatError } from "@cocalc/conat/core/client";
+import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import { DEFAULT_BACKUP_COUNTS } from "@cocalc/util/consts/snapshots";
 import { field_cmp } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -115,6 +116,7 @@ interface Snapshot {
 
 interface CreatedSnapshot extends Snapshot {
   snapshotGeneration: number;
+  oversized_files?: OversizedFilesReport;
 }
 
 function flattenSnapshotGroups(groups: any): any[] {
@@ -186,11 +188,13 @@ export type RusticBackupRunner = (opts: {
   tags?: string[];
   parent?: string;
   progress?: (update: RusticProgressUpdate) => void;
+  // null: the runner is unavailable on this host; back up unprivileged.
 }) => Promise<{
   time: string | Date;
   id: string;
   summary: { [key: string]: string | number };
-}>;
+  oversized_files?: OversizedFilesReport;
+} | null>;
 
 export type RusticRestoreRunner = (opts: {
   snapshot: string;
@@ -391,7 +395,7 @@ export class SubvolumeRustic {
       // already includes persistent metadata under ~/.local/share/cocalc/persist.
       logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
       const backupFs = this.backupSnapshotFs(snapshotPath);
-      const backupResult = runner
+      const viaRunner = runner
         ? await runner({
             src: snapshotPath,
             host: this.subvolume.name,
@@ -400,7 +404,10 @@ export class SubvolumeRustic {
             parent,
             progress,
           })
-        : JSON.parse(
+        : null;
+      const backupResult =
+        viaRunner ??
+        JSON.parse(
             parseOutput(
               await backupFs.rustic(
                 [
@@ -425,7 +432,7 @@ export class SubvolumeRustic {
               ),
             ).stdout,
           );
-      const { time, id, summary } = backupResult;
+      const { time, id, summary, oversized_files } = backupResult;
       const backupTime = time instanceof Date ? time : new Date(time);
       return {
         time: backupTime,
@@ -433,6 +440,7 @@ export class SubvolumeRustic {
         summary,
         tags: tags ?? [],
         snapshotGeneration,
+        ...(oversized_files ? { oversized_files } : {}),
       };
     } finally {
       this.snapshotsCache = null;
@@ -728,16 +736,18 @@ export class SubvolumeRustic {
       timeout,
       tags,
       progress,
+      runner,
       existingSnapshotNames: _existingSnapshotNames,
     }: {
       timeout?: number;
       limit?: number;
       tags?: string[];
       progress?: (update: RusticProgressUpdate) => void;
+      runner?: RusticBackupRunner;
       existingSnapshotNames?: string[];
     } = {},
   ) => {
-    return await this.backup({ limit, timeout, tags, progress });
+    return await this.backup({ limit, timeout, tags, progress, runner });
   };
 
   readdir = async (): Promise<string[]> => {

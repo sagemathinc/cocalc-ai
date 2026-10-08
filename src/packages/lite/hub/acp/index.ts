@@ -28,6 +28,12 @@ import {
   forkCodexAppServerSession,
 } from "@cocalc/ai/acp";
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
+import {
+  formatMemoryLimit,
+  oomKilledBetween,
+  readProjectMemoryEvents,
+  type ProjectMemoryEvents,
+} from "./project-memory";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
 import {
   initAcpDaemonControlService,
@@ -517,9 +523,9 @@ const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because CoCalc had to recover the live Codex turn.**";
+  "**Conversation interrupted because CoCalc had to recover the live agent turn.**";
 const STALE_TURN_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because CoCalc lost the live Codex turn.**";
+  "**Conversation interrupted because CoCalc lost the live agent turn.**";
 const APP_SERVER_EXITED_NOTICE =
   "**Conversation interrupted because the Codex app-server exited unexpectedly.**";
 const COMMAND_BLOCKED_NOTICE =
@@ -762,7 +768,7 @@ function buildRecoveryContinuationPrompt({
   recoveryGuidance?: string;
 }): string {
   return [
-    "The previous Codex turn in this same session did not complete.",
+    "The previous turn in this same session did not complete.",
     `Recovery attempt: ${recoveryCount}.`,
     `Interruption summary: ${`${interruptedNotice ?? ""}`.replace(/\*\*/g, "").trim()}`,
     "Resume the work from the current workspace state.",
@@ -853,9 +859,95 @@ function failureRecoveryDirective(
         ].join("\n"),
       };
     }
+    case CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled: {
+      const { agent, oom } = parseHarnessKilledDetail(detail);
+      return {
+        code,
+        interruptedNotice: oom
+          ? `**${agent} was stopped because this project ran out of memory.**`
+          : `**${agent}'s process was killed unexpectedly.**`,
+        recoveryReason: oom
+          ? "agent stopped: project out of memory"
+          : "agent process killed",
+        delayMs: Math.max(1_000, ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS),
+        maxRetries: Math.min(
+          HARNESS_KILLED_MAX_RECOVERIES,
+          ACP_AUTO_RECOVERY_MAX_RETRIES,
+        ),
+        recoveryGuidance: oom
+          ? "The previous turn was stopped because the project ran out of memory, most likely from a memory-heavy command you were running (for example test suites with many parallel workers). Check what completed and whether any of its processes are still running before continuing. Run memory-heavy commands one at a time and limit their parallelism (for example jest --maxWorkers=2, or --runInBand for one heavy suite); never start one while another is still running."
+          : "The previous turn's agent process was killed unexpectedly (SIGKILL). Check what completed before continuing. If you were running memory-heavy commands, run them one at a time with limited parallelism.",
+      };
+    }
     default:
       return undefined;
   }
+}
+
+// A harness turn whose agent was killed is resumed at most this many times
+// in a row, so a turn that keeps exhausting memory does not loop.
+const HARNESS_KILLED_MAX_RECOVERIES = 1;
+
+function harnessKilledDetail(agent: string, oom: boolean): string {
+  return JSON.stringify({ agent, oom });
+}
+
+function parseHarnessKilledDetail(detail?: string): {
+  agent: string;
+  oom: boolean;
+} {
+  try {
+    const parsed = JSON.parse(detail ?? "");
+    return {
+      agent:
+        parsed?.agent === "Claude" || parsed?.agent === "The agent"
+          ? parsed.agent
+          : "The agent",
+      oom: parsed?.oom === true,
+    };
+  } catch {
+    return { agent: "The agent", oom: false };
+  }
+}
+
+// When a harness turn failed because its agent was killed: an explanation
+// for the chat, and the recovery detail. A memory kill is recognized from the
+// project's OOM counter even if the harness itself died without reporting it.
+async function harnessKilledFailure({
+  err,
+  projectId,
+  memoryBefore,
+  agent,
+  resumable,
+  readMemory = readProjectMemoryEvents,
+}: {
+  err: unknown;
+  projectId: string;
+  memoryBefore: ProjectMemoryEvents;
+  agent: string;
+  resumable: boolean;
+  readMemory?: (projectId: string) => Promise<ProjectMemoryEvents>;
+}): Promise<{ message: string; detail: string } | undefined> {
+  const memoryAfter = await readMemory(projectId);
+  const oom = oomKilledBetween(memoryBefore, memoryAfter);
+  if (!oom && (err as { killed?: unknown })?.killed !== true) return;
+  const diagnostic =
+    `${(err as Error)?.message ?? ""}`.match(
+      /\[Diagnostic ID: [^\]]+\]/,
+    )?.[0] ?? "";
+  const limit = formatMemoryLimit(
+    memoryAfter.limitBytes ?? memoryBefore.limitBytes,
+  );
+  const next = resumable
+    ? "It is being resumed automatically."
+    : "It was already resumed automatically once, so it was not resumed again. Check what is using memory before trying again.";
+  const message = oom
+    ? `${agent} was stopped because this project ran out of memory${limit ? ` (its limit is ${limit})` : ""}, most likely from a memory-heavy command it was running. ${next}`
+    : `${agent}'s process was killed unexpectedly (SIGKILL). ${next}`;
+  return {
+    message: diagnostic ? `${message} ${diagnostic}` : message,
+    detail: harnessKilledDetail(agent, oom),
+  };
 }
 
 function shouldAutoResumeRecoveredTurn({
@@ -2112,6 +2204,23 @@ function compactLivePreviewBatch(
       continue;
     }
     flushProjection();
+    const last = compacted[compacted.length - 1];
+    if (
+      message.type === "event" &&
+      message.event.type === "thinking" &&
+      last?.type === "event" &&
+      last.event.type === "thinking"
+    ) {
+      // Adjacent reasoning chunks are one block; send them as one event.
+      compacted[compacted.length - 1] = {
+        ...message,
+        event: {
+          ...message.event,
+          text: `${last.event.text ?? ""}${message.event.text ?? ""}`,
+        },
+      };
+      continue;
+    }
     compacted.push(message);
   }
   flushProjection();
@@ -2158,6 +2267,7 @@ export class ChatStreamWriter {
   private completionNoticePublished = false;
   private approverAccountId: string;
   private runtimeKind: "codex" | "acp";
+  private agentLabel: string;
   private interruptedMessage?: string;
   private contentBeforeInterrupt?: string;
   private interruptNotified = false;
@@ -2739,6 +2849,7 @@ export class ChatStreamWriter {
           undefined,
         terminal_state: terminalState,
         error_text: terminalState === "error" ? this.lastErrorText : undefined,
+        agent_label: this.agentLabel,
       });
       await publishCodexTurnNotice({
         client: this.client,
@@ -2771,9 +2882,12 @@ export class ChatStreamWriter {
     liveLogStreamFactory,
     livePreviewStreamFactory,
     runtimeKind = "codex",
+    agentLabel,
   }: {
     metadata: AcpChatContext;
     runtimeKind?: "codex" | "acp";
+    // Names the agent in turn notifications ("Claude"); see buildCodexTurnNoticeOptions.
+    agentLabel?: string;
     client: ConatClient;
     approverAccountId: string;
     sessionKey?: string;
@@ -2795,6 +2909,8 @@ export class ChatStreamWriter {
     }
     this.metadata = metadata;
     this.runtimeKind = runtimeKind;
+    this.agentLabel =
+      agentLabel ?? (runtimeKind === "codex" ? "Codex" : "Agent");
     this.approverAccountId = approverAccountId;
     this.client = client;
     this.chatKey = chatKey(metadata);
@@ -4486,6 +4602,12 @@ export class ChatStreamWriter {
           flush: event.event.delta !== true,
         });
       }
+      return;
+    }
+    if (event.type === "event" && event.event.type === "thinking") {
+      // The agent's reasoning is shown inline (muted, collapsed); a reply
+      // can be entirely in it. The client places it between messages.
+      this.livePreviewBatcher.add(event);
       return;
     }
     if (event.type === "event" && event.event.type === "subagent") {
@@ -6210,12 +6332,6 @@ export async function recoverOrphanedAcpTurns(
     const request = recoverySourceJob
       ? decodeAcpJobRequest(recoverySourceJob)
       : undefined;
-    const outcomeUnknown =
-      request?.request_kind !== "command" && request?.runtime?.kind === "acp";
-    const turnNotice = outcomeUnknown
-      ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
-      : interruptedNotice;
-    const turnReason = outcomeUnknown ? turnNotice : recoveryReason;
     const autoResumeDecision =
       autoResume && recoverySourceJob
         ? shouldAutoResumeRecoveredTurn({
@@ -6224,6 +6340,17 @@ export async function recoverOrphanedAcpTurns(
           })
         : { ok: false as const };
     const shouldAutoResume = autoResumeDecision.ok;
+    // A harness turn (Claude) that is resumed continues in its session with
+    // a prompt to check what already completed, as for Codex. Only one that
+    // is not resumed is left with an unknown outcome for the user to decide.
+    const outcomeUnknown =
+      !shouldAutoResume &&
+      request?.request_kind !== "command" &&
+      request?.runtime?.kind === "acp";
+    const turnNotice = outcomeUnknown
+      ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
+      : interruptedNotice;
+    const turnReason = outcomeUnknown ? turnNotice : recoveryReason;
     if (autoResume && recoverySourceJob && !shouldAutoResume) {
       logger.warn("skipping ACP recovery continuation", {
         interrupted_op_id: recoverySourceJob.op_id,
@@ -8034,6 +8161,10 @@ async function executeAcpRequest({
       ? new ChatStreamWriter({
           metadata: chatContext,
           runtimeKind: harness ? "acp" : "codex",
+          agentLabel:
+            request.runtime?.profile.id === "claude-code"
+              ? "Claude"
+              : undefined,
           client: conatClient,
           approverAccountId: request.account_id,
           sessionKey: request.session_id,
@@ -8085,6 +8216,10 @@ async function executeAcpRequest({
 
     let terminalState: AcpExecutionResult["terminalState"] = "completed";
     let terminalError: string | undefined;
+    // To tell whether a harness killed mid-turn hit the project's memory limit.
+    const memoryBefore = harness
+      ? await readProjectMemoryEvents(projectId)
+      : {};
     try {
       logger.debug("evaluate: running", {
         reqId,
@@ -8128,6 +8263,25 @@ async function executeAcpRequest({
         // failure. The adapter still throws so its retained process is disposed.
         if (!(harness && chatWriter?.getTerminalState() === "interrupted")) {
           terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
+          if (harness) {
+            const killed = await harnessKilledFailure({
+              err,
+              projectId,
+              memoryBefore,
+              agent:
+                request.runtime?.profile.id === "claude-code"
+                  ? "Claude"
+                  : "The agent",
+              resumable:
+                Number(request.recovery_count ?? 0) <
+                HARNESS_KILLED_MAX_RECOVERIES,
+            });
+            if (killed) {
+              terminalFallbackError = killed.message;
+              recoveryCode = CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled;
+              recoveryDetail = killed.detail;
+            }
+          }
           try {
             await wrappedStream({
               type: "error",
@@ -9895,9 +10049,13 @@ async function enqueueRecoveryContinuationForJob({
   const sourceJob = current ?? job;
   if (sourceJob.error === ACP_PROJECT_RESTART_FENCE_REASON) return undefined;
   const request = decodeAcpJobRequest(sourceJob);
-  if (request.request_kind === "command" || request.runtime !== undefined) {
+  if (request.request_kind === "command") {
     return undefined;
   }
+  // A harness job (Claude) takes the thread's current session and settings
+  // when it starts, so it resumes the interrupted session even when this
+  // request predates it.
+  const harness = request.runtime !== undefined;
   const session_id =
     `${request.session_id ?? sourceJob.session_id ?? ""}`.trim();
   const thread_id =
@@ -9905,7 +10063,13 @@ async function enqueueRecoveryContinuationForJob({
   const project_id =
     `${request.chat?.project_id ?? request.project_id ?? sourceJob.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? sourceJob.path ?? ""}`.trim();
-  if (!project_id || !path || !thread_id || !session_id || !request.chat) {
+  if (
+    !project_id ||
+    !path ||
+    !thread_id ||
+    (!session_id && !harness) ||
+    !request.chat
+  ) {
     return undefined;
   }
   const supersessionGuard = {
@@ -9973,7 +10137,8 @@ async function enqueueRecoveryContinuationForJob({
       originalPrompt: request.prompt,
       recoveryGuidance,
     }),
-    session_id,
+    // Never "" for a harness: that is the explicit session-reset marker.
+    session_id: session_id || undefined,
     recovery_parent_op_id: parentOpId,
     recovery_reason: recoveryReason,
     recovery_count: recoveryCount,
@@ -10055,6 +10220,15 @@ async function enqueueFailureRecoveryContinuation({
 }): Promise<AcpJobRow | undefined> {
   const directive = failureRecoveryDirective(recoveryCode, recoveryDetail);
   if (!directive) return undefined;
+  // Codex error codes apply to Codex jobs; a harness only has its own.
+  const failed = decodeAcpJobRequest(job);
+  const harnessJob =
+    failed.request_kind !== "command" && failed.runtime !== undefined;
+  if (
+    harnessJob !==
+    (directive.code === CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled)
+  )
+    return undefined;
   const decision = shouldAutoResumeRecoveredTurn({
     turn: {
       started_at: job.started_at,
@@ -10185,6 +10359,8 @@ async function writeQueuedJobFailureToChat({
     const writer = new ChatStreamWriter({
       metadata: request.chat,
       runtimeKind: request.runtime?.kind === "acp" ? "acp" : "codex",
+      agentLabel:
+        request.runtime?.profile.id === "claude-code" ? "Claude" : undefined,
       client: conatClient,
       approverAccountId: request.account_id,
       sessionKey: request.session_id,
@@ -10870,6 +11046,7 @@ async function trySteerCandidateIds({
   request,
   candidateIds,
   claimGuard,
+  hostProjectRoot,
 }: {
   projectId: string;
   threadId?: string;
@@ -10877,6 +11054,7 @@ async function trySteerCandidateIds({
   request: AcpSteerRequest;
   candidateIds?: string[];
   claimGuard?: () => boolean;
+  hostProjectRoot?: string;
 }): Promise<AcpSteerAttemptResult> {
   const ids = new Set<string>();
   const writer = findChatWriter({ threadId, chat });
@@ -10900,51 +11078,86 @@ async function trySteerCandidateIds({
 
   let firstError: unknown;
   let sawNotSteerable = false;
-  for (const id of ids) {
-    // Cached writer/lease aliases can outlive an ACP reset. Only the current
-    // native session may receive guidance, never another candidate's context.
-    if (request.runtime && id !== request.session_id) continue;
-    for (const agent of agentsForProject(projectId)) {
-      if (typeof agent.steer !== "function") {
-        continue;
-      }
-      if (claimGuard && !claimGuard()) {
-        throw new Error("durable ACP steer claim was lost");
-      }
-      try {
-        // Authorized RPC guidance inherits the actual live turn's funding,
-        // not next-turn preferences. Keep the original for durable/queue fallback.
-        const steerRequest =
-          request.chat.agent_rpc_execution?.guidance === true
-            ? {
-                ...request,
-                config: {
-                  ...request.config,
-                  paymentSource: undefined,
-                  credentialId: undefined,
-                },
-              }
-            : request;
-        const result = await agent.steer(id, steerRequest);
-        if (result.state === "steered") {
-          return {
-            state: "steered",
-            threadId: result.threadId ?? id,
-          };
+  // Harness agents (Claude) take pasted images as content blocks, exactly as
+  // for a new turn; prepared once, only if a harness agent is asked.
+  let harnessRequest:
+    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
+    | undefined;
+  try {
+    for (const id of ids) {
+      // Cached writer/lease aliases can outlive an ACP reset. Only the current
+      // native session may receive guidance, never another candidate's context.
+      if (request.runtime && id !== request.session_id) continue;
+      for (const agent of agentsForProject(projectId)) {
+        if (typeof agent.steer !== "function") {
+          continue;
         }
-        if (result.state === "not_steerable") {
-          sawNotSteerable = true;
+        if (claimGuard && !claimGuard()) {
+          throw new Error("durable ACP steer claim was lost");
         }
-      } catch (err) {
-        if ((err as { code?: string }).code === "principal_mismatch") throw err;
-        if (firstError === undefined) {
-          firstError = err;
+        try {
+          // Authorized RPC guidance inherits the actual live turn's funding,
+          // not next-turn preferences. Keep the original for durable/queue fallback.
+          const steerRequest =
+            request.chat.agent_rpc_execution?.guidance === true
+              ? {
+                  ...request,
+                  config: {
+                    ...request.config,
+                    paymentSource: undefined,
+                    credentialId: undefined,
+                  },
+                }
+              : request;
+          let deliveredRequest: Parameters<NonNullable<AcpAgent["steer"]>>[1] =
+            steerRequest;
+          if (
+            harnessAgents.has(agent) &&
+            extractBlobReferences(request.prompt).length
+          ) {
+            harnessRequest ??= materializeBlobs(
+              request.prompt,
+              projectId,
+              hostProjectRoot
+                ? projectBlobMaterializationRoots({
+                    hostProjectRoot,
+                    runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+                  })
+                : undefined,
+              true,
+            );
+            const { prompt, image_attachments } = await harnessRequest;
+            deliveredRequest = { ...steerRequest, prompt, image_attachments };
+          }
+          const result = await agent.steer(id, deliveredRequest);
+          if (result.state === "steered") {
+            return {
+              state: "steered",
+              threadId: result.threadId ?? id,
+            };
+          }
+          if (result.state === "not_steerable") {
+            sawNotSteerable = true;
+          }
+        } catch (err) {
+          if ((err as { code?: string }).code === "principal_mismatch")
+            throw err;
+          if (firstError === undefined) {
+            firstError = err;
+          }
+          logger.warn("failed to steer codex session", {
+            threadId: id,
+            err,
+          });
         }
-        logger.warn("failed to steer codex session", {
-          threadId: id,
-          err,
-        });
       }
+    }
+  } finally {
+    if (harnessRequest) {
+      void harnessRequest.then(
+        ({ cleanup }) => cleanup(),
+        () => {},
+      );
     }
   }
 
@@ -12302,6 +12515,10 @@ async function attemptAcpSteerRequest(
     useContainer && executor instanceof ContainerExecutor
       ? executor.getMountPoint()
       : workspaceRoot;
+  const hostProjectRoot =
+    useContainer && executor instanceof ContainerExecutor
+      ? executor.getProjectMountPoint()
+      : undefined;
   const useNativeTerminal = useContainer ? false : sessionMode === "auto";
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
   if (!request.runtime) {
@@ -12325,6 +12542,7 @@ async function attemptAcpSteerRequest(
     request,
     candidateIds,
     claimGuard,
+    hostProjectRoot,
   });
   if (result.state === "steered") {
     await recordAcpGuidanceDelivered(request);
@@ -13394,6 +13612,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  harnessKilledFailure,
   loadAgentMemoryContext,
   handleAcpAttentionRequest,
   persistAttentionResponseProjection,

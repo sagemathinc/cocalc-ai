@@ -505,32 +505,32 @@ describe("project env helpers", () => {
     });
   });
 
-  it("routes project secret reads to the owning bay", async () => {
+  it("reads project secrets here even when another bay owns the project", async () => {
+    // The receiving hub routes this call to the owning bay (edge routing), so
+    // the method itself never forwards; it always runs its guarded local path.
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 3,
     }));
     const { listProjectSecrets } = await import("./projects");
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    expect(getHubApiRoute("projects.listProjectSecrets")?.owner).toBe(
+      "project",
+    );
 
-    await expect(
-      listProjectSecrets({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-      }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        project_id: PROJECT_ID,
-        name: "API_KEY",
-      }),
-    ]);
-
-    expect(assertCollabMock).not.toHaveBeenCalled();
-    expect(listProjectSecretsMock).not.toHaveBeenCalled();
-    expect(interBayProjectSecretsMock.list).toHaveBeenCalledWith({
+    await listProjectSecrets({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
-      epoch: 3,
     });
+
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(listProjectSecretsMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
+    expect(interBayProjectSecretsMock.list).not.toHaveBeenCalled();
   });
 
   it("sets project secrets and publishes detail invalidation", async () => {
@@ -744,41 +744,33 @@ describe("project env helpers", () => {
     );
   });
 
-  it("routes SSH key secret generation to the owning bay", async () => {
+  it("generates SSH key secrets here even when another bay owns the project", async () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 3,
     }));
     const { generateProjectSshKeySecret } = await import("./projects");
-
-    await expect(
-      generateProjectSshKeySecret({
-        account_id: ACCOUNT_ID,
-        session_hash: "session-1",
-        project_id: PROJECT_ID,
-      }),
-    ).resolves.toEqual(
-      expect.objectContaining({
-        secret_name: "SSH_PRIVATE_KEY",
-      }),
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    expect(getHubApiRoute("projects.generateProjectSshKeySecret")?.owner).toBe(
+      "project",
     );
 
-    expect(assertCollabMock).not.toHaveBeenCalled();
-    expect(generateProjectSshKeySecretLocalMock).not.toHaveBeenCalled();
-    expect(
-      interBayProjectSecretsMock.generateSshKeySecret,
-    ).toHaveBeenCalledWith({
+    await generateProjectSshKeySecret({
       account_id: ACCOUNT_ID,
       session_hash: "session-1",
       project_id: PROJECT_ID,
-      secret_name: undefined,
-      epoch: 3,
     });
+
     expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       browser_id: undefined,
       session_hash: "session-1",
     });
+    expect(assertCollabMock).toHaveBeenCalled();
+    expect(generateProjectSshKeySecretLocalMock).toHaveBeenCalled();
+    expect(
+      interBayProjectSecretsMock.generateSshKeySecret,
+    ).not.toHaveBeenCalled();
   });
 
   it("requires fresh auth before a direct admin collaborator grant", async () => {

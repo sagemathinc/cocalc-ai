@@ -44,8 +44,14 @@ jest.mock("@cocalc/backend/sandbox", () => ({
       return path.join(this.root, p.replace(/^\/+/, ""));
     }
 
-    async rustic(args: string[]): Promise<void> {
-      return await mockRustic(args, this.root);
+    async rustic(args: string[], opts?: { timeout?: number }) {
+      return (
+        (await mockRustic(args, this.root, opts)) ?? {
+          stdout: Buffer.from(""),
+          stderr: Buffer.from(""),
+          code: 0,
+        }
+      );
     }
   },
 }));
@@ -174,6 +180,90 @@ describe("project-host pending copies", () => {
     await expect(readFile(path.join(projectRoot, "foo"), "utf8")).resolves.toBe(
       "notebook payload",
     );
+  });
+
+  it("bounds the restore and copy by the claim's budget", async () => {
+    const { applyPendingCopies } = await import("./pending-copies");
+    await applyPendingCopies({ limit: 1 });
+
+    const budget = 30 * 60 * 1000;
+    const restoreTimeout = mockRustic.mock.calls[0][2]?.timeout;
+    expect(restoreTimeout).toBeGreaterThan(0);
+    expect(restoreTimeout).toBeLessThanOrEqual(budget);
+    const cpTimeout = mockCpExec.mock.calls[0][2]?.timeout;
+    expect(cpTimeout).toBeGreaterThan(0);
+    expect(cpTimeout).toBeLessThanOrEqual(budget);
+  });
+
+  it("leaves later rows for the hub to reclaim once the claim's budget is spent", async () => {
+    const row = (copy_id: string, dest_path: string) => ({
+      copy_id,
+      src_project_id: "src-project",
+      src_path: "test.ipynb",
+      dest_project_id: "dest-project",
+      dest_path,
+      snapshot_id: "snap-1",
+      options: { force: true },
+      exact: true,
+    });
+    const claim = mockCallHub.getMockImplementation()!;
+    mockCallHub.mockImplementation(async (opts) =>
+      opts.name === "hosts.claimPendingCopies"
+        ? [row("copy-1", "foo"), row("copy-2", "bar")]
+        : claim(opts),
+    );
+    const realNow = Date.now();
+    let offset = 0;
+    const nowSpy = jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => realNow + offset);
+    try {
+      mockRustic.mockImplementationOnce(
+        async (args: string[], root: string) => {
+          const dest = path.join(root, args[2].replace(/^\/+/, ""));
+          await mkdir(path.dirname(dest), { recursive: true });
+          await writeFile(dest, "notebook payload");
+          offset = 31 * 60 * 1000;
+        },
+      );
+      const { applyPendingCopies } = await import("./pending-copies");
+      await applyPendingCopies({ limit: 2 });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    // The first row stops before copying; the second is never started and
+    // stays 'applying' until the hub hands it out again.
+    expect(mockRustic).toHaveBeenCalledTimes(1);
+    expect(mockCpExec).not.toHaveBeenCalled();
+    expect(mockStatusUpdates).toEqual([
+      expect.objectContaining({
+        copy_id: "copy-1",
+        status: "failed",
+        last_error: expect.stringContaining("claim expired"),
+      }),
+    ]);
+  });
+
+  it("fails the copy when the restore is killed part way", async () => {
+    mockRustic.mockImplementationOnce(async (args: string[], root: string) => {
+      const dest = path.join(root, args[2].replace(/^\/+/, ""));
+      await mkdir(path.dirname(dest), { recursive: true });
+      await writeFile(dest, "partial");
+      return { stdout: Buffer.from(""), stderr: Buffer.from(""), code: 143 };
+    });
+
+    const { applyPendingCopies } = await import("./pending-copies");
+    await applyPendingCopies({ limit: 1 });
+
+    expect(mockCpExec).not.toHaveBeenCalled();
+    expect(mockStatusUpdates).toEqual([
+      expect.objectContaining({
+        copy_id: "copy-1",
+        status: "failed",
+        last_error: expect.stringContaining("exited with code 143"),
+      }),
+    ]);
   });
 
   it("skips an exact no-clobber copy before restoring its snapshot", async () => {

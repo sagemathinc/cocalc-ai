@@ -8,6 +8,7 @@ import {
   resolveImmediateAcpParentMessageId,
   resolveAgentSessionRecordStatus,
   splitCompletedCodexTurnNotifications,
+  threadAgentLabel,
 } from "../chatroom";
 
 describe("chatActionsStoreName", () => {
@@ -585,5 +586,21 @@ describe("appendCompletedCodexTurnNotifications", () => {
         newestMessageDate: "202",
       },
     ]);
+  });
+});
+
+describe("threadAgentLabel", () => {
+  it("names the agent a turn notification is about", () => {
+    expect(
+      threadAgentLabel({
+        agent_runtime: { kind: "acp", profile: { id: "claude-code" } },
+      }),
+    ).toBe("Claude");
+    expect(
+      threadAgentLabel({
+        agent_runtime: { kind: "acp", profile: { id: "x" } },
+      }),
+    ).toBe("Agent");
+    expect(threadAgentLabel({})).toBe("Codex");
   });
 });

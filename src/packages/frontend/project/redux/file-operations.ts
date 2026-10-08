@@ -6,6 +6,7 @@
 import { join } from "path";
 
 import { alert_message } from "@cocalc/frontend/alerts";
+import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CopyOptions, FilesystemClient } from "@cocalc/conat/files/fs";
 import { migrateStarsOnMove } from "@cocalc/frontend/project/page/flyouts/store";
@@ -101,6 +102,49 @@ export async function copyPaths({
   }
 }
 
+// Copies to a project on another host restore from a backup of the source,
+// which leaves out files over its backup file size limit.
+async function checkCopyOversizedFiles({
+  src_project_id,
+  dest_project_id,
+  files,
+  src_home,
+}: {
+  src_project_id: string;
+  dest_project_id: string;
+  files: string[];
+  src_home?: string;
+}): Promise<{ proceed: boolean; allow_oversized_skip: boolean }> {
+  const projectMap = redux.getStore("projects")?.get("project_map");
+  const srcHost = projectMap?.getIn([src_project_id, "host_id"]);
+  const destHost = projectMap?.getIn([dest_project_id, "host_id"]);
+  if (srcHost && srcHost === destHost) {
+    return { proceed: true, allow_oversized_skip: false };
+  }
+  const home = src_home?.replace(/\/+$/, "");
+  const paths = files.flatMap((path) => {
+    if (!path.startsWith("/")) return [path];
+    if (home && (path === home || path.startsWith(`${home}/`))) {
+      return [path.slice(home.length + 1)];
+    }
+    // Paths outside the home directory are not backed up at all.
+    return [];
+  });
+  if (paths.length === 0) {
+    return { proceed: true, allow_oversized_skip: false };
+  }
+  const { checkOversizedFiles } =
+    await import("@cocalc/frontend/project/backups/oversized-files");
+  return await checkOversizedFiles({
+    project_id: src_project_id,
+    paths,
+    title: "Copy without these files?",
+    okText: "Copy without these files",
+    consequence:
+      "The destination project is on another host, so the copy is made from a backup, which cannot include these files.",
+  });
+}
+
 export async function copyPathBetweenProjects({
   opts,
   projectId,
@@ -124,6 +168,20 @@ export async function copyPathBetweenProjects({
   const id = misc.uuid();
   const files =
     typeof opts.src.path == "string" ? [opts.src.path] : opts.src.path;
+  const src_home =
+    opts.src_home ??
+    (opts.src.project_id === projectId
+      ? getProjectHomeDirectory(projectId)
+      : undefined);
+  const oversized = await checkCopyOversizedFiles({
+    src_project_id: opts.src.project_id,
+    dest_project_id: opts.dest.project_id,
+    files,
+    src_home,
+  });
+  if (!oversized.proceed) {
+    return;
+  }
   setActivity({
     id,
     status: `Copying ${files.length} ${misc.plural(
@@ -133,14 +191,10 @@ export async function copyPathBetweenProjects({
   });
   let error: any = undefined;
   try {
-    const src_home =
-      opts.src_home ??
-      (opts.src.project_id === projectId
-        ? getProjectHomeDirectory(projectId)
-        : undefined);
     const resp = await webapp_client.project_client.copyPathBetweenProjects({
       ...opts,
       ...(src_home ? { src_home } : {}),
+      ...(oversized.allow_oversized_skip ? { allow_oversized_skip: true } : {}),
     });
     copyOpsTrack(resp);
     setActivity({

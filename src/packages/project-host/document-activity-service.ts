@@ -17,6 +17,7 @@ import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
+import { syncdbPath } from "@cocalc/util/jupyter/names";
 
 const logger = getLogger("project-host:document-activity");
 
@@ -232,11 +233,12 @@ async function getRecentStore({
     project_id,
     name: PROJECT_DOCUMENT_ACTIVITY_RECENT_NAME,
     client,
-  }).then((store) => {
-    recentStores.set(project_id, store);
-    recentStoreInflight.delete(project_id);
-    return store;
-  });
+  })
+    .then((store) => {
+      recentStores.set(project_id, store);
+      return store;
+    })
+    .finally(() => recentStoreInflight.delete(project_id));
   recentStoreInflight.set(project_id, promise);
   return await promise;
 }
@@ -260,12 +262,18 @@ async function getAccessStream({
     project_id,
     name: PROJECT_DOCUMENT_ACTIVITY_EVENTS_NAME,
     client,
-  }).then(async (stream) => {
-    await stream.config({ allow_msg_ttl: true });
-    accessStreams.set(project_id, stream);
-    accessStreamInflight.delete(project_id);
-    return stream;
-  });
+  })
+    .then(async (stream) => {
+      try {
+        await stream.config({ allow_msg_ttl: true });
+      } catch (err) {
+        stream.close();
+        throw err;
+      }
+      accessStreams.set(project_id, stream);
+      return stream;
+    })
+    .finally(() => accessStreamInflight.delete(project_id));
   accessStreamInflight.set(project_id, promise);
   return await promise;
 }
@@ -303,17 +311,21 @@ export async function handleMarkFileRequest(
 
   const throttleKey = `${project_id}:${account_id}:${path}:${action}`;
   if (!accessThrottle.has(throttleKey)) {
-    accessThrottle.set(throttleKey, true);
     const stream = await getAccessStream({ client, project_id });
-    stream.publish(
-      {
-        time: nowIso,
-        account_id,
-        path,
-        action,
-      },
-      { ttl: DOCUMENT_ACTIVITY_TTL_MS },
-    );
+    // Concurrent callers may have published while this one awaited the stream.
+    // A failed open/publish must not suppress the next recording attempt.
+    if (!accessThrottle.has(throttleKey)) {
+      stream.publish(
+        {
+          time: nowIso,
+          account_id,
+          path,
+          action,
+        },
+        { ttl: DOCUMENT_ACTIVITY_TTL_MS },
+      );
+      accessThrottle.set(throttleKey, true);
+    }
   }
   return null;
 }
@@ -416,15 +428,21 @@ export async function handleGetFileUseTimesRequest(
   }
 
   if (opts?.edit_times) {
+    // Notebook patches belong to the syncdb, but access events use the visible
+    // filename above. Patch times are document-wide, not per-account edits.
+    const editPath = path.endsWith(".ipynb") ? syncdbPath(path) : path;
     const patchStream = await dstream({
       project_id,
-      name: patchesStreamName({ path }),
+      name: patchesStreamName({ path: editPath }),
       noAutosave: true,
       noInventory: true,
       client,
     });
-    resp.edit_times = patchStream.times().map((x) => x?.valueOf());
-    patchStream.close();
+    try {
+      resp.edit_times = patchStream.times().map((x) => x?.valueOf());
+    } finally {
+      patchStream.close();
+    }
   }
 
   return resp;
