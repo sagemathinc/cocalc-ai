@@ -847,6 +847,17 @@ export const MEMBERSHIP_TIER_FIELDS = [
     integer: true,
   }),
   field({
+    id: "features.project_network",
+    path: ["features", "project_network"],
+    card: "runtime",
+    label: "Project internet access",
+    help: "Whether this tier's projects can reach the internet. Unset: only tiers with a positive shared compute priority.",
+    input: "boolean",
+    valueType: "boolean",
+    risks: ["abuse"],
+    public: true,
+  }),
+  field({
     id: "features.create_hosts",
     path: ["features", "create_hosts"],
     card: "dedicated-hosts",

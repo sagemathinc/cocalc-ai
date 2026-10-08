@@ -70,6 +70,117 @@ test("reconnect validates the credential and replaces its token in place", async
   }
 });
 
+test("a new sign-in replaces an abandoned pending one", async () => {
+  const publish = jest.fn(async () => credentialId);
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+  });
+  try {
+    const first = await service.start(projectId, accountId);
+    await verificationUrl(service, first.id);
+    const second = await service.start(projectId, accountId);
+    expect(second.id).not.toBe(first.id);
+    expect(service.status(first.id, projectId, accountId).state).toBe(
+      "canceled",
+    );
+    await verificationUrl(service, second.id);
+    service.submitCode(second.id, projectId, accountId, "fixture-code");
+    await waitFor(service, second.id, "completed");
+  } finally {
+    await service.close();
+  }
+});
+
+test("a submitted code blocks a new sign-in until its exchange finishes", async () => {
+  const publish = jest.fn(async () => credentialId);
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    exchangeTimeoutMs: 300,
+  });
+  try {
+    const first = await service.start(projectId, accountId);
+    await verificationUrl(service, first.id);
+    // The provider exchange for this code never answers.
+    service.submitCode(first.id, projectId, accountId, "fixture-hang");
+    await expect(service.start(projectId, accountId)).rejects.toThrow(
+      "already in progress",
+    );
+    expect(service.status(first.id, projectId, accountId).state).toBe(
+      "pending",
+    );
+    // The exchange then times out normally; afterwards a new start works.
+    await waitFor(service, first.id, "failed");
+    const second = await service.start(projectId, accountId);
+    await verificationUrl(service, second.id);
+  } finally {
+    await service.close();
+  }
+});
+
+test("concurrent starts for one account leave only the newest pending", async () => {
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish: jest.fn(async () => credentialId),
+  });
+  try {
+    const [a, b] = await Promise.all([
+      service.start(projectId, accountId),
+      service.start(projectId, accountId),
+    ]);
+    expect(service.status(a.id, projectId, accountId).state).toBe("canceled");
+    expect(service.status(b.id, projectId, accountId).state).toBe("pending");
+  } finally {
+    await service.close();
+  }
+});
+
+test("a slow reconnect validation does not reverse start order", async () => {
+  let releaseValidation!: () => void;
+  const validateReconnect = jest.fn(
+    () => new Promise<void>((resolve) => (releaseValidation = resolve)),
+  );
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish: jest.fn(async () => credentialId),
+    validateReconnect,
+  });
+  try {
+    const earlier = service.start(projectId, accountId, credentialId);
+    const later = service.start(projectId, accountId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    releaseValidation();
+    const [a, b] = await Promise.all([earlier, later]);
+    expect(service.status(a.id, projectId, accountId).state).toBe("canceled");
+    expect(service.status(b.id, projectId, accountId).state).toBe("pending");
+  } finally {
+    await service.close();
+  }
+});
+
+test("a sign-in for another account leaves this account's sign-in pending", async () => {
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish: jest.fn(async () => credentialId),
+  });
+  try {
+    const mine = await service.start(projectId, accountId);
+    const theirs = await service.start(projectId, otherAccountId);
+    expect(service.status(mine.id, projectId, accountId).state).toBe("pending");
+    expect(service.status(theirs.id, projectId, otherAccountId).state).toBe(
+      "pending",
+    );
+  } finally {
+    await service.close();
+  }
+});
+
 test("reconnect rejects unavailable credentials before starting sign-in", async () => {
   const publish = jest.fn();
   const service = new ClaudeSubscriptionLoginService({

@@ -78,8 +78,8 @@ describe("public route metadata", () => {
       { site_name: "CoCalc" },
     );
     expect(star.title).toBe("CoCalc Star | CoCalc");
-    expect(star.description).toContain("single-VM appliance");
-    expect(star.description).toContain("one public Ubuntu VM");
+    expect(star.description).toContain("one Docker container");
+    expect(star.description).toContain("macOS, Windows, or Linux");
 
     const launchpad = getPublicRouteMetadata(
       {
@@ -395,10 +395,10 @@ describe("public route metadata", () => {
       ),
     );
     expect(headMeta('meta[name="description"]')).toContain(
-      "single-VM appliance",
+      "one Docker container",
     );
     expect(headMeta('meta[property="og:description"]')).toContain(
-      "one public Ubuntu VM",
+      "macOS, Windows, or Linux",
     );
     expect(headMeta('meta[name="twitter:card"]')).toBe("summary_large_image");
     expect(headMeta('meta[property="og:image"]')).toBe(

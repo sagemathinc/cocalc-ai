@@ -1,5 +1,11 @@
+import { MEMBERSHIP_TIER_FIELDS } from "./membership-tier-field-metadata";
 import {
   applyMembershipTierTemplateFallbacks,
+  membershipTierTemplates,
+  STAR_FREE_TIER_TEMPLATE,
+  STAR_GENEROUS_USAGE_LIMITS,
+  STAR_RETAINED_USAGE_LIMITS,
+  STAR_UNLIMITED_USAGE_LIMITS,
   TIER_TEMPLATES,
 } from "./membership-tier-templates";
 
@@ -301,5 +307,71 @@ describe("membership tier templates", () => {
         expect(projectDefaults).not.toHaveProperty(key);
       }
     }
+  });
+});
+
+describe("CoCalc Star free tier", () => {
+  const classified = [
+    ...STAR_UNLIMITED_USAGE_LIMITS,
+    ...STAR_GENEROUS_USAGE_LIMITS,
+    ...STAR_RETAINED_USAGE_LIMITS,
+  ] as string[];
+
+  it("classifies every known usage limit exactly once", () => {
+    expect(new Set(classified).size).toBe(classified.length);
+    const known = new Set([
+      ...Object.values(TIER_TEMPLATES).flatMap((tier) =>
+        Object.keys(tier.usage_limits),
+      ),
+      ...MEMBERSHIP_TIER_FIELDS.map(({ id }) => id)
+        .filter((id) => id.startsWith("usage_limits."))
+        .map((id) => id.slice("usage_limits.".length)),
+    ]);
+    expect([...known].filter((key) => !classified.includes(key))).toEqual([]);
+  });
+
+  it("has no per-account limits and moderate project sizes", () => {
+    const usage = STAR_FREE_TIER_TEMPLATE.usage_limits;
+    for (const key of STAR_UNLIMITED_USAGE_LIMITS) {
+      expect(usage).not.toHaveProperty(key);
+    }
+    for (const key of STAR_GENEROUS_USAGE_LIMITS) {
+      expect(usage[key]).toEqual(TIER_TEMPLATES.admin.usage_limits[key]);
+    }
+    for (const key of STAR_RETAINED_USAGE_LIMITS) {
+      if (key in TIER_TEMPLATES.free.usage_limits) {
+        expect(usage[key]).toEqual(TIER_TEMPLATES.free.usage_limits[key]);
+      }
+    }
+    expect(STAR_FREE_TIER_TEMPLATE.project_defaults).toEqual({
+      ...TIER_TEMPLATES.free.project_defaults,
+      memory: 8000,
+      disk_quota: 20000,
+    });
+    expect(STAR_FREE_TIER_TEMPLATE.id).toBe("free");
+    expect(STAR_FREE_TIER_TEMPLATE.features.project_network).toBe(true);
+    expect(TIER_TEMPLATES.free.features).not.toHaveProperty("project_network");
+  });
+
+  it("is the free template only on Star", () => {
+    expect(membershipTierTemplates("star").free).toBe(STAR_FREE_TIER_TEMPLATE);
+    expect(membershipTierTemplates("star").admin).toBe(TIER_TEMPLATES.admin);
+    expect(membershipTierTemplates(undefined)).toBe(TIER_TEMPLATES);
+    expect(membershipTierTemplates("launchpad-cloud")).toBe(TIER_TEMPLATES);
+  });
+
+  it("keeps blank limits of an edited Star free tier unlimited", () => {
+    const edited = applyMembershipTierTemplateFallbacks(
+      { id: "free", usage_limits: { max_named_agents: 7 } },
+      membershipTierTemplates("star"),
+    ).usage_limits as Record<string, unknown>;
+    expect(edited.max_named_agents).toBe(7);
+    expect(edited).not.toHaveProperty("max_projects");
+    expect(
+      (
+        applyMembershipTierTemplateFallbacks({ id: "free", usage_limits: {} })
+          .usage_limits as Record<string, unknown>
+      ).max_projects,
+    ).toBe(TIER_TEMPLATES.free.usage_limits.max_projects);
   });
 });

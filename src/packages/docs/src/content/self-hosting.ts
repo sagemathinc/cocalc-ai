@@ -6,317 +6,212 @@
 export const COCALC_STAR_BODY = `
 ## What CoCalc Star is
 
-CoCalc Star is the single-VM CoCalc appliance. It is the default self-hosting
-path when you have a fresh public Ubuntu VM and want a shared CoCalc instance
-without manual DNS, TLS, SSH port forwarding, or cloud-provider-specific setup.
+CoCalc Star is a complete CoCalc site in one Docker container: Jupyter, LaTeX,
+terminals, chat, agents, and real-time collaboration for a lab, course, or
+small team. It is free, and it runs anywhere Docker runs: Docker Desktop on
+macOS and Windows, or Docker Engine on Linux.
 
-Star installs a local control plane, local Postgres, one local project host,
-rootless Podman project execution, a managed Jupyter/LaTeX root filesystem, and
-Caddy HTTPS.
+All of its state (accounts, projects, settings, certificates) lives in one
+Docker volume. Upgrading means running a newer image with the same volume;
+removing the container and the volume removes all of its data.
 
-## Quick start
+## Quick start on your own computer
 
-On a fresh Ubuntu 24.04 VM with ports 80 and 443 open:
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+   (macOS or Windows) or Docker Engine (Linux) and start it. Give Docker at
+   least 4 CPUs, 8 GB of memory, and 50 GB of disk.
+2. In a terminal (on Windows, in PowerShell), run:
 
 ~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star.sh | sudo bash
+docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 8170:80 -e COCALC_STAR_HTTP_PORT=8170 sagemathinc/star
 ~~~
 
-The installer detects the public IPv4 address, uses https://sslip.io for DNS,
-obtains a Let's Encrypt certificate through Caddy, and shows a web onboarding
-page before continuing. If the onboarding URL does not open, fix the VM firewall
-or cloud network rule for port 443 before continuing.
+3. Follow the first start, which takes a few minutes:
 
-## First-run flow
+~~~sh
+docker logs -f cocalc-star
+~~~
 
-1. Create a public VM.
-2. Open ports 80 and 443.
-3. Run the one-line installer.
-4. Open the HTTPS onboarding page.
-5. Confirm the VM is reachable.
-6. Wait for the installer to finish.
-7. Use the bootstrap URL to create the first admin account.
-8. Create a project.
-9. Verify Jupyter, terminals, LaTeX, chat, and agents.
-10. Invite another user and collaborate.
+4. Open the printed link that starts with http://localhost:8170 and create
+   the first admin account.
+5. Create a project and check that Jupyter, a terminal, and LaTeX work.
+6. Use the printed invite link to add collaborators.
+
+## On a server with a domain
+
+Point a DNS name at a Linux server with Docker, open TCP port 443 (port 80 is
+optional), and pass the domain:
+
+~~~sh
+docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 443:443 -p 80:80 -e COCALC_STAR_DOMAIN=star.example.com sagemathinc/star
+~~~
+
+Certificates are obtained and renewed automatically. Set
+\`COCALC_STAR_ACME_EMAIL\` to give the certificate authority a contact address.
+
+## First admin account
+
+The first start prints a single-use link for creating the first admin account.
+Print it again with:
+
+~~~sh
+docker exec cocalc-star star bootstrap-link
+~~~
+
+If it was already used, or you lost access to the admin account, create a new
+single-use admin link (valid for 24 hours):
+
+~~~sh
+docker exec cocalc-star star admin-link
+~~~
+
+## Upgrade
+
+~~~sh
+docker pull sagemathinc/star
+docker rm -f cocalc-star
+~~~
+
+Then run the same \`docker run\` command you installed with. The new container
+reinstalls the new release over the existing volume and logs
+\`upgrading CoCalc Star from <old> to <new>\`. Running projects stop during the
+upgrade and can be started again right away. To go back, run the previous
+image tag with the same volume.
+
+## Back up
+
+Stop the container for a consistent copy of the volume:
+
+~~~sh
+docker stop cocalc-star
+docker run --rm -v cocalc-star:/data -v "$PWD":/backup ubuntu tar -C /data -czf /backup/cocalc-star-backup.tar.gz .
+docker start cocalc-star
+~~~
+
+Keep backups off the machine that runs Star, and test restoring one into a
+fresh volume before relying on it.
+
+## Remove CoCalc Star
+
+This deletes CoCalc Star and all of its data:
+
+~~~sh
+docker rm -f cocalc-star
+docker volume rm cocalc-star
+docker rmi sagemathinc/star
+~~~
+
+Star writes no files outside Docker. One thing outlives the container on
+Linux hosts that use AppArmor (for example Ubuntu): the \`cocalc-star-podman\`
+profile described below stays loaded in the kernel until the host restarts.
+It only applies to Star's bundled Podman. To unload it right away:
+
+~~~sh
+echo -n cocalc-star-podman | sudo tee /sys/kernel/security/apparmor/.remove
+~~~
+
+## Why the container is privileged
+
+Each project runs in its own rootless container with its own storage inside
+the CoCalc Star container, so the outer container needs \`--privileged\` and
+\`--cgroupns=host\`. Docker is how Star is distributed; the isolation between
+users and projects is inside the container. On Linux hosts that restrict
+unprivileged user namespaces with AppArmor (Ubuntu 23.10 and later), the
+container loads a small AppArmor profile named \`cocalc-star-podman\` that gives
+its bundled Podman the same permission the distribution gives its own Podman.
 
 ## When to use Star
 
-Use Star for a lab, course, GPU box, agent sandbox, or small team where the
-operator owns the VM and wants collaborators using the same browser-based CoCalc
-workspace.
+Use Star for a lab, course, GPU box, agent sandbox, or small team that wants
+collaborators in the same browser-based CoCalc workspace on hardware they
+control. Star is one machine: it is not high availability or scale-out.
 
-Star is not high availability. It is the easiest way to experience a real shared
-CoCalc system on your own VM.
+Star is for people you invite: signing up requires a registration link. Every
+project has internet access; Star does not include the network restrictions
+that public CoCalc sites apply to free accounts, nor their free-tier project
+limits: anyone can create as many projects as they like, and each project gets
+8 GB of memory and a 20 GB disk quota by default. Only the machine itself
+limits how many run at once. An admin can change these by editing the Free
+membership tier in the admin settings.
 
 ## Product boundaries
 
 - Use CoCalc Plus for a local single-user install.
-- Use CoCalc Star for a one-command public VM appliance.
+- Use CoCalc Star for a shared site in one Docker container.
 - Use CoCalc Launchpad for a bounded private deployment operated by your team,
   with more control over the environment than Star.
 - Discuss CoCalc Rocket with CoCalc when planning a broader private-cloud
   deployment, including infrastructure, operational ownership, and support
   requirements. Rocket has VM and Kubernetes deployment paths.
 
-## Current beta target
-
-The documented beta target is Ubuntu 24.04 or Ubuntu 26.04 on a fresh public VM
-with a public IPv4 address and ports 80 and 443 open. Manual beta installs have
-passed on Google Cloud, AWS, and Azure. Other cloud providers should work if
-they provide a normal Ubuntu VM and let you expose ports 80 and 443.
-
 ## Map the connections
-
-This map describes the public-VM Star installer with its default local
-services. Use it to identify which machine, storage, and network paths your
-team must operate. It is not a firewall allowlist or evidence that a restricted
-network has been tested. The [local VM guide](/docs/self-hosting/cocalc-star-local-vm)
-uses a different browser access path.
 
 | Connection | Default Star path | Operator check |
 | --- | --- | --- |
-| Browser to the site | Public HTTPS reaches Caddy, which forwards ordinary application requests to the local CoCalc web service on 127.0.0.1:9100. | Check the public hostname, certificate, and websocket access. The **Sign in** page loading does not by itself verify notebooks and terminals. |
-| CoCalc to project compute | Star registers its project host on the same VM, with an internal HTTP address of 127.0.0.1:9002 and SSH address of 127.0.0.1:2222. | These are backend addresses on the VM, not browser destinations or instructions to expose those ports publicly. |
-| CoCalc to stored site state | The default site uses local PostgreSQL through a local socket. | Include site state as well as project files in recovery planning. |
-| Project backup service | A local Rustic REST service listens on 127.0.0.1:9345 and stores its repository on the VM. | A local backup repository is not an off-VM recovery copy. |
-| Installation and updates | The release installer downloads from GitHub; public-address discovery, DNS/TLS setup, package installation, and image preparation can need external services. | Review the selected release and enabled installation paths before restricting egress. A release archive alone does not establish an offline installation. |
+| Browser to the site | The published port (8170 locally, 443 with a domain) reaches Caddy in the container, which forwards to the CoCalc web service on 127.0.0.1:9100 inside the container. | Check the URL, certificate, and websocket access. The **Sign in** page loading does not by itself verify notebooks and terminals. |
+| CoCalc to project compute | Star registers one project host inside the same container. | These are internal addresses, not ports to publish. |
+| Stored site state | Local PostgreSQL, project storage, configuration, and certificates are all in the \`cocalc-star\` volume. | Back up the volume; the image holds no state. |
+| Installation and updates | Images come from Docker Hub (\`sagemathinc/star\`); HTTPS certificates come from Let's Encrypt. | Everything else needed to start is in the image. |
 
-Installing CoCalc on your VM does not prevent applications from contacting
-external services. Review the credentials and endpoints selected for AI tools,
-remote kernels, package downloads, and user code as part of your deployment.
-This Star map does not describe Launchpad or Rocket deployments with separate
-machines, nor establish data residency, compliance, high availability, or
-successful backup restoration.
+Installing CoCalc on your machine does not prevent applications from
+contacting external services. Review the credentials and endpoints selected
+for AI tools, remote kernels, package downloads, and user code as part of your
+deployment.
 
-## Inventory state before maintenance
+## Troubleshooting
 
-Before replacing the VM or removing an installation, identify its data and
-configuration. A software release directory is only one part of a Star site.
-The following are installer defaults; overrides and mounted storage can change
-the locations. Check the installed configuration before planning a backup.
-Copying a live database directory or active project files does not by itself
-establish a consistent backup.
+~~~sh
+docker exec cocalc-star star status
+docker exec cocalc-star star doctor
+docker exec cocalc-star star smoke
+docker exec cocalc-star star logs hub
+~~~
 
-| State | Default location or reference | Why it matters |
-| --- | --- | --- |
-| Site database and control-plane data | \`STAR_DATA\`: \`/var/lib/cocalc/star/launchpad\`; local PostgreSQL data normally resides in its \`postgres\` subdirectory | Project files alone do not reconstruct accounts and site state. |
-| Project filesystem | Btrfs mounted at \`/mnt/cocalc\`; the default backing image is \`/var/lib/cocalc/btrfs.img\` | Identify the actual backing storage separately from the installed software release. |
-| Project-host state, caches, and runtime secrets | \`STAR_PROJECT_HOST_DATA\`: \`/mnt/cocalc/data\` | This lives under the project storage mount; it is not automatically a separate disk. |
-| Configuration and keys | \`/etc/cocalc/star/config.env\`, \`hub.env\`, \`project-host.env\`, and the configured secret paths | Configuration selects the data locations and services. The default site master key is under \`STAR_DATA/secrets\`; preserve it with the state it protects. Keep credentials out of shared logs and handoff notes. |
-| Local backups | \`COCALC_BACKUP_ROOT\`: \`/var/lib/cocalc/star/backup\` | A backup retained on the same VM is not an off-VM recovery copy. |
-| Installed releases and container runtime | \`/opt/cocalc-star/releases\`, \`/opt/cocalc-star/source\`, \`/opt/cocalc-star/current\`, and \`/opt/cocalc/container-runtime\` | The source and current links are siblings of releases and point into the selected release. Record the selected release and runtime; they do not replace database or project backups. |
-| Shared scratch | The configured shared-scratch mount; a local VM can use a folder on the operator's computer | Check where the backing files actually live. Copy results that must be retained into project storage and include them in the backup plan. |
-
-The normal \`star.sh uninstall\` removes active service hooks and preserves
-Star data. Removed configuration files are copied to the uninstall backup
-location printed by the command. After its unmount checks,
-\`uninstall --purge-data\` removes the configured \`STAR_ROOT\`,
-\`STAR_INSTALL_ROOT\`, and \`STAR_CONTAINER_RUNTIME_ROOT\`; the fixed paths
-\`/mnt/cocalc-scratch\` and \`/mnt/cocalc/shared-scratch\`; and the selected
-\`STAR_BTRFS_IMAGE\`. Those targets do not enumerate every custom storage path
-or external volume. Do not use purge as a repair or backup check. Deleting a
-Lima VM is a separate operation from uninstalling Star inside it.
-
-\`star.sh rollback\` selects an installed software release and restarts
-services. It does not restore earlier project files or database contents.
-A successful \`doctor\` or \`smoke\` check does not demonstrate recovery after
-loss of the VM. See the [Star operator reference](https://github.com/sagemathinc/cocalc-ai/blob/main/src/scripts/star/README.md)
-for the supported commands and release layout.
-
-This inventory is based on the installer source. It is not a backup or restore
-procedure; validate a consistent off-VM backup and a disposable restore before
-relying on recovery.
+\`star smoke\` creates a test account and project and checks Jupyter, LaTeX,
+and terminals end to end.
 
 ## Agent notes
 
 When helping someone install Star:
 
-1. Confirm the VM is public and can expose ports 80 and 443.
-2. Prefer the one-line installer unless the user needs a pinned release.
-3. If the onboarding URL fails, debug cloud firewall and VM firewall before
-   debugging CoCalc.
-4. Do not recommend SSH port forwarding for the public VM appliance path.
-5. After install, verify the first project starts and Jupyter, terminal, LaTeX,
-   and invite-user flows work.
+1. Confirm Docker is installed and running (\`docker info\`), with at least
+   4 CPUs, 8 GB of memory, and 50 GB of disk available to it.
+2. Use the one-line \`docker run\` commands above unchanged; they work in macOS
+   and Linux shells and in Windows PowerShell.
+3. For a public server, the domain must already resolve to the server and
+   port 443 must be reachable before starting the container.
+4. If the first-admin link is gone, use \`star admin-link\`; do not delete the
+   volume to start over unless the user wants to lose their data.
+5. After install, verify that the first project starts and Jupyter, a terminal,
+   and LaTeX work.
 `;
 
 export const COCALC_STAR_LOCAL_VM_BODY = String.raw`
 ## Why run CoCalc Star on your own computer?
 
 If you tried CoCalc and want the same kind of browser-based workspace on your
-own hardware, a local VM is a good fit. It is especially useful when you want:
+own hardware, run CoCalc Star locally. It is especially useful when you want:
 
 - a very private CoCalc instance that stays on your laptop or desktop server,
 - very low latency because the server is physically near you,
 - to use a powerful laptop, workstation, or home server you already own,
 - to keep working while flying or away from reliable internet, or
-- to experiment with CoCalc Star without renting a cloud VM.
+- to experiment with CoCalc Star without renting a cloud server.
 
-This setup runs CoCalc inside an Ubuntu virtual machine on your computer. You
-open CoCalc from your normal browser on the host computer.
+## Use Docker Desktop
 
-## Recommended setup: Lima
+CoCalc Star runs in one Docker container. Install Docker Desktop (macOS or
+Windows) or Docker Engine (Linux), then follow the quick start in the
+[CoCalc Star guide](/docs/self-hosting/cocalc-star). You open CoCalc in your
+normal browser at http://localhost:8170.
 
-For a personal computer, the recommended CoCalc Star local VM path is Lima. Lima
-runs headless Linux VMs, is scriptable, supports localhost forwarding, and does
-not push you toward a graphical desktop VM.
+Everything Star stores is in one Docker volume, so stopping the container frees
+its memory and CPU, and removing the container and volume removes it
+completely.
 
-Install Lima first. On macOS:
-
-~~~sh
-brew install lima
-~~~
-
-On Ubuntu Linux, install QEMU support first:
-
-~~~sh
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends ovmf qemu-system-x86 qemu-utils
-~~~
-
-Then install Lima using Homebrew on Linux if you already use it, or download the
-current Lima binary archive from https://github.com/lima-vm/lima/releases.
-
-Then install CoCalc Star:
-
-~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \
-  | COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
-~~~
-
-This creates or starts a Lima VM named cocalc-star, installs Ubuntu 24.04,
-forwards CoCalc to http://localhost:8170/, installs CoCalc Star inside the
-VM, and prints the local setup URL. Project sessions, terminals, chat, and
-Jupyter use the same localhost origin through CoCalc's built-in project proxy.
-The optional COCALC_STAR_LIMA_SHARED_DIR value is a host folder that becomes
-/scratch inside projects. For example, a host file
-$HOME/cocalc-star-scratch/data.csv is visible in projects as
-/scratch/data.csv. The installer creates the host folder if it does not
-exist. Edit the path before running the command, or remove the environment
-variable if you do not want host file sharing.
-
-After install, open http://localhost:8170/, create the first account, create
-a project, and test a terminal plus a Jupyter notebook.
-
-The general local setup is:
-
-1. Install a VM app that can run Ubuntu 24.04.
-2. Create an Ubuntu VM with enough disk and memory for your projects.
-3. Forward a local port on your computer to port 80 inside the VM.
-4. Open CoCalc at a localhost URL such as http://localhost:8170/.
-
-Using localhost is better than opening the VM's private IP address directly.
-Browsers treat localhost as a trusted local address, and it is easier to
-bookmark and remember.
-
-## Which VM app should I use?
-
-Use the VM app that fits your computer and comfort level. If you do not already
-have a preference, start with Lima.
-
-- **Recommended headless option**: Lima. Good for CoCalc Star because it is a
-  scriptable Linux VM runtime with localhost forwarding.
-- **Mac, easiest paid desktop option**: Parallels Desktop. Good general VM support and a
-  polished interface.
-- **Mac, good free option**: UTM. Works well on Apple Silicon and Intel Macs,
-  but networking setup can be a little more manual.
-- **Windows**: VMware Workstation, VirtualBox, or Hyper-V are reasonable choices.
-  WSL2 is useful for many Linux tasks, but CoCalc Star should run in a real
-  Ubuntu VM.
-- **Linux**: KVM/QEMU through virt-manager, libvirt, or GNOME Boxes is usually
-  the natural choice.
-- **Ubuntu-focused convenience**: Multipass is easy for starting Ubuntu VMs, but
-  it is not the best first choice if you need simple port forwarding.
-
-If Lima does not fit your platform or workflow, use Parallels on Mac, VirtualBox
-on Windows, and KVM/QEMU on Linux as practical manual alternatives. On Mac,
-choose UTM if you want a free desktop VM app.
-
-## Customizing the Lima VM
-
-The Lima installer accepts environment variables passed to bash at the end
-of the install pipeline.
-
-For example, to use 16 GiB RAM, 8 CPUs, and a 200 GiB disk:
-
-~~~sh
-curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/download/cocalc-star-stable/install-cocalc-star-local-lima.sh \
-  | COCALC_STAR_LIMA_MEMORY=16GiB COCALC_STAR_LIMA_CPUS=8 COCALC_STAR_LIMA_DISK=200GiB COCALC_STAR_LIMA_SHARED_DIR="$HOME/cocalc-star-scratch" bash
-~~~
-
-The default memory is host-aware. On a typical laptop it uses a reasonable
-fraction of system RAM instead of Lima's small default.
-
-The shared directory setting is initial-install only. Lima reads this setting
-when the cocalc-star VM is created; rerunning the installer does not change an
-existing VM's shared directory.
-
-The commands below delete the VM and all data stored only inside it, including
-CoCalc project files, the database, and local backups. Before replacing the VM,
-back up important data outside it and verify that backup. Keeping the host
-shared folder preserves only the files stored in that folder, not the VM's
-project HOME directories.
-
-After protecting the guest data, use these commands to remove the local VM
-before reinstalling with the new shared-directory setting:
-
-~~~sh
-limactl stop cocalc-star
-limactl delete cocalc-star
-~~~
-
-Do not delete $HOME/cocalc-star-scratch unless you also want to remove the host
-files that were visible as /scratch.
-
-## Networking choice
-
-Pick one of these access patterns:
-
-1. **Best**: http://localhost:8170/
-
-   Configure your VM app to forward host port 8170 to guest port 80. This gives
-   you a local browser URL and avoids public internet exposure.
-
-2. **Simple fallback**: http://vm-private-ip/
-
-   Many VM apps show a private VM IP address, such as 192.168.x.y or 10.x.y.z.
-   You can often open that directly from your host browser. This
-   is simple, but it is less polished than a localhost URL.
-
-3. **Avoid for local-only VMs**: public HTTPS with https://sslip.io
-
-   The public CoCalc Star installer can set up automatic HTTPS for a public VM.
-   That is the right path for cloud servers, not for a VM that only exists on
-   your laptop.
-
-## What to expect
-
-A local VM install is private to your machine unless you deliberately expose it
-to your network. You can use it without depending on CoCalc's hosted service.
-If you are offline, local project tools keep working, but internet-dependent
-features still need internet access.
-
-The default project image includes Python, pip, uv, Jupyter, LaTeX, and common
-scientific Python packages. You can use pip install or uv pip install
-from a project terminal for additional packages such as PyTorch.
-
-You are responsible for the VM's disk, backups, operating-system updates, and
-any data you store there. If the VM is important, back it up like any other
-important local computer.
-
-## Practical notes
-
-- Give the VM enough disk. Start with at least 80 GB if you will use notebooks,
-  LaTeX, packages, or large datasets.
-- Give the VM enough memory. 8 GB is a small test VM; 16 GB or more is more
-  comfortable.
-- Use Ubuntu 24.04 unless the Star release notes say a newer Ubuntu version is
-  supported.
-- Prefer a localhost port forward over SSH port forwarding. SSH forwarding works
-  for experts, but it is not the cleanest everyday setup.
-- Do not expose the VM to your LAN or the public internet unless you understand
-  the security implications.
+Earlier versions of this page described running Star inside a Lima virtual
+machine. Docker replaces that path: it is simpler to install, to upgrade, and
+to undo.
 `;
 
 export const INSTALL_CHROMIUM_BODY = `

@@ -1,5 +1,5 @@
 [Unit]
-Description=CoCalc Star Docker preview first-boot installer
+Description=CoCalc Star Docker first-boot and upgrade initializer
 After=local-fs.target systemd-journald.service
 Wants=local-fs.target
 
@@ -8,6 +8,8 @@ Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/cocalc/star-docker.env
 PassEnvironment=COCALC_STAR_ACCESS_URL
+PassEnvironment=COCALC_STAR_ACME_EMAIL
+PassEnvironment=COCALC_STAR_DOMAIN
 PassEnvironment=COCALC_STAR_BTRFS_IMAGE
 PassEnvironment=COCALC_STAR_BTRFS_SIZE
 PassEnvironment=COCALC_STAR_BUILD
