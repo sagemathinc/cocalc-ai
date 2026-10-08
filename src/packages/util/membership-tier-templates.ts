@@ -5,7 +5,7 @@
 
 // Built-in starting templates for the admin membership-tier editor. These
 // mirror /home/user/scratch/cocalc-membership-tiers-2026-06-20-183541.json.
-export const TIER_TEMPLATES = {
+const BASE_TIER_TEMPLATES = {
   admin: {
     id: "admin",
     label: "Admin",
@@ -827,6 +827,30 @@ export const TIER_TEMPLATES = {
   },
 } as const;
 
+// Default educational offer: Instructor-style limits for educators who buy for
+// themselves. Prices here are only starting defaults; admins edit them per tier
+// and enable "Available for instructor purchase" when they want to sell it.
+const EDUCATOR_TEMPLATE = {
+  ...BASE_TIER_TEMPLATES.instructor,
+  id: "educator",
+  label: "Educator",
+  store_description:
+    "Educational offer for instructors with a verified academic email address.",
+  site_license_pool_description:
+    "Teaching-focused CoCalc access for educators.",
+  priority: 24,
+  price_monthly: 25,
+  price_yearly: 225,
+  instructor_purchase_visible: false,
+  instructor_term_price: 60,
+  instructor_term_days: 122,
+} as const;
+
+export const TIER_TEMPLATES = {
+  ...BASE_TIER_TEMPLATES,
+  educator: EDUCATOR_TEMPLATE,
+} as const;
+
 export function getTierTemplate(id: keyof typeof TIER_TEMPLATES) {
   return TIER_TEMPLATES[id];
 }
@@ -844,6 +868,9 @@ type TierTemplateFields = {
   course_price?: number | null;
   course_duration_days?: number | null;
   course_grace_days?: number | null;
+  instructor_purchase_visible?: boolean;
+  instructor_term_price?: number | string | null;
+  instructor_term_days?: number | null;
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;

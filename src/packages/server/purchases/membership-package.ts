@@ -20,11 +20,14 @@ import { isValidBillingAccount } from "./billing-account";
 import { isBillingAuthorityEnabled } from "./billing-authority/config";
 import {
   addMembershipPackageSeats,
+  assignMembershipPackageSeat,
   createMembershipPackage,
   getMembershipPackage,
+  isEducatorTermProduct,
   resolveMembershipPackageQuote,
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
+import { assertEducatorEligible } from "@cocalc/server/membership/educator/eligibility";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import { recordMembershipAllocationFact } from "@cocalc/server/membership/allocation-analytics";
 import { lockAccountSpending } from "./lock-account-spending";
@@ -85,6 +88,9 @@ export async function createMembershipPackagePurchase(
   }
 
   const quote = await resolveMembershipPackageQuote(product, client);
+  if (isEducatorTermProduct(quote)) {
+    await assertEducatorEligible({ account_id, client });
+  }
   let package_id = existingPackageId;
   const expandingExistingPackage = !!package_id;
 
@@ -144,6 +150,22 @@ export async function createMembershipPackagePurchase(
       {
         package_id,
         purchase_id,
+      },
+      client,
+    );
+  }
+
+  // An educator buys a term for themselves. Give them the seat in the same
+  // transaction as the charge, so a failure can never leave a paid package
+  // without its seat (and a retry can never charge twice).
+  if (isEducatorTermProduct(quote) && !expandingExistingPackage) {
+    await assignMembershipPackageSeat(
+      {
+        package_id,
+        account_id,
+        assigned_by_account_id: account_id,
+        metadata: { educator_term: true },
+        educator_term_initial_assignment: true,
       },
       client,
     );

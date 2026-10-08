@@ -23,6 +23,8 @@ export interface MembershipTierPricing {
   course_duration_days?: number;
   course_grace_days?: number;
   course_allowed_domains?: readonly string[] | null;
+  instructor_term_price?: number | string | null;
+  instructor_term_days?: number | null;
   features?: Record<string, unknown>;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
@@ -38,6 +40,7 @@ export interface MembershipTierRecord extends MembershipTierPricing {
   site_license_pool_description?: string;
   team_visible?: boolean;
   course_store_visible?: boolean;
+  instructor_purchase_visible?: boolean;
   priority?: number;
   disabled?: boolean;
 }
@@ -104,7 +107,8 @@ export async function getMembershipTiers({
             site_license_pool_description,
             team_visible, course_store_visible, course_allowed_domains, priority,
             price_monthly, price_yearly, trial_days, course_price, course_duration_days,
-            course_grace_days,
+            course_grace_days, instructor_purchase_visible,
+            instructor_term_price, instructor_term_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers`,
   );
@@ -253,7 +257,8 @@ export async function getMembershipTierById({
             site_license_pool_description,
             team_visible, course_store_visible, course_allowed_domains, priority,
             price_monthly, price_yearly, trial_days, course_price, course_duration_days,
-            course_grace_days,
+            course_grace_days, instructor_purchase_visible,
+            instructor_term_price, instructor_term_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers
      WHERE id=$1`,
@@ -537,7 +542,14 @@ export async function computeMembershipChange({
     throw Error(`membership tier "${targetClass}" is not available`);
   }
   if (storeVisibleOnly && !targetTier.store_visible) {
-    throw Error(`membership tier "${targetClass}" is not available`);
+    // Educational offers: tiers marked "available for instructor purchase"
+    // can be bought by eligible educators even though they are not listed in
+    // the public store.
+    if (!targetTier.instructor_purchase_visible) {
+      throw Error(`membership tier "${targetClass}" is not available`);
+    }
+    const { assertEducatorEligible } = await import("./educator/eligibility");
+    await assertEducatorEligible({ account_id, client });
   }
 
   const price = getMembershipPrice(targetTier, interval);

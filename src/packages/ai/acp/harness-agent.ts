@@ -17,7 +17,7 @@ import {
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
-import { harnessPrompt } from "./harness-context";
+import { harnessHasSessionGuidance, harnessPrompt } from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import { normalizeCodexAsyncQuestions } from "./codex-attention";
@@ -249,7 +249,11 @@ export class HarnessAgent implements AcpAgent {
         await client.beginConnectorTurn(request.chat);
       }
       const result = await client.prompt(
-        harnessPrompt(request),
+        harnessPrompt(request, {
+          inlineSessionGuidance: !harnessHasSessionGuidance(
+            this.binding.profile,
+          ),
+        }),
         async (event) => {
           if (event.type === "message") {
             if (!event.text) return;

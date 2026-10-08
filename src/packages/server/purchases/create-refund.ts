@@ -483,6 +483,8 @@ async function refundMembershipPackage({
             email_address: assignment.account_id
               ? undefined
               : (assignment.email_address ?? undefined),
+            // Only admins can create refunds (checked above).
+            trusted_admin: true,
           },
           client,
         );

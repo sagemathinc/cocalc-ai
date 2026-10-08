@@ -189,7 +189,11 @@ test("recovery requires an exact trusted proof and retries errors without secret
     });
     return { stdin };
   });
-  for (let i = 0; i < 6; i++) {
+  // The first check runs soon after the job, then every 30 seconds.
+  await jest.advanceTimersByTimeAsync(5_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  expect(confirmed).not.toHaveBeenCalled();
+  for (let i = 0; i < 5; i++) {
     await jest.advanceTimersByTimeAsync(30_000);
     expect(confirmed).not.toHaveBeenCalled();
   }

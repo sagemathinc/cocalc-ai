@@ -7311,5 +7311,88 @@ class StarInstallScriptTest(unittest.TestCase):
 
 
 
+class ManagedProjectJobOutputRelayTest(unittest.TestCase):
+    def helper(self):
+        namespace = {"__name__": "managed_project_job_helper_test"}
+        exec(bootstrap.MANAGED_PROJECT_JOB_HELPER, namespace)
+        return namespace
+
+    def small_pipe(self):
+        import fcntl
+        read_fd, write_fd = os.pipe()
+        fcntl.fcntl(write_fd, 1031, 4096)  # F_SETPIPE_SZ
+        os.set_blocking(write_fd, False)
+        self.addCleanup(lambda: [os.close(fd) for fd in (read_fd, write_fd)])
+        return read_fd, write_fd
+
+    def test_fast_output_to_a_slow_runtime_is_delivered_intact(self) -> None:
+        import base64
+        import threading
+        ns = self.helper()
+        read_fd, write_fd = self.small_pipe()
+        relay = ns["OutputRelay"](write_fd)
+        received = bytearray()
+        done = threading.Event()
+
+        def slow_runtime():
+            while True:
+                chunk = os.read(read_fd, 1024)
+                if not chunk:
+                    break
+                received.extend(chunk)
+                if b'"exit"' in received[-64:]:
+                    break
+                time.sleep(0.0005)
+            done.set()
+
+        reader = threading.Thread(target=slow_runtime, daemon=True)
+        reader.start()
+        # 2 MB of one-line output, as from grep matching minified bundles:
+        # far more than the old 256 KB transport limit.
+        line = (b"x" * (2 * 1024 * 1024 - 1)) + b"\n"
+        peak = 0
+        until = time.monotonic() + 60
+        for i in range(0, len(line), 4096):
+            relay.wait_below_high_water(until)
+            relay.emit({"type": "output", "stream": "stdout",
+                        "data": base64.b64encode(line[i:i + 4096]).decode("ascii")})
+            peak = max(peak, len(relay.pending))
+            relay.flush()
+        relay.emit({"type": "exit", "code": 0, "cleanup": True})
+        while relay.pending:
+            relay.wait_below_high_water(until)
+            relay.flush()
+            time.sleep(0.001)
+        self.assertTrue(done.wait(30))
+        frames = [json.loads(frame) for frame in received.decode().splitlines()]
+        self.assertEqual(frames[-1], {"type": "exit", "code": 0, "cleanup": True})
+        output = b"".join(base64.b64decode(frame["data"]) for frame in frames[:-1])
+        self.assertEqual(output, line)
+        # Queued frames stay bounded by the high-water mark plus one frame.
+        self.assertLess(peak, ns["OUTPUT_HIGH_WATER"] + 8 * 1024)
+
+    def test_a_runtime_that_never_reads_fails_after_the_deadline(self) -> None:
+        ns = self.helper()
+        _, write_fd = self.small_pipe()
+        relay = ns["OutputRelay"](write_fd)
+        while not relay.full:
+            relay.emit({"type": "output", "stream": "stdout", "data": "A" * 4096})
+            relay.flush()
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "job output transport stalled"):
+            relay.wait_below_high_water(time.monotonic() + 0.3)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_supervisor_stops_reading_command_output_while_the_runtime_lags(self) -> None:
+        source = bootstrap.MANAGED_PROJECT_JOB_HELPER
+        loop = source[source.index("while not stopped:"):source.index("if stopped:\n            result = 130")]
+        paused = loop[loop.index("if relay.full:"):loop.index("else:")]
+        # While paused only the lease (fd 0) is read; output pipes are not.
+        self.assertIn("select.select([0], [relay.fd], [], 0.05)", paused)
+        self.assertNotIn("sel.select", paused)
+        self.assertNotIn("emit_output", paused)
+        self.assertNotIn("256 * 1024", source)
+
+
 if __name__ == "__main__":
     unittest.main()

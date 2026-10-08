@@ -282,6 +282,28 @@ export interface MembershipDetails {
   admin_override?: MembershipAdminOverrideSummary;
 }
 
+export interface EducatorOfferTier {
+  membership_class: MembershipClass;
+  label: string;
+  store_description?: string | null;
+  store_highlights?: readonly string[];
+  price_monthly?: number | null;
+  price_yearly?: number | null;
+  /** Null when the tier offers no one-time term purchase. */
+  term_price?: number | null;
+  term_days?: number | null;
+}
+
+export interface EducatorOffers {
+  eligibility: {
+    eligible: boolean;
+    reason: string;
+    email_address?: string;
+    message?: string;
+  };
+  tiers: EducatorOfferTier[];
+}
+
 export interface MembershipTrialOffer {
   membership_class: MembershipClass;
   label: string;
@@ -305,6 +327,9 @@ export interface AdminMembershipTierPayload {
   course_price?: number | null;
   course_duration_days?: number | null;
   course_grace_days?: number | null;
+  instructor_purchase_visible?: boolean | null;
+  instructor_term_price?: number | null;
+  instructor_term_days?: number | null;
   project_defaults?: Record<string, unknown> | null;
   ai_limits?: Record<string, unknown> | null;
   features?: Record<string, unknown> | null;
@@ -1589,6 +1614,10 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
   getMembershipTrialOffers: (opts?: {
     account_id?: string;
   }) => Promise<MembershipTrialOffer[]>;
+  /** Tiers marked "available for instructor purchase" and whether this account qualifies. */
+  getEducatorOffers: (opts?: {
+    account_id?: string;
+  }) => Promise<EducatorOffers>;
   getMembershipDetails: (opts?: {
     account_id?: string;
     user_account_id?: string;
@@ -2014,6 +2043,7 @@ export const purchases = {
   setAutoBalance: authFirstRequireAccount,
   getMembership: authFirstRequireAccount,
   getMembershipTrialOffers: authFirstRequireAccount,
+  getEducatorOffers: authFirstRequireAccount,
   getMembershipDetails: authFirstRequireAccount,
   getMembershipTierAdminOverview: authFirstRequireAccount,
   getMembershipAnalyticsOverview: authFirstRequireAccount,

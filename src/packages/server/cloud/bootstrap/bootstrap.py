@@ -4570,6 +4570,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import select
 import selectors
 import signal
 import sys
@@ -5000,6 +5001,39 @@ def lease_connected():
     finally:
         probe.close()
 
+# Frames queued for the runtime before the helper stops reading the command's
+# output. The command then blocks on its own pipe writes until the runtime
+# catches up (backpressure), instead of fast output failing the whole job.
+OUTPUT_HIGH_WATER = 64 * 1024
+# After the command's processes are gone, how long remaining output and the
+# exit frame may wait for a slow runtime before cleanup is reported unconfirmed.
+OUTPUT_FINAL_DRAIN_SECONDS = 30
+
+class OutputRelay:
+    """Newline-delimited JSON frames to the runtime over a non-blocking fd."""
+    def __init__(self, fd=1):
+        self.fd = fd
+        self.pending = bytearray()
+    def emit(self, value):
+        self.pending.extend(json.dumps(value, separators=(",", ":")).encode() + b"\n")
+    @property
+    def full(self):
+        return len(self.pending) >= OUTPUT_HIGH_WATER
+    def flush(self):
+        if self.pending:
+            try:
+                del self.pending[:os.write(self.fd, self.pending)]
+            except BlockingIOError:
+                pass
+    def wait_below_high_water(self, until):
+        """Block, at most until `until`, while too much output is queued."""
+        while self.full:
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("job output transport stalled")
+            select.select([], [self.fd], [], min(remaining, 0.5))
+            self.flush()
+
 # Rootless Podman moves itself into a scope of the runtime user's systemd
 # session when it does not own its cgroup, i.e. out of the job's root-owned
 # scope. Without a reachable user bus it stays; with cgroupfs it needs none.
@@ -5041,23 +5075,15 @@ def supervise(project, job, owner, timeout_ms):
     completed = False
     pipes = []
     sel = selectors.DefaultSelector()
-    pending = bytearray()
+    relay = OutputRelay(1)
+    emit, flush = relay.emit, relay.flush
     background_warning = BackgroundWarningTracker()
     stopped = False
     result = 1
+    final_until = None
     def stop(*_):
         nonlocal stopped
         stopped = True
-    def emit(value):
-        pending.extend(json.dumps(value, separators=(",", ":")).encode() + b"\n")
-        if len(pending) > 256 * 1024:
-            raise RuntimeError("job output transport stalled")
-    def flush():
-        if pending:
-            try:
-                del pending[:os.write(1, pending)]
-            except BlockingIOError:
-                pass
     def emit_output(stream, chunk):
         background_warning.observe(stream, chunk)
         emit({"type": "output", "stream": stream,
@@ -5109,16 +5135,26 @@ def supervise(project, job, owner, timeout_ms):
                 except (BrokenPipeError, BlockingIOError):
                     pass
                 last_beat = now
-            for key, _ in sel.select(0.05):
-                chunk = os.read(key.fd, 4096)
-                if key.data == "lease":
-                    if not chunk:
+            if relay.full:
+                # Backpressure: leave the command's pipes unread, so it blocks
+                # on its writes, until the runtime reads the queued frames.
+                # Lease, heartbeat, deadline and exit checks continue.
+                readable, _, _ = select.select([0], [relay.fd], [], 0.05)
+                if readable:
+                    if not os.read(0, 4096):
                         stopped = True
                     last_lease = time.monotonic()
-                elif chunk:
-                    emit_output(key.data, chunk)
-                else:
-                    sel.unregister(key.fd)
+            else:
+                for key, _ in sel.select(0.05):
+                    chunk = os.read(key.fd, 4096)
+                    if key.data == "lease":
+                        if not chunk:
+                            stopped = True
+                        last_lease = time.monotonic()
+                    elif chunk:
+                        emit_output(key.data, chunk)
+                    else:
+                        sel.unregister(key.fd)
             flush()
             pid, status = os.waitpid(child, os.WNOHANG)
             if pid:
@@ -5131,6 +5167,7 @@ def supervise(project, job, owner, timeout_ms):
     finally:
         # Even success kills detached leftovers. Do not report success until
         # populated=0 AND rmdir confirm that there is no remaining authority.
+        final_until = time.monotonic() + OUTPUT_FINAL_DRAIN_SECONDS
         try:
             with lifecycle_lock():
                 leftovers = live_scope_processes(scope) if completed and not stopped else 0
@@ -5149,6 +5186,7 @@ def supervise(project, job, owner, timeout_ms):
                     chunk = os.read(fd, 4096)
                     if not chunk:
                         break
+                    relay.wait_below_high_water(final_until)
                     emit_output("stdout" if pair is pipes[1] else "stderr", chunk)
                     flush()
             if leftovers and not background_warning.seen:
@@ -5162,8 +5200,8 @@ def supervise(project, job, owner, timeout_ms):
             raise RuntimeError("job containment cleanup not confirmed") from None
         finally:
             sel.close()
-            until = time.monotonic() + 1
-            while pending and time.monotonic() < until:
+            until = max(time.monotonic() + 1, final_until or 0)
+            while relay.pending and time.monotonic() < until:
                 try:
                     flush()
                 except BrokenPipeError:

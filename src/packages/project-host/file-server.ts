@@ -4650,6 +4650,43 @@ async function updateBackupsUnlocked({
       try {
         await refreshed.rustic.update(counts, {
           limit,
+          // Same privileged, size-limited backup as manual backups, so a huge
+          // sparse file cannot occupy every scheduled backup of this host.
+          runner: async ({ src, host, timeout, tags, parent, progress }) => {
+            try {
+              const backup = await projectRusticBackup({
+                src,
+                repoProfile: refreshed.fs.rusticRepo,
+                host,
+                timeoutMs: timeout,
+                tags,
+                parent,
+                maxFileBytes: await projectBackupMaxFileBytes(refreshed),
+                progress,
+              });
+              if (backup.oversized_files) {
+                logger.warn(
+                  "scheduled backup skipped files larger than the limit",
+                  {
+                    project_id,
+                    backup_id: backup.id,
+                    max_file_bytes: backup.oversized_files.max_file_bytes,
+                    count: backup.oversized_files.count,
+                  },
+                );
+              }
+              return backup;
+            } catch (err) {
+              if (!(err instanceof ProjectRusticUnsupportedError)) {
+                throw err;
+              }
+              logger.warn(
+                "project rustic wrapper unavailable; falling back to unprivileged scheduled backup",
+                { project_id, err: `${err}` },
+              );
+              return null;
+            }
+          },
           onStage: (stage: string, durationMs: number) => {
             stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
           },

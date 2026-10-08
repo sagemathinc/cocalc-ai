@@ -8,10 +8,12 @@ import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
+import { readBlobFromDatabase } from "@cocalc/server/blobs/read";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 import {
   buildTriageGroups,
+  extractSupportBlobDocuments,
   extractSupportImages,
   getImage,
   getAttachment,
@@ -52,6 +54,30 @@ jest.mock("@cocalc/server/support/zendesk-client", () => ({
   default: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/blobs/read", () => ({
+  readBlobFromDatabase: jest.fn(),
+}));
+
+const mockBayId = jest.fn(() => "bay-0");
+const mockSeedGetBlob = jest.fn();
+jest.mock("@cocalc/server/bay-config", () => ({
+  ...jest.requireActual("@cocalc/server/bay-config"),
+  getConfiguredBayId: () => mockBayId(),
+}));
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  getConfiguredClusterSeedBayId: () => "bay-0",
+}));
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => ({}),
+}));
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  ...jest.requireActual("@cocalc/conat/inter-bay/api"),
+  createInterBayAccountLocalClient: ({ dest_bay }: { dest_bay: string }) => ({
+    getBlob: (opts: { uuid: string }) => mockSeedGetBlob(dest_bay, opts),
+  }),
+}));
+
 jest.mock("./dangerous-session-auth", () => ({
   requireDangerousSessionAuth: jest.fn(),
 }));
@@ -61,6 +87,7 @@ const mockGetPool = jest.mocked(getPool);
 const mockSiteURL = jest.mocked(siteURL);
 const mockIsAdmin = jest.mocked(isAdmin);
 const mockGetZendeskClient = jest.mocked(getZendeskClient);
+const mockReadBlob = jest.mocked(readBlobFromDatabase);
 const mockRequireDangerousSessionAuth = jest.mocked(
   requireDangerousSessionAuth,
 );
@@ -124,6 +151,7 @@ const poolQuery = jest.fn(async (sql: string, params: any[] = []) => {
 const PROJECT_ID = "881e5f4d-fca6-4739-9848-45bfaa8d49d3";
 const IMAGE_UUID = "835c0265-a303-4322-af0c-9cbfe2da05e8";
 const INLINE_IMAGE_UUID = "1c6dca0d-5155-4dd1-8bd6-38aa8927a33b";
+const DOC_UUID = "5f0d3a52-7d8e-4c1b-9a6e-2b4c8d9e0f11";
 
 function ticket(overrides: Record<string, unknown> = {}) {
   const now = new Date();
@@ -193,6 +221,48 @@ describe("admin support API", () => {
         url: `https://cocalc.ai/blobs/paste%20one.png?uuid=${IMAGE_UUID}`,
       },
     ]);
+  });
+
+  it("extracts relative support-form links under the site's base path", () => {
+    const docs = extractSupportBlobDocuments(
+      [
+        `/cocalc/blobs/report.pdf?uuid=${DOC_UUID}`,
+        // Without the base path this is not one of the site's blob links.
+        `/blobs/other.pdf?uuid=${IMAGE_UUID}`,
+      ].join("\n"),
+      "https://example.org/cocalc",
+    );
+    expect(docs.map((doc) => doc.blob_uuid)).toEqual([DOC_UUID]);
+  });
+
+  it("extracts support-form PDF/DOCX blobs without URLs or customer filenames", () => {
+    const docs = extractSupportBlobDocuments(
+      [
+        `- Image: https://cocalc.ai/blobs/My%20private%20chat.pdf?uuid=${DOC_UUID}`,
+        `https://cocalc.ai/blobs/form.docx?uuid=${IMAGE_UUID}`,
+        `https://cocalc.ai/blobs/again.pdf?uuid=${DOC_UUID}`,
+        "https://evil.example/blobs/x.pdf?uuid=11111111-1111-4111-8111-111111111111",
+        "https://cocalc.ai/blobs/macro.docm?uuid=22222222-2222-4222-8222-222222222222",
+        `https://cocalc.ai/blobs/image.png?uuid=${INLINE_IMAGE_UUID}`,
+      ].join("\n"),
+      "https://cocalc.ai",
+    );
+    expect(docs).toEqual([
+      {
+        source: "cocalc_blob",
+        blob_uuid: DOC_UUID,
+        filename: `cocalc-blob-${DOC_UUID}.pdf`,
+        content_type: "application/pdf",
+      },
+      {
+        source: "cocalc_blob",
+        blob_uuid: IMAGE_UUID,
+        filename: `cocalc-blob-${IMAGE_UUID}.docx`,
+        content_type:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
+    ]);
+    expect(JSON.stringify(docs)).not.toContain("private chat");
   });
 
   it("returns bounded redacted recent tickets and records an audit", async () => {
@@ -672,6 +742,134 @@ describe("admin support API", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("support-form blob document downloads", () => {
+    const pdf = Buffer.from("%PDF-1.7\nexample\n%%EOF\n");
+    const opts = {
+      account_id: "admin-account",
+      session_hash: "fresh-session",
+      ticket_id: 123,
+      blob_uuid: DOC_UUID,
+      reason: "read the customer's attached transcript",
+    };
+    let client: any;
+
+    beforeEach(() => {
+      client = {
+        tickets: {
+          show: jest.fn(async () => ({
+            result: ticket({
+              description: `- Image: https://cocalc.ai/blobs/chat.pdf?uuid=${DOC_UUID}`,
+            }),
+          })),
+          get: jest.fn(async () => ({
+            result: [
+              {
+                id: 7,
+                author_id: 44,
+                public: true,
+                plain_body: `- Image: https://cocalc.ai/blobs/chat.pdf?uuid=${DOC_UUID}`,
+                attachments: [],
+              },
+            ],
+          })),
+        },
+        users: { show: jest.fn(async () => ({ result: {} })) },
+      };
+      mockGetZendeskClient.mockResolvedValue(client);
+      mockReadBlob.mockResolvedValue(pdf);
+    });
+
+    it("reads the blob from the cluster seed when served by another bay", async () => {
+      mockBayId.mockReturnValue("bay-1");
+      mockSeedGetBlob.mockResolvedValue({ data: new Uint8Array(pdf) });
+      try {
+        const result = await getAttachment(opts);
+        expect(mockSeedGetBlob).toHaveBeenCalledWith("bay-0", {
+          uuid: DOC_UUID,
+        });
+        expect(mockReadBlob).not.toHaveBeenCalled();
+        expect(result.data_base64).toBe(pdf.toString("base64"));
+      } finally {
+        mockBayId.mockReturnValue("bay-0");
+      }
+    });
+
+    it("lists the document in show output with no blob URL", async () => {
+      const result = await show({ ...opts, ticket_id: 123 });
+      expect(result.comments[0].documents).toEqual([
+        {
+          source: "cocalc_blob",
+          blob_uuid: DOC_UUID,
+          filename: `cocalc-blob-${DOC_UUID}.pdf`,
+          content_type: "application/pdf",
+        },
+      ]);
+      expect(result.ticket.documents).toHaveLength(1);
+      expect(result.comments[0].images).toEqual([]);
+    });
+
+    it("downloads a linked PDF blob with fresh auth, integrity metadata and an audit", async () => {
+      const result = await getAttachment(opts);
+      expect(mockRequireDangerousSessionAuth).toHaveBeenCalled();
+      expect(mockReadBlob).toHaveBeenCalledWith(DOC_UUID);
+      expect(result).toMatchObject({
+        ticket_id: 123,
+        comment_id: 7,
+        blob_uuid: DOC_UUID,
+        filename: `ticket-123-blob-${DOC_UUID}.pdf`,
+        content_type: "application/pdf",
+        size: pdf.length,
+        data_base64: pdf.toString("base64"),
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      });
+      expect(result.attachment_id).toBeUndefined();
+      expect(mockCentralLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: expect.objectContaining({
+            mode: "get_attachment",
+            blob_uuid: DOC_UUID,
+            result_bytes: pdf.length,
+          }),
+        }),
+      );
+    });
+
+    it("refuses blobs that are not linked from the ticket", async () => {
+      await expect(
+        getAttachment({
+          ...opts,
+          blob_uuid: "11111111-1111-4111-8111-111111111111",
+        }),
+      ).rejects.toThrow("not a PDF or DOCX linked from ticket 123");
+      expect(mockReadBlob).not.toHaveBeenCalled();
+    });
+
+    it("requires fresh admin auth before reading Zendesk or blobs", async () => {
+      mockRequireDangerousSessionAuth.mockRejectedValueOnce(
+        new Error("fresh auth is required"),
+      );
+      await expect(getAttachment(opts)).rejects.toThrow("fresh auth");
+      expect(client.tickets.get).not.toHaveBeenCalled();
+      expect(mockReadBlob).not.toHaveBeenCalled();
+    });
+
+    it("rejects disguised content, oversize blobs and ambiguous requests", async () => {
+      mockReadBlob.mockResolvedValueOnce(Buffer.from("<html>nope</html>"));
+      await expect(getAttachment(opts)).rejects.toThrow(
+        "content does not match",
+      );
+      await expect(getAttachment({ ...opts, max_bytes: 8 })).rejects.toThrow(
+        "maximum",
+      );
+      await expect(
+        getAttachment({ ...opts, attachment_id: 987 }),
+      ).rejects.toThrow("not both");
+      await expect(
+        getAttachment({ ...opts, blob_uuid: "not-a-uuid" }),
+      ).rejects.toThrow("must be a UUID");
     });
   });
 

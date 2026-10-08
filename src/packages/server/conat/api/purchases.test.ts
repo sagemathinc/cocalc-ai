@@ -2715,6 +2715,7 @@ describe("purchases membership packages", () => {
       package_id: "package-1",
       account_id: "student-1",
       email_address: undefined,
+      trusted_admin: false,
     });
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "owner-1",
