@@ -99,7 +99,12 @@ export class SharedBrowserServer {
   private appServer!: http.Server;
   private cdpServer!: http.Server;
   // Each viewer (a chat card, a frame of a .browser file) shows its own tab.
-  private views = new Map<WebSocket, { tab: string | null; key: string }>();
+  // key: the place showing it ("frame:<id>" for an editor frame, "card:<id>"),
+  // client: the page load (one person's browser tab) it is in.
+  private views = new Map<
+    WebSocket,
+    { tab: string | null; key: string; client: string; hidden?: boolean }
+  >();
   // The tab each view key (e.g. an editor frame) last showed, so a frame
   // that reloads comes back to its own tab.
   private viewTabs = new Map<string, string>();
@@ -176,9 +181,13 @@ export class SharedBrowserServer {
         socket.destroy();
         return;
       }
-      const key = new URL(req.url ?? "/", "http://x").searchParams.get("view");
+      const query = new URL(req.url ?? "/", "http://x").searchParams;
       viewerWss.handleUpgrade(req, socket, head, (ws) =>
-        this.addViewer(ws, `${key ?? ""}`.slice(0, 200)),
+        this.addViewer(
+          ws,
+          `${query.get("view") ?? ""}`.slice(0, 200),
+          `${query.get("client") ?? ""}`.slice(0, 200),
+        ),
       );
     });
     const port = await listen(
@@ -375,6 +384,14 @@ export class SharedBrowserServer {
       .map(([ws]) => ws);
   }
 
+  // Viewers that can see their tab right now (hidden ones keep their last
+  // frame and get no stream).
+  private watchersOf(targetId: string): WebSocket[] {
+    return [...this.views]
+      .filter(([, view]) => view.tab === targetId && !view.hidden)
+      .map(([ws]) => ws);
+  }
+
   /**
    * The tab agents use and new viewers show.  Viewers that were showing the
    * previous one follow (as when an agent switches tabs); others keep theirs.
@@ -446,7 +463,7 @@ export class SharedBrowserServer {
   private async updateCasting(targetId: string): Promise<void> {
     const page = this.pages.get(targetId);
     if (!page?.session) return;
-    const want = this.viewersOf(targetId).length > 0;
+    const want = this.watchersOf(targetId).length > 0;
     if (want === page.casting) return;
     page.casting = want;
     if (want) {
@@ -538,7 +555,7 @@ export class SharedBrowserServer {
         sessionId,
       );
       const frame = Buffer.from(params.data, "base64");
-      for (const ws of this.viewersOf(page.targetId)) {
+      for (const ws of this.watchersOf(page.targetId)) {
         // Drop frames for slow viewers instead of queueing them.
         if (ws.bufferedAmount < 2 * 1024 * 1024)
           ws.send(frame, { binary: true });
@@ -582,10 +599,25 @@ export class SharedBrowserServer {
 
   // --- viewers -------------------------------------------------------------
 
-  private addViewer(ws: WebSocket, key = ""): void {
+  private addViewer(ws: WebSocket, key = "", client = ""): void {
     const remembered = key ? (this.viewTabs.get(key) ?? null) : null;
     const tab = this.hasTab(remembered) ? remembered : this.state.active;
-    this.views.set(ws, { tab, key });
+    // A new frame next to another frame of the same person on this tab is a
+    // split: like a new terminal, it gets a tab of its own (the same page).
+    // Collaborators and chat cards keep sharing what they see.
+    const split =
+      !this.hasTab(remembered) &&
+      !!tab &&
+      !!client &&
+      key.startsWith("frame:") &&
+      [...this.views.values()].some(
+        (view) =>
+          view.client === client &&
+          view.key !== key &&
+          view.key.startsWith("frame:") &&
+          view.tab === tab,
+      );
+    this.views.set(ws, { tab, key, client });
     this.state.viewers = this.views.size;
     if (this.handBackTimer) clearTimeout(this.handBackTimer);
     this.handBackTimer = null;
@@ -596,6 +628,14 @@ export class SharedBrowserServer {
       void this.attach(this.pageFor(tab))
         .then(() => this.updateCasting(tab))
         .catch(() => {});
+    if (split && tab) {
+      const url =
+        this.state.tabs.find((t) => t.id === tab)?.url || "about:blank";
+      this.newTabFor = ws;
+      void this.cdp
+        .send("Target.createTarget", { url })
+        .catch((err) => this.log(`split: ${err?.message ?? err}`));
+    }
     this.broadcastState();
     ws.on("message", (data, isBinary) => {
       if (isBinary) return;
@@ -675,6 +715,25 @@ export class SharedBrowserServer {
       case "tab":
         if (typeof msg.id === "string") await this.show(ws, msg.id);
         return;
+      case "visible": {
+        view.hidden = !msg.visible;
+        if (!view.tab) return;
+        const page = this.pages.get(view.tab);
+        if (view.hidden || !page?.session) {
+          await this.updateCasting(view.tab);
+          return;
+        }
+        // A screencast only sends frames when the page changes: restart it
+        // so the returning viewer gets the current picture at once.
+        if (page.casting) {
+          await this.cdp
+            .send("Page.stopScreencast", {}, page.session)
+            .catch(() => {});
+          page.casting = false;
+        }
+        await this.updateCasting(view.tab);
+        return;
+      }
     }
     // Everything below acts on the page: only while the human drives.
     if (this.state.driver !== "human") return;

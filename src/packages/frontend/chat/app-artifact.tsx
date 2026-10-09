@@ -18,6 +18,9 @@ import {
   sharedBrowserAppSpec,
 } from "@cocalc/util/shared-browser";
 
+// The last open URL of each app, by project and app id.
+const OPEN_URLS = new Map<string, string>();
+
 export function AppArtifact({
   projectId,
   app,
@@ -31,13 +34,18 @@ export function AppArtifact({
   // shared browser shows each frame its own tab.
   view?: string;
 }) {
+  const client = webapp_client.browser_id;
   const [src, setSrc] = useState<string>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
 
+  const cacheKey = `${projectId}/${app.id}`;
   useEffect(() => {
     let canceled = false;
-    setSrc(undefined);
+    // Showing the app again (another tab or frame was in front) should be
+    // instant: use the URL it had and check that it still runs meanwhile.
+    const known = OPEN_URLS.get(cacheKey);
+    setSrc(known && view ? withView(known, view, client) : known);
     setError(undefined);
     void (async () => {
       const api = webapp_client.conat_client.projectApi({
@@ -77,14 +85,15 @@ export function AppArtifact({
         status,
       });
       if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
-      if (!canceled) setSrc(view ? withView(url, view) : url);
+      OPEN_URLS.set(cacheKey, url);
+      if (!canceled) setSrc(view ? withView(url, view, client) : url);
     })().catch((err) => {
       if (!canceled) setError(`${err?.message ?? err}`);
     });
     return () => {
       canceled = true;
     };
-  }, [projectId, app.id, attempt, view]);
+  }, [projectId, app.id, attempt, view, cacheKey]);
 
   if (error)
     return (
@@ -139,8 +148,9 @@ async function appFailureDetail(api, id: string): Promise<string> {
   }
 }
 
-function withView(url: string, view: string): string {
+function withView(url: string, view: string, client: string): string {
   const [base, hash] = url.split("#", 2);
   const sep = base.includes("?") ? "&" : "?";
-  return `${base}${sep}view=${encodeURIComponent(view)}${hash ? `#${hash}` : ""}`;
+  const query = `view=${encodeURIComponent(view)}&client=${encodeURIComponent(client)}`;
+  return `${base}${sep}${query}${hash ? `#${hash}` : ""}`;
 }

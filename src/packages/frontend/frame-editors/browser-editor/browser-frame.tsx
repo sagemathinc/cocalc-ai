@@ -98,7 +98,7 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
         projectId={project_id}
         app={{ id: app.id }}
         title={app.title}
-        view={frameId}
+        view={`frame:${frameId}`}
       />
     </div>
   );

@@ -83,14 +83,14 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   function connect() {
     ws = new WebSocket(wsUrl());
     ws.binaryType = "blob";
-    ws.onopen = () => { retry = 0; $("status").textContent = "live"; sendSize(true); };
+    ws.onopen = () => { retry = 0; $("status").textContent = "live"; visible = null; updateVisible(); sendSize(true); };
     ws.onclose = () => {
       $("status").textContent = "reconnecting...";
       setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
     };
     ws.onmessage = async (ev) => {
       if (typeof ev.data !== "string") {
-        try { const bmp = await createImageBitmap(ev.data); drawFrame(bmp); } catch {}
+        try { const bmp = await createImageBitmap(ev.data); drawFrame(bmp); saveFrame(ev.data); } catch {}
         return;
       }
       const msg = JSON.parse(ev.data);
@@ -99,9 +99,33 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     };
   }
 
+  // The last frame, kept per view so a hidden or reloaded viewer shows it at
+  // once and then updates.
+  const viewKey = "cocalc-browser-frame:" + location.pathname + ":" + (new URLSearchParams(location.search).get("view") || "");
+  let saveTimer = null, lastBlob = null;
+  function saveFrame(blob) {
+    lastBlob = blob;
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      const reader = new FileReader();
+      reader.onload = () => { try { sessionStorage.setItem(viewKey, reader.result); } catch {} };
+      reader.readAsDataURL(lastBlob);
+    }, 2000);
+  }
+  (function restoreFrame() {
+    let data = null;
+    try { data = sessionStorage.getItem(viewKey); } catch {}
+    if (!data) return;
+    const img = new Image();
+    img.onload = () => { if (!lastFrame) createImageBitmap(img).then(drawFrame).catch(() => {}); };
+    img.src = data;
+  })();
+
   let lastFrame = null;
   function drawFrame(bmp) {
-    lastFrame && lastFrame.close && lastFrame.close();
+    // Redrawing the current frame (e.g. on resize) must not close it first.
+    if (lastFrame && lastFrame !== bmp && lastFrame.close) lastFrame.close();
     lastFrame = bmp;
     const w = canvas.width, h = canvas.height;
     ctx.fillStyle = "#888"; ctx.fillRect(0, 0, w, h);
@@ -110,8 +134,22 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     ctx.drawImage(bmp, 0, 0, bmp.width * scale, bmp.height * scale);
   }
 
+  // A hidden view (another tab or frame in front, a background browser tab)
+  // keeps its last frame and must not resize the page to nothing.
+  let visible = null;
+  function setVisible(v) {
+    if (v === visible) return;
+    visible = v;
+    send({ type: "visible", visible: v });
+    if (v) sendSize(true);
+  }
+  function tooSmall() { const r = stage.getBoundingClientRect(); return r.width < 40 || r.height < 40; }
+  function updateVisible() { setVisible(!document.hidden && !tooSmall()); }
+  document.addEventListener("visibilitychange", updateVisible);
+
   let sizeTimer = null, lastSize = "";
   function sendSize(force) {
+    if (tooSmall()) { updateVisible(); return; }
     const r = stage.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
@@ -122,7 +160,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     clearTimeout(sizeTimer);
     sizeTimer = setTimeout(() => send({ type: "resize", width: Math.round(r.width), height: Math.round(r.height) }), 150);
   }
-  new ResizeObserver(() => sendSize(false)).observe(stage);
+  new ResizeObserver(() => { updateVisible(); sendSize(false); }).observe(stage);
 
   function render() {
     // tabs

@@ -306,7 +306,7 @@ test(
     const frames = (viewer: any) =>
       viewer.evaluate(() => (window as any).__frames ?? 0);
     try {
-      const open = async (view: string) => {
+      const open = async (view: string, client = "me") => {
         const viewer = await human.newPage({
           viewport: { width: 700, height: 500 },
         });
@@ -320,44 +320,54 @@ test(
             return (draw as any).apply(this, args);
           };
         });
-        await viewer.goto(`http://127.0.0.1:${port}/?view=${view}`);
+        await viewer.goto(
+          `http://127.0.0.1:${port}/?view=${view}&client=${client}`,
+        );
         await viewer.waitForFunction(
           () => document.getElementById("status")?.textContent === "live",
         );
         return viewer;
       };
-      const a = await open("frame-a");
+      const tabCount = (n: number) => (viewer: any) =>
+        viewer.waitForFunction(
+          (n: number) => document.querySelectorAll(".tab").length === n,
+          n,
+        );
+      const activeTitle = (viewer: any, title: string) =>
+        viewer.waitForFunction(
+          (title: string) =>
+            document.querySelector(".tab.active")?.textContent?.includes(title),
+          title,
+        );
+
+      const a = await open("frame:a");
       await a.fill("#url", "data:text/html,<title>one</title>A");
       await a.press("#url", "Enter");
-      await a.waitForFunction(() =>
-        document.querySelector(".tab.active")?.textContent?.includes("one"),
-      );
-      let b = await open("frame-b"); // the split: starts on the same tab
-      assert.match(await urlOf(b), /title>one/);
+      await activeTitle(a, "one");
 
-      await b.click("#newtab");
-      await b.waitForFunction(
-        () => document.querySelectorAll(".tab").length === 2,
-      );
+      // A collaborator's view shares the tab: no new tab.
+      const c = await open("frame:c", "someone-else");
+      await activeTitle(c, "one");
+      assert.equal(server.getState().tabs.length, 1);
+
+      // My split gets its own tab with the same page, right away.
+      let b = await open("frame:b");
+      await tabCount(2)(b);
+      await activeTitle(b, "one");
       await b.fill("#url", "data:text/html,<title>two</title>B");
       await b.press("#url", "Enter");
-      await b.waitForFunction(() =>
-        document.querySelector(".tab.active")?.textContent?.includes("two"),
-      );
-      // A still shows its own tab, and both keep streaming.
-      await a.waitForFunction(
-        () => document.querySelectorAll(".tab").length === 2,
-      );
+      await activeTitle(b, "two");
+      // A (and the collaborator) still show their tab, and all stream.
       assert.match(await urlOf(a), /title>one/);
+      assert.match(await urlOf(c), /title>one/);
       assert.ok((await frames(a)) > 0, "A was streamed its tab");
       assert.ok((await frames(b)) > 0, "B was streamed its tab");
 
-      // A frame that reloads comes back to its own tab.
+      // A frame that reloads comes back to its own tab, without a new one.
       await b.close();
-      b = await open("frame-b");
-      await b.waitForFunction(() =>
-        document.querySelector(".tab.active")?.textContent?.includes("two"),
-      );
+      b = await open("frame:b");
+      await activeTitle(b, "two");
+      assert.equal(server.getState().tabs.length, 2);
       assert.match(await urlOf(a), /title>one/);
 
       // Agents act where the human last worked: B's tab.
@@ -368,6 +378,93 @@ test(
       );
       assert.equal((await page.location()).title, "two");
       page.close();
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);
+
+test(
+  "a hidden viewer keeps the page's size and its last frame",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const viewer = await human.newPage({
+        viewport: { width: 900, height: 600 },
+      });
+      await viewer.goto(`http://127.0.0.1:${port}/?view=frame:x&client=me`);
+      await viewer.waitForFunction(
+        () => document.getElementById("status")?.textContent === "live",
+      );
+      const stageWidth = await viewer.evaluate(() =>
+        Math.round(
+          document.getElementById("stage")!.getBoundingClientRect().width,
+        ),
+      );
+      const deadline = Date.now() + 5000;
+      while (
+        server.getState().viewport.width !== stageWidth &&
+        Date.now() < deadline
+      )
+        await new Promise((r) => setTimeout(r, 100));
+      const size = server.getState().viewport;
+      assert.equal(size.width, stageWidth, "viewport follows the viewer");
+
+      // Another tab or frame in front: the viewer's iframe collapses.
+      await viewer.setViewportSize({ width: 1, height: 1 });
+      await new Promise((r) => setTimeout(r, 800));
+      assert.deepEqual(server.getState().viewport, size, "page not shrunk");
+
+      // Shown again: the same size, streaming again.
+      await viewer.setViewportSize({ width: 900, height: 600 });
+      await new Promise((r) => setTimeout(r, 800));
+      assert.deepEqual(server.getState().viewport, size);
+
+      // Resizing the viewer after frames have arrived resizes the page.
+      await viewer.setViewportSize({ width: 700, height: 500 });
+      const narrower = Date.now() + 5000;
+      while (server.getState().viewport.width >= 900 && Date.now() < narrower)
+        await new Promise((r) => setTimeout(r, 100));
+      assert.ok(
+        server.getState().viewport.width < 900,
+        "page follows the viewer's size",
+      );
+
+      // The last frame is kept for a viewer that is reloaded.
+      await new Promise((r) => setTimeout(r, 2500));
+      const saved = await viewer.evaluate(() =>
+        Object.keys(sessionStorage).some((k) =>
+          k.startsWith("cocalc-browser-frame:"),
+        ),
+      );
+      assert.ok(saved, "last frame saved");
     } finally {
       await human.close().catch(() => {});
       await server.close();
