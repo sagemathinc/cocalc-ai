@@ -16,6 +16,7 @@ import { constants } from "node:fs";
 import {
   access,
   chmod,
+  link,
   mkdir,
   open,
   readFile,
@@ -639,42 +640,50 @@ async function withKeyringLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const lockPath = `${keyringPath}.lock`;
+  const nonce = randomBytes(8).toString("hex");
   const me = JSON.stringify({
     pid: process.pid,
     ...(await processIdentity(process.pid)),
+    nonce,
   });
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const handle = await open(lockPath, "wx", 0o600);
+  // Publish the complete record with link(2), which fails if the lock exists:
+  // a lock created empty and then written could be read as stale, and
+  // removed, in between.
+  const record = `${lockPath}.${nonce}`;
+  await writeFile(record, `${me}\n`, { mode: 0o600, flag: "wx" });
+  try {
+    for (let attempt = 0; ; attempt++) {
       try {
-        await handle.writeFile(`${me}\n`);
-      } finally {
-        await handle.close();
-      }
-      break;
-    } catch (err: any) {
-      if (err?.code !== "EEXIST") throw err;
-      const holder =
-        `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
-      if (!(await lockHolderAlive(holder))) {
-        // Remove only the stale lock we looked at, not a newer one.
-        const now =
+        await link(record, lockPath);
+        break;
+      } catch (err: any) {
+        if (err?.code !== "EEXIST") throw err;
+        const holder =
           `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
-        if (now === holder) await unlink(lockPath).catch(() => {});
-        continue;
+        if (!(await lockHolderAlive(holder))) {
+          // Remove only the stale lock we looked at, not a newer one.
+          const now =
+            `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
+          if (now === holder) await unlink(lockPath).catch(() => {});
+          continue;
+        }
+        if (attempt >= 30) {
+          throw new Error(
+            `another key rotation step holds ${lockPath} (${holder}); try again when it finishes, or remove the file if that process is not a rotation step`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-      if (attempt >= 30) {
-        throw new Error(
-          `another key rotation step holds ${lockPath} (${holder}); try again when it finishes, or remove the file if that process is not a rotation step`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
+  } finally {
+    await unlink(record).catch(() => {});
   }
   try {
     return await fn();
   } finally {
-    await unlink(lockPath).catch(() => {});
+    // Release only our own lock, in case it was wrongly judged stale.
+    const now = `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
+    if (now === me) await unlink(lockPath).catch(() => {});
   }
 }
 

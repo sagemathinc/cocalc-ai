@@ -96,7 +96,7 @@ keyfiles() {
   KEY="$KEY" KEYRING="$KEYRING" MIN_AGE_HOURS="$COCALC_SITE_MASTER_KEY_RETIRE_MIN_AGE_HOURS" \
     "$node" --input-type=module -e '
 import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, linkSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 const [command, ...args] = process.argv.slice(1);
@@ -185,28 +185,42 @@ const holderAlive = (text) => {
   try { process.kill(pid, 0); } catch (e) { if (e.code !== "EPERM") return false; }
   return !(holder.start && current.start && holder.start !== current.start);
 };
+let lockRecord;
+// The complete record is published with link(2), which fails if the lock
+// exists, so the lock is never seen empty (and judged stale) while written.
 const lock = () => {
-  const me = JSON.stringify({ pid: process.pid, ...identity(process.pid) });
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const fd = openSync(LOCK, "wx", 0o600);
-      writeSync(fd, `${me}\n`);
-      closeSync(fd);
-      return;
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-      let holder = "";
-      try { holder = readFileSync(LOCK, "utf8").trim(); } catch {}
-      if (!holderAlive(holder)) {
-        let now = "";
-        try { now = readFileSync(LOCK, "utf8").trim(); } catch {}
-        if (now === holder) { try { unlinkSync(LOCK); } catch {} }
-        continue;
+  const nonce = randomBytes(8).toString("hex");
+  lockRecord = JSON.stringify({ pid: process.pid, ...identity(process.pid), nonce });
+  const record = `${LOCK}.${nonce}`;
+  writeFileSync(record, `${lockRecord}\n`, { mode: 0o600, flag: "wx" });
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        linkSync(record, LOCK);
+        return;
+      } catch (err) {
+        if (err.code !== "EEXIST") throw err;
+        let holder = "";
+        try { holder = readFileSync(LOCK, "utf8").trim(); } catch {}
+        if (!holderAlive(holder)) {
+          let now = "";
+          try { now = readFileSync(LOCK, "utf8").trim(); } catch {}
+          if (now === holder) { try { unlinkSync(LOCK); } catch {} }
+          continue;
+        }
+        if (attempt >= 30) throw new Error(`another key rotation step holds ${LOCK} (${holder}); remove it if that process is not a rotation step`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
       }
-      if (attempt >= 30) throw new Error(`another key rotation step holds ${LOCK} (${holder}); remove it if that process is not a rotation step`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
     }
+  } finally {
+    try { unlinkSync(record); } catch {}
   }
+};
+// Release only our own lock, in case it was wrongly judged stale.
+const unlock = () => {
+  let now = "";
+  try { now = readFileSync(LOCK, "utf8").trim(); } catch {}
+  if (now === lockRecord) { try { unlinkSync(LOCK); } catch {} }
 };
 const now = () => new Date().toISOString();
 
@@ -277,7 +291,7 @@ try {
     throw new Error(`unknown key-file command ${command}`);
   }
 } finally {
-  try { unlinkSync(LOCK); } catch {}
+  unlock();
 }
 ' "$@" || die "$1 failed"
 }

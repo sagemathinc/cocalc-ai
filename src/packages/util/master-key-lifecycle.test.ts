@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -6,8 +7,9 @@ import {
   rm,
   stat,
   writeFile,
+  readdir,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
@@ -293,6 +295,36 @@ describe("master-key-lifecycle", () => {
         (await ids()).filter((id) => id.startsWith("retired:")),
       ).toHaveLength(5); // the two above, then these three
     }, 20000);
+
+    it("never exposes an empty lock file", async () => {
+      await getOrCreateSiteMasterKey(paths());
+      const lock = `${keyPath()}.keyring.lock`;
+      // A lock created empty and written afterwards could be read as stale,
+      // and removed, by a waiter in between.
+      const seen = new Set<string>();
+      let polling = true;
+      const poll = () => {
+        try {
+          seen.add(readFileSync(lock, "utf8"));
+        } catch {}
+        if (polling) setImmediate(poll);
+      };
+      poll();
+      try {
+        for (let i = 0; i < 20; i++) {
+          await addRetiredSiteMasterKey(Buffer.alloc(32, 10 + i), paths());
+        }
+      } finally {
+        polling = false;
+      }
+      expect(seen.size).toBeGreaterThan(0);
+      expect([...seen].filter((text) => !text.trim())).toEqual([]);
+      // No lock or lock record is left behind.
+      const leftovers = (await readdir(dirname(keyPath()))).filter((name) =>
+        name.includes(".lock"),
+      );
+      expect(leftovers).toEqual([]);
+    });
 
     it("refuses to rotate a read-only systemd credential", async () => {
       const credentialsDir = join(dir, "credentials");

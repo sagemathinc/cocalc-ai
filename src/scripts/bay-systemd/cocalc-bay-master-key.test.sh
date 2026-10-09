@@ -175,4 +175,8 @@ keyrings="$(grep -c '/etc/cocalc/site-master-key.keyring "$credential_dir/site-m
 [[ "$keys" -gt 0 && "$keys" == "$keyrings" ]] ||
   fail "upgrade-bay-release.sh passes the key without the keyring ($keys keys, $keyrings keyrings)"
 
+# Lock records are published by link(2) and removed: nothing is left behind.
+leftover="$(find "$etc2" -name '*.lock*' -print -quit)"
+[[ -z "$leftover" ]] || fail "lock file left behind: ${leftover}"
+
 echo "cocalc-bay-master-key tests passed"
