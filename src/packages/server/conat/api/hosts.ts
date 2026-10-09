@@ -9155,7 +9155,22 @@ export async function relocateHost({
     await releaseRelocationLease({ host_id: row.id, lease_id });
     throw err;
   }
-  await attachRelocationLeaseOp({ host_id: row.id, lease_id, op_id: op.op_id });
+  try {
+    await attachRelocationLeaseOp({
+      host_id: row.id,
+      lease_id,
+      op_id: op.op_id,
+    });
+  } catch (err) {
+    // An admin cleared the lease in between; the queued operation would
+    // fail its own lease check, so retire it now.
+    await updateLro({
+      op_id: op.op_id,
+      status: "canceled",
+      error: `${err}`,
+    }).catch(() => undefined);
+    throw err;
+  }
   return op;
 }
 
@@ -9189,8 +9204,19 @@ export async function setHostMaintenanceNotice({
       );
     }
   }
+  const changedMeanwhile = () =>
+    Object.assign(
+      new Error(
+        "the host's maintenance state changed meanwhile (a relocation may have started); check it and try again",
+      ),
+      { code: "host_maintenance_in_progress" },
+    );
   if (clear) {
-    await setHostMaintenanceMetadata(row.id, null);
+    if (
+      !(await setHostMaintenanceMetadata(row.id, null, { expected: current }))
+    ) {
+      throw changedMeanwhile();
+    }
     return null;
   }
   if (!scheduled_for || expected_minutes == null) {
@@ -9201,7 +9227,11 @@ export async function setHostMaintenanceNotice({
     expected_minutes,
     message,
   });
-  await setHostMaintenanceMetadata(row.id, notice);
+  if (
+    !(await setHostMaintenanceMetadata(row.id, notice, { expected: current }))
+  ) {
+    throw changedMeanwhile();
+  }
   return notice;
 }
 

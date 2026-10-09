@@ -37,6 +37,51 @@ describe("hosts start-worker maintenance fence", () => {
   });
 });
 
+describe("hosts start-worker relocation start", () => {
+  test("waits for the start's own cloud work, not just the heartbeat", async () => {
+    const states = ["in_progress", "in_progress", "done"];
+    const query = jest.fn(async () => ({
+      rows: [{ state: states.shift(), updated_at: new Date(5000) }],
+    }));
+    const delays: number[] = [];
+    await __test__.waitForCloudWorkFinished({
+      host_id: "h",
+      workId: "work-1",
+      action: "start",
+      query,
+      delayFn: async (ms) => {
+        delays.push(ms);
+      },
+    });
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(delays).toHaveLength(2);
+    expect((query.mock.calls[0] as any[])[1]).toEqual(["work-1", "h", "start"]);
+  });
+
+  test("surfaces a failed start and gives up when told to stop", async () => {
+    await expect(
+      __test__.waitForCloudWorkFinished({
+        host_id: "h",
+        workId: "work-1",
+        action: "start",
+        query: async () => ({
+          rows: [{ state: "failed", error: "no capacity" }],
+        }),
+      }),
+    ).rejects.toThrow("no capacity");
+    await expect(
+      __test__.waitForCloudWorkFinished({
+        host_id: "h",
+        workId: "work-1",
+        action: "start",
+        query: async () => ({ rows: [{ state: "in_progress" }] }),
+        shouldStop: async () => true,
+        delayFn: async () => {},
+      }),
+    ).rejects.toThrow(/did not finish in time/);
+  });
+});
+
 describe("hosts start-worker bootstrap wait failure detection", () => {
   const since = new Date("2026-05-05T00:10:00.000Z").getTime();
 

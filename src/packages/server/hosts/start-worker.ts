@@ -510,6 +510,39 @@ async function loadHostActionCompletion(
   return work.state === "done" ? parseTimestampMs(work.updated_at) : undefined;
 }
 
+// Wait until one cloud work item has finished (it may write back the whole
+// metadata object it read when it started). Throws if it failed.
+async function waitForCloudWorkFinished({
+  host_id,
+  workId,
+  action,
+  shouldStop,
+  query,
+  delayFn = delay,
+  pollMs = POLL_MS,
+}: {
+  host_id: string;
+  workId: string;
+  action: string;
+  shouldStop?: () => Promise<boolean>;
+  query?: (sql: string, params: any[]) => Promise<{ rows: any[] }>;
+  delayFn?: (ms: number) => Promise<unknown>;
+  pollMs?: number;
+}): Promise<void> {
+  for (;;) {
+    const done = await loadHostActionCompletion(
+      host_id,
+      { workId, action } as HostReadinessAttempt,
+      query,
+    );
+    if (done != null) return;
+    if (await shouldStop?.()) {
+      throw new Error(`${action} work ${workId} did not finish in time`);
+    }
+    await delayFn(pollMs);
+  }
+}
+
 function hostApplicationReady(
   row: any,
   attempt: HostReadinessAttempt,
@@ -822,15 +855,39 @@ async function runHostRelocation({
           }),
         startHost: async (opts) => {
           const startedAt = Date.now();
-          await startHostInternal({ account_id, id: host_id });
+          let workId: string | undefined;
+          await startHostInternal({
+            account_id,
+            id: host_id,
+            onWorkQueued: (id) => {
+              workId = id;
+            },
+          });
           // Bounded, so a target without capacity rolls back instead of
           // holding the maintenance window open.
+          const timeoutMs = opts?.rollback
+            ? undefined
+            : RELOCATION_START_TIMEOUT_MS;
           await waitFor(
             ["running"],
             ["error", "off", "stopped", "deprovisioned"],
-            opts?.rollback ? undefined : RELOCATION_START_TIMEOUT_MS,
+            timeoutMs,
           );
           await waitForHostHeartbeat({ host_id, since: startedAt });
+          // The start handler can still be finishing (network reconcile)
+          // after the host heartbeats, and then writes back the metadata it
+          // read: relocation's final writes must come after it.
+          if (workId) {
+            const deadline = timeoutMs ? startedAt + timeoutMs : undefined;
+            await waitForCloudWorkFinished({
+              host_id,
+              workId,
+              action: "start",
+              shouldStop: async () =>
+                (await shouldCancel()) ||
+                (deadline != null && Date.now() > deadline),
+            });
+          }
         },
         preflight: async (target) => {
           const row = await loadHost();
@@ -3226,6 +3283,7 @@ function assertHostOpAllowedDuringMaintenance(kind: string, maintenance: any) {
 
 export const __test__ = {
   assertHostOpAllowedDuringMaintenance,
+  waitForCloudWorkFinished,
   loadHostActionCompletion,
   hostReadinessAttempt,
   hostApplicationReady,

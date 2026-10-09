@@ -4,6 +4,8 @@ import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { before, after, getPool } from "@cocalc/server/test";
 import {
   acquireRelocationLease,
+  assertProjectHostsNotUnderMaintenance,
+  hostActivity,
   hostLifecycleFenced,
   hostOfflineFenced,
   normalizeHostMaintenanceNotice,
@@ -119,7 +121,11 @@ describe("relocation lease", () => {
 
     const second = randomUUID();
     await acquireRelocationLease({ host_id, lease_id: second });
-    await setHostMaintenanceMetadata(host_id, null);
+    expect(
+      await setHostMaintenanceMetadata(host_id, null, {
+        expected: await maintenanceOf(host_id),
+      }),
+    ).toBe(true);
     await expect(
       setRelocationNotice({
         host_id,
@@ -215,11 +221,121 @@ describe("quiesceHostActivity", () => {
     expect(rows).toEqual([
       { state: "failed", error: "canceled by a host relocation" },
     ]);
+    // Settling leaves the host's intent alone; relocation decides it from
+    // the settled row.
     const host = await getPool().query(
       "SELECT metadata->>'desired_state' AS desired FROM project_hosts WHERE id=$1",
       [host_id],
     );
-    expect(host.rows[0].desired).toBe("stopped");
+    expect(host.rows[0].desired).toBeNull();
+  });
+
+  it("counts project operations by the hosts they name, not only current placement", async () => {
+    const host_id = await newHost();
+    const elsewhere = await newHost();
+    // A move that already pointed the project at its destination but still
+    // cleans up the source.
+    const moved = randomUUID();
+    await getPool().query(
+      "INSERT INTO projects (project_id, host_id) VALUES ($1, $2)",
+      [moved, elsewhere],
+    );
+    const move = await createLro({
+      kind: "project-move",
+      scope_type: "project",
+      scope_id: moved,
+      status: "running",
+      input: {
+        project_id: moved,
+        source_host_id: host_id,
+        dest_host_id: elsewhere,
+      },
+    });
+    // A hard delete is account-scoped and names its project in the input.
+    const doomed = randomUUID();
+    await getPool().query(
+      "INSERT INTO projects (project_id, host_id, deleted) VALUES ($1, $2, true)",
+      [doomed, host_id],
+    );
+    const hardDelete = await createLro({
+      kind: "project-hard-delete",
+      scope_type: "account",
+      scope_id: randomUUID(),
+      status: "queued",
+      input: { project_id: doomed },
+    });
+    expect(await hostActivity({ host_id })).toMatchObject({
+      project_operations: 2,
+    });
+    // The destination counts the move too.
+    expect(await hostActivity({ host_id: elsewhere })).toMatchObject({
+      project_operations: 1,
+    });
+    await updateLro({ op_id: move.op_id, status: "succeeded" });
+    await updateLro({ op_id: hardDelete.op_id, status: "succeeded" });
+    expect(await hostActivity({ host_id })).toMatchObject({
+      project_operations: 0,
+    });
+  });
+});
+
+describe("project operations during a window", () => {
+  it("refuses operations on a project whose host, or the host they target, is down", async () => {
+    const host_id = await newHost();
+    const other = await newHost();
+    const project_id = randomUUID();
+    await getPool().query(
+      "INSERT INTO projects (project_id, host_id) VALUES ($1, $2)",
+      [project_id, other],
+    );
+    const lease_id = randomUUID();
+    await acquireRelocationLease({ host_id, lease_id });
+    // Preparing: the relocation's own backups still run.
+    await expect(
+      assertProjectHostsNotUnderMaintenance({
+        project_ids: [project_id],
+        host_ids: [host_id],
+      }),
+    ).resolves.toBeUndefined();
+    await setRelocationNotice({
+      host_id,
+      lease_id,
+      notice: { kind: "relocation", state: "in_progress" },
+    });
+    // A move onto the host being relocated.
+    await expect(
+      assertProjectHostsNotUnderMaintenance({
+        project_ids: [project_id],
+        host_ids: [host_id],
+      }),
+    ).rejects.toMatchObject({ code: "host_maintenance_in_progress" });
+    await expect(
+      assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] }),
+    ).resolves.toBeUndefined();
+    // A backup of a project on it.
+    await getPool().query(
+      "UPDATE projects SET host_id=$2 WHERE project_id=$1",
+      [project_id, host_id],
+    );
+    await expect(
+      assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] }),
+    ).rejects.toMatchObject({ code: "host_maintenance_in_progress" });
+  });
+});
+
+describe("admin notice writes", () => {
+  it("do not overwrite a lease taken after they read the notice", async () => {
+    const host_id = await newHost();
+    const read = await maintenanceOf(host_id);
+    const lease_id = randomUUID();
+    await acquireRelocationLease({ host_id, lease_id });
+    expect(
+      await setHostMaintenanceMetadata(host_id, null, { expected: read }),
+    ).toBe(false);
+    expect(await maintenanceOf(host_id)).toMatchObject({
+      state: "preparing",
+      lease_id,
+    });
   });
 
   it("ignores its own operation but waits for other host operations", async () => {

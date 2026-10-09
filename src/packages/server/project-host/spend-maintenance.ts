@@ -43,6 +43,7 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import type { DedicatedHostBillingState } from "@cocalc/util/project-host-pricing";
+import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:project-host:spend-maintenance");
 const CHECK_INTERVAL_MS = Math.max(
@@ -72,7 +73,19 @@ type CandidateHostRow = {
   region: string | null;
   status: string | null;
   metadata: any;
+  maintenance?: any;
 };
+
+// This pass writes back whole metadata objects it read earlier. While a
+// relocation holds the host it must not write at all (it would stop the VM
+// mid-move or restore the old placement); after a relocation (or any other
+// placement change) a write based on the old placement is dropped and the
+// next pass decides again from a fresh read.
+function hostWriteGuard(metadataParam: number): string {
+  return `
+        AND COALESCE(maintenance->>'state', '') NOT IN ('preparing','in_progress','failed')
+        AND metadata->'machine' IS NOT DISTINCT FROM ($${metadataParam}::jsonb)->'machine'`;
+}
 
 export function billingStateForHost(
   row: CandidateHostRow,
@@ -123,7 +136,7 @@ async function withMaintenanceLock<T>(
 async function listCandidateHosts(): Promise<CandidateHostRow[]> {
   const { rows } = await getPool().query<CandidateHostRow>(
     `
-      SELECT id, name, region, status, metadata
+      SELECT id, name, region, status, metadata, maintenance
       FROM project_hosts
       WHERE deleted IS NULL
         AND metadata IS NOT NULL
@@ -364,11 +377,13 @@ async function updateHostBillingMetadata({
 }: {
   host_id: string;
   metadata: any;
-}): Promise<void> {
-  await getPool().query(
-    `UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+}): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts SET metadata=$2, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL${hostWriteGuard(2)}`,
     [host_id, metadata],
   );
+  return (rowCount ?? 0) > 0;
 }
 
 async function requestHostStopForExceededLane({
@@ -422,14 +437,20 @@ async function requestHostStopForExceededLane({
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
   metadata.last_action_at = now.toISOString();
-  await getPool().query(
+  const { rowCount } = await getPool().query(
     `
       UPDATE project_hosts
       SET status=$2, last_seen=$3, metadata=$4, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL
+      WHERE id=$1 AND deleted IS NULL${hostWriteGuard(4)}
     `,
     [row.id, "stopping", null, metadata],
   );
+  if (!rowCount) {
+    logger.info("deferred dedicated host stop: host is being relocated", {
+      host_id: row.id,
+    });
+    return;
+  }
   await enqueueCloudVmWork({
     vm_id: row.id,
     action: "stop",
@@ -480,14 +501,20 @@ async function requestHostStopForOwnerSpendLimit({
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
   metadata.last_action_at = nowIso;
-  await getPool().query(
+  const { rowCount } = await getPool().query(
     `
       UPDATE project_hosts
       SET status=$2, last_seen=$3, metadata=$4, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL
+      WHERE id=$1 AND deleted IS NULL${hostWriteGuard(4)}
     `,
     [row.id, "stopping", null, metadata],
   );
+  if (!rowCount) {
+    logger.info("deferred dedicated host stop: host is being relocated", {
+      host_id: row.id,
+    });
+    return;
+  }
   await enqueueCloudVmWork({
     vm_id: row.id,
     action: "stop",
@@ -751,7 +778,7 @@ async function updateHostStatusAndBillingMetadata({
     `
       UPDATE project_hosts
       SET status=$2, metadata=$3, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL
+      WHERE id=$1 AND deleted IS NULL${hostWriteGuard(3)}
     `,
     [row.id, status, metadata],
   );
@@ -1093,9 +1120,7 @@ async function runPass(): Promise<void> {
   const getSnapshot = async (
     account_id: string,
     funding_mode_override?:
-      | "account-prepaid"
-      | "account-postpaid"
-      | "site-funded",
+      "account-prepaid" | "account-postpaid" | "site-funded",
   ) => {
     const cacheKey = `${account_id}:${funding_mode_override ?? ""}`;
     const cached = snapshotCache.get(cacheKey);
@@ -1116,6 +1141,12 @@ async function runPass(): Promise<void> {
   };
 
   for (const row of rows) {
+    // A relocation owns the host; enforcement resumes on the first pass after
+    // it releases the host.
+    if (hostLifecycleFenced(row.maintenance)) {
+      logger.debug("skipping host being relocated", { host_id: row.id });
+      continue;
+    }
     const metadata = row.metadata ?? {};
     const owner = `${metadata?.owner ?? ""}`.trim();
     const machine = metadata?.machine ?? {};

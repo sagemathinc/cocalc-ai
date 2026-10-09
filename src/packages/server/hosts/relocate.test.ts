@@ -127,6 +127,8 @@ function fakeDeps(
     desiredState?: "running" | "stopped";
     sourceDiskDeleteFails?: boolean;
     rollbackRestoreFails?: boolean;
+    // Work admitted before the fence that finishes while the host settles.
+    duringFirstQuiesce?: (row: any) => any;
   } = {},
 ) {
   const calls: string[] = [];
@@ -134,6 +136,13 @@ function fakeDeps(
   if (opts.desiredState) {
     row.metadata = { ...row.metadata, desired_state: opts.desiredState };
   }
+  // Cloud work a start queued (verification), which later writes back the
+  // whole row it read. Quiescing waits it out; anything left lands late.
+  const pendingWork: Array<() => void> = [];
+  const flushCloudWork = () => {
+    for (const write of pendingWork.splice(0)) write();
+  };
+  let quiesces = 0;
   let starts = 0;
   let deprovisions = 0;
   let updates = 0;
@@ -204,6 +213,11 @@ function fakeDeps(
     },
     quiesceCloudWork: async () => {
       calls.push("quiesce");
+      quiesces += 1;
+      if (quiesces === 1 && opts.duringFirstQuiesce) {
+        row = opts.duringFirstQuiesce(row);
+      }
+      flushCloudWork();
       if (opts.fenceFails) {
         // A start raced in before the fence and is still running.
         row = { ...row, status: "starting" };
@@ -228,12 +242,26 @@ function fakeDeps(
         throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED");
       }
       row = { ...row, status: "running" };
+      const stale = {
+        ...row,
+        metadata: { ...row.metadata, desired_state: "running" },
+      };
+      pendingWork.push(() => {
+        row = { ...stale };
+      });
     },
     progress: async () => {},
     shouldCancel: async () => false,
     alert: jest.fn(async () => {}),
   };
-  return { deps, calls, provider, maintenance, getRow: () => row };
+  return {
+    deps,
+    calls,
+    provider,
+    maintenance,
+    flushCloudWork,
+    getRow: () => row,
+  };
 }
 
 describe("relocateHost", () => {
@@ -248,10 +276,11 @@ describe("relocateHost", () => {
     expect(calls).toEqual([
       "backup",
       "snapshot:warm",
-      // The notice is the fence; it is written again after in-flight work.
+      // The notice is the fence; work admitted before it settles first.
       "maintenance:in_progress",
       "quiesce",
-      "maintenance:in_progress",
+      // Relocation's own stop is not an interruption to recover from.
+      "desired:stopped",
       "stop",
       "snapshot:final",
       "deprovision",
@@ -291,6 +320,7 @@ describe("relocateHost", () => {
     ).rejects.toThrow(/rolled back to us-south1-c/);
     expect(calls.slice(calls.indexOf("start:us-west2-a"))).toEqual([
       "start:us-west2-a",
+      "desired:stopped",
       "quiesce",
       "deprovision",
       "delete-disk:us-west2-a",
@@ -317,6 +347,7 @@ describe("relocateHost", () => {
     ).rejects.toThrow(/rolled back to us-south1-c/);
     expect(calls.slice(calls.indexOf("deprovision"))).toEqual([
       "deprovision",
+      "desired:stopped",
       "quiesce",
       "deprovision",
       "delete-disk:us-west2-a",
@@ -336,6 +367,7 @@ describe("relocateHost", () => {
     ).rejects.toThrow(/rolled back/);
     expect(calls.slice(calls.indexOf("restore:us-west2-a"))).toEqual([
       "restore:us-west2-a",
+      "desired:stopped",
       "quiesce",
       "deprovision",
       "delete-disk:us-west2-a",
@@ -379,7 +411,7 @@ describe("relocateHost", () => {
     expect(calls).toEqual([
       "maintenance:in_progress",
       "quiesce",
-      "maintenance:in_progress",
+      "desired:stopped",
       "stop",
       "set-machine-type:n2-standard-32",
       "update:us-south1:us-south1-c",
@@ -407,6 +439,7 @@ describe("relocateHost", () => {
       calls.slice(calls.indexOf("set-machine-type:n2-standard-32")),
     ).toEqual([
       "set-machine-type:n2-standard-32",
+      "desired:stopped",
       "quiesce",
       "set-machine-type:t2d-standard-16",
       "update:us-south1:us-south1-c",
@@ -430,8 +463,11 @@ describe("relocateHost", () => {
     expect(calls).not.toContain("stop");
     expect(calls).not.toContain("deprovision");
     expect(calls.filter((call) => call.startsWith("start:"))).toEqual([]);
-    expect(calls.slice(-2)).toEqual(["desired:running", "maintenance:cleared"]);
+    // Its intent is left alone too: nothing here changed it.
+    expect(calls.filter((call) => call.startsWith("desired:"))).toEqual([]);
+    expect(calls.slice(-2)).toEqual(["quiesce", "maintenance:cleared"]);
     expect(getRow().status).toBe("starting");
+    expect(getRow().metadata.desired_state).toBe("running");
   });
 
   it("moves a stopped host and leaves it stopped", async () => {
@@ -444,7 +480,7 @@ describe("relocateHost", () => {
     expect(calls).toEqual([
       "maintenance:in_progress",
       "quiesce",
-      "maintenance:in_progress",
+      "desired:stopped",
       "snapshot:final",
       "deprovision",
       "update:us-west2:us-west2-a",
@@ -452,6 +488,8 @@ describe("relocateHost", () => {
       "restore:us-west2-a",
       // Started once to prove the moved disk works, then stopped again.
       "start:us-west2-a",
+      // Its verification work settles before it is stopped again.
+      "quiesce",
       "stop",
       "desired:stopped",
       "delete-disk:us-south1-c",
@@ -459,6 +497,96 @@ describe("relocateHost", () => {
       "delete-snapshot:final",
     ]);
     expect(getRow().status).toBe("off");
+  });
+
+  it("acts on a start that finished while the host settled", async () => {
+    // Read as stopped; a start admitted before the fence then completed.
+    const { deps, calls, getRow, flushCloudWork } = fakeDeps({
+      status: "off",
+      desiredState: "stopped",
+      duringFirstQuiesce: (row) => ({
+        ...row,
+        status: "running",
+        metadata: { ...row.metadata, desired_state: "running" },
+      }),
+    });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { zone: "us-west2-a" },
+      deps,
+    });
+    flushCloudWork();
+    // Stopped before the final snapshot, and kept running afterwards.
+    expect(calls.indexOf("stop")).toBeLessThan(calls.indexOf("snapshot:final"));
+    expect(calls.filter((call) => call === "stop")).toHaveLength(1);
+    expect(getRow().status).toBe("running");
+    expect(getRow().metadata.desired_state).toBe("running");
+  });
+
+  it("acts on a stop that finished while the host settled", async () => {
+    const { deps, calls, getRow, flushCloudWork } = fakeDeps({
+      desiredState: "running",
+      duringFirstQuiesce: (row) => ({
+        ...row,
+        status: "off",
+        metadata: { ...row.metadata, desired_state: "stopped" },
+      }),
+    });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { zone: "us-west2-a" },
+      deps,
+    });
+    flushCloudWork();
+    // Already off at the snapshot; started once to verify, then stopped.
+    expect(calls.indexOf("stop")).toBeGreaterThan(
+      calls.indexOf("start:us-west2-a"),
+    );
+    expect(getRow().status).toBe("off");
+    expect(getRow().metadata.desired_state).toBe("stopped");
+  });
+
+  it("moves nothing if the host was changed while it settled", async () => {
+    const { deps, calls, getRow } = fakeDeps({
+      duringFirstQuiesce: (row) => ({
+        ...row,
+        metadata: {
+          ...row.metadata,
+          machine: { ...row.metadata.machine, machine_type: "n2-standard-8" },
+        },
+      }),
+    });
+    await expect(
+      relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
+    ).rejects.toThrow(/host changed while other work finished.*rolled back/);
+    expect(calls).toEqual([
+      "backup",
+      "snapshot:warm",
+      "maintenance:in_progress",
+      "quiesce",
+      "maintenance:cleared",
+    ]);
+    expect(getRow().status).toBe("running");
+  });
+
+  it("is not undone by verification work that writes back the row late", async () => {
+    // The start's verification read the row while the host ran; if it
+    // landed after the host was stopped again, a stopped host would be
+    // recorded as running and wanted running.
+    const { deps, getRow, flushCloudWork } = fakeDeps({ status: "off" });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { zone: "us-west2-a" },
+      deps,
+    });
+    flushCloudWork();
+    expect(getRow().status).toBe("off");
+    expect(getRow().metadata.desired_state).toBe("stopped");
+    expect(getRow().region).toBe("us-west2");
+    expect(getRow().metadata.machine).toMatchObject({
+      zone: "us-west2-a",
+      machine_type: "t2d-standard-16",
+    });
   });
 
   it("keeps the exact desired state when it disagrees with the status", async () => {
@@ -479,6 +607,7 @@ describe("relocateHost", () => {
       input: { machine_type: "n2-standard-32", skip_backups: true },
       deps: stopping.deps,
     });
+    stopping.flushCloudWork();
     expect(stopping.getRow().metadata.desired_state).toBe("stopped");
 
     const rollingBack = fakeDeps({ desiredState: "stopped", failStart: 1 });

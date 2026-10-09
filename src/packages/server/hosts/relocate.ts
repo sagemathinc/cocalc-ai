@@ -170,13 +170,16 @@ export interface RelocationDeps {
   // Relocation's own deprovision: idempotent, and unlike a user deprovision
   // it never deletes the host row or touches its projects' provisioning.
   deprovisionHost: () => Promise<void>;
-  // Stop the host's own start/recovery machinery: mark it desired-stopped,
-  // cancel queued cloud work and wait for in-flight work to finish. Used to
-  // fence the window, and before a rollback.
+  // Cancel queued cloud work and wait out in-flight cloud work, other host
+  // operations and project operations on the host. Leaves the desired state
+  // alone. Used to fence the window, before stopping a moved host again,
+  // and before a rollback.
   quiesceCloudWork: () => Promise<void>;
-  // Record whether the host should run (quiescing marks it stopped).
+  // Record whether the host should run.
   setDesiredState: (state: "running" | "stopped") => Promise<void>;
-  // A rollback start waits as long as it takes; the planned start is bounded.
+  // Returns once the host runs, heartbeats, and the start's own cloud work
+  // has finished (it writes back the whole metadata object it read). A
+  // rollback start waits as long as it takes; the planned start is bounded.
   startHost: (opts?: { rollback?: boolean }) => Promise<void>;
   // Fails if the host could not start as planned (e.g. no price for the
   // target machine type), checked before anything is changed.
@@ -244,6 +247,35 @@ function placementMatches(
   );
 }
 
+interface OriginalHostState {
+  running: boolean;
+  region: string;
+  machine: Record<string, any>;
+  size?: string;
+  runtime: Record<string, any>;
+  // Restored exactly: it may disagree with the status (a pending stop, or a
+  // Spot host being recovered), and that intent must survive the move.
+  desired_state: "running" | "stopped";
+}
+
+function originalHostState(row: any, plan: RelocationPlan): OriginalHostState {
+  const running = row.status === "running";
+  const desired = row.metadata?.desired_state;
+  return {
+    running,
+    region: `${row.region ?? plan.source.region}`,
+    machine: row.metadata?.machine ?? {},
+    size: row.metadata?.size,
+    runtime: row.metadata?.runtime ?? {},
+    desired_state:
+      desired === "stopped" || desired === "running"
+        ? desired
+        : running
+          ? "running"
+          : "stopped",
+  };
+}
+
 type RelocationStep =
   | "stop"
   | "final-snapshot"
@@ -283,25 +315,9 @@ export async function relocateHost({
   const row = await deps.loadHost();
   const plan = planRelocation(row, input);
   // The host ends in the state it started in: a stopped host is moved and
-  // left stopped.
-  const running = row.status === "running";
-  const original = {
-    region: `${row.region ?? plan.source.region}`,
-    machine: row.metadata?.machine ?? {},
-    size: row.metadata?.size,
-    runtime: row.metadata?.runtime ?? {},
-    // Restored exactly: it may disagree with the status (a pending stop, or
-    // a Spot host being recovered), and that intent must survive the move.
-    desired_state: (row.metadata?.desired_state === "stopped"
-      ? "stopped"
-      : row.metadata?.desired_state === "running"
-        ? "running"
-        : running
-          ? "running"
-          : "stopped") as "running" | "stopped",
-  };
+  // left stopped. Taken again once the host has settled inside the window.
+  let original = originalHostState(row, plan);
   const { provider, creds } = await deps.provider();
-  const runtime = original.runtime;
   if (
     plan.cross_zone &&
     (!provider?.snapshotDataDisk ||
@@ -327,19 +343,19 @@ export async function relocateHost({
   await deps.preflight?.(plan.target);
 
   // Online preparation: users are not affected yet.
-  if (running && !input.skip_backups) {
+  if (original.running && !input.skip_backups) {
     await deps.progress("backups", "backing up projects while still online");
     await timed("backups", deps.backupProjects);
   }
   await checkCancel();
   let warm: DataDiskSnapshot | undefined;
-  if (plan.cross_zone && running) {
+  if (plan.cross_zone && original.running) {
     await deps.progress("warm-snapshot", "snapshotting the data disk online");
     warm = await timed(
       "warm_snapshot",
       async () =>
         await provider.snapshotDataDisk(
-          runtime,
+          original.runtime,
           relocationSnapshotName(host_id, "warm", new Date(now())),
           creds,
         ),
@@ -353,14 +369,13 @@ export async function relocateHost({
       : estimateRelocationWindowMs({
           cross_zone: plan.cross_zone,
           data_bytes: warm?.storage_bytes,
-          running,
+          running: original.running,
         });
 
   // Maintenance window. The in_progress notice is also the fence: host
   // lifecycle APIs, project starts and Spot recovery refuse to act on the
-  // host while it is set. Work already queued or running is cancelled or
-  // waited out, and the notice is written again in case an in-flight handler
-  // wrote back older metadata without it.
+  // host while it is set. Work already queued is cancelled, and work already
+  // running is waited out.
   const windowStarted = now();
   const notice: HostMaintenanceNotice = {
     kind: "relocation",
@@ -373,11 +388,31 @@ export async function relocateHost({
   };
   const attempted = new Set<RelocationStep>();
   let final: DataDiskSnapshot | undefined;
+  // Whether this relocation changed the desired state, which is then put
+  // back; otherwise the intent of whatever ran before is left alone.
+  let desiredChanged = false;
   try {
     await deps.setMaintenance(notice);
     await deps.progress("fence", "pausing other work on the host");
     await timed("fence", deps.quiesceCloudWork);
-    await deps.setMaintenance(notice);
+    // A start, stop or change admitted before the fence may have finished
+    // while the host settled: act on the settled host, not the first read.
+    const settled = await deps.loadHost();
+    const settledPlan = planRelocation(settled, input);
+    if (
+      settledPlan.source.zone !== plan.source.zone ||
+      settledPlan.source.machine_type !== plan.source.machine_type ||
+      settledPlan.data_disk_name !== plan.data_disk_name
+    ) {
+      throw new Error(
+        `the host changed while other work finished (now ${settledPlan.source.zone}/${settledPlan.source.machine_type}); nothing was moved`,
+      );
+    }
+    original = originalHostState(settled, plan);
+    // Relocation's own stops are not interruptions to recover from.
+    desiredChanged = true;
+    await deps.setDesiredState("stopped");
+    const { running, runtime } = original;
     if (running) {
       await deps.progress("stopping", "stopping the host");
       attempted.add("stop");
@@ -453,6 +488,12 @@ export async function relocateHost({
       );
       attempted.add("start");
       await timed("start", deps.startHost);
+      // Verification work queued by the start must not write back a running
+      // host after it is stopped again, or a stale desired state after the
+      // final one.
+      if (!running || original.desired_state !== "running") {
+        await timed("settle", deps.quiesceCloudWork);
+      }
       // Host work writes whole metadata objects; one that read the row
       // before the placement update can put the old machine back.
       const started = await deps.loadHost();
@@ -476,7 +517,7 @@ export async function relocateHost({
       plan,
       final,
       attempted,
-      running,
+      desiredChanged,
       original,
       provider,
       creds,
@@ -585,7 +626,7 @@ async function rollBack({
   plan,
   final,
   attempted,
-  running,
+  desiredChanged,
   original,
   provider,
   creds,
@@ -595,19 +636,14 @@ async function rollBack({
   plan: RelocationPlan;
   final?: DataDiskSnapshot;
   attempted: Set<RelocationStep>;
-  running: boolean;
-  original: {
-    region: string;
-    machine: Record<string, any>;
-    size?: string;
-    runtime: Record<string, any>;
-    desired_state: "running" | "stopped";
-  };
+  desiredChanged: boolean;
+  original: OriginalHostState;
   provider: any;
   creds: any;
   deps: RelocationDeps;
   timed: <T>(name: string, run: () => Promise<T>) => Promise<T>;
 }): Promise<{ ok: boolean; error?: string }> {
+  const running = original.running;
   const restorePlacement = (metadata: Record<string, any>) => ({
     ...metadata,
     machine: original.machine,
@@ -632,7 +668,10 @@ async function rollBack({
     await deps.progress("rollback", `rolling back to ${plan.source.zone}`);
     await timed("rollback", async () => {
       // Nothing was changed yet (e.g. the fence failed): nothing to race.
+      // Otherwise the abandoned start's verification must not queue another
+      // start while the host is put back.
       if (attempted.size > 0) {
+        await deps.setDesiredState("stopped");
         await deps.quiesceCloudWork();
       }
       let restartNeeded = false;
@@ -688,8 +727,7 @@ async function rollBack({
         });
       }
       // Nothing changed (e.g. the fence could not be established): leave
-      // the host and its in-flight work alone; only undo the desired-state
-      // change made while fencing.
+      // the host and its in-flight work alone.
       if (attempted.size > 0) {
         const current = await deps.loadHost();
         if (running || restartNeeded) {
@@ -701,7 +739,9 @@ async function rollBack({
           }
         }
       }
-      await deps.setDesiredState(original.desired_state);
+      if (desiredChanged) {
+        await deps.setDesiredState(original.desired_state);
+      }
     });
     return { ok: true };
   } catch (err) {

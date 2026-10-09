@@ -186,14 +186,14 @@ describe("dedicated host spend maintenance", () => {
             "stopped_limit_exceeded",
           );
         }
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (
         sql.includes("UPDATE project_hosts") &&
         sql.includes("SET metadata=$2")
       ) {
         expect(params?.[0]).toBe("host-1");
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -432,7 +432,7 @@ describe("dedicated host spend maintenance", () => {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1].billing.funding_mode).toBe("account-prepaid");
         expect(params?.[1].billing.enforcement.state).toBe("ok");
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -534,7 +534,7 @@ describe("dedicated host spend maintenance", () => {
           funding_mode: "site-funded",
           started_at: "2026-05-07T00:00:00.000Z",
         });
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -678,7 +678,7 @@ describe("dedicated host spend maintenance", () => {
             used_5h_usd: "30.0000000000",
           }),
         );
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -706,6 +706,141 @@ describe("dedicated host spend maintenance", () => {
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
+  it("leaves a host being relocated alone", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "running",
+              maintenance: { kind: "relocation", state: "in_progress" },
+              metadata: {
+                owner: "acc-1",
+                size: "n1-standard-4",
+                pricing_model: "on_demand",
+                desired_state: "running",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "n1-standard-4",
+                  disk_gb: 100,
+                  disk_type: "ssd",
+                  storage_mode: "persistent",
+                  zone: "us-central1-a",
+                },
+                billing: {
+                  funding_lane: "prepaid",
+                  hourly_cost_usd: "12",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                  owner_spend_limit_5h_usd: 25,
+                  owner_spend_limit_7d_usd: 1000,
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        throw new Error("must not write a host being relocated");
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(() => true);
+    getDedicatedHostWindowUsageForHostLocalMock = jest.fn(async () => ({
+      spend_5h_usd: "30",
+      spend_7d_usd: "30",
+    }));
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+  });
+
+  it("does not queue a stop when a relocation took the host after it was read", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: "acc-1",
+                size: "n1-standard-4",
+                pricing_model: "on_demand",
+                desired_state: "running",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "n1-standard-4",
+                  disk_gb: 100,
+                  disk_type: "ssd",
+                  storage_mode: "persistent",
+                  zone: "us-central1-a",
+                },
+                billing: {
+                  funding_lane: "prepaid",
+                  hourly_cost_usd: "12",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                  owner_spend_limit_5h_usd: 25,
+                  owner_spend_limit_7d_usd: 1000,
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
+        expect(params?.[0]).toBe("host-1");
+        expect(params?.[1]).toBe("stopping");
+        expect(params?.[3].desired_state).toBe("stopped");
+        expect(params?.[3].billing.owner_spend_limit_status).toEqual(
+          expect.objectContaining({
+            state: "stopped_limit_exceeded",
+            exceeded_window: "5h",
+            limit_5h_usd: 25,
+            used_5h_usd: "30.0000000000",
+          }),
+        );
+        // Guarded on the fence and on the placement it read.
+        expect(sql).toContain("maintenance->>'state'");
+        expect(sql).toContain("metadata->'machine' IS NOT DISTINCT FROM");
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(() => true);
+    getDedicatedHostWindowUsageForHostLocalMock = jest.fn(async () => ({
+      spend_5h_usd: "30",
+      spend_7d_usd: "30",
+    }));
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+  });
   it("preserves an explicit site-funded policy on inactive hosts", async () => {
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("pg_try_advisory_lock")) {
@@ -745,7 +880,7 @@ describe("dedicated host spend maintenance", () => {
           funding_mode: "site-funded",
           started_at: "2026-05-07T00:00:00.000Z",
         });
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -822,7 +957,7 @@ describe("dedicated host spend maintenance", () => {
         expect(params?.[3].billing.enforcement.final_backup_status).toBe(
           "succeeded",
         );
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -895,7 +1030,7 @@ describe("dedicated host spend maintenance", () => {
         expect(params?.[1].billing.enforcement.state).toBe(
           "deprovision_pending",
         );
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -996,7 +1131,7 @@ describe("dedicated host spend maintenance", () => {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1].billing.enforcement).toEqual({ state: "ok" });
         expect(params?.[1].billing.funding_lane).toBe("prepaid");
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -1064,7 +1199,7 @@ describe("dedicated host spend maintenance", () => {
           "deprovisioned_recoverable",
         );
         expect(params?.[1].billing.enforcement.deprovisioned_at).toBeTruthy();
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };
@@ -1142,7 +1277,7 @@ describe("dedicated host spend maintenance", () => {
         sql.includes("SET metadata=$2")
       ) {
         expect(params?.[1].billing.hourly_cost_usd).toBe("12");
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1228,7 +1363,7 @@ describe("dedicated host spend maintenance", () => {
         expect(params?.[1].billing.pricing_snapshot.billing_state).toBe(
           "stopped",
         );
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1344,7 +1479,7 @@ describe("dedicated host spend maintenance", () => {
           state: "stopped_billing_blocked",
           final_backup_status: "unknown",
         });
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1393,7 +1528,7 @@ describe("dedicated host spend maintenance", () => {
         expect(
           params?.[1].billing.enforcement.deprovision_reminder_sent_at,
         ).toBeTruthy();
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected query: ${sql}`);
     });

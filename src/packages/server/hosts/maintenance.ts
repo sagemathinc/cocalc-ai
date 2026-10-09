@@ -121,19 +121,26 @@ export function scheduledMaintenanceNotice(opts: {
   };
 }
 
+// Replace the host's notice, but only if it is still the one the caller
+// decided on (compare-and-swap): a relocation may have taken the lease since.
+// Returns whether it was written.
 export async function setHostMaintenanceMetadata(
   host_id: string,
   notice: HostMaintenanceNotice | null,
-): Promise<void> {
-  await getPool().query(
-    `UPDATE project_hosts SET maintenance=$2::jsonb, updated=NOW() WHERE id=$1`,
+  { expected }: { expected: unknown },
+): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts SET maintenance=$2::jsonb, updated=NOW()
+      WHERE id=$1 AND maintenance IS NOT DISTINCT FROM $3::jsonb`,
     [
       host_id,
       notice == null
         ? null
         : JSON.stringify({ ...notice, updated_at: new Date().toISOString() }),
+      expected == null ? null : JSON.stringify(expected),
     ],
   );
+  return (rowCount ?? 0) > 0;
 }
 
 // Host lifecycle changes (start, stop, restart, delete, drain, machine and
@@ -194,13 +201,18 @@ export async function attachRelocationLeaseOp({
   lease_id: string;
   op_id: string;
 }): Promise<void> {
-  await getPool().query(
+  const { rowCount } = await getPool().query(
     `UPDATE project_hosts
         SET maintenance = maintenance || jsonb_build_object('op_id', $3::text),
             updated=NOW()
       WHERE id=$1 AND maintenance->>'lease_id' = $2`,
     [host_id, lease_id, op_id],
   );
+  if (!rowCount) {
+    throw new Error(
+      "the relocation lost the host's lease before it was queued",
+    );
+  }
 }
 
 // Write the relocation's notice (null releases the lease), only while this
@@ -261,6 +273,10 @@ export async function hostActivity({
   host_id: string;
   own_op_id?: string;
 }): Promise<HostActivity> {
+  // A project operation is attributed to the host through its project's
+  // current host and through the hosts its input names: a move changes the
+  // project's host early but keeps using the source until it cleans up.
+  // Hard deletes are account-scoped and name their project in the input.
   const { rows } = await getPool().query(
     `SELECT
        (SELECT count(*)::int FROM cloud_vm_work
@@ -270,14 +286,52 @@ export async function hostActivity({
            AND status IN ('queued','running')
            AND ($2::text IS NULL OR op_id::text <> $2)) AS host_operations,
        (SELECT count(*)::int FROM long_running_operations l
-          JOIN projects p ON p.project_id::text = l.scope_id::text
-         WHERE l.scope_type='project'
+         WHERE l.scope_type <> 'host'
            AND l.status IN ('queued','running')
-           AND p.host_id::text=$1
-           AND p.deleted IS NOT TRUE) AS project_operations`,
+           AND (l.input->>'source_host_id' = $1
+                OR l.input->>'dest_host_id' = $1
+                OR EXISTS (
+                  SELECT 1 FROM projects p
+                   WHERE p.host_id::text = $1
+                     AND p.project_id::text = COALESCE(
+                       CASE WHEN l.scope_type = 'project' THEN l.scope_id::text END,
+                       l.input->>'project_id')))) AS project_operations`,
     [host_id, own_op_id ?? null],
   );
   return rows[0];
+}
+
+// Project operations that touch a host's data (moves, backups, restores,
+// copies, hard deletes, RootFS publishing) must not run while the host is down
+// for a relocation or after a failed one. They check when they start running,
+// after being claimed: one already running when the window began is counted
+// by quiesce and waited out, and one that starts later fails here.
+export async function assertProjectHostsNotUnderMaintenance({
+  project_ids = [],
+  host_ids = [],
+}: {
+  project_ids?: Array<string | null | undefined>;
+  host_ids?: Array<string | null | undefined>;
+}): Promise<void> {
+  const projects = project_ids.filter((id): id is string => !!id);
+  const hosts = host_ids.filter((id): id is string => !!id);
+  if (projects.length === 0 && hosts.length === 0) return;
+  const { rows } = await getPool().query(
+    `SELECT h.id FROM project_hosts h
+      WHERE COALESCE(h.maintenance->>'state', '') IN ('in_progress','failed')
+        AND (h.id::text = ANY($2::text[])
+             OR h.id::text IN (SELECT p.host_id::text FROM projects p
+                                WHERE p.project_id::text = ANY($1::text[])))`,
+    [projects, hosts],
+  );
+  if (rows.length > 0) {
+    throw Object.assign(
+      new Error(
+        "This project's server is down for scheduled maintenance and will be back shortly.",
+      ),
+      { code: "host_maintenance_in_progress" },
+    );
+  }
 }
 
 // Settle everything that could act on the host before its window: queued
@@ -300,13 +354,6 @@ export async function quiesceHostActivity({
   onWait?: (activity: HostActivity) => Promise<void>;
 }): Promise<void> {
   const pool = getPool();
-  await pool.query(
-    `UPDATE project_hosts
-        SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', '"stopped"'),
-            updated=NOW()
-      WHERE id=$1`,
-    [host_id],
-  );
   const deadline = Date.now() + timeoutMs;
   let quiet = 0;
   let activity: HostActivity | undefined;

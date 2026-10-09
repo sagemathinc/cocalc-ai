@@ -3853,7 +3853,7 @@ describe("hosts browser fresh auth gating", () => {
     try {
       isAdminMock = jest.fn(async () => true);
       const updates: string[] = [];
-      queryMock = jest.fn(async (sql: string) => {
+      queryMock = jest.fn(async (sql: string, params: any[]) => {
         if (sql.includes("SELECT * FROM project_hosts")) {
           return {
             rows: [
@@ -3873,7 +3873,12 @@ describe("hosts browser fresh auth gating", () => {
         }
         if (sql.includes("UPDATE project_hosts")) {
           updates.push(sql);
-          return { rows: [] };
+          // The notice is replaced only if it is still the one read.
+          expect(JSON.parse(params[2])).toMatchObject({
+            state: "in_progress",
+            op_id: "op-dead",
+          });
+          return { rows: [], rowCount: updates.length === 1 ? 0 : 1 };
         }
         return { rows: [] };
       });
@@ -3891,7 +3896,15 @@ describe("hosts browser fresh auth gating", () => {
         }),
       ).rejects.toThrow(/still running|in progress/);
       expect(updates).toEqual([]);
-      // getLro now returns nothing: the owning operation is gone.
+      // getLro now returns nothing: the owning operation is gone. The first
+      // clear loses a race (a relocation changed the notice meanwhile).
+      await expect(
+        setHostMaintenanceNotice({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          clear: true,
+        }),
+      ).rejects.toThrow(/changed meanwhile/);
       await expect(
         setHostMaintenanceNotice({
           account_id: ACCOUNT_ID,
