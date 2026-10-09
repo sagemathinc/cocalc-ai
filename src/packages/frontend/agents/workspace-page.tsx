@@ -48,7 +48,7 @@ import {
   retryablePreparation,
   readPreparedFirstAgent,
   writePreparedFirstAgent,
-  type PreparedFirstAgentPayment,
+  type PreparedFirstAgentSettings,
 } from "./retryable-preparation";
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
@@ -605,7 +605,10 @@ function NewAgentPanel({
     () => getStoredCodexNewChatDefaults() != null,
     [],
   );
-  const modelCustomized = useRef(false);
+  // A restored first-run agent keeps the model it was created with.
+  const modelCustomized = useRef(
+    restoredPreparation?.settings?.codexConfig != null,
+  );
   const [sourceRuntime] = useState(() => {
     if (!sourceAgent) return;
     const raw = redux
@@ -708,27 +711,26 @@ function NewAgentPanel({
         })
       : undefined,
   );
-  const restoredCodexPayment = restoredPreparation?.payment?.codex;
-  const [config, setConfig] = useState<NewAgentCodexConfig>(() => ({
-    ...(sourceConfig ?? {}),
-    model: sourceConfig?.model || accountDefaults.model,
-    reasoning: sourceConfig?.reasoning ?? accountDefaults.reasoning,
-    serviceTier: sourceConfig?.serviceTier ?? accountDefaults.serviceTier,
-    sessionMode:
-      sourceConfig?.sessionMode ??
-      accountDefaults.sessionMode ??
-      getDefaultCodexSessionMode(),
-    allowWrite:
-      (sourceConfig?.sessionMode ?? accountDefaults.sessionMode) !==
-      "read-only",
-    paymentSource:
-      sourceConfig?.paymentSource ??
-      restoredCodexPayment?.paymentSource ??
-      (restoredCredentialId ? "subscription" : "auto"),
-    credentialId: restoredCodexPayment
-      ? restoredCodexPayment.credentialId
-      : restoredCredentialId,
-  }));
+  const [config, setConfig] = useState<NewAgentCodexConfig>(
+    () =>
+      restoredPreparation?.settings?.codexConfig ?? {
+        ...(sourceConfig ?? {}),
+        model: sourceConfig?.model || accountDefaults.model,
+        reasoning: sourceConfig?.reasoning ?? accountDefaults.reasoning,
+        serviceTier: sourceConfig?.serviceTier ?? accountDefaults.serviceTier,
+        sessionMode:
+          sourceConfig?.sessionMode ??
+          accountDefaults.sessionMode ??
+          getDefaultCodexSessionMode(),
+        allowWrite:
+          (sourceConfig?.sessionMode ?? accountDefaults.sessionMode) !==
+          "read-only",
+        paymentSource:
+          sourceConfig?.paymentSource ??
+          (restoredCredentialId ? "subscription" : "auto"),
+        credentialId: restoredCredentialId,
+      },
+  );
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
   );
@@ -786,7 +788,7 @@ function NewAgentPanel({
   const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
   const claudeCredentialsAccount = useRef<string | undefined>(undefined);
   const initialClaudeCredential = useRef(
-    restoredPreparation?.payment?.claudeCredential ??
+    restoredPreparation?.settings?.claudeCredential ??
       readHarnessCredentialSelection({
         accountId: boundAccount.accountId,
         projectId: selectionThread?.projectId,
@@ -813,8 +815,8 @@ function NewAgentPanel({
     restoredPreparation,
   );
   const pendingRef = useRef<PendingAgent | undefined>(restoredPreparation);
-  const preparedPayment = useRef<PreparedFirstAgentPayment | undefined>(
-    restoredPreparation?.payment,
+  const preparedSettings = useRef<PreparedFirstAgentSettings | undefined>(
+    restoredPreparation?.settings,
   );
   const prepareOnce = useRef(retryablePreparation<PendingAgent>());
   const identityOnce = useRef(retryablePreparation<string>());
@@ -1112,11 +1114,11 @@ function NewAgentPanel({
             credential: claudeCredential,
           });
         }
-        preparedPayment.current =
+        preparedSettings.current =
           runtimeKind === "codex-native"
             ? {
-                codex: {
-                  paymentSource: executionConfig.paymentSource ?? "auto",
+                codexConfig: {
+                  ...executionConfig,
                   credentialId:
                     executionConfig.paymentSource === "subscription"
                       ? executionConfig.credentialId
@@ -1144,7 +1146,7 @@ function NewAgentPanel({
           name: claimedNameRef.current ?? agentName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
           runtimeKind,
-          payment: preparedPayment.current,
+          settings: preparedSettings.current,
         });
       return created;
     });
@@ -1293,7 +1295,7 @@ function NewAgentPanel({
           name: claimedName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
           runtimeKind,
-          payment: preparedPayment.current,
+          settings: preparedSettings.current,
         });
       }
       return identity.agent_id;

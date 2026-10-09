@@ -50,10 +50,15 @@ it("checkpoints a saved first agent across remounts without crossing accounts", 
     threadId: "thread",
     name: "agent",
     automaticProjectTitle: "My first project",
-    // The type and payment chosen at creation survive a reload.
+    // The type and settings chosen at creation survive a reload.
     runtimeKind: "codex-native" as const,
-    payment: {
-      codex: { paymentSource: "subscription" as const, credentialId: "a" },
+    settings: {
+      codexConfig: {
+        model: "gpt-5.5-mini",
+        reasoning: "high" as const,
+        paymentSource: "subscription" as const,
+        credentialId: "a",
+      },
     },
   };
   writePreparedFirstAgent("alice", value);
