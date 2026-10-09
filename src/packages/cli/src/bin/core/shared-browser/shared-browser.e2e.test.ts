@@ -567,3 +567,85 @@ test(
     }
   },
 );
+
+test(
+  "clicks land where the human clicks, at any pixel ratio",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port, cdpPort } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      await page.goto(
+        "data:text/html,<body style='margin:0'><script>addEventListener('mousedown',e=>document.title=e.clientX+','+e.clientY+','+innerWidth)</script></body>",
+      );
+      page.close();
+      const results: any[] = [];
+      for (const dpr of [1, 1.5, 2, 2.5, 3]) {
+        const viewer = await human.newPage({
+          viewport: { width: 800, height: 500 },
+          deviceScaleFactor: dpr,
+        });
+        await viewer.goto(
+          `http://127.0.0.1:${port}/?view=frame:d${String(dpr).replace(".", "_")}`,
+        );
+        await viewer.waitForFunction(
+          () => document.getElementById("status")?.textContent === "live",
+        );
+        await viewer.click("#driver button"); // take over
+        // Let the viewport, pixel ratio and the sharp frame settle.
+        await new Promise((r) => setTimeout(r, 1500));
+        const box = await viewer.locator("#screen").boundingBox();
+        await viewer.mouse.click(box!.x + 300, box!.y + 100);
+        await new Promise((r) => setTimeout(r, 500));
+        await viewer.click("#driver button"); // hand back
+        const p = await SharedBrowserPage.open(
+          `http://127.0.0.1:${cdpPort}`,
+          server.getState().active,
+        );
+        const [x, y, width] = (await p.location()).title.split(",").map(Number);
+        p.close();
+        results.push({ dpr, x, y, width, canvas: Math.round(box!.width) });
+        await viewer.close();
+      }
+      for (const r of results) {
+        assert.equal(
+          r.width,
+          r.canvas,
+          `page width = canvas width ${JSON.stringify(r)}`,
+        );
+        assert.ok(
+          Math.abs(r.x - 300) <= 1 && Math.abs(r.y - 100) <= 1,
+          JSON.stringify(r),
+        );
+      }
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);
