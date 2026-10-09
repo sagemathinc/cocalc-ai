@@ -159,6 +159,24 @@ cmp "${secrets}/host-owner-ssh/test-bay/id_ed25519" \
   fail "open --force"
 ls -A "${restored}/bay-secrets" | grep -q '\.escrow-' && fail "temporary file left behind"
 
+# Empty directories are restored too, with their mode.
+mkdir -m 0750 "${secrets}/empty-dir"
+run || fail "rerun with an empty directory"
+"$NODE" "$ESCROW" open --master-key "$KEY" --in "$sealed" --out-dir "${TMP_ROOT}/with-empty" >/dev/null ||
+  fail "open with an empty directory"
+[[ -d "${TMP_ROOT}/with-empty/bay-secrets/empty-dir" ]] || fail "empty directory not restored"
+[[ "$(stat -c %a "${TMP_ROOT}/with-empty/bay-secrets/empty-dir")" == 750 ]] || fail "empty directory mode"
+rmdir "${secrets}/empty-dir"
+run || fail "rerun without the empty directory"
+
+# Two roots mapped onto the same directory are refused before any write.
+mkdir "${TMP_ROOT}/same"
+out="$("$NODE" "$ESCROW" open --master-key "$KEY" --in "$sealed" \
+  --map "etc-cocalc=${TMP_ROOT}/same/x" --map "bay-secrets=${TMP_ROOT}/same/x" 2>&1)" &&
+  fail "two roots restored to one directory"
+[[ "$out" == *"would both be restored to"* ]] || fail "conflict message: $out"
+[[ ! -e "${TMP_ROOT}/same/x" ]] || fail "a refused open wrote files"
+
 # --map never follows a symbolic link in the destination: not in a component
 # below the mapped directory, and not the mapped directory itself.
 mkdir -p "${TMP_ROOT}/map" "${TMP_ROOT}/outside"
@@ -226,6 +244,27 @@ mkdir "${TMP_ROOT}/injected"
   }
 " || fail "injected --chown"
 [[ ! -e "${TMP_ROOT}/injected/t" ]] || fail "refused --chown wrote files"
+
+# Directory-only payloads restore; colliding destinations are refused before
+# any write (the review's reproductions).
+"$NODE" --input-type=module -e "
+  import { restore } from '${ESCROW}';
+  const dir = (root, path) => ({ root, path, mode: 0o755, owner: null, group: null });
+  const file = (root, path, text) => ({ root, path, mode: 0o600, owner: null, group: null, content: Buffer.from(text) });
+  const only = restore({ files: [], dirs: [dir('e', ''), dir('e', 'empty'), dir('e', 'empty/deeper')] },
+    new Map([['e', '${TMP_ROOT}/injected/e']]));
+  if (only.created.length !== 3) { console.error('dirs only', only); process.exit(1); }
+  const refused = (payload, bases, pattern) => {
+    try { restore(payload, new Map(bases)); } catch (err) { if (pattern.test(err.message)) return; throw err; }
+    console.error('accepted', JSON.stringify(bases)); process.exit(1);
+  };
+  refused({ dirs: [], files: [file('a', 'x', 'A'), file('b', 'x', 'B')] },
+    [['a', '${TMP_ROOT}/injected/ab'], ['b', '${TMP_ROOT}/injected/ab']], /would both be restored/);
+  refused({ dirs: [], files: [file('a', 'x', 'A'), file('b', 'y', 'B')] },
+    [['a', '${TMP_ROOT}/injected/nest'], ['b', '${TMP_ROOT}/injected/nest/x/sub']], /below the file/);
+" || fail "directory-only restore or destination conflicts"
+[[ -d "${TMP_ROOT}/injected/e/empty/deeper" ]] || fail "nested empty directory not restored"
+[[ ! -e "${TMP_ROOT}/injected/ab" && ! -e "${TMP_ROOT}/injected/nest" ]] || fail "a refused restore wrote files"
 
 # Symbolic links, symlinked directories and FIFOs in the source are refused
 # rather than followed, and a FIFO does not block the walk.
@@ -321,10 +360,16 @@ verify && fail "verify missed a changed file"
 # account or anyone else could change.
 mkdir -p "${TMP_ROOT}/writable"
 chmod 0777 "${TMP_ROOT}/writable"
-ln -s "$NODE" "${TMP_ROOT}/writable/node"
+printf '#!/bin/sh\nexit 0\n' > "${TMP_ROOT}/writable/node"
+chmod 0755 "${TMP_ROOT}/writable/node"
 COCALC_BAY_NODE_BIN="${TMP_ROOT}/writable/node" bash "$RUN" >/dev/null 2>"${TMP_ROOT}/run-err" &&
   fail "ran node from a world-writable directory"
 grep -q 'refusing to trust' "${TMP_ROOT}/run-err" || fail "trust message: $(cat "${TMP_ROOT}/run-err")"
+# A symbolic link is resolved once and only its checked target is run, so a
+# link in a writable directory cannot be swapped after the check.
+ln -s "$NODE" "${TMP_ROOT}/writable/node-link"
+COCALC_BAY_NODE_BIN="${TMP_ROOT}/writable/node-link" bash "$RUN" >/dev/null 2>&1 ||
+  fail "a link to a trusted node was refused"
 COCALC_BAY_USER="$(id -un)" bash "$RUN" >/dev/null 2>"${TMP_ROOT}/run-err" &&
   fail "trusted files owned by the bay account"
 grep -q "owned by $(id -un)" "${TMP_ROOT}/run-err" || fail "owner message: $(cat "${TMP_ROOT}/run-err")"

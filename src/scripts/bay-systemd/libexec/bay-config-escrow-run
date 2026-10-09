@@ -78,11 +78,13 @@ fail() {
   exit 1
 }
 
-# Root must not trust what the bay account can change: refuse a path if it,
-# or any directory above it, is owned by that account or writable by group or
-# others (unless sticky). Symbolic links are checked by owner (their mode
-# means nothing) and then followed. COCALC_BAY_CONFIG_ESCROW_ASSUME_TRUSTED_DIR stops the walk at
-# that directory; it exists only for tests in containers whose / is
+# Root must not trust what the bay account can change. Each path is resolved
+# once to its canonical form, every directory on that path is checked (not
+# owned by that account, not writable by group or others unless sticky),
+# and only the canonical path is used afterwards, so a symbolic link cannot
+# be swapped between the check and the use.
+# COCALC_BAY_CONFIG_ESCROW_ASSUME_TRUSTED_DIR stops the walk at that
+# directory; it exists only for tests in containers whose / is
 # group-writable, and like everything here it comes from root's environment.
 check_chain() {
   local path="$1" bay_uid="$2" uid mode
@@ -92,26 +94,25 @@ check_chain() {
       "$path" == "$COCALC_BAY_CONFIG_ESCROW_ASSUME_TRUSTED_DIR" ]] && return 0
     uid="$(stat -c %u -- "$path")" || return 1
     mode="$(stat -c %a -- "$path")" || return 1
-    [[ -L "$path" ]] && mode=0
     # A sticky directory (like /tmp) lets no one else replace what is in it.
     (( 8#$mode & 8#1000 )) && mode=0
-    if [[ "$uid" == "$bay_uid" ]] || (( 8#$mode & 8#022 )); then
-      echo "$path is owned by ${COCALC_BAY_USER} or is group/world-writable"
+    if [[ -L "$path" || "$uid" == "$bay_uid" ]] || (( 8#$mode & 8#022 )); then
+      echo "$path is a symbolic link, is owned by ${COCALC_BAY_USER} or is group/world-writable"
       return 1
     fi
     [[ "$path" == / ]] && return 0
     path="$(dirname -- "$path")"
   done
 }
+# require_trusted VAR: replace $VAR with its checked canonical path.
 require_trusted() {
-  local path="$1" bay_uid problem resolved
+  local var="$1" path="${!1}" bay_uid problem resolved
   bay_uid="$(id -u "$COCALC_BAY_USER" 2>/dev/null || echo -1)"
   [[ "$path" == /* ]] || fail "refusing to trust $path: not an absolute path"
-  resolved="$(readlink -f -- "$path")" || fail "cannot resolve $path"
-  problem="$(check_chain "$(dirname -- "$path")" "$bay_uid")" ||
-    fail "refusing to trust $path: $problem"
+  resolved="$(readlink -e -- "$path")" || fail "cannot resolve $path"
   problem="$(check_chain "$resolved" "$bay_uid")" ||
     fail "refusing to trust $path: $problem"
+  printf -v "$var" '%s' "$resolved"
 }
 
 for name in COCALC_BAY_ID COCALC_BAY_PGBACKREST_S3_BUCKET COCALC_BAY_PGBACKREST_S3_ENDPOINT \
@@ -121,13 +122,14 @@ done
 [[ "$COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS" =~ ^[1-9][0-9]{0,3}$ ]] ||
   fail "COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS must be a positive number of days"
 [[ -x "$COCALC_BAY_NODE_BIN" ]] || fail "node is not executable: ${COCALC_BAY_NODE_BIN:-unset}"
-require_trusted "$COCALC_BAY_NODE_BIN"
-require_trusted "$ESCROW_MJS"
-require_trusted "${BASH_SOURCE[0]}"
+require_trusted COCALC_BAY_NODE_BIN
+require_trusted ESCROW_MJS
+SELF="${BASH_SOURCE[0]}"
+require_trusted SELF
 [[ "$CURL_BIN" == */* ]] || CURL_BIN="$(type -P "$CURL_BIN")" || fail "curl not found"
-require_trusted "$CURL_BIN"
+require_trusted CURL_BIN
 [[ -r "$COCALC_SITE_MASTER_KEY_PATH" ]] || fail "site master key is not readable: $COCALC_SITE_MASTER_KEY_PATH"
-require_trusted "$COCALC_SITE_MASTER_KEY_PATH"
+require_trusted COCALC_SITE_MASTER_KEY_PATH
 
 includes=()
 for name in "${ESCROW_FILES[@]}"; do

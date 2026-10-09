@@ -675,11 +675,14 @@ function createExclusive(
 }
 
 /**
- * Write the escrowed files below their mapped directories. No symbolic link
- * is followed, in the destination or any of its components; existing files
- * are replaced only with `force`. With `chown` (root only) files and the
- * directories this restore creates get their recorded owner, group and mode;
- * existing directories are left as they are.
+ * Write the escrowed directories and files below their mapped directories.
+ * The whole destination plan is checked before anything is written: no two
+ * entries (from any root) may land on the same path, and no file may stand
+ * where another entry needs a directory. No symbolic link is followed, in the
+ * destination or any of its components; existing files are replaced only
+ * with `force`. With `chown` (root only) files and the directories this
+ * restore creates get their recorded owner, group and mode; existing
+ * directories are left as they are.
  */
 export function restore({ files, dirs }, bases, options = {}) {
   const { force = false, chown = false } = options;
@@ -698,7 +701,48 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
     return resolve(base);
   };
+  const fullPath = ({ root, path }) =>
+    path ? `${baseOf(root)}/${path}` : baseOf(root);
   const dirMeta = new Map(dirs.map((dir) => [`${dir.root}/${dir.path}`, dir]));
+  // Directories without a recorded entry (an etc-cocalc file's root, say)
+  // take the owner of the entry being restored into them, mode 0700.
+  const dirFor = (root, path, fallback) =>
+    dirMeta.get(`${root}/${path}`) ?? { ...fallback, mode: 0o700 };
+  const roots = [...new Set([...dirs, ...files].map((entry) => entry.root))];
+  // Shallowest first, so each directory's parent exists when it is made.
+  const orderedDirs = dirs
+    .filter((dir) => dir.path !== "")
+    .sort((a, b) => a.path.split("/").length - b.path.split("/").length);
+
+  // The destination plan: where every entry lands.
+  const plan = new Map();
+  const claim = (full, kind, what) => {
+    const prior = plan.get(full);
+    if (prior) {
+      throw new Error(
+        `${what} and ${prior.what} would both be restored to ${full}`,
+      );
+    }
+    plan.set(full, { kind, what });
+  };
+  for (const root of roots) claim(baseOf(root), "dir", `${root}/`);
+  for (const dir of orderedDirs) {
+    claim(fullPath(dir), "dir", `${dir.root}/${dir.path}`);
+  }
+  for (const file of files) {
+    claim(fullPath(file), "file", `${file.root}/${file.path}`);
+  }
+  for (const [full, { what }] of plan) {
+    for (let up = dirname(full); up !== dirname(up); up = dirname(up)) {
+      const ancestor = plan.get(up);
+      if (ancestor?.kind === "file") {
+        throw new Error(
+          `${what} would be restored below the file ${ancestor.what}`,
+        );
+      }
+    }
+  }
+
   // Resolve every owner before writing anything.
   const owners = new Map();
   const ownerOf = (entry, what) => {
@@ -709,19 +753,16 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
     return owners.get(key);
   };
-  const dirFor = (root, path, fallback) =>
-    dirMeta.get(`${root}/${path}`) ?? { ...fallback, mode: 0o700 };
-  for (const file of files) {
-    baseOf(file.root);
-    ownerOf(file, `${file.root}/${file.path}`);
-    const parts = file.path.split("/");
+  for (const entry of [...files, ...dirs]) {
+    ownerOf(entry, `${entry.root}/${entry.path}`);
+    const parts = entry.path ? entry.path.split("/") : [];
     for (let i = 0; i < parts.length; i++) {
       const path = parts.slice(0, i).join("/");
-      ownerOf(dirFor(file.root, path, file), `${file.root}/${path}`);
+      ownerOf(dirFor(entry.root, path, entry), `${entry.root}/${path}`);
     }
   }
 
-  // Check first, so a refusal leaves nothing half written.
+  // Check the destination, so a refusal leaves nothing half written.
   const openParent = (base) => {
     let fd;
     try {
@@ -738,19 +779,23 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
     return fd;
   };
-  for (const root of new Set(files.map((file) => file.root))) {
-    closeSync(openParent(baseOf(root)));
-  }
-  for (const file of files) {
-    const target = `${baseOf(file.root)}/${file.path}`;
-    const fd = openNoFollow(target, { missingOk: true });
+  for (const root of roots) closeSync(openParent(baseOf(root)));
+  for (const [full, { kind }] of plan) {
+    const fd = openNoFollow(full, { missingOk: true });
     if (fd === undefined) continue;
     try {
-      if (!fstatSync(fd).isFile()) {
-        throw new Error(`refusing to replace ${target}: not a regular file`);
+      const stat = fstatSync(fd);
+      if (kind === "dir" && !stat.isDirectory()) {
+        throw new Error(
+          `${full} is not a directory (symbolic links are refused)`,
+        );
       }
-      if (!force)
-        throw new Error(`refusing to overwrite ${target}; pass --force`);
+      if (kind === "file" && !stat.isFile()) {
+        throw new Error(`refusing to replace ${full}: not a regular file`);
+      }
+      if (kind === "file" && !force) {
+        throw new Error(`refusing to overwrite ${full}; pass --force`);
+      }
     } finally {
       closeSync(fd);
     }
@@ -780,34 +825,49 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
     return fd;
   };
-  const restored = [];
-  for (const file of files) {
-    const base = baseOf(file.root);
+  // A descriptor for root/parts, creating directories as needed; the caller
+  // closes it.
+  const openDirectory = (root, parts, entry) => {
+    const base = baseOf(root);
     const parentFd = openParent(base);
     let fd;
     try {
-      fd = ensureDir(
-        parentFd,
-        basename(base),
-        dirFor(file.root, "", file),
-        base,
-      );
+      fd = ensureDir(parentFd, basename(base), dirFor(root, "", entry), base);
     } finally {
       closeSync(parentFd);
     }
-    const parts = file.path.split("/");
     try {
-      for (let i = 0; i < parts.length - 1; i++) {
+      for (let i = 0; i < parts.length; i++) {
         const path = parts.slice(0, i + 1).join("/");
         const next = ensureDir(
           fd,
           parts[i],
-          dirFor(file.root, path, file),
+          dirFor(root, path, entry),
           `${base}/${path}`,
         );
         closeSync(fd);
         fd = next;
       }
+    } catch (err) {
+      closeSync(fd);
+      throw err;
+    }
+    return fd;
+  };
+  for (const root of roots) {
+    const entry =
+      dirs.find((dir) => dir.root === root) ??
+      files.find((file) => file.root === root);
+    closeSync(openDirectory(root, [], entry));
+  }
+  for (const dir of orderedDirs) {
+    closeSync(openDirectory(dir.root, dir.path.split("/"), dir));
+  }
+  const restored = [];
+  for (const file of files) {
+    const parts = file.path.split("/");
+    const fd = openDirectory(file.root, parts.slice(0, -1), file);
+    try {
       createExclusive(
         fd,
         parts[parts.length - 1],
@@ -816,12 +876,38 @@ export function restore({ files, dirs }, bases, options = {}) {
         ownerOf(file, `${file.root}/${file.path}`),
         fchown,
       );
-      restored.push(`${base}/${file.path}`);
+      restored.push(fullPath(file));
     } finally {
       closeSync(fd);
     }
   }
   return { restored, created };
+}
+
+/**
+ * Create directory `path` (its parent must exist) without following a
+ * symbolic link anywhere; an existing directory is fine.
+ */
+function makeDirectory(path, mode = 0o700) {
+  const target = resolve(path);
+  const parentFd = openNoFollow(dirname(target));
+  try {
+    try {
+      mkdirSync(at(parentFd, basename(target)), { mode });
+    } catch (err) {
+      if (errorCode(err) !== "EEXIST") throw err;
+    }
+    const fd = openSync(at(parentFd, basename(target)), O_PATH | O_NOFOLLOW);
+    const isDirectory = fstatSync(fd).isDirectory();
+    closeSync(fd);
+    if (!isDirectory) {
+      throw new Error(
+        `${target} is not a directory (symbolic links are refused)`,
+      );
+    }
+  } finally {
+    closeSync(parentFd);
+  }
 }
 
 // --- command line ---------------------------------------------------------
@@ -951,13 +1037,8 @@ function main() {
     if (bases.size === 0) {
       throw new Error("open requires --out-dir DIR or --map ROOT=DIR");
     }
-    if (options.out_dir) {
-      // --out-dir itself may be new; its parent must exist.
-      const fd = openNoFollow(options.out_dir, { missingOk: true });
-      if (fd === undefined)
-        mkdirSync(resolve(options.out_dir), { mode: 0o700 });
-      else closeSync(fd);
-    }
+    // --out-dir itself may be new; its parent must exist.
+    if (options.out_dir) makeDirectory(options.out_dir);
     const result = restore(payload, bases, {
       force: !!options.force,
       chown: !!options.chown,
