@@ -444,4 +444,41 @@ describe("portable Jupyter blob attachments", () => {
       expect(Date.now() - started).toBeLessThan(3000);
     });
   });
+
+  it("keeps carriage returns and line separators in list sources", async () => {
+    const live = notebook([
+      "intro\r\n",
+      "a\rb c\n",
+      `![diagram](/blobs/diagram.png?uuid=${pngUuid})`,
+    ]);
+    const loadBlob = jest.fn(async () => ({ bytes: png }));
+
+    const saved = await embedCoCalcBlobImages({ ipynb: live, loadBlob });
+
+    expect(saved.cells[0].source).toEqual([
+      "intro\r\n",
+      "a\rb c\n",
+      "![diagram](attachment:diagram.png)",
+    ]);
+  });
+
+  it("splits a long CRLF line of a list source in linear time", async () => {
+    // A long line ending in "\r\n": the line regexp retried from every
+    // character before the "\r", which took seconds here.
+    const long = `${"x".repeat(2_000_000)}\r\n`;
+    const live = notebook([
+      long,
+      `![diagram](/blobs/diagram.png?uuid=${pngUuid})\n`,
+    ]);
+    const loadBlob = jest.fn(async () => ({ bytes: png }));
+    const started = Date.now();
+
+    const saved = await embedCoCalcBlobImages({ ipynb: live, loadBlob });
+
+    expect(saved.cells[0].source).toEqual([
+      long,
+      "![diagram](attachment:diagram.png)\n",
+    ]);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });

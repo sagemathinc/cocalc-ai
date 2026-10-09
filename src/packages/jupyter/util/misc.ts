@@ -73,6 +73,21 @@ export function codemirror_to_jupyter_pos(
   return s;
 }
 
+// Split text into ipynb source lines, each keeping its trailing "\n".  This is
+// a linear scan; the regexp /.*(?:\n|$)/g used before was quadratic on a long
+// line containing "\r" and silently dropped the text before any "\r".
+export function splitSourceLines(source: string): string[] {
+  const lines: string[] = [];
+  let start = 0;
+  while (start < source.length) {
+    const newline = source.indexOf("\n", start);
+    const end = newline < 0 ? source.length : newline + 1;
+    lines.push(source.slice(start, end));
+    start = end;
+  }
+  return lines;
+}
+
 // Return s + ... + s = s*n (in python notation), where there are n>=0 summands.
 export function times_n(s: string, n: number): string {
   let t = "";

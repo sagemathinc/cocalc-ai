@@ -6,6 +6,7 @@
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import { isValidUUID } from "@cocalc/util/misc";
+import { splitSourceLines } from "@cocalc/jupyter/util/misc";
 
 const METADATA_KEY = "blob_attachments";
 const METADATA_VERSION = 1;
@@ -365,7 +366,7 @@ function assertAttachmentReferenceLimit(
 
 function setSource(cell: any, source: string): void {
   if (Array.isArray(cell.source)) {
-    cell.source = source.match(/.*(?:\n|$)/g)?.filter(Boolean) ?? [];
+    cell.source = splitSourceLines(source);
   } else {
     cell.source = source;
   }
