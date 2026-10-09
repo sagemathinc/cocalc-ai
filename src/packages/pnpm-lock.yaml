@@ -35,7 +35,7 @@ overrides:
   node-forge@<1.4.0: '>=1.4.0'
   lodash@<4.18.0: '>=4.18.0'
   lodash-es@<4.18.0: '>=4.18.0'
-  handlebars@<4.7.9: '>=4.7.9'
+  handlebars@<4.7.10: '>=4.7.10'
   dompurify@<3.4.16: ^3.4.16
   nodemailer@<10.0.9: ^10.0.9
   protobufjs@>=7.0.0 <7.6.5: ^7.6.5
@@ -2402,11 +2402,11 @@ importers:
         specifier: ^2.2.0
         version: 2.2.0
       handlebars:
-        specifier: ^4.7.9
-        version: 4.7.9
+        specifier: ^4.7.10
+        version: 4.7.10
       handlebars-loader:
         specifier: ^1.7.1
-        version: 1.7.3(handlebars@4.7.9)
+        version: 1.7.3(handlebars@4.7.10)
       identity-obj-proxy:
         specifier: ^3.0.0
         version: 3.0.0
@@ -8494,10 +8494,10 @@ packages:
   handlebars-loader@1.7.3:
     resolution: {integrity: sha512-dDb+8D51vE3OTSE2wuGPWRAegtsEuw8Mk8hCjtRu/pNcBfN5q+M8ZG3kVJxBuOeBrVElpFStipGmaxSBTRR1mQ==}
     peerDependencies:
-      handlebars: '>=4.7.9'
+      handlebars: '>=4.7.10'
 
-  handlebars@4.7.9:
-    resolution: {integrity: sha512-4E71E0rpOaQuJR2A3xDZ+GM1HyWYv1clR58tC8emQNeQe3RH7MAzSbat+V0wG78LQBo6m6bzSG/L4pBuCsgnUQ==}
+  handlebars@4.7.10:
+    resolution: {integrity: sha512-P5VJMVM7qgBn6vjXMw8WG9uVI+ncf2pi72j4de4yz5ZULLj2RGqLYaKOYGsgyrViQ0tePOVlN1tDCCXXtFqXKg==}
     engines: {node: '>=0.4.7'}
     hasBin: true
 
@@ -19083,15 +19083,15 @@ snapshots:
 
   hachure-fill@0.5.2: {}
 
-  handlebars-loader@1.7.3(handlebars@4.7.9):
+  handlebars-loader@1.7.3(handlebars@4.7.10):
     dependencies:
       async: 3.2.6
       fastparse: 1.1.2
-      handlebars: 4.7.9
+      handlebars: 4.7.10
       loader-utils: 2.0.4
       object-assign: 4.1.1
 
-  handlebars@4.7.9:
+  handlebars@4.7.10:
     dependencies:
       minimist: 1.2.8
       neo-async: 2.6.2
@@ -22621,7 +22621,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.9
+      handlebars: 4.7.10
       jest: 30.4.2(@types/node@22.20.1)(ts-node@10.9.2(@types/node@22.20.1)(@typescript/typescript6@6.0.2))
       json5: 2.2.3
       lodash.memoize: 4.1.2
@@ -22641,7 +22641,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.9
+      handlebars: 4.7.10
       jest: 30.4.2(@types/node@26.2.0)(ts-node@10.9.2(@types/node@26.2.0)(@typescript/typescript6@6.0.2))
       json5: 2.2.3
       lodash.memoize: 4.1.2

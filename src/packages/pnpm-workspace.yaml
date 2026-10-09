@@ -45,7 +45,7 @@ overrides:
   "node-forge@<1.4.0": ">=1.4.0"
   "lodash@<4.18.0": ">=4.18.0"
   "lodash-es@<4.18.0": ">=4.18.0"
-  "handlebars@<4.7.9": ">=4.7.9"
+  "handlebars@<4.7.10": ">=4.7.10"
   "dompurify@<3.4.16": "^3.4.16"
   "nodemailer@<10.0.9": "^10.0.9"
   "protobufjs@>=7.0.0 <7.6.5": "^7.6.5"
