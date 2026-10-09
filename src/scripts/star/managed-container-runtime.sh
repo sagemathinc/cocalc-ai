@@ -198,6 +198,13 @@ star_run_podman_as_user() {
   star_uid="$(id -u "$star_user")" || return
   star_home="$(getent passwd "$star_user" | cut -d: -f6)"
   [ -n "$star_home" ] || return 1
+  # Rootless Podman keeps its pause process under the runtime directory. When
+  # the Docker image upgrades at boot, this runs before systemd has created the
+  # Star user's runtime directory, so create it as logind would.
+  if [ ! -d "/run/user/${star_uid}" ]; then
+    install -d -m 0700 -o "$star_uid" -g "$(id -g "$star_user")" \
+      "/run/user/${star_uid}" || return
+  fi
   runuser -u "$star_user" -- env \
     "HOME=${star_home}" \
     "XDG_RUNTIME_DIR=/run/user/${star_uid}" \

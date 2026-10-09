@@ -95,6 +95,15 @@ star_configure_container_runtime_env
 star_install_container_runtime_archive "$archive" amd64
 [ "$STAR_INSTALLED_CONTAINER_RUNTIME_CREATED" = "0" ]
 
+# Podman as the Star user works before its runtime directory exists (a Docker
+# upgrade runs at boot, before systemd creates it).
+nobody_runtime="/run/user/$(id -u nobody)"
+if [ ! -e "$nobody_runtime" ]; then
+  [ "$(star_podman_info_field "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" nobody DatabaseBackend)" = "sqlite" ]
+  [ "$(stat -c %U:%a "$nobody_runtime")" = "nobody:700" ]
+  rmdir "$nobody_runtime"
+fi
+
 release_dir="${tmp}/release"
 mkdir -p "$release_dir"
 cat >"${release_dir}/release.json" <<EOF
