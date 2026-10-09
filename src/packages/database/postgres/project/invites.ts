@@ -71,21 +71,24 @@ export async function whenSentProjectInvite(
  * Multiple invites for different emails are tracked in the same JSONB field.
  */
 export async function sentProjectInvite(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: SentProjectInviteOptions,
 ): Promise<void> {
-  await db.async_query({
-    query: "UPDATE projects",
-    jsonb_merge: {
-      invite: {
-        [opts.to]: {
-          time: new Date(),
-          error: opts.error,
-        },
-      },
-    },
-    where: { "project_id :: UUID = $": opts.project_id },
-  });
+  // Replace this address's entry, which also clears an in-flight send claim
+  // (claimed_at) taken by claimProjectInviteSend. Other addresses are kept.
+  const entry: { time: Date; error?: string } = { time: new Date() };
+  if (opts.error) entry.error = opts.error;
+  await getPool().query(
+    `UPDATE projects
+        SET invite = jsonb_set(
+              COALESCE(invite, '{}'::jsonb),
+              ARRAY[$2::text],
+              $3::jsonb,
+              true
+            )
+      WHERE project_id = $1::uuid`,
+    [opts.project_id, opts.to, JSON.stringify(entry)],
+  );
 }
 
 export interface ClaimProjectInviteSendOptions {
@@ -94,11 +97,18 @@ export interface ClaimProjectInviteSendOptions {
   cutoff: Date;
 }
 
-// Atomically claim the right to email an invite to `to` for this project:
-// succeeds only if no invite email was sent (or claimed) since `cutoff`, or
-// the last attempt recorded an error. Concurrent callers serialize on the
-// project row, so exactly one of them sends. Record the outcome afterwards
-// with sentProjectInvite (an error re-enables sending).
+// How long an unfinished send claim blocks other senders (crash safety).
+export const INVITE_SEND_CLAIM_LEASE_MINUTES = 10;
+
+// Atomically claim the right to email an invite to `to` for this project.
+// Two independent conditions must hold:
+//  - no other send is in flight: no claimed_at newer than the lease, which
+//    blocks concurrent senders even with a zero-minute resend cooldown;
+//  - the resend cooldown allows it: no successful send since `cutoff`, or
+//    the last attempt recorded an error.
+// Concurrent callers serialize on the project row, so exactly one wins.
+// Finish with sentProjectInvite (success, or an error to allow a retry),
+// which clears the claim.
 export async function claimProjectInviteSend(
   _db: PostgreSQL,
   opts: ClaimProjectInviteSendOptions,
@@ -108,16 +118,22 @@ export async function claimProjectInviteSend(
         SET invite = jsonb_set(
               COALESCE(invite, '{}'::jsonb),
               ARRAY[$2::text],
-              jsonb_build_object('time', to_jsonb(NOW()), 'claimed', true),
+              COALESCE(invite -> $2::text, '{}'::jsonb)
+                || jsonb_build_object('claimed_at', to_jsonb(NOW())),
               true
             )
       WHERE project_id = $1::uuid
+        AND (
+          invite -> $2::text -> 'claimed_at' IS NULL
+          OR (invite -> $2::text ->> 'claimed_at')::timestamptz
+               < NOW() - make_interval(mins => $4::int)
+        )
         AND (
           invite -> $2::text -> 'time' IS NULL
           OR COALESCE(invite -> $2::text ->> 'error', '') <> ''
           OR (invite -> $2::text ->> 'time')::timestamptz < $3::timestamptz
         )`,
-    [opts.project_id, opts.to, opts.cutoff],
+    [opts.project_id, opts.to, opts.cutoff, INVITE_SEND_CLAIM_LEASE_MINUTES],
   );
   return (rowCount ?? 0) > 0;
 }

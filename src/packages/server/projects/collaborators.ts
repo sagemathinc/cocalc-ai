@@ -4382,13 +4382,6 @@ export async function inviteCollaboratorWithoutAccount({
         });
         return created.invite;
       }
-      await getPool().query(
-        `UPDATE project_collab_invites
-            SET last_sent=NOW(), resend_count=COALESCE(resend_count, 0) + 1, updated=NOW()
-          WHERE invite_id=$1`,
-        [created.invite.invite_id],
-      );
-      email_sent = true;
     } catch (err) {
       dbg(`FAILED to send email to ${email_address}  -- err=${err}`);
       await callback2(database.sent_project_invite, {
@@ -4398,12 +4391,24 @@ export async function inviteCollaboratorWithoutAccount({
       });
       throw err;
     }
-    // Record successful send (without error):
+    // The email went out: record it at once (this also ends the send claim)
+    // so later bookkeeping failures can never reopen it for a duplicate.
     await callback2(database.sent_project_invite, {
       project_id: opts.project_id,
       to: email_address,
       error: undefined,
     });
+    email_sent = true;
+    try {
+      await getPool().query(
+        `UPDATE project_collab_invites
+            SET last_sent=NOW(), resend_count=COALESCE(resend_count, 0) + 1, updated=NOW()
+          WHERE invite_id=$1`,
+        [created.invite.invite_id],
+      );
+    } catch (err) {
+      dbg(`failed to record invite send metadata -- err=${err}`);
+    }
     return created.invite;
   };
 
