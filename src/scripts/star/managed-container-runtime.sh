@@ -221,6 +221,8 @@ star_ensure_user_runtime_dir() {
       true
   fi
   [ -d "$runtime_dir" ] && return 0
+  printf 'systemd did not provide %s; creating it as a plain directory\n' \
+    "$runtime_dir" >&2
   install -d -m 0700 -o "$star_uid" -g "$(id -g "$star_user")" "$runtime_dir"
 }
 
