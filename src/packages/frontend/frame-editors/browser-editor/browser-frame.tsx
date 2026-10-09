@@ -21,12 +21,14 @@ import {
 } from "@cocalc/util/shared-browser";
 
 interface Props {
+  id: string;
   project_id: string;
   path: string;
   reload?: number;
 }
 
-export function BrowserFrame({ project_id, path, reload }: Props) {
+// Each frame (e.g. after a split) shows its own tab of the file's browser.
+export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
   const [app, setApp] = useState<{ id: string; title: string }>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
@@ -96,6 +98,7 @@ export function BrowserFrame({ project_id, path, reload }: Props) {
         projectId={project_id}
         app={{ id: app.id }}
         title={app.title}
+        view={frameId}
       />
     </div>
   );

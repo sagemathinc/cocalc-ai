@@ -528,6 +528,7 @@ function WorkbenchDocument(props: WorkbenchProps) {
         projectId={project_id}
         app={artifact.app}
         title={artifact.title}
+        view={artifact.artifact_id}
       />
     );
   if (artifact.kind === "commit")

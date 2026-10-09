@@ -22,10 +22,14 @@ export function AppArtifact({
   projectId,
   app,
   title,
+  view,
 }: {
   projectId: string;
   app: ArtifactApp;
   title: string;
+  // Identifies this place (an editor frame, a card) to the app, e.g. so the
+  // shared browser shows each frame its own tab.
+  view?: string;
 }) {
   const [src, setSrc] = useState<string>();
   const [error, setError] = useState<string>();
@@ -73,14 +77,14 @@ export function AppArtifact({
         status,
       });
       if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
-      if (!canceled) setSrc(url);
+      if (!canceled) setSrc(view ? withView(url, view) : url);
     })().catch((err) => {
       if (!canceled) setError(`${err?.message ?? err}`);
     });
     return () => {
       canceled = true;
     };
-  }, [projectId, app.id, attempt]);
+  }, [projectId, app.id, attempt, view]);
 
   if (error)
     return (
@@ -133,4 +137,10 @@ async function appFailureDetail(api, id: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+function withView(url: string, view: string): string {
+  const [base, hash] = url.split("#", 2);
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}view=${encodeURIComponent(view)}${hash ? `#${hash}` : ""}`;
 }

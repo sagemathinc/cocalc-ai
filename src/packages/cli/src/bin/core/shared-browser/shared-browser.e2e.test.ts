@@ -271,3 +271,108 @@ test(
     }
   },
 );
+
+test(
+  "two viewers (split frames) show their own tabs of one browser",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+      humanFirst: true,
+    });
+    const { port, cdpPort } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    const urlOf = (viewer: any) =>
+      viewer.evaluate(() => (document.getElementById("url") as any).value);
+    const frames = (viewer: any) =>
+      viewer.evaluate(() => (window as any).__frames ?? 0);
+    try {
+      const open = async (view: string) => {
+        const viewer = await human.newPage({
+          viewport: { width: 700, height: 500 },
+        });
+        // Count frames drawn into this viewer's canvas.
+        await viewer.addInitScript(() => {
+          const draw = CanvasRenderingContext2D.prototype.drawImage;
+          CanvasRenderingContext2D.prototype.drawImage = function (
+            ...args: any[]
+          ) {
+            (window as any).__frames = ((window as any).__frames ?? 0) + 1;
+            return (draw as any).apply(this, args);
+          };
+        });
+        await viewer.goto(`http://127.0.0.1:${port}/?view=${view}`);
+        await viewer.waitForFunction(
+          () => document.getElementById("status")?.textContent === "live",
+        );
+        return viewer;
+      };
+      const a = await open("frame-a");
+      await a.fill("#url", "data:text/html,<title>one</title>A");
+      await a.press("#url", "Enter");
+      await a.waitForFunction(() =>
+        document.querySelector(".tab.active")?.textContent?.includes("one"),
+      );
+      let b = await open("frame-b"); // the split: starts on the same tab
+      assert.match(await urlOf(b), /title>one/);
+
+      await b.click("#newtab");
+      await b.waitForFunction(
+        () => document.querySelectorAll(".tab").length === 2,
+      );
+      await b.fill("#url", "data:text/html,<title>two</title>B");
+      await b.press("#url", "Enter");
+      await b.waitForFunction(() =>
+        document.querySelector(".tab.active")?.textContent?.includes("two"),
+      );
+      // A still shows its own tab, and both keep streaming.
+      await a.waitForFunction(
+        () => document.querySelectorAll(".tab").length === 2,
+      );
+      assert.match(await urlOf(a), /title>one/);
+      assert.ok((await frames(a)) > 0, "A was streamed its tab");
+      assert.ok((await frames(b)) > 0, "B was streamed its tab");
+
+      // A frame that reloads comes back to its own tab.
+      await b.close();
+      b = await open("frame-b");
+      await b.waitForFunction(() =>
+        document.querySelector(".tab.active")?.textContent?.includes("two"),
+      );
+      assert.match(await urlOf(a), /title>one/);
+
+      // Agents act where the human last worked: B's tab.
+      await b.click("#driver button"); // hand back
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${cdpPort}`,
+        server.getState().active,
+      );
+      assert.equal((await page.location()).title, "two");
+      page.close();
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);

@@ -55,6 +55,20 @@ export interface SharedBrowserState {
   viewers: number;
 }
 
+interface TabPage {
+  targetId: string;
+  session: string | null;
+  ready: Promise<void> | null;
+  casting: boolean;
+  viewport: { width: number; height: number };
+  dialog: SharedBrowserState["dialog"];
+  select: SharedBrowserState["select"];
+  fileChooser: SharedBrowserState["fileChooser"];
+  fileChooserNode: number | null;
+  selectContext: number | null;
+  scriptId: string | null;
+}
+
 export interface SharedBrowserServerOptions {
   /** Chromium's own browser-level DevTools URL (ws://127.0.0.1:N/devtools/browser/ID). */
   chromeWebSocketUrl: string;
@@ -84,18 +98,20 @@ export class SharedBrowserServer {
   private chromeHttp: string;
   private appServer!: http.Server;
   private cdpServer!: http.Server;
-  private viewers = new Set<WebSocket>();
+  // Each viewer (a chat card, a frame of a .browser file) shows its own tab.
+  private views = new Map<WebSocket, { tab: string | null; key: string }>();
+  // The tab each view key (e.g. an editor frame) last showed, so a frame
+  // that reloads comes back to its own tab.
+  private viewTabs = new Map<string, string>();
   private agentSockets = new Set<WebSocket>();
   private held: Array<{ client: WebSocket; deliver: () => void }> = [];
   private handBackTimer: NodeJS.Timeout | null = null;
   private state: SharedBrowserState;
-  // Our own flat session on the active tab (screencast, input, overlays).
-  private session: string | null = null;
-  private sessionTarget: string | null = null;
-  private casting = false;
-  private fileChooserNode: number | null = null;
-  private selectContext: number | null = null;
-  private scriptIds = new Map<string, string>();
+  // Our own flat session on each tab someone looks at, and on the agents'
+  // current tab: screencast, input, overlays.
+  private pages = new Map<string, TabPage>();
+  // The viewer whose "+" is creating a tab, so only it switches to it.
+  private newTabFor: WebSocket | null = null;
   private switching: Promise<void> = Promise.resolve();
   private log: (message: string) => void;
 
@@ -120,7 +136,20 @@ export class SharedBrowserServer {
   }
 
   getState(): SharedBrowserState {
-    return structuredClone(this.state);
+    return structuredClone(this.stateFor(this.state.active));
+  }
+
+  // The shared state as seen from one tab: its viewport and overlays.
+  private stateFor(tab: string | null): SharedBrowserState {
+    const page = tab ? this.pages.get(tab) : undefined;
+    return {
+      ...this.state,
+      active: tab,
+      viewport: page?.viewport ?? this.state.viewport,
+      dialog: page?.dialog ?? null,
+      select: page?.select ?? null,
+      fileChooser: page?.fileChooser ?? null,
+    };
   }
 
   async start(): Promise<{ port: number; cdpPort: number }> {
@@ -147,7 +176,10 @@ export class SharedBrowserServer {
         socket.destroy();
         return;
       }
-      viewerWss.handleUpgrade(req, socket, head, (ws) => this.addViewer(ws));
+      const key = new URL(req.url ?? "/", "http://x").searchParams.get("view");
+      viewerWss.handleUpgrade(req, socket, head, (ws) =>
+        this.addViewer(ws, `${key ?? ""}`.slice(0, 200)),
+      );
     });
     const port = await listen(
       this.appServer,
@@ -185,7 +217,8 @@ export class SharedBrowserServer {
 
   async close(): Promise<void> {
     if (this.handBackTimer) clearTimeout(this.handBackTimer);
-    for (const ws of [...this.viewers, ...this.agentSockets]) ws.terminate();
+    for (const ws of [...this.views.keys(), ...this.agentSockets])
+      ws.terminate();
     await Promise.all([
       closeServer(this.appServer),
       closeServer(this.cdpServer),
@@ -200,14 +233,16 @@ export class SharedBrowserServer {
     this.state.driver = driver;
     if (driver === "agent") {
       this.state.ask = null;
-      this.state.select = null;
-      this.state.fileChooser = null;
+      for (const page of this.pages.values()) {
+        page.select = null;
+        page.fileChooser = null;
+      }
       const held = this.held;
       this.held = [];
       this.state.agentWaiting = false;
       for (const { deliver } of held) deliver();
     }
-    void this.applyDriverToPage();
+    for (const page of this.pages.values()) void this.applyDriverToPage(page);
     this.broadcastState();
   }
 
@@ -219,8 +254,8 @@ export class SharedBrowserServer {
     this.broadcastState();
   }
 
-  private async applyDriverToPage(): Promise<void> {
-    const session = this.session;
+  private async applyDriverToPage(page: TabPage): Promise<void> {
+    const session = page.session;
     if (!session) return;
     const human = this.state.driver === "human";
     // While the human drives, our session handles the file chooser; while
@@ -228,16 +263,17 @@ export class SharedBrowserServer {
     await this.cdp
       .send("Page.setInterceptFileChooserDialog", { enabled: human }, session)
       .catch(() => {});
-    await this.installSelectScript(session, human).catch(() => {});
+    await this.installSelectScript(page, human).catch(() => {});
   }
 
-  private async installSelectScript(session: string, human: boolean) {
-    const old = this.scriptIds.get(session);
-    if (old)
+  private async installSelectScript(page: TabPage, human: boolean) {
+    const session = page.session;
+    if (!session) return;
+    if (page.scriptId)
       await this.cdp
         .send(
           "Page.removeScriptToEvaluateOnNewDocument",
-          { identifier: old },
+          { identifier: page.scriptId },
           session,
         )
         .catch(() => {});
@@ -247,13 +283,13 @@ export class SharedBrowserServer {
       { source },
       session,
     );
-    this.scriptIds.set(session, identifier);
+    page.scriptId = identifier;
     await this.cdp
       .send("Runtime.evaluate", { expression: source }, session)
       .catch(() => {});
   }
 
-  // --- tabs and our page session -----------------------------------------
+  // --- tabs, our page sessions and what each viewer shows -----------------
 
   private addTab(info: any): void {
     if (info.type !== "page") return;
@@ -265,90 +301,172 @@ export class SharedBrowserServer {
     });
   }
 
+  private hasTab(targetId: string | null): targetId is string {
+    return !!targetId && this.state.tabs.some((tab) => tab.id === targetId);
+  }
+
+  private pageFor(targetId: string): TabPage {
+    let page = this.pages.get(targetId);
+    if (!page) {
+      page = {
+        targetId,
+        session: null,
+        ready: null,
+        casting: false,
+        viewport: { ...this.state.viewport },
+        dialog: null,
+        select: null,
+        fileChooser: null,
+        fileChooserNode: null,
+        selectContext: null,
+        scriptId: null,
+      };
+      this.pages.set(targetId, page);
+    }
+    return page;
+  }
+
+  private attach(page: TabPage): Promise<void> {
+    if (page.session) return Promise.resolve();
+    if (!page.ready)
+      page.ready = (async () => {
+        const { sessionId } = await this.cdp.send("Target.attachToTarget", {
+          targetId: page.targetId,
+          flatten: true,
+        });
+        page.session = sessionId;
+        await this.cdp.send("Page.enable", {}, sessionId);
+        await this.cdp.send("Runtime.enable", {}, sessionId);
+        await this.cdp.send(
+          "Runtime.addBinding",
+          { name: SELECT_BINDING },
+          sessionId,
+        );
+        await this.cdp.send(
+          "Emulation.setFocusEmulationEnabled",
+          { enabled: true },
+          sessionId,
+        );
+        await this.applyViewport(page);
+        await this.applyDriverToPage(page);
+      })().catch((err) => {
+        page.ready = null;
+        throw err;
+      });
+    return page.ready;
+  }
+
+  // Stop following a tab that nobody shows and agents do not use.
+  private async release(targetId: string | null): Promise<void> {
+    if (!targetId || targetId === this.state.active) return;
+    if ([...this.views.values()].some((view) => view.tab === targetId)) return;
+    const page = this.pages.get(targetId);
+    if (!page) return;
+    this.pages.delete(targetId);
+    if (page.session)
+      await this.cdp
+        .send("Target.detachFromTarget", { sessionId: page.session })
+        .catch(() => {});
+  }
+
+  private viewersOf(targetId: string): WebSocket[] {
+    return [...this.views]
+      .filter(([, view]) => view.tab === targetId)
+      .map(([ws]) => ws);
+  }
+
+  /**
+   * The tab agents use and new viewers show.  Viewers that were showing the
+   * previous one follow (as when an agent switches tabs); others keep theirs.
+   */
   activate(targetId: string): Promise<void> {
     // Serialize switches; the latest request wins.
     this.switching = this.switching
-      .then(() => this.switchTo(targetId))
+      .then(async () => {
+        if (!this.hasTab(targetId)) return;
+        const previous = this.state.active;
+        this.state.active = targetId;
+        const moved: string[] = [];
+        for (const view of this.views.values())
+          if (!this.hasTab(view.tab) || view.tab === previous) {
+            if (view.tab) moved.push(view.tab);
+            view.tab = targetId;
+          }
+        await this.attach(this.pageFor(targetId));
+        await this.updateCasting(targetId);
+        for (const old of new Set([previous, ...moved])) {
+          if (old && old !== targetId) {
+            await this.updateCasting(old);
+            await this.release(old);
+          }
+        }
+        this.broadcastState();
+      })
       .catch((err) => this.log(`switch tab: ${err?.message ?? err}`));
     return this.switching;
   }
 
-  private async switchTo(targetId: string): Promise<void> {
-    if (this.sessionTarget === targetId) return;
-    if (!this.state.tabs.some((tab) => tab.id === targetId)) return;
-    const old = this.session;
-    this.session = null;
-    this.sessionTarget = null;
-    this.casting = false;
-    if (old)
-      await this.cdp
-        .send("Target.detachFromTarget", { sessionId: old })
-        .catch(() => {});
-    const { sessionId } = await this.cdp.send("Target.attachToTarget", {
-      targetId,
-      flatten: true,
-    });
-    this.session = sessionId;
-    this.sessionTarget = targetId;
+  // One viewer switches tabs; the others keep showing theirs.
+  private async show(ws: WebSocket, targetId: string): Promise<void> {
+    const view = this.views.get(ws);
+    if (!view || !this.hasTab(targetId)) return;
+    const previous = view.tab;
+    view.tab = targetId;
+    // Agents act where the human last looked.
     this.state.active = targetId;
-    this.state.dialog = null;
-    this.state.select = null;
-    this.state.fileChooser = null;
-    await this.cdp.send("Page.enable", {}, sessionId);
-    await this.cdp.send("Runtime.enable", {}, sessionId);
-    await this.cdp.send(
-      "Runtime.addBinding",
-      { name: SELECT_BINDING },
-      sessionId,
-    );
-    await this.cdp.send(
-      "Emulation.setFocusEmulationEnabled",
-      { enabled: true },
-      sessionId,
-    );
-    await this.applyViewport();
-    await this.applyDriverToPage();
-    await this.updateCasting();
+    await this.attach(this.pageFor(targetId));
+    await this.updateCasting(targetId);
+    if (previous && previous !== targetId) {
+      await this.updateCasting(previous);
+      await this.release(previous);
+    }
     this.broadcastState();
   }
 
-  private async applyViewport(): Promise<void> {
-    if (!this.session) return;
-    const { width, height } = this.state.viewport;
+  private async applyViewport(page: TabPage): Promise<void> {
+    if (!page.session) return;
+    const { width, height } = page.viewport;
     await this.cdp
       .send(
         "Emulation.setDeviceMetricsOverride",
         { width, height, deviceScaleFactor: 1, mobile: false },
-        this.session,
+        page.session,
       )
       .catch(() => {});
-    if (this.casting) {
+    if (page.casting) {
       await this.cdp
-        .send("Page.stopScreencast", {}, this.session)
+        .send("Page.stopScreencast", {}, page.session)
         .catch(() => {});
-      this.casting = false;
-      await this.updateCasting();
+      page.casting = false;
+      await this.updateCasting(page.targetId);
     }
   }
 
-  // Only stream while someone is watching.
-  private async updateCasting(): Promise<void> {
-    if (!this.session) return;
-    const want = this.viewers.size > 0;
-    if (want === this.casting) return;
-    this.casting = want;
+  // Only stream a tab while someone is watching it.
+  private async updateCasting(targetId: string): Promise<void> {
+    const page = this.pages.get(targetId);
+    if (!page?.session) return;
+    const want = this.viewersOf(targetId).length > 0;
+    if (want === page.casting) return;
+    page.casting = want;
     if (want) {
-      const { width, height } = this.state.viewport;
+      const { width, height } = page.viewport;
       await this.cdp.send(
         "Page.startScreencast",
         { format: "jpeg", quality: 70, maxWidth: width, maxHeight: height },
-        this.session,
+        page.session,
       );
     } else {
       await this.cdp
-        .send("Page.stopScreencast", {}, this.session)
+        .send("Page.stopScreencast", {}, page.session)
         .catch(() => {});
     }
+  }
+
+  private pageBySession(sessionId: string | undefined): TabPage | undefined {
+    if (!sessionId) return;
+    for (const page of this.pages.values())
+      if (page.session === sessionId) return page;
   }
 
   private onCdpEvent(event: CdpEvent): void {
@@ -356,11 +474,24 @@ export class SharedBrowserServer {
     if (method === "Target.targetCreated") {
       const before = this.state.tabs.length;
       this.addTab(params.targetInfo);
-      if (this.state.tabs.length > before) {
-        // New tabs and popups come to the front, as in a normal browser.
-        void this.activate(params.targetInfo.targetId);
-        this.broadcastState();
+      if (this.state.tabs.length === before) return;
+      const id = params.targetInfo.targetId;
+      const opener = params.targetInfo.openerId;
+      const requester = this.newTabFor;
+      if (requester && this.views.has(requester)) {
+        // This viewer's "+": only it switches to the new tab.
+        this.newTabFor = null;
+        void this.show(requester, id);
+      } else if (opener && this.hasTab(opener)) {
+        // A popup or target=_blank link comes to the front where it was
+        // opened, as in a normal browser.
+        for (const ws of this.viewersOf(opener)) void this.show(ws, id);
+        void this.activate(id);
+      } else {
+        // An agent's new tab: shown where the agent's tab was.
+        void this.activate(id);
       }
+      this.broadcastState();
       return;
     }
     if (method === "Target.targetInfoChanged") {
@@ -378,23 +509,28 @@ export class SharedBrowserServer {
       const index = this.state.tabs.findIndex((t) => t.id === params.targetId);
       if (index < 0) return;
       this.state.tabs.splice(index, 1);
-      if (this.sessionTarget === params.targetId) {
-        this.session = null;
-        this.sessionTarget = null;
-        this.casting = false;
-        const next =
-          this.state.tabs[Math.min(index, this.state.tabs.length - 1)];
-        this.state.active = next?.id ?? null;
+      this.pages.delete(params.targetId);
+      const next =
+        this.state.tabs[Math.min(index, this.state.tabs.length - 1)] ?? null;
+      for (const view of this.views.values())
+        if (view.tab === params.targetId) view.tab = next?.id ?? null;
+      if (this.state.active === params.targetId) {
+        this.state.active = null;
         if (next) void this.activate(next.id);
-        else
-          void this.cdp
-            .send("Target.createTarget", { url: "about:blank" })
-            .catch(() => {});
+      } else if (next) {
+        void this.attach(this.pageFor(next.id))
+          .then(() => this.updateCasting(next.id))
+          .catch(() => {});
       }
+      if (!next)
+        void this.cdp
+          .send("Target.createTarget", { url: "about:blank" })
+          .catch(() => {});
       this.broadcastState();
       return;
     }
-    if (!sessionId || sessionId !== this.session) return;
+    const page = this.pageBySession(sessionId);
+    if (!page) return;
     if (method === "Page.screencastFrame") {
       this.cdp.notify(
         "Page.screencastFrameAck",
@@ -402,7 +538,7 @@ export class SharedBrowserServer {
         sessionId,
       );
       const frame = Buffer.from(params.data, "base64");
-      for (const ws of this.viewers) {
+      for (const ws of this.viewersOf(page.targetId)) {
         // Drop frames for slow viewers instead of queueing them.
         if (ws.bufferedAmount < 2 * 1024 * 1024)
           ws.send(frame, { binary: true });
@@ -410,7 +546,7 @@ export class SharedBrowserServer {
       return;
     }
     if (method === "Page.javascriptDialogOpening") {
-      this.state.dialog = {
+      page.dialog = {
         type: params.type,
         message: params.message ?? "",
         defaultPrompt: params.defaultPrompt,
@@ -419,21 +555,21 @@ export class SharedBrowserServer {
       return;
     }
     if (method === "Page.javascriptDialogClosed") {
-      this.state.dialog = null;
+      page.dialog = null;
       this.broadcastState();
       return;
     }
     if (method === "Page.fileChooserOpened") {
-      this.fileChooserNode = params.backendNodeId ?? null;
-      this.state.fileChooser = { mode: params.mode };
+      page.fileChooserNode = params.backendNodeId ?? null;
+      page.fileChooser = { mode: params.mode };
       this.broadcastState();
       return;
     }
     if (method === "Runtime.bindingCalled" && params.name === SELECT_BINDING) {
       try {
         const payload = JSON.parse(params.payload);
-        this.selectContext = params.executionContextId;
-        this.state.select = {
+        page.selectContext = params.executionContextId;
+        page.select = {
           options: (payload.options ?? []).slice(0, 2000),
           selected: payload.selected ?? -1,
         };
@@ -446,15 +582,20 @@ export class SharedBrowserServer {
 
   // --- viewers -------------------------------------------------------------
 
-  private addViewer(ws: WebSocket): void {
-    this.viewers.add(ws);
-    this.state.viewers = this.viewers.size;
+  private addViewer(ws: WebSocket, key = ""): void {
+    const remembered = key ? (this.viewTabs.get(key) ?? null) : null;
+    const tab = this.hasTab(remembered) ? remembered : this.state.active;
+    this.views.set(ws, { tab, key });
+    this.state.viewers = this.views.size;
     if (this.handBackTimer) clearTimeout(this.handBackTimer);
     this.handBackTimer = null;
     if (this.options.humanFirst && this.agentSockets.size === 0)
       this.setDriver("human");
-    ws.send(JSON.stringify({ type: "state", state: this.state }));
-    void this.updateCasting();
+    ws.send(JSON.stringify({ type: "state", state: this.stateFor(tab) }));
+    if (tab)
+      void this.attach(this.pageFor(tab))
+        .then(() => this.updateCasting(tab))
+        .catch(() => {});
     this.broadcastState();
     ws.on("message", (data, isBinary) => {
       if (isBinary) return;
@@ -464,60 +605,94 @@ export class SharedBrowserServer {
       } catch {
         return;
       }
-      this.onViewerMessage(msg).catch((err) =>
+      this.onViewerMessage(ws, msg).catch((err) =>
         ws.send(
           JSON.stringify({ type: "error", message: `${err?.message ?? err}` }),
         ),
       );
     });
     ws.on("close", () => {
-      this.viewers.delete(ws);
-      this.state.viewers = this.viewers.size;
-      void this.updateCasting();
+      const tab = this.views.get(ws)?.tab ?? null;
+      this.views.delete(ws);
+      if (this.newTabFor === ws) this.newTabFor = null;
+      this.state.viewers = this.views.size;
+      if (tab)
+        void this.updateCasting(tab)
+          .then(() => this.release(tab))
+          .catch(() => {});
       this.broadcastState();
-      if (this.viewers.size === 0 && this.state.driver === "human") {
+      if (this.views.size === 0 && this.state.driver === "human") {
         if (this.handBackTimer) clearTimeout(this.handBackTimer);
         // A grace period, e.g. for a reload of the page.
         this.handBackTimer = setTimeout(() => {
           this.handBackTimer = null;
-          if (this.viewers.size === 0) this.setDriver("agent");
+          if (this.views.size === 0) this.setDriver("agent");
         }, this.options.handBackAfterMs ?? 15_000);
       }
     });
   }
 
-  private broadcastState(): void {
-    const text = JSON.stringify({ type: "state", state: this.state });
-    for (const ws of this.viewers) ws.send(text);
+  private rememberViews(): void {
+    for (const view of this.views.values())
+      if (view.key && view.tab) {
+        this.viewTabs.delete(view.key);
+        this.viewTabs.set(view.key, view.tab);
+      }
+    while (this.viewTabs.size > 200)
+      this.viewTabs.delete(this.viewTabs.keys().next().value!);
   }
 
-  private async onViewerMessage(msg: any): Promise<void> {
+  private broadcastState(): void {
+    this.rememberViews();
+    for (const [ws, view] of this.views)
+      ws.send(
+        JSON.stringify({ type: "state", state: this.stateFor(view.tab) }),
+      );
+  }
+
+  private async onViewerMessage(ws: WebSocket, msg: any): Promise<void> {
+    const view = this.views.get(ws);
+    if (!view) return;
     switch (msg.type) {
       case "takeover":
         return this.setDriver("human");
       case "handback":
         return this.setDriver("agent");
       case "resize": {
+        if (!view.tab) return;
+        const page = this.pageFor(view.tab);
         const width = clampInt(msg.width, 200, MAX_VIEWPORT);
         const height = clampInt(msg.height, 150, MAX_VIEWPORT);
-        if (
-          width === this.state.viewport.width &&
-          height === this.state.viewport.height
-        )
-          return;
+        // New tabs start at the size the human last used.
         this.state.viewport = { width, height };
-        await this.applyViewport();
+        if (width === page.viewport.width && height === page.viewport.height)
+          return;
+        page.viewport = { width, height };
+        await this.applyViewport(page);
         this.broadcastState();
         return;
       }
       case "tab":
-        if (typeof msg.id === "string") await this.activate(msg.id);
+        if (typeof msg.id === "string") await this.show(ws, msg.id);
         return;
     }
     // Everything below acts on the page: only while the human drives.
     if (this.state.driver !== "human") return;
-    const s = this.session;
-    if (!s) return;
+    if (msg.type === "newTab") {
+      this.newTabFor = ws;
+      await this.cdp.send("Target.createTarget", { url: "about:blank" });
+      return;
+    }
+    if (msg.type === "closeTab") {
+      if (typeof msg.id === "string")
+        await this.cdp.send("Target.closeTarget", { targetId: msg.id });
+      return;
+    }
+    const page = view.tab ? this.pages.get(view.tab) : undefined;
+    const s = page?.session;
+    if (!page || !s) return;
+    // Agents act where the human is working.
+    this.state.active = page.targetId;
     switch (msg.type) {
       case "mouse":
         // Not awaited: a click that opens alert() is only acknowledged once
@@ -587,13 +762,6 @@ export class SharedBrowserServer {
       case "reload":
         await this.cdp.send("Page.reload", {}, s);
         return;
-      case "newTab":
-        await this.cdp.send("Target.createTarget", { url: "about:blank" });
-        return;
-      case "closeTab":
-        if (typeof msg.id === "string")
-          await this.cdp.send("Target.closeTarget", { targetId: msg.id });
-        return;
       case "dialog":
         await this.cdp.send(
           "Page.handleJavaScriptDialog",
@@ -606,27 +774,27 @@ export class SharedBrowserServer {
         );
         return;
       case "select": {
-        this.state.select = null;
+        page.select = null;
         this.broadcastState();
         if (
           Number.isInteger(msg.index) &&
           msg.index >= 0 &&
-          this.selectContext != null
+          page.selectContext != null
         )
           await this.cdp.send(
             "Runtime.evaluate",
             {
               expression: pickSelectExpression(msg.index),
-              contextId: this.selectContext,
+              contextId: page.selectContext,
             },
             s,
           );
         return;
       }
       case "file": {
-        const node = this.fileChooserNode;
-        this.state.fileChooser = null;
-        this.fileChooserNode = null;
+        const node = page.fileChooserNode;
+        page.fileChooser = null;
+        page.fileChooserNode = null;
         this.broadcastState();
         const files = (Array.isArray(msg.paths) ? msg.paths : [])
           .map((p: unknown) => resolveProjectFile(`${p}`))
@@ -662,7 +830,7 @@ export class SharedBrowserServer {
       return;
     }
     if (path.endsWith("/api/state") && req.method === "GET") {
-      return json(res, 200, this.state);
+      return json(res, 200, this.getState());
     }
     if (
       req.method === "POST" &&
@@ -734,7 +902,7 @@ export class SharedBrowserServer {
       // clients (Playwright's auto-dismiss) do not handle.
       if (
         msg?.method === "Page.handleJavaScriptDialog" &&
-        this.state.dialog == null
+        ![...this.pages.values()].some((page) => page.dialog)
       ) {
         if (client.readyState === WebSocket.OPEN)
           client.send(
