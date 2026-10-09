@@ -279,6 +279,21 @@ export function isSupportedCatalogGcpMachineType(
   );
 }
 
+const GCP_PRICING_FAMILIES: readonly GcpPricingFamily[] = [
+  "e2",
+  "t2a",
+  "t2d",
+  "n2",
+  "n2d",
+  "c3",
+  "c3d",
+  "c2d",
+  "g2",
+];
+
+// The pricing family of any machine type of a priced family, not only the
+// user-selectable shapes: hosts also run on Spot recovery alternates and
+// relocation targets (e.g. n2-standard-32, c2d-highcpu-32, custom shapes).
 export function gcpPricingFamilyForMachineType(
   name?: string | null,
 ): GcpPricingFamily | undefined {
@@ -289,7 +304,20 @@ export function gcpPricingFamilyForMachineType(
       return rule.family;
     }
   }
-  return undefined;
+  const prefix = value.split("-")[0] as GcpPricingFamily;
+  return GCP_PRICING_FAMILIES.includes(prefix) ? prefix : undefined;
+}
+
+// e.g. n2d-custom-32-65536 (vCPUs, MiB), also with an -ext suffix.
+function gcpCustomShape(
+  value: string,
+): { cpu: number; memoryGiB: number } | undefined {
+  const match = value.match(/-custom-(\d+)-(\d+)(?:-ext)?$/);
+  if (!match) return undefined;
+  const cpu = Number(match[1]);
+  const memoryMiB = Number(match[2]);
+  if (!(cpu > 0) || !(memoryMiB > 0)) return undefined;
+  return { cpu, memoryGiB: memoryMiB / 1024 };
 }
 
 export function gcpCatalogMachineTypeSortKey(name?: string | null): string {
@@ -304,6 +332,8 @@ export function gcpCpuCountForMachineType(
   name?: string | null,
 ): number | undefined {
   const value = `${name ?? ""}`.trim().toLowerCase();
+  const custom = gcpCustomShape(value);
+  if (custom) return custom.cpu;
   const cpuMatch = value.match(/-(\d+)$/);
   if (!cpuMatch) return undefined;
   const cpu = Number(cpuMatch[1]);
@@ -313,13 +343,19 @@ export function gcpCpuCountForMachineType(
 export function gcpMemoryGiBForMachineType(
   name?: string | null,
 ): number | undefined {
+  const value = `${name ?? ""}`.trim().toLowerCase();
+  const custom = gcpCustomShape(value);
+  if (custom) return custom.memoryGiB;
   const cpu = gcpCpuCountForMachineType(name);
   if (!cpu) return undefined;
-  const value = `${name ?? ""}`.trim().toLowerCase();
+  // highcpu is 1 GiB per vCPU on E2, N2 and N2D, 2 GiB on C2D, C3 and C3D.
+  const family = value.split("-")[0];
   const gibPerCpu = value.includes("-highmem-")
     ? 8
     : value.includes("-highcpu-")
-      ? 2
+      ? family === "e2" || family === "n2" || family === "n2d"
+        ? 1
+        : 2
       : 4;
   return cpu * gibPerCpu;
 }

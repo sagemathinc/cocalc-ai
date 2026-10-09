@@ -24,9 +24,10 @@ const FINAL_SNAPSHOT_MS = 150_000;
 const DEPROVISION_MS = 20_000;
 const START_MS = 180_000;
 const SET_MACHINE_TYPE_MS = 15_000;
-// Cross-region restore of a 112 GB disk ran at about 690 MB/s on staging2.
-const RESTORE_BYTES_PER_MS = 600_000;
-const MIN_RESTORE_MS = 30_000;
+// Restoring a snapshot into another region took 163 s for 112 GB and 126 s
+// for 255 GB on staging2: mostly fixed cost, then about 1.5 GB/s or better.
+const RESTORE_BYTES_PER_MS = 1_500_000;
+const MIN_RESTORE_MS = 120_000;
 const ESTIMATE_MARGIN = 1.2;
 
 export interface RelocationInput {
@@ -172,7 +173,11 @@ export interface RelocationDeps {
   loadProvisionedProjectIds: () => Promise<string[]>;
   markProjectsProvisioned: (project_ids: string[]) => Promise<void>;
   deprovisionHost: () => Promise<void>;
-  startHost: () => Promise<void>;
+  // A rollback start waits as long as it takes; the planned start is bounded.
+  startHost: (opts?: { rollback?: boolean }) => Promise<void>;
+  // Fails if the host could not start as planned (e.g. no price for the
+  // target machine type), checked before anything is changed.
+  preflight?: (target: RelocationPlan["target"]) => Promise<void>;
   progress: (step: string, message: string, detail?: any) => Promise<void>;
   shouldCancel: () => Promise<boolean>;
   alert?: (subject: string, body: string) => Promise<void>;
@@ -263,6 +268,8 @@ export async function relocateHost({
       `${plan.target.machine_type} is not offered in ${plan.target.zone}`,
     );
   }
+
+  await deps.preflight?.(plan.target);
 
   // Online preparation: users are not affected yet.
   if (running && !input.skip_backups) {
@@ -522,7 +529,7 @@ async function rollBack({
       }
       const current = await deps.loadHost();
       if (current.status !== "running") {
-        await deps.startHost();
+        await deps.startHost({ rollback: true });
       }
     });
     return { ok: true };

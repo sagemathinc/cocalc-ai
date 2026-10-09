@@ -3426,7 +3426,9 @@ Examples:
             };
           }
           const summary = await waitForLro(ctx, op.op_id, {
-            timeoutMs: ctx.timeoutMs,
+            // Backups and a large warm snapshot can take a while before the
+            // window even starts; the operation continues if this gives up.
+            timeoutMs: Math.max(ctx.timeoutMs, 2 * 60 * 60 * 1000),
             pollMs: ctx.pollMs,
             scope: { type: "host", id: hostRow.id },
             onUpdate: createHostLroProgressReporter(ctx, {

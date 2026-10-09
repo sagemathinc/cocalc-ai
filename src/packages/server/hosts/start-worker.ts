@@ -56,6 +56,7 @@ import {
 import { migrateHostPublicRouteInternal } from "@cocalc/server/cloud/public-route";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { relocateHost } from "@cocalc/server/hosts/relocate";
+import { estimateDedicatedHostRate } from "@cocalc/server/project-host/spend";
 import { setHostMaintenanceMetadata } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:hosts:ops-worker");
@@ -641,7 +642,10 @@ async function waitForHostHeartbeat({
   throw new Error("timeout waiting for host heartbeat");
 }
 
-const RELOCATION_START_TIMEOUT_MS = 20 * 60 * 1000;
+// Override only for staging tests of the rollback path.
+const RELOCATION_START_TIMEOUT_MS =
+  Number(process.env.COCALC_HOST_RELOCATION_START_TIMEOUT_MS) ||
+  20 * 60 * 1000;
 
 async function runHostRelocation({
   op_id,
@@ -773,7 +777,7 @@ async function runHostRelocation({
         await deleteHostInternal({ account_id, id: host_id });
         await waitFor(["deprovisioned"], ["error"]);
       },
-      startHost: async () => {
+      startHost: async (opts) => {
         const startedAt = Date.now();
         await startHostInternal({ account_id, id: host_id });
         // Bounded, so a target without capacity rolls back instead of
@@ -781,9 +785,29 @@ async function runHostRelocation({
         await waitFor(
           ["running"],
           ["error", "off", "stopped", "deprovisioned"],
-          RELOCATION_START_TIMEOUT_MS,
+          opts?.rollback ? undefined : RELOCATION_START_TIMEOUT_MS,
         );
         await waitForHostHeartbeat({ host_id, since: startedAt });
+      },
+      preflight: async (target) => {
+        const row = await loadHost();
+        const machine = row.metadata?.machine ?? {};
+        const rate = await estimateDedicatedHostRate({
+          provider: "gcp",
+          region: target.region,
+          zone: target.zone,
+          machine_type: target.machine_type,
+          disk_gb: machine.disk_gb,
+          disk_type: machine.disk_type,
+          storage_mode: machine.storage_mode,
+          pricing_model: row.metadata?.pricing_model,
+          billing_state: "running",
+        });
+        if (!rate) {
+          throw new Error(
+            `no price for ${target.machine_type} in ${target.region}; the host could not be started there`,
+          );
+        }
       },
       progress: async (step, message, detail) =>
         await progressStep(step, message, { host_id, ...(detail ?? {}) }),

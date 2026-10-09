@@ -272,6 +272,21 @@ describe("relocateHost", () => {
     ]);
   });
 
+  it("runs the preflight before touching anything", async () => {
+    const { deps, calls } = fakeDeps();
+    deps.preflight = async () => {
+      throw new Error("no price for n2-standard-32 in asia-south2");
+    };
+    await expect(
+      relocateHost({
+        host_id: HOST_ID,
+        input: { machine_type: "n2-standard-32" },
+        deps,
+      }),
+    ).rejects.toThrow(/no price/);
+    expect(calls).toEqual([]);
+  });
+
   it("refuses a machine type the target zone does not offer", async () => {
     const { deps, calls } = fakeDeps();
     deps.machineTypeShape = async () => undefined;
