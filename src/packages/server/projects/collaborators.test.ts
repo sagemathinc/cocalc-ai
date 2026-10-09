@@ -2193,6 +2193,21 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  function courseInviteContext({
+    courseProjectId,
+    studentId,
+  }: {
+    courseProjectId: string;
+    studentId: string;
+  }) {
+    return {
+      course_project_id: courseProjectId,
+      require_invite_email_match: true,
+      student_id: studentId,
+      student_project_id: PROJECT_ID,
+    };
+  }
+
   // queries for redeeming a pending course_student email invite;
   // `override` can answer (or fail) a statement first
   function courseRedeemQueryMock({
@@ -2214,10 +2229,23 @@ describe("project collaborators local bay access", () => {
         return overridden;
       }
       if (sql.includes("SELECT status, scope")) {
-        return { rows: [{ status: "pending", scope: "course_student" }] };
+        // the invite row as seen under the lock: unchanged since the checks
+        return {
+          rows: [
+            {
+              status: "pending",
+              scope: "course_student",
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invite_role: "collaborator",
+              read_policy: null,
+              token_hash: inviteTokenHash(token),
+              context: courseInviteContext({ courseProjectId, studentId }),
+            },
+          ],
+        };
       }
       if (sql.includes("AS existing_group")) {
-        return { rows: [{ existing_group: null }] };
+        return { rows: [{ existing_group: null, bound_account_id: null }] };
       }
       if (
         sql.includes("UPDATE project_collab_invites") &&
@@ -2240,12 +2268,7 @@ describe("project collaborators local bay access", () => {
               token_hash: inviteTokenHash(token),
               scope: "course_student",
               email_ciphertext: encryptedInviteEmail("invite@example.com"),
-              context: {
-                course_project_id: courseProjectId,
-                require_invite_email_match: true,
-                student_id: studentId,
-                student_project_id: PROJECT_ID,
-              },
+              context: courseInviteContext({ courseProjectId, studentId }),
             },
           ],
         };
@@ -2474,6 +2497,117 @@ describe("project collaborators local bay access", () => {
     expect(statementIndex((sql) => sql === "ROLLBACK")).toBeGreaterThanOrEqual(
       0,
     );
+  });
+
+  async function redeemCourseInviteWith(
+    override: (sql: string) => any,
+  ): Promise<unknown> {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "course-invite-token";
+    queryMock = courseRedeemQueryMock({
+      inviteId,
+      token,
+      courseProjectId: "88888888-8888-4888-8888-888888888888",
+      studentId: "99999999-9999-4999-8999-999999999999",
+      override,
+    });
+    getVerifiedEmailAddressForAccountMock.mockResolvedValue(
+      "invite@example.com",
+    );
+    resolveProjectReferenceAllowRemoteMock.mockResolvedValueOnce(null);
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    return await redeemEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      invite_id: inviteId,
+      token,
+    });
+  }
+
+  function expectNothingGranted(): void {
+    expect(statementIndex((sql) => sql.includes("SET users = jsonb_set"))).toBe(
+      -1,
+    );
+    expect(statementIndex((sql) => sql.includes("SET course=jsonb_set"))).toBe(
+      -1,
+    );
+    expect(statementIndex((sql) => sql.includes("SET status='accepted'"))).toBe(
+      -1,
+    );
+    expect(statementIndex((sql) => sql === "ROLLBACK")).toBeGreaterThanOrEqual(
+      0,
+    );
+  }
+
+  it("rechecks the invite sender under the project lock", async () => {
+    let senderChecks = 0;
+    await expect(
+      redeemCourseInviteWith((sql) => {
+        if (sql.includes("AS inviter_group")) {
+          senderChecks += 1;
+          // allowed at the early check, removed before the lock was taken
+          return {
+            rows: [
+              senderChecks === 1
+                ? { inviter_group: "owner", manage_users_owner_only: true }
+                : { inviter_group: null, manage_users_owner_only: true },
+            ],
+          };
+        }
+      }),
+    ).rejects.toThrow("invite sender no longer has access");
+    expect(senderChecks).toBe(2);
+    expectNothingGranted();
+  });
+
+  it("refuses to rebind a student project already linked to another account", async () => {
+    await expect(
+      redeemCourseInviteWith((sql) => {
+        if (sql.includes("AS existing_group")) {
+          return {
+            rows: [
+              { existing_group: null, bound_account_id: TARGET_ACCOUNT_ID },
+            ],
+          };
+        }
+      }),
+    ).rejects.toThrow("already linked to a different account");
+    expectNothingGranted();
+  });
+
+  it("accepts again for the account the student project is already linked to", async () => {
+    await expect(
+      redeemCourseInviteWith((sql) => {
+        if (sql.includes("AS existing_group")) {
+          return {
+            rows: [{ existing_group: null, bound_account_id: ACCOUNT_ID }],
+          };
+        }
+      }),
+    ).resolves.toEqual(expect.objectContaining({ status: "accepted" }));
+    expect(statementIndex((sql) => sql === "COMMIT")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("refuses if the invite changed after the pre-lock checks", async () => {
+    await expect(
+      redeemCourseInviteWith((sql) => {
+        if (sql.includes("SELECT status, scope")) {
+          return {
+            rows: [
+              {
+                status: "pending",
+                scope: "course_student",
+                inviter_account_id: TARGET_ACCOUNT_ID,
+                invite_role: "collaborator",
+                read_policy: null,
+                token_hash: "different",
+                context: {},
+              },
+            ],
+          };
+        }
+      }),
+    ).rejects.toThrow("invitation changed while it was being accepted");
+    expectNothingGranted();
   });
 
   it("rejects a protected project invite for a different verified email", async () => {

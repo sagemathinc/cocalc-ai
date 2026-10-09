@@ -53,6 +53,7 @@ import {
   uuid,
 } from "@cocalc/util/misc";
 import getLogger from "@cocalc/backend/logger";
+import { isDeepStrictEqual } from "node:util";
 import { send_invite_email } from "@cocalc/server/hub/email";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { getVerifiedEmailAddressForAccount } from "@cocalc/server/accounts/verified-email-address";
@@ -1886,7 +1887,8 @@ async function assertInviteSenderCanStillGrantAccess({
   pool,
   invite,
 }: {
-  pool: ReturnType<typeof getPool>;
+  // a pool, or a transaction client that holds the project row lock
+  pool: Pick<ReturnType<typeof getPool>, "query">;
   invite: {
     project_id: string;
     inviter_account_id: string;
@@ -3845,22 +3847,22 @@ async function assertCanCopyCourseEmailInviteLink({
 // concurrent course reconcile in between could leave the project bound to
 // the student (course.account_id) without the student in users, or the
 // student in users with the invite still pending. The invite and project rows
-// are locked, so concurrent redemptions and reconciles serialize.
+// are locked, so concurrent redemptions and reconciles serialize, and the
+// authorization-relevant state is rechecked under those locks.
 async function acceptEmailInviteAtomically({
-  invite_id,
-  project_id,
   account_id,
-  invite_role,
-  read_policy,
+  invite,
 }: {
-  invite_id: string;
-  project_id: string;
   account_id: string;
-  invite_role?: string | null;
-  read_policy?: ProjectViewerReadPolicy | null;
+  // the snapshot the pre-lock checks (token, email match, manager) used
+  invite: Awaited<ReturnType<typeof getPendingEmailCollabInviteForToken>>;
 }): Promise<{ granted: boolean }> {
-  const role = normalizeInviteRole(invite_role);
-  const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
+  const { invite_id, project_id } = invite;
+  const role = normalizeInviteRole(invite.invite_role);
+  const policy = normalizeInviteReadPolicy({
+    invite_role: role,
+    read_policy: invite.read_policy,
+  });
   const client = await getPool().connect();
   let granted = false;
   try {
@@ -3875,8 +3877,10 @@ async function acceptEmailInviteAtomically({
     });
     const { rows: projectRows } = await client.query<{
       existing_group: string | null;
+      bound_account_id: string | null;
     }>(
-      `SELECT users -> $2::text ->> 'group' AS existing_group
+      `SELECT users -> $2::text ->> 'group' AS existing_group,
+              course ->> 'account_id' AS bound_account_id
          FROM projects
         WHERE project_id=$1
           FOR UPDATE`,
@@ -3888,16 +3892,59 @@ async function acceptEmailInviteAtomically({
     const { rows: inviteRows } = await client.query<{
       status: string;
       scope: string | null;
+      inviter_account_id: string;
+      invite_role: string;
+      read_policy: ProjectViewerReadPolicy | null;
+      context: Record<string, unknown> | null;
+      token_hash: string | null;
     }>(
-      `SELECT status, scope
+      `SELECT status, scope, inviter_account_id,
+              COALESCE(invite_role, 'collaborator') AS invite_role,
+              read_policy, context, token_hash
          FROM project_collab_invites
         WHERE invite_id=$1
           FOR UPDATE`,
       [invite_id],
     );
-    const status = inviteRows[0]?.status;
-    if (status !== "pending") {
-      throw new Error(`invite is not pending (status=${status})`);
+    const locked = inviteRows[0];
+    if (locked?.status !== "pending") {
+      throw new Error(`invite is not pending (status=${locked?.status})`);
+    }
+    // The checks before the transaction used a snapshot of the invite; a
+    // pending invite's context can change (course policy updates), so refuse
+    // if anything they depended on is different now.
+    if (
+      locked.inviter_account_id !== invite.inviter_account_id ||
+      (locked.scope ?? null) !== (invite.scope ?? null) ||
+      locked.invite_role !== (invite.invite_role ?? "collaborator") ||
+      locked.token_hash !== invite.token_hash ||
+      !isDeepStrictEqual(
+        locked.read_policy ?? null,
+        invite.read_policy ?? null,
+      ) ||
+      !isDeepStrictEqual(locked.context ?? null, invite.context ?? null)
+    ) {
+      throw new Error(
+        "This invitation changed while it was being accepted. Please try again.",
+      );
+    }
+    // Recheck the sender against the locked project row: they may have been
+    // removed, or lost the right to add people, since the earlier check.
+    await assertInviteSenderCanStillGrantAccess({
+      pool: client,
+      invite: { project_id, inviter_account_id: locked.inviter_account_id },
+    });
+    const boundAccountId = `${projectRows[0]?.bound_account_id ?? ""}`.trim();
+    if (
+      locked.scope === COURSE_EMAIL_INVITE_SCOPE &&
+      is_valid_uuid_string(boundAccountId) &&
+      boundAccountId !== account_id
+    ) {
+      // Same fail-closed rule as course reconciliation: never rebind a
+      // student project that already belongs to another student.
+      throw new Error(
+        "This student project is already linked to a different account.",
+      );
     }
     const existingGroup = projectRows[0]?.existing_group;
     const needsGrant =
@@ -3928,7 +3975,7 @@ async function acceptEmailInviteAtomically({
       });
       granted = true;
     }
-    if (inviteRows[0]?.scope === COURSE_EMAIL_INVITE_SCOPE) {
+    if (locked.scope === COURSE_EMAIL_INVITE_SCOPE) {
       await client.query(
         `UPDATE projects
             SET course=jsonb_set(
@@ -3994,13 +4041,7 @@ export async function redeemEmailProjectInvite({
     invite,
   });
   await assertInviteSenderCanStillGrantAccess({ pool, invite });
-  const { granted } = await acceptEmailInviteAtomically({
-    invite_id,
-    project_id: invite.project_id,
-    account_id,
-    invite_role: invite.invite_role,
-    read_policy: invite.read_policy,
-  });
+  const { granted } = await acceptEmailInviteAtomically({ account_id, invite });
   if (granted) {
     await syncProjectUsersOnHostBestEffort(
       invite.project_id,
