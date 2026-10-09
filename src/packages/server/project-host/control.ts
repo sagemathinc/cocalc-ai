@@ -1078,7 +1078,8 @@ async function assertHostNotUnderMaintenance(host_id: string): Promise<void> {
     "SELECT metadata->'maintenance'->>'state' AS state FROM project_hosts WHERE id=$1",
     [host_id],
   );
-  if (rows[0]?.state === "in_progress") {
+  // A failed relocation stays fenced until an admin clears it.
+  if (rows[0]?.state === "in_progress" || rows[0]?.state === "failed") {
     throw Object.assign(
       new Error(
         "This project's server is down for scheduled maintenance and will be back shortly.",

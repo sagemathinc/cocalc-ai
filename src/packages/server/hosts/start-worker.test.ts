@@ -5,6 +5,38 @@
 
 import { __test__ } from "./start-worker";
 
+describe("hosts start-worker maintenance fence", () => {
+  test("queued host ops wait for a relocation that took the lease", () => {
+    for (const state of ["preparing", "in_progress", "failed"]) {
+      const maintenance = { kind: "relocation", state };
+      for (const kind of ["host-start", "host-stop", "host-upgrade-software"]) {
+        expect(() =>
+          __test__.assertHostOpAllowedDuringMaintenance(kind, maintenance),
+        ).toThrow(
+          expect.objectContaining({ code: "host_maintenance_in_progress" }),
+        );
+      }
+      for (const kind of ["host-relocate", "host-force-deprovision"]) {
+        expect(() =>
+          __test__.assertHostOpAllowedDuringMaintenance(kind, maintenance),
+        ).not.toThrow();
+      }
+    }
+    for (const maintenance of [
+      undefined,
+      { kind: "relocation", state: "scheduled" },
+      { kind: "relocation", state: "completed" },
+    ]) {
+      expect(() =>
+        __test__.assertHostOpAllowedDuringMaintenance(
+          "host-start",
+          maintenance,
+        ),
+      ).not.toThrow();
+    }
+  });
+});
+
 describe("hosts start-worker bootstrap wait failure detection", () => {
   const since = new Date("2026-05-05T00:10:00.000Z").getTime();
 

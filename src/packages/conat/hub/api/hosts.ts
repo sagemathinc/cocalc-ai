@@ -54,12 +54,7 @@ export type HostStatus =
 
 export type HostAccessRole = "user" | "manager";
 export type HostEffectiveAccessRole =
-  | "owner"
-  | "manager"
-  | "user"
-  | "pool"
-  | "shared"
-  | "admin";
+  "owner" | "manager" | "user" | "pool" | "shared" | "admin";
 
 export type AcpAdmissionDenialLimit =
   | "queued_per_account"
@@ -71,12 +66,7 @@ export type AcpAdmissionDenialLimit =
   | "active_automations_per_project";
 
 export type AcpAdmissionDenialSource =
-  | "automation"
-  | "chat"
-  | "claim"
-  | "recovery"
-  | "resend"
-  | "unknown";
+  "automation" | "chat" | "claim" | "recovery" | "resend" | "unknown";
 
 export interface AcpAdmissionDenialRecord {
   host_id?: string;
@@ -122,9 +112,7 @@ export interface HostAccessEntry {
 export type HostPricingModel = "on_demand" | "spot";
 export type HostInterruptionRestorePolicy = "none" | "immediate";
 export type HostFundingMode =
-  | "account-prepaid"
-  | "account-postpaid"
-  | "site-funded";
+  "account-prepaid" | "account-postpaid" | "site-funded";
 export type HostBillingEnforcementState =
   | "ok"
   | "at_risk"
@@ -133,9 +121,7 @@ export type HostBillingEnforcementState =
   | "deprovision_pending"
   | "deprovisioned_recoverable";
 export type HostBillingRecoveryAction =
-  | "add_funds"
-  | "fix_payment"
-  | "support_limit_increase";
+  "add_funds" | "fix_payment" | "support_limit_increase";
 export type HostSpotRecoveryPhase =
   | "idle"
   | "retrying_spot"
@@ -537,18 +523,10 @@ export interface HostBootstrapStatus {
 }
 
 export type HostBootstrapLifecycleSummaryStatus =
-  | "in_sync"
-  | "drifted"
-  | "reconciling"
-  | "error"
-  | "unknown";
+  "in_sync" | "drifted" | "reconciling" | "error" | "unknown";
 
 export type HostBootstrapLifecycleItemStatus =
-  | "match"
-  | "drift"
-  | "missing"
-  | "disabled"
-  | "unknown";
+  "match" | "drift" | "missing" | "disabled" | "unknown";
 
 export interface HostBootstrapLifecycleItem {
   key: string;
@@ -590,10 +568,7 @@ export interface HostProjectRow {
 }
 
 export type HostProjectStateFilter =
-  | "all"
-  | "running"
-  | "stopped"
-  | "unprovisioned";
+  "all" | "running" | "stopped" | "unprovisioned";
 
 export interface HostProjectsResponse {
   rows: HostProjectRow[];
@@ -654,13 +629,7 @@ export type HostExamNetworkMode = "disabled";
 export type HostExamCleanupMode = "scheduled" | "manual";
 
 export type HostExamRunStatus =
-  | "preparing"
-  | "ready"
-  | "open"
-  | "closing"
-  | "cleaning"
-  | "stopped"
-  | "error";
+  "preparing" | "ready" | "open" | "closing" | "cleaning" | "stopped" | "error";
 
 export interface HostExamConfig {
   host_id: string;
@@ -860,10 +829,7 @@ export interface HostResourcePressureMetrics {
 }
 
 export type HostIoCapabilityState =
-  | "available"
-  | "enabled"
-  | "validated"
-  | "unsupported";
+  "available" | "enabled" | "validated" | "unsupported";
 
 export interface HostIoDeviceMetrics {
   device: string;
@@ -948,10 +914,7 @@ export interface HostIoContainmentMetrics {
 export type HostStorageAdmissionMode = "disabled" | "observe" | "enforce";
 
 export type HostStoragePressureState =
-  | "normal"
-  | "contended"
-  | "emergency"
-  | "recovery";
+  "normal" | "contended" | "emergency" | "recovery";
 
 export interface HostStorageAdmissionDecision {
   decided_at: string;
@@ -1097,9 +1060,7 @@ export interface HostCurrentMetrics {
   snapshot_backup_maintenance_gate?: {
     checked_at: string;
     blocked_reason?:
-      | "available_memory"
-      | "memory_pressure"
-      | "memory_measurement_unavailable";
+      "available_memory" | "memory_pressure" | "memory_measurement_unavailable";
     memory_psi_full_avg10?: number;
     pressure_attribution?: "bees_cgroup";
   };
@@ -1221,11 +1182,7 @@ export interface HostBeesStatus {
   };
   telemetry?: {
     assessment:
-      | "observing"
-      | "active"
-      | "idle"
-      | "possible_stall"
-      | "unavailable";
+      "observing" | "active" | "idle" | "possible_stall" | "unavailable";
     sample?: Record<string, any>;
     previous_sampled_at?: string;
     interval_ms?: number;
@@ -1333,11 +1290,13 @@ export interface Host {
 
 // A maintenance window announced to users of a host's projects. "scheduled"
 // is shown in advance; "in_progress" while the host is down for it.
+// scheduled: announced in advance. preparing: a relocation holds the host's
+// lease and is backing up / snapshotting online (users keep working, host
+// lifecycle changes are refused). in_progress: the host is down for it.
+// failed: rollback did not complete; the host stays fenced until an admin
+// clears it.
 export type HostMaintenanceState =
-  | "scheduled"
-  | "in_progress"
-  | "completed"
-  | "failed";
+  "scheduled" | "preparing" | "in_progress" | "completed" | "failed";
 
 export interface HostMaintenanceNotice {
   kind: "relocation" | "maintenance";
@@ -1349,6 +1308,8 @@ export interface HostMaintenanceNotice {
   finished_at?: string;
   message?: string;
   op_id?: string;
+  // Identifies the relocation that holds the host's lease (never shown).
+  lease_id?: string;
   updated_at?: string;
 }
 
@@ -1402,11 +1363,7 @@ export interface HostLogEntry {
 }
 
 export type HostAvailabilityState =
-  | "online"
-  | "unobserved"
-  | "unavailable"
-  | "recovering"
-  | "degraded";
+  "online" | "unobserved" | "unavailable" | "recovering" | "degraded";
 
 export type HostAvailabilityCategory =
   | "spot_interruption"
@@ -1564,8 +1521,7 @@ export type HostRuntimeArtifact = (typeof HOST_RUNTIME_ARTIFACTS)[number];
 export type HostRuntimeDeploymentScopeType = "global" | "host";
 export type HostRuntimeDeploymentTargetType = "component" | "artifact";
 export type HostRuntimeDeploymentTarget =
-  | ManagedComponentKind
-  | HostRuntimeArtifact;
+  ManagedComponentKind | HostRuntimeArtifact;
 export type HostRuntimeDeploymentPolicy = ManagedComponentUpgradePolicy;
 
 export interface HostRuntimeDeploymentRecord {
@@ -1597,10 +1553,7 @@ export interface HostRuntimeDeploymentStatus {
 }
 
 export type HostRuntimeDeploymentObservedVersionState =
-  | ManagedComponentVersionState
-  | "unobserved"
-  | "missing"
-  | "unsupported";
+  ManagedComponentVersionState | "unobserved" | "missing" | "unsupported";
 
 export interface HostRuntimeArtifactObservation {
   artifact: HostRuntimeArtifact;
@@ -1766,10 +1719,7 @@ export interface HostManagedComponentRolloutRequest {
 }
 
 export type ExternalCredentialScope =
-  | "account"
-  | "project"
-  | "organization"
-  | "site";
+  "account" | "project" | "organization" | "site";
 
 export interface ExternalCredentialSelector {
   provider: string;

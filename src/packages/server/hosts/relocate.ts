@@ -143,11 +143,11 @@ export function relocationSnapshotName(
   stage: "warm" | "final",
   now: Date,
 ): string {
-  const stamp = now
-    .toISOString()
-    .replace(/[-:T]/g, "")
+  const stamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 12);
+  const id = host_id
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase()
     .slice(0, 12);
-  const id = host_id.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
   return `reloc-${id}-${stamp}-${stage}`;
 }
 
@@ -193,6 +193,8 @@ export interface RelocationResult {
   expected_window_ms: number;
   steps_ms: Record<string, number>;
   snapshots_kept: string[];
+  // Leftovers that could not be removed (the move itself succeeded).
+  cleanup_warnings: string[];
 }
 
 function withPlacement(
@@ -288,6 +290,15 @@ export async function relocateHost({
     machine: row.metadata?.machine ?? {},
     size: row.metadata?.size,
     runtime: row.metadata?.runtime ?? {},
+    // Restored exactly: it may disagree with the status (a pending stop, or
+    // a Spot host being recovered), and that intent must survive the move.
+    desired_state: (row.metadata?.desired_state === "stopped"
+      ? "stopped"
+      : row.metadata?.desired_state === "running"
+        ? "running"
+        : running
+          ? "running"
+          : "stopped") as "running" | "stopped",
   };
   const { provider, creds } = await deps.provider();
   const runtime = original.runtime;
@@ -500,12 +511,42 @@ export async function relocateHost({
     );
   }
   const window_ms = now() - windowStarted;
+  await deps.setDesiredState(original.desired_state);
+
+  // Deprovisioning only logs a failure to delete the old data disk; a full
+  // copy of every project must not be left behind silently.
+  const cleanup_warnings: string[] = [];
+  if (plan.cross_zone) {
+    try {
+      await provider.deleteDataDisk(
+        { zone: plan.source.zone, disk_name: plan.data_disk_name },
+        creds,
+      );
+    } catch (err) {
+      cleanup_warnings.push(
+        `could not delete the old data disk ${plan.data_disk_name} in ${plan.source.zone}: ${err}`,
+      );
+    }
+  }
   await deps.setMaintenance(null);
+  if (cleanup_warnings.length > 0) {
+    await deps.alert?.(
+      `Host relocation left data behind: ${host_id}`,
+      [
+        `The host moved to ${plan.target.zone}, but cleanup is incomplete:`,
+        ...cleanup_warnings,
+        `The final snapshot ${final?.name ?? "(none)"} was kept.`,
+      ].join("\n\n"),
+    );
+  }
 
   const snapshots_kept: string[] = [];
   for (const snapshot of [warm, final]) {
     if (!snapshot) continue;
-    if (snapshot === final && input.keep_snapshot) {
+    if (
+      snapshot === final &&
+      (input.keep_snapshot || cleanup_warnings.length > 0)
+    ) {
       snapshots_kept.push(snapshot.name);
       continue;
     }
@@ -520,11 +561,21 @@ export async function relocateHost({
       );
     }
   }
-  await deps.progress("done", "relocation complete", {
+  await deps.progress(
+    "done",
+    cleanup_warnings.length > 0
+      ? "relocation complete; cleanup incomplete"
+      : "relocation complete",
+    { window_ms, expected_window_ms, cleanup_warnings },
+  );
+  return {
+    plan,
     window_ms,
     expected_window_ms,
-  });
-  return { plan, window_ms, expected_window_ms, steps_ms, snapshots_kept };
+    steps_ms,
+    snapshots_kept,
+    cleanup_warnings,
+  };
 }
 
 // Put the host back where and how it was. Works from what was *attempted*,
@@ -550,6 +601,7 @@ async function rollBack({
     machine: Record<string, any>;
     size?: string;
     runtime: Record<string, any>;
+    desired_state: "running" | "stopped";
   };
   provider: any;
   creds: any;
@@ -635,16 +687,21 @@ async function rollBack({
           metadata: restorePlacement(reloaded.metadata ?? {}),
         });
       }
-      const current = await deps.loadHost();
-      if (running || restartNeeded) {
-        if (current.status !== "running") {
-          await deps.startHost({ rollback: true });
-        }
-        if (!running) {
-          await deps.stopHost();
+      // Nothing changed (e.g. the fence could not be established): leave
+      // the host and its in-flight work alone; only undo the desired-state
+      // change made while fencing.
+      if (attempted.size > 0) {
+        const current = await deps.loadHost();
+        if (running || restartNeeded) {
+          if (current.status !== "running") {
+            await deps.startHost({ rollback: true });
+          }
+          if (!running) {
+            await deps.stopHost();
+          }
         }
       }
-      await deps.setDesiredState(running ? "running" : "stopped");
+      await deps.setDesiredState(original.desired_state);
     });
     return { ok: true };
   } catch (err) {

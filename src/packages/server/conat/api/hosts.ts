@@ -146,7 +146,12 @@ import {
   updateCopyStatus as updateCopyStatusDb,
 } from "@cocalc/server/projects/copy-db";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
-import { createLro, getLro, listLro, updateLro } from "@cocalc/server/lro/lro-db";
+import {
+  createLro,
+  getLro,
+  listLro,
+  updateLro,
+} from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -425,7 +430,11 @@ function pool() {
 
 import { planRelocation } from "@cocalc/server/hosts/relocate";
 import {
+  acquireRelocationLease,
+  attachRelocationLeaseOp,
+  hostLifecycleFenced,
   MAX_EXPECTED_MINUTES,
+  releaseRelocationLease,
   scheduledMaintenanceNotice,
   setHostMaintenanceMetadata,
 } from "@cocalc/server/hosts/maintenance";
@@ -9037,8 +9046,7 @@ export async function setHostPublicRouteMode({
 // While a relocation (or other maintenance) is in progress, its operation
 // owns the host's lifecycle; other starts, stops and changes would race it.
 function assertHostNotUnderMaintenance(row: any): void {
-  const state = `${row?.metadata?.maintenance?.state ?? ""}`;
-  if (state === "in_progress") {
+  if (hostLifecycleFenced(row?.metadata?.maintenance)) {
     throw Object.assign(
       new Error(
         "this host is in a scheduled maintenance window; try again when it is over",
@@ -9112,22 +9120,43 @@ export async function relocateHost({
     throw new Error("message is longer than 500 characters");
   }
   await assertNoPendingDestructiveHostOp(row.id);
-  return await createHostLro({
-    kind: HOST_RELOCATE_LRO_KIND,
-    row,
-    account_id: owner,
-    input: {
-      id: row.id,
+  // The lease is taken here, atomically and before the operation is queued,
+  // so a second relocation or any other host change admitted concurrently
+  // is refused instead of racing it.
+  const lease_id = randomUUID();
+  if (!(await acquireRelocationLease({ host_id: row.id, lease_id }))) {
+    throw Object.assign(
+      new Error(
+        "another relocation or maintenance window holds this host; wait for it or clear it",
+      ),
+      { code: "host_maintenance_in_progress" },
+    );
+  }
+  let op: HostLroResponse;
+  try {
+    op = await createHostLro({
+      kind: HOST_RELOCATE_LRO_KIND,
+      row,
       account_id: owner,
-      zone,
-      machine_type,
-      expected_minutes,
-      message: text || undefined,
-      skip_backups: !!skip_backups,
-      keep_snapshot: !!keep_snapshot,
-    },
-    dedupe_key: `${HOST_RELOCATE_LRO_KIND}:${row.id}`,
-  });
+      input: {
+        id: row.id,
+        account_id: owner,
+        lease_id,
+        zone,
+        machine_type,
+        expected_minutes,
+        message: text || undefined,
+        skip_backups: !!skip_backups,
+        keep_snapshot: !!keep_snapshot,
+      },
+      dedupe_key: `${HOST_RELOCATE_LRO_KIND}:${row.id}:${lease_id}`,
+    });
+  } catch (err) {
+    await releaseRelocationLease({ host_id: row.id, lease_id });
+    throw err;
+  }
+  await attachRelocationLeaseOp({ host_id: row.id, lease_id, op_id: op.op_id });
+  return op;
 }
 
 export async function setHostMaintenanceNotice({
@@ -9147,7 +9176,7 @@ export async function setHostMaintenanceNotice({
 }): Promise<HostMaintenanceNotice | null> {
   const { row } = await requireAdminForHostMaintenance(account_id, id);
   const current = row.metadata?.maintenance;
-  if (current?.state === "in_progress") {
+  if (hostLifecycleFenced(current)) {
     // Only clearable once the operation that owns the window is gone (e.g.
     // the bay restarted mid-relocation), so a stuck fence can be lifted.
     const op = current.op_id ? await getLro(current.op_id) : undefined;
@@ -9156,7 +9185,7 @@ export async function setHostMaintenanceNotice({
       throw new Error(
         live
           ? `maintenance operation ${current.op_id} is still running on this host`
-          : "maintenance is in progress on this host",
+          : "a relocation holds this host; only --clear can lift it",
       );
     }
   }

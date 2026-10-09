@@ -14,6 +14,7 @@ import type {
 
 const STATES: HostMaintenanceState[] = [
   "scheduled",
+  "preparing",
   "in_progress",
   "completed",
   "failed",
@@ -37,9 +38,17 @@ export function normalizeHostMaintenanceNotice(
   now = Date.now(),
 ): HostMaintenanceNotice | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, any>;
-  const state = STATES.find((s) => s === raw.state);
+  const raw = { ...(value as Record<string, any>) };
+  let state = STATES.find((s) => s === raw.state);
   if (!state || state === "completed") return undefined;
+  // Users keep working while a relocation prepares; to them the window is
+  // still upcoming.
+  if (state === "preparing") {
+    state = "scheduled";
+    if (!raw.scheduled_for) {
+      raw.scheduled_for = raw.updated_at ?? new Date(now).toISOString();
+    }
+  }
   const kind = raw.kind === "relocation" ? "relocation" : "maintenance";
   const scheduled_for = iso(raw.scheduled_for);
   if (state === "scheduled") {
@@ -87,8 +96,14 @@ export function scheduledMaintenanceNotice(opts: {
     throw new Error("the maintenance time is more than 14 days away");
   }
   const minutes = Number(opts.expected_minutes);
-  if (!Number.isFinite(minutes) || minutes <= 0 || minutes > MAX_EXPECTED_MINUTES) {
-    throw new Error(`expected minutes must be between 1 and ${MAX_EXPECTED_MINUTES}`);
+  if (
+    !Number.isFinite(minutes) ||
+    minutes <= 0 ||
+    minutes > MAX_EXPECTED_MINUTES
+  ) {
+    throw new Error(
+      `expected minutes must be between 1 and ${MAX_EXPECTED_MINUTES}`,
+    );
   }
   const expected_duration_ms = Math.round(minutes * 60_000);
   const message = `${opts.message ?? ""}`.trim();
@@ -122,6 +137,221 @@ export async function setHostMaintenanceMetadata(
        SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{maintenance}', $2::jsonb),
            updated=NOW()
      WHERE id=$1`,
-    [host_id, JSON.stringify({ ...notice, updated_at: new Date().toISOString() })],
+    [
+      host_id,
+      JSON.stringify({ ...notice, updated_at: new Date().toISOString() }),
+    ],
+  );
+}
+
+// Host lifecycle changes (start, stop, restart, delete, drain, machine and
+// software changes, Spot probes and returns) belong to the relocation while
+// it holds the host's lease, including a failed relocation awaiting an admin.
+export function hostLifecycleFenced(notice: unknown): boolean {
+  const state = `${(notice as any)?.state ?? ""}`;
+  return state === "preparing" || state === "in_progress" || state === "failed";
+}
+
+// The host is down, or in an unknown state after a failed rollback: project
+// starts and provider reconciliation must stay away.
+export function hostOfflineFenced(notice: unknown): boolean {
+  const state = `${(notice as any)?.state ?? ""}`;
+  return state === "in_progress" || state === "failed";
+}
+
+const FENCED_STATES_SQL = "('preparing','in_progress','failed')";
+
+// Claim the host for a relocation, atomically: of concurrent claims exactly
+// one succeeds, and none while another relocation (or a failed one) holds
+// it. A scheduled announcement's time and message are kept.
+export async function acquireRelocationLease({
+  host_id,
+  lease_id,
+}: {
+  host_id: string;
+  lease_id: string;
+}): Promise<boolean> {
+  const lease = {
+    kind: "relocation",
+    state: "preparing",
+    lease_id,
+    updated_at: new Date().toISOString(),
+  };
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts
+        SET metadata = jsonb_set(
+              COALESCE(metadata, '{}'::jsonb),
+              '{maintenance}',
+              COALESCE(
+                CASE WHEN metadata->'maintenance'->>'state' = 'scheduled'
+                     THEN metadata->'maintenance' END,
+                '{}'::jsonb
+              ) || $2::jsonb
+            ),
+            updated=NOW()
+      WHERE id=$1
+        AND deleted IS NULL
+        AND COALESCE(metadata->'maintenance'->>'state', '') NOT IN ${FENCED_STATES_SQL}`,
+    [host_id, JSON.stringify(lease)],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+// Record the owning operation on the lease.
+export async function attachRelocationLeaseOp({
+  host_id,
+  lease_id,
+  op_id,
+}: {
+  host_id: string;
+  lease_id: string;
+  op_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `UPDATE project_hosts
+        SET metadata = jsonb_set(metadata, '{maintenance,op_id}', to_jsonb($3::text)),
+            updated=NOW()
+      WHERE id=$1 AND metadata->'maintenance'->>'lease_id' = $2`,
+    [host_id, lease_id, op_id],
+  );
+}
+
+// Write the relocation's notice (null releases the lease), only while this
+// relocation still holds the lease: an admin may have cleared it.
+export async function setRelocationNotice({
+  host_id,
+  lease_id,
+  notice,
+}: {
+  host_id: string;
+  lease_id: string;
+  notice: HostMaintenanceNotice | null;
+}): Promise<void> {
+  const { rowCount } =
+    notice == null
+      ? await getPool().query(
+          `UPDATE project_hosts SET metadata = metadata - 'maintenance', updated=NOW()
+            WHERE id=$1 AND metadata->'maintenance'->>'lease_id' = $2`,
+          [host_id, lease_id],
+        )
+      : // Also re-establishes the lease if a handler wrote back an older
+        // metadata object without it, unless something else fenced the host.
+        await getPool().query(
+          `UPDATE project_hosts
+              SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{maintenance}', $3::jsonb),
+                  updated=NOW()
+            WHERE id=$1
+              AND (metadata->'maintenance'->>'lease_id' = $2
+                   OR COALESCE(metadata->'maintenance'->>'state', '') NOT IN ${FENCED_STATES_SQL})`,
+          [
+            host_id,
+            lease_id,
+            JSON.stringify({
+              ...notice,
+              lease_id,
+              updated_at: new Date().toISOString(),
+            }),
+          ],
+        );
+  if (!rowCount) {
+    throw new Error("the relocation no longer holds this host's lease");
+  }
+}
+
+export async function releaseRelocationLease({
+  host_id,
+  lease_id,
+}: {
+  host_id: string;
+  lease_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `UPDATE project_hosts SET metadata = metadata - 'maintenance', updated=NOW()
+      WHERE id=$1 AND metadata->'maintenance'->>'lease_id' = $2`,
+    [host_id, lease_id],
+  );
+}
+
+export interface HostActivity {
+  cloud_work: number;
+  host_operations: number;
+  project_operations: number;
+}
+
+export async function hostActivity({
+  host_id,
+  own_op_id,
+}: {
+  host_id: string;
+  own_op_id?: string;
+}): Promise<HostActivity> {
+  const { rows } = await getPool().query(
+    `SELECT
+       (SELECT count(*)::int FROM cloud_vm_work
+         WHERE vm_id=$1 AND state IN ('queued','in_progress')) AS cloud_work,
+       (SELECT count(*)::int FROM long_running_operations
+         WHERE scope_type='host' AND scope_id::text=$1
+           AND status IN ('queued','running')
+           AND ($2::text IS NULL OR op_id::text <> $2)) AS host_operations,
+       (SELECT count(*)::int FROM long_running_operations l
+          JOIN projects p ON p.project_id::text = l.scope_id::text
+         WHERE l.scope_type='project'
+           AND l.status IN ('queued','running')
+           AND p.host_id::text=$1
+           AND p.deleted IS NOT TRUE) AS project_operations`,
+    [host_id, own_op_id ?? null],
+  );
+  return rows[0];
+}
+
+// Settle everything that could act on the host before its window: queued
+// cloud work is cancelled (its handlers would race the move), and running
+// cloud work, other host operations, and project operations on the host
+// (starts, backups, restores, moves) are waited out. New ones are refused by
+// the fence meanwhile; queued ones fail on it when they run. Quiet means
+// nothing active on two consecutive checks.
+export async function quiesceHostActivity({
+  host_id,
+  own_op_id,
+  timeoutMs = 10 * 60 * 1000,
+  pollMs = 5_000,
+  onWait,
+}: {
+  host_id: string;
+  own_op_id?: string;
+  timeoutMs?: number;
+  pollMs?: number;
+  onWait?: (activity: HostActivity) => Promise<void>;
+}): Promise<void> {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE project_hosts
+        SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', '"stopped"'),
+            updated=NOW()
+      WHERE id=$1`,
+    [host_id],
+  );
+  const deadline = Date.now() + timeoutMs;
+  let quiet = 0;
+  let activity: HostActivity | undefined;
+  while (Date.now() < deadline) {
+    await pool.query(
+      `UPDATE cloud_vm_work
+          SET state='failed', error='canceled by a host relocation', updated_at=NOW()
+        WHERE vm_id=$1 AND state='queued'`,
+      [host_id],
+    );
+    activity = await hostActivity({ host_id, own_op_id });
+    const busy =
+      activity.cloud_work +
+      activity.host_operations +
+      activity.project_operations;
+    quiet = busy === 0 ? quiet + 1 : 0;
+    if (quiet >= 2) return;
+    if (busy > 0) await onWait?.(activity);
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(
+    `host activity did not settle (cloud work ${activity?.cloud_work ?? "?"}, host operations ${activity?.host_operations ?? "?"}, project operations ${activity?.project_operations ?? "?"})`,
   );
 }

@@ -28,6 +28,7 @@ import {
   spotRecoveryState,
 } from "./spot-restore";
 import { recordHostAvailabilityFromSnapshot } from "@cocalc/server/hosts/availability";
+import { hostOfflineFenced } from "@cocalc/server/hosts/maintenance";
 export { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 
 const logger = getLogger("server:cloud:reconcile");
@@ -788,7 +789,7 @@ async function reconcileProvider(provider: Provider) {
     if (!instance_id) continue;
     // A relocation owns the host for its maintenance window: its VM and disks
     // come and go on purpose, and this row snapshot would be stale.
-    if (row.metadata?.maintenance?.state === "in_progress") continue;
+    if (hostOfflineFenced(row.metadata?.maintenance)) continue;
     const now = new Date();
     const remote = remoteById.get(instance_id);
     const lastActionAt = parseLastActionAt(row);

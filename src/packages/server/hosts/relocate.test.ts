@@ -6,6 +6,8 @@ import {
   type RelocationDeps,
 } from "./relocate";
 import {
+  hostLifecycleFenced,
+  hostOfflineFenced,
   normalizeHostMaintenanceNotice,
   scheduledMaintenanceNotice,
 } from "./maintenance";
@@ -122,10 +124,16 @@ function fakeDeps(
     restoreFails?: boolean;
     updateFailsAfterSetMachineType?: boolean;
     fenceFails?: boolean;
+    desiredState?: "running" | "stopped";
+    sourceDiskDeleteFails?: boolean;
+    rollbackRestoreFails?: boolean;
   } = {},
 ) {
   const calls: string[] = [];
   let row: any = hostRow({ status: opts.status ?? "running" });
+  if (opts.desiredState) {
+    row.metadata = { ...row.metadata, desired_state: opts.desiredState };
+  }
   let starts = 0;
   let deprovisions = 0;
   let updates = 0;
@@ -147,13 +155,21 @@ function fakeDeps(
         // Ambiguous: the disk was created but the response was lost.
         throw new Error("socket hang up");
       }
+      if (opts.rollbackRestoreFails && args.reuse_existing) {
+        throw new Error("quota exceeded");
+      }
       return "created";
     }),
     deleteDataDisk: jest.fn(async (args) => {
       calls.push(`delete-disk:${args.zone}`);
+      if (opts.sourceDiskDeleteFails && args.zone === "us-south1-c") {
+        throw new Error("disk is in use");
+      }
     }),
     deleteSnapshot: jest.fn(async (name: string) => {
-      calls.push(`delete-snapshot:${name.endsWith("-warm") ? "warm" : "final"}`);
+      calls.push(
+        `delete-snapshot:${name.endsWith("-warm") ? "warm" : "final"}`,
+      );
     }),
     setMachineType: jest.fn(async (_runtime, type: string) => {
       calls.push(`set-machine-type:${type}`);
@@ -184,10 +200,15 @@ function fakeDeps(
     },
     setDesiredState: async (state) => {
       calls.push(`desired:${state}`);
+      row = { ...row, metadata: { ...row.metadata, desired_state: state } };
     },
     quiesceCloudWork: async () => {
       calls.push("quiesce");
-      if (opts.fenceFails) throw new Error("cloud work did not settle");
+      if (opts.fenceFails) {
+        // A start raced in before the fence and is still running.
+        row = { ...row, status: "starting" };
+        throw new Error("cloud work did not settle");
+      }
     },
     deprovisionHost: async () => {
       deprovisions += 1;
@@ -239,6 +260,9 @@ describe("relocateHost", () => {
       "delete-disk:us-west2-a",
       "restore:us-west2-a",
       "start:us-west2-a",
+      "desired:running",
+      // The old disk is removed explicitly, not left to deprovision.
+      "delete-disk:us-south1-c",
       "maintenance:cleared",
       "delete-snapshot:warm",
       "delete-snapshot:final",
@@ -285,7 +309,9 @@ describe("relocateHost", () => {
   it("restores from the snapshot when deprovision deleted the VM but then failed", async () => {
     // Before: the rollback trusted a flag set only after deprovision
     // returned, and started the deleted VM instead of restoring the disk.
-    const { deps, calls, getRow } = fakeDeps({ deprovisionFailsAfterDelete: 1 });
+    const { deps, calls, getRow } = fakeDeps({
+      deprovisionFailsAfterDelete: 1,
+    });
     await expect(
       relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
     ).rejects.toThrow(/rolled back to us-south1-c/);
@@ -321,6 +347,28 @@ describe("relocateHost", () => {
     ]);
   });
 
+  it("keeps the host fenced when the rollback itself fails", async () => {
+    const { deps, calls, maintenance } = fakeDeps({
+      restoreFails: true,
+      rollbackRestoreFails: true,
+    });
+    await expect(
+      relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
+    ).rejects.toThrow(/rollback failed: .*quota exceeded .*-final kept/);
+    // Nothing may start or schedule work on a host whose disk is not back.
+    expect(calls).not.toContain("maintenance:cleared");
+    expect(calls.filter((call) => call.startsWith("maintenance:")).pop()).toBe(
+      "maintenance:failed",
+    );
+    const last = maintenance[maintenance.length - 1];
+    expect(hostLifecycleFenced(last)).toBe(true);
+    expect(hostOfflineFenced(last)).toBe(true);
+    expect(deps.alert).toHaveBeenCalledWith(
+      expect.stringMatching(/relocation failed/),
+      expect.stringMatching(/Rollback failed: .*quota exceeded/),
+    );
+  });
+
   it("changes the machine type in place without snapshots", async () => {
     const { deps, calls, getRow } = fakeDeps();
     await relocateHost({
@@ -336,6 +384,7 @@ describe("relocateHost", () => {
       "set-machine-type:n2-standard-32",
       "update:us-south1:us-south1-c",
       "start:us-south1-c",
+      "desired:running",
       "maintenance:cleared",
     ]);
     expect(getRow().metadata.runtime.metadata.machine_type).toBe(
@@ -354,7 +403,9 @@ describe("relocateHost", () => {
         deps,
       }),
     ).rejects.toThrow(/rolled back/);
-    expect(calls.slice(calls.indexOf("set-machine-type:n2-standard-32"))).toEqual([
+    expect(
+      calls.slice(calls.indexOf("set-machine-type:n2-standard-32")),
+    ).toEqual([
       "set-machine-type:n2-standard-32",
       "quiesce",
       "set-machine-type:t2d-standard-16",
@@ -367,19 +418,29 @@ describe("relocateHost", () => {
   });
 
   it("leaves the host untouched when the fence cannot be established", async () => {
-    const { deps, calls, getRow } = fakeDeps({ fenceFails: true });
+    // Quiesce timed out because a start is still in flight: the rollback
+    // must not start or stop anything on top of it.
+    const { deps, calls, getRow } = fakeDeps({
+      fenceFails: true,
+      desiredState: "running",
+    });
     await expect(
       relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
     ).rejects.toThrow(/did not settle/);
     expect(calls).not.toContain("stop");
     expect(calls).not.toContain("deprovision");
+    expect(calls.filter((call) => call.startsWith("start:"))).toEqual([]);
     expect(calls.slice(-2)).toEqual(["desired:running", "maintenance:cleared"]);
-    expect(getRow().status).toBe("running");
+    expect(getRow().status).toBe("starting");
   });
 
   it("moves a stopped host and leaves it stopped", async () => {
     const { deps, calls, getRow } = fakeDeps({ status: "off" });
-    await relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { zone: "us-west2-a" },
+      deps,
+    });
     expect(calls).toEqual([
       "maintenance:in_progress",
       "quiesce",
@@ -392,10 +453,63 @@ describe("relocateHost", () => {
       // Started once to prove the moved disk works, then stopped again.
       "start:us-west2-a",
       "stop",
+      "desired:stopped",
+      "delete-disk:us-south1-c",
       "maintenance:cleared",
       "delete-snapshot:final",
     ]);
     expect(getRow().status).toBe("off");
+  });
+
+  it("keeps the exact desired state when it disagrees with the status", async () => {
+    // A stopped Spot host being recovered (desired running) stays wanted
+    // running; a running host with a pending stop keeps that stop.
+    const recovering = fakeDeps({ status: "off", desiredState: "running" });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { zone: "us-west2-a" },
+      deps: recovering.deps,
+    });
+    expect(recovering.getRow().metadata.desired_state).toBe("running");
+    expect(recovering.getRow().status).toBe("off");
+
+    const stopping = fakeDeps({ desiredState: "stopped" });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { machine_type: "n2-standard-32", skip_backups: true },
+      deps: stopping.deps,
+    });
+    expect(stopping.getRow().metadata.desired_state).toBe("stopped");
+
+    const rollingBack = fakeDeps({ desiredState: "stopped", failStart: 1 });
+    await expect(
+      relocateHost({
+        host_id: HOST_ID,
+        input: { zone: "us-west2-a" },
+        deps: rollingBack.deps,
+      }),
+    ).rejects.toThrow(/rolled back/);
+    expect(rollingBack.getRow().metadata.desired_state).toBe("stopped");
+  });
+
+  it("reports and keeps the snapshot when the old data disk cannot be deleted", async () => {
+    const { deps, provider } = fakeDeps({ sourceDiskDeleteFails: true });
+    const result = await relocateHost({
+      host_id: HOST_ID,
+      input: { zone: "us-west2-a" },
+      deps,
+    });
+    expect(result.cleanup_warnings).toEqual([
+      expect.stringMatching(
+        /could not delete the old data disk .* us-south1-c/,
+      ),
+    ]);
+    expect(result.snapshots_kept).toEqual([expect.stringMatching(/-final$/)]);
+    expect(provider.deleteSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.alert).toHaveBeenCalledWith(
+      expect.stringMatching(/left data behind/),
+      expect.any(String),
+    );
   });
 
   it("changes the type of a stopped host without starting it", async () => {

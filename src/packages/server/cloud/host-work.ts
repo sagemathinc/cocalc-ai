@@ -27,6 +27,7 @@ import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
+import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
 import {
   computeSpotRetryDelayMs,
   desiredPricingModel,
@@ -234,12 +235,7 @@ async function waitForProviderStatus(opts: {
   const intervalMs = opts.intervalMs ?? 5000;
   const deadline = Date.now() + timeoutMs;
   let lastStatus:
-    | "running"
-    | "starting"
-    | "off"
-    | "stopped"
-    | "error"
-    | undefined;
+    "running" | "starting" | "off" | "stopped" | "error" | undefined;
   while (Date.now() < deadline) {
     try {
       if (opts.entry.provider.getStatus) {
@@ -350,8 +346,7 @@ async function observeProviderReadyStatus(opts: {
       }
       const mapped =
         (entry.provider.mapStatus?.(remote.status) as
-          | ProviderReadyObservation["mapped_status"]
-          | undefined) ??
+          ProviderReadyObservation["mapped_status"] | undefined) ??
         (remote.status as ProviderReadyObservation["mapped_status"]);
       return {
         mapped_status: mapped,
@@ -1619,21 +1614,18 @@ async function handleStart(row: any) {
         const nextMachineMeta = { ...(nextMachine.metadata ?? {}) };
         if (providerId === "gcp") {
           const runtimeMeta = runtime.metadata as
-            | { data_disk_name?: string }
-            | undefined;
+            { data_disk_name?: string } | undefined;
           nextMachineMeta.data_disk_name =
             runtimeMeta?.data_disk_name ?? `${runtime.instance_id}-data`;
         } else if (providerId === "nebius") {
           const runtimeMeta = runtime.metadata as
-            | { diskIds?: { data?: string } }
-            | undefined;
+            { diskIds?: { data?: string } } | undefined;
           if (runtimeMeta?.diskIds?.data) {
             nextMachineMeta.data_disk_id = runtimeMeta.diskIds.data;
           }
         } else if (providerId === "hyperstack") {
           const runtimeMeta = runtime.metadata as
-            | { data_volume_id?: number; data_volume_name?: string }
-            | undefined;
+            { data_volume_id?: number; data_volume_name?: string } | undefined;
           if (runtimeMeta?.data_volume_id) {
             nextMachineMeta.data_volume_id = runtimeMeta.data_volume_id;
           }
@@ -2599,12 +2591,7 @@ async function handleStart(row: any) {
       }
     }
     let statusAfterStart:
-      | "running"
-      | "starting"
-      | "off"
-      | "stopped"
-      | "error"
-      | undefined;
+      "running" | "starting" | "off" | "stopped" | "error" | undefined;
     if (
       providerId === "gcp" ||
       providerId === "nebius" ||
@@ -3199,12 +3186,7 @@ async function handleRefreshRuntime(row: any) {
     network,
   });
   const mappedProviderStatus = network?.mapped_status as
-    | "running"
-    | "starting"
-    | "off"
-    | "stopped"
-    | "error"
-    | undefined;
+    "running" | "starting" | "off" | "stopped" | "error" | undefined;
   const nextMetadata = {
     ...(host.metadata ?? {}),
     runtime: {
@@ -3716,8 +3698,9 @@ async function handleProbeSpot(row: any) {
   const host = await loadHostRow(row.vm_id);
   if (!host) return;
   if (!isSpotRecoveryManagedHost(host)) return;
-  // A relocation owns the host for its window and resets Spot recovery after.
-  if (host.metadata?.maintenance?.state === "in_progress") return;
+  // A relocation owns the host (preparing, in its window, or failed and
+  // awaiting an admin) and resets Spot recovery after.
+  if (hostLifecycleFenced(host.metadata?.maintenance)) return;
   const policy = spotRecoveryPolicy(host);
   const state = spotRecoveryState(host);
   const currentEffectivePricing = effectivePricingModel(host);
