@@ -95,6 +95,31 @@ star_configure_container_runtime_env
 star_install_container_runtime_archive "$archive" amd64
 [ "$STAR_INSTALLED_CONTAINER_RUNTIME_CREATED" = "0" ]
 
+# Podman as the Star user works before its runtime directory exists (a Docker
+# upgrade runs at boot, before systemd creates it).
+nobody_runtime="/run/user/$(id -u nobody)"
+if [ ! -e "$nobody_runtime" ]; then
+  [ "$(star_podman_info_field "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" nobody DatabaseBackend)" = "sqlite" ]
+  [ "$(stat -c %U:%a "$nobody_runtime")" = "nobody:700" ]
+  systemctl stop "user@$(id -u nobody).service" >/dev/null 2>&1 ||
+    true
+  rmdir "$nobody_runtime" 2>/dev/null || true
+
+  # Under systemd, a runtime directory systemd could not set up stops Podman
+  # rather than falling back to a plain directory it would later cover.
+  mkdir -p "${tmp}/systemd-booted" "${tmp}/fake-bin"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"${tmp}/fake-bin/systemctl"
+  chmod 0755 "${tmp}/fake-bin/systemctl"
+  if PATH="${tmp}/fake-bin:${PATH}" \
+    STAR_SYSTEMD_BOOTED_MARKER="${tmp}/systemd-booted" \
+    star_podman_info_field "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" nobody DatabaseBackend 2>/dev/null |
+    grep -q sqlite; then
+    echo "podman ran without the systemd runtime directory" >&2
+    exit 1
+  fi
+  [ ! -e "$nobody_runtime" ]
+fi
+
 release_dir="${tmp}/release"
 mkdir -p "$release_dir"
 cat >"${release_dir}/release.json" <<EOF

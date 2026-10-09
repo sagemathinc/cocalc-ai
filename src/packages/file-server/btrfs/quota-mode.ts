@@ -1,5 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import { readFile } from "node:fs/promises";
+import { release } from "node:os";
 import { type BtrfsQuotaMode, btrfsQuotaMode } from "./config";
 import { btrfs } from "./util";
 
@@ -115,6 +116,36 @@ export function parseBtrfsQuotaStatus(
   return { enabled: true, mode: "legacy-qgroup" };
 }
 
+// Simple quotas need Linux 6.7; older kernels reject them with EINVAL (e.g.
+// the WSL2 kernel behind Docker Desktop on Windows, 6.6 in 2026). Hosts that
+// set COCALC_BTRFS_UNSUPPORTED_QUOTA_MODE=disabled (CoCalc Star) then run
+// without per-project disk quotas; every other host fails as before, since it
+// must not run unbounded projects and must never fall back to legacy qgroups.
+export function simpleQuotasUnsupported(err: unknown): boolean {
+  return /invalid argument/i.test(`${(err as any)?.message ?? err}`);
+}
+
+// The kernel advertises simple quota support (6.7+, or a backport) here. An
+// EINVAL from a kernel that has the feature is some other problem.
+const SIMPLE_QUOTA_FEATURE = "/sys/fs/btrfs/features/simple_quota";
+
+async function kernelLacksSimpleQuotas(): Promise<boolean> {
+  try {
+    await readFile(SIMPLE_QUOTA_FEATURE, "utf8");
+    return false;
+  } catch (err: any) {
+    return err?.code === "ENOENT";
+  }
+}
+
+function disableQuotasWhenUnsupported(): boolean {
+  return (
+    `${process.env.COCALC_BTRFS_UNSUPPORTED_QUOTA_MODE ?? ""}`
+      .trim()
+      .toLowerCase() === "disabled"
+  );
+}
+
 export function btrfsQuotaEnableArgs(mount: string): string[] {
   return ["quota", "enable", "--simple", mount];
 }
@@ -192,10 +223,32 @@ async function reconcileBtrfsQuotaMode(
     });
   }
 
-  await btrfs({
-    args: btrfsQuotaEnableArgs(mount),
-    verbose: false,
-  });
+  try {
+    await btrfs({
+      args: btrfsQuotaEnableArgs(mount),
+      verbose: false,
+    });
+  } catch (err) {
+    if (
+      !simpleQuotasUnsupported(err) ||
+      !disableQuotasWhenUnsupported() ||
+      !(await kernelLacksSimpleQuotas())
+    ) {
+      throw err;
+    }
+    // Everything in this process (and processes it starts) now treats
+    // quotas as disabled, like COCALC_BTRFS_QUOTA_MODE=disabled.
+    process.env.COCALC_BTRFS_QUOTA_MODE = "disabled";
+    logger.warn(
+      "btrfs simple quotas are not supported by this kernel; running without per-project disk quotas",
+      { mount, kernel: release() },
+    );
+    return {
+      status: { enabled: false, mode: "disabled" },
+      filesystem_uuid,
+      reconciled: current.enabled,
+    };
+  }
 
   const status = await getBtrfsQuotaRuntimeStatus(mount, filesystem_uuid);
   if (!status.enabled || status.mode !== desiredMode) {
