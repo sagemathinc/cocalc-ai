@@ -84,9 +84,55 @@ interface ParsedBlobUrl {
   url: string;
 }
 
+// Never run this over a whole Markdown cell: use blobUrlMatches.
 const GLOBAL_BLOB_URL =
   /(?:https?:\/\/[^/\s"'<>()[\]]+)?\/[^\s"'<>()[\]]*blobs\/[^\s"'<>()[\]]+/gi;
 const ATTACHMENT_URL = /attachment:([^\s"'<>()[\]]+)/gi;
+// A run of characters that can be part of a URL in Markdown or HTML: no
+// whitespace, quotes, angle brackets, parentheses or square brackets.
+const URL_RUN = /[^\s"'<>()[\]]+/g;
+// Real blob URLs (path, encoded filename, uuid, optional origin) are far
+// shorter; longer runs are things like inline base64 images.
+export const MAX_BLOB_URL_LENGTH = 8192;
+
+interface TextMatch {
+  0: string;
+  1?: string;
+  index: number;
+}
+
+/**
+ * The CoCalc blob URLs in Markdown text: exactly text.matchAll(GLOBAL_BLOB_URL)
+ * for runs of at most MAX_BLOB_URL_LENGTH, in linear time.
+ *
+ * GLOBAL_BLOB_URL itself is quadratic on a long run of URL characters that
+ * contains "/" but no "blobs/", such as an inline base64 image: the engine
+ * retries from every "/" and scans to the end of the run each time. A 2 MB
+ * image took about 80 seconds of CPU and stalled a whole project host.
+ * Every character the pattern can match is a URL-run character, and its last
+ * part runs to the end of the run, so a match never crosses a run boundary and
+ * there is at most one per run. Matching each run on its own is therefore
+ * equivalent, and runs without "blobs/" (or too long to be a blob URL) can be
+ * skipped without running the pattern at all.
+ */
+function blobUrlMatches(text: string): TextMatch[] {
+  const matches: TextMatch[] = [];
+  const pattern = new RegExp(GLOBAL_BLOB_URL.source, "i");
+  for (const run of text.matchAll(URL_RUN)) {
+    const value = run[0];
+    if (
+      value.length > MAX_BLOB_URL_LENGTH ||
+      !value.toLowerCase().includes("blobs/")
+    ) {
+      continue;
+    }
+    const match = pattern.exec(value);
+    if (match != null) {
+      matches.push({ 0: match[0], index: (run.index ?? 0) + match.index });
+    }
+  }
+  return matches;
+}
 
 function deepCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -207,11 +253,12 @@ function assertAttachmentReferenceLimit(
   for (const cell of ipynb?.cells ?? []) {
     if (cell?.cell_type !== "markdown") continue;
     const seen = new Set<string>();
-    const regex =
+    const regex = new RegExp(ATTACHMENT_URL.source, ATTACHMENT_URL.flags);
+    const matches =
       kind === "blob"
-        ? new RegExp(GLOBAL_BLOB_URL.source, GLOBAL_BLOB_URL.flags)
-        : new RegExp(ATTACHMENT_URL.source, ATTACHMENT_URL.flags);
-    for (const match of sourceText(cell.source).matchAll(regex)) {
+        ? blobUrlMatches(sourceText(cell.source))
+        : sourceText(cell.source).matchAll(regex);
+    for (const match of matches) {
       const key =
         kind === "blob" ? parseBlobUrl(match[0])?.uuid : (match[1] ?? match[0]);
       if (key == null || seen.has(key)) continue;
@@ -411,10 +458,17 @@ function findMetadataEntryForUuid(
 
 async function replaceAsync(
   source: string,
-  regex: RegExp,
+  find: RegExp | ((source: string) => TextMatch[]),
   replacement: (match: string, captured: string | undefined) => Promise<string>,
 ): Promise<string> {
-  const matches = [...source.matchAll(regex)];
+  const matches: TextMatch[] =
+    typeof find === "function"
+      ? find(source)
+      : [...source.matchAll(find)].map((match) => ({
+          0: match[0],
+          1: match[1],
+          index: match.index ?? 0,
+        }));
   if (matches.length === 0) return source;
   let result = "";
   let offset = 0;
@@ -504,7 +558,7 @@ export async function embedCoCalcBlobImages({
 
     const rewritten = await replaceAsync(
       sourceText(cell.source),
-      GLOBAL_BLOB_URL,
+      blobUrlMatches,
       async (candidate) => {
         const parsed = parseBlobUrl(candidate);
         if (parsed == null) return candidate;
@@ -655,7 +709,7 @@ export async function externalizeJupyterAttachments({
       Promise<BlobAttachmentEntryMetadata | undefined>
     >();
     const consumedAttachments = new Set<string>();
-    for (const match of sourceText(cell.source).matchAll(GLOBAL_BLOB_URL)) {
+    for (const match of blobUrlMatches(sourceText(cell.source))) {
       const parsed = parseBlobUrl(match[0]);
       if (parsed == null) continue;
       const mapped = findMetadataEntryForUuid(originalMetadata, parsed.uuid);
@@ -774,5 +828,7 @@ export async function externalizeJupyterAttachments({
 }
 
 export const BLOB_ATTACHMENT_METADATA_KEY = METADATA_KEY;
+// For tests: the linear blob URL scan and the pattern it must agree with.
+export const blobUrlScanForTesting = { blobUrlMatches, GLOBAL_BLOB_URL };
 export const MAX_JUPYTER_ATTACHMENT_BYTES = MAX_NOTEBOOK_ATTACHMENT_BYTES;
 export const MAX_JUPYTER_ATTACHMENT_COUNT = MAX_NOTEBOOK_ATTACHMENT_COUNT;

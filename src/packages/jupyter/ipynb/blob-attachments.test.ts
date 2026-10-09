@@ -6,8 +6,10 @@
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import {
   BLOB_ATTACHMENT_METADATA_KEY,
+  blobUrlScanForTesting,
   embedCoCalcBlobImages,
   externalizeJupyterAttachments,
+  MAX_BLOB_URL_LENGTH,
   MAX_JUPYTER_ATTACHMENT_COUNT,
 } from "./blob-attachments";
 
@@ -308,5 +310,101 @@ describe("portable Jupyter blob attachments", () => {
       }),
     ).rejects.toThrow("too many image attachments");
     expect(saveBlob).not.toHaveBeenCalled();
+  });
+
+  describe("blob URL scan", () => {
+    const { blobUrlMatches, GLOBAL_BLOB_URL } = blobUrlScanForTesting;
+    const reference = (text: string) =>
+      [...text.matchAll(GLOBAL_BLOB_URL)].map((m) => [m.index, m[0]]);
+    const linear = (text: string) =>
+      blobUrlMatches(text).map((m) => [m.index, m[0]]);
+
+    it("finds exactly what the pattern finds", () => {
+      const pieces = [
+        "/blobs/a.png?uuid=1",
+        "https://cocalc.ai/blobs/b.png?uuid=2",
+        "HTTP://Example.COM/x/BLOBS/c",
+        "blobs/",
+        "/",
+        "//",
+        "https://",
+        "http://h",
+        "x",
+        "blobs",
+        " ",
+        "\n",
+        "(",
+        ")",
+        "[",
+        "]",
+        "<",
+        ">",
+        '"',
+        "'",
+        "![i](",
+        '<img src="',
+        "?uuid=",
+        "%20",
+      ];
+      let seed = 12345;
+      const random = () => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return seed / 2147483648;
+      };
+      for (let i = 0; i < 3000; i++) {
+        let text = "";
+        const n = 1 + Math.floor(random() * 12);
+        for (let j = 0; j < n; j++) {
+          text += pieces[Math.floor(random() * pieces.length)];
+        }
+        expect(linear(text)).toEqual(reference(text));
+      }
+    });
+
+    it("scans a large inline base64 image in linear time", () => {
+      // 3 MB of base64: about 2 minutes of CPU with the pattern itself.
+      const base64 = Buffer.alloc(2_300_000, 7)
+        .toString("base64")
+        .replace(/c/g, "/");
+      const url = `/blobs/diagram.png?uuid=${pngUuid}`;
+      const text = `![inline](data:image/png;base64,${base64})\n![blob](${url})\n`;
+      const started = Date.now();
+      expect(linear(text)).toEqual([[text.indexOf(url), url]]);
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it("never treats a run longer than any blob URL as one", () => {
+      const run = `/${"x".repeat(MAX_BLOB_URL_LENGTH)}blobs/a.png`;
+      expect(linear(` ${run} `)).toEqual([]);
+      const short = `/${"x".repeat(100)}blobs/a.png`;
+      expect(linear(` ${short} `)).toEqual(reference(` ${short} `));
+    });
+
+    it("saves a notebook with a large inline image without stalling", async () => {
+      const base64 = Buffer.alloc(2_300_000, 9)
+        .toString("base64")
+        .replace(/c/g, "/");
+      const live = notebook(
+        `![inline](data:image/png;base64,${base64})\n` +
+          `![diagram](/blobs/diagram.png?uuid=${pngUuid})\n`,
+      );
+      const loadBlob = jest.fn(async () => ({ bytes: png }));
+      const started = Date.now();
+      const saved = await embedCoCalcBlobImages({ ipynb: live, loadBlob });
+      expect(saved.cells[0].source).toContain(
+        "![diagram](attachment:diagram.png)",
+      );
+      expect(saved.cells[0].source).toContain("data:image/png;base64,");
+      const reopened = await externalizeJupyterAttachments({
+        ipynb: saved,
+        loadBlob,
+        saveBlob: async ({ content_id, filename }) => ({
+          uuid: content_id,
+          url: `/blobs/${filename}?uuid=${content_id}`,
+        }),
+      });
+      expect(reopened.cells[0].source).toContain(`/blobs/diagram.png?uuid=`);
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
   });
 });
