@@ -7,9 +7,11 @@
 // chat cards show), for a browser of this file's own, which keeps its
 // profile.  Agents reach it with `cocalc project browser ... --browser <file>`.
 
-import { Alert, Button, Flex, Spin } from "antd";
-import { useEffect, useState } from "react";
+import { Alert, Button, Flex, Spin, Typography } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppArtifact } from "@cocalc/frontend/chat/app-artifact";
+import { CopyToClipBoard } from "@cocalc/frontend/components";
+import { InstallCocalcCli } from "@cocalc/frontend/components/install-cocalc-cli";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -29,7 +31,17 @@ interface Props {
 
 // Each frame (e.g. after a split) shows its own tab of the file's browser.
 export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
-  const [app, setApp] = useState<{ id: string; title: string }>();
+  const [app, setApp] = useState<{ id: string; title: string; file: string }>();
+  // What the viewer reports: where the browser runs and whether it is there.
+  const [remote, setRemote] = useState<{
+    runsOn?: string;
+    connection?: string;
+  }>();
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const onMessage = useCallback((data: any) => {
+    if (data?.type === "cocalc-browser-state")
+      setRemote({ runsOn: data.runsOn, connection: data.connection });
+  }, []);
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
 
@@ -53,7 +65,7 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
           file,
         }) as AppSpec,
       );
-      if (!canceled) setApp({ id, title: sharedBrowserTitle(file) });
+      if (!canceled) setApp({ id, title: sharedBrowserTitle(file), file });
     })().catch((err) => {
       if (!canceled) setError(`${err?.message ?? err}`);
     });
@@ -99,7 +111,96 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
         app={{ id: app.id }}
         title={app.title}
         view={`frame:${frameId}`}
-      />
+        // We draw the "waiting for your computer" panel (below).
+        params={{ panel: "host" }}
+        onMessage={onMessage}
+        frameRef={frame}
+      >
+        {remote?.runsOn === "computer" && remote.connection === "waiting" && (
+          <WaitingForComputer
+            command={connectCommand(project_id, app.file)}
+            onRunInProject={() =>
+              frame.current?.contentWindow?.postMessage(
+                { type: "cocalc-browser-runs-on", value: "project" },
+                "*",
+              )
+            }
+          />
+        )}
+      </AppArtifact>
+    </div>
+  );
+}
+
+// What the user runs on their computer to connect this file's browser.
+export function connectCommand(projectId: string, file: string): string {
+  const quoted = /^[\w./~-]+$/.test(file)
+    ? file
+    : `'${file.replace(/'/g, "'\\''")}'`;
+  return `cocalc project browser connect -w ${projectId} --browser ${quoted} --api ${window.location.origin}`;
+}
+
+function WaitingForComputer({
+  command,
+  onRunInProject,
+}: {
+  command: string;
+  onRunInProject: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "auto",
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "flex-start",
+        padding: "40px 16px",
+      }}
+    >
+      <div
+        style={{
+          background: "white",
+          borderRadius: 8,
+          padding: 20,
+          maxWidth: 640,
+          width: "100%",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+        }}
+      >
+        <Typography.Title level={5} style={{ marginTop: 0 }}>
+          Waiting for your computer
+        </Typography.Title>
+        <Typography.Paragraph>
+          This browser runs in Chrome on your computer, so sites see your
+          network and your logins, and agents here can use it while it is
+          connected.
+        </Typography.Paragraph>
+        <InstallCocalcCli title="1. Install the CoCalc CLI (once)" />
+        <div style={{ marginTop: 16 }}>
+          <Typography.Text strong>2. Run this on your computer</Typography.Text>
+          <CopyToClipBoard
+            value={command}
+            inputWidth="100%"
+            inputStyle={{ minWidth: 0 }}
+            outerStyle={{ width: "100%" }}
+            style={{ marginTop: 6, width: "100%" }}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginTop: 6 }}>
+            A Chrome window opens with this file's own profile and stays
+            connected while the command runs. To sign in to a site that blocks
+            automated browsers (e.g. X), add <code>--sign-in</code>: sign in,
+            close the window, and it connects.
+          </Typography.Paragraph>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <Button onClick={onRunInProject}>
+            Run it in the project instead
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

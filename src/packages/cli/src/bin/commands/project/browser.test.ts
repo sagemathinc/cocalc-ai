@@ -75,3 +75,17 @@ test("connect --browser names the project file and keeps a profile per file", ()
     "C:/Users/w/AppData/Local/cocalc/browser-profiles/p1-cocalc-browser-1",
   );
 });
+
+test("--sign-in opens Chrome without remote debugging", () => {
+  const { signInLaunchArgs } = require("./browser");
+  const { chromeLaunchArgs } = require("../../core/local-browser");
+  const args = signInLaunchArgs("/p", "about:blank");
+  assert.ok(!args.some((a: string) => a.startsWith("--remote-debugging")));
+  assert.ok(args.includes("--user-data-dir=/p"));
+  // The connected browser hides the automation flag from sites.
+  assert.ok(
+    chromeLaunchArgs({ profileDir: "/p" }).includes(
+      "--disable-blink-features=AutomationControlled",
+    ),
+  );
+});

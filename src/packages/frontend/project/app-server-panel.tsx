@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { InstallCocalcCli } from "@cocalc/frontend/components/install-cocalc-cli";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -55,7 +56,6 @@ import {
 } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { displayPath } from "@cocalc/util/path-model";
-import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   appServerPresetsFromCatalogEntries,
@@ -4615,18 +4615,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               tunnel to this app. The command will wake the project and app if
               needed, then print the local URL.
             </Paragraph>
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                Install CoCalc CLI
-              </div>
-              <a
-                href={COCALC_CLI_DOWNLOAD_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {COCALC_CLI_DOWNLOAD_URL}
-              </a>
-            </div>
+            <InstallCocalcCli />
             {siteOrigin ? (
               <div style={{ fontSize: "12px", opacity: 0.78 }}>
                 This tunnel targets: {siteOrigin}

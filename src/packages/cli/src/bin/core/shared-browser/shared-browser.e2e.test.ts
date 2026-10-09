@@ -138,6 +138,8 @@ test(
       await page.type("x", "#s");
       assert.equal((await page.press("Enter")).title, "submitted");
       assert.equal(await page.evaluate("Promise.resolve(6 * 7)"), 42);
+      // Sites must not be told the browser is automated (X refuses logins).
+      assert.equal(await page.evaluate("navigator.webdriver"), false);
       await assert.rejects(page.evaluate("nope()"), /nope is not defined/);
       assert.match((await page.text()).text, /Hello text/);
       const png = await page.screenshot();
@@ -475,7 +477,7 @@ test(
 );
 
 test(
-  "frames match the viewer's pixel ratio, with a lossless frame at rest",
+  "a still page gets one lossless frame at the stream's size, then nothing",
   {
     skip: executable ? false : "no Chrome/Chromium installed",
     timeout: 120_000,
@@ -519,8 +521,13 @@ test(
           ...rest: any[]
         ) => {
           const bmp = await decode(src, ...rest);
-          if (src instanceof Blob)
-            (window as any).__frames.push({ type: src.type, width: bmp.width });
+          if (src instanceof Blob) {
+            const head = new Uint8Array(await src.slice(0, 1).arrayBuffer())[0];
+            (window as any).__frames.push({
+              type: head === 0x89 ? "png" : "jpeg",
+              width: bmp.width,
+            });
+          }
           return bmp;
         };
       });
@@ -539,17 +546,24 @@ test(
           document.getElementById("stage")!.getBoundingClientRect().width,
         ),
       );
-      // At rest, a frame at device pixels: twice the stage's width.
-      await until((f) => f.some((x) => x.width === stage * 2));
+      // At rest: a lossless frame, at the stream's (the page's) size...
+      await until((f) => f.some((x) => x.type === "png" && x.width === stage));
       // ...and then nothing more while nothing changes (no capture loop).
       await new Promise((r) => setTimeout(r, 1000));
       const settled = (await frames()).length;
-      await new Promise((r) => setTimeout(r, 1500));
-      assert.equal((await frames()).length, settled, "no frames at rest");
-      const last = (await frames()).at(-1);
-      assert.equal(last.width, stage * 2, "the sharp frame stays");
+      await new Promise((r) => setTimeout(r, 2000));
+      assert.equal(
+        (await frames()).length,
+        settled,
+        `no frames at rest: ${JSON.stringify((await frames()).slice(settled - 2))}`,
+      );
+      assert.equal(
+        (await frames()).at(-1).type,
+        "png",
+        "the lossless frame stays",
+      );
 
-      // Fast: no full-resolution frame.
+      // Fast: stream frames only.
       await viewer.selectOption("#quality", "fast");
       await new Promise((r) => setTimeout(r, 500));
       await viewer.evaluate(() => ((window as any).__frames = []));
@@ -557,8 +571,8 @@ test(
       await p2.evaluate("document.body.style.background = 'yellow'");
       p2.close();
       await until((f) => f.length > 0);
-      await new Promise((r) => setTimeout(r, 1000));
-      assert.ok(!(await frames()).some((x: any) => x.width === stage * 2));
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.ok(!(await frames()).some((x: any) => x.type === "png"));
     } finally {
       await human.close().catch(() => {});
       await server.close();
@@ -716,7 +730,11 @@ test(
       const viewer = await human.newPage({
         viewport: { width: 800, height: 500 },
       });
-      await viewer.goto(`http://127.0.0.1:${port}/?view=frame:w&client=me`);
+      // The CoCalc page passes the site it is on (the viewer itself is
+      // served from the project host's domain).
+      await viewer.goto(
+        `http://127.0.0.1:${port}/?view=frame:w&client=me&site=${encodeURIComponent("https://example.cocalc.ai")}`,
+      );
       await viewer.waitForSelector("#waiting", { state: "visible" });
       assert.match(
         await viewer.textContent("#waiting pre"),
@@ -742,7 +760,7 @@ test(
       // The connect command names this site.
       assert.match(
         server.getState().connectCommand!,
-        /--api http:\/\/127\.0\.0\.1:\d+$/,
+        /--api https:\/\/example\.cocalc\.ai$/,
       );
       // A preview streams; the human is told to use the window.
       await viewer.waitForFunction(() =>

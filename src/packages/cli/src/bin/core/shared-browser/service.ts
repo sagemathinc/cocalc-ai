@@ -10,6 +10,7 @@ import {
   launchBrowser,
   startCleanupWatchdog,
   type LocalBrowserSystem,
+  HIDE_AUTOMATION,
   type ProfileDir,
   type ProfileStorage,
 } from "../local-browser";
@@ -131,6 +132,7 @@ export function sharedBrowserChromeArgs(profileDir: string): string[] {
     `--user-data-dir=${profileDir}`,
     "--remote-debugging-port=0",
     "--remote-debugging-address=127.0.0.1",
+    ...HIDE_AUTOMATION,
     "--headless=new",
     // Project containers cannot create the namespaces Chromium's sandbox
     // needs.  The project is the security boundary (see the README).

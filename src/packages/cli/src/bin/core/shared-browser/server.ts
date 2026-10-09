@@ -63,30 +63,28 @@ export interface SharedBrowserState {
   connectCommand: string | null;
 }
 
-// The screencast streams changes as JPEG at CSS pixels (headless Chromium
-// does not scale it); once the page is still, one frame at the viewer's
-// device pixels replaces it: lossless PNG (sharp) or high-quality JPEG
-// (balanced).  Fast skips that (slow links).
+// The screencast streams changes as JPEG; once the page is still, one frame
+// replaces it: lossless PNG (sharp) or high-quality JPEG (balanced).  Fast
+// skips that (slow links).  All at the page's CSS pixels: rendering at the
+// viewer's pixel ratio broke input and screenshots (see applyViewport).
 export type ViewQuality = "sharp" | "balanced" | "fast";
 const QUALITY: Record<
   ViewQuality,
   {
     jpeg: number;
-    maxScale: number;
     rest: null | { format: string; quality?: number };
   }
 > = {
-  sharp: { jpeg: 80, maxScale: 2, rest: { format: "png" } },
-  balanced: { jpeg: 75, maxScale: 2, rest: { format: "jpeg", quality: 92 } },
-  fast: { jpeg: 60, maxScale: 1, rest: null },
+  sharp: { jpeg: 80, rest: { format: "png" } },
+  balanced: { jpeg: 75, rest: { format: "jpeg", quality: 92 } },
+  fast: { jpeg: 60, rest: null },
 };
 // A lossless frame this long after the last change, in sharp mode.
 const SETTLE_MS = 350;
 
 interface TabPage {
   targetId: string;
-  // Device pixels per CSS pixel the viewer draws at, and its quality.
-  scale: number;
+  // The viewer's picture quality.
   quality: ViewQuality;
   settleTimer: NodeJS.Timeout | null;
   // The last screencast frame, to recognize frames without a change.
@@ -197,7 +195,7 @@ export class SharedBrowserServer {
     return this.state.runsOn === "computer";
   }
 
-  // The site the viewer is on (for `connect --api`).
+  // The site the user is on (for `connect --api`), from the CoCalc page.
   private siteOrigin = "";
   private noteOrigin(origin: string | undefined): void {
     if (!origin || !/^https?:\/\/[^/]+$/.test(origin)) return;
@@ -293,7 +291,9 @@ export class SharedBrowserServer {
         return;
       }
       const query = new URL(req.url ?? "/", "http://x").searchParams;
-      this.noteOrigin(req.headers.origin);
+      // Not the Origin header: the viewer is served from the project host's
+      // domain, while the CLI needs the site the user is on.
+      this.noteOrigin(query.get("site") ?? undefined);
       viewerWss.handleUpgrade(req, socket, head, (ws) =>
         this.addViewer(
           ws,
@@ -431,7 +431,6 @@ export class SharedBrowserServer {
     if (!page) {
       page = {
         targetId,
-        scale: 1,
         quality: "sharp",
         settleTimer: null,
         lastFrame: null,
@@ -564,10 +563,9 @@ export class SharedBrowserServer {
     await this.cdp
       .send(
         "Emulation.setDeviceMetricsOverride",
-        // Not the viewer's pixel ratio: emulating one moves input
-        // coordinates in some Chromium versions (clicks land at half the
-        // distance when the page is wider than the headless window).  The
-        // still frame is rendered at that ratio instead (see settle).
+        // Never the viewer's pixel ratio: with it, a screenshot leaves input
+        // scaled (clicks at half the distance), and scaled-clip screenshots
+        // misrender on some hosts (tiled, shifted).  Everything is 1x.
         { width, height, deviceScaleFactor: 1, mobile: false },
         page.session,
       )
@@ -599,8 +597,8 @@ export class SharedBrowserServer {
           format: "jpeg",
           quality: this.lightTouch ? 50 : QUALITY[page.quality].jpeg,
           // Frames at the device pixels the viewer draws: no upscaling blur.
-          maxWidth: Math.round(width * (this.lightTouch ? 1 : page.scale)),
-          maxHeight: Math.round(height * (this.lightTouch ? 1 : page.scale)),
+          maxWidth: width,
+          maxHeight: height,
         },
         page.session,
       );
@@ -624,26 +622,10 @@ export class SharedBrowserServer {
     const rest = QUALITY[page.quality].rest;
     if (!page.session || !page.casting || !rest) return;
     try {
-      // The visible part of the page, rendered at the viewer's pixel ratio.
-      const { cssVisualViewport: v } = await this.cdp.send(
-        "Page.getLayoutMetrics",
-        {},
-        page.session,
-      );
+      // The page exactly as the stream shows it, without JPEG artifacts.
       const { data } = await this.cdp.send(
         "Page.captureScreenshot",
-        {
-          ...rest,
-          // The whole viewport, scrollbar included: the same picture as
-          // the stream, or the frames alternate (a flickering scrollbar).
-          clip: {
-            x: v.pageX,
-            y: v.pageY,
-            width: page.viewport.width,
-            height: page.viewport.height,
-            scale: page.scale,
-          },
-        },
+        rest,
         page.session,
         10_000,
       );
@@ -896,22 +878,15 @@ export class SharedBrowserServer {
           msg.quality === "balanced" || msg.quality === "fast"
             ? msg.quality
             : "sharp";
-        const ratio = Number(msg.scale);
-        const scale = Math.min(
-          QUALITY[quality].maxScale,
-          Math.max(1, Number.isFinite(ratio) ? Math.round(ratio * 4) / 4 : 1),
-        );
         // New tabs start at the size the human last used.
         this.state.viewport = { width, height };
         if (
           width === page.viewport.width &&
           height === page.viewport.height &&
-          scale === page.scale &&
           quality === page.quality
         )
           return;
         page.viewport = { width, height };
-        page.scale = scale;
         page.quality = quality;
         await this.applyViewport(page);
         this.broadcastState();

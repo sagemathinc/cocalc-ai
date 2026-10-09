@@ -238,7 +238,13 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     runson.style.display = state.runsOn ? "" : "none";
     if (state.runsOn && document.activeElement !== runson) runson.value = state.runsOn;
     const waiting = $("waiting");
-    waiting.style.display = state.connection === "waiting" && state.runsOn === "computer" ? "block" : "none";
+    const waitingForComputer = state.connection === "waiting" && state.runsOn === "computer";
+    // In a .browser editor the page draws this panel itself (with how to
+    // install the CoCalc CLI); tell it what to show.
+    const hostPanel = new URLSearchParams(location.search).get("panel") === "host";
+    waiting.style.display = waitingForComputer && !hostPanel ? "block" : "none";
+    if (window.parent !== window)
+      window.parent.postMessage({ type: "cocalc-browser-state", runsOn: state.runsOn, connection: state.connection, connectCommand: state.connectCommand }, "*");
     waiting.querySelector("pre").textContent = state.connectCommand || "";
     if (state.connection === "waiting" && lastFrame) { ctx.fillStyle = "#888"; ctx.fillRect(0, 0, canvas.width, canvas.height); lastFrame = null; }
     // overlays (only meaningful while the human drives)
@@ -255,6 +261,11 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     $("filechooser").style.display = state.fileChooser && human() ? "block" : "none";
   }
   $("runson").addEventListener("change", () => send({ type: "runsOn", value: $("runson").value }));
+  // The page's panel may switch it back to the project.
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent || !e.data || e.data.type !== "cocalc-browser-runs-on") return;
+    if (e.data.value === "project" || e.data.value === "computer") send({ type: "runsOn", value: e.data.value });
+  });
   $("waiting").addEventListener("click", (e) => {
     const a = e.target.dataset && e.target.dataset.a;
     if (a === "project") send({ type: "runsOn", value: "project" });

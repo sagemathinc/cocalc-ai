@@ -168,6 +168,13 @@ export function startUrl(value?: string): string {
   return url;
 }
 
+// With remote debugging on, Chrome sets navigator.webdriver = true on every
+// page, which sites' bot detection reads (X refuses to sign in).  This keeps
+// the debugging port and turns that signal off.
+export const HIDE_AUTOMATION = [
+  "--disable-blink-features=AutomationControlled",
+];
+
 export function chromeLaunchArgs({
   profileDir,
   url,
@@ -181,6 +188,7 @@ export function chromeLaunchArgs({
     `--user-data-dir=${profileDir}`,
     // 0: Chrome picks a free loopback port and writes it to DevToolsActivePort.
     "--remote-debugging-port=0",
+    ...HIDE_AUTOMATION,
     "--no-first-run",
     "--no-default-browser-check",
     `--disk-cache-size=${DISK_CACHE_BYTES}`,

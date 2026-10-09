@@ -72,7 +72,20 @@ type ConnectOptions = {
   keyPath?: string;
   installKey?: boolean;
   browser?: string;
+  signIn?: boolean;
 };
+
+// Chrome with no remote debugging at all: some sites (X) refuse to sign in
+// when it is on, but accept the session afterwards.
+export function signInLaunchArgs(profileDir: string, url: string): string[] {
+  return [
+    `--user-data-dir=${profileDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--",
+    url,
+  ];
+}
 
 // A .browser file named on this computer: its absolute path in the project
 // (relative paths are relative to the project's home directory).
@@ -309,6 +322,29 @@ async function runBrowserConnect(
       file && appId
         ? persistentProfile(computerBrowserProfileDir(projectId, appId, sys))
         : await createProfileDir(storage, sys);
+    if (opts.signIn) {
+      if (!file) throw new Error("--sign-in needs --browser <file>");
+      const args = signInLaunchArgs(profile.path, url);
+      say(
+        `Sign in to the sites you need in the Chrome window that opens (no automation is attached), then close it to connect. Starting: ${[executable, ...args].map(shellQuote).join(" ")}`,
+      );
+      const signIn = spawn(executable, args, { stdio: "ignore" });
+      const result = await Promise.race([
+        new Promise<string>((resolve) => {
+          signIn.once("exit", () => resolve("closed"));
+          signIn.once("error", (err) => resolve(`error: ${err.message}`));
+        }),
+        stopped,
+      ]);
+      if (result !== "closed") {
+        signIn.kill();
+        throw new Error(
+          result.startsWith("error") ? result : `stopped (${result})`,
+        );
+      }
+      // Chrome may leave its lock for a moment.
+      persistentProfile(profile.path);
+    }
     const launchArgs = chromeLaunchArgs({
       profileDir: profile.path,
       url,
@@ -464,6 +500,10 @@ export function registerProjectBrowserCommands(
     .option(
       "-b, --browser <file>",
       "connect this .browser file in the project to this computer's Chrome: a lasting profile for that file (log in once), shown in the file and usable by agents with --browser <file>",
+    )
+    .option(
+      "--sign-in",
+      "with --browser: first open Chrome without remote debugging so you can sign in to sites that block automated browsers (e.g. X); close it to connect",
     )
     .option(
       "--no-install-key",
