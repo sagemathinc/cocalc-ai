@@ -85,7 +85,9 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   const $ = (id) => document.getElementById(id);
   const canvas = $("screen"), ctx = canvas.getContext("2d"), stage = $("stage");
   let ws = null, state = null, retry = 0, lastPointer = { x: 20, y: 20 };
-  const human = () => state && state.driver === "human";
+  // A browser on the user's computer: they use its window; this is a preview.
+  const preview = () => state && state.runsOn === "computer";
+  const human = () => state && state.driver === "human" && !preview();
   const send = (msg) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
 
   function wsUrl() {
@@ -214,7 +216,12 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     // driver banner
     const bar = $("driver"), msg = bar.querySelector(".msg"), button = bar.querySelector("button");
     bar.className = human() ? (state.agentWaiting ? "waiting" : "") : state.ask ? "ask" : state.agents ? "agent" : "";
-    if (human()) {
+    if (preview()) {
+      msg.textContent = "Running in Chrome on your computer: use that window. This is a preview." +
+        (state.driver === "human" ? " The agent waits until you hand back." : state.agents ? " The agent is using it." : "");
+      button.textContent = state.driver === "human" ? "Hand back to agent" : "Pause the agent";
+      $("notdriving").style.display = "none";
+    } else if (human()) {
       msg.textContent = state.agentWaiting ? "You are driving. The agent is waiting to use the browser."
         : "You are driving." + (state.agents ? " The agent waits until you hand back." : "");
       button.textContent = "Hand back to agent";
@@ -225,6 +232,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
       button.textContent = "Take over";
     }
     canvas.className = human() ? "" : "view-only";
+    $("quality").style.display = preview() ? "none" : "";
     // Where a .browser file's browser runs, and waiting for the computer.
     const runson = $("runson");
     runson.style.display = state.runsOn ? "" : "none";
@@ -257,15 +265,18 @@ export const VIEWER_HTML = String.raw`<!doctype html>
       else flash("Select the command and copy it.");
     }
   });
-  $("driver").querySelector("button").onclick = () => send({ type: human() ? "handback" : "takeover" });
+  $("driver").querySelector("button").onclick = () => send({ type: state && state.driver === "human" ? "handback" : "takeover" });
   // Using the browser without driving does nothing: say why, right where
   // the user looked, with the way out.
   let notDrivingTimer;
   function notDriving() {
     const box = $("notdriving");
-    box.querySelector("p").textContent = state && state.agents
-      ? "The agent is driving this browser, so your clicks and typing are ignored."
-      : "Take over to use this browser.";
+    box.querySelector("p").textContent = preview()
+      ? "This browser runs in Chrome on your computer: use that window. This is a preview."
+      : state && state.agents
+        ? "The agent is driving this browser, so your clicks and typing are ignored."
+        : "Take over to use this browser.";
+    box.querySelector("button").style.display = preview() ? "none" : "";
     box.style.display = "block";
     clearTimeout(notDrivingTimer);
     notDrivingTimer = setTimeout(() => (box.style.display = "none"), 5000);

@@ -739,6 +739,23 @@ test(
         ),
       );
       await viewer.waitForSelector("#waiting", { state: "hidden" });
+      // The connect command names this site.
+      assert.match(
+        server.getState().connectCommand!,
+        /--api http:\/\/127\.0\.0\.1:\d+$/,
+      );
+      // A preview streams; the human is told to use the window.
+      await viewer.waitForFunction(() =>
+        document
+          .querySelector("#driver .msg")
+          ?.textContent?.includes("Chrome on your computer"),
+      );
+      await viewer.click("#screen");
+      await viewer.waitForSelector("#notdriving", { state: "visible" });
+      assert.match(
+        await viewer.textContent("#notdriving p"),
+        /use that window/,
+      );
       // Agents reach it through our endpoint (addresses rewritten).
       const page = await SharedBrowserPage.open(
         `http://127.0.0.1:${cdpPort}`,
@@ -748,6 +765,13 @@ test(
       assert.equal(
         (await page.goto("data:text/html,<title>on the laptop</title>")).title,
         "on the laptop",
+      );
+      // Light touch: the real window's size, and nothing of ours in the page.
+      assert.deepEqual(
+        await page.evaluate(
+          "[innerWidth, typeof window.__cocalcSelectHooked, typeof window.__cocalcSharedBrowserSelect]",
+        ),
+        [1280, "undefined", "undefined"],
       );
       page.close();
 
@@ -893,6 +917,103 @@ test(
       await laptop?.stop();
       await profile.cleanup();
       rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "after scrolling, a still page gets one sharp frame, not a flicker",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port, cdpPort } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      await page.goto(
+        "data:text/html,<body style='margin:0'>" +
+          "<p>line</p>".repeat(300) +
+          "</body>",
+      );
+      page.close();
+      const viewer = await human.newPage({
+        viewport: { width: 900, height: 600 },
+        deviceScaleFactor: 2,
+      });
+      await viewer.addInitScript(() => {
+        const decode = window.createImageBitmap.bind(window);
+        (window as any).__frames = [];
+        (window as any).createImageBitmap = async (
+          src: any,
+          ...rest: any[]
+        ) => {
+          const bmp = await decode(src, ...rest);
+          if (src instanceof Blob)
+            (window as any).__frames.push({
+              width: bmp.width,
+              height: bmp.height,
+            });
+          return bmp;
+        };
+      });
+      await viewer.goto(`http://127.0.0.1:${port}/`);
+      await viewer.waitForFunction(
+        () => document.getElementById("status")?.textContent === "live",
+      );
+      await viewer.click("#driver button"); // take over
+      const box = await viewer.locator("#screen").boundingBox();
+      await viewer.mouse.move(box!.x + 200, box!.y + 200);
+      for (let i = 0; i < 5; i++) {
+        await viewer.mouse.wheel(0, 300);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      // Let it settle, then nothing more should arrive.
+      await new Promise((r) => setTimeout(r, 2500));
+      const settled = await viewer.evaluate(
+        () => (window as any).__frames.length,
+      );
+      await new Promise((r) => setTimeout(r, 3000));
+      const frames = await viewer.evaluate(() => (window as any).__frames);
+      assert.equal(
+        frames.length,
+        settled,
+        `frames at rest: ${JSON.stringify(frames.slice(settled))}`,
+      );
+      // The still frame has the stream's proportions (no grey strip).
+      const last = frames.at(-1);
+      const stream =
+        frames.find((f: any) => f.width * 2 === last.width) ?? last;
+      assert.ok(
+        Math.abs(last.width / last.height - stream.width / stream.height) <
+          0.01,
+        `still ${JSON.stringify(last)} vs stream ${JSON.stringify(stream)}`,
+      );
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
     }
   },
 );

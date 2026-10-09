@@ -91,6 +91,7 @@ interface TabPage {
   settleTimer: NodeJS.Timeout | null;
   // The last screencast frame, to recognize frames without a change.
   lastFrame: Buffer | null;
+  settledAt: number;
   session: string | null;
   ready: Promise<void> | null;
   casting: boolean;
@@ -188,6 +189,23 @@ export class SharedBrowserServer {
     return !!this.chromeHttp;
   }
 
+  // A browser on the user's computer is theirs: we only stream a small
+  // preview.  Enabling domains, injecting scripts and emulating a viewport
+  // are what sites' bot detection looks for (X refused a login), and the
+  // emulation would fight the real window for its size.
+  private get lightTouch(): boolean {
+    return this.state.runsOn === "computer";
+  }
+
+  // The site the viewer is on (for `connect --api`).
+  private siteOrigin = "";
+  private noteOrigin(origin: string | undefined): void {
+    if (!origin || !/^https?:\/\/[^/]+$/.test(origin)) return;
+    if (origin === this.siteOrigin || !this.options.connectCommand) return;
+    this.siteOrigin = origin;
+    this.state.connectCommand = `${this.options.connectCommand} --api ${origin}`;
+  }
+
   setRunsOn(runsOn: SharedBrowserRunsOn): void {
     if (this.state.runsOn === runsOn) return;
     this.state.runsOn = runsOn;
@@ -275,6 +293,7 @@ export class SharedBrowserServer {
         return;
       }
       const query = new URL(req.url ?? "/", "http://x").searchParams;
+      this.noteOrigin(req.headers.origin);
       viewerWss.handleUpgrade(req, socket, head, (ws) =>
         this.addViewer(
           ws,
@@ -358,7 +377,7 @@ export class SharedBrowserServer {
 
   private async applyDriverToPage(page: TabPage): Promise<void> {
     const session = page.session;
-    if (!session) return;
+    if (!session || this.lightTouch) return;
     const human = this.state.driver === "human";
     // While the human drives, our session handles the file chooser; while
     // the agent drives, its own client may want to.
@@ -416,6 +435,7 @@ export class SharedBrowserServer {
         quality: "sharp",
         settleTimer: null,
         lastFrame: null,
+        settledAt: 0,
         session: null,
         ready: null,
         casting: false,
@@ -441,6 +461,7 @@ export class SharedBrowserServer {
           flatten: true,
         });
         page.session = sessionId;
+        if (this.lightTouch) return;
         await this.cdp.send("Page.enable", {}, sessionId);
         await this.cdp.send("Runtime.enable", {}, sessionId);
         await this.cdp.send(
@@ -538,7 +559,7 @@ export class SharedBrowserServer {
   }
 
   private async applyViewport(page: TabPage): Promise<void> {
-    if (!page.session) return;
+    if (!page.session || this.lightTouch) return;
     const { width, height } = page.viewport;
     await this.cdp
       .send(
@@ -569,15 +590,17 @@ export class SharedBrowserServer {
     page.casting = want;
     page.lastFrame = null;
     if (want) {
-      const { width, height } = page.viewport;
+      const { width, height } = this.lightTouch
+        ? { width: 960, height: 960 } // a preview of the real window
+        : page.viewport;
       await this.cdp.send(
         "Page.startScreencast",
         {
           format: "jpeg",
-          quality: QUALITY[page.quality].jpeg,
+          quality: this.lightTouch ? 50 : QUALITY[page.quality].jpeg,
           // Frames at the device pixels the viewer draws: no upscaling blur.
-          maxWidth: Math.round(width * page.scale),
-          maxHeight: Math.round(height * page.scale),
+          maxWidth: Math.round(width * (this.lightTouch ? 1 : page.scale)),
+          maxHeight: Math.round(height * (this.lightTouch ? 1 : page.scale)),
         },
         page.session,
       );
@@ -611,17 +634,20 @@ export class SharedBrowserServer {
         "Page.captureScreenshot",
         {
           ...rest,
+          // The whole viewport, scrollbar included: the same picture as
+          // the stream, or the frames alternate (a flickering scrollbar).
           clip: {
             x: v.pageX,
             y: v.pageY,
-            width: v.clientWidth,
-            height: v.clientHeight,
+            width: page.viewport.width,
+            height: page.viewport.height,
             scale: page.scale,
           },
         },
         page.session,
         10_000,
       );
+      page.settledAt = Date.now();
       // Skip it if the page changed meanwhile: a newer frame is coming.
       if (!page.settleTimer && page.casting)
         this.sendFrame(page, Buffer.from(data, "base64"));
@@ -710,9 +736,11 @@ export class SharedBrowserServer {
       if (page.lastFrame?.equals(frame)) return;
       page.lastFrame = frame;
       this.sendFrame(page, frame);
-      if (QUALITY[page.quality].rest) {
+      if (QUALITY[page.quality].rest && !this.lightTouch) {
         if (page.settleTimer) clearTimeout(page.settleTimer);
-        page.settleTimer = setTimeout(() => void this.settle(page), SETTLE_MS);
+        // At most one still frame a second, whatever keeps the page busy.
+        const wait = Math.max(SETTLE_MS, page.settledAt + 1000 - Date.now());
+        page.settleTimer = setTimeout(() => void this.settle(page), wait);
       }
       return;
     }
@@ -912,8 +940,10 @@ export class SharedBrowserServer {
         return;
       }
     }
-    // Everything below acts on the page: only while the human drives.
-    if (this.state.driver !== "human" || !this.attached) return;
+    // Everything below acts on the page: only while the human drives, and
+    // not on the user's computer (they use its window).
+    if (this.state.driver !== "human" || !this.attached || this.lightTouch)
+      return;
     if (msg.type === "newTab") {
       this.newTabFor = ws;
       await this.cdp.send("Target.createTarget", { url: "about:blank" });

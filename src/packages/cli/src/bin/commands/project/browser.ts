@@ -100,6 +100,10 @@ export function computerBrowserProfileDir(
   return join(base, "browser-profiles", `${projectId}-${appId}`);
 }
 
+function shellQuote(arg: string): string {
+  return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
 function parseStorage(value: string | undefined): ProfileStorage {
   const storage = `${value ?? "memory"}`.trim().toLowerCase();
   if (storage !== "memory" && storage !== "disk") {
@@ -305,14 +309,16 @@ async function runBrowserConnect(
       file && appId
         ? persistentProfile(computerBrowserProfileDir(projectId, appId, sys))
         : await createProfileDir(storage, sys);
+    const launchArgs = chromeLaunchArgs({
+      profileDir: profile.path,
+      url,
+      headless: opts.headless,
+    });
+    say(`Starting: ${[executable, ...launchArgs].map(shellQuote).join(" ")}`);
     browser = await launchBrowser({
       executable,
       profileDir: profile.path,
-      args: chromeLaunchArgs({
-        profileDir: profile.path,
-        url,
-        headless: opts.headless,
-      }),
+      args: launchArgs,
     });
     // If this process dies without reaching `finally` (crash, SIGKILL), the
     // detached browser would outlive it; the watchdog stops it and releases
