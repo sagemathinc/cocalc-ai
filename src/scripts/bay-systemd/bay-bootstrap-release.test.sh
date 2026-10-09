@@ -214,7 +214,10 @@ touch "${VALIDATION_RELEASE}/scripts/bay-systemd/needrestart/cocalc-bay.conf"
 NEEDRESTART_POLICY_PATH="${TMP_ROOT}/etc/needrestart/conf.d/cocalc-bay.conf"
 printf '%s\n' 'test needrestart policy' \
   >"${VALIDATION_RELEASE}/scripts/bay-systemd/needrestart/cocalc-bay.conf"
+# (Installs from the trusted scaffold copy; here a stand-in for one.)
+TRUSTED_SCAFFOLD_DIR="${VALIDATION_RELEASE}/scripts/bay-systemd"
 install_needrestart_policy >/dev/null
+TRUSTED_SCAFFOLD_DIR=""
 if [[ "$(cat "$NEEDRESTART_POLICY_PATH")" != "test needrestart policy" ]]; then
   echo "static release needrestart policy was not installed" >&2
   exit 1
@@ -308,6 +311,33 @@ SOURCE_ROOT="$scaffold_bundle_root"
 stage_trusted_scaffold >/dev/null
 check_trusted_scaffold
 remove_trusted_scaffold
+# A static deploy installs only the needrestart policy (Perl that root
+# evaluates), also from a trusted copy of its bundle.
+static_root="${TMP_ROOT}/static-bundle/cocalc-bay-static-test"
+mkdir -p "${static_root}/scripts/bay-systemd/needrestart"
+printf '# trusted policy\n' > "${static_root}/scripts/bay-systemd/needrestart/cocalc-bay.conf"
+tar -czf "${TMP_ROOT}/static-bundle.tar.gz" -C "${TMP_ROOT}/static-bundle" cocalc-bay-static-test
+mkdir -p "${TARGET_RELEASE}/scripts/bay-systemd/needrestart"
+printf 'system("touch /tmp/pwned");\n' > "${TARGET_RELEASE}/scripts/bay-systemd/needrestart/cocalc-bay.conf"
+STATIC_BUNDLE_PATH="${TMP_ROOT}/static-bundle.tar.gz"
+SOURCE_ROOT=""
+NEEDRESTART_POLICY_PATH="${TMP_ROOT}/installed-needrestart.conf"
+stage_trusted_scaffold needrestart >/dev/null
+install_needrestart_policy >/dev/null
+remove_trusted_scaffold
+[[ "$(cat "$NEEDRESTART_POLICY_PATH")" == "# trusted policy" ]] ||
+  { echo "needrestart policy did not come from the bundle" >&2; exit 1; }
+STATIC_BUNDLE_PATH=""
+# Nothing root reads into /etc (overlay env, needrestart) comes from the
+# release, and the CDN preservation runs its code and copies as the bay user.
+if grep -nE '(cat|<) "\$\{TARGET_RELEASE\}' "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
+  echo "root reads configuration from the release directory" >&2
+  exit 1
+fi
+grep -q 'run "\${as_bay\[@\]}" cp -aL' "${SCRIPT_DIR}/bay-bootstrap-release.sh" ||
+  { echo "CDN copies are not made as the bay user" >&2; exit 1; }
+grep -q '"\${as_bay\[@\]}" "\$node_bin" -' "${SCRIPT_DIR}/bay-bootstrap-release.sh" ||
+  { echo "the previous release's CDN index is not loaded as the bay user" >&2; exit 1; }
 if grep -n 'INSTALL_CMD.*TARGET_RELEASE\|"\${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh"$' \
   "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
   echo "an installer still runs from the release directory" >&2

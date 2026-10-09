@@ -98,8 +98,10 @@ find_node() {
 SCAFFOLD_STAGE_PARENT="${COCALC_BAY_SCAFFOLD_STAGE_PARENT:-/run}"
 TRUSTED_SCAFFOLD_DIR=""
 
+# A static bundle carries only needrestart/; pass "needrestart" to stage it.
 stage_trusted_scaffold() {
-  local stage bundle="${HUB_BUNDLE_PATH:-$BUNDLE_PATH}"
+  local stage bundle="${HUB_BUNDLE_PATH:-${BUNDLE_PATH:-$STATIC_BUNDLE_PATH}}"
+  local required="${1:-install-scaffold.sh}"
   stage="$(mktemp -d "${SCAFFOLD_STAGE_PARENT}/cocalc-bay-scaffold.XXXXXX")"
   if [[ -n "$bundle" ]]; then
     run tar --no-same-owner -xf "$bundle" -C "$stage" --strip-components=1 \
@@ -113,7 +115,14 @@ stage_trusted_scaffold() {
   fi
   run chmod -R go-w "$stage"
   TRUSTED_SCAFFOLD_DIR="${stage}/scripts/bay-systemd"
-  if [[ ! -x "${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" ]]; then
+  # Removed by remove_trusted_scaffold; a stage left by a failed bootstrap is
+  # root-only (0700) and goes with /run at the next boot.
+  if [[ "$required" == needrestart ]]; then
+    if [[ ! -f "${TRUSTED_SCAFFOLD_DIR}/needrestart/cocalc-bay.conf" ]]; then
+      echo "${bundle:-$SOURCE_ROOT} is missing scripts/bay-systemd/needrestart/cocalc-bay.conf" >&2
+      exit 1
+    fi
+  elif [[ ! -x "${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" ]]; then
     echo "${bundle:-$SOURCE_ROOT} is missing scripts/bay-systemd/install-scaffold.sh" >&2
     exit 1
   fi
@@ -131,9 +140,11 @@ make_target_release_accessible() {
   run chmod 0755 "$TARGET_RELEASE"
 }
 
+# needrestart evaluates this policy as root, so it comes from the trusted
+# scaffold copy, not the bay-owned release.
 install_needrestart_policy() {
   run install -D -m 0644 \
-    "${TARGET_RELEASE}/scripts/bay-systemd/needrestart/cocalc-bay.conf" \
+    "${TRUSTED_SCAFFOLD_DIR}/needrestart/cocalc-bay.conf" \
     "$NEEDRESTART_POLICY_PATH"
 }
 
@@ -653,9 +664,17 @@ preserve_previous_cdn_assets() {
     return
   fi
 
+  # Both releases belong to the bay account, so this runs as that account:
+  # root must not execute their code (require runs index.js) or follow
+  # symbolic links in them (cp -L), which could expose root-only files.
+  local as_bay=()
+  if [[ "$(id -u)" == 0 ]]; then
+    as_bay=(runuser -u "$BAY_USER" --)
+    run chown "${BAY_USER}:${BAY_GROUP}" "$target_cdn"
+  fi
   local node_bin package_names
   node_bin="$(find_node)"
-  package_names="$("$node_bin" - "${previous_cdn}/index.js" "${target_cdn}/index.js" <<'NODE'
+  package_names="$("${as_bay[@]}" "$node_bin" - "${previous_cdn}/index.js" "${target_cdn}/index.js" <<'NODE'
 const [previous, target] = process.argv.slice(2);
 const names = new Set([
   ...Object.keys(require(previous).versions ?? {}),
@@ -678,7 +697,7 @@ NODE
       fi
       # The CDN build uses versioned symlinks. Dereference old aliases so they
       # remain pinned to their old contents after the unversioned tree changes.
-      run cp -aL "$previous_path" "${target_cdn}/${versioned_name}"
+      run "${as_bay[@]}" cp -aL "$previous_path" "${target_cdn}/${versioned_name}"
     done
   done <<<"$package_names"
 }
@@ -1019,7 +1038,9 @@ main() {
   fi
   validate_release
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
+    stage_trusted_scaffold needrestart
     install_needrestart_policy
+    remove_trusted_scaffold
   fi
   set_current_release
 
@@ -1074,7 +1095,7 @@ EOF
     INSTALL_CMD+=("--daemon-reload")
   fi
   run "${INSTALL_CMD[@]}"
-  remove_trusted_scaffold
+  # The trusted copy stays until the overlay environment is written below.
 
   run mkdir -p "${BAY_ROOT}/secrets" "${BAY_ROOT}/projects"
   run mkdir -p "${BAY_ROOT}/bin"
@@ -1281,13 +1302,16 @@ EOF
 
   if [[ "$OVERLAY_MODE" != "none" ]]; then
     if [[ "$FORCE_OVERLAY" -eq 1 && "$FORCE_ENV" -eq 0 ]]; then
-      cat "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example" \
+      cat "${TRUSTED_SCAFFOLD_DIR}/env/bay-${OVERLAY_MODE}-overlay.env.example" \
         > "${ENV_DIR}/bay-overlay.env"
     else
       render_if_missing_or_forced "${ENV_DIR}/bay-overlay.env" "$BAY_OVERLAY_ENV_EXAMPLE" \
-        < "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example"
+        < "${TRUSTED_SCAFFOLD_DIR}/env/bay-${OVERLAY_MODE}-overlay.env.example"
     fi
   fi
+  # Root-run units load the overlay and root scripts source it, so it came
+  # from the trusted copy too; that copy is no longer needed.
+  remove_trusted_scaffold
 
   run systemctl enable cocalc-bay.target
   run systemctl enable cocalc-bay-frontdoor.service
