@@ -85,7 +85,7 @@ describe("useHostActions deletion protection", () => {
 });
 
 describe("useHostActions machine updates", () => {
-  function actionsWith(updateHostMachine: jest.Mock) {
+  function useActionsWith(updateHostMachine: jest.Mock) {
     return useHostActions({
       hub: {
         hosts: {
@@ -103,7 +103,7 @@ describe("useHostActions machine updates", () => {
 
   it("gives disk and shared scratch resizes a long RPC timeout", async () => {
     const updateHostMachine = jest.fn().mockResolvedValue(undefined);
-    const actions = actionsWith(updateHostMachine);
+    const actions = useActionsWith(updateHostMachine);
 
     await actions.updateHostMachine("host-1", { disk_gb: 300 });
     await actions.updateHostMachine("host-1", { shared_disk_gb: 100 });
