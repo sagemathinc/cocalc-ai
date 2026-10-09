@@ -20,7 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { SharedBrowserServer } from "./server";
@@ -330,10 +330,23 @@ export async function runSharedBrowserService({
   await new Promise(() => {});
 }
 
+// Inside a project: its id (apps may not get COCALC_PROJECT_ID; the
+// project's hostname is project-<id>).
+export function currentProjectId(
+  env: NodeJS.ProcessEnv = process.env,
+  host: string = hostname(),
+): string | undefined {
+  const id = `${env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (id) return id;
+  return host.match(
+    /^project-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+  )?.[1];
+}
+
 // What the user runs on their computer to connect it to this file's browser.
 export function connectCommandFor(
   file: string,
-  projectId = process.env.COCALC_PROJECT_ID,
+  projectId = currentProjectId(),
 ): string {
   const quoted = /^[\w./~-]+$/.test(file)
     ? file

@@ -699,6 +699,12 @@ the browser or its last page.
 - `cocalc project browser status` lists tabs and the driver;
   `cocalc project browser stop` stops it and deletes the profile.
 - Pages on the project's own servers are reachable as `http://localhost:<port>`.
+- A `.browser` file is a browser of its own (`--browser <file>` on every
+  command; it keeps its logins). It can run on the user's computer instead
+  of the project, so sites see their network and accounts (needed for sites
+  that block cloud servers, e.g. X/Twitter sign-in). If it is not connected,
+  commands say so: ask the user to run the printed
+  `cocalc project browser connect --browser <file>` on their computer.
 
 ## Shared Terminal: Work Where The Human Can Watch
 

@@ -6,6 +6,7 @@ import { HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
 import {
   BUNDLED_CHROMIUM,
   connectCommandFor,
+  currentProjectId,
   findSharedBrowserChrome,
   sharedBrowserChromeArgs,
   sharedBrowserProfileDir,
@@ -176,4 +177,11 @@ test("a .browser file's settings, tunnel port and connect command", () => {
     connectCommandFor("/home/user/my x's.browser", "p1"),
     `cocalc project browser connect -w p1 --browser '/home/user/my x'\\''s.browser'`,
   );
+});
+
+test("the project id comes from the environment or the project's hostname", () => {
+  const id = "9447b19f-aabe-49d8-8aea-f870de179eb0";
+  assert.equal(currentProjectId({ COCALC_PROJECT_ID: id }, "x"), id);
+  assert.equal(currentProjectId({}, `project-${id}`), id);
+  assert.equal(currentProjectId({}, "laptop"), undefined);
 });
