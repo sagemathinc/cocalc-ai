@@ -246,6 +246,8 @@ describe("project collaborators local bay access", () => {
   const removeCollaboratorFromProject = jest.fn(async () => undefined);
   const addUserToProject = jest.fn(async () => undefined);
   const whenSentProjectInvite = jest.fn(async () => 0);
+  const claimProjectInviteSend = jest.fn(async () => true);
+  const sentProjectInvite = jest.fn(async () => undefined);
   const getServerSettingsCached = jest.fn(async () => ({
     organization_email: "help@example.com",
   }));
@@ -352,12 +354,16 @@ describe("project collaborators local bay access", () => {
     removeCollaboratorFromProject.mockClear();
     addUserToProject.mockClear();
     whenSentProjectInvite.mockClear();
+    claimProjectInviteSend.mockClear();
+    claimProjectInviteSend.mockImplementation(async () => true);
+    sentProjectInvite.mockClear();
     getServerSettingsCached.mockClear();
     dbMock = jest.fn(() => ({
       remove_collaborator_from_project: removeCollaboratorFromProject,
       add_user_to_project: addUserToProject,
       when_sent_project_invite: whenSentProjectInvite,
-      sent_project_invite: jest.fn(async () => undefined),
+      claim_project_invite_send: claimProjectInviteSend,
+      sent_project_invite: sentProjectInvite,
       get_server_settings_cached: getServerSettingsCached,
       account_exists: jest.fn(async ({ email_address }) =>
         email_address === "user@example.com" ? TARGET_ACCOUNT_ID : null,
@@ -1711,6 +1717,14 @@ describe("project collaborators local bay access", () => {
         }),
       ],
     });
+    // The claimed-but-unsent email is released so a later retry can send.
+    expect(sentProjectInvite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        to: "nobody@example.com",
+        error: expect.stringMatching(/^not sent: /),
+      }),
+    );
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO project_collab_invites"),
       expect.arrayContaining([
@@ -1719,6 +1733,65 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  it("sends one invite email when two invites race for the same address", async () => {
+    const emailModule = jest.requireMock("@cocalc/server/hub/email");
+    emailModule.send_invite_email.mockClear();
+    claimProjectInviteSend.mockImplementation(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+              message: "Please join",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: null,
+              expires: new Date("2026-04-15T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          project_id: PROJECT_ID,
+          title: "Test Project",
+          link2proj: "https://example.com/project",
+          to: "nobody@example.com",
+          email: "<p>Hello</p>",
+          message: "Please join",
+        },
+      }),
+    ).resolves.toMatchObject({
+      email_sent: false,
+      email_blocked_reason: "cooldown",
+    });
+    expect(claimProjectInviteSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        to: "nobody@example.com",
+        cutoff: expect.any(Date),
+      }),
+    );
+    expect(emailModule.send_invite_email).not.toHaveBeenCalled();
+  });
   it("blocks course email invites at the pending-per-course limit", async () => {
     resolveMembershipForAccountMock = jest.fn(async () => ({
       class: "instructor",

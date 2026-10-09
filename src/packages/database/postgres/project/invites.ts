@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import getPool from "@cocalc/database/pool";
 import type { PostgreSQL } from "../types";
 
 interface WhenSentProjectInviteOptions {
@@ -85,4 +86,38 @@ export async function sentProjectInvite(
     },
     where: { "project_id :: UUID = $": opts.project_id },
   });
+}
+
+export interface ClaimProjectInviteSendOptions {
+  project_id: string;
+  to: string;
+  cutoff: Date;
+}
+
+// Atomically claim the right to email an invite to `to` for this project:
+// succeeds only if no invite email was sent (or claimed) since `cutoff`, or
+// the last attempt recorded an error. Concurrent callers serialize on the
+// project row, so exactly one of them sends. Record the outcome afterwards
+// with sentProjectInvite (an error re-enables sending).
+export async function claimProjectInviteSend(
+  _db: PostgreSQL,
+  opts: ClaimProjectInviteSendOptions,
+): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `UPDATE projects
+        SET invite = jsonb_set(
+              COALESCE(invite, '{}'::jsonb),
+              ARRAY[$2::text],
+              jsonb_build_object('time', to_jsonb(NOW()), 'claimed', true),
+              true
+            )
+      WHERE project_id = $1::uuid
+        AND (
+          invite -> $2::text -> 'time' IS NULL
+          OR COALESCE(invite -> $2::text ->> 'error', '') <> ''
+          OR (invite -> $2::text ->> 'time')::timestamptz < $3::timestamptz
+        )`,
+    [opts.project_id, opts.to, opts.cutoff],
+  );
+  return (rowCount ?? 0) > 0;
 }

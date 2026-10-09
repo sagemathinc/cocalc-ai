@@ -478,6 +478,13 @@ export interface PostgreSQLMethods extends EventEmitter {
     cb: (err, result?: Date | number) => void;
   }): void;
 
+  claim_project_invite_send(opts: {
+    project_id: string;
+    to: string;
+    cutoff: Date;
+    cb: (err, result?: boolean) => void;
+  }): void;
+
   sent_project_invite(opts: {
     project_id: string;
     to: string;
@@ -747,6 +754,13 @@ export interface PostgreSQLMethods extends EventEmitter {
   archivePatches(opts: ArchivePatchesOpts);
 
   when_sent_project_invite(opts: { project_id: string; to: string; cb?: CB });
+
+  claim_project_invite_send(opts: {
+    project_id: string;
+    to: string;
+    cutoff: Date;
+    cb?: CB;
+  });
 
   sent_project_invite(opts: {
     project_id: string;
