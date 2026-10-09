@@ -11,6 +11,7 @@ that agents can drive (`cocalc project browser ... --browser <file>`).
 import { set } from "@cocalc/util/misc";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
+import { terminal } from "../terminal-editor/terminal-spec";
 import { BrowserFrame } from "./browser-frame";
 
 export const browser: EditorDescription = {
@@ -22,8 +23,10 @@ export const browser: EditorDescription = {
   commands: set(["reload", "help"]),
 } as const;
 
+// A terminal frame beside the browser (the frame title bar's terminal button).
 const EDITOR_SPEC = {
   browser,
+  terminal,
 } as const;
 
 export const Editor = createEditor({

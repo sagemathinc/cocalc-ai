@@ -37,6 +37,24 @@ function normalizeThreadId(value?: string): string {
   return threadId;
 }
 
+// A card for an app that does not exist only ever shows an error; agents
+// asked for "a browser artifact" must start the real thing.
+async function assertArtifactAppExists(
+  deps: ProjectCommandDeps,
+  ctx: any,
+  project: string | undefined,
+  id: string,
+): Promise<void> {
+  const { api } = await deps.resolveProjectProjectApi(ctx, project);
+  try {
+    await api.apps.getAppSpec(id);
+  } catch {
+    throw Error(
+      `There is no app "${id}" in this project, so its card could not show anything. For a live browser card run \`cocalc project browser start\` (then \`browser goto <url>\`); for a live terminal card run \`cocalc project terminal start\`. Both publish their card.`,
+    );
+  }
+}
+
 export function registerProjectChatCommands(
   project: Command,
   deps: ProjectCommandDeps,
@@ -194,6 +212,13 @@ export function registerProjectChatCommands(
           }
           if (opts.title) payload.title = opts.title;
           if (opts.base !== undefined) payload.base = opts.base;
+          if (payload.app?.id)
+            await assertArtifactAppExists(
+              deps,
+              ctx,
+              opts.project,
+              `${payload.app.id}`,
+            );
           return deps.projectChatArtifactData({
             ctx,
             action: "publish",

@@ -180,6 +180,8 @@ export async function runSharedBrowserService({
     host,
     port,
     cdpPort,
+    // A .browser file's browser is the human's first.
+    humanFirst: !!profileDir,
     log,
   });
   await server.start();

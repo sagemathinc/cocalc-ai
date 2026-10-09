@@ -104,6 +104,7 @@ export function registerSharedBrowserCommands(
       "--message-date <date>",
       "producing message timestamp (default: $COCALC_CODEX_MESSAGE_DATE)",
     )
+    .option("--url <url>", "open this URL (or host, or search words) first")
     .option("--no-card", "do not publish a chat card")
     .action(async (opts: any, command: Command) => {
       await withContext(command, "project browser start", async (ctx: any) => {
@@ -127,7 +128,21 @@ export function registerSharedBrowserCommands(
           timeout: 60_000,
           interval: 500,
         });
-        const state = await serviceState(status.port);
+        let state = await serviceState(status.port);
+        let opened: { url: string; title: string } | undefined;
+        if (opts.url) {
+          if (!state)
+            throw Error(
+              "--url needs to run inside the project with the browser",
+            );
+          const page = await SharedBrowserPage.open(state.cdp, state.active);
+          try {
+            opened = await page.goto(opts.url);
+          } finally {
+            page.close();
+          }
+          state = await serviceState(status.port);
+        }
 
         let card: { artifact_id: string; reused: boolean } | null = null;
         let cardNote: string | undefined;
@@ -152,6 +167,7 @@ export function registerSharedBrowserCommands(
           ...(target.file ? { browser: target.file } : {}),
           cdp: state?.cdp ?? null,
           driver: state?.driver ?? null,
+          ...(opened ? { opened } : {}),
           card,
           ...(cardNote ? { note: cardNote } : {}),
           usage:

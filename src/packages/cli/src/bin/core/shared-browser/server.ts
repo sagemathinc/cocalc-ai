@@ -49,6 +49,8 @@ export interface SharedBrowserState {
   } | null;
   fileChooser: { mode: string } | null;
   agents: number;
+  // Agent commands are waiting for the human to hand back.
+  agentWaiting: boolean;
   cdp: string;
   viewers: number;
 }
@@ -59,6 +61,12 @@ export interface SharedBrowserServerOptions {
   host: string;
   port: number;
   cdpPort: number;
+  // A .browser file's browser is the human's: whoever opens it drives,
+  // unless an agent is using it.
+  humanFirst?: boolean;
+  // Hand back to the agent this long after the last viewer leaves while the
+  // human drives, so an agent never waits on a closed tab.
+  handBackAfterMs?: number;
   log?: (message: string) => void;
 }
 
@@ -78,7 +86,8 @@ export class SharedBrowserServer {
   private cdpServer!: http.Server;
   private viewers = new Set<WebSocket>();
   private agentSockets = new Set<WebSocket>();
-  private held: Array<() => void> = [];
+  private held: Array<{ client: WebSocket; deliver: () => void }> = [];
+  private handBackTimer: NodeJS.Timeout | null = null;
   private state: SharedBrowserState;
   // Our own flat session on the active tab (screencast, input, overlays).
   private session: string | null = null;
@@ -104,6 +113,7 @@ export class SharedBrowserServer {
       select: null,
       fileChooser: null,
       agents: 0,
+      agentWaiting: false,
       cdp: "",
       viewers: 0,
     };
@@ -174,6 +184,7 @@ export class SharedBrowserServer {
   }
 
   async close(): Promise<void> {
+    if (this.handBackTimer) clearTimeout(this.handBackTimer);
     for (const ws of [...this.viewers, ...this.agentSockets]) ws.terminate();
     await Promise.all([
       closeServer(this.appServer),
@@ -193,7 +204,8 @@ export class SharedBrowserServer {
       this.state.fileChooser = null;
       const held = this.held;
       this.held = [];
-      for (const deliver of held) deliver();
+      this.state.agentWaiting = false;
+      for (const { deliver } of held) deliver();
     }
     void this.applyDriverToPage();
     this.broadcastState();
@@ -437,6 +449,10 @@ export class SharedBrowserServer {
   private addViewer(ws: WebSocket): void {
     this.viewers.add(ws);
     this.state.viewers = this.viewers.size;
+    if (this.handBackTimer) clearTimeout(this.handBackTimer);
+    this.handBackTimer = null;
+    if (this.options.humanFirst && this.agentSockets.size === 0)
+      this.setDriver("human");
     ws.send(JSON.stringify({ type: "state", state: this.state }));
     void this.updateCasting();
     this.broadcastState();
@@ -459,6 +475,14 @@ export class SharedBrowserServer {
       this.state.viewers = this.viewers.size;
       void this.updateCasting();
       this.broadcastState();
+      if (this.viewers.size === 0 && this.state.driver === "human") {
+        if (this.handBackTimer) clearTimeout(this.handBackTimer);
+        // A grace period, e.g. for a reload of the page.
+        this.handBackTimer = setTimeout(() => {
+          this.handBackTimer = null;
+          if (this.viewers.size === 0) this.setDriver("agent");
+        }, this.options.handBackAfterMs ?? 15_000);
+      }
     });
   }
 
@@ -727,18 +751,22 @@ export class SharedBrowserServer {
     };
     upstream.on("open", () => {
       open = true;
-      for (const data of pending.splice(0)) this.forwardAgent(data, deliver);
+      for (const data of pending.splice(0))
+        this.forwardAgent(data, deliver, client);
     });
     upstream.on("message", (data) => {
       if (client.readyState === WebSocket.OPEN) client.send(data.toString());
     });
     client.on("message", (data) => {
       if (!open) pending.push(data);
-      else this.forwardAgent(data, deliver);
+      else this.forwardAgent(data, deliver, client);
     });
     const end = () => {
       if (!this.agentSockets.delete(client)) return;
       this.state.agents = this.agentSockets.size;
+      // Its held commands have nowhere to go.
+      this.held = this.held.filter((entry) => entry.client !== client);
+      this.state.agentWaiting = this.held.length > 0;
       this.broadcastState();
       client.close();
       upstream.close();
@@ -754,15 +782,20 @@ export class SharedBrowserServer {
   private forwardAgent(
     data: WebSocket.RawData,
     deliver: (d: WebSocket.RawData) => void,
+    client: WebSocket,
   ): void {
     const method = parseMessage(data.toString())?.method;
     if (
       this.state.driver === "human" &&
       typeof method === "string" &&
       HELD_WHILE_HUMAN_DRIVES.test(method)
-    )
-      this.held.push(() => deliver(data));
-    else deliver(data);
+    ) {
+      this.held.push({ client, deliver: () => deliver(data) });
+      if (!this.state.agentWaiting) {
+        this.state.agentWaiting = true;
+        this.broadcastState();
+      }
+    } else deliver(data);
   }
 
   // Show the tab the agent brings to the front.

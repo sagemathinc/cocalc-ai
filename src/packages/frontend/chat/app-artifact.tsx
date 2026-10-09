@@ -13,6 +13,10 @@ import type { ArtifactApp } from "@cocalc/chat";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  SHARED_BROWSER_APP_ID,
+  sharedBrowserAppSpec,
+} from "@cocalc/util/shared-browser";
 
 export function AppArtifact({
   projectId,
@@ -39,9 +43,17 @@ export function AppArtifact({
       try {
         spec = await api.apps.getAppSpec(app.id);
       } catch {
-        throw Error(
-          `The app "${app.id}" is not set up in this project (it may have been removed).`,
-        );
+        // The project's shared browser needs nothing but the CLI on the
+        // project's PATH, so set it up rather than fail.
+        if (app.id !== SHARED_BROWSER_APP_ID)
+          throw Error(
+            `The app "${app.id}" is not set up in this project (it may have been removed).`,
+          );
+        spec = (
+          await api.apps.upsertAppSpec(
+            sharedBrowserAppSpec({ exec: "cocalc", args: [] }) as AppSpec,
+          )
+        ).spec as AppSpec;
       }
       let status;
       try {

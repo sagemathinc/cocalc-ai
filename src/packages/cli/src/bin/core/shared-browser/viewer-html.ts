@@ -18,10 +18,15 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   .tab button, #newtab { border:none; background:none; color:var(--muted); cursor:pointer; padding:0 2px; font-size:13px; }
   #nav { display:flex; gap:4px; align-items:center; padding:4px 6px; background:var(--bg); border-bottom:1px solid var(--line); }
   #nav button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 8px; cursor:pointer; }
-  #nav button:disabled { opacity:.45; cursor:default; }
+  #nav button.off { opacity:.45; }
   #url { flex:1; min-width:0; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--fg); }
   #driver { display:flex; align-items:center; gap:8px; padding:4px 8px; border-bottom:1px solid var(--line); }
-  #driver.ask { background:var(--warn); color:var(--warnfg); }
+  #driver.ask, #driver.waiting { background:var(--warn); color:var(--warnfg); }
+  #driver.agent { background:var(--accent); color:#fff; }
+  #driver.agent button { background:#fff; color:var(--accent); }
+  #notdriving { left:50%; top:50%; transform:translate(-50%,-50%); padding:16px 20px; text-align:center; display:none; max-width:80%; }
+  #notdriving p { margin:0 0 12px; font-size:14px; }
+  #notdriving button { border:none; border-radius:4px; padding:6px 16px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; font-size:14px; }
   #driver .msg { flex:1; min-width:0; }
   #driver button { border:none; border-radius:4px; padding:4px 12px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
   #stage { position:relative; flex:1; min-height:0; background:#888; }
@@ -55,6 +60,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   <div id="stage">
     <canvas id="screen" tabindex="0"></canvas>
     <div id="hint"></div>
+    <div id="notdriving" class="overlay"><p></p><button>Take over</button></div>
     <div id="dialog" class="overlay"><pre></pre><input><div class="row"><button data-a="0">Cancel</button><button data-a="1">OK</button></div></div>
     <div id="select" class="overlay"></div>
     <div id="filechooser" class="overlay"><div style="margin-bottom:6px">Upload a project file (path relative to your home directory):</div><input placeholder="e.g. Documents/report.pdf"><div class="row"><button data-a="0">Cancel</button><button data-a="1">Upload</button></div></div>
@@ -138,14 +144,16 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     if (human()) { const plus = document.createElement("button"); plus.id = "newtab"; plus.textContent = "+"; plus.title = "New tab"; plus.onclick = () => send({ type: "newTab" }); tabs.appendChild(plus); }
     const active = state.tabs.find((t) => t.id === state.active);
     if (document.activeElement !== $("url")) $("url").value = active ? (active.url === "about:blank" ? "" : active.url) : "";
-    for (const id of ["back", "fwd", "reload"]) $(id).disabled = !human();
+    for (const id of ["back", "fwd", "reload"]) $(id).classList.toggle("off", !human());
     $("url").readOnly = !human();
     // driver banner
     const bar = $("driver"), msg = bar.querySelector(".msg"), button = bar.querySelector("button");
-    bar.className = state.ask && !human() ? "ask" : "";
+    bar.className = human() ? (state.agentWaiting ? "waiting" : "") : state.ask ? "ask" : state.agents ? "agent" : "";
     if (human()) {
-      msg.textContent = "You are driving." + (state.agents ? " The agent waits until you hand back." : "");
+      msg.textContent = state.agentWaiting ? "You are driving. The agent is waiting to use the browser."
+        : "You are driving." + (state.agents ? " The agent waits until you hand back." : "");
       button.textContent = "Hand back to agent";
+      $("notdriving").style.display = "none";
     } else {
       msg.textContent = state.ask ? "The agent asks you to take over: " + state.ask.message
         : state.agents ? "The agent is driving." : "No agent connected. Take over to use the browser.";
@@ -166,6 +174,19 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     $("filechooser").style.display = state.fileChooser && human() ? "block" : "none";
   }
   $("driver").querySelector("button").onclick = () => send({ type: human() ? "handback" : "takeover" });
+  // Using the browser without driving does nothing: say why, right where
+  // the user looked, with the way out.
+  let notDrivingTimer;
+  function notDriving() {
+    const box = $("notdriving");
+    box.querySelector("p").textContent = state && state.agents
+      ? "The agent is driving this browser, so your clicks and typing are ignored."
+      : "Take over to use this browser.";
+    box.style.display = "block";
+    clearTimeout(notDrivingTimer);
+    notDrivingTimer = setTimeout(() => (box.style.display = "none"), 5000);
+  }
+  $("notdriving").querySelector("button").onclick = () => { $("notdriving").style.display = "none"; send({ type: "takeover" }); canvas.focus(); };
   $("dialog").addEventListener("click", (e) => {
     const a = e.target.dataset && e.target.dataset.a; if (a == null) return;
     send({ type: "dialog", accept: a === "1", promptText: $("dialog").querySelector("input").value });
@@ -208,7 +229,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     return { x: lastPointer.x / scale, y: lastPointer.y / scale };
   }
   function mouse(event, e, extra) {
-    if (!human()) { if (event === "mousePressed") flash("Take over to use the browser."); return; }
+    if (!human()) { if (event === "mousePressed") notDriving(); return; }
     const p = point(e);
     send(Object.assign({ type: "mouse", event, x: p.x, y: p.y, modifiers: mods(e), buttons: e.buttons }, extra));
   }
@@ -226,7 +247,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
 
   const SPECIAL = { Backspace: 8, Tab: 9, Enter: 13, Escape: 27, " ": 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46 };
   function key(event, e) {
-    if (!human()) return;
+    if (!human()) { if (event === "keyDown") notDriving(); return; }
     // Let the system paste; it arrives as a paste event.
     if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) return;
     if (e.isComposing) return;
@@ -244,10 +265,12 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   // One paste listener only: a paste on the canvas also bubbles to the document.
   document.addEventListener("paste", (e) => { if (document.activeElement !== canvas || !human()) return; e.preventDefault(); send({ type: "text", text: e.clipboardData.getData("text") }); });
 
+  $("url").addEventListener("mousedown", () => { if (!human()) notDriving(); });
   $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") { send({ type: "navigate", url: $("url").value }); canvas.focus(); } });
-  $("back").onclick = () => send({ type: "history", delta: -1 });
-  $("fwd").onclick = () => send({ type: "history", delta: 1 });
-  $("reload").onclick = () => send({ type: "reload" });
+  const navButton = (id, msg) => { $(id).onclick = () => (human() ? send(msg) : notDriving()); };
+  navButton("back", { type: "history", delta: -1 });
+  navButton("fwd", { type: "history", delta: 1 });
+  navButton("reload", { type: "reload" });
 
   connect();
 })();

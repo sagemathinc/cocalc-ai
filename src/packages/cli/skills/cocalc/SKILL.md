@@ -299,6 +299,8 @@ Choose the supported object that fits the task:
 | File reference       | An existing compliance document, source file, image, or PDF       | Preview the current saved file with an Open file escape hatch; not historical file bytes.                                 |
 | Proposed action list | Draft support replies, email actions, or decisions needing review | Users edit, comment, approve/reject, then return decisions to the originating chat. Nothing executes in the card.         |
 | GitHub PR            | A PR summary with a GitHub link and local Git review              | Cached status has a retrieval time; refresh uses project-side `gh`; local review pins revisions and fetching is explicit. |
+| Live browser         | A web page the agent drives and the human watches or takes over   | Only `cocalc project browser start` makes it (see Shared Browser); never publish an `app` card by hand.                   |
+| Live terminal        | A shell the agent works in and the human watches or types in      | Only `cocalc project terminal start` makes it (see Shared Terminal); never publish a card by hand.                        |
 
 ### Discover And Publish
 

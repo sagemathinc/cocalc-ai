@@ -194,3 +194,80 @@ test(
     }
   },
 );
+
+test(
+  "a file's browser is the human's first; waiting agents and ignored input are shown",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+      humanFirst: true,
+      handBackAfterMs: 300,
+    });
+    const { port, cdpPort } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const viewer = await human.newPage();
+      await viewer.goto(`http://127.0.0.1:${port}/`);
+      await viewer.waitForFunction(() =>
+        document
+          .querySelector("#driver .msg")
+          ?.textContent?.startsWith("You are driving"),
+      );
+      assert.equal(server.getState().driver, "human");
+
+      // An agent action waits, and the human is told.
+      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      const held = page.evaluate("1 + 1");
+      await viewer.waitForFunction(() =>
+        document
+          .querySelector("#driver .msg")
+          ?.textContent?.includes("waiting"),
+      );
+      await viewer.click("#driver button"); // hand back
+      assert.equal(await held, 2);
+
+      // Clicking while the agent drives explains why nothing happens.
+      await viewer.click("#screen");
+      await viewer.waitForSelector("#notdriving", { state: "visible" });
+      await viewer.click("#notdriving button");
+      await viewer.waitForFunction(() =>
+        document
+          .querySelector("#driver .msg")
+          ?.textContent?.startsWith("You are driving"),
+      );
+
+      // Closing the last viewer hands back, so agents never wait on nobody.
+      await viewer.close();
+      const deadline = Date.now() + 5000;
+      while (server.getState().driver !== "agent" && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 100));
+      assert.equal(server.getState().driver, "agent");
+      page.close();
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);
