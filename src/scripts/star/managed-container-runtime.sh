@@ -208,21 +208,29 @@ star_run_podman_as_user() {
 
 # Rootless Podman keeps its pause process and per-boot state under
 # /run/user/<uid>. When the Docker image upgrades at boot, this runs before
-# systemd has set that up for the Star user. Have systemd mount it first:
-# systemd mounts a tmpfs over an existing plain directory, which would hide
-# state Podman had already written there. A plain directory is only the
-# fallback where systemd cannot provide it.
+# systemd has set that up for the Star user. Under systemd it must come from
+# user-runtime-dir@<uid> before Podman runs: systemd later mounts a tmpfs over
+# a plain directory, hiding the state Podman wrote there. Only a host without
+# systemd gets a plain directory.
 star_ensure_user_runtime_dir() {
   local star_user="$1"
   local star_uid="$2"
   local runtime_dir="/run/user/${star_uid}"
-  if ! mountpoint -q "$runtime_dir" 2>/dev/null; then
-    systemctl start "user-runtime-dir@${star_uid}.service" >/dev/null 2>&1 ||
-      true
+  local unit="user-runtime-dir@${star_uid}.service"
+  if [ -d "${STAR_SYSTEMD_BOOTED_MARKER:-/run/systemd/system}" ]; then
+    mountpoint -q "$runtime_dir" 2>/dev/null && return 0
+    # The unit asks logind for the directory's size; early in boot logind
+    # may not be running yet.
+    systemctl start systemd-logind.service >/dev/null 2>&1 || true
+    if ! systemctl start "$unit" || ! systemctl is-active --quiet "$unit"; then
+      printf 'could not start %s for the Star user runtime directory\n' \
+        "$unit" >&2
+      return 1
+    fi
+    [ -d "$runtime_dir" ]
+    return
   fi
   [ -d "$runtime_dir" ] && return 0
-  printf 'systemd did not provide %s; creating it as a plain directory\n' \
-    "$runtime_dir" >&2
   install -d -m 0700 -o "$star_uid" -g "$(id -g "$star_user")" "$runtime_dir"
 }
 

@@ -104,6 +104,20 @@ if [ ! -e "$nobody_runtime" ]; then
   systemctl stop "user-runtime-dir@$(id -u nobody).service" >/dev/null 2>&1 ||
     true
   rmdir "$nobody_runtime" 2>/dev/null || true
+
+  # Under systemd, a runtime directory systemd could not set up stops Podman
+  # rather than falling back to a plain directory it would later cover.
+  mkdir -p "${tmp}/systemd-booted" "${tmp}/fake-bin"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"${tmp}/fake-bin/systemctl"
+  chmod 0755 "${tmp}/fake-bin/systemctl"
+  if PATH="${tmp}/fake-bin:${PATH}" \
+    STAR_SYSTEMD_BOOTED_MARKER="${tmp}/systemd-booted" \
+    star_podman_info_field "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" nobody DatabaseBackend 2>/dev/null |
+    grep -q sqlite; then
+    echo "podman ran without the systemd runtime directory" >&2
+    exit 1
+  fi
+  [ ! -e "$nobody_runtime" ]
 fi
 
 release_dir="${tmp}/release"
