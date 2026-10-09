@@ -786,6 +786,9 @@ async function reconcileProvider(provider: Provider) {
     const runtime = row.metadata?.runtime ?? {};
     const instance_id = runtime.instance_id;
     if (!instance_id) continue;
+    // A relocation owns the host for its maintenance window: its VM and disks
+    // come and go on purpose, and this row snapshot would be stale.
+    if (row.metadata?.maintenance?.state === "in_progress") continue;
     const now = new Date();
     const remote = remoteById.get(instance_id);
     const lastActionAt = parseLastActionAt(row);

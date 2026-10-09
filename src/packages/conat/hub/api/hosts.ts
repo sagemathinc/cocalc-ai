@@ -2648,6 +2648,8 @@ export interface Hosts {
   // disk (snapshot and restore across zones). Projects see a maintenance banner.
   relocateHost: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     id: string;
     zone?: string;
     machine_type?: string;

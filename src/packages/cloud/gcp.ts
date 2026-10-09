@@ -2102,12 +2102,25 @@ export class GcpProvider implements CloudProvider {
       snapshot_name: string;
       disk_type?: string;
       size_gb?: number;
+      reuse_existing?: boolean;
     },
     creds: any,
-  ): Promise<void> {
+  ): Promise<"created" | "exists"> {
     const credentials = parseCredentials(creds ?? {});
     const diskClient = new DisksClient(credentials);
     const diskType = opts.disk_type || "pd-balanced";
+    if (opts.reuse_existing) {
+      try {
+        await diskClient.get({
+          project: credentials.projectId,
+          zone: opts.zone,
+          disk: opts.disk_name,
+        });
+        return "exists";
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+      }
+    }
     const [response] = await diskClient.insert({
       project: credentials.projectId,
       zone: opts.zone,
@@ -2123,6 +2136,7 @@ export class GcpProvider implements CloudProvider {
       zone: opts.zone,
       credentials,
     });
+    return "created";
   }
 
   async deleteDataDisk(

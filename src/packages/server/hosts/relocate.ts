@@ -166,17 +166,16 @@ export interface RelocationDeps {
   ) => Promise<{ cpu: number; ram_gb: number } | undefined>;
   backupProjects: () => Promise<void>;
   stopHost: () => Promise<void>;
-  // Deprovisioning marks every project on the host unprovisioned (its data
-  // is normally gone), which makes the next start restore from backup over
-  // the local volume. A relocation keeps the data, so it records which
-  // projects are provisioned and marks them provisioned again right after.
-  loadProvisionedProjectIds: () => Promise<string[]>;
-  markProjectsProvisioned: (project_ids: string[]) => Promise<void>;
+  // Delete the VM and disks the host row points at and mark it deprovisioned.
+  // Relocation's own deprovision: idempotent, and unlike a user deprovision
+  // it never deletes the host row or touches its projects' provisioning.
   deprovisionHost: () => Promise<void>;
-  // Stop the host's own start/recovery machinery (queued starts, readiness
-  // checks that re-queue starts) and wait for in-flight work to finish, so a
-  // rollback is not raced by a start of the abandoned target.
+  // Stop the host's own start/recovery machinery: mark it desired-stopped,
+  // cancel queued cloud work and wait for in-flight work to finish. Used to
+  // fence the window, and before a rollback.
   quiesceCloudWork: () => Promise<void>;
+  // Record whether the host should run (quiescing marks it stopped).
+  setDesiredState: (state: "running" | "stopped") => Promise<void>;
   // A rollback start waits as long as it takes; the planned start is bounded.
   startHost: (opts?: { rollback?: boolean }) => Promise<void>;
   // Fails if the host could not start as planned (e.g. no price for the
@@ -243,6 +242,15 @@ function placementMatches(
   );
 }
 
+type RelocationStep =
+  | "stop"
+  | "final-snapshot"
+  | "deprovision"
+  | "placement"
+  | "restore"
+  | "set-machine-type"
+  | "start";
+
 export async function relocateHost({
   host_id,
   op_id,
@@ -272,13 +280,22 @@ export async function relocateHost({
 
   const row = await deps.loadHost();
   const plan = planRelocation(row, input);
+  // The host ends in the state it started in: a stopped host is moved and
+  // left stopped.
   const running = row.status === "running";
+  const original = {
+    region: `${row.region ?? plan.source.region}`,
+    machine: row.metadata?.machine ?? {},
+    size: row.metadata?.size,
+    runtime: row.metadata?.runtime ?? {},
+  };
   const { provider, creds } = await deps.provider();
-  const runtime = row.metadata?.runtime ?? {};
+  const runtime = original.runtime;
   if (
     plan.cross_zone &&
     (!provider?.snapshotDataDisk ||
       !provider?.createDataDiskFromSnapshot ||
+      !provider?.deleteDataDisk ||
       !provider?.deleteSnapshot)
   ) {
     throw new Error("provider does not support data disk snapshots");
@@ -305,7 +322,7 @@ export async function relocateHost({
   }
   await checkCancel();
   let warm: DataDiskSnapshot | undefined;
-  if (plan.cross_zone) {
+  if (plan.cross_zone && running) {
     await deps.progress("warm-snapshot", "snapshotting the data disk online");
     warm = await timed(
       "warm_snapshot",
@@ -328,7 +345,11 @@ export async function relocateHost({
           running,
         });
 
-  // Maintenance window.
+  // Maintenance window. The in_progress notice is also the fence: host
+  // lifecycle APIs, project starts and Spot recovery refuse to act on the
+  // host while it is set. Work already queued or running is cancelled or
+  // waited out, and the notice is written again in case an in-flight handler
+  // wrote back older metadata without it.
   const windowStarted = now();
   const notice: HostMaintenanceNotice = {
     kind: "relocation",
@@ -339,19 +360,21 @@ export async function relocateHost({
     ...(input.message ? { message: input.message } : {}),
     ...(op_id ? { op_id } : {}),
   };
-  await deps.setMaintenance(notice);
-
+  const attempted = new Set<RelocationStep>();
   let final: DataDiskSnapshot | undefined;
-  let provisionedProjectIds: string[] = [];
-  let deprovisioned = false;
-  let targetDiskCreated = false;
   try {
+    await deps.setMaintenance(notice);
+    await deps.progress("fence", "pausing other work on the host");
+    await timed("fence", deps.quiesceCloudWork);
+    await deps.setMaintenance(notice);
     if (running) {
       await deps.progress("stopping", "stopping the host");
+      attempted.add("stop");
       await timed("stop", deps.stopHost);
     }
     if (plan.cross_zone) {
       await deps.progress("final-snapshot", "taking the final snapshot");
+      attempted.add("final-snapshot");
       const finalSnapshot: DataDiskSnapshot = await timed(
         "final_snapshot",
         async () =>
@@ -365,36 +388,43 @@ export async function relocateHost({
       await deps.progress("deprovision", "removing the old VM and disks", {
         snapshot: finalSnapshot.name,
       });
-      provisionedProjectIds = await deps.loadProvisionedProjectIds();
+      attempted.add("deprovision");
       await timed("deprovision", deps.deprovisionHost);
-      deprovisioned = true;
-      await deps.markProjectsProvisioned(provisionedProjectIds);
       const current = await deps.loadHost();
+      attempted.add("placement");
       await deps.updateHost({
         region: plan.target.region,
         metadata: withPlacement(current.metadata ?? {}, plan.target, shape),
       });
-      await deps.progress("restore", `restoring the data disk in ${plan.target.zone}`);
-      await timed(
+      await deps.progress(
         "restore",
-        async () =>
-          await provider.createDataDiskFromSnapshot(
-            {
-              zone: plan.target.zone,
-              disk_name: plan.data_disk_name,
-              snapshot_name: finalSnapshot.name,
-              disk_type: finalSnapshot.disk_type,
-              size_gb: finalSnapshot.disk_size_gb,
-            },
-            creds,
-          ),
+        `restoring the data disk in ${plan.target.zone}`,
       );
-      targetDiskCreated = true;
+      attempted.add("restore");
+      await timed("restore", async () => {
+        // A disk left by an earlier failed attempt must not be reused: only
+        // the final snapshot has the current data.
+        await provider.deleteDataDisk(
+          { zone: plan.target.zone, disk_name: plan.data_disk_name },
+          creds,
+        );
+        await provider.createDataDiskFromSnapshot(
+          {
+            zone: plan.target.zone,
+            disk_name: plan.data_disk_name,
+            snapshot_name: finalSnapshot.name,
+            disk_type: finalSnapshot.disk_type,
+            size_gb: finalSnapshot.disk_size_gb,
+          },
+          creds,
+        );
+      });
     } else {
       await deps.progress(
         "machine-type",
         `changing the machine type to ${plan.target.machine_type}`,
       );
+      attempted.add("set-machine-type");
       await timed("set_machine_type", async () => {
         await provider.setMachineType(runtime, plan.target.machine_type, creds);
         const current = await deps.loadHost();
@@ -403,33 +433,40 @@ export async function relocateHost({
         });
       });
     }
-    await deps.progress("starting", `starting the host in ${plan.target.zone}`);
-    await timed("start", deps.startHost);
-    // Host work writes whole metadata objects; one that read the row before
-    // the placement update can put the old machine back. Re-apply it.
-    const started = await deps.loadHost();
-    if (!placementMatches(started, plan.target)) {
-      await deps.updateHost({
-        region: plan.target.region,
-        metadata: withPlacement(started.metadata ?? {}, plan.target, shape),
-      });
+    // A moved disk is only verified once the host runs on it, so a stopped
+    // host is started and then stopped again.
+    if (running || plan.cross_zone) {
       await deps.progress(
-        "placement",
-        "re-applied the new placement after a concurrent metadata update",
+        "starting",
+        `starting the host in ${plan.target.zone}`,
       );
+      attempted.add("start");
+      await timed("start", deps.startHost);
+      // Host work writes whole metadata objects; one that read the row
+      // before the placement update can put the old machine back.
+      const started = await deps.loadHost();
+      if (!placementMatches(started, plan.target)) {
+        await deps.updateHost({
+          region: plan.target.region,
+          metadata: withPlacement(started.metadata ?? {}, plan.target, shape),
+        });
+        await deps.progress(
+          "placement",
+          "re-applied the new placement after a concurrent metadata update",
+        );
+      }
+      if (!running) {
+        await deps.progress("stopping", "stopping the host again");
+        await timed("stop_after", deps.stopHost);
+      }
     }
   } catch (err) {
     const rollback = await rollBack({
       plan,
       final,
-      deprovisioned,
-      targetDiskCreated,
-      provisionedProjectIds,
-      original: {
-        region: `${row.region ?? plan.source.region}`,
-        machine: row.metadata?.machine ?? {},
-        size: row.metadata?.size,
-      },
+      attempted,
+      running,
+      original,
       provider,
       creds,
       deps,
@@ -450,7 +487,7 @@ export async function relocateHost({
       [
         `Relocation ${plan.source.zone}/${plan.source.machine_type} -> ${plan.target.zone}/${plan.target.machine_type} failed: ${err}`,
         rollback.ok
-          ? `Rolled back to ${plan.source.zone}; the host is running there again.`
+          ? `Rolled back to ${plan.source.zone}/${plan.source.machine_type}.`
           : `Rollback failed: ${rollback.error}. Final snapshot: ${final?.name ?? "none"}.`,
       ].join("\n\n"),
     );
@@ -476,9 +513,11 @@ export async function relocateHost({
       await provider.deleteSnapshot(snapshot.name, creds);
     } catch (err) {
       snapshots_kept.push(snapshot.name);
-      await deps.progress("cleanup", `could not delete snapshot ${snapshot.name}`, {
-        error: `${err}`,
-      });
+      await deps.progress(
+        "cleanup",
+        `could not delete snapshot ${snapshot.name}`,
+        { error: `${err}` },
+      );
     }
   }
   await deps.progress("done", "relocation complete", {
@@ -488,12 +527,14 @@ export async function relocateHost({
   return { plan, window_ms, expected_window_ms, steps_ms, snapshots_kept };
 }
 
+// Put the host back where and how it was. Works from what was *attempted*,
+// not what is known to have succeeded: a provider call can succeed while its
+// response, or a later bookkeeping write, is lost. Every step is idempotent.
 async function rollBack({
   plan,
   final,
-  deprovisioned,
-  targetDiskCreated,
-  provisionedProjectIds,
+  attempted,
+  running,
   original,
   provider,
   creds,
@@ -502,10 +543,14 @@ async function rollBack({
 }: {
   plan: RelocationPlan;
   final?: DataDiskSnapshot;
-  deprovisioned: boolean;
-  targetDiskCreated: boolean;
-  provisionedProjectIds: string[];
-  original: { region: string; machine: Record<string, any>; size?: string };
+  attempted: Set<RelocationStep>;
+  running: boolean;
+  original: {
+    region: string;
+    machine: Record<string, any>;
+    size?: string;
+    runtime: Record<string, any>;
+  };
   provider: any;
   creds: any;
   deps: RelocationDeps;
@@ -515,6 +560,17 @@ async function rollBack({
     ...metadata,
     machine: original.machine,
     ...(original.size ? { size: original.size } : {}),
+    ...(metadata.runtime
+      ? {
+          runtime: {
+            ...metadata.runtime,
+            metadata: {
+              ...(metadata.runtime.metadata ?? {}),
+              machine_type: plan.source.machine_type,
+            },
+          },
+        }
+      : {}),
     spot_recovery_state: {
       phase: "idle",
       active_machine_type: plan.source.machine_type,
@@ -523,55 +579,72 @@ async function rollBack({
   try {
     await deps.progress("rollback", `rolling back to ${plan.source.zone}`);
     await timed("rollback", async () => {
-      await deps.quiesceCloudWork();
-      if (plan.cross_zone && deprovisioned) {
+      // Nothing was changed yet (e.g. the fence failed): nothing to race.
+      if (attempted.size > 0) {
+        await deps.quiesceCloudWork();
+      }
+      let restartNeeded = false;
+      if (plan.cross_zone && attempted.has("deprovision")) {
         if (!final) throw new Error("no final snapshot");
-        const current = await deps.loadHost();
-        if (current.status !== "deprovisioned") {
-          await deps.deprovisionHost();
-          await deps.markProjectsProvisioned(provisionedProjectIds);
-        }
-        if (targetDiskCreated) {
-          await provider.deleteDataDisk?.(
-            { zone: plan.target.zone, disk_name: plan.data_disk_name },
-            creds,
-          );
-        }
+        // Remove whatever VM the row points at now (the target, or the
+        // source if its deletion never ran), then any target disk.
+        await deps.deprovisionHost();
+        await provider.deleteDataDisk(
+          { zone: plan.target.zone, disk_name: plan.data_disk_name },
+          creds,
+        );
         const reloaded = await deps.loadHost();
         await deps.updateHost({
           region: original.region,
           metadata: restorePlacement(reloaded.metadata ?? {}),
         });
-        await provider.createDataDiskFromSnapshot(
+        // The source disk may have survived (deletion interrupted); it then
+        // holds exactly the final snapshot's data, so it is reused.
+        const result = await provider.createDataDiskFromSnapshot(
           {
             zone: plan.source.zone,
             disk_name: plan.data_disk_name,
             snapshot_name: final.name,
             disk_type: final.disk_type,
             size_gb: final.disk_size_gb,
+            reuse_existing: true,
           },
           creds,
         );
-      } else if (!plan.cross_zone) {
+        await deps.progress(
+          "rollback",
+          result === "exists"
+            ? `reusing the original data disk in ${plan.source.zone}`
+            : `restored the data disk in ${plan.source.zone}`,
+        );
+        restartNeeded = true;
+      } else if (!plan.cross_zone && attempted.has("set-machine-type")) {
         const current = await deps.loadHost();
-        if (
-          `${current.metadata?.machine?.machine_type ?? ""}` !==
-          plan.source.machine_type
-        ) {
-          await provider.setMachineType(
-            current.metadata?.runtime ?? {},
-            plan.source.machine_type,
-            creds,
-          );
-          await deps.updateHost({
-            metadata: restorePlacement(current.metadata ?? {}),
-          });
+        if (current.status === "running" || current.status === "starting") {
+          await deps.stopHost();
         }
+        // Set the original type whatever the database says: the provider
+        // call may have succeeded without its result being recorded.
+        await provider.setMachineType(
+          original.runtime,
+          plan.source.machine_type,
+          creds,
+        );
+        const reloaded = await deps.loadHost();
+        await deps.updateHost({
+          metadata: restorePlacement(reloaded.metadata ?? {}),
+        });
       }
       const current = await deps.loadHost();
-      if (current.status !== "running") {
-        await deps.startHost({ rollback: true });
+      if (running || restartNeeded) {
+        if (current.status !== "running") {
+          await deps.startHost({ rollback: true });
+        }
+        if (!running) {
+          await deps.stopHost();
+        }
       }
+      await deps.setDesiredState(running ? "running" : "stopped");
     });
     return { ok: true };
   } catch (err) {

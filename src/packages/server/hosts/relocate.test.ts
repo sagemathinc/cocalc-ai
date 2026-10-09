@@ -114,10 +114,21 @@ it("names snapshots within GCP limits", () => {
   expect(name).toMatch(/^[a-z][a-z0-9-]{0,62}$/);
 });
 
-function fakeDeps(opts: { failStart?: number } = {}) {
+function fakeDeps(
+  opts: {
+    status?: string;
+    failStart?: number;
+    deprovisionFailsAfterDelete?: number;
+    restoreFails?: boolean;
+    updateFailsAfterSetMachineType?: boolean;
+    fenceFails?: boolean;
+  } = {},
+) {
   const calls: string[] = [];
-  let row: any = hostRow();
+  let row: any = hostRow({ status: opts.status ?? "running" });
   let starts = 0;
+  let deprovisions = 0;
+  let updates = 0;
   const maintenance: any[] = [];
   const provider = {
     snapshotDataDisk: jest.fn(async (_runtime, name: string) => {
@@ -131,7 +142,12 @@ function fakeDeps(opts: { failStart?: number } = {}) {
       };
     }),
     createDataDiskFromSnapshot: jest.fn(async (args) => {
-      calls.push(`restore:${args.zone}`);
+      calls.push(`restore:${args.zone}${args.reuse_existing ? ":reuse" : ""}`);
+      if (opts.restoreFails && !args.reuse_existing) {
+        // Ambiguous: the disk was created but the response was lost.
+        throw new Error("socket hang up");
+      }
+      return "created";
     }),
     deleteDataDisk: jest.fn(async (args) => {
       calls.push(`delete-disk:${args.zone}`);
@@ -146,6 +162,10 @@ function fakeDeps(opts: { failStart?: number } = {}) {
   const deps: RelocationDeps = {
     loadHost: async () => row,
     updateHost: async ({ metadata, region }) => {
+      updates += 1;
+      if (opts.updateFailsAfterSetMachineType && updates === 1) {
+        throw new Error("database connection lost");
+      }
       calls.push(`update:${region ?? row.region}:${metadata.machine.zone}`);
       row = { ...row, metadata, region: region ?? row.region };
     },
@@ -162,18 +182,21 @@ function fakeDeps(opts: { failStart?: number } = {}) {
       calls.push("stop");
       row = { ...row, status: "off" };
     },
-    loadProvisionedProjectIds: async () => {
-      calls.push("load-provisioned");
-      return ["p1", "p2"];
-    },
-    markProjectsProvisioned: async (ids) => {
-      calls.push(`mark-provisioned:${ids.length}`);
+    setDesiredState: async (state) => {
+      calls.push(`desired:${state}`);
     },
     quiesceCloudWork: async () => {
       calls.push("quiesce");
+      if (opts.fenceFails) throw new Error("cloud work did not settle");
     },
     deprovisionHost: async () => {
+      deprovisions += 1;
       calls.push("deprovision");
+      if (deprovisions <= (opts.deprovisionFailsAfterDelete ?? 0)) {
+        // The provider deleted the VM and disk; the bookkeeping failed.
+        row = { ...row, status: "error" };
+        throw new Error("cloudflare tunnel delete failed");
+      }
       row = { ...row, status: "deprovisioned" };
     },
     startHost: async () => {
@@ -193,7 +216,7 @@ function fakeDeps(opts: { failStart?: number } = {}) {
 }
 
 describe("relocateHost", () => {
-  it("moves the data disk across zones with a short announced window", async () => {
+  it("fences the window and moves the data disk across zones", async () => {
     const { deps, calls, maintenance, getRow } = fakeDeps();
     const result = await relocateHost({
       host_id: HOST_ID,
@@ -204,13 +227,16 @@ describe("relocateHost", () => {
     expect(calls).toEqual([
       "backup",
       "snapshot:warm",
+      // The notice is the fence; it is written again after in-flight work.
+      "maintenance:in_progress",
+      "quiesce",
       "maintenance:in_progress",
       "stop",
       "snapshot:final",
-      "load-provisioned",
       "deprovision",
-      "mark-provisioned:2",
       "update:us-west2:us-west2-a",
+      // Never reuse a leftover target disk: only the final snapshot is current.
+      "delete-disk:us-west2-a",
       "restore:us-west2-a",
       "start:us-west2-a",
       "maintenance:cleared",
@@ -222,7 +248,6 @@ describe("relocateHost", () => {
       state: "in_progress",
       op_id: "op-1",
     });
-    // The estimate uses the data size measured by the warm snapshot.
     expect(maintenance[0].expected_duration_ms).toBe(result.expected_window_ms);
     expect(getRow().metadata.spot_recovery_state).toEqual({
       phase: "idle",
@@ -231,7 +256,7 @@ describe("relocateHost", () => {
     expect(result.snapshots_kept).toEqual([]);
   });
 
-  it("rolls back to the source zone from the final snapshot when the move fails", async () => {
+  it("rolls back when the target start fails, restoring the original machine", async () => {
     const { deps, calls, provider, getRow } = fakeDeps({ failStart: 1 });
     await expect(
       relocateHost({
@@ -242,26 +267,62 @@ describe("relocateHost", () => {
     ).rejects.toThrow(/rolled back to us-south1-c/);
     expect(calls.slice(calls.indexOf("start:us-west2-a"))).toEqual([
       "start:us-west2-a",
-      // The abandoned start must not race the rollback.
       "quiesce",
       "deprovision",
-      "mark-provisioned:2",
       "delete-disk:us-west2-a",
       "update:us-south1:us-south1-c",
-      "restore:us-south1-c",
+      "restore:us-south1-c:reuse",
       "start:us-south1-c",
-      // Back in service: no maintenance banner left behind.
+      "desired:running",
       "maintenance:cleared",
     ]);
     expect(getRow().region).toBe("us-south1");
-    expect(getRow().metadata.machine.machine_type).toBe("t2d-standard-16");
-    // Snapshots are kept for investigation after a failure.
+    expect(getRow().metadata.machine).toEqual(hostRow().metadata.machine);
     expect(provider.deleteSnapshot).not.toHaveBeenCalled();
     expect(deps.alert).toHaveBeenCalled();
   });
 
+  it("restores from the snapshot when deprovision deleted the VM but then failed", async () => {
+    // Before: the rollback trusted a flag set only after deprovision
+    // returned, and started the deleted VM instead of restoring the disk.
+    const { deps, calls, getRow } = fakeDeps({ deprovisionFailsAfterDelete: 1 });
+    await expect(
+      relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
+    ).rejects.toThrow(/rolled back to us-south1-c/);
+    expect(calls.slice(calls.indexOf("deprovision"))).toEqual([
+      "deprovision",
+      "quiesce",
+      "deprovision",
+      "delete-disk:us-west2-a",
+      "update:us-south1:us-south1-c",
+      "restore:us-south1-c:reuse",
+      "start:us-south1-c",
+      "desired:running",
+      "maintenance:cleared",
+    ]);
+    expect(getRow().status).toBe("running");
+  });
+
+  it("removes a target disk whose creation result was lost", async () => {
+    const { deps, calls } = fakeDeps({ restoreFails: true });
+    await expect(
+      relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
+    ).rejects.toThrow(/rolled back/);
+    expect(calls.slice(calls.indexOf("restore:us-west2-a"))).toEqual([
+      "restore:us-west2-a",
+      "quiesce",
+      "deprovision",
+      "delete-disk:us-west2-a",
+      "update:us-south1:us-south1-c",
+      "restore:us-south1-c:reuse",
+      "start:us-south1-c",
+      "desired:running",
+      "maintenance:cleared",
+    ]);
+  });
+
   it("changes the machine type in place without snapshots", async () => {
-    const { deps, calls } = fakeDeps();
+    const { deps, calls, getRow } = fakeDeps();
     await relocateHost({
       host_id: HOST_ID,
       input: { machine_type: "n2-standard-32", skip_backups: true },
@@ -269,12 +330,82 @@ describe("relocateHost", () => {
     });
     expect(calls).toEqual([
       "maintenance:in_progress",
+      "quiesce",
+      "maintenance:in_progress",
       "stop",
       "set-machine-type:n2-standard-32",
       "update:us-south1:us-south1-c",
       "start:us-south1-c",
       "maintenance:cleared",
     ]);
+    expect(getRow().metadata.runtime.metadata.machine_type).toBe(
+      "n2-standard-32",
+    );
+  });
+
+  it("resets the provider type even when the database never recorded the change", async () => {
+    const { deps, calls, getRow } = fakeDeps({
+      updateFailsAfterSetMachineType: true,
+    });
+    await expect(
+      relocateHost({
+        host_id: HOST_ID,
+        input: { machine_type: "n2-standard-32", skip_backups: true },
+        deps,
+      }),
+    ).rejects.toThrow(/rolled back/);
+    expect(calls.slice(calls.indexOf("set-machine-type:n2-standard-32"))).toEqual([
+      "set-machine-type:n2-standard-32",
+      "quiesce",
+      "set-machine-type:t2d-standard-16",
+      "update:us-south1:us-south1-c",
+      "start:us-south1-c",
+      "desired:running",
+      "maintenance:cleared",
+    ]);
+    expect(getRow().metadata.machine.machine_type).toBe("t2d-standard-16");
+  });
+
+  it("leaves the host untouched when the fence cannot be established", async () => {
+    const { deps, calls, getRow } = fakeDeps({ fenceFails: true });
+    await expect(
+      relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps }),
+    ).rejects.toThrow(/did not settle/);
+    expect(calls).not.toContain("stop");
+    expect(calls).not.toContain("deprovision");
+    expect(calls.slice(-2)).toEqual(["desired:running", "maintenance:cleared"]);
+    expect(getRow().status).toBe("running");
+  });
+
+  it("moves a stopped host and leaves it stopped", async () => {
+    const { deps, calls, getRow } = fakeDeps({ status: "off" });
+    await relocateHost({ host_id: HOST_ID, input: { zone: "us-west2-a" }, deps });
+    expect(calls).toEqual([
+      "maintenance:in_progress",
+      "quiesce",
+      "maintenance:in_progress",
+      "snapshot:final",
+      "deprovision",
+      "update:us-west2:us-west2-a",
+      "delete-disk:us-west2-a",
+      "restore:us-west2-a",
+      // Started once to prove the moved disk works, then stopped again.
+      "start:us-west2-a",
+      "stop",
+      "maintenance:cleared",
+      "delete-snapshot:final",
+    ]);
+    expect(getRow().status).toBe("off");
+  });
+
+  it("changes the type of a stopped host without starting it", async () => {
+    const { deps, calls } = fakeDeps({ status: "off" });
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { machine_type: "n2-standard-32" },
+      deps,
+    });
+    expect(calls).not.toContain("start:us-south1-c");
   });
 
   it("updates the runtime's machine type and re-applies a clobbered placement", async () => {
@@ -295,9 +426,6 @@ describe("relocateHost", () => {
       deps,
     });
     expect(getRow().metadata.machine.machine_type).toBe("n2-standard-32");
-    expect(getRow().metadata.runtime.metadata.machine_type).toBe(
-      "n2-standard-32",
-    );
   });
 
   it("runs the preflight before touching anything", async () => {

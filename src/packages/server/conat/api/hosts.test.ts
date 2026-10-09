@@ -3709,6 +3709,133 @@ describe("hosts browser fresh auth gating", () => {
     expect(updated.deletion_protection).toBe(false);
   });
 
+  it("requires fresh second-factor auth before relocating a host", async () => {
+    // Later tests in this file rely on the shared query/admin mocks.
+    const previousQueryMock = queryMock;
+    const previousIsAdminMock = isAdminMock;
+    try {
+      requireFreshAuthForSessionHashMock = jest.fn(async () => {
+        throw Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        });
+      });
+      getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+      isAdminMock = jest.fn(async () => true);
+      const { relocateHost } = await import("./hosts");
+      await expect(
+        relocateHost({
+          account_id: ACCOUNT_ID,
+          browser_id: "browser-1",
+          id: HOST_ID,
+          zone: "us-west2-a",
+        }),
+      ).rejects.toMatchObject({ code: "fresh_auth_required" });
+      expect(createLroMock).not.toHaveBeenCalled();
+    } finally {
+      queryMock = previousQueryMock;
+      isAdminMock = previousIsAdminMock;
+    }
+  });
+
+  it("refuses host lifecycle changes during a maintenance window", async () => {
+    // Later tests in this file rely on the shared query/admin mocks.
+    const previousQueryMock = queryMock;
+    const previousIsAdminMock = isAdminMock;
+    try {
+      getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                id: HOST_ID,
+                name: "host-name",
+                status: "off",
+                metadata: {
+                  owner: ACCOUNT_ID,
+                  machine: { cloud: "gcp", machine_type: "t2d-standard-16" },
+                  maintenance: { kind: "relocation", state: "in_progress" },
+                },
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+      const { startHost, stopHost, restartHost } = await import("./hosts");
+      for (const action of [startHost, stopHost, restartHost]) {
+        await expect(
+          (action as any)({
+            account_id: ACCOUNT_ID,
+            browser_id: "browser-1",
+            id: HOST_ID,
+          }),
+        ).rejects.toMatchObject({ code: "host_maintenance_in_progress" });
+      }
+      expect(createLroMock).not.toHaveBeenCalled();
+    } finally {
+      queryMock = previousQueryMock;
+      isAdminMock = previousIsAdminMock;
+    }
+  });
+
+  it("lets an admin clear a maintenance window only when its operation is gone", async () => {
+    // Later tests in this file rely on the shared query/admin mocks.
+    const previousQueryMock = queryMock;
+    const previousIsAdminMock = isAdminMock;
+    try {
+      isAdminMock = jest.fn(async () => true);
+      const updates: string[] = [];
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("SELECT * FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                id: HOST_ID,
+                name: "host-name",
+                status: "deprovisioned",
+                metadata: {
+                  owner: ACCOUNT_ID,
+                  maintenance: {
+                    kind: "relocation",
+                    state: "in_progress",
+                    op_id: "op-dead",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        if (sql.includes("UPDATE project_hosts")) {
+          updates.push(sql);
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+      const { setHostMaintenanceNotice } = await import("./hosts");
+      // getLro is mocked to return nothing: the owning operation is gone.
+      await expect(
+        setHostMaintenanceNotice({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          scheduled_for: new Date(Date.now() + 3600_000).toISOString(),
+          expected_minutes: 10,
+        }),
+      ).rejects.toThrow(/in progress/);
+      await expect(
+        setHostMaintenanceNotice({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          clear: true,
+        }),
+      ).resolves.toBeNull();
+      expect(updates.join("\n")).toContain("metadata - 'maintenance'");
+    } finally {
+      queryMock = previousQueryMock;
+      isAdminMock = previousIsAdminMock;
+    }
+  });
+
   it("requires fresh auth before queueing host stop or restart", async () => {
     requireFreshAuthForSessionHashMock = jest.fn(async () => {
       throw Object.assign(new Error("fresh auth is required"), {

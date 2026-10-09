@@ -3379,10 +3379,15 @@ Examples:
       "keep the final disk snapshot after a successful move",
     )
     .option("--wait", "wait for the relocation to finish")
+    .option(
+      "--browser-id <id>",
+      "browser id for the second-factor check (default: COCALC_BROWSER_ID)",
+    )
     .action(
       async (
         hostIdentifier: string,
         opts: {
+          browserId?: string;
           zone?: string;
           machineType?: string;
           expectedMinutes?: string;
@@ -3408,8 +3413,11 @@ Examples:
             throw new Error("--expected-minutes must be a positive number");
           }
           const hostRow = await resolveHost(ctx, hostIdentifier);
+          const browserId =
+            `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
           const op = await ctx.hub.hosts.relocateHost({
             id: hostRow.id,
+            ...(browserId ? { browser_id: browserId } : undefined),
             zone: opts.zone,
             machine_type: opts.machineType,
             expected_minutes,

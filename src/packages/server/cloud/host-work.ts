@@ -3716,6 +3716,8 @@ async function handleProbeSpot(row: any) {
   const host = await loadHostRow(row.vm_id);
   if (!host) return;
   if (!isSpotRecoveryManagedHost(host)) return;
+  // A relocation owns the host for its window and resets Spot recovery after.
+  if (host.metadata?.maintenance?.state === "in_progress") return;
   const policy = spotRecoveryPolicy(host);
   const state = spotRecoveryState(host);
   const currentEffectivePricing = effectivePricingModel(host);

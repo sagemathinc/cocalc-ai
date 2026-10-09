@@ -146,7 +146,7 @@ import {
   updateCopyStatus as updateCopyStatusDb,
 } from "@cocalc/server/projects/copy-db";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
-import { createLro, listLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { createLro, getLro, listLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -6749,6 +6749,7 @@ export async function startHost({
       });
   }
   const row = await loadHostForStartStop(id, actor);
+  assertHostNotUnderMaintenance(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
   assertHostBillingEnforcementAllowsStart(row.metadata);
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
@@ -6833,6 +6834,7 @@ export async function stopHost({
       });
   }
   const row = await loadHostForStartStop(id, account_id);
+  assertHostNotUnderMaintenance(row);
   await eraseActiveExamRunBeforeHostStopLocal({ host: row });
   return await createHostLro({
     kind: HOST_STOP_LRO_KIND,
@@ -6892,6 +6894,7 @@ export async function restartHost({
       });
   }
   const row = await loadHostForStartStop(id, account_id);
+  assertHostNotUnderMaintenance(row);
   await assertNoPendingDestructiveHostOp(row.id);
   return await createHostLro({
     kind: HOST_RESTART_LRO_KIND,
@@ -6966,6 +6969,7 @@ export async function drainHost({
   }
   const owner = requireAccount(account_id);
   const row = await loadHostForDrainInternal({ id, owner });
+  assertHostNotUnderMaintenance(row);
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
   const drainParallel = await resolveDrainParallelInternal({
     owner,
@@ -7505,6 +7509,7 @@ export async function updateHostMachine({
 }): Promise<Host> {
   const actor = requireAccount(account_id);
   const row = await loadHostForMachineUpdate(id, actor);
+  assertHostNotUnderMaintenance(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
@@ -9029,6 +9034,20 @@ export async function setHostPublicRouteMode({
   });
 }
 
+// While a relocation (or other maintenance) is in progress, its operation
+// owns the host's lifecycle; other starts, stops and changes would race it.
+function assertHostNotUnderMaintenance(row: any): void {
+  const state = `${row?.metadata?.maintenance?.state ?? ""}`;
+  if (state === "in_progress") {
+    throw Object.assign(
+      new Error(
+        "this host is in a scheduled maintenance window; try again when it is over",
+      ),
+      { code: "host_maintenance_in_progress" },
+    );
+  }
+}
+
 async function requireAdminForHostMaintenance(
   account_id: string | undefined,
   id: string,
@@ -9048,6 +9067,8 @@ async function requireAdminForHostMaintenance(
 
 export async function relocateHost({
   account_id,
+  browser_id,
+  session_hash,
   id,
   zone,
   machine_type,
@@ -9057,6 +9078,8 @@ export async function relocateHost({
   keep_snapshot,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
   zone?: string;
   machine_type?: string;
@@ -9065,7 +9088,15 @@ export async function relocateHost({
   skip_backups?: boolean;
   keep_snapshot?: boolean;
 }): Promise<HostLroResponse> {
+  // Deletes and recreates the VM and its data disk: same second-factor
+  // policy as deprovisioning.
+  await requireDangerousHostMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   const { owner, row } = await requireAdminForHostMaintenance(account_id, id);
+  assertHostNotUnderMaintenance(row);
   // Validate now, so a bad request fails here instead of in the worker.
   planRelocation(row, { zone, machine_type });
   if (
@@ -9115,8 +9146,19 @@ export async function setHostMaintenanceNotice({
   clear?: boolean;
 }): Promise<HostMaintenanceNotice | null> {
   const { row } = await requireAdminForHostMaintenance(account_id, id);
-  if (row.metadata?.maintenance?.state === "in_progress") {
-    throw new Error("maintenance is in progress on this host");
+  const current = row.metadata?.maintenance;
+  if (current?.state === "in_progress") {
+    // Only clearable once the operation that owns the window is gone (e.g.
+    // the bay restarted mid-relocation), so a stuck fence can be lifted.
+    const op = current.op_id ? await getLro(current.op_id) : undefined;
+    const live = op && ["queued", "running"].includes(`${op.status}`);
+    if (!clear || live) {
+      throw new Error(
+        live
+          ? `maintenance operation ${current.op_id} is still running on this host`
+          : "maintenance is in progress on this host",
+      );
+    }
   }
   if (clear) {
     await setHostMaintenanceMetadata(row.id, null);
@@ -10212,6 +10254,7 @@ export async function deleteHost({
       });
   }
   const row = await loadHostForDestructiveAction(id, account_id);
+  assertHostNotUnderMaintenance(row);
   if (row.deletion_protection === true) {
     throw Object.assign(
       new Error(

@@ -56,6 +56,7 @@ import {
 import { migrateHostPublicRouteInternal } from "@cocalc/server/cloud/public-route";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { relocateHost } from "@cocalc/server/hosts/relocate";
+import { enqueueCloudVmWork } from "@cocalc/server/cloud/db";
 import { estimateDedicatedHostRate } from "@cocalc/server/project-host/spend";
 import { setHostMaintenanceMetadata } from "@cocalc/server/hosts/maintenance";
 
@@ -757,25 +758,32 @@ async function runHostRelocation({
         await stopHostInternal({ account_id, id: host_id });
         await waitFor(["off"], ["error"]);
       },
-      loadProvisionedProjectIds: async () => {
-        const { rows } = await pool.query(
-          `SELECT project_id FROM projects
-            WHERE host_id=$1 AND deleted IS NOT TRUE AND provisioned IS TRUE`,
+      // Not deleteHostInternal: on a host without a runtime that deletes
+      // the host row, and a user deprovision may clear project provisioning.
+      deprovisionHost: async () => {
+        await pool.query(
+          `UPDATE project_hosts
+             SET status='deprovisioning',
+                 metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', '"stopped"'),
+                 updated=NOW()
+           WHERE id=$1 AND deleted IS NULL`,
           [host_id],
         );
-        return rows.map((row) => row.project_id);
-      },
-      markProjectsProvisioned: async (project_ids) => {
-        if (project_ids.length === 0) return;
-        await pool.query(
-          `UPDATE projects SET provisioned=TRUE, provisioned_checked_at=NOW()
-            WHERE host_id=$1 AND project_id = ANY($2::uuid[])`,
-          [host_id, project_ids],
-        );
-      },
-      deprovisionHost: async () => {
-        await deleteHostInternal({ account_id, id: host_id });
+        await enqueueCloudVmWork({
+          vm_id: host_id,
+          action: "delete",
+          payload: { provider: "gcp", source: "host-relocation" },
+        });
         await waitFor(["deprovisioned"], ["error"]);
+      },
+      setDesiredState: async (state) => {
+        await pool.query(
+          `UPDATE project_hosts
+             SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($2::text)),
+                 updated=NOW()
+           WHERE id=$1`,
+          [host_id, state],
+        );
       },
       quiesceCloudWork: async () => {
         await pool.query(
@@ -790,7 +798,7 @@ async function runHostRelocation({
         while (Date.now() < deadline) {
           await pool.query(
             `UPDATE cloud_vm_work
-               SET state='failed', error='canceled by host relocation rollback', updated_at=NOW()
+               SET state='failed', error='canceled by a host relocation', updated_at=NOW()
              WHERE vm_id=$1 AND state='queued'`,
             [host_id],
           );

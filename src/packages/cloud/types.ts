@@ -202,9 +202,11 @@ export interface CloudProvider {
       snapshot_name: string;
       disk_type?: string;
       size_gb?: number;
+      // Keep a disk that already exists under this name instead of failing.
+      reuse_existing?: boolean;
     },
     creds: any,
-  ): Promise<void>;
+  ): Promise<"created" | "exists">;
   deleteDataDisk?(
     opts: { zone: string; disk_name: string },
     creds: any,

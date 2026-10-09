@@ -2263,6 +2263,57 @@ describe("cloud host start failures", () => {
     );
   });
 
+  it("does not probe or return a host while a relocation owns it", async () => {
+    const hostId = "6f1e2d3c-4b5a-4968-8776-655443322110";
+    const probeSpotAvailability = jest.fn(async () => true);
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider: { probeSpotAvailability } },
+      creds: {},
+    });
+    await upsertProjectHost({
+      id: hostId,
+      name: "Relocating host",
+      region: "us-south1",
+      status: "running",
+      last_seen: new Date() as any,
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-south1-c",
+          machine_type: "t2d-standard-16",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: { provider: "gcp", instance_id: `cocalc-host-${hostId}` },
+        spot_recovery_state: { phase: "running_standard_fallback" },
+      },
+    });
+    await getPool().query(
+      `UPDATE project_hosts SET metadata = jsonb_set(metadata, '{maintenance}', '{"kind":"relocation","state":"in_progress"}') WHERE id=$1`,
+      [hostId],
+    );
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.probe_spot({
+      id: "probe-during-relocation",
+      vm_id: hostId,
+      action: "probe_spot",
+      payload: { provider: "gcp" },
+    } as any);
+    expect(probeSpotAvailability).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT action FROM cloud_vm_work WHERE vm_id=$1",
+      [hostId],
+    );
+    expect(rows).toEqual([]);
+  });
+
   it("returns an alternate Spot host only after its desired type probes successfully", async () => {
     const hostId = "63e292e8-26e6-418e-bc2d-a691643f52dd";
     const probeSpotAvailability = jest
