@@ -148,10 +148,17 @@ export default async function watch(
   options: WatchOptions,
   lastOnDisk: LRU<string, string>,
   lastOnDiskHash: TTL<string, boolean>,
+  containmentBase?: string,
 ): Promise<WatchIterator> {
   log("watch", path, options);
   assertPollingDisabled(path, options);
-  const watcher = new Watcher(path, options, lastOnDisk, lastOnDiskHash);
+  const watcher = new Watcher(
+    path,
+    options,
+    lastOnDisk,
+    lastOnDiskHash,
+    containmentBase,
+  );
   await watcher.waitUntilReady();
 
   const iter = new EventIterator(watcher, "change", {
@@ -186,6 +193,7 @@ class Watcher extends EventEmitter {
     private options: WatchOptions,
     private lastOnDisk: LRU<string, string>,
     private lastOnDiskHash: TTL<string, boolean>,
+    private containmentBase?: string,
   ) {
     super();
     activeWatchers.add(this);
@@ -379,9 +387,10 @@ class Watcher extends EventEmitter {
     }
     let cur;
     try {
-      // No-follow, nonblocking: a swapped-in symlink or FIFO must not be
-      // followed into the patch stream or block a worker.
-      cur = await readWatchedFileUtf8(path);
+      // No-follow, nonblocking, and (in safe mode) fd-contained: a swapped-in
+      // symlink or FIFO must not be followed into the patch stream or block a
+      // worker, and the resolved inode must stay inside the sandbox base.
+      cur = await readWatchedFileUtf8(path, this.containmentBase);
     } catch (err) {
       log(path, "read error", err);
       return x;

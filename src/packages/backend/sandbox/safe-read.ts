@@ -1,6 +1,7 @@
 /*
 Read a watched file's contents without following a symlink at the final path
-component and without blocking on a special file.
+component, without blocking on a special file, and optionally only if the
+opened inode resolves inside a given sandbox base.
 
 The sync-fs watcher and the low-level file watcher re-read a path after an
 inotify event to compute a patch. A project user owns the files under their
@@ -13,16 +14,31 @@ watched regular file with:
   - a FIFO, whose blocking open would pin a libuv worker shared by every
     project in the process.
 
-O_NOFOLLOW makes the first case fail with ELOOP instead of following the link,
-and O_NONBLOCK plus a regular-file check makes the second return immediately.
-This only constrains the final component; full descriptor-anchored resolution
-of the parent chain is handled separately by the openat2 sandbox.
+O_NOFOLLOW makes a swapped-in leaf symlink fail with ELOOP instead of being
+followed, and O_NONBLOCK plus a regular-file check makes a FIFO return
+immediately. O_NOFOLLOW only constrains the final component, so when a
+containmentBase is given we additionally resolve the opened descriptor through
+/proc/self/fd and refuse to read unless it lies inside that base. That closes a
+parent-directory component being swapped to an outside symlink too, using the
+same fd-anchored check the sandbox applies to its own reads and writes.
 */
 
-import { open } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
+import { relative, isAbsolute } from "node:path";
 
-export async function readWatchedFileUtf8(path: string): Promise<string> {
+function isInside(child: string, base: string): boolean {
+  if (child === base) {
+    return true;
+  }
+  const rel = relative(base, child);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+export async function readWatchedFileUtf8(
+  path: string,
+  containmentBase?: string,
+): Promise<string> {
   const handle = await open(
     path,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -36,6 +52,17 @@ export async function readWatchedFileUtf8(path: string): Promise<string> {
       err.code = "EINVAL";
       err.path = path;
       throw err;
+    }
+    if (containmentBase != null) {
+      const resolved = await realpath(`/proc/self/fd/${handle.fd}`);
+      if (!isInside(resolved, containmentBase)) {
+        const err: NodeJS.ErrnoException = new Error(
+          `EACCES: watched file '${path}' resolves to a path outside of sandbox`,
+        );
+        err.code = "EACCES";
+        err.path = path;
+        throw err;
+      }
     }
     return await handle.readFile("utf8");
   } finally {

@@ -2963,6 +2963,18 @@ export class SandboxedFilesystem {
     }
   };
 
+  // Resolved sandbox base a watched path belongs to, for fd-containment checks
+  // on re-reads. undefined in unsafe mode (no containment enforced).
+  private watchContainmentBase = async (
+    path: string,
+  ): Promise<string | undefined> => {
+    if (this.unsafeMode) {
+      return undefined;
+    }
+    const { sandboxBasePath } = await this.resolvePathInSandbox(path);
+    return await this.resolveSandboxBasePathForComparison(sandboxBasePath);
+  };
+
   watch = async (
     path: string,
     options: WatchOptions = {},
@@ -2972,6 +2984,7 @@ export class SandboxedFilesystem {
       options,
       this.lastOnDisk,
       this.lastOnDiskHash,
+      await this.watchContainmentBase(path),
     );
   };
 
@@ -3328,6 +3341,7 @@ export class SandboxedFilesystem {
       history_epoch: info?.history_epoch,
       doctype: info?.doctype,
       watchDebounce: info?.watchDebounce,
+      containmentBase: await this.watchContainmentBase(path),
     });
   };
 
@@ -3347,6 +3361,7 @@ export class SandboxedFilesystem {
       syncPath,
       history_epoch: info?.history_epoch,
       doctype: info?.doctype,
+      containmentBase: await this.watchContainmentBase(path),
     });
   };
 

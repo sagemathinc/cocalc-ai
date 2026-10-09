@@ -40,6 +40,9 @@ export interface WatchEvent {
 export interface WatchMeta {
   project_id?: string;
   syncPath?: string;
+  // Resolved sandbox base this path must stay inside when re-read after an
+  // inotify event; set by the sandbox in safe mode, undefined in unsafe mode.
+  containmentBase?: string;
   string_id?: string;
   history_epoch?: number;
   watchDebounce?: number;
@@ -621,7 +624,7 @@ export class SyncFsService extends EventEmitter {
       let diskContent: string;
       let forceDiff = false;
       try {
-        diskContent = await readWatchedFileUtf8(path);
+        diskContent = await readWatchedFileUtf8(path, meta.containmentBase);
       } catch (err: any) {
         if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
           throw err;
@@ -903,7 +906,10 @@ export class SyncFsService extends EventEmitter {
           if (marker != null) {
             if (Date.now() <= marker.until) {
               try {
-                preloaded = await readWatchedFileUtf8(path);
+                preloaded = await readWatchedFileUtf8(
+                  path,
+                  meta?.containmentBase,
+                );
               } catch {
                 preloaded = undefined;
               }
@@ -919,7 +925,10 @@ export class SyncFsService extends EventEmitter {
           const change = await this.store.handleExternalChange(
             path,
             async () => {
-              return preloaded ?? (await readWatchedFileUtf8(path));
+              return (
+                preloaded ??
+                (await readWatchedFileUtf8(path, meta?.containmentBase))
+              );
             },
             false,
             codec,
