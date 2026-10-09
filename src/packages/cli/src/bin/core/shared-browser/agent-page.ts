@@ -43,7 +43,12 @@ export class SharedBrowserPage {
     cdp: string,
     targetId?: string | null,
   ): Promise<SharedBrowserPage> {
-    const version = await (await fetch(`${cdp}/json/version`)).json();
+    const res = await fetch(`${cdp}/json/version`);
+    const version = await res.json().catch(() => ({}));
+    if (!res.ok || !version.webSocketDebuggerUrl)
+      throw Error(
+        version.error ?? `the browser is not available (${res.status})`,
+      );
     const client = await CdpClient.connect(version.webSocketDebuggerUrl);
     try {
       const { targetInfos } = await client.send("Target.getTargets");

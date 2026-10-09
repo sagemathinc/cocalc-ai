@@ -19,12 +19,17 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #nav { display:flex; gap:4px; align-items:center; padding:4px 6px; background:var(--bg); border-bottom:1px solid var(--line); }
   #nav button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 8px; cursor:pointer; }
   #nav button.off { opacity:.45; }
-  #quality { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 4px; }
+  #runson, #quality { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 4px; }
   #url { flex:1; min-width:0; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--fg); }
   #driver { display:flex; align-items:center; gap:8px; padding:4px 8px; border-bottom:1px solid var(--line); }
   #driver.ask, #driver.waiting { background:var(--warn); color:var(--warnfg); }
   #driver.agent { background:var(--accent); color:#fff; }
   #driver.agent button { background:#fff; color:var(--accent); }
+  #waiting { left:50%; top:40px; transform:translateX(-50%); padding:14px 16px; display:none; width:min(560px, 90%); }
+  #waiting p { margin:0 0 10px; line-height:1.4; }
+  #waiting pre { white-space:pre-wrap; word-break:break-all; background:var(--bar); border:1px solid var(--line); border-radius:4px; padding:8px; margin:0 0 10px; font-size:12px; }
+  #waiting button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:4px 10px; cursor:pointer; }
+  #waiting button[data-a="copy"] { background:var(--accent); color:#fff; border:none; font-weight:600; }
   #notdriving { left:50%; top:50%; transform:translate(-50%,-50%); padding:16px 20px; text-align:center; display:none; max-width:80%; }
   #notdriving p { margin:0 0 12px; font-size:14px; }
   #notdriving button { border:none; border-radius:4px; padding:6px 16px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; font-size:14px; }
@@ -56,6 +61,9 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <button id="fwd" title="Forward">&#8594;</button>
     <button id="reload" title="Reload">&#8635;</button>
     <input id="url" spellcheck="false" placeholder="Address or search">
+    <select id="runson" title="Where this browser runs" style="display:none">
+      <option value="project">Runs in the project</option><option value="computer">Runs on my computer</option>
+    </select>
     <select id="quality" title="Picture quality: Sharp sends crisp text once the page is still; Fast uses less bandwidth">
       <option value="sharp">Sharp</option><option value="balanced">Balanced</option><option value="fast">Fast</option>
     </select>
@@ -65,6 +73,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <canvas id="screen" tabindex="0"></canvas>
     <div id="hint"></div>
     <div id="notdriving" class="overlay"><p></p><button>Take over</button></div>
+    <div id="waiting" class="overlay"><p><b>Waiting for your computer.</b> This browser runs in Chrome on your computer, so sites see your network and your logins. Run this there (it needs the CoCalc CLI); a Chrome window opens, and stays connected while it runs:</p><pre></pre><div class="row"><button data-a="project">Run it in the project instead</button><button data-a="copy">Copy command</button></div></div>
     <div id="dialog" class="overlay"><pre></pre><input><div class="row"><button data-a="0">Cancel</button><button data-a="1">OK</button></div></div>
     <div id="select" class="overlay"></div>
     <div id="filechooser" class="overlay"><div style="margin-bottom:6px">Upload a project file (path relative to your home directory):</div><input placeholder="e.g. Documents/report.pdf"><div class="row"><button data-a="0">Cancel</button><button data-a="1">Upload</button></div></div>
@@ -216,6 +225,14 @@ export const VIEWER_HTML = String.raw`<!doctype html>
       button.textContent = "Take over";
     }
     canvas.className = human() ? "" : "view-only";
+    // Where a .browser file's browser runs, and waiting for the computer.
+    const runson = $("runson");
+    runson.style.display = state.runsOn ? "" : "none";
+    if (state.runsOn && document.activeElement !== runson) runson.value = state.runsOn;
+    const waiting = $("waiting");
+    waiting.style.display = state.connection === "waiting" && state.runsOn === "computer" ? "block" : "none";
+    waiting.querySelector("pre").textContent = state.connectCommand || "";
+    if (state.connection === "waiting" && lastFrame) { ctx.fillStyle = "#888"; ctx.fillRect(0, 0, canvas.width, canvas.height); lastFrame = null; }
     // overlays (only meaningful while the human drives)
     const dlg = $("dialog");
     if (state.dialog && human()) {
@@ -229,6 +246,17 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     renderSelect();
     $("filechooser").style.display = state.fileChooser && human() ? "block" : "none";
   }
+  $("runson").addEventListener("change", () => send({ type: "runsOn", value: $("runson").value }));
+  $("waiting").addEventListener("click", (e) => {
+    const a = e.target.dataset && e.target.dataset.a;
+    if (a === "project") send({ type: "runsOn", value: "project" });
+    else if (a === "copy") {
+      const text = (state && state.connectCommand) || "";
+      const done = () => flash("Copied. Run it in a terminal on your computer.");
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => flash("Select the command and copy it."));
+      else flash("Select the command and copy it.");
+    }
+  });
   $("driver").querySelector("button").onclick = () => send({ type: human() ? "handback" : "takeover" });
   // Using the browser without driving does nothing: say why, right where
   // the user looked, with the way out.

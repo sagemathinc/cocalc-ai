@@ -25,6 +25,7 @@ import {
   SELECT_BINDING,
   selectScript,
 } from "./page-script";
+import type { SharedBrowserRunsOn } from "@cocalc/util/shared-browser";
 import { VIEWER_HTML } from "./viewer-html";
 
 export type Driver = "agent" | "human";
@@ -53,6 +54,13 @@ export interface SharedBrowserState {
   agentWaiting: boolean;
   cdp: string;
   viewers: number;
+  // Whether a browser is attached; "waiting" while a .browser file's
+  // browser on the user's computer is not connected.
+  connection: "connected" | "waiting";
+  // Where a .browser file's browser runs (null: the project's own browser,
+  // which always runs in the project), and how to connect a computer.
+  runsOn: SharedBrowserRunsOn | null;
+  connectCommand: string | null;
 }
 
 // The screencast streams changes as JPEG at CSS pixels (headless Chromium
@@ -96,8 +104,11 @@ interface TabPage {
 }
 
 export interface SharedBrowserServerOptions {
-  /** Chromium's own browser-level DevTools URL (ws://127.0.0.1:N/devtools/browser/ID). */
-  chromeWebSocketUrl: string;
+  /**
+   * Chromium's own browser-level DevTools URL (ws://127.0.0.1:N/devtools/browser/ID).
+   * Without it the server waits for attachChrome().
+   */
+  chromeWebSocketUrl?: string;
   host: string;
   port: number;
   cdpPort: number;
@@ -107,6 +118,11 @@ export interface SharedBrowserServerOptions {
   // Hand back to the agent this long after the last viewer leaves while the
   // human drives, so an agent never waits on a closed tab.
   handBackAfterMs?: number;
+  // A .browser file's browser: where it runs, the command that connects the
+  // user's computer, and what to do when the viewer switches.
+  runsOn?: SharedBrowserRunsOn;
+  connectCommand?: string;
+  onRunsOn?: (runsOn: SharedBrowserRunsOn) => void | Promise<void>;
   log?: (message: string) => void;
 }
 
@@ -120,8 +136,9 @@ export const HELD_WHILE_HUMAN_DRIVES =
   /^(Input\.|Page\.(navigate|reload|navigateToHistoryEntry|stopLoading|handleJavaScriptDialog|bringToFront|close)$|Target\.(createTarget|closeTarget|activateTarget)$|Runtime\.(evaluate|callFunctionOn)$|DOM\.setFileInputFiles$)/;
 
 export class SharedBrowserServer {
+  // The attached browser (none while waiting for the user's computer).
   private cdp!: CdpClient;
-  private chromeHttp: string;
+  private chromeHttp = "";
   private appServer!: http.Server;
   private cdpServer!: http.Server;
   // Each viewer (a chat card, a frame of a .browser file) shows its own tab.
@@ -148,8 +165,6 @@ export class SharedBrowserServer {
 
   constructor(private readonly options: SharedBrowserServerOptions) {
     this.log = options.log ?? (() => {});
-    const url = new URL(options.chromeWebSocketUrl);
-    this.chromeHttp = `http://${url.host}`;
     this.state = {
       driver: "agent",
       ask: null,
@@ -163,7 +178,67 @@ export class SharedBrowserServer {
       agentWaiting: false,
       cdp: "",
       viewers: 0,
+      connection: "waiting",
+      runsOn: options.runsOn ?? null,
+      connectCommand: options.connectCommand ?? null,
     };
+  }
+
+  get attached(): boolean {
+    return !!this.chromeHttp;
+  }
+
+  setRunsOn(runsOn: SharedBrowserRunsOn): void {
+    if (this.state.runsOn === runsOn) return;
+    this.state.runsOn = runsOn;
+    this.broadcastState();
+  }
+
+  /** Use this browser (e.g. the user's, through a tunnel). */
+  async attachChrome(webSocketUrl: string): Promise<void> {
+    if (this.attached) this.detachChrome();
+    const cdp = await CdpClient.connect(webSocketUrl);
+    this.cdp = cdp;
+    this.chromeHttp = `http://${new URL(webSocketUrl).host}`;
+    cdp.on((event) => {
+      if (this.cdp === cdp) this.onCdpEvent(event);
+    });
+    void cdp.closed.then(() => {
+      if (this.cdp === cdp) {
+        this.log("the browser disconnected");
+        this.detachChrome();
+      }
+    });
+    await cdp.send("Target.setDiscoverTargets", { discover: true });
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    for (const info of targetInfos) this.addTab(info);
+    this.state.connection = "connected";
+    if (this.state.tabs.length === 0) {
+      await cdp.send("Target.createTarget", { url: "about:blank" });
+    } else {
+      await this.activate(this.state.tabs[this.state.tabs.length - 1].id);
+    }
+    this.broadcastState();
+  }
+
+  /** Forget the browser: back to waiting (viewers and agents are told). */
+  detachChrome(): void {
+    if (!this.attached) return;
+    const cdp = this.cdp;
+    this.chromeHttp = "";
+    this.state.connection = "waiting";
+    this.state.tabs = [];
+    this.state.active = null;
+    for (const page of this.pages.values())
+      if (page.settleTimer) clearTimeout(page.settleTimer);
+    this.pages.clear();
+    for (const view of this.views.values()) view.tab = null;
+    // Agents' connections went to that browser.
+    this.held = [];
+    this.state.agentWaiting = false;
+    for (const ws of this.agentSockets) ws.terminate();
+    cdp?.close();
+    this.broadcastState();
   }
 
   getState(): SharedBrowserState {
@@ -184,16 +259,8 @@ export class SharedBrowserServer {
   }
 
   async start(): Promise<{ port: number; cdpPort: number }> {
-    this.cdp = await CdpClient.connect(this.options.chromeWebSocketUrl);
-    this.cdp.on((event) => this.onCdpEvent(event));
-    await this.cdp.send("Target.setDiscoverTargets", { discover: true });
-    const { targetInfos } = await this.cdp.send("Target.getTargets");
-    for (const info of targetInfos) this.addTab(info);
-    if (this.state.tabs.length === 0) {
-      await this.cdp.send("Target.createTarget", { url: "about:blank" });
-    } else {
-      await this.activate(this.state.tabs[this.state.tabs.length - 1].id);
-    }
+    if (this.options.chromeWebSocketUrl)
+      await this.attachChrome(this.options.chromeWebSocketUrl);
 
     this.appServer = http.createServer((req, res) =>
       this.onAppRequest(req, res),
@@ -258,7 +325,7 @@ export class SharedBrowserServer {
       closeServer(this.appServer),
       closeServer(this.cdpServer),
     ]);
-    this.cdp?.close();
+    if (this.attached) this.cdp.close();
   }
 
   // --- driver ------------------------------------------------------------
@@ -476,7 +543,11 @@ export class SharedBrowserServer {
     await this.cdp
       .send(
         "Emulation.setDeviceMetricsOverride",
-        { width, height, deviceScaleFactor: page.scale, mobile: false },
+        // Not the viewer's pixel ratio: emulating one moves input
+        // coordinates in some Chromium versions (clicks land at half the
+        // distance when the page is wider than the headless window).  The
+        // still frame is rendered at that ratio instead (see settle).
+        { width, height, deviceScaleFactor: 1, mobile: false },
         page.session,
       )
       .catch(() => {});
@@ -530,9 +601,24 @@ export class SharedBrowserServer {
     const rest = QUALITY[page.quality].rest;
     if (!page.session || !page.casting || !rest) return;
     try {
+      // The visible part of the page, rendered at the viewer's pixel ratio.
+      const { cssVisualViewport: v } = await this.cdp.send(
+        "Page.getLayoutMetrics",
+        {},
+        page.session,
+      );
       const { data } = await this.cdp.send(
         "Page.captureScreenshot",
-        rest,
+        {
+          ...rest,
+          clip: {
+            x: v.pageX,
+            y: v.pageY,
+            width: v.clientWidth,
+            height: v.clientHeight,
+            scale: page.scale,
+          },
+        },
         page.session,
         10_000,
       );
@@ -766,6 +852,13 @@ export class SharedBrowserServer {
         return this.setDriver("human");
       case "handback":
         return this.setDriver("agent");
+      case "runsOn":
+        if (
+          this.state.runsOn &&
+          (msg.value === "project" || msg.value === "computer")
+        )
+          await this.options.onRunsOn?.(msg.value);
+        return;
       case "resize": {
         if (!view.tab) return;
         const page = this.pageFor(view.tab);
@@ -820,7 +913,7 @@ export class SharedBrowserServer {
       }
     }
     // Everything below acts on the page: only while the human drives.
-    if (this.state.driver !== "human") return;
+    if (this.state.driver !== "human" || !this.attached) return;
     if (msg.type === "newTab") {
       this.newTabFor = ws;
       await this.cdp.send("Target.createTarget", { url: "about:blank" });
@@ -1003,6 +1096,11 @@ export class SharedBrowserServer {
     const url = new URL(req.url ?? "/", "http://x");
     if (!url.pathname.startsWith("/json"))
       return json(res, 404, { error: "not found" });
+    if (!this.attached)
+      return json(res, 503, {
+        error:
+          "the browser is not connected: it runs on the user's computer, which is not connected now",
+      });
     try {
       const upstream = await fetch(
         `${this.chromeHttp}${url.pathname}${url.search}`,
@@ -1017,13 +1115,27 @@ export class SharedBrowserServer {
         "content-type":
           upstream.headers.get("content-type") ?? "application/json",
       });
-      res.end(text.split(chromeHost).join(ours));
+      // A browser behind a tunnel reports its own (other) port: rewrite
+      // every DevTools address to ours.
+      res.end(
+        text
+          .split(chromeHost)
+          .join(ours)
+          .replace(
+            /(ws:\/\/|ws=)(?:127\.0\.0\.1|localhost|\[::1\]):\d+/g,
+            `$1${ours}`,
+          ),
+      );
     } catch (err: any) {
       json(res, 502, { error: `${err?.message ?? err}` });
     }
   }
 
   private addAgent(client: WebSocket, path: string): void {
+    if (!this.attached) {
+      client.close(1013, "the browser is not connected");
+      return;
+    }
     const upstream = new WebSocket(
       `ws://${new URL(this.chromeHttp).host}${path}`,
       {

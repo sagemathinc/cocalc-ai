@@ -5,6 +5,7 @@ import { pickSelectExpression, selectScript } from "./page-script";
 import { HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
 import {
   BUNDLED_CHROMIUM,
+  connectCommandFor,
   findSharedBrowserChrome,
   sharedBrowserChromeArgs,
   sharedBrowserProfileDir,
@@ -146,5 +147,33 @@ test("a .browser file names its own browser; no file means the project's", () =>
   assert.equal(
     sharedBrowserProfileDir(a.appId, "/home/user"),
     `/home/user/.local/share/cocalc/browser-profiles/${a.appId}`,
+  );
+});
+
+test("a .browser file's settings, tunnel port and connect command", () => {
+  const {
+    parseSharedBrowserFile,
+    formatSharedBrowserFile,
+    sharedBrowserTunnelPort,
+  } = require("@cocalc/util/shared-browser");
+  assert.deepEqual(parseSharedBrowserFile(""), { runs_on: "project" });
+  assert.deepEqual(parseSharedBrowserFile("not json"), { runs_on: "project" });
+  const computer = formatSharedBrowserFile({ runs_on: "computer" });
+  assert.deepEqual(parseSharedBrowserFile(computer), { runs_on: "computer" });
+  const id = "cocalc-browser-464dabaf8307dbcd";
+  const port = sharedBrowserTunnelPort(id);
+  assert.equal(port, sharedBrowserTunnelPort(id), "stable");
+  assert.ok(port >= 20000 && port < 40000);
+  assert.notEqual(
+    port,
+    sharedBrowserTunnelPort("cocalc-browser-0000000000000000"),
+  );
+  assert.equal(
+    connectCommandFor("/home/user/twitter.browser", "p1"),
+    "cocalc project browser connect -w p1 --browser /home/user/twitter.browser",
+  );
+  assert.equal(
+    connectCommandFor("/home/user/my x's.browser", "p1"),
+    `cocalc project browser connect -w p1 --browser '/home/user/my x'\\''s.browser'`,
   );
 });

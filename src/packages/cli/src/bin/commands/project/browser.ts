@@ -9,6 +9,7 @@
  * or Ctrl-C ends the tunnel and removes the profile.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { join, posix } from "node:path";
 import { Command } from "commander";
 
 import {
@@ -32,10 +33,15 @@ import {
   type ReverseTunnel,
 } from "../../core/reverse-tunnel";
 import {
+  persistentProfile,
   runSharedBrowserService,
-  sharedBrowserProfileDir,
   sharedBrowserTarget,
 } from "../../core/shared-browser/service";
+import {
+  sharedBrowserAppSpec,
+  sharedBrowserFileAppId,
+  sharedBrowserTunnelPort,
+} from "@cocalc/util/shared-browser";
 import { registerSharedBrowserCommands } from "./shared-browser";
 import type { ProjectCommandDeps } from "../project";
 import {
@@ -65,7 +71,34 @@ type ConnectOptions = {
   compress?: boolean;
   keyPath?: string;
   installKey?: boolean;
+  browser?: string;
 };
+
+// A .browser file named on this computer: its absolute path in the project
+// (relative paths are relative to the project's home directory).
+export function projectBrowserFile(value: string, home = "/home/user"): string {
+  const text = value.trim();
+  if (!text.endsWith(".browser"))
+    throw new Error(`--browser must be a .browser file, got '${value}'`);
+  const relative = text.startsWith("~/") ? text.slice(2) : text;
+  return posix.normalize(
+    relative.startsWith("/") ? relative : posix.join(home, relative),
+  );
+}
+
+// Where this computer keeps the Chrome profile of a project's .browser file:
+// it persists, so logins made in it last.
+export function computerBrowserProfileDir(
+  projectId: string,
+  appId: string,
+  sys: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; home: string },
+): string {
+  const base =
+    sys.platform === "win32" && sys.env.LOCALAPPDATA
+      ? join(sys.env.LOCALAPPDATA, "cocalc")
+      : join(sys.home, ".local", "share", "cocalc");
+  return join(base, "browser-profiles", `${projectId}-${appId}`);
+}
 
 function parseStorage(value: string | undefined): ProfileStorage {
   const storage = `${value ?? "memory"}`.trim().toLowerCase();
@@ -203,7 +236,12 @@ async function runBrowserConnect(
     ensureCloudflaredBinary,
   } = deps;
   const storage = parseStorage(opts.profileStorage);
-  const projectPort = parsePort(opts.port);
+  // A .browser file's browser: its own project port and a lasting profile.
+  const file = opts.browser ? projectBrowserFile(opts.browser) : null;
+  const appId = file ? sharedBrowserFileAppId(file) : null;
+  const projectPort = appId
+    ? sharedBrowserTunnelPort(appId)
+    : parsePort(opts.port);
   const url = startUrl(opts.url);
   const sys = defaultLocalBrowserSystem();
   const executable = findChrome(opts.chrome, sys);
@@ -263,7 +301,10 @@ async function runBrowserConnect(
   let endedBy = "browser closed";
   let cleanedUp = false;
   try {
-    profile = await createProfileDir(storage, sys);
+    profile =
+      file && appId
+        ? persistentProfile(computerBrowserProfileDir(projectId, appId, sys))
+        : await createProfileDir(storage, sys);
     browser = await launchBrowser({
       executable,
       profileDir: profile.path,
@@ -315,12 +356,25 @@ async function runBrowserConnect(
     if (verified !== "verified") {
       endedBy = verified;
     } else {
+      if (file && appId) {
+        // The file's browser service attaches to this browser (and switches
+        // the file to run on this computer) once it is running.
+        const { api } = await deps.resolveProjectProjectApi(ctx, projectId);
+        await api.apps.upsertAppSpec(
+          sharedBrowserAppSpec({ exec: "cocalc", args: [], appId, file }),
+        );
+        await api.apps.ensureRunning(appId, { timeout: 60_000, interval: 500 });
+      }
       say(
         [
-          `Browser ready: agents in the project can use http://127.0.0.1:${projectPort} (Chrome DevTools Protocol).`,
-          storage === "memory"
-            ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
-            : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
+          file
+            ? `Browser ready: ${file} in project ${projectId} now uses this Chrome; open the file in CoCalc to watch it, and agents use it with --browser ${file}.`
+            : `Browser ready: agents in the project can use http://127.0.0.1:${projectPort} (Chrome DevTools Protocol).`,
+          file
+            ? `Its profile (logins, cookies) stays in ${profile.path} for next time.`
+            : storage === "memory"
+              ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
+              : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
           "Close the browser or press Ctrl-C to end the session.",
         ].join("\n"),
       );
@@ -402,6 +456,10 @@ export function registerProjectBrowserCommands(
       "ssh key base path (default: ~/.ssh/id_ed25519)",
     )
     .option(
+      "-b, --browser <file>",
+      "connect this .browser file in the project to this computer's Chrome: a lasting profile for that file (log in once), shown in the file and usable by agents with --browser <file>",
+    )
+    .option(
       "--no-install-key",
       "skip automatic local ssh key ensure + project authorized_keys install",
     )
@@ -441,12 +499,11 @@ export function registerProjectBrowserCommands(
         const target = sharedBrowserTarget(opts.browser);
         await runSharedBrowserService({
           port: parsePort(opts.port ?? process.env.PORT ?? "0", true),
-          cdpPort: parsePort(opts.cdpPort),
+          cdpPort: parsePort(opts.cdpPort, true),
           chrome: opts.chrome,
           profileStorage: parseStorage(opts.profileStorage),
-          profileDir: target.file
-            ? sharedBrowserProfileDir(target.appId)
-            : undefined,
+          file: target.file,
+          appId: target.appId,
         });
       },
     );

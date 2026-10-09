@@ -605,7 +605,8 @@ test(
       const results: any[] = [];
       for (const dpr of [1, 1.5, 2, 2.5, 3]) {
         const viewer = await human.newPage({
-          viewport: { width: 800, height: 500 },
+          // Wider than the headless window (1280): clicks far right matter.
+          viewport: { width: 1500, height: 700 },
           deviceScaleFactor: dpr,
         });
         await viewer.goto(
@@ -618,7 +619,7 @@ test(
         // Let the viewport, pixel ratio and the sharp frame settle.
         await new Promise((r) => setTimeout(r, 1500));
         const box = await viewer.locator("#screen").boundingBox();
-        await viewer.mouse.click(box!.x + 300, box!.y + 100);
+        await viewer.mouse.click(box!.x + 1000, box!.y + 100);
         await new Promise((r) => setTimeout(r, 500));
         await viewer.click("#driver button"); // hand back
         const p = await SharedBrowserPage.open(
@@ -637,7 +638,7 @@ test(
           `page width = canvas width ${JSON.stringify(r)}`,
         );
         assert.ok(
-          Math.abs(r.x - 300) <= 1 && Math.abs(r.y - 100) <= 1,
+          Math.abs(r.x - 1000) <= 1 && Math.abs(r.y - 100) <= 1,
           JSON.stringify(r),
         );
       }
@@ -646,6 +647,252 @@ test(
       await server.close();
       await browser.stop();
       await profile.cleanup();
+    }
+  },
+);
+
+// Stand-in for the reverse ssh tunnel: a TCP forward from a port in the
+// "project" to the browser on the "computer".  `close()` drops it.
+async function tcpForward(targetPort: number, listenPort = 0) {
+  const net = require("node:net");
+  const sockets = new Set<any>();
+  const server = net.createServer((client: any) => {
+    const upstream = net.connect(targetPort, "127.0.0.1");
+    sockets.add(client).add(upstream);
+    client.pipe(upstream).pipe(client);
+    const end = () => {
+      client.destroy();
+      upstream.destroy();
+    };
+    client.on("error", end).on("close", end);
+    upstream.on("error", end).on("close", end);
+  });
+  await new Promise<void>((r) => server.listen(listenPort, "127.0.0.1", r));
+  return {
+    port: server.address().port as number,
+    close: async () => {
+      for (const s of sockets) s.destroy();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
+test(
+  "a browser on the user's computer: waiting, attach through a tunnel, drop, switch",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const switched: string[] = [];
+    const server = new SharedBrowserServer({
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+      humanFirst: true,
+      runsOn: "computer",
+      connectCommand:
+        "cocalc project browser connect -w p --browser /home/user/t.browser",
+      onRunsOn: (value) => {
+        switched.push(value);
+      },
+    });
+    const { port, cdpPort } = await server.start();
+    // The "computer": its own Chrome.
+    const profile = await createProfileDir("disk", sys);
+    const laptop = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    let tunnel: Awaited<ReturnType<typeof tcpForward>> | null = null;
+    try {
+      // Waiting: the viewer shows how to connect; agents get a clear error.
+      const viewer = await human.newPage({
+        viewport: { width: 800, height: 500 },
+      });
+      await viewer.goto(`http://127.0.0.1:${port}/?view=frame:w&client=me`);
+      await viewer.waitForSelector("#waiting", { state: "visible" });
+      assert.match(
+        await viewer.textContent("#waiting pre"),
+        /connect -w p --browser \/home\/user\/t\.browser/,
+      );
+      await assert.rejects(
+        SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`),
+        /user's computer/,
+      );
+
+      // The computer connects (through the tunnel, which reports another port).
+      tunnel = await tcpForward(laptop.port);
+      const version = await (
+        await fetch(`http://127.0.0.1:${tunnel.port}/json/version`)
+      ).json();
+      await server.attachChrome(
+        version.webSocketDebuggerUrl.replace(
+          /^ws:\/\/[^/]+/,
+          `ws://127.0.0.1:${tunnel.port}`,
+        ),
+      );
+      await viewer.waitForSelector("#waiting", { state: "hidden" });
+      // Agents reach it through our endpoint (addresses rewritten).
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${cdpPort}`,
+        server.getState().active,
+      );
+      await viewer.click("#driver button"); // the human hands back
+      assert.equal(
+        (await page.goto("data:text/html,<title>on the laptop</title>")).title,
+        "on the laptop",
+      );
+      page.close();
+
+      // The tunnel drops: back to waiting, nothing hangs.
+      await tunnel.close();
+      tunnel = null;
+      await viewer.waitForSelector("#waiting", { state: "visible" });
+      assert.equal(server.getState().connection, "waiting");
+
+      // The viewer's switch asks to run it in the project instead.
+      await viewer.click('#waiting button[data-a="project"]');
+      const deadline = Date.now() + 5000;
+      while (!switched.length && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 100));
+      assert.deepEqual(switched, ["project"]);
+    } finally {
+      await tunnel?.close();
+      await human.close().catch(() => {});
+      await server.close();
+      await laptop.stop();
+      await profile.cleanup();
+    }
+  },
+);
+
+test(
+  "serve --browser follows the file and a computer that connects",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 180_000,
+  },
+  async () => {
+    const { spawn } = require("node:child_process");
+    const { mkdtempSync, writeFileSync, rmSync } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const net = require("node:net");
+    const {
+      sharedBrowserFileAppId,
+      sharedBrowserTunnelPort,
+    } = require("@cocalc/util/shared-browser");
+    const home = mkdtempSync(join(tmpdir(), "cocalc-serve-home-"));
+    const file = join(home, "t.browser");
+    const tunnelPort = sharedBrowserTunnelPort(sharedBrowserFileAppId(file));
+    const appPort: number = await new Promise((r) => {
+      const s = net.createServer().listen(0, "127.0.0.1", () => {
+        const p = s.address().port;
+        s.close(() => r(p));
+      });
+    });
+    // Tests run in packages/cli.
+    const cli = join(process.cwd(), "dist/bin/cocalc.js");
+    const serve = spawn(
+      process.execPath,
+      [
+        cli,
+        "project",
+        "browser",
+        "serve",
+        "--browser",
+        file,
+        "--port",
+        `${appPort}`,
+        "--cdp-port",
+        "0",
+      ],
+      {
+        env: { ...process.env, HOME: home, COCALC_CHROME: executable },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let log = "";
+    serve.stderr.on("data", (d: Buffer) => (log += d.toString()));
+    const state = async () => {
+      try {
+        return await (
+          await fetch(`http://127.0.0.1:${appPort}/api/state`)
+        ).json();
+      } catch {
+        return null;
+      }
+    };
+    const until = async (ok: (s: any) => boolean, what: string) => {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const s = await state();
+        if (s && ok(s)) return s;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      assert.fail(`${what}: ${JSON.stringify(await state())}\n${log}`);
+    };
+    const profile = await createProfileDir("disk", sys);
+    let laptop: Awaited<ReturnType<typeof launchBrowser>> | null = null;
+    let tunnel: Awaited<ReturnType<typeof tcpForward>> | null = null;
+    try {
+      // No file yet: it runs in the project.
+      await until(
+        (s) => s.runsOn === "project" && s.connection === "connected",
+        "in the project",
+      );
+
+      // The file says: on my computer.  Nobody connected yet: waiting.
+      writeFileSync(file, JSON.stringify({ runs_on: "computer" }));
+      await until(
+        (s) => s.runsOn === "computer" && s.connection === "waiting",
+        "waiting",
+      );
+
+      // The computer connects: attached.
+      laptop = await launchBrowser({
+        executable: executable!,
+        profileDir: profile.path,
+        args: sharedBrowserChromeArgs(profile.path),
+      });
+      tunnel = await tcpForward(laptop.port, tunnelPort);
+      await until(
+        (s) => s.connection === "connected",
+        "attached to the computer",
+      );
+
+      // Back to the project (e.g. the viewer's switch wrote the file).
+      writeFileSync(file, JSON.stringify({ runs_on: "project" }));
+      await until(
+        (s) => s.runsOn === "project" && s.connection === "connected",
+        "back in the project",
+      );
+      await tunnel.close();
+      tunnel = null;
+
+      // A computer that connects takes over the file's browser by itself.
+      tunnel = await tcpForward(laptop.port, tunnelPort);
+      await until(
+        (s) => s.runsOn === "computer" && s.connection === "connected",
+        "switched by connecting",
+      );
+      assert.match(require("node:fs").readFileSync(file, "utf8"), /"computer"/);
+    } finally {
+      if (serve.exitCode === null && serve.signalCode === null) {
+        serve.kill("SIGTERM");
+        await new Promise((r) => serve.once("exit", r));
+      }
+      await tunnel?.close();
+      await laptop?.stop();
+      await profile.cleanup();
+      rmSync(home, { recursive: true, force: true });
     }
   },
 );

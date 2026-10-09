@@ -241,6 +241,10 @@ export function registerSharedBrowserCommands(
       throw Error(
         "the shared browser is not running here; run `cocalc project browser start` in the project first",
       );
+    if (state.connection === "waiting")
+      throw Error(
+        `this browser runs on the user's computer, which is not connected. Ask them to run on their computer: ${state.connectCommand ?? "cocalc project browser connect --browser <file>"}`,
+      );
     if (state.driver === "human")
       console.error(
         "The human is driving the shared browser; waiting until they hand back...",

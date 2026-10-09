@@ -45,3 +45,33 @@ test("the probe reports nothing when the peer is silent and is abortable", async
   setTimeout(() => abort.abort(), 200);
   assert.deepEqual(await pending, { kind: "none" });
 });
+
+test("connect --browser names the project file and keeps a profile per file", () => {
+  const {
+    projectBrowserFile,
+    computerBrowserProfileDir,
+  } = require("./browser");
+  assert.equal(
+    projectBrowserFile("twitter.browser"),
+    "/home/user/twitter.browser",
+  );
+  assert.equal(projectBrowserFile("~/a/b.browser"), "/home/user/a/b.browser");
+  assert.equal(projectBrowserFile("/tmp/x/../y.browser"), "/tmp/y.browser");
+  assert.throws(() => projectBrowserFile("a.txt"), /\.browser file/);
+  assert.equal(
+    computerBrowserProfileDir("p1", "cocalc-browser-1", {
+      platform: "darwin",
+      env: {},
+      home: "/Users/w",
+    }),
+    "/Users/w/.local/share/cocalc/browser-profiles/p1-cocalc-browser-1",
+  );
+  assert.equal(
+    computerBrowserProfileDir("p1", "cocalc-browser-1", {
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\w\\AppData\\Local" },
+      home: "C:\\Users\\w",
+    }).replace(/\\/g, "/"),
+    "C:/Users/w/AppData/Local/cocalc/browser-profiles/p1-cocalc-browser-1",
+  );
+});

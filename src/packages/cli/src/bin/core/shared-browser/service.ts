@@ -10,18 +10,29 @@ import {
   launchBrowser,
   startCleanupWatchdog,
   type LocalBrowserSystem,
+  type ProfileDir,
   type ProfileStorage,
 } from "../local-browser";
-import { mkdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { SharedBrowserServer } from "./server";
 
 import {
+  formatSharedBrowserFile,
+  parseSharedBrowserFile,
   SHARED_BROWSER_APP_ID,
   SHARED_BROWSER_FILE_APP_ID_RE,
   sharedBrowserFileAppId,
+  sharedBrowserTunnelPort,
+  type SharedBrowserRunsOn,
 } from "@cocalc/util/shared-browser";
 
 export { SHARED_BROWSER_APP_ID };
@@ -144,8 +155,9 @@ export async function runSharedBrowserService({
   // In a project, /tmp is wiped when the project stops and is neither backed
   // up nor shared; /dev/shm is too small for a browser profile.
   profileStorage = "disk",
-  // A persistent profile (a .browser file's browser) instead of a temporary one.
-  profileDir,
+  // A .browser file's browser: the file (absolute path) and its app id.
+  file,
+  appId,
   log = (message: string) => console.error(`[shared-browser] ${message}`),
 }: {
   port: number;
@@ -153,64 +165,183 @@ export async function runSharedBrowserService({
   cdpPort?: number;
   chrome?: string;
   profileStorage?: ProfileStorage;
-  profileDir?: string;
+  file?: string | null;
+  appId?: string;
   log?: (message: string) => void;
 }): Promise<void> {
   const sys = defaultLocalBrowserSystem();
-  const executable = findSharedBrowserChrome(chrome, sys);
-  const profile = profileDir
-    ? persistentProfile(profileDir)
-    : await createProfileDir(profileStorage, sys);
-  const browser = await launchBrowser({
-    executable,
-    profileDir: profile.path,
-    args: sharedBrowserChromeArgs(profile.path),
-    captureStderr: true,
-  });
-  const watchdog = startCleanupWatchdog({
-    browser: browser.child.pid!,
-    browserMarker: `--user-data-dir=${profile.path}`,
-    release: profile.release,
-  });
-  const version = await (
-    await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-  ).json();
+  const readRunsOn = (): SharedBrowserRunsOn =>
+    file && existsSync(file)
+      ? parseSharedBrowserFile(readFileSync(file, "utf8")).runs_on
+      : "project";
+  let runsOn: SharedBrowserRunsOn = file ? readRunsOn() : "project";
+  const tunnelPort = file && appId ? sharedBrowserTunnelPort(appId) : null;
+
   const server = new SharedBrowserServer({
-    chromeWebSocketUrl: version.webSocketDebuggerUrl,
     host,
     port,
     cdpPort,
     // A .browser file's browser is the human's first.
-    humanFirst: !!profileDir,
+    humanFirst: !!file,
+    ...(file
+      ? {
+          runsOn,
+          connectCommand: connectCommandFor(file),
+          onRunsOn: (value) => switchTo(value, true),
+        }
+      : {}),
     log,
   });
   await server.start();
-  log(`${version.Browser}; profile in ${profile.backing}`);
 
+  // The browser in the project, while the file says it runs here.
+  let local: {
+    browser: Awaited<ReturnType<typeof launchBrowser>>;
+    profile: Pick<ProfileDir, "path" | "backing" | "cleanup" | "release">;
+    watchdog: ReturnType<typeof startCleanupWatchdog>;
+  } | null = null;
   let stopping = false;
+
+  const startLocal = async () => {
+    const executable = findSharedBrowserChrome(chrome, sys);
+    const profile =
+      file && appId
+        ? persistentProfile(sharedBrowserProfileDir(appId))
+        : await createProfileDir(profileStorage, sys);
+    const browser = await launchBrowser({
+      executable,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+      captureStderr: true,
+    });
+    const watchdog = startCleanupWatchdog({
+      browser: browser.child.pid!,
+      browserMarker: `--user-data-dir=${profile.path}`,
+      release: profile.release,
+    });
+    local = { browser, profile, watchdog };
+    const current = local;
+    // The app manager restarts the service on the next use.
+    void browser.exited.then(() => {
+      if (local === current && !stopping)
+        void stop(
+          `the browser exited (code ${browser.child.exitCode ?? browser.child.signalCode})\n${browser.stderrTail()}`,
+        );
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    await server.attachChrome(version.webSocketDebuggerUrl);
+    log(`${version.Browser}; profile in ${profile.backing}`);
+  };
+
+  const stopLocal = async () => {
+    const current = local;
+    if (!current) return;
+    local = null;
+    server.detachChrome();
+    await cleanupThenDisarm(
+      [() => current.browser.stop(), () => current.profile.cleanup()],
+      current.watchdog,
+      (err) => log(`cleanup: ${(err as Error)?.message ?? err}`),
+    );
+  };
+
+  // The user's computer, through the reverse tunnel of
+  // `cocalc project browser connect --browser <file>`.
+  const remoteVersion = async (): Promise<any | null> => {
+    if (!tunnelPort) return null;
+    try {
+      const res = await fetch(`http://127.0.0.1:${tunnelPort}/json/version`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  };
+  const attachRemote = async () => {
+    const version = await remoteVersion();
+    if (!version?.webSocketDebuggerUrl) return false;
+    // It reports its own port on the computer; we reach it through ours.
+    const url = `${version.webSocketDebuggerUrl}`.replace(
+      /^ws:\/\/[^/]+/,
+      `ws://127.0.0.1:${tunnelPort}`,
+    );
+    await server.attachChrome(url);
+    log(`attached to ${version.Browser} on the user's computer`);
+    return true;
+  };
+
+  let switching: Promise<void> = Promise.resolve();
+  const switchTo = (value: SharedBrowserRunsOn, write: boolean) => {
+    switching = switching
+      .then(async () => {
+        if (write && file && readRunsOn() !== value)
+          writeFileSync(file, formatSharedBrowserFile({ runs_on: value }));
+        if (value === runsOn && (value === "computer" || local)) return;
+        runsOn = value;
+        server.setRunsOn(value);
+        log(`runs on: ${value}`);
+        if (value === "computer") {
+          await stopLocal();
+          await attachRemote();
+        } else {
+          server.detachChrome();
+          await startLocal();
+        }
+      })
+      .catch((err) => log(`switch: ${err?.message ?? err}`));
+    return switching;
+  };
+
+  if (runsOn === "project") await startLocal();
+  else await attachRemote();
+
+  // Follow the file (the viewer, an edit, or `connect` may change it), and
+  // the tunnel: a computer that connects takes over the file's browser.
+  const poll = setInterval(() => {
+    switching = switching
+      .then(async () => {
+        if (stopping || !file) return;
+        const fromFile = readRunsOn();
+        if (fromFile !== runsOn) {
+          void switchTo(fromFile, false);
+          return;
+        }
+        if (runsOn === "computer" && !server.attached) await attachRemote();
+        else if (runsOn === "project" && tunnelPort && (await remoteVersion()))
+          void switchTo("computer", true);
+      })
+      .catch((err) => log(`poll: ${err?.message ?? err}`));
+  }, 2000);
+
   const stop = async (reason: string) => {
     if (stopping) return;
     stopping = true;
+    clearInterval(poll);
     log(`stopping: ${reason}`);
-    await cleanupThenDisarm(
-      [() => server.close(), () => browser.stop(), () => profile.cleanup()],
-      watchdog,
-      (err) => log(`cleanup: ${(err as Error)?.message ?? err}`),
-    );
+    await stopLocal().catch(() => {});
+    await server.close().catch(() => {});
     process.exit(0);
   };
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
     process.on(signal, () => void stop(signal));
-  // The app manager restarts the service on the next use.
-  void browser.exited.then(() =>
-    stop(
-      `the browser exited (code ${browser.child.exitCode ?? browser.child.signalCode})\n${browser.stderrTail()}`,
-    ),
-  );
   await new Promise(() => {});
 }
 
-function persistentProfile(path: string) {
+// What the user runs on their computer to connect it to this file's browser.
+export function connectCommandFor(
+  file: string,
+  projectId = process.env.COCALC_PROJECT_ID,
+): string {
+  const quoted = /^[\w./~-]+$/.test(file)
+    ? file
+    : `'${file.replace(/'/g, "'\\''")}'`;
+  return `cocalc project browser connect${projectId ? ` -w ${projectId}` : ""} --browser ${quoted}`;
+}
+
+export function persistentProfile(path: string): ProfileDir {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   // Only this service uses the profile (the app manager runs one instance),
   // so a lock left by a browser that did not exit cleanly, e.g. when the
@@ -219,6 +350,7 @@ function persistentProfile(path: string) {
     rmSync(join(path, name), { force: true });
   return {
     path,
+    storage: "disk" as const,
     backing: `persistent directory ${path}`,
     cleanup: async () => {},
     release: {},

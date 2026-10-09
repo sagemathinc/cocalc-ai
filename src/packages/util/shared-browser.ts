@@ -31,6 +31,47 @@ export function sharedBrowserFileAppId(absolutePath: string): string {
   return `${SHARED_BROWSER_APP_ID}-${fnv1a32(bytes, 0x811c9dc5)}${fnv1a32(bytes, 0x050c5d1f)}`;
 }
 
+// Where a .browser file's browser runs: in the project (bundled headless
+// Chromium) or on the user's computer (their Chrome, reached through a
+// reverse ssh tunnel from `cocalc project browser connect --browser <file>`).
+export type SharedBrowserRunsOn = "project" | "computer";
+
+/** The settings stored in a .browser file (JSON; an empty file is fine). */
+export interface SharedBrowserFileSettings {
+  runs_on: SharedBrowserRunsOn;
+}
+
+export function parseSharedBrowserFile(
+  text: string,
+): SharedBrowserFileSettings {
+  try {
+    const value = JSON.parse(text);
+    if (value?.runs_on === "computer") return { runs_on: "computer" };
+  } catch {
+    // Empty or not JSON: the defaults.
+  }
+  return { runs_on: "project" };
+}
+
+export function formatSharedBrowserFile(settings: SharedBrowserFileSettings) {
+  return `${JSON.stringify({ runs_on: settings.runs_on }, null, 2)}\n`;
+}
+
+/**
+ * The project port where a .browser file's browser on the user's computer is
+ * reached (the reverse tunnel's end).  Derived from the app id, so `connect`
+ * on the computer and the browser service in the project agree without
+ * talking to each other.  In 20000..39999, clear of the usual dev ports.
+ */
+export function sharedBrowserTunnelPort(appId: string): number {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(appId)) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return 20000 + (hash % 20000);
+}
+
 export function sharedBrowserTitle(absolutePath?: string | null): string {
   if (!absolutePath) return "Shared browser";
   return `Browser: ${absolutePath.split("/").pop() || absolutePath}`;
