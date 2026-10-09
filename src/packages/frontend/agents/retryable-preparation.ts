@@ -14,7 +14,19 @@ export function retryablePreparation<T>() {
   };
 }
 
+import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import type { NewAgentRuntimeKind } from "./new-agent-runtime-select";
+
+// How the thread pays, as chosen when it was created. Kept here because the
+// server copy of a thread's selection may not have loaded after a reload.
+export interface PreparedFirstAgentPayment {
+  codex?: {
+    paymentSource: CodexPaymentSourcePreference;
+    credentialId?: string;
+  };
+  claudeCredential?: AcpHarnessCredential;
+}
 
 export interface PreparedFirstAgent {
   projectId: string;
@@ -25,6 +37,7 @@ export interface PreparedFirstAgent {
   // The agent type the thread was created with (missing: Codex, the only
   // first-run type before the selector was shown there).
   runtimeKind?: NewAgentRuntimeKind;
+  payment?: PreparedFirstAgentPayment;
 }
 
 const KEY = "cocalc:prepared-first-agent:";

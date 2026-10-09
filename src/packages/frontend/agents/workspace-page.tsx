@@ -48,6 +48,7 @@ import {
   retryablePreparation,
   readPreparedFirstAgent,
   writePreparedFirstAgent,
+  type PreparedFirstAgentPayment,
 } from "./retryable-preparation";
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
@@ -707,6 +708,7 @@ function NewAgentPanel({
         })
       : undefined,
   );
+  const restoredCodexPayment = restoredPreparation?.payment?.codex;
   const [config, setConfig] = useState<NewAgentCodexConfig>(() => ({
     ...(sourceConfig ?? {}),
     model: sourceConfig?.model || accountDefaults.model,
@@ -721,8 +723,11 @@ function NewAgentPanel({
       "read-only",
     paymentSource:
       sourceConfig?.paymentSource ??
+      restoredCodexPayment?.paymentSource ??
       (restoredCredentialId ? "subscription" : "auto"),
-    credentialId: restoredCredentialId,
+    credentialId: restoredCodexPayment
+      ? restoredCodexPayment.credentialId
+      : restoredCredentialId,
   }));
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
@@ -781,12 +786,13 @@ function NewAgentPanel({
   const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
   const claudeCredentialsAccount = useRef<string | undefined>(undefined);
   const initialClaudeCredential = useRef(
-    readHarnessCredentialSelection({
-      accountId: boundAccount.accountId,
-      projectId: selectionThread?.projectId,
-      threadKey: selectionThread?.threadId,
-      forNewAgent: true,
-    }),
+    restoredPreparation?.payment?.claudeCredential ??
+      readHarnessCredentialSelection({
+        accountId: boundAccount.accountId,
+        projectId: selectionThread?.projectId,
+        threadKey: selectionThread?.threadId,
+        forNewAgent: true,
+      }),
   );
   // Only a choice made in this form wins over the preferred credential; a
   // remembered one is kept while it still exists.
@@ -807,6 +813,9 @@ function NewAgentPanel({
     restoredPreparation,
   );
   const pendingRef = useRef<PendingAgent | undefined>(restoredPreparation);
+  const preparedPayment = useRef<PreparedFirstAgentPayment | undefined>(
+    restoredPreparation?.payment,
+  );
   const prepareOnce = useRef(retryablePreparation<PendingAgent>());
   const identityOnce = useRef(retryablePreparation<string>());
   const backgroundOnce = useRef(retryablePreparation<void>());
@@ -1103,6 +1112,20 @@ function NewAgentPanel({
             credential: claudeCredential,
           });
         }
+        preparedPayment.current =
+          runtimeKind === "codex-native"
+            ? {
+                codex: {
+                  paymentSource: executionConfig.paymentSource ?? "auto",
+                  credentialId:
+                    executionConfig.paymentSource === "subscription"
+                      ? executionConfig.credentialId
+                      : undefined,
+                },
+              }
+            : runtimeKind === "claude-code"
+              ? { claudeCredential }
+              : undefined;
         created = { projectId: targetProjectId, path, threadId };
         pendingRef.current = created;
         setPending(created);
@@ -1121,6 +1144,7 @@ function NewAgentPanel({
           name: claimedNameRef.current ?? agentName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
           runtimeKind,
+          payment: preparedPayment.current,
         });
       return created;
     });
@@ -1269,6 +1293,7 @@ function NewAgentPanel({
           name: claimedName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
           runtimeKind,
+          payment: preparedPayment.current,
         });
       }
       return identity.agent_id;
@@ -1506,16 +1531,6 @@ function NewAgentPanel({
       await waitForChatReady(actions);
       if (runtimeKind === "codex-native")
         actions.setCodexConfig(created.threadId, executionConfig);
-      writeAgentSubscriptionSelection({
-        accountId: boundAccount.accountId,
-        projectId: created.projectId,
-        threadId: created.threadId,
-        credentialId:
-          runtimeKind === "codex-native" &&
-          executionConfig.paymentSource === "subscription"
-            ? executionConfig.credentialId
-            : undefined,
-      });
       progress("sending", created.projectId);
       const chatIdentity = actions.reserveChatSendIdentity({
         reply_thread_id: created.threadId,

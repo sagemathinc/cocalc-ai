@@ -50,6 +50,11 @@ it("checkpoints a saved first agent across remounts without crossing accounts", 
     threadId: "thread",
     name: "agent",
     automaticProjectTitle: "My first project",
+    // The type and payment chosen at creation survive a reload.
+    runtimeKind: "codex-native" as const,
+    payment: {
+      codex: { paymentSource: "subscription" as const, credentialId: "a" },
+    },
   };
   writePreparedFirstAgent("alice", value);
   expect(readPreparedFirstAgent("alice")).toEqual(value);
