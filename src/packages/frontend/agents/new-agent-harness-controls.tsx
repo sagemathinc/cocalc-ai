@@ -49,7 +49,8 @@ export function NewAgentClaudeControls({
   onConnected,
   disabled,
   assertCurrent,
-  connectSignal,
+  connectRequested,
+  onConnectRequestHandled,
   onNeedsConnection,
 }: {
   accountId?: string;
@@ -69,8 +70,9 @@ export function NewAgentClaudeControls({
   onConnected: (credentialId: string) => Promise<void>;
   disabled?: boolean;
   assertCurrent: () => void;
-  // Each new value starts the Claude sign-in (when one is needed).
-  connectSignal?: number;
+  // Starts the Claude sign-in when one is needed (see ClaudeSubscriptionConnect).
+  connectRequested?: boolean;
+  onConnectRequestHandled?: () => void;
   // Whether starting an agent first needs a Claude connection.
   onNeedsConnection?: (needsConnection: boolean) => void;
 }) {
@@ -266,7 +268,8 @@ export function NewAgentClaudeControls({
               compact
               projectId={projectId}
               disabled={disabled}
-              openSignal={connectSignal}
+              openRequested={connectRequested}
+              onOpenRequestHandled={onConnectRequestHandled}
               onConnected={async (credentialId) => {
                 const trigger = configureButton.current;
                 await onConnected(credentialId);

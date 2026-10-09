@@ -686,6 +686,27 @@ function NewAgentPanel({
           : ""),
   );
   const [directoryProjectId, setDirectoryProjectId] = useState(projectId);
+  // The thread whose payment selections the form starts from: the agent
+  // being copied, or a first-run agent prepared before a reload.
+  const selectionThread = sourceAgent
+    ? {
+        projectId: sourceAgent.endpoint.project_id,
+        threadId: sourceAgent.thread_id,
+      }
+    : restoredPreparation
+      ? {
+          projectId: restoredPreparation.projectId,
+          threadId: restoredPreparation.threadId,
+        }
+      : undefined;
+  const [restoredCredentialId] = useState(() =>
+    selectionThread
+      ? readAgentSubscriptionSelection({
+          accountId: boundAccount.accountId,
+          ...selectionThread,
+        })
+      : undefined,
+  );
   const [config, setConfig] = useState<NewAgentCodexConfig>(() => ({
     ...(sourceConfig ?? {}),
     model: sourceConfig?.model || accountDefaults.model,
@@ -698,14 +719,10 @@ function NewAgentPanel({
     allowWrite:
       (sourceConfig?.sessionMode ?? accountDefaults.sessionMode) !==
       "read-only",
-    paymentSource: sourceConfig?.paymentSource ?? "auto",
-    credentialId: sourceAgent
-      ? readAgentSubscriptionSelection({
-          accountId: boundAccount.accountId,
-          projectId: sourceAgent.endpoint.project_id,
-          threadId: sourceAgent.thread_id,
-        })
-      : undefined,
+    paymentSource:
+      sourceConfig?.paymentSource ??
+      (restoredCredentialId ? "subscription" : "auto"),
+    credentialId: restoredCredentialId,
   }));
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
@@ -766,8 +783,8 @@ function NewAgentPanel({
   const initialClaudeCredential = useRef(
     readHarnessCredentialSelection({
       accountId: boundAccount.accountId,
-      projectId: sourceAgent?.endpoint.project_id,
-      threadKey: sourceAgent?.thread_id,
+      projectId: selectionThread?.projectId,
+      threadKey: selectionThread?.threadId,
       forNewAgent: true,
     }),
   );
@@ -842,7 +859,8 @@ function NewAgentPanel({
   });
   const [signInOpen, setSignInOpen] = useState(false);
   const [claudeNeedsConnection, setClaudeNeedsConnection] = useState(false);
-  const [claudeConnectSignal, setClaudeConnectSignal] = useState(0);
+  // A sign-in requested before the Claude controls could start it.
+  const [claudeConnectRequested, setClaudeConnectRequested] = useState(false);
   const modelOptions = useMemo(
     () => defaultModelOptions(modelCatalog, config.model),
     [config.model, modelCatalog],
@@ -1065,11 +1083,31 @@ function NewAgentPanel({
                 },
         });
         if (!threadId) throw new Error("Unable to create the agent thread");
+        // The thread's payment is chosen once, when it is created: a retry
+        // (possibly after a reload, with the controls disabled) keeps it.
+        writeAgentSubscriptionSelection({
+          accountId: boundAccount.accountId,
+          projectId: targetProjectId,
+          threadId,
+          credentialId:
+            runtimeKind === "codex-native" &&
+            executionConfig.paymentSource === "subscription"
+              ? executionConfig.credentialId
+              : undefined,
+        });
+        if (runtimeKind === "claude-code") {
+          writeHarnessCredentialSelection({
+            accountId: boundAccount.accountId,
+            projectId: targetProjectId,
+            threadKey: threadId,
+            credential: claudeCredential,
+          });
+        }
         created = { projectId: targetProjectId, path, threadId };
         pendingRef.current = created;
         setPending(created);
       }
-      const { path, threadId } = created;
+      const { path } = created;
       const chatActions = initChat(targetProjectId, path, {
         instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
         workbenchEnabled: true,
@@ -1084,24 +1122,6 @@ function NewAgentPanel({
           automaticProjectTitle: automaticProjectCreated.current?.title,
           runtimeKind,
         });
-      writeAgentSubscriptionSelection({
-        accountId: boundAccount.accountId,
-        projectId: targetProjectId,
-        threadId,
-        credentialId:
-          runtimeKind === "codex-native" &&
-          executionConfig.paymentSource === "subscription"
-            ? executionConfig.credentialId
-            : undefined,
-      });
-      if (runtimeKind === "claude-code") {
-        writeHarnessCredentialSelection({
-          accountId: boundAccount.accountId,
-          projectId: targetProjectId,
-          threadKey: threadId,
-          credential: claudeCredential,
-        });
-      }
       return created;
     });
   }
@@ -1333,6 +1353,15 @@ function NewAgentPanel({
         }
         createdProjectTitle = automaticProjectCreated.current.title;
       }
+      if (
+        !withoutTask &&
+        runtimeKind === "claude-code" &&
+        (await claudeConnectionMissing(targetProjectId))
+      ) {
+        attemptRef.current?.finish("failed", "sign_in_required");
+        requestSignIn();
+        return;
+      }
       if (!withoutTask && runtimeKind === "codex-native") {
         progress("funding", targetProjectId);
         const source = await fetchCodexPaymentSourceForSubmit({
@@ -1343,6 +1372,18 @@ function NewAgentPanel({
               ? config.credentialId
               : undefined,
         });
+        // Checked again now that the project is known: the form's payment
+        // source may not have loaded when this was sent.
+        if (
+          !lite &&
+          source.source === "none" &&
+          !source.hasSubscription &&
+          subscriptions.length === 0
+        ) {
+          attemptRef.current?.finish("failed", "sign_in_required");
+          requestSignIn();
+          return;
+        }
         executionConfig = newAgentFundingConfig({
           config,
           paymentSource: source,
@@ -1425,6 +1466,25 @@ function NewAgentPanel({
       submitting.current = false;
       setBusy(false);
     }
+  }
+
+  // Whether Claude would run with no way to pay: no connected subscription and
+  // no ANTHROPIC_API_KEY secret in the project (read from the server, since
+  // the form's copy may still be loading).
+  async function claudeConnectionMissing(target: string): Promise<boolean> {
+    if (claudeCredential.mode !== "project-secret") return false;
+    if (
+      anthropicCredentials.some(
+        (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
+      )
+    )
+      return false;
+    const secrets =
+      await webapp_client.conat_client.hub.projects.listProjectSecrets({
+        project_id: target,
+      });
+    boundAccount.assertCurrent();
+    return !secrets.some(({ name }) => name === "ANTHROPIC_API_KEY");
   }
 
   async function submitNewAgentRequest(
@@ -1672,7 +1732,7 @@ function NewAgentPanel({
       : "Sign in with ChatGPT to start";
   function requestSignIn() {
     if (runtimeKind === "claude-code") {
-      setClaudeConnectSignal((signal) => signal + 1);
+      setClaudeConnectRequested(true);
     } else {
       setSignInOpen(true);
     }
@@ -1714,6 +1774,7 @@ function NewAgentPanel({
 
   function chooseRuntime(kind: NewAgentRuntimeKind) {
     runtimeChosen.current = true;
+    setClaudeConnectRequested(false);
     setRuntimeKind(kind);
     if (kind === "claude-code") void prepareProjectForClaude();
   }
@@ -2258,7 +2319,8 @@ function NewAgentPanel({
                 }}
                 disabled={busy || !!pending}
                 assertCurrent={() => boundAccount.assertCurrent()}
-                connectSignal={claudeConnectSignal}
+                connectRequested={claudeConnectRequested}
+                onConnectRequestHandled={() => setClaudeConnectRequested(false)}
                 onNeedsConnection={setClaudeNeedsConnection}
               />
             )}
