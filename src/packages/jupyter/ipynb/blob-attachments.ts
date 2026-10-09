@@ -84,16 +84,11 @@ interface ParsedBlobUrl {
   url: string;
 }
 
-// Never run this over a whole Markdown cell: use blobUrlMatches.
+// The blob URL syntax, for reference and tests only. Never run it over
+// notebook text: it backtracks quadratically (see blobUrlMatches).
 const GLOBAL_BLOB_URL =
   /(?:https?:\/\/[^/\s"'<>()[\]]+)?\/[^\s"'<>()[\]]*blobs\/[^\s"'<>()[\]]+/gi;
 const ATTACHMENT_URL = /attachment:([^\s"'<>()[\]]+)/gi;
-// A run of characters that can be part of a URL in Markdown or HTML: no
-// whitespace, quotes, angle brackets, parentheses or square brackets.
-const URL_RUN = /[^\s"'<>()[\]]+/g;
-// Real blob URLs (path, encoded filename, uuid, optional origin) are far
-// shorter; longer runs are things like inline base64 images.
-export const MAX_BLOB_URL_LENGTH = 8192;
 
 interface TextMatch {
   0: string;
@@ -101,34 +96,129 @@ interface TextMatch {
   index: number;
 }
 
+// The characters that end a URL in Markdown or HTML, as in GLOBAL_BLOB_URL:
+// ECMAScript whitespace and line terminators (exactly regex \s), quotes,
+// angle brackets, parentheses and square brackets.
+function isUrlDelimiter(code: number): boolean {
+  switch (code) {
+    case 0x09: // \t
+    case 0x0a: // \n
+    case 0x0b: // \v
+    case 0x0c: // \f
+    case 0x0d: // \r
+    case 0x20: // space
+    case 0x22: // "
+    case 0x27: // '
+    case 0x28: // (
+    case 0x29: // )
+    case 0x3c: // <
+    case 0x3e: // >
+    case 0x5b: // [
+    case 0x5d: // ]
+    case 0xa0:
+    case 0x1680:
+    case 0x2028:
+    case 0x2029:
+    case 0x202f:
+    case 0x205f:
+    case 0x3000:
+    case 0xfeff:
+      return true;
+    default:
+      return code >= 0x2000 && code <= 0x200a;
+  }
+}
+
+const SLASH = 0x2f;
+
+// ASCII-only case-insensitive comparison of text at index with a lowercase
+// ASCII literal, as the non-Unicode /i flag does for ASCII letters.
+function startsWithAt(text: string, index: number, literal: string): boolean {
+  if (index < 0 || index + literal.length > text.length) return false;
+  for (let i = 0; i < literal.length; i++) {
+    let code = text.charCodeAt(index + i);
+    if (code >= 0x41 && code <= 0x5a) code += 0x20;
+    if (code !== literal.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
 /**
- * The CoCalc blob URLs in Markdown text: exactly text.matchAll(GLOBAL_BLOB_URL)
- * for runs of at most MAX_BLOB_URL_LENGTH, in linear time.
+ * The match of GLOBAL_BLOB_URL in text[start, end), a run with no URL
+ * delimiters, or undefined. The pattern's last part extends to the end of the
+ * run, so the match is text[p, end) for the leftmost start p at which
+ *   - no origin: text[p] is "/" and "blobs/" occurs after p with at least
+ *     one character after it; or
+ *   - origin: "http://" or "https://" starts at p, followed by at least one
+ *     non-"/" host character, a "/" and then such a "blobs/".
+ * Let K be the last such "blobs/". The no-origin case holds first at a, the
+ * first "/" in the run, iff a < K. An origin start has its "://" slashes at
+ * a and a + 1, so it can only be p = a - 6 ("https") or a - 5 ("http"), and
+ * it fails whenever a >= K. One pass, no backtracking.
+ */
+function blobUrlInRun(
+  text: string,
+  start: number,
+  end: number,
+): number | undefined {
+  let lastBlobs = -1;
+  for (let k = end - 7; k >= start; k--) {
+    if (startsWithAt(text, k, "blobs/")) {
+      lastBlobs = k;
+      break;
+    }
+  }
+  if (lastBlobs < 0) return;
+  let firstSlash = -1;
+  for (let i = start; i < lastBlobs; i++) {
+    if (text.charCodeAt(i) === SLASH) {
+      firstSlash = i;
+      break;
+    }
+  }
+  if (firstSlash < 0) return;
+  if (text.charCodeAt(firstSlash + 1) === SLASH) {
+    for (const [scheme, offset] of [
+      ["https:", 6],
+      ["http:", 5],
+    ] as const) {
+      const p = firstSlash - offset;
+      if (p < start || !startsWithAt(text, p, scheme)) continue;
+      const host = firstSlash + 2;
+      if (host >= end || text.charCodeAt(host) === SLASH) continue;
+      let pathSlash = host + 1;
+      while (pathSlash < end && text.charCodeAt(pathSlash) !== SLASH) {
+        pathSlash += 1;
+      }
+      if (pathSlash < lastBlobs) return p;
+    }
+  }
+  return firstSlash;
+}
+
+/**
+ * The CoCalc blob URLs in Markdown text, exactly what
+ * text.matchAll(GLOBAL_BLOB_URL) finds, in linear time and without a regular
+ * expression.
  *
- * GLOBAL_BLOB_URL itself is quadratic on a long run of URL characters that
- * contains "/" but no "blobs/", such as an inline base64 image: the engine
- * retries from every "/" and scans to the end of the run each time. A 2 MB
- * image took about 80 seconds of CPU and stalled a whole project host.
- * Every character the pattern can match is a URL-run character, and its last
- * part runs to the end of the run, so a match never crosses a run boundary and
- * there is at most one per run. Matching each run on its own is therefore
- * equivalent, and runs without "blobs/" (or too long to be a blob URL) can be
- * skipped without running the pattern at all.
+ * The pattern itself backtracks quadratically on a long run of URL characters
+ * with many "/" (an inline base64 image, or crafted input): it retries from
+ * every "/" and scans to the end of the run each time. A 2 MB inline image
+ * took about 80 seconds of CPU and stalled a whole project host. Every
+ * character the pattern can match is a URL-run character and its last part
+ * extends to the end of the run, so a match never crosses a run boundary and
+ * there is at most one per run: blobUrlInRun finds it directly.
  */
 function blobUrlMatches(text: string): TextMatch[] {
   const matches: TextMatch[] = [];
-  const pattern = new RegExp(GLOBAL_BLOB_URL.source, "i");
-  for (const run of text.matchAll(URL_RUN)) {
-    const value = run[0];
-    if (
-      value.length > MAX_BLOB_URL_LENGTH ||
-      !value.toLowerCase().includes("blobs/")
-    ) {
-      continue;
-    }
-    const match = pattern.exec(value);
-    if (match != null) {
-      matches.push({ 0: match[0], index: (run.index ?? 0) + match.index });
+  let i = 0;
+  while (i < text.length) {
+    while (i < text.length && isUrlDelimiter(text.charCodeAt(i))) i += 1;
+    const start = i;
+    while (i < text.length && !isUrlDelimiter(text.charCodeAt(i))) i += 1;
+    if (i > start) {
+      const p = blobUrlInRun(text, start, i);
+      if (p != null) matches.push({ 0: text.slice(p, i), index: p });
     }
   }
   return matches;
@@ -829,6 +919,10 @@ export async function externalizeJupyterAttachments({
 
 export const BLOB_ATTACHMENT_METADATA_KEY = METADATA_KEY;
 // For tests: the linear blob URL scan and the pattern it must agree with.
-export const blobUrlScanForTesting = { blobUrlMatches, GLOBAL_BLOB_URL };
+export const blobUrlScanForTesting = {
+  blobUrlMatches,
+  GLOBAL_BLOB_URL,
+  isUrlDelimiter,
+};
 export const MAX_JUPYTER_ATTACHMENT_BYTES = MAX_NOTEBOOK_ATTACHMENT_BYTES;
 export const MAX_JUPYTER_ATTACHMENT_COUNT = MAX_NOTEBOOK_ATTACHMENT_COUNT;

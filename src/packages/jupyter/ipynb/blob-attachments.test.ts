@@ -9,7 +9,6 @@ import {
   blobUrlScanForTesting,
   embedCoCalcBlobImages,
   externalizeJupyterAttachments,
-  MAX_BLOB_URL_LENGTH,
   MAX_JUPYTER_ATTACHMENT_COUNT,
 } from "./blob-attachments";
 
@@ -313,26 +312,54 @@ describe("portable Jupyter blob attachments", () => {
   });
 
   describe("blob URL scan", () => {
-    const { blobUrlMatches, GLOBAL_BLOB_URL } = blobUrlScanForTesting;
+    const { blobUrlMatches, GLOBAL_BLOB_URL, isUrlDelimiter } =
+      blobUrlScanForTesting;
     const reference = (text: string) =>
       [...text.matchAll(GLOBAL_BLOB_URL)].map((m) => [m.index, m[0]]);
     const linear = (text: string) =>
       blobUrlMatches(text).map((m) => [m.index, m[0]]);
+
+    it("ends URLs at exactly the pattern's delimiters", () => {
+      const delimiter = /[\s"'<>()[\]]/;
+      const mismatches: number[] = [];
+      for (let code = 0; code < 0x10000; code++) {
+        if (
+          isUrlDelimiter(code) !== delimiter.test(String.fromCharCode(code))
+        ) {
+          mismatches.push(code);
+        }
+      }
+      expect(mismatches).toEqual([]);
+    });
 
     it("finds exactly what the pattern finds", () => {
       const pieces = [
         "/blobs/a.png?uuid=1",
         "https://cocalc.ai/blobs/b.png?uuid=2",
         "HTTP://Example.COM/x/BLOBS/c",
+        "hTtPs://h/BlObS/x",
         "blobs/",
+        "BLOBS/",
+        "blobs",
         "/",
         "//",
+        "///",
         "https://",
+        "http://",
+        "https:/",
+        "http:",
         "http://h",
         "x",
-        "blobs",
+        "s",
+        "\u017f", // long s: /i does not match it to "s"
+        "\u212a", // Kelvin sign
+        "\u0130", // dotted capital I
         " ",
         "\n",
+        "\u00a0",
+        "\u2028",
+        "\ufeff",
+        "\u200a",
         "(",
         ")",
         "[",
@@ -345,24 +372,25 @@ describe("portable Jupyter blob attachments", () => {
         '<img src="',
         "?uuid=",
         "%20",
+        "/x".repeat(40),
       ];
       let seed = 12345;
       const random = () => {
         seed = (seed * 1103515245 + 12345) % 2147483648;
         return seed / 2147483648;
       };
-      for (let i = 0; i < 3000; i++) {
+      for (let i = 0; i < 20000; i++) {
         let text = "";
-        const n = 1 + Math.floor(random() * 12);
+        const n = 1 + Math.floor(random() * 16);
         for (let j = 0; j < n; j++) {
           text += pieces[Math.floor(random() * pieces.length)];
         }
-        expect(linear(text)).toEqual(reference(text));
+        expect([text, linear(text)]).toEqual([text, reference(text)]);
       }
     });
 
     it("scans a large inline base64 image in linear time", () => {
-      // 3 MB of base64: about 2 minutes of CPU with the pattern itself.
+      // 3 MB of base64: minutes of CPU with the pattern itself.
       const base64 = Buffer.alloc(2_300_000, 7)
         .toString("base64")
         .replace(/c/g, "/");
@@ -373,11 +401,20 @@ describe("portable Jupyter blob attachments", () => {
       expect(Date.now() - started).toBeLessThan(2000);
     });
 
-    it("never treats a run longer than any blob URL as one", () => {
-      const run = `/${"x".repeat(MAX_BLOB_URL_LENGTH)}blobs/a.png`;
-      expect(linear(` ${run} `)).toEqual([]);
-      const short = `/${"x".repeat(100)}blobs/a.png`;
-      expect(linear(` ${short} `)).toEqual(reference(` ${short} `));
+    it("scans crafted near-miss runs in linear time", () => {
+      // Many slashes, then "blobs/" with nothing after it, so the pattern
+      // retries from every slash; short runs separated by spaces (review
+      // reproduction), and one long run.
+      const nearMiss = `${"/x".repeat(4093)}blobs/`;
+      const text = `${Array(200).fill(nearMiss).join(" ")} ${"/x".repeat(1_000_000)}blobs/`;
+      const started = Date.now();
+      expect(linear(text)).toEqual([]);
+      expect(Date.now() - started).toBeLessThan(2000);
+      // Still exact on a smaller copy the pattern can check quickly.
+      const small = `${Array(3)
+        .fill(`${"/x".repeat(50)}blobs/`)
+        .join(" ")} /blobs/a`;
+      expect(linear(small)).toEqual(reference(small));
     });
 
     it("saves a notebook with a large inline image without stalling", async () => {
