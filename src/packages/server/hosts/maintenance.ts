@@ -7,6 +7,7 @@
 // project_hosts.maintenance and shown as a banner on project pages.
 
 import getPool from "@cocalc/database/pool";
+import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import type {
   HostMaintenanceNotice,
   HostMaintenanceState,
@@ -284,18 +285,27 @@ export async function hostActivity({
        (SELECT count(*)::int FROM long_running_operations
          WHERE scope_type='host' AND scope_id::text=$1
            AND status IN ('queued','running')
+           AND expires_at > NOW()
            AND ($2::text IS NULL OR op_id::text <> $2)) AS host_operations,
        (SELECT count(*)::int FROM long_running_operations l
          WHERE l.scope_type <> 'host'
            AND l.status IN ('queued','running')
            AND (l.input->>'source_host_id' = $1
                 OR l.input->>'dest_host_id' = $1
+                OR l.input->>'project_host_id' = $1
                 OR EXISTS (
                   SELECT 1 FROM projects p
                    WHERE p.host_id::text = $1
-                     AND p.project_id::text = COALESCE(
-                       CASE WHEN l.scope_type = 'project' THEN l.scope_id::text END,
-                       l.input->>'project_id')))) AS project_operations`,
+                     AND (p.project_id::text = COALESCE(
+                            CASE WHEN l.scope_type = 'project' THEN l.scope_id::text END,
+                            l.input->>'project_id')
+                          -- Copies name their destination projects.
+                          OR p.project_id::text IN (
+                            SELECT dest->>'project_id'
+                              FROM jsonb_array_elements(
+                                CASE WHEN jsonb_typeof(l.input->'dests') = 'array'
+                                     THEN l.input->'dests' ELSE '[]'::jsonb END
+                              ) AS dest))))) AS project_operations`,
     [host_id, own_op_id ?? null],
   );
   return rows[0];
@@ -331,6 +341,65 @@ export async function assertProjectHostsNotUnderMaintenance({
       ),
       { code: "host_maintenance_in_progress" },
     );
+  }
+}
+
+// In-process work that changes a host's VM or disks outside cloud work and
+// LROs (disk auto-grow) registers as a running host operation first, so a
+// relocation's quiesce waits for it; it is refused while a relocation holds
+// the host. Registering before checking the fence closes the race: work that
+// checked before the lease was taken is already registered when quiesce
+// looks. The registration expires, so a crashed process cannot block
+// relocations of the host for long.
+export const TRACKED_HOST_WORK_MAX_MS = 30 * 60 * 1000;
+
+export async function withTrackedHostWork<T>({
+  host_id,
+  kind,
+  input,
+  refused,
+  run,
+}: {
+  host_id: string;
+  kind: string;
+  input?: Record<string, any>;
+  refused: () => T;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const op = await createLro({
+    kind,
+    scope_type: "host",
+    scope_id: host_id,
+    status: "running",
+    input,
+    expires_at: new Date(Date.now() + TRACKED_HOST_WORK_MAX_MS),
+  });
+  let error: unknown;
+  try {
+    const { rows } = await getPool().query(
+      "SELECT maintenance FROM project_hosts WHERE id=$1",
+      [host_id],
+    );
+    if (hostLifecycleFenced(rows[0]?.maintenance)) {
+      await updateLro({
+        op_id: op.op_id,
+        status: "canceled",
+        error: "the host is being relocated",
+      });
+      return refused();
+    }
+    return await run();
+  } catch (err) {
+    error = err;
+    throw err;
+  } finally {
+    await updateLro({
+      op_id: op.op_id,
+      status: error == null ? "succeeded" : "failed",
+      error: error == null ? null : `${error}`,
+      // A refused registration was already canceled.
+      if_status: ["running"],
+    }).catch(() => undefined);
   }
 }
 

@@ -13,6 +13,7 @@ import {
   releaseRelocationLease,
   setHostMaintenanceMetadata,
   setRelocationNotice,
+  withTrackedHostWork,
 } from "./maintenance";
 
 beforeAll(async () => {
@@ -271,6 +272,36 @@ describe("quiesceHostActivity", () => {
     expect(await hostActivity({ host_id: elsewhere })).toMatchObject({
       project_operations: 1,
     });
+    // A copy is scoped to its source project and names its destinations.
+    const source = randomUUID();
+    const dest = randomUUID();
+    await getPool().query(
+      "INSERT INTO projects (project_id, host_id) VALUES ($1, $2), ($3, $4)",
+      [source, elsewhere, dest, host_id],
+    );
+    const copy = await createLro({
+      kind: "copy-path-between-projects",
+      scope_type: "project",
+      scope_id: source,
+      status: "running",
+      input: {
+        src: { project_id: source, path: "a" },
+        dests: [{ project_id: dest, path: "b" }],
+      },
+    });
+    // A RootFS publish pinned to the host.
+    const publish = await createLro({
+      kind: "project-rootfs-publish",
+      scope_type: "project",
+      scope_id: randomUUID(),
+      status: "queued",
+      input: { project_host_id: host_id },
+    });
+    expect(await hostActivity({ host_id })).toMatchObject({
+      project_operations: 4,
+    });
+    await updateLro({ op_id: copy.op_id, status: "succeeded" });
+    await updateLro({ op_id: publish.op_id, status: "succeeded" });
     await updateLro({ op_id: move.op_id, status: "succeeded" });
     await updateLro({ op_id: hardDelete.op_id, status: "succeeded" });
     expect(await hostActivity({ host_id })).toMatchObject({
@@ -320,6 +351,44 @@ describe("project operations during a window", () => {
     await expect(
       assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] }),
     ).rejects.toMatchObject({ code: "host_maintenance_in_progress" });
+  });
+});
+
+describe("tracked host work", () => {
+  it("registers before checking the fence, and is refused once a relocation holds the host", async () => {
+    const host_id = await newHost();
+    let seen: any;
+    await expect(
+      withTrackedHostWork({
+        host_id,
+        kind: "host-auto-grow-disk",
+        refused: () => "refused",
+        run: async () => {
+          seen = await hostActivity({ host_id });
+          return "ran";
+        },
+      }),
+    ).resolves.toBe("ran");
+    // A relocation quiescing now would wait for it.
+    expect(seen).toMatchObject({ host_operations: 1 });
+    expect(await hostActivity({ host_id })).toMatchObject({
+      host_operations: 0,
+    });
+
+    await acquireRelocationLease({ host_id, lease_id: randomUUID() });
+    const run = jest.fn(async () => "ran");
+    await expect(
+      withTrackedHostWork({
+        host_id,
+        kind: "host-auto-grow-disk",
+        refused: () => "refused",
+        run,
+      }),
+    ).resolves.toBe("refused");
+    expect(run).not.toHaveBeenCalled();
+    expect(await hostActivity({ host_id })).toMatchObject({
+      host_operations: 0,
+    });
   });
 });
 

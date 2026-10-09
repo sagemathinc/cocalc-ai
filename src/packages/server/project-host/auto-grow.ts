@@ -38,7 +38,10 @@ import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
 import type { MoneyValue } from "@cocalc/util/money";
 import { getRoutedHostControlClient } from "./client";
-import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
+import {
+  hostLifecycleFenced,
+  withTrackedHostWork,
+} from "@cocalc/server/hosts/maintenance";
 
 const log = getLogger("server:project-host:auto-grow");
 const GIB = 1024 ** 3;
@@ -704,7 +707,26 @@ async function ensureRuntimeForResize(
   return { runtime, providerId };
 }
 
+// Disk resizes run as tracked host work: a relocation waits for one already
+// running and refuses new ones.
 async function performAutoGrow(
+  row: HostRow,
+  config: AutoGrowConfig,
+  opts?: {
+    trigger?: "reservation_failure" | "background_low_headroom";
+    reason?: string;
+  },
+): Promise<AutoGrowResult> {
+  return await withTrackedHostWork({
+    host_id: row.id,
+    kind: "host-auto-grow-disk",
+    input: { trigger: opts?.trigger },
+    refused: () => ({ grown: false, reason: "host is being relocated" }),
+    run: async () => await performAutoGrowNow(row, config, opts),
+  });
+}
+
+async function performAutoGrowNow(
   row: HostRow,
   config: AutoGrowConfig,
   opts?: {
@@ -814,6 +836,23 @@ async function performAutoGrow(
 }
 
 async function performSharedScratchAutoGrow(
+  row: HostRow,
+  config: AutoGrowConfig,
+  opts?: {
+    trigger?: "background_low_headroom";
+    reason?: string;
+  },
+): Promise<AutoGrowResult> {
+  return await withTrackedHostWork({
+    host_id: row.id,
+    kind: "host-auto-grow-scratch",
+    input: { trigger: opts?.trigger },
+    refused: () => ({ grown: false, reason: "host is being relocated" }),
+    run: async () => await performSharedScratchAutoGrowNow(row, config, opts),
+  });
+}
+
+async function performSharedScratchAutoGrowNow(
   row: HostRow,
   config: AutoGrowConfig,
   opts?: {

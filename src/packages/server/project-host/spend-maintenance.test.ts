@@ -190,7 +190,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[0]).toBe("host-1");
         return { rows: [], rowCount: 1 };
@@ -349,6 +349,24 @@ describe("dedicated host spend maintenance", () => {
     expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
   });
 
+  it("does not queue a drain when a relocation took the host after it was read", async () => {
+    const readRow = queryMock;
+    queryMock = jest.fn(async (sql: string, params?: any[]) =>
+      sql.includes("UPDATE project_hosts")
+        ? { rows: [], rowCount: 0 }
+        : await readRow(sql, params),
+    );
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    // A relocation took the host after this pass read it: nothing queued.
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).not.toHaveBeenCalled();
+  });
   it("keeps running site-funded hosts and closes any metered purchase session", async () => {
     getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
       account_id: "acc-1",
@@ -427,7 +445,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1].billing.funding_mode).toBe("account-prepaid");
@@ -528,7 +546,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[1]?.billing).toEqual({
           funding_mode: "site-funded",
@@ -821,7 +839,15 @@ describe("dedicated host spend maintenance", () => {
         );
         // Guarded on the fence and on the placement it read.
         expect(sql).toContain("maintenance->>'state'");
-        expect(sql).toContain("metadata->'machine' IS NOT DISTINCT FROM");
+        // Only the keys this pass changed are written.
+        expect(Object.keys(params?.[3]).sort()).toEqual([
+          "billing",
+          "desired_state",
+          "last_action",
+          "last_action_at",
+          "last_action_error",
+          "last_action_status",
+        ]);
         return { rows: [], rowCount: 0 };
       }
       if (sql.includes("pg_advisory_unlock")) {
@@ -874,12 +900,12 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
-        expect(params?.[1]?.billing).toEqual({
-          funding_mode: "site-funded",
-          started_at: "2026-05-07T00:00:00.000Z",
-        });
+        // Only changed keys are written: the unchanged site-funded billing
+        // policy is neither rewritten nor removed.
+        expect(params?.[1]?.billing).toBeUndefined();
+        expect(params?.[2]).not.toContain("billing");
         return { rows: [], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
@@ -1024,7 +1050,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1].billing.enforcement.state).toBe(
@@ -1068,6 +1094,67 @@ describe("dedicated host spend maintenance", () => {
     );
   });
 
+  it("does not queue a deprovision when a relocation took the host after it was read", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: "acc-1",
+                desired_state: "stopped",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "n1-standard-4",
+                },
+                billing: {
+                  funding_mode: "account-prepaid",
+                  enforcement: {
+                    state: "stopped_billing_blocked",
+                    reason: "prepaid balance is exhausted",
+                    final_backup_status: "succeeded",
+                    deprovision_after: "2026-01-01T00:00:00.000Z",
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        expect(params?.[0]).toBe("host-1");
+        expect(params?.[1].billing.enforcement.state).toBe(
+          "deprovision_pending",
+        );
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    // A relocation took the host after this pass read it: nothing queued.
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).not.toHaveBeenCalled();
+  });
   it("automatically clears inactive billing enforcement after limits recover", async () => {
     isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(() => true);
     getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
@@ -1126,7 +1213,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1].billing.enforcement).toEqual({ state: "ok" });
@@ -1192,7 +1279,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1].billing.enforcement.state).toBe(
@@ -1274,7 +1361,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[1].billing.hourly_cost_usd).toBe("12");
         return { rows: [], rowCount: 1 };
@@ -1358,7 +1445,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[1].billing.pricing_snapshot.billing_state).toBe(
           "stopped",
@@ -1473,7 +1560,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(params?.[1].billing.enforcement).toMatchObject({
           state: "stopped_billing_blocked",
@@ -1523,7 +1610,7 @@ describe("dedicated host spend maintenance", () => {
       }
       if (
         sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=$2")
+        sql.includes("SET metadata=(")
       ) {
         expect(
           params?.[1].billing.enforcement.deprovision_reminder_sent_at,
@@ -1546,5 +1633,31 @@ describe("dedicated host spend maintenance", () => {
       deprovision_after: deprovisionAfter,
     });
     expect(createLroMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("spend maintenance metadata patches", () => {
+  it("writes only the keys a pass changed", async () => {
+    const { metadataPatch } = await import("./spend-maintenance");
+    // Read before a relocation that later rolled back: the pass changed only
+    // billing, so placement, runtime and intent restored meanwhile survive.
+    const read = {
+      owner: "acc-1",
+      desired_state: "running",
+      machine: { zone: "us-south1-c", machine_type: "t2d-standard-16" },
+      runtime: { instance_id: "i-1" },
+      billing: { enforcement: { state: "ok" } },
+      last_action_error: "old",
+    };
+    const next = {
+      ...read,
+      billing: { enforcement: { state: "draining" } },
+      last_action_error: undefined,
+    };
+    expect(metadataPatch(read, next)).toEqual({
+      set: { billing: { enforcement: { state: "draining" } } },
+      remove: ["last_action_error"],
+    });
+    expect(metadataPatch(read, { ...read })).toEqual({ set: {}, remove: [] });
   });
 });

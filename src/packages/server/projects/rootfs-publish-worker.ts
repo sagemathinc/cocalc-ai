@@ -559,7 +559,10 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
   };
 
   try {
-    await assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] });
+    await assertProjectHostsNotUnderMaintenance({
+      project_ids: [project_id],
+      host_ids: [input.project_host_id],
+    });
     const runningOp = await updateLro({
       op_id,
       status: "running",
