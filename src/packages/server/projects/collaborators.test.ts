@@ -83,7 +83,14 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: queryMock })),
+  default: jest.fn(() => ({
+    query: queryMock,
+    // transaction clients share queryMock so tests can check statement order
+    connect: async () => ({
+      query: (...args: any[]) => queryMock(...args),
+      release: () => undefined,
+    }),
+  })),
 }));
 
 jest.mock("@cocalc/database/settings/site-url", () => ({
@@ -2186,15 +2193,32 @@ describe("project collaborators local bay access", () => {
     );
   });
 
-  it("binds accepted course email invites to the student project course field", async () => {
-    const inviteId = "77777777-7777-4777-8777-777777777777";
-    const token = "course-invite-token";
-    const courseProjectId = "88888888-8888-4888-8888-888888888888";
-    const studentId = "99999999-9999-4999-8999-999999999999";
-    assertAccountTrustedForProductAccessMock = jest.fn(async () => {
-      throw new Error("verify");
-    });
-    queryMock = jest.fn(async (sql: string) => {
+  // queries for redeeming a pending course_student email invite;
+  // `override` can answer (or fail) a statement first
+  function courseRedeemQueryMock({
+    inviteId,
+    token,
+    courseProjectId,
+    studentId,
+    override,
+  }: {
+    inviteId: string;
+    token: string;
+    courseProjectId: string;
+    studentId: string;
+    override?: (sql: string) => any;
+  }): jest.Mock {
+    return jest.fn(async (sql: string) => {
+      const overridden = override?.(sql);
+      if (overridden !== undefined) {
+        return overridden;
+      }
+      if (sql.includes("SELECT status, scope")) {
+        return { rows: [{ status: "pending", scope: "course_student" }] };
+      }
+      if (sql.includes("AS existing_group")) {
+        return { rows: [{ existing_group: null }] };
+      }
       if (
         sql.includes("UPDATE project_collab_invites") &&
         sql.includes("RETURNING")
@@ -2279,6 +2303,26 @@ describe("project collaborators local bay access", () => {
       }
       return { rows: [] };
     });
+  }
+
+  function statementIndex(predicate: (sql: string) => boolean): number {
+    return queryMock.mock.calls.findIndex(([sql]) => predicate(`${sql}`));
+  }
+
+  it("binds accepted course email invites to the student project course field", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "course-invite-token";
+    const courseProjectId = "88888888-8888-4888-8888-888888888888";
+    const studentId = "99999999-9999-4999-8999-999999999999";
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => {
+      throw new Error("verify");
+    });
+    queryMock = courseRedeemQueryMock({
+      inviteId,
+      token,
+      courseProjectId,
+      studentId,
+    });
 
     const { redeemEmailProjectInvite } = await import("./collaborators");
     getVerifiedEmailAddressForAccountMock.mockResolvedValue(
@@ -2310,13 +2354,25 @@ describe("project collaborators local bay access", () => {
         status: "accepted",
       }),
     );
-    expect(addUserToProject).toHaveBeenCalledWith(
-      expect.objectContaining({
-        account_id: ACCOUNT_ID,
-        group: "collaborator",
-        project_id: PROJECT_ID,
-      }),
+    // grant, course binding and invite acceptance commit together
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET users = jsonb_set"),
+      [PROJECT_ID, ACCOUNT_ID, JSON.stringify({ group: "collaborator" })],
     );
+    const begin = statementIndex((sql) => sql === "BEGIN");
+    const grant = statementIndex((sql) =>
+      sql.includes("SET users = jsonb_set"),
+    );
+    const bind = statementIndex((sql) => sql.includes("SET course=jsonb_set"));
+    const accept = statementIndex((sql) =>
+      sql.includes("SET status='accepted'"),
+    );
+    const commit = statementIndex((sql) => sql === "COMMIT");
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(begin).toBeLessThan(grant);
+    expect(grant).toBeLessThan(bind);
+    expect(bind).toBeLessThan(accept);
+    expect(accept).toBeLessThan(commit);
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("jsonb_set"),
       [PROJECT_ID, ACCOUNT_ID],
@@ -2336,6 +2392,88 @@ describe("project collaborators local bay access", () => {
       project_id: courseProjectId,
       warmRoute: false,
     });
+  });
+
+  it("rolls back the membership grant when binding the course project fails", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "course-invite-token";
+    const courseProjectId = "88888888-8888-4888-8888-888888888888";
+    const studentId = "99999999-9999-4999-8999-999999999999";
+    queryMock = courseRedeemQueryMock({
+      inviteId,
+      token,
+      courseProjectId,
+      studentId,
+      override: (sql) => {
+        if (sql.includes("SET course=jsonb_set")) {
+          throw new Error("database unavailable");
+        }
+      },
+    });
+    getVerifiedEmailAddressForAccountMock.mockResolvedValue(
+      "invite@example.com",
+    );
+    resolveProjectReferenceAllowRemoteMock.mockResolvedValueOnce(null);
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      redeemEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        token,
+      }),
+    ).rejects.toThrow("database unavailable");
+    expect(
+      statementIndex((sql) => sql.includes("SET users = jsonb_set")),
+    ).toBeGreaterThanOrEqual(0);
+    expect(statementIndex((sql) => sql === "ROLLBACK")).toBeGreaterThanOrEqual(
+      0,
+    );
+    expect(statementIndex((sql) => sql === "COMMIT")).toBe(-1);
+    expect(statementIndex((sql) => sql.includes("SET status='accepted'"))).toBe(
+      -1,
+    );
+    expect(
+      claimCourseMembershipPackageSeatsForAcceptedInviteMock,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does not grant access when the invite stopped being pending before the lock", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "course-invite-token";
+    const courseProjectId = "88888888-8888-4888-8888-888888888888";
+    const studentId = "99999999-9999-4999-8999-999999999999";
+    queryMock = courseRedeemQueryMock({
+      inviteId,
+      token,
+      courseProjectId,
+      studentId,
+      override: (sql) => {
+        if (sql.includes("SELECT status, scope")) {
+          return { rows: [{ status: "canceled", scope: "course_student" }] };
+        }
+      },
+    });
+    getVerifiedEmailAddressForAccountMock.mockResolvedValue(
+      "invite@example.com",
+    );
+    resolveProjectReferenceAllowRemoteMock.mockResolvedValueOnce(null);
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      redeemEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        token,
+      }),
+    ).rejects.toThrow("invite is not pending (status=canceled)");
+    expect(statementIndex((sql) => sql.includes("SET users = jsonb_set"))).toBe(
+      -1,
+    );
+    expect(statementIndex((sql) => sql.includes("SET course=jsonb_set"))).toBe(
+      -1,
+    );
+    expect(statementIndex((sql) => sql === "ROLLBACK")).toBeGreaterThanOrEqual(
+      0,
+    );
   });
 
   it("rejects a protected project invite for a different verified email", async () => {

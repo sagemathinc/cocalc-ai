@@ -72,6 +72,7 @@ import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getClusterAccountById,
@@ -3838,6 +3839,128 @@ async function assertCanCopyCourseEmailInviteLink({
   });
 }
 
+// Accept an email invite in one transaction: grant project membership, bind
+// a course student project to the accepting account, and mark the invite
+// accepted. Previously these were separate writes, so a failure or a
+// concurrent course reconcile in between could leave the project bound to
+// the student (course.account_id) without the student in users, or the
+// student in users with the invite still pending. The invite and project rows
+// are locked, so concurrent redemptions and reconciles serialize.
+async function acceptEmailInviteAtomically({
+  invite_id,
+  project_id,
+  account_id,
+  invite_role,
+  read_policy,
+}: {
+  invite_id: string;
+  project_id: string;
+  account_id: string;
+  invite_role?: string | null;
+  read_policy?: ProjectViewerReadPolicy | null;
+}): Promise<{ granted: boolean }> {
+  const role = normalizeInviteRole(invite_role);
+  const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
+  const client = await getPool().connect();
+  let granted = false;
+  try {
+    await client.query("BEGIN");
+    // Same lock order as other membership writers (course reconcile,
+    // add/remove collaborator): rehome fence, then the project row; the
+    // invite row is locked last.
+    await assertProjectNotRehoming({
+      db: client,
+      project_id,
+      action: "accept project invite",
+    });
+    const { rows: projectRows } = await client.query<{
+      existing_group: string | null;
+    }>(
+      `SELECT users -> $2::text ->> 'group' AS existing_group
+         FROM projects
+        WHERE project_id=$1
+          FOR UPDATE`,
+      [project_id, account_id],
+    );
+    if (projectRows.length === 0) {
+      throw new Error(`project '${project_id}' not found`);
+    }
+    const { rows: inviteRows } = await client.query<{
+      status: string;
+      scope: string | null;
+    }>(
+      `SELECT status, scope
+         FROM project_collab_invites
+        WHERE invite_id=$1
+          FOR UPDATE`,
+      [invite_id],
+    );
+    const status = inviteRows[0]?.status;
+    if (status !== "pending") {
+      throw new Error(`invite is not pending (status=${status})`);
+    }
+    const existingGroup = projectRows[0]?.existing_group;
+    const needsGrant =
+      existingGroup !== "owner" &&
+      existingGroup !== "collaborator" &&
+      !(existingGroup === "viewer" && role === "viewer");
+    const needsUpgrade = existingGroup === "viewer" && role === "collaborator";
+    if (needsGrant || needsUpgrade) {
+      const entry =
+        role === "viewer"
+          ? { group: "viewer", read_policy: policy }
+          : { group: "collaborator" };
+      await client.query(
+        `UPDATE projects
+            SET users = jsonb_set(
+                  COALESCE(users, '{}'::jsonb),
+                  ARRAY[$2::text],
+                  $3::jsonb,
+                  true
+                )
+          WHERE project_id=$1`,
+        [project_id, account_id, JSON.stringify(entry)],
+      );
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.membership_changed",
+        project_id,
+      });
+      granted = true;
+    }
+    if (inviteRows[0]?.scope === COURSE_EMAIL_INVITE_SCOPE) {
+      await client.query(
+        `UPDATE projects
+            SET course=jsonb_set(
+                  COALESCE(course, '{}'::jsonb),
+                  '{account_id}',
+                  to_jsonb($2::text),
+                  true
+                )
+          WHERE project_id=$1`,
+        [project_id, account_id],
+      );
+    }
+    await client.query(
+      `UPDATE project_collab_invites
+          SET status='accepted',
+              responder_action='accept',
+              accepted_account_id=$2,
+              responded=NOW(),
+              updated=NOW()
+        WHERE invite_id=$1`,
+      [invite_id, account_id],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+  return { granted };
+}
+
 export async function redeemEmailProjectInvite({
   account_id,
   invite_id,
@@ -3871,58 +3994,19 @@ export async function redeemEmailProjectInvite({
     invite,
   });
   await assertInviteSenderCanStillGrantAccess({ pool, invite });
-  const role = normalizeInviteRole(invite.invite_role);
-  const { rows: collabRows } = await pool.query<{
-    existing_group: string | null;
-  }>(
-    `SELECT users -> $2::text ->> 'group' AS existing_group
-       FROM projects
-      WHERE project_id=$1
-      LIMIT 1`,
-    [invite.project_id, account_id],
-  );
-  const existingGroup = collabRows[0]?.existing_group;
-  const needsGrant =
-    existingGroup !== "owner" &&
-    existingGroup !== "collaborator" &&
-    !(existingGroup === "viewer" && role === "viewer");
-  const needsUpgrade = existingGroup === "viewer" && role === "collaborator";
-  if (needsGrant || needsUpgrade) {
-    await addUserToProjectForAcceptedInvite({
-      project_id: invite.project_id,
-      account_id,
-      invite_role: invite.invite_role,
-      read_policy: invite.read_policy,
-    });
+  const { granted } = await acceptEmailInviteAtomically({
+    invite_id,
+    project_id: invite.project_id,
+    account_id,
+    invite_role: invite.invite_role,
+    read_policy: invite.read_policy,
+  });
+  if (granted) {
     await syncProjectUsersOnHostBestEffort(
       invite.project_id,
       "accept email token invite",
     );
   }
-  const loaded = await getCanonicalCollabInvite(pool, invite_id);
-  if (loaded?.scope === COURSE_EMAIL_INVITE_SCOPE) {
-    await pool.query(
-      `UPDATE projects
-          SET course=jsonb_set(
-                COALESCE(course, '{}'::jsonb),
-                '{account_id}',
-                to_jsonb($2::text),
-                true
-              )
-        WHERE project_id=$1`,
-      [invite.project_id, account_id],
-    );
-  }
-  await pool.query(
-    `UPDATE project_collab_invites
-        SET status='accepted',
-            responder_action='accept',
-            accepted_account_id=$2,
-            responded=NOW(),
-            updated=NOW()
-      WHERE invite_id=$1`,
-    [invite_id, account_id],
-  );
   await registerEmailInviteDirectory({
     invite_id,
     project_id: invite.project_id,
