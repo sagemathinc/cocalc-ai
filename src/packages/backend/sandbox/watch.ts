@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { watch as chokidarWatch } from "chokidar";
+import { readWatchedFileUtf8 } from "./safe-read";
 import {
   watch as nativeFsWatch,
   type FSWatcher as NativeFsWatcher,
@@ -379,7 +379,9 @@ class Watcher extends EventEmitter {
     }
     let cur;
     try {
-      cur = await readFile(path, "utf8");
+      // No-follow, nonblocking: a swapped-in symlink or FIFO must not be
+      // followed into the patch stream or block a worker.
+      cur = await readWatchedFileUtf8(path);
     } catch (err) {
       log(path, "read error", err);
       return x;

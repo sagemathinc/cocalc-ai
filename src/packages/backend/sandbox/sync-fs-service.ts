@@ -1,5 +1,6 @@
 import { watch as chokidarWatch, type FSWatcher } from "chokidar";
-import { readFile, stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
+import { readWatchedFileUtf8 } from "./safe-read";
 import { EventEmitter } from "events";
 import { dirname } from "path";
 import { createHash } from "node:crypto";
@@ -620,7 +621,7 @@ export class SyncFsService extends EventEmitter {
       let diskContent: string;
       let forceDiff = false;
       try {
-        diskContent = (await readFile(path, "utf8")) as string;
+        diskContent = await readWatchedFileUtf8(path);
       } catch (err: any) {
         if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
           throw err;
@@ -902,7 +903,7 @@ export class SyncFsService extends EventEmitter {
           if (marker != null) {
             if (Date.now() <= marker.until) {
               try {
-                preloaded = (await readFile(path, "utf8")) as string;
+                preloaded = await readWatchedFileUtf8(path);
               } catch {
                 preloaded = undefined;
               }
@@ -918,7 +919,7 @@ export class SyncFsService extends EventEmitter {
           const change = await this.store.handleExternalChange(
             path,
             async () => {
-              return preloaded ?? ((await readFile(path, "utf8")) as string);
+              return preloaded ?? (await readWatchedFileUtf8(path));
             },
             false,
             codec,
@@ -953,7 +954,9 @@ export class SyncFsService extends EventEmitter {
       return true;
     }
     try {
-      const stats = await stat(path);
+      // lstat, not stat: a watched path swapped to a symlink must be treated
+      // as "reconcile" and then refused by the no-follow read, never followed.
+      const stats = await lstat(path);
       if (!stats.isFile()) {
         return true;
       }
