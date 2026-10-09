@@ -14,12 +14,29 @@ export function retryablePreparation<T>() {
   };
 }
 
+import type { CodexThreadConfig } from "@cocalc/chat";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
+import type { NewAgentRuntimeKind } from "./new-agent-runtime-select";
+
+// The agent's settings as chosen when its thread was created: Codex's model,
+// reasoning and payment (with the selected subscription), or Claude's
+// credential. Kept here because the server copy of a thread's selections may
+// not have loaded after a reload, and a retry must not fall back to defaults.
+export interface PreparedFirstAgentSettings {
+  codexConfig?: CodexThreadConfig & { credentialId?: string };
+  claudeCredential?: AcpHarnessCredential;
+}
+
 export interface PreparedFirstAgent {
   projectId: string;
   path: string;
   threadId: string;
   name: string;
   automaticProjectTitle?: string;
+  // The agent type the thread was created with (missing: Codex, the only
+  // first-run type before the selector was shown there).
+  runtimeKind?: NewAgentRuntimeKind;
+  settings?: PreparedFirstAgentSettings;
 }
 
 const KEY = "cocalc:prepared-first-agent:";

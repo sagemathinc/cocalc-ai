@@ -47,6 +47,22 @@ export async function completeFirstRunWithAgent(
   accountId: string | undefined,
   projectId: string,
 ): Promise<void> {
+  await completeAgentFirstRun(accountId, projectId, "codex");
+}
+
+// "Or just use your project directly": the first run ends without an agent.
+export async function completeFirstRunWithProject(
+  accountId: string | undefined,
+  projectId: string,
+): Promise<void> {
+  await completeAgentFirstRun(accountId, projectId, "existing-project");
+}
+
+async function completeAgentFirstRun(
+  accountId: string | undefined,
+  projectId: string,
+  intent: "codex" | "existing-project",
+): Promise<void> {
   if (!accountId) return;
   const key = `${AGENT_FIRST_RUN_KEY}${accountId}`;
   let started = activeFirstRuns.has(accountId);
@@ -81,7 +97,7 @@ export async function completeFirstRunWithAgent(
   const value: StoredFirstRunOnboarding = {
     version: FIRST_RUN_ONBOARDING_VERSION,
     status: "completed",
-    intent: "codex",
+    intent,
     project_id: projectId,
     updated_at: new Date().toISOString(),
   };
