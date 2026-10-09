@@ -1,6 +1,9 @@
 describe("btrfs quota mode reconciliation", () => {
   const originalQuotaMode = process.env.COCALC_BTRFS_QUOTA_MODE;
   const originalDisableQuotas = process.env.COCALC_DISABLE_BTRFS_QUOTAS;
+  const originalUnsupportedMode =
+    process.env.COCALC_BTRFS_UNSUPPORTED_QUOTA_MODE;
+  const originalCacheMs = process.env.COCALC_BTRFS_QUOTA_MODE_CACHE_MS;
 
   beforeEach(() => {
     jest.resetModules();
@@ -20,6 +23,13 @@ describe("btrfs quota mode reconciliation", () => {
       delete process.env.COCALC_DISABLE_BTRFS_QUOTAS;
     } else {
       process.env.COCALC_DISABLE_BTRFS_QUOTAS = originalDisableQuotas;
+    }
+    for (const [name, value] of [
+      ["COCALC_BTRFS_UNSUPPORTED_QUOTA_MODE", originalUnsupportedMode],
+      ["COCALC_BTRFS_QUOTA_MODE_CACHE_MS", originalCacheMs],
+    ] as const) {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
     }
   });
 
@@ -156,7 +166,10 @@ Quotas on /mnt/test:
     expect(btrfsMock).toHaveBeenCalledTimes(1);
   });
 
-  function mockKernelWithoutSimpleQuotas(enableError: string) {
+  function mockKernelWithoutSimpleQuotas(
+    enableError: string,
+    { featureAdvertised = false } = {},
+  ) {
     const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
       if (args.join(" ") === "filesystem show /mnt/test") {
         return {
@@ -178,6 +191,10 @@ Quotas on /mnt/test:
     jest.doMock("node:fs/promises", () => ({
       readFile: async (path: string) => {
         if (path.endsWith("/enabled")) return "0\n";
+        if (path === "/sys/fs/btrfs/features/simple_quota") {
+          if (featureAdvertised) return "0\n";
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
         throw new Error(`unexpected readFile path: ${path}`);
       },
     }));
@@ -219,5 +236,19 @@ Quotas on /mnt/test:
     await expect(ensureBtrfsQuotaMode("/mnt/test")).rejects.toThrow(
       "Device or resource busy",
     );
+  });
+
+  it("does not fall back when the kernel advertises simple quotas", async () => {
+    process.env.COCALC_BTRFS_UNSUPPORTED_QUOTA_MODE = "disabled";
+    mockKernelWithoutSimpleQuotas(
+      "ERROR: quota command failed: Invalid argument",
+      { featureAdvertised: true },
+    );
+    const { ensureBtrfsQuotaMode } = await import("./quota-mode");
+    await expect(ensureBtrfsQuotaMode("/mnt/test")).rejects.toThrow(
+      "Invalid argument",
+    );
+    const { btrfsQuotasDisabled } = await import("./config");
+    expect(btrfsQuotasDisabled()).toBe(false);
   });
 });

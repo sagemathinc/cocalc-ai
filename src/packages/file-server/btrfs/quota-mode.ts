@@ -125,6 +125,19 @@ export function simpleQuotasUnsupported(err: unknown): boolean {
   return /invalid argument/i.test(`${(err as any)?.message ?? err}`);
 }
 
+// The kernel advertises simple quota support (6.7+, or a backport) here. An
+// EINVAL from a kernel that has the feature is some other problem.
+const SIMPLE_QUOTA_FEATURE = "/sys/fs/btrfs/features/simple_quota";
+
+async function kernelLacksSimpleQuotas(): Promise<boolean> {
+  try {
+    await readFile(SIMPLE_QUOTA_FEATURE, "utf8");
+    return false;
+  } catch (err: any) {
+    return err?.code === "ENOENT";
+  }
+}
+
 function disableQuotasWhenUnsupported(): boolean {
   return (
     `${process.env.COCALC_BTRFS_UNSUPPORTED_QUOTA_MODE ?? ""}`
@@ -216,7 +229,11 @@ async function reconcileBtrfsQuotaMode(
       verbose: false,
     });
   } catch (err) {
-    if (!simpleQuotasUnsupported(err) || !disableQuotasWhenUnsupported()) {
+    if (
+      !simpleQuotasUnsupported(err) ||
+      !disableQuotasWhenUnsupported() ||
+      !(await kernelLacksSimpleQuotas())
+    ) {
       throw err;
     }
     // Everything in this process (and processes it starts) now treats
