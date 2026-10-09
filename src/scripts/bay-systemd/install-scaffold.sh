@@ -111,7 +111,9 @@ install -m 0644 "${SCRIPT_DIR}/needrestart/cocalc-bay.conf" \
   "${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf"
 
 if command -v visudo >/dev/null 2>&1; then
-  visudo -cf "${TARGET_SUDOERS_DIR}/cocalc-bay-cloudflared" >/dev/null
+  for sudoers_file in "${SCRIPT_DIR}/sudoers/"*; do
+    visudo -cf "${TARGET_SUDOERS_DIR}/$(basename "$sudoers_file")" >/dev/null
+  done
 fi
 
 install -m 0644 "${SCRIPT_DIR}/env/bay.env.example" \

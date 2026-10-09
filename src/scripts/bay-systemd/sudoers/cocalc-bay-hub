@@ -1,0 +1,1 @@
+cocalc-bay ALL=(root) NOPASSWD: /usr/local/sbin/cocalc-bay-hub-ctl restart *, /usr/local/sbin/cocalc-bay-hub-ctl journal *

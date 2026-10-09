@@ -42,6 +42,21 @@ case "$1" in
 esac
 EOF
 
+# The watchdog runs as the bay user and restarts a worker through the root
+# helper with sudo; both are stand-ins here.
+cat > "${FAKE_BIN}/sudo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "-n" ]] && shift
+exec "$@"
+EOF
+cat > "${FAKE_BIN}/cocalc-bay-hub-ctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'hub-ctl %s\n' "$*" >> "$WATCHDOG_SYSTEMCTL_LOG"
+EOF
+export COCALC_BAY_HUB_CTL="${FAKE_BIN}/cocalc-bay-hub-ctl"
+
 cat > "${FAKE_BIN}/timeout" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -88,18 +103,23 @@ export WATCHDOG_HEALTH_JSON='{
 }'
 
 bash "${SCRIPT_DIR}/bay-hub-watchdog"
-if grep -q '^restart ' "$WATCHDOG_SYSTEMCTL_LOG"; then
+if grep -q '^hub-ctl restart ' "$WATCHDOG_SYSTEMCTL_LOG"; then
   echo "watchdog restarted a worker before reaching its threshold" >&2
   exit 1
 fi
 
 bash "${SCRIPT_DIR}/bay-hub-watchdog"
-grep -qx 'restart cocalc-bay-hub@1.service' "$WATCHDOG_SYSTEMCTL_LOG"
+grep -qx 'hub-ctl restart 1' "$WATCHDOG_SYSTEMCTL_LOG"
+# Never systemctl directly: the bay user cannot, and root goes through hub-ctl.
+if grep -q '^restart \|^reset-failed ' "$WATCHDOG_SYSTEMCTL_LOG"; then
+  echo "watchdog called systemctl restart directly" >&2
+  exit 1
+fi
 grep -qx 'bay-hub-diagnose 1' "$WATCHDOG_HELPER_LOG"
 grep -qx 'bay-frontdoor-drain 1' "$WATCHDOG_HELPER_LOG"
 grep -qx 'bay-worker-health 1' "$WATCHDOG_HELPER_LOG"
 grep -qx 'bay-frontdoor-undrain 1' "$WATCHDOG_HELPER_LOG"
-if grep -qx 'restart cocalc-bay-hub@2.service' "$WATCHDOG_SYSTEMCTL_LOG"; then
+if grep -qx 'hub-ctl restart 2' "$WATCHDOG_SYSTEMCTL_LOG"; then
   echo "watchdog restarted more than one worker in one pass" >&2
   exit 1
 fi
@@ -109,7 +129,7 @@ rm -rf "$COCALC_BAY_RUN_DIR"
 export COCALC_BAY_HUB_WATCHDOG_FAILURE_THRESHOLD=1
 export FAKE_ROUTER_HEALTHY=0
 bash "${SCRIPT_DIR}/bay-hub-watchdog"
-if grep -q '^restart ' "$WATCHDOG_SYSTEMCTL_LOG"; then
+if grep -q '^hub-ctl restart ' "$WATCHDOG_SYSTEMCTL_LOG"; then
   echo "watchdog restarted a worker while the router was unhealthy" >&2
   exit 1
 fi

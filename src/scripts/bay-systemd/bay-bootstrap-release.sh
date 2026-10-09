@@ -90,6 +90,42 @@ find_node() {
   return 1
 }
 
+# Root runs install-scaffold.sh, which installs systemd units, sudoers rules
+# and root helpers. TARGET_RELEASE belongs to the bay account, which could
+# replace anything in it (even files it does not own, by renaming their
+# directory), so the installer and everything it installs come from a
+# root-owned copy taken straight from the bundle or source tree instead.
+SCAFFOLD_STAGE_PARENT="${COCALC_BAY_SCAFFOLD_STAGE_PARENT:-/run}"
+TRUSTED_SCAFFOLD_DIR=""
+
+stage_trusted_scaffold() {
+  local stage bundle="${HUB_BUNDLE_PATH:-$BUNDLE_PATH}"
+  stage="$(mktemp -d "${SCAFFOLD_STAGE_PARENT}/cocalc-bay-scaffold.XXXXXX")"
+  if [[ -n "$bundle" ]]; then
+    run tar --no-same-owner -xf "$bundle" -C "$stage" --strip-components=1 \
+      --wildcards '*/scripts/bay-systemd/*'
+  else
+    run mkdir -p "${stage}/scripts"
+    run cp -a "${SOURCE_ROOT}/scripts/bay-systemd" "${stage}/scripts/"
+  fi
+  if [[ "$(id -u)" == 0 ]]; then
+    run chown -R root:root "$stage"
+  fi
+  run chmod -R go-w "$stage"
+  TRUSTED_SCAFFOLD_DIR="${stage}/scripts/bay-systemd"
+  if [[ ! -x "${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" ]]; then
+    echo "${bundle:-$SOURCE_ROOT} is missing scripts/bay-systemd/install-scaffold.sh" >&2
+    exit 1
+  fi
+}
+
+remove_trusted_scaffold() {
+  if [[ -n "$TRUSTED_SCAFFOLD_DIR" ]]; then
+    rm -rf "$(dirname "$(dirname "$TRUSTED_SCAFFOLD_DIR")")"
+    TRUSTED_SCAFFOLD_DIR=""
+  fi
+}
+
 make_target_release_accessible() {
   run chown "${BAY_USER}:${BAY_GROUP}" "$TARGET_RELEASE"
   run chmod 0755 "$TARGET_RELEASE"
@@ -1006,8 +1042,9 @@ EOF
 
   if [[ -n "$HUB_BUNDLE_PATH" ]]; then
     configure_bay_logging_env
+    stage_trusted_scaffold
     INSTALL_CMD=(
-      "${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh"
+      "${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh"
       "--overlay"
       "$OVERLAY_MODE"
     )
@@ -1015,6 +1052,7 @@ EOF
       INSTALL_CMD+=("--daemon-reload")
     fi
     run "${INSTALL_CMD[@]}"
+    remove_trusted_scaffold
     prune_old_releases
     cat <<EOF
 Hub release bootstrap complete.
@@ -1030,11 +1068,13 @@ EOF
     exit 0
   fi
 
-  INSTALL_CMD=("${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh" "--overlay" "$OVERLAY_MODE")
+  stage_trusted_scaffold
+  INSTALL_CMD=("${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" "--overlay" "$OVERLAY_MODE")
   if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
     INSTALL_CMD+=("--daemon-reload")
   fi
   run "${INSTALL_CMD[@]}"
+  remove_trusted_scaffold
 
   run mkdir -p "${BAY_ROOT}/secrets" "${BAY_ROOT}/projects"
   run mkdir -p "${BAY_ROOT}/bin"

@@ -260,4 +260,58 @@ if ! awk '/^  if \[\[ -n "\$HUB_BUNDLE_PATH" \]\]; then$/ { hub = 1 }
   exit 1
 fi
 
+# The installer root runs comes from a root-owned copy of the bundle's (or
+# source tree's) scaffold, never from the bay-owned release directory.
+scaffold_bundle_root="${TMP_ROOT}/scaffold-bundle/cocalc-bay-test"
+mkdir -p "${scaffold_bundle_root}/scripts/bay-systemd/bin" "${scaffold_bundle_root}/runtime"
+printf '#!/usr/bin/env bash\necho trusted-installer\n' > "${scaffold_bundle_root}/scripts/bay-systemd/install-scaffold.sh"
+chmod 0777 "${scaffold_bundle_root}/scripts/bay-systemd/install-scaffold.sh"
+printf 'helper\n' > "${scaffold_bundle_root}/scripts/bay-systemd/bin/helper"
+printf 'runtime\n' > "${scaffold_bundle_root}/runtime/index.js"
+tar -czf "${TMP_ROOT}/scaffold-bundle.tar.gz" -C "${TMP_ROOT}/scaffold-bundle" cocalc-bay-test
+SCAFFOLD_STAGE_PARENT="${TMP_ROOT}"
+TARGET_RELEASE="${TMP_ROOT}/tampered-release"
+mkdir -p "${TARGET_RELEASE}/scripts/bay-systemd"
+printf '#!/usr/bin/env bash\necho tampered\n' > "${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh"
+check_trusted_scaffold() {
+  [[ "$TRUSTED_SCAFFOLD_DIR" == "${TMP_ROOT}"/cocalc-bay-scaffold.*/scripts/bay-systemd ]] || {
+    echo "scaffold not staged outside the release: $TRUSTED_SCAFFOLD_DIR" >&2
+    exit 1
+  }
+  [[ "$("${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh")" == trusted-installer ]] || {
+    echo "staged installer is not the bundle's" >&2
+    exit 1
+  }
+  if find "$(dirname "$(dirname "$TRUSTED_SCAFFOLD_DIR")")" -perm /022 | grep -q .; then
+    echo "staged scaffold is group- or world-writable" >&2
+    exit 1
+  fi
+}
+BUNDLE_PATH="${TMP_ROOT}/scaffold-bundle.tar.gz"
+HUB_BUNDLE_PATH=""
+stage_trusted_scaffold >/dev/null
+check_trusted_scaffold
+if [[ -e "$(dirname "$(dirname "$TRUSTED_SCAFFOLD_DIR")")/runtime" ]]; then
+  echo "staged more of the bundle than its scaffold" >&2
+  exit 1
+fi
+staged="$(dirname "$(dirname "$TRUSTED_SCAFFOLD_DIR")")"
+remove_trusted_scaffold
+[[ ! -e "$staged" ]] || { echo "staged scaffold not removed" >&2; exit 1; }
+BUNDLE_PATH=""
+HUB_BUNDLE_PATH="${TMP_ROOT}/scaffold-bundle.tar.gz"
+stage_trusted_scaffold >/dev/null
+check_trusted_scaffold
+remove_trusted_scaffold
+HUB_BUNDLE_PATH=""
+SOURCE_ROOT="$scaffold_bundle_root"
+stage_trusted_scaffold >/dev/null
+check_trusted_scaffold
+remove_trusted_scaffold
+if grep -n 'INSTALL_CMD.*TARGET_RELEASE\|"\${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh"$' \
+  "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
+  echo "an installer still runs from the release directory" >&2
+  exit 1
+fi
+
 echo "bay release pruning and CDN retention tests passed"

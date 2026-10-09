@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Narrow root helper for the bay hub watchdog, which runs as the bay user:
+# restart one hub worker, or read one hub worker's journal for a diagnostic
+# capture. Installed root-owned in /usr/local/sbin; sudoers lets cocalc-bay
+# run exactly these two commands.
+
+SYSTEMCTL="/usr/bin/systemctl"
+[[ -x "$SYSTEMCTL" ]] || SYSTEMCTL="/bin/systemctl"
+JOURNALCTL="/usr/bin/journalctl"
+[[ -x "$JOURNALCTL" ]] || JOURNALCTL="/bin/journalctl"
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: cocalc-bay-hub-ctl <restart|journal> <worker-id>
+
+Narrow root helper for the CoCalc bay hub watchdog.
+USAGE
+  exit 2
+}
+
+[[ $# -eq 2 && "$2" =~ ^[1-9][0-9]{0,3}$ ]] || usage
+unit="cocalc-bay-hub@${2}.service"
+case "$1" in
+  restart)
+    "$SYSTEMCTL" reset-failed "$unit" >/dev/null 2>&1 || true
+    exec "$SYSTEMCTL" restart "$unit"
+    ;;
+  journal)
+    exec "$JOURNALCTL" -u "$unit" -n 200 --no-pager -o short-iso
+    ;;
+  *)
+    usage
+    ;;
+esac

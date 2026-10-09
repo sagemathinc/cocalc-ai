@@ -608,6 +608,16 @@ digest manifest as a one-shot enrollment file. On the first installation use
 - Rollout helpers assume versioned bundles live under
   `/opt/cocalc/bay/releases/<version>` and the active bundle is the symlink
   `/opt/cocalc/bay/current`.
+- The release tree under `/opt/cocalc/bay` belongs to the bay account, so
+  root never executes code from it:
+  - `bay-bootstrap-release.sh` runs `install-scaffold.sh`, which installs the
+    systemd units, sudoers rules and root helpers. It runs it from a
+    root-owned copy of `scripts/bay-systemd` taken straight from the bundle
+    or source tree, staged under `/run`.
+  - The hub watchdog runs as `cocalc-bay`. It restarts a hub worker, and
+    reads that worker's journal for a diagnostic capture, only through the
+    root-owned `/usr/local/sbin/cocalc-bay-hub-ctl`, which sudoers allows for
+    exactly those two commands.
 
 ## Implementation Scope And Validation
 

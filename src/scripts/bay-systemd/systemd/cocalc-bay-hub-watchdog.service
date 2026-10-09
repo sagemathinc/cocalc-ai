@@ -4,7 +4,16 @@ After=cocalc-bay-frontdoor.service cocalc-bay-conat-router.service
 
 [Service]
 Type=oneshot
+# Runs as the bay user: everything it executes lives in the bay's release
+# tree, which that user can write. Restarting a hub worker and reading its
+# journal go through the root-owned /usr/local/sbin/cocalc-bay-hub-ctl.
+User=cocalc-bay
+Group=cocalc-bay
 UMask=0077
+StateDirectory=cocalc-bay-hub-watchdog
+StateDirectoryMode=0700
+LogsDirectory=cocalc-bay/hub-watchdog-incidents
+LogsDirectoryMode=0700
 ExecStart=/opt/cocalc/bay/current/bin/bay-hub-watchdog
 TimeoutStartSec=120
 StandardOutput=journal
