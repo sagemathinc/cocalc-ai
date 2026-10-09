@@ -35,7 +35,11 @@ import {
   decryptSecretSettingValue,
   encryptSecretSettingValue,
 } from "@cocalc/util/secret-settings-crypto";
-import { inviteEmailHash, runMasterKeyMigration } from "./master-key-migration";
+import {
+  inviteEmailHash,
+  retireBlockers,
+  runMasterKeyMigration,
+} from "./master-key-migration";
 
 const PROJECT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const FACTOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -218,6 +222,23 @@ describe("site master key rotation re-encryption", () => {
         key: deriveSiteMasterKey(k2, "project-secrets:v1"),
       }),
     ).toBe("project-secret");
+    // Nothing keeps K1 now; a hash-only registration token would, since it
+    // cannot be attributed to a key or re-encrypted.
+    expect(retireBlockers(after, id1)).toEqual([]);
+    await pool.query("INSERT INTO registration_tokens(token) VALUES ($1)", [
+      "cocalc-registration-token-hash:v1:abc",
+    ]);
+    const withToken = await runMasterKeyMigration();
+    expect(withToken.unattributable.registration_tokens_hash_only).toBe(1);
+    expect(retireBlockers(withToken, id1)).toEqual([
+      expect.stringContaining("hash-only registration tokens"),
+    ]);
+    expect(retireBlockers(dry, id1)[0]).toMatch(
+      /rows in .* are still encrypted/,
+    );
+    await pool.query(
+      "DELETE FROM registration_tokens WHERE token LIKE 'cocalc-registration-token-hash:%'",
+    );
     // Hosts re-sync the rewrapped project secrets.
     expect(
       Number(

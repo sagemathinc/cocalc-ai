@@ -81,7 +81,7 @@ describe("secret-settings key handling", () => {
     readFileMock.mockImplementation(async (path: string) => {
       if (path === keyPathDefault) return active.toString("base64");
       if (path === `${keyPathDefault}.keyring`) {
-        return `${retired.toString("base64")} retired ${siteMasterKeyId(retired)}\n`;
+        return `${retired.toString("base64")} retired ${siteMasterKeyId(retired)} 2026-10-08T00:00:00.000Z\n`;
       }
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     });

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 
 import {
   activateSiteMasterKey,
+  addRetiredSiteMasterKey,
   createSiteMasterKeyBackup,
   decryptWithAnyKey,
   deriveSiteMasterKey,
@@ -185,7 +187,7 @@ describe("master-key-lifecycle", () => {
       await expect(retireSiteMasterKey(id2, paths())).rejects.toThrow(
         "is the active key",
       );
-      await retireSiteMasterKey(id1, paths());
+      await retireSiteMasterKey(id1, { ...paths(), force: true });
       expect(await ids()).toEqual([`active:${id2}`]);
     });
 
@@ -197,7 +199,7 @@ describe("master-key-lifecycle", () => {
       const keyring = await readFile(`${keyPath()}.keyring`, "utf8");
       await writeFile(
         `${keyPath()}.keyring`,
-        `${keyring}${k1.toString("base64")} retired ${siteMasterKeyId(k1)}\n`,
+        `${keyring}${k1.toString("base64")} retired ${siteMasterKeyId(k1)} 2026-10-08T00:00:00.000Z\n`,
         { mode: 0o600 },
       );
       await writeFile(keyPath(), k2.toString("base64"), { mode: 0o600 });
@@ -208,15 +210,79 @@ describe("master-key-lifecycle", () => {
       ]);
     });
 
-    it("rejects a keyring line whose recorded id does not match its key", () => {
+    it("accepts only the exact keyring line format", () => {
       const key = Buffer.alloc(32, 3);
-      expect(() =>
-        parseSiteMasterKeyring(`${key.toString("base64")} retired smk_wrong`),
-      ).toThrow("does not match");
-      expect(() =>
-        parseSiteMasterKeyring(`${key.toString("base64")} active`),
-      ).toThrow('role must be "next" or "retired"');
+      const b64 = key.toString("base64");
+      const id = siteMasterKeyId(key);
+      const when = "2026-10-08T00:00:00.000Z";
+      const other = Buffer.alloc(32, 4);
+      expect(
+        parseSiteMasterKeyring(`${b64} retired ${id} ${when}`),
+      ).toHaveLength(1);
+      for (const [line, message] of [
+        [`${b64} retired smk_wrong ${when}`, "does not match"],
+        [`${b64} active ${id} ${when}`, 'role must be "next" or "retired"'],
+        [`${b64} retired ${id}`, "expected"],
+        [`${b64} retired ${id} ${when} extra`, "expected"],
+        [`${b64} retired ${id} yesterday`, "invalid timestamp"],
+        [`${b64.replace(/=$/, "")} retired ${id} ${when}`, "canonical"],
+        [
+          `${b64} next ${id} ${when}\n${other.toString("base64")} next ${siteMasterKeyId(other)} ${when}`,
+          "more than one next key",
+        ],
+      ]) {
+        expect(() => parseSiteMasterKeyring(line)).toThrow(message);
+      }
     });
+
+    it("refuses to retire a key before its retirement window has passed", async () => {
+      const k1 = await getOrCreateSiteMasterKey(paths());
+      const { id: id2 } = await stageNextSiteMasterKey(paths());
+      await activateSiteMasterKey(id2, paths());
+      const id1 = siteMasterKeyId(k1);
+      await expect(retireSiteMasterKey(id1, paths())).rejects.toThrow(
+        "wait until",
+      );
+      const later = new Date(Date.now() + 25 * 60 * 60 * 1000);
+      await retireSiteMasterKey(id1, { ...paths(), now: later });
+      expect(await ids()).toEqual([`active:${id2}`]);
+    });
+
+    it("stages the same key on another bay and puts an old key back", async () => {
+      const k1 = await getOrCreateSiteMasterKey(paths());
+      const shared = randomBytes(32);
+      const { id } = await stageNextSiteMasterKey({ ...paths(), key: shared });
+      // Staging the same key again is a no-op; another key is refused.
+      await stageNextSiteMasterKey({ ...paths(), key: shared });
+      await expect(
+        stageNextSiteMasterKey({ ...paths(), key: randomBytes(32) }),
+      ).rejects.toThrow("already staged");
+      const old = randomBytes(32);
+      await addRetiredSiteMasterKey(old, paths());
+      expect(await ids()).toEqual([
+        `active:${siteMasterKeyId(k1)}`,
+        `next:${id}`,
+        `retired:${siteMasterKeyId(old)}`,
+      ]);
+    });
+
+    it("serializes key-file changes and clears a stale lock", async () => {
+      await getOrCreateSiteMasterKey(paths());
+      const lock = `${keyPath()}.keyring.lock`;
+      // A lock left by a process that no longer exists does not block.
+      await writeFile(lock, "999999999\n");
+      await stageNextSiteMasterKey(paths());
+      await expect(stat(lock)).rejects.toThrow();
+      // Concurrent changes all apply.
+      await Promise.all(
+        [1, 2, 3].map((i) =>
+          addRetiredSiteMasterKey(Buffer.alloc(32, 100 + i), paths()),
+        ),
+      );
+      expect(
+        (await ids()).filter((id) => id.startsWith("retired:")),
+      ).toHaveLength(3);
+    }, 20000);
 
     it("refuses to rotate a read-only systemd credential", async () => {
       const credentialsDir = join(dir, "credentials");

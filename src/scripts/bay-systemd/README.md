@@ -333,9 +333,14 @@ anything needs it:
   name the keys in 1Password.
 
 Run each step on the bay as root with `cocalc-bay-master-key`, which
-`install-scaffold.sh` installs root-owned in `/usr/local/sbin`. With several
-bays sharing one site key, finish each key-file step on every bay before the
-next step.
+`install-scaffold.sh` installs root-owned in `/usr/local/sbin`.
+
+- Key-file changes take a lock (`site-master-key.keyring.lock`), so two
+  invocations cannot interleave.
+- Every rename is synced to disk before the next step starts.
+
+With several bays sharing one site key, finish each step on every bay before
+the next one, and compare `cocalc-bay-master-key status` across the bays.
 
 1. **Stage a new key:**
 
@@ -343,9 +348,14 @@ next step.
    cocalc-bay-master-key prepare --export /root/new-site-master-key
    ```
 
-   This writes the new key to the export file and to the keyring, as `next`.
-   Nothing encrypts with it yet. Store the file's contents in 1Password under
-   the printed key id, then delete the file.
+   This writes the new key to the export file, durably, then to the keyring
+   as `next`. Nothing encrypts with it yet.
+   - On every other bay sharing the site key, run
+     `cocalc-bay-master-key prepare --import /root/new-site-master-key` with a
+     copy of that file. This stages the *same* key, so `status` shows the same
+     next key id everywhere.
+   - Store the file's contents in 1Password under the printed key id, then
+     delete every copy.
 2. **Restart the services:** `cocalc-bay-master-key restart`. This restarts
    the hub workers one at a time, then Conat, frontdoor, billing and
    cloudflared. Every process can now decrypt what the new key will encrypt.
@@ -372,27 +382,33 @@ next step.
    It also:
    - recomputes invite email hashes;
    - makes project hosts re-sync rewrapped project secrets.
-5. **Retire the old key** at least 24 hours later, after in-flight email
-   sign-in challenges and connector turns have expired:
+5. **Retire the old key** once it has been retired for 24 hours. Email
+   sign-in challenges and connector turns made under it must expire first.
+   The command enforces the wait; set
+   `COCALC_SITE_MASTER_KEY_RETIRE_MIN_AGE_HOURS` to change it.
 
    ```sh
    cocalc-bay-master-key retire <old key id>
    cocalc-bay-master-key restart
    ```
 
-   `retire` refuses while any row is still encrypted under that key.
+   `retire` refuses while any row is still encrypted under that key. It
+   also refuses while hash-only registration tokens exist: they cannot be
+   attributed to a key or re-encrypted, so recreate them first. `--force`
+   skips these checks.
    - Keep the old key in 1Password, marked retired, for as long as backups
      made before the rotation exist. That means the pgBackRest retention, the
      escrow history and offsite copies: at most four calendar months.
-   - To restore such a backup, put the old key back in the keyring as
-     `retired`, then run `reencrypt --execute`.
+   - To restore such a backup, put the old key back in the keyring with
+     `cocalc-bay-master-key add-retired --import FILE` (FILE holds the
+     base64 key), restart, then run `reencrypt --execute`.
 
 **Rollback** before step 5: run `activate <old key id> --backed-up` and
 restart. Both keys are still online, so nothing is lost.
 
 Project hosts keep the last few project-secret keys they were sent, so they
 can still start a project from cached secrets across the change.
-`cocalc admin master-key rotate prepare|activate|retire` and
+`cocalc admin master-key rotate prepare|add-retired|activate|retire` and
 `cocalc admin master-key reencrypt` do the same for a non-bay deployment.
 
 Tests:

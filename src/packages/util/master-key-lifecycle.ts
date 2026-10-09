@@ -406,41 +406,69 @@ export function resolveSiteMasterKeyringFile(
 }
 
 const KEYRING_ROLES = new Set(["next", "retired"]);
+const KEY_ID_RE = /^smk_[A-Za-z0-9_-]{16}$/;
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+/** How long a key stays retired before it may leave the keyring. */
+export const SITE_MASTER_KEY_RETIRE_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** A key in canonical base64, exactly 32 bytes. */
+export function parseCanonicalSiteMasterKey(
+  value: string,
+  where: string,
+): Buffer {
+  const key = Buffer.from(value, "base64");
+  if (key.length !== 32 || key.toString("base64") !== value) {
+    throw new Error(`${where}: not a canonical base64 32-byte key`);
+  }
+  return key;
+}
 
 /**
- * Parse a keyring file: one key per line, "<base64 key> <role> [key id]
- * [added at]", where role is "next" or "retired". Blank lines and lines
- * starting with "#" are ignored. A recorded key id must match the key.
+ * Parse a keyring file: one key per line, exactly
+ * "<base64 key> <next|retired> <key id> <added at>", as written by
+ * formatSiteMasterKeyring. Blank lines and lines starting with "#" are
+ * ignored. Anything else, a key id that does not match its key, a duplicate
+ * key or more than one next key is an error rather than a guess.
  */
 export function parseSiteMasterKeyring(
   contents: string,
   path = "keyring",
 ): SiteMasterKeyEntry[] {
   const entries: SiteMasterKeyEntry[] = [];
-  const seen = new Set<string>();
   contents.split("\n").forEach((raw, index) => {
     const line = raw.trim();
     if (!line || line.startsWith("#")) return;
-    const [value, role, recordedId, added_at] = line.split(/\s+/);
     const where = `${path}:${index + 1}`;
+    const fields = line.split(/\s+/);
+    if (fields.length !== 4) {
+      throw new Error(
+        `${where}: expected "<base64 key> <next|retired> <key id> <added at>"`,
+      );
+    }
+    const [value, role, recordedId, added_at] = fields;
     if (!KEYRING_ROLES.has(role)) {
       throw new Error(`${where}: role must be "next" or "retired"`);
     }
-    const key = parseKeyContents({ contents: value, path: where });
+    const key = parseCanonicalSiteMasterKey(value, where);
     const id = siteMasterKeyId(key);
-    if (recordedId && recordedId !== id) {
+    if (!KEY_ID_RE.test(recordedId) || recordedId !== id) {
       throw new Error(
         `${where}: key id ${recordedId} does not match its key (${id})`,
       );
     }
-    if (seen.has(id)) throw new Error(`${where}: duplicate key ${id}`);
-    seen.add(id);
-    entries.push({
-      id,
-      key,
-      role: role as SiteMasterKeyRole,
-      ...(added_at ? { added_at } : {}),
-    });
+    if (
+      !TIMESTAMP_RE.test(added_at) ||
+      !Number.isFinite(Date.parse(added_at))
+    ) {
+      throw new Error(`${where}: invalid timestamp ${added_at}`);
+    }
+    if (entries.some((entry) => entry.id === id)) {
+      throw new Error(`${where}: duplicate key ${id}`);
+    }
+    if (role === "next" && entries.some((entry) => entry.role === "next")) {
+      throw new Error(`${where}: more than one next key`);
+    }
+    entries.push({ id, key, role: role as SiteMasterKeyRole, added_at });
   });
   return entries;
 }
@@ -498,8 +526,19 @@ export async function getSiteMasterKeyring(
   ];
 }
 
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 // Write a 0600 file by creating a new file next to it and renaming it over
-// the old one, so a reader or a crash never sees a partial key file.
+// the old one, then syncing the directory: a reader never sees a partial key
+// file, and the rename is on disk before the next step of a rotation starts
+// (several renames are otherwise not guaranteed to survive a crash in order).
 async function writeFileAtomic(path: string, contents: string): Promise<void> {
   const temporary = join(
     dirname(path),
@@ -519,6 +558,22 @@ async function writeFileAtomic(path: string, contents: string): Promise<void> {
     await unlink(temporary).catch(() => {});
     throw err;
   }
+  await syncDirectory(dirname(path));
+}
+
+/** Create a new 0600 file (never replacing one) and make it durable. */
+export async function writeNewFileDurably(
+  path: string,
+  contents: string,
+): Promise<void> {
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(contents);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await syncDirectory(dirname(resolve(path)));
 }
 
 type RotationPaths = SiteMasterKeyPathOptions & { keyringPath?: string };
@@ -534,6 +589,61 @@ function writableRotationFiles(opts: RotationPaths) {
   return { site, keyring };
 }
 
+/**
+ * Run one key-file change under `<keyring>.lock`, so two rotation commands
+ * cannot interleave their reads and writes. A lock left by a process that no
+ * longer exists is removed. The bay's root helper uses the same lock file.
+ */
+async function withKeyringLock<T>(
+  keyringPath: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPath = `${keyringPath}.lock`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      try {
+        await handle.writeFile(`${process.pid}\n`);
+      } finally {
+        await handle.close();
+      }
+      break;
+    } catch (err: any) {
+      if (err?.code !== "EEXIST") throw err;
+      const holder =
+        `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
+      const pid = Number(holder);
+      let alive = false;
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          alive = true;
+        } catch (killErr: any) {
+          alive = killErr?.code === "EPERM";
+        }
+      }
+      if (!alive) {
+        // Remove only the stale lock we looked at, not a newer one.
+        const now =
+          `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
+        if (now === holder) await unlink(lockPath).catch(() => {});
+        continue;
+      }
+      if (attempt >= 30) {
+        throw new Error(
+          `another key rotation step (pid ${pid}) holds ${lockPath}; try again when it finishes`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await unlink(lockPath).catch(() => {});
+  }
+}
+
 async function readActiveKey(path: string): Promise<Buffer> {
   const key = await readOptionalMasterKeyFile(path);
   if (!key) throw new Error(`no site master key at ${path}`);
@@ -542,7 +652,11 @@ async function readActiveKey(path: string): Promise<Buffer> {
 
 export interface SiteMasterKeyRotationStep {
   active_id: string;
-  keyring: { id: string; role: Exclude<SiteMasterKeyRole, "active"> }[];
+  keyring: {
+    id: string;
+    role: Exclude<SiteMasterKeyRole, "active">;
+    added_at?: string;
+  }[];
 }
 
 async function rotationState(
@@ -554,115 +668,171 @@ async function rotationState(
     active_id: activeId,
     keyring: (await readSiteMasterKeyring(opts))
       .filter((entry) => entry.id !== activeId)
-      .map(({ id, role }) => ({
+      .map(({ id, role, added_at }) => ({
         id,
         role: role as Exclude<SiteMasterKeyRole, "active">,
+        added_at,
       })),
   };
 }
 
 /**
- * Rotation step 1: create a new key and add it to the keyring as "next". It is
- * not used to encrypt anything until it is activated; once services restart
- * with it in the keyring they can decrypt what it will encrypt. The caller
- * must back it up (e.g. with exportSiteMasterKeyBackup) before activating.
+ * Rotation step 1: add a key to the keyring as "next": a new random key, or
+ * (`key`) one generated elsewhere, e.g. on the first of several bays sharing
+ * the site key. It is not used to encrypt anything until it is activated;
+ * once services restart with it in the keyring they can decrypt what it will
+ * encrypt. The caller must back it up before activating.
  */
 export async function stageNextSiteMasterKey(
   opts: RotationPaths & { key?: Buffer } = {},
 ): Promise<{ id: string; key: Buffer }> {
   const { site, keyring } = writableRotationFiles(opts);
-  const active = await readActiveKey(site.path);
-  const entries = await readSiteMasterKeyring(opts);
-  const staged = entries.find((entry) => entry.role === "next");
-  if (staged) {
-    throw new Error(
-      `a next key (${staged.id}) is already staged; activate it or remove it from ${keyring.path} first`,
+  return await withKeyringLock(keyring.path, async () => {
+    const active = await readActiveKey(site.path);
+    const entries = await readSiteMasterKeyring(opts);
+    const key = opts.key ?? randomBytes(32);
+    if (key.length !== 32) throw new Error("site master key must be 32 bytes");
+    if (key.equals(active))
+      throw new Error("the new key equals the active key");
+    const id = siteMasterKeyId(key);
+    const staged = entries.find((entry) => entry.role === "next");
+    if (staged?.id === id) return { id, key };
+    if (staged) {
+      throw new Error(
+        `a next key (${staged.id}) is already staged; activate it or remove it from ${keyring.path} first`,
+      );
+    }
+    if (entries.some((entry) => entry.id === id)) {
+      throw new Error(`${id} is already in the keyring as a retired key`);
+    }
+    await writeFileAtomic(
+      keyring.path,
+      formatSiteMasterKeyring([
+        ...entries,
+        { id, key, role: "next", added_at: new Date().toISOString() },
+      ]),
     );
-  }
-  // A caller may generate the key itself, to back it up before staging it.
-  const key = opts.key ?? randomBytes(32);
-  if (key.length !== 32) throw new Error("site master key must be 32 bytes");
-  if (key.equals(active)) throw new Error("the new key equals the active key");
-  const entry: SiteMasterKeyEntry = {
-    id: siteMasterKeyId(key),
-    key,
-    role: "next",
-    added_at: new Date().toISOString(),
-  };
-  await writeFileAtomic(
-    keyring.path,
-    formatSiteMasterKeyring([...entries, entry]),
-  );
-  return { id: entry.id, key };
+    return { id, key };
+  });
+}
+
+/**
+ * Put an old key back in the keyring as "retired", e.g. before restoring a
+ * backup made before a rotation. Decrypt-only; reencrypt then moves its data
+ * to the active key.
+ */
+export async function addRetiredSiteMasterKey(
+  key: Buffer,
+  opts: RotationPaths = {},
+): Promise<SiteMasterKeyRotationStep> {
+  const { site, keyring } = writableRotationFiles(opts);
+  return await withKeyringLock(keyring.path, async () => {
+    if (key.length !== 32) throw new Error("site master key must be 32 bytes");
+    const id = siteMasterKeyId(key);
+    if (siteMasterKeyId(await readActiveKey(site.path)) === id) {
+      throw new Error(`${id} is the active key`);
+    }
+    const entries = await readSiteMasterKeyring(opts);
+    if (!entries.some((entry) => entry.id === id)) {
+      await writeFileAtomic(
+        keyring.path,
+        formatSiteMasterKeyring([
+          ...entries,
+          { id, key, role: "retired", added_at: new Date().toISOString() },
+        ]),
+      );
+    }
+    return await rotationState(opts);
+  });
 }
 
 /**
  * Rotation step 2 (and rollback): make the keyring key `id` (the staged next
  * key, or a retired key to roll back) the active key; the previously active
- * key becomes "retired". Each write is atomic and the order keeps every key
- * on disk at all times: first the keyring gains the old key as retired, then
- * the active file changes, then the new active key leaves the keyring. If
- * interrupted, running it again completes it.
+ * key becomes "retired". Each write is atomic and durable before the next,
+ * and the order keeps every key on disk at all times: first the keyring
+ * gains the old key as retired, then the active file changes, then the new
+ * active key leaves the keyring. If interrupted, running it again completes
+ * it.
  */
 export async function activateSiteMasterKey(
   id: string,
   opts: RotationPaths = {},
 ): Promise<SiteMasterKeyRotationStep & { previous_id?: string }> {
   const { site, keyring } = writableRotationFiles(opts);
-  const active = await readActiveKey(site.path);
-  const activeId = siteMasterKeyId(active);
-  let entries = await readSiteMasterKeyring(opts);
-  const target = entries.find((entry) => entry.id === id);
-  if (!target) {
-    if (activeId === id) return await rotationState(opts);
-    throw new Error(`key ${id} is not in the keyring at ${keyring.path}`);
-  }
-  if (activeId !== id) {
-    const now = new Date().toISOString();
-    if (!entries.some((entry) => entry.id === activeId)) {
-      entries = [
-        ...entries,
-        { id: activeId, key: active, role: "retired", added_at: now },
-      ];
-      await writeFileAtomic(keyring.path, formatSiteMasterKeyring(entries));
+  return await withKeyringLock(keyring.path, async () => {
+    const active = await readActiveKey(site.path);
+    const activeId = siteMasterKeyId(active);
+    let entries = await readSiteMasterKeyring(opts);
+    const target = entries.find((entry) => entry.id === id);
+    if (!target) {
+      if (activeId === id) return await rotationState(opts);
+      throw new Error(`key ${id} is not in the keyring at ${keyring.path}`);
     }
-    await writeFileAtomic(site.path, target.key.toString("base64"));
-  }
-  await writeFileAtomic(
-    keyring.path,
-    formatSiteMasterKeyring(entries.filter((entry) => entry.id !== id)),
-  );
-  return {
-    ...(await rotationState(opts)),
-    ...(activeId !== id ? { previous_id: activeId } : {}),
-  };
+    if (activeId !== id) {
+      if (!entries.some((entry) => entry.id === activeId)) {
+        entries = [
+          ...entries,
+          {
+            id: activeId,
+            key: active,
+            role: "retired",
+            added_at: new Date().toISOString(),
+          },
+        ];
+        await writeFileAtomic(keyring.path, formatSiteMasterKeyring(entries));
+      }
+      await writeFileAtomic(site.path, target.key.toString("base64"));
+    }
+    await writeFileAtomic(
+      keyring.path,
+      formatSiteMasterKeyring(entries.filter((entry) => entry.id !== id)),
+    );
+    return {
+      ...(await rotationState(opts)),
+      ...(activeId !== id ? { previous_id: activeId } : {}),
+    };
+  });
 }
 
 /**
  * Rotation step 3: remove a retired key from the online keyring, once nothing
- * encrypted under it is still needed. Keep an offline copy for as long as
- * backups made before the rotation are retained.
+ * encrypted under it is still needed. Short-lived keyed hashes (email sign-in
+ * challenges, connector turns) cannot be re-encrypted, so a key must have
+ * been retired for at least `minAgeMs` (24 hours) unless `force`. Keep an
+ * offline copy for as long as backups made before the rotation are retained.
  */
 export async function retireSiteMasterKey(
   id: string,
-  opts: RotationPaths = {},
+  opts: RotationPaths & { force?: boolean; minAgeMs?: number; now?: Date } = {},
 ): Promise<SiteMasterKeyRotationStep> {
   const { site, keyring } = writableRotationFiles(opts);
-  if (siteMasterKeyId(await readActiveKey(site.path)) === id) {
-    throw new Error(`${id} is the active key`);
-  }
-  const entries = await readSiteMasterKeyring(opts);
-  const target = entries.find((entry) => entry.id === id);
-  if (!target)
-    throw new Error(`key ${id} is not in the keyring at ${keyring.path}`);
-  if (target.role !== "retired") {
-    throw new Error(`key ${id} is ${target.role}, not retired`);
-  }
-  await writeFileAtomic(
-    keyring.path,
-    formatSiteMasterKeyring(entries.filter((entry) => entry.id !== id)),
-  );
-  return await rotationState(opts);
+  return await withKeyringLock(keyring.path, async () => {
+    if (siteMasterKeyId(await readActiveKey(site.path)) === id) {
+      throw new Error(`${id} is the active key`);
+    }
+    const entries = await readSiteMasterKeyring(opts);
+    const target = entries.find((entry) => entry.id === id);
+    if (!target) {
+      throw new Error(`key ${id} is not in the keyring at ${keyring.path}`);
+    }
+    if (target.role !== "retired") {
+      throw new Error(`key ${id} is ${target.role}, not retired`);
+    }
+    const minAgeMs = opts.minAgeMs ?? SITE_MASTER_KEY_RETIRE_MIN_AGE_MS;
+    const age =
+      (opts.now ?? new Date()).getTime() - Date.parse(target.added_at!);
+    if (!opts.force && !(age >= minAgeMs)) {
+      throw new Error(
+        `${id} was retired at ${target.added_at}; wait until ${new Date(Date.parse(target.added_at!) + minAgeMs).toISOString()} (in-flight sign-in challenges may still need it) or force it`,
+      );
+    }
+    await writeFileAtomic(
+      keyring.path,
+      formatSiteMasterKeyring(entries.filter((entry) => entry.id !== id)),
+    );
+    return await rotationState(opts);
+  });
 }
 
 /** A purpose key derived from one keyring entry. */

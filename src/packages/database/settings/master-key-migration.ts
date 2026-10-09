@@ -116,6 +116,14 @@ export type MasterKeyMigrationReport = {
   keyring: { id: string; role: string }[];
   legacy_key_files_present: string[];
   tables: MasterKeyMigrationTableReport[];
+  // Keyed hashes that may depend on any keyring key but cannot be attributed
+  // to one or re-encrypted: they stop matching once their key is retired.
+  // Hash-only registration tokens live until deleted; email sign-in challenges
+  // expire within minutes (the retirement window covers them).
+  unattributable: {
+    registration_tokens_hash_only: number;
+    email_auth_challenges_pending: number;
+  };
   totals: {
     rows: number;
     current: number;
@@ -914,6 +922,26 @@ export async function runMasterKeyMigration({
     }
     const finalTotals = emptyTotals();
     for (const report of tables) addTotals(finalTotals, report);
+    const count = async (table: string, where: string) =>
+      (await tableExists(client, table))
+        ? Number(
+            (
+              await client.query<{ n: string }>(
+                `SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`,
+              )
+            ).rows[0]?.n ?? 0,
+          )
+        : 0;
+    const unattributable = {
+      registration_tokens_hash_only: await count(
+        "registration_tokens",
+        "token LIKE 'cocalc-registration-token-hash:%'",
+      ),
+      email_auth_challenges_pending: await count(
+        "email_auth_challenges",
+        "state = 'pending' AND expires_at > NOW()",
+      ),
+    };
     return {
       offline_required: false,
       executed: execute,
@@ -922,11 +950,34 @@ export async function runMasterKeyMigration({
       keyring: keyring.map(({ id, role }) => ({ id, role })),
       legacy_key_files_present: legacyKeyFilesPresent,
       tables,
+      unattributable,
       totals: finalTotals,
     };
   } finally {
     client.release();
   }
+}
+
+/**
+ * Why a key cannot be retired yet: rows still under it, or hash-only
+ * registration tokens, which may have been made with it and would stop
+ * working (they cannot be re-encrypted; recreate them, or retire with force).
+ */
+export function retireBlockers(
+  report: MasterKeyMigrationReport,
+  keyId: string,
+): string[] {
+  const blockers = Object.entries(rowsUnderKey(report, keyId)).map(
+    ([table, count]) =>
+      `${count} rows in ${table} are still encrypted under ${keyId}`,
+  );
+  const tokens = report.unattributable?.registration_tokens_hash_only ?? 0;
+  if (tokens > 0) {
+    blockers.push(
+      `${tokens} hash-only registration tokens may have been made with ${keyId} and would stop working`,
+    );
+  }
+  return blockers;
 }
 
 /** Rows (by table) that still decrypt only with the given key id. */

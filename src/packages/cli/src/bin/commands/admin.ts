@@ -17,10 +17,12 @@ import {
 } from "../core/support-as-user";
 import {
   activateSiteMasterKey,
+  addRetiredSiteMasterKey,
   createSiteMasterKeyBackup,
   getOrCreateSiteMasterKey,
   retireSiteMasterKey,
   stageNextSiteMasterKey,
+  writeNewFileDurably,
   getSiteMasterKeyStatus,
   readSiteMasterKeyBackupFile,
   restoreSiteMasterKeyBackup,
@@ -3882,46 +3884,99 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   rotate
     .command("prepare")
     .description(
-      "stage a new site master key in the keyring (not used until activated) and write a backup of it",
+      "stage a site master key in the keyring (not used until activated): a new key written to a backup file (--export), or the same key as another server sharing the site key (--import)",
     )
-    .requiredOption("--export <path>", "new file for the backup of the new key")
+    .option("--export <path>", "new file for the backup of a new key")
+    .option(
+      "--import <path>",
+      "stage the key in this backup (from prepare --export on the first server)",
+    )
     .option(
       "--passphrase-env <name>",
-      "read backup encryption passphrase from this environment variable",
+      "backup encryption passphrase from this environment variable",
     )
     .option(
       "--passphrase-file <path>",
-      "read backup encryption passphrase from this file",
+      "backup encryption passphrase from this file",
     )
-    .option("--plaintext", "write an unencrypted backup file")
+    .option("--plaintext", "write an unencrypted backup file (--export)")
     .action(
       async (opts: {
-        export: string;
+        export?: string;
+        import?: string;
         passphraseEnv?: string;
         passphraseFile?: string;
         plaintext?: boolean;
       }) => {
-        const key = randomBytes(32);
-        const backup = await createSiteMasterKeyBackup({
-          key,
-          passphrase: opts.plaintext
-            ? undefined
-            : await requirePassphraseOption(opts),
-          plaintext: !!opts.plaintext,
-        });
-        // The backup first, so a staged key always has one.
-        await writeFile(opts.export, `${JSON.stringify(backup, null, 2)}\n`, {
-          mode: 0o600,
-          flag: "wx",
-        });
+        if (!!opts.export === !!opts.import) {
+          throw new Error("prepare needs exactly one of --export or --import");
+        }
+        let key: Buffer;
+        if (opts.import) {
+          const backup = await readSiteMasterKeyBackupFile({
+            path: opts.import,
+            passphrase: await resolvePassphraseOption(opts),
+          });
+          key = Buffer.from(backup.key.value_base64, "base64");
+        } else {
+          key = randomBytes(32);
+          const backup = await createSiteMasterKeyBackup({
+            key,
+            passphrase: opts.plaintext
+              ? undefined
+              : await requirePassphraseOption(opts),
+            plaintext: !!opts.plaintext,
+          });
+          // The backup first, durably, so a staged key always has one.
+          await writeNewFileDurably(
+            opts.export!,
+            `${JSON.stringify(backup, null, 2)}\n`,
+          );
+        }
         const { id } = await stageNextSiteMasterKey({ key });
         console.log(
           JSON.stringify(
             {
               staged: id,
-              backup: opts.export,
-              next: `store the backup separately, restart every service that uses the key, then: cocalc admin master-key rotate activate ${id} --backed-up`,
+              ...(opts.export ? { backup: opts.export } : {}),
+              next: `${opts.export ? "store the backup separately; on every other server sharing the site key run prepare --import with it; " : ""}restart every service that uses the key, then: cocalc admin master-key rotate activate ${id} --backed-up`,
             },
+            null,
+            2,
+          ),
+        );
+      },
+    );
+
+  rotate
+    .command("add-retired")
+    .description(
+      "put an old key (e.g. from before a rotation, to restore an older backup) back in the keyring as retired; then run reencrypt --execute",
+    )
+    .requiredOption("--import <path>", "backup of the old key")
+    .option(
+      "--passphrase-env <name>",
+      "backup encryption passphrase from this environment variable",
+    )
+    .option(
+      "--passphrase-file <path>",
+      "backup encryption passphrase from this file",
+    )
+    .action(
+      async (opts: {
+        import: string;
+        passphraseEnv?: string;
+        passphraseFile?: string;
+      }) => {
+        const backup = await readSiteMasterKeyBackupFile({
+          path: opts.import,
+          passphrase: await resolvePassphraseOption(opts),
+        });
+        console.log(
+          JSON.stringify(
+            await addRetiredSiteMasterKey(
+              Buffer.from(backup.key.value_base64, "base64"),
+            ),
             null,
             2,
           ),
@@ -3950,24 +4005,33 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   rotate
     .command("retire <key-id>")
     .description(
-      "remove a retired key from the keyring once no data is encrypted under it; keep an offline copy while older backups exist",
+      "remove a retired key from the keyring: only once no data is encrypted under it and it has been retired for 24 hours; keep an offline copy while older backups exist",
     )
-    .option("--force", "skip the database check")
+    .option(
+      "--force",
+      "skip the database and retirement-window checks (data or sign-ins that still need the key break)",
+    )
     .action(async (keyId: string, opts: { force?: boolean }) => {
       if (!opts.force) {
-        const { rowsUnderKey, runMasterKeyMigration } =
+        const { retireBlockers, runMasterKeyMigration } =
           await loadMasterKeyMigration();
-        const remaining = rowsUnderKey(
+        const blockers = retireBlockers(
           await runMasterKeyMigration({ execute: false }),
           keyId,
         );
-        if (Object.keys(remaining).length > 0) {
+        if (blockers.length > 0) {
           throw new Error(
-            `rows are still encrypted under ${keyId}: ${JSON.stringify(remaining)}; run reencrypt --execute first`,
+            `${keyId} is still needed: ${blockers.join("; ")}. Run reencrypt --execute first, or use --force`,
           );
         }
       }
-      console.log(JSON.stringify(await retireSiteMasterKey(keyId), null, 2));
+      console.log(
+        JSON.stringify(
+          await retireSiteMasterKey(keyId, { force: !!opts.force }),
+          null,
+          2,
+        ),
+      );
     });
 
   adminMasterKey
