@@ -169,6 +169,9 @@ function fakeDeps(opts: { failStart?: number } = {}) {
     markProjectsProvisioned: async (ids) => {
       calls.push(`mark-provisioned:${ids.length}`);
     },
+    quiesceCloudWork: async () => {
+      calls.push("quiesce");
+    },
     deprovisionHost: async () => {
       calls.push("deprovision");
       row = { ...row, status: "deprovisioned" };
@@ -239,6 +242,8 @@ describe("relocateHost", () => {
     ).rejects.toThrow(/rolled back to us-south1-c/);
     expect(calls.slice(calls.indexOf("start:us-west2-a"))).toEqual([
       "start:us-west2-a",
+      // The abandoned start must not race the rollback.
+      "quiesce",
       "deprovision",
       "mark-provisioned:2",
       "delete-disk:us-west2-a",

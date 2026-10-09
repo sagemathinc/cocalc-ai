@@ -1808,16 +1808,21 @@ export class GcpProvider implements CloudProvider {
           err,
         });
       }
-      const [response] = await client.delete({
-        project: credentials.projectId,
-        zone: runtime.zone,
-        instance: runtime.instance_id,
-      });
-      await waitUntilOperationComplete({
-        response,
-        zone: runtime.zone,
-        credentials,
-      });
+      try {
+        const [response] = await client.delete({
+          project: credentials.projectId,
+          zone: runtime.zone,
+          instance: runtime.instance_id,
+        });
+        await waitUntilOperationComplete({
+          response,
+          zone: runtime.zone,
+          credentials,
+        });
+      } catch (err) {
+        // Already gone (e.g. an interrupted provisioning): nothing to delete.
+        if (!isNotFoundError(err)) throw err;
+      }
       if (!opts?.preserveDataDisk && dataDiskName) {
         try {
           const [diskResponse] = await diskClient.delete({

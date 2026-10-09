@@ -777,6 +777,35 @@ async function runHostRelocation({
         await deleteHostInternal({ account_id, id: host_id });
         await waitFor(["deprovisioned"], ["error"]);
       },
+      quiesceCloudWork: async () => {
+        await pool.query(
+          `UPDATE project_hosts
+             SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', '"stopped"'),
+                 updated=NOW()
+           WHERE id=$1`,
+          [host_id],
+        );
+        const deadline = Date.now() + 5 * 60 * 1000;
+        let quiet = 0;
+        while (Date.now() < deadline) {
+          await pool.query(
+            `UPDATE cloud_vm_work
+               SET state='failed', error='canceled by host relocation rollback', updated_at=NOW()
+             WHERE vm_id=$1 AND state='queued'`,
+            [host_id],
+          );
+          const { rows } = await pool.query(
+            `SELECT count(*)::int AS n FROM cloud_vm_work
+              WHERE vm_id=$1 AND state IN ('queued','in_progress')`,
+            [host_id],
+          );
+          // In-flight handlers may queue follow-ups as they finish.
+          quiet = rows[0]?.n === 0 ? quiet + 1 : 0;
+          if (quiet >= 2) return;
+          await delay(5_000);
+        }
+        throw new Error("cloud work for the host did not settle");
+      },
       startHost: async (opts) => {
         const startedAt = Date.now();
         await startHostInternal({ account_id, id: host_id });

@@ -173,6 +173,10 @@ export interface RelocationDeps {
   loadProvisionedProjectIds: () => Promise<string[]>;
   markProjectsProvisioned: (project_ids: string[]) => Promise<void>;
   deprovisionHost: () => Promise<void>;
+  // Stop the host's own start/recovery machinery (queued starts, readiness
+  // checks that re-queue starts) and wait for in-flight work to finish, so a
+  // rollback is not raced by a start of the abandoned target.
+  quiesceCloudWork: () => Promise<void>;
   // A rollback start waits as long as it takes; the planned start is bounded.
   startHost: (opts?: { rollback?: boolean }) => Promise<void>;
   // Fails if the host could not start as planned (e.g. no price for the
@@ -483,6 +487,7 @@ async function rollBack({
   try {
     await deps.progress("rollback", `rolling back to ${plan.source.zone}`);
     await timed("rollback", async () => {
+      await deps.quiesceCloudWork();
       if (plan.cross_zone && deprovisioned) {
         if (!final) throw new Error("no final snapshot");
         const current = await deps.loadHost();
