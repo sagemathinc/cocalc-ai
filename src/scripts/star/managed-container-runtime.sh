@@ -208,27 +208,29 @@ star_run_podman_as_user() {
 
 # Rootless Podman keeps its pause process and per-boot state under
 # /run/user/<uid>. When the Docker image upgrades at boot, this runs before
-# systemd has set that up for the Star user. Under systemd it must come from
-# user-runtime-dir@<uid> before Podman runs: systemd later mounts a tmpfs over
-# a plain directory, hiding the state Podman wrote there. Only a host without
-# systemd gets a plain directory.
+# logind has started the (lingering) Star user's manager, which mounts that
+# directory. Under systemd it must be that mount before Podman runs: a plain
+# directory would later be covered by the tmpfs, hiding Podman's state. So
+# start user@<uid> as logind would (user-runtime-dir@<uid> alone is stopped
+# again as unneeded). Only a host without systemd gets a plain directory.
 star_ensure_user_runtime_dir() {
   local star_user="$1"
   local star_uid="$2"
   local runtime_dir="/run/user/${star_uid}"
-  local unit="user-runtime-dir@${star_uid}.service"
+  local manager="user@${star_uid}.service"
+  local runtime_unit="user-runtime-dir@${star_uid}.service"
   if [ -d "${STAR_SYSTEMD_BOOTED_MARKER:-/run/systemd/system}" ]; then
     mountpoint -q "$runtime_dir" 2>/dev/null && return 0
-    # The unit asks logind for the directory's size; early in boot logind
-    # may not be running yet.
-    systemctl start systemd-logind.service >/dev/null 2>&1 || true
-    if ! systemctl start "$unit" || ! systemctl is-active --quiet "$unit"; then
-      printf 'could not start %s for the Star user runtime directory\n' \
-        "$unit" >&2
-      return 1
+    if systemctl start "$manager" &&
+      systemctl is-active --quiet "$runtime_unit" &&
+      [ -d "$runtime_dir" ]; then
+      return 0
     fi
-    [ -d "$runtime_dir" ]
-    return
+    printf 'could not start %s for the Star user runtime directory\n' \
+      "$manager" >&2
+    systemctl status --no-pager --lines=20 \
+      "$manager" "$runtime_unit" >&2 2>&1 || true
+    return 1
   fi
   [ -d "$runtime_dir" ] && return 0
   install -d -m 0700 -o "$star_uid" -g "$(id -g "$star_user")" "$runtime_dir"

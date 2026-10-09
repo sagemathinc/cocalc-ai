@@ -101,7 +101,7 @@ nobody_runtime="/run/user/$(id -u nobody)"
 if [ ! -e "$nobody_runtime" ]; then
   [ "$(star_podman_info_field "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" nobody DatabaseBackend)" = "sqlite" ]
   [ "$(stat -c %U:%a "$nobody_runtime")" = "nobody:700" ]
-  systemctl stop "user-runtime-dir@$(id -u nobody).service" >/dev/null 2>&1 ||
+  systemctl stop "user@$(id -u nobody).service" >/dev/null 2>&1 ||
     true
   rmdir "$nobody_runtime" 2>/dev/null || true
 
