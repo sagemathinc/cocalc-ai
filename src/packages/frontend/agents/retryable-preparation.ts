@@ -14,12 +14,17 @@ export function retryablePreparation<T>() {
   };
 }
 
+import type { NewAgentRuntimeKind } from "./new-agent-runtime-select";
+
 export interface PreparedFirstAgent {
   projectId: string;
   path: string;
   threadId: string;
   name: string;
   automaticProjectTitle?: string;
+  // The agent type the thread was created with (missing: Codex, the only
+  // first-run type before the selector was shown there).
+  runtimeKind?: NewAgentRuntimeKind;
 }
 
 const KEY = "cocalc:prepared-first-agent:";

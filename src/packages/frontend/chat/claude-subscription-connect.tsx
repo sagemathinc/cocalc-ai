@@ -97,8 +97,12 @@ export function ClaudeSubscriptionConnect({
   links = false,
   leadingActions,
   trailingActions,
+  openSignal,
 }: {
   projectId: string;
+  // Each new value starts sign-in as if "Connect Claude Pro/Max" was clicked
+  // (e.g. from a send button that needs a connection first).
+  openSignal?: number;
   // Offer only "Reconnect Claude" (e.g. when a turn failed on expired sign-in).
   reconnectOnly?: boolean;
   disabled?: boolean;
@@ -210,6 +214,14 @@ export function ClaudeSubscriptionConnect({
   };
   const signingIn =
     busy || login?.state === "pending" || login?.state === "verifying";
+  const handledOpenSignal = useRef(openSignal);
+  useEffect(() => {
+    if (openSignal === handledOpenSignal.current) return;
+    handledOpenSignal.current = openSignal;
+    if (!openSignal || disabled || reconnectOnly || signingIn) return;
+    if (modal) setOpen(true);
+    void start();
+  }, [openSignal]);
   const { token } = theme.useToken();
   const submitCode = async (value: string) => {
     if (!login || submitting || codeSubmitted) return;

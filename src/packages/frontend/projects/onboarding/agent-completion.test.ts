@@ -4,6 +4,7 @@ import {
   agentFirstRunStarted,
   beginAgentFirstRun,
   completeFirstRunWithAgent,
+  completeFirstRunWithProject,
 } from "./agent-completion";
 
 const mockSetOtherSettings = jest.fn();
@@ -67,4 +68,18 @@ test("an in-progress invitation is not replaced by agent onboarding", async () =
 
   expect(mockSetOtherSettings).not.toHaveBeenCalled();
   expect(mockMarkCompleted).not.toHaveBeenCalled();
+});
+
+test("using the project directly also completes the first run", async () => {
+  beginAgentFirstRun("project-account");
+  await completeFirstRunWithProject("project-account", "project");
+  expect(agentFirstRunStarted("project-account")).toBe(false);
+  expect(mockSetOtherSettings).toHaveBeenCalledWith(
+    "first_run_onboarding_v1",
+    expect.objectContaining({
+      status: "completed",
+      intent: "existing-project",
+      project_id: "project",
+    }),
+  );
 });

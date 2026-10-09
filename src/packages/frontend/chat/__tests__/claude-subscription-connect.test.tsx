@@ -434,3 +434,41 @@ test("pasting a complete code connects at once; a partial code gets a hint", asy
     submit.mockRestore();
   }
 });
+
+test("a new open signal starts sign-in; the initial one does not", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "signal-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  try {
+    const { rerender } = render(
+      <ClaudeSubscriptionConnect
+        modal
+        projectId="project-a"
+        openSignal={0}
+        onConnected={jest.fn()}
+      />,
+    );
+    expect(start).not.toHaveBeenCalled();
+    rerender(
+      <ClaudeSubscriptionConnect
+        modal
+        projectId="project-a"
+        openSignal={1}
+        onConnected={jest.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("link", { name: "Open Claude sign-in" }),
+    ).toBeTruthy();
+    expect(start).toHaveBeenCalledTimes(1);
+  } finally {
+    start.mockRestore();
+  }
+});

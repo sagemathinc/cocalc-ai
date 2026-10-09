@@ -49,6 +49,8 @@ export function NewAgentClaudeControls({
   onConnected,
   disabled,
   assertCurrent,
+  connectSignal,
+  onNeedsConnection,
 }: {
   accountId?: string;
   projectId?: string;
@@ -67,6 +69,10 @@ export function NewAgentClaudeControls({
   onConnected: (credentialId: string) => Promise<void>;
   disabled?: boolean;
   assertCurrent: () => void;
+  // Each new value starts the Claude sign-in (when one is needed).
+  connectSignal?: number;
+  // Whether starting an agent first needs a Claude connection.
+  onNeedsConnection?: (needsConnection: boolean) => void;
 }) {
   const [secretsOpen, setSecretsOpen] = useState(false);
   const configureButton = useRef<HTMLButtonElement>(null);
@@ -108,6 +114,10 @@ export function NewAgentClaudeControls({
     !secretMetadata.some(
       (secret: { name: string }) => secret.name === "ANTHROPIC_API_KEY",
     );
+  useEffect(() => {
+    onNeedsConnection?.(needsConnection);
+  }, [needsConnection]);
+  useEffect(() => () => onNeedsConnection?.(false), []);
   const unavailableCredential =
     credentialsLoaded && !options.some((option) => option.value === value);
   const payment =
@@ -256,6 +266,7 @@ export function NewAgentClaudeControls({
               compact
               projectId={projectId}
               disabled={disabled}
+              openSignal={connectSignal}
               onConnected={async (credentialId) => {
                 const trigger = configureButton.current;
                 await onConnected(credentialId);

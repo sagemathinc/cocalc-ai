@@ -202,6 +202,7 @@ import {
 import {
   agentFirstRunStarted,
   completeFirstRunWithAgent,
+  completeFirstRunWithProject,
 } from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid, is_valid_uuid_string } from "@cocalc/util/misc";
@@ -613,6 +614,9 @@ function NewAgentPanel({
     return raw == null ? undefined : raw;
   });
   const [runtimeKind, setRuntimeKind] = useState<NewAgentRuntimeKind>(() => {
+    // A first-run agent prepared before a reload keeps its type.
+    if (restoredPreparation)
+      return restoredPreparation.runtimeKind ?? "codex-native";
     if (sourceRuntime == null) return "codex-native";
     try {
       const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
@@ -625,7 +629,9 @@ function NewAgentPanel({
   });
   // Whether the runtime came from the source agent or the user's choice,
   // rather than the Codex default.
-  const runtimeChosen = useRef(sourceRuntime != null);
+  const runtimeChosen = useRef(
+    sourceRuntime != null || restoredPreparation != null,
+  );
   const [harnessSettings, setHarnessSettings] =
     useState<HarnessSessionSettings>(() => {
       try {
@@ -835,6 +841,8 @@ function NewAgentPanel({
     credentialId?: string;
   });
   const [signInOpen, setSignInOpen] = useState(false);
+  const [claudeNeedsConnection, setClaudeNeedsConnection] = useState(false);
+  const [claudeConnectSignal, setClaudeConnectSignal] = useState(0);
   const modelOptions = useMemo(
     () => defaultModelOptions(modelCatalog, config.model),
     [config.model, modelCatalog],
@@ -1074,6 +1082,7 @@ function NewAgentPanel({
           ...created,
           name: claimedNameRef.current ?? agentName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
+          runtimeKind,
         });
       writeAgentSubscriptionSelection({
         accountId: boundAccount.accountId,
@@ -1166,6 +1175,7 @@ function NewAgentPanel({
     emailVerificationRequired,
   ]);
 
+  // Creates and starts the first-run workspace while the request is typed.
   function prepareFirstAgent(): Promise<void> {
     return backgroundOnce.current(async () => {
       if (emailVerificationRequired)
@@ -1185,24 +1195,8 @@ function NewAgentPanel({
           "Your workspace could not start. Submit again to retry.",
         );
       }
-      const source = await fetchCodexPaymentSourceForSubmit({
-        projectId: target,
-        preference: paymentPreference,
-        credentialId:
-          paymentPreference === "subscription"
-            ? config.credentialId
-            : undefined,
-      });
-      const executionConfig = newAgentFundingConfig({
-        config,
-        paymentSource: source,
-        useSubscriptionDefault:
-          !sourceAgent && !hasStoredAccountDefaults && !modelCustomized.current,
-      });
-      boundAccount.assertCurrent();
-      setConfig(executionConfig);
-      const created = await prepare(target, executionConfig);
-      await prepareIdentity(created);
+      // Only the workspace is prepared ahead of time: the agent's thread and
+      // name are created on submit with the agent type chosen then.
       progress("ready", target);
     });
   }
@@ -1254,6 +1248,7 @@ function NewAgentPanel({
           ...created,
           name: claimedName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
+          runtimeKind,
         });
       }
       return identity.agent_id;
@@ -1268,6 +1263,12 @@ function NewAgentPanel({
 
   async function create(requestValue?: string, withoutTask = false) {
     if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
+    // Without a way to pay for the chosen agent, sending starts sign-in; the
+    // request stays in the box.
+    if (signInRequired && !withoutTask) {
+      requestSignIn();
+      return;
+    }
     const request = (
       requestValue ??
       inputControlRef.current?.getValue?.() ??
@@ -1297,7 +1298,10 @@ function NewAgentPanel({
       boundAccount.assertCurrent();
       if (isFirstRun) {
         await prepareFirstAgent();
-        targetProjectId = pendingRef.current?.projectId ?? targetProjectId;
+        targetProjectId =
+          pendingRef.current?.projectId ??
+          targetProjectId ??
+          automaticProjectCreated.current?.projectId;
       }
       let createdProjectTitle: string | undefined;
       let executionConfig = config;
@@ -1388,6 +1392,35 @@ function NewAgentPanel({
       );
       handleCreateError(err, targetProjectId);
       if (isNamedAgentLimitError(err)) refreshNamedAgents();
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+
+  // "Or just use your project directly": the first run ends in the project's
+  // files rather than with an agent.
+  async function openProjectDirectly() {
+    if (submitting.current || busy) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      boundAccount.assertCurrent();
+      const target =
+        projectId ??
+        automaticProjectCreated.current?.projectId ??
+        (await ensureAutomaticProject(firstRequest, false)).projectId;
+      boundAccount.assertCurrent();
+      await completeFirstRunWithProject(boundAccount.accountId, target);
+      writePreparedFirstAgent(boundAccount.accountId);
+      await redux.getActions("projects").open_project({
+        project_id: target,
+        target: "files/",
+        switch_to: true,
+      });
+    } catch (err) {
+      setError(`${err}`);
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -1630,6 +1663,20 @@ function NewAgentPanel({
     !paymentSource.hasSubscription;
   const paymentUnconfigured =
     chatGPTSignInAvailable && paymentSource?.source === "none";
+  const signInRequired =
+    (runtimeKind === "codex-native" && paymentUnconfigured) ||
+    (runtimeKind === "claude-code" && claudeNeedsConnection);
+  const signInLabel =
+    runtimeKind === "claude-code"
+      ? "Connect Claude to start"
+      : "Sign in with ChatGPT to start";
+  function requestSignIn() {
+    if (runtimeKind === "claude-code") {
+      setClaudeConnectSignal((signal) => signal + 1);
+    } else {
+      setSignInOpen(true);
+    }
+  }
   useEffect(() => {
     const candidate = (claudeConnected: boolean) =>
       runtimeKind === "codex-native" &&
@@ -1931,9 +1978,11 @@ function NewAgentPanel({
             )}
             <Tooltip
               title={
-                emptyRequest
-                  ? "Create agent without a task (Shift+Enter)"
-                  : "Start agent (Shift+Enter)"
+                signInRequired
+                  ? signInLabel
+                  : emptyRequest
+                    ? "Create agent without a task (Shift+Enter)"
+                    : "Start agent (Shift+Enter)"
               }
             >
               {/* The span receives hover even while the button is disabled. */}
@@ -1942,7 +1991,11 @@ function NewAgentPanel({
                   type="primary"
                   shape="circle"
                   aria-label={
-                    emptyRequest ? "Create agent without a task" : "Start agent"
+                    signInRequired
+                      ? signInLabel
+                      : emptyRequest
+                        ? "Create agent without a task"
+                        : "Start agent"
                   }
                   icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
                   style={{ height: 32, minWidth: 32, width: 32 }}
@@ -1966,8 +2019,9 @@ function NewAgentPanel({
             </Tooltip>
           </div>
         </div>
-        {!isFirstRun && (
+        {
           // The agent's settings sit below the box, apart from the request.
+          // The first run shows only the agent type and how to pay for it.
           <div
             role="group"
             aria-label="Agent settings"
@@ -1980,33 +2034,38 @@ function NewAgentPanel({
               padding: "0 10px",
             }}
           >
-            <NewAgentNamePill
-              name={name}
-              onChange={setName}
-              problem={problem}
-              busy={busy || !!pending}
-            />
-            <Popover
-              content={advancedSettings}
-              open={settingsOpen}
-              placement="bottomLeft"
-              trigger="click"
-              onOpenChange={(open) => {
-                setSettingsOpen(open);
-                if (open) setMoreSettingsOpen(false);
-              }}
-            >
-              <ComposerProjectDirectoryButton
-                ref={projectSettingsButton}
-                projectTitle={projectTitle}
-                directory={effectiveDirectory}
-                displayedDirectory={directoryLabel}
-                disabled={busy || !!pending}
+            {!isFirstRun && (
+              <NewAgentNamePill
+                name={name}
+                onChange={setName}
+                problem={problem}
+                busy={busy || !!pending}
               />
-            </Popover>
+            )}
+            {!isFirstRun && (
+              <Popover
+                content={advancedSettings}
+                open={settingsOpen}
+                placement="bottomLeft"
+                trigger="click"
+                onOpenChange={(open) => {
+                  setSettingsOpen(open);
+                  if (open) setMoreSettingsOpen(false);
+                }}
+              >
+                <ComposerProjectDirectoryButton
+                  ref={projectSettingsButton}
+                  projectTitle={projectTitle}
+                  directory={effectiveDirectory}
+                  displayedDirectory={directoryLabel}
+                  disabled={busy || !!pending}
+                />
+              </Popover>
+            )}
             <NewAgentRuntimeSelect
               value={runtimeKind}
               disabled={busy || !!pending}
+              includeCustom={!isFirstRun}
               onChange={chooseRuntime}
             />
             {runtimeKind === "codex-native" && (
@@ -2125,7 +2184,7 @@ function NewAgentPanel({
                 />
               </span>
             )}
-            {runtimeKind === "codex-native" && (
+            {runtimeKind === "codex-native" && !isFirstRun && (
               <Popover
                 content={advancedSettings}
                 open={moreSettingsOpen}
@@ -2199,6 +2258,8 @@ function NewAgentPanel({
                 }}
                 disabled={busy || !!pending}
                 assertCurrent={() => boundAccount.assertCurrent()}
+                connectSignal={claudeConnectSignal}
+                onNeedsConnection={setClaudeNeedsConnection}
               />
             )}
             {runtimeKind === "acp" && (
@@ -2211,9 +2272,22 @@ function NewAgentPanel({
                 onCreate={() => void create(undefined, true)}
               />
             )}
-            <span style={{ marginLeft: "auto" }}>
-              <NamedAgentUsage directory={namedAgentDirectory} />
-            </span>
+            {!isFirstRun && (
+              <span style={{ marginLeft: "auto" }}>
+                <NamedAgentUsage directory={namedAgentDirectory} />
+              </span>
+            )}
+          </div>
+        }
+        {isFirstRun && (projectId || !emailVerificationRequired) && (
+          <div style={{ textAlign: "center" }}>
+            <Button
+              type="link"
+              disabled={busy || !!pending || (!projectId && !projectMap)}
+              onClick={() => void openProjectDirectly()}
+            >
+              Or just use your project directly
+            </Button>
           </div>
         )}
         {!isFirstRun && (
