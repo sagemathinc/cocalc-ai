@@ -22,6 +22,7 @@ What does not belong here:
 owns the local connection and token mechanics.
 */
 
+import { normalizeHostMaintenanceNotice } from "@cocalc/server/hosts/maintenance";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
@@ -652,5 +653,6 @@ export async function resolveHostConnectionLocalHelper({
         ? (recoveryOutageStartedAt ?? recoveryTiming.unavailable_since)
         : availability.unavailable_since,
     recovery_duration_estimate_ms: recoveryTiming.recovery_duration_estimate_ms,
+    maintenance: normalizeHostMaintenanceNotice(metadata.maintenance),
   } as HostConnectionInfo;
 }

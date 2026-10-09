@@ -81,6 +81,7 @@ import { StartButton } from "@cocalc/frontend/project/start-button";
 import { useProjectPageHostState } from "./use-project-page-host-state";
 import {
   expectsProjectHostConnection,
+  getHostMaintenanceDisplay,
   getHostRecoveryDisplay,
   getProjectLifecycleView,
   hostUnavailableBannerDelay,
@@ -122,6 +123,7 @@ import {
 } from "@cocalc/frontend/project/runtime-recovery";
 import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-latency";
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
+import { HostMaintenanceBanner } from "./host-maintenance-banner";
 import { HostRecoveryBanner } from "./host-recovery-banner";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { useStableRenderOrder } from "@cocalc/frontend/components/stable-render-order";
@@ -373,6 +375,22 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     projectHostConnection.unavailableSince,
   ]);
   const hostUnavailable = hostUnavailableCandidate && hostUnavailableConfirmed;
+  const hostMaintenance = useMemo(
+    () => getHostMaintenanceDisplay(hostInfo, hostRecoveryNow),
+    [hostInfo, hostRecoveryNow],
+  );
+  const hostMaintenanceState = hostMaintenance?.state;
+  useEffect(() => {
+    // Keep an announced or running window current: its start, its end, and
+    // the banner going away. (Outages refresh separately, below.)
+    if (!hostMaintenanceState || hostUnavailable || !host_id) return;
+    const everyMs = hostMaintenanceState === "scheduled" ? 5 * 60_000 : 30_000;
+    const timer = window.setInterval(() => {
+      setHostRecoveryNow(Date.now());
+      redux.getActions("projects")?.ensure_host_info(host_id, true);
+    }, everyMs);
+    return () => window.clearInterval(timer);
+  }, [hostMaintenanceState, hostUnavailable, host_id]);
   useEffect(() => {
     if (!hostUnavailable) return;
     const refresh = () =>
@@ -1067,6 +1085,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     );
   }
 
+  function renderHostMaintenanceBanner() {
+    // While the project is cut off, the reconnect banner explains the window.
+    if (!hostMaintenance || hostUnavailable || hardDeleteBlocked) return;
+    return <HostMaintenanceBanner maintenance={hostMaintenance} />;
+  }
+
   function renderHostUnavailableBanner() {
     if (!hostUnavailable || hardDeleteBlocked) return;
     return (
@@ -1259,6 +1283,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           {props.publicDirectoryShare ? (
             <PublicDirectoryShareBanner share={props.publicDirectoryShare} />
           ) : null}
+          {renderHostMaintenanceBanner()}
           {renderHostUnavailableBanner()}
           {renderRuntimeRecoveryBanner()}
           {!hardDeleteBlocked && browserRuntimePresenceEnabled ? (

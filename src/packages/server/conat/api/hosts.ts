@@ -24,6 +24,7 @@ import type {
   HostRuntimeDeploymentStatus,
   HostRuntimeDeploymentUpsert,
   HostLroResponse,
+  HostMaintenanceNotice,
   HostLroKind,
   HostPublicRouteMode,
   HostRuntimeFleetRolloutRequest,
@@ -422,6 +423,12 @@ function pool() {
   return getPool();
 }
 
+import { planRelocation } from "@cocalc/server/hosts/relocate";
+import {
+  MAX_EXPECTED_MINUTES,
+  scheduledMaintenanceNotice,
+  setHostMaintenanceMetadata,
+} from "@cocalc/server/hosts/maintenance";
 const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
 const CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY = "cocalc_default";
 const HOST_CONNECTION_CACHE_TTL_MS = 5_000;
@@ -721,6 +728,7 @@ const HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND = "host-runtime-fleet-rollout";
 const HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND =
   "host-rollout-managed-components";
 const HOST_PUBLIC_ROUTE_LRO_KIND = "host-public-route";
+const HOST_RELOCATE_LRO_KIND = "host-relocate";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
@@ -732,6 +740,7 @@ export const HOST_DANGEROUS_INTERNAL_AUTH = Symbol(
   "host-dangerous-internal-auth",
 );
 const HOST_DESTRUCTIVE_LRO_KINDS = [
+  HOST_RELOCATE_LRO_KIND,
   HOST_DEPROVISION_LRO_KIND,
   HOST_DELETE_LRO_KIND,
   HOST_FORCE_DEPROVISION_LRO_KIND,
@@ -9018,6 +9027,111 @@ export async function setHostPublicRouteMode({
     input: { id: row.id, account_id, mode },
     dedupe_key: `${HOST_PUBLIC_ROUTE_LRO_KIND}:${row.id}`,
   });
+}
+
+async function requireAdminForHostMaintenance(
+  account_id: string | undefined,
+  id: string,
+): Promise<{ owner: string; row: any }> {
+  const owner = requireAccount(account_id);
+  if (!(await isAdmin(owner))) {
+    throw new Error("not authorized");
+  }
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    throw new Error(
+      `host is owned by another bay (${remoteBay}); run this on that bay`,
+    );
+  }
+  return { owner, row: await loadHostForRootfsManagement(id, owner) };
+}
+
+export async function relocateHost({
+  account_id,
+  id,
+  zone,
+  machine_type,
+  expected_minutes,
+  message,
+  skip_backups,
+  keep_snapshot,
+}: {
+  account_id?: string;
+  id: string;
+  zone?: string;
+  machine_type?: string;
+  expected_minutes?: number;
+  message?: string;
+  skip_backups?: boolean;
+  keep_snapshot?: boolean;
+}): Promise<HostLroResponse> {
+  const { owner, row } = await requireAdminForHostMaintenance(account_id, id);
+  // Validate now, so a bad request fails here instead of in the worker.
+  planRelocation(row, { zone, machine_type });
+  if (
+    expected_minutes != null &&
+    !(expected_minutes > 0 && expected_minutes <= MAX_EXPECTED_MINUTES)
+  ) {
+    throw new Error(
+      `expected minutes must be between 1 and ${MAX_EXPECTED_MINUTES}`,
+    );
+  }
+  const text = `${message ?? ""}`.trim();
+  if (text.length > 500) {
+    throw new Error("message is longer than 500 characters");
+  }
+  await assertNoPendingDestructiveHostOp(row.id);
+  return await createHostLro({
+    kind: HOST_RELOCATE_LRO_KIND,
+    row,
+    account_id: owner,
+    input: {
+      id: row.id,
+      account_id: owner,
+      zone,
+      machine_type,
+      expected_minutes,
+      message: text || undefined,
+      skip_backups: !!skip_backups,
+      keep_snapshot: !!keep_snapshot,
+    },
+    dedupe_key: `${HOST_RELOCATE_LRO_KIND}:${row.id}`,
+  });
+}
+
+export async function setHostMaintenanceNotice({
+  account_id,
+  id,
+  scheduled_for,
+  expected_minutes,
+  message,
+  clear,
+}: {
+  account_id?: string;
+  id: string;
+  scheduled_for?: string;
+  expected_minutes?: number;
+  message?: string;
+  clear?: boolean;
+}): Promise<HostMaintenanceNotice | null> {
+  const { row } = await requireAdminForHostMaintenance(account_id, id);
+  if (row.metadata?.maintenance?.state === "in_progress") {
+    throw new Error("maintenance is in progress on this host");
+  }
+  if (clear) {
+    await setHostMaintenanceMetadata(row.id, null);
+    return null;
+  }
+  if (!scheduled_for || expected_minutes == null) {
+    throw new Error("scheduled_for and expected_minutes are required");
+  }
+  const notice = scheduledMaintenanceNotice({
+    scheduled_for,
+    expected_minutes,
+    message,
+  });
+  await setHostMaintenanceMetadata(row.id, notice);
+  return notice;
 }
 
 function bootstrapLifecycleSummaryStatus(row: any): string | undefined {

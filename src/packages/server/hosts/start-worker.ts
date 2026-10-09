@@ -54,6 +54,9 @@ import {
   endPlannedProjectHostRuntimeTransition,
 } from "./runtime-transition";
 import { migrateHostPublicRouteInternal } from "@cocalc/server/cloud/public-route";
+import { getProviderContext } from "@cocalc/server/cloud/provider-context";
+import { relocateHost } from "@cocalc/server/hosts/relocate";
+import { setHostMaintenanceMetadata } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:hosts:ops-worker");
 
@@ -86,6 +89,7 @@ const HOST_OP_KINDS = [
   "host-upgrade-software",
   "host-rollout-managed-components",
   "host-public-route",
+  "host-relocate",
   "host-deprovision",
   "host-delete",
   "host-force-deprovision",
@@ -635,6 +639,160 @@ async function waitForHostHeartbeat({
     await delay(POLL_MS);
   }
   throw new Error("timeout waiting for host heartbeat");
+}
+
+const RELOCATION_START_TIMEOUT_MS = 20 * 60 * 1000;
+
+async function runHostRelocation({
+  op_id,
+  host_id,
+  account_id,
+  input,
+  progressStep,
+  shouldCancel,
+}: {
+  op_id: string;
+  host_id: string;
+  account_id: string;
+  input: any;
+  progressStep: (
+    step: string,
+    message: string,
+    detail?: any,
+    progress?: number,
+  ) => Promise<void>;
+  shouldCancel: () => Promise<boolean>;
+}) {
+  const pool = getPool();
+  const loadHost = async () => {
+    const { rows } = await pool.query(
+      "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [host_id],
+    );
+    if (!rows[0]) throw new Error("host not found");
+    return rows[0];
+  };
+  const waitFor = async (
+    desired: string[],
+    failOn: string[],
+    timeoutMs?: number,
+  ) => {
+    const deadline = timeoutMs ? Date.now() + timeoutMs : undefined;
+    try {
+      return await waitForHostStatus({
+        host_id,
+        desired,
+        failOn,
+        shouldCancel: async () =>
+          (await shouldCancel()) ||
+          (deadline != null && Date.now() > deadline),
+        onUpdate: async () => {},
+      });
+    } catch (err) {
+      if (deadline != null && Date.now() > deadline) {
+        throw new Error(
+          `host did not reach ${desired.join("/")} within ${Math.round(timeoutMs! / 60_000)} minutes`,
+        );
+      }
+      throw err;
+    }
+  };
+  const providerFor = async () => {
+    const row = await loadHost();
+    return await getProviderContext("gcp", { region: row.region });
+  };
+  return await relocateHost({
+    host_id,
+    op_id,
+    input: {
+      zone: input?.zone,
+      machine_type: input?.machine_type,
+      expected_minutes: input?.expected_minutes,
+      message: input?.message,
+      skip_backups: !!input?.skip_backups,
+      keep_snapshot: !!input?.keep_snapshot,
+    },
+    deps: {
+      loadHost,
+      updateHost: async ({ metadata, region }) => {
+        await pool.query(
+          `UPDATE project_hosts
+             SET metadata=$2, region=COALESCE($3, region), updated=NOW()
+           WHERE id=$1 AND deleted IS NULL`,
+          [host_id, metadata, region ?? null],
+        );
+      },
+      setMaintenance: async (notice) =>
+        await setHostMaintenanceMetadata(host_id, notice),
+      provider: async () => {
+        const { entry, creds } = await providerFor();
+        return { provider: entry.provider, creds };
+      },
+      machineTypeShape: async (zone, machine_type) => {
+        const { entry, creds } = await providerFor();
+        const types = (await entry.provider.listZoneMachineTypes?.(
+          zone,
+          creds,
+        )) as Array<{ name: string; guestCpus?: number; memoryMb?: number }>;
+        const match = (types ?? []).find((type) => type.name === machine_type);
+        if (!match) return undefined;
+        return {
+          cpu: Number(match.guestCpus ?? 0),
+          ram_gb: Math.round(Number(match.memoryMb ?? 0) / 1024),
+        };
+      },
+      backupProjects: async () =>
+        await ensureHostBackups({
+          host_id,
+          account_id,
+          skip_backups: false,
+          progressStep,
+          shouldCancel,
+        }),
+      stopHost: async () => {
+        await stopHostInternal({ account_id, id: host_id });
+        await waitFor(["off"], ["error"]);
+      },
+      loadProvisionedProjectIds: async () => {
+        const { rows } = await pool.query(
+          `SELECT project_id FROM projects
+            WHERE host_id=$1 AND deleted IS NOT TRUE AND provisioned IS TRUE`,
+          [host_id],
+        );
+        return rows.map((row) => row.project_id);
+      },
+      markProjectsProvisioned: async (project_ids) => {
+        if (project_ids.length === 0) return;
+        await pool.query(
+          `UPDATE projects SET provisioned=TRUE, provisioned_checked_at=NOW()
+            WHERE host_id=$1 AND project_id = ANY($2::uuid[])`,
+          [host_id, project_ids],
+        );
+      },
+      deprovisionHost: async () => {
+        await deleteHostInternal({ account_id, id: host_id });
+        await waitFor(["deprovisioned"], ["error"]);
+      },
+      startHost: async () => {
+        const startedAt = Date.now();
+        await startHostInternal({ account_id, id: host_id });
+        // Bounded, so a target without capacity rolls back instead of
+        // holding the maintenance window open.
+        await waitFor(
+          ["running"],
+          ["error", "off", "stopped", "deprovisioned"],
+          RELOCATION_START_TIMEOUT_MS,
+        );
+        await waitForHostHeartbeat({ host_id, since: startedAt });
+      },
+      progress: async (step, message, detail) =>
+        await progressStep(step, message, { host_id, ...(detail ?? {}) }),
+      shouldCancel,
+      alert: async (subject, body) => {
+        await adminAlert({ subject, body, dedupBySubject: true });
+      },
+    },
+  });
 }
 
 async function loadHostProjects(host_id: string): Promise<HostProjectRow[]> {
@@ -1394,6 +1552,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return "Upgrade";
     case "host-rollout-managed-components":
       return "Rollout managed components";
+    case "host-relocate":
+      return "Relocate";
     case "host-deprovision":
       return "Deprovision";
     case "host-delete":
@@ -2479,6 +2639,37 @@ async function handleOp(op: LroSummary): Promise<void> {
       }
       await progressStep("done", "reconcile complete", {
         host_id,
+      });
+      return;
+    }
+
+    if (kind === "host-relocate") {
+      const result = await runHostRelocation({
+        op_id,
+        host_id,
+        account_id,
+        input,
+        progressStep,
+        shouldCancel,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          window_ms: result.window_ms,
+          expected_window_ms: result.expected_window_ms,
+        },
+        result: { host_id, ...result },
+        error: null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep("done", "relocation complete", {
+        host_id,
+        ...result,
       });
       return;
     }
