@@ -701,8 +701,12 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
     return resolve(base);
   };
+  // Canonical, so the plan below sees "/" + "x" and "/x" as one path.
   const fullPath = ({ root, path }) =>
-    path ? `${baseOf(root)}/${path}` : baseOf(root);
+    path ? resolve(baseOf(root), path) : baseOf(root);
+  // --out-dir: a directory to create (its parent must exist) only once every
+  // check below has passed, so a refused restore leaves nothing behind.
+  const createDir = options.createDir ? resolve(options.createDir) : undefined;
   const dirMeta = new Map(dirs.map((dir) => [`${dir.root}/${dir.path}`, dir]));
   // Directories without a recorded entry (an etc-cocalc file's root, say)
   // take the owner of the entry being restored into them, mode 0700.
@@ -779,7 +783,25 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
     return fd;
   };
-  for (const root of roots) closeSync(openParent(baseOf(root)));
+  const checkCreateDir = () => {
+    const fd = openNoFollow(createDir, { missingOk: true });
+    if (fd === undefined) {
+      closeSync(openParent(createDir));
+      return;
+    }
+    const isDirectory = fstatSync(fd).isDirectory();
+    closeSync(fd);
+    if (!isDirectory) {
+      throw new Error(
+        `${createDir} is not a directory (symbolic links are refused)`,
+      );
+    }
+  };
+  for (const root of roots) {
+    const base = baseOf(root);
+    if (createDir && dirname(base) === createDir) checkCreateDir();
+    else closeSync(openParent(base));
+  }
   for (const [full, { kind }] of plan) {
     const fd = openNoFollow(full, { missingOk: true });
     if (fd === undefined) continue;
@@ -801,6 +823,7 @@ export function restore({ files, dirs }, bases, options = {}) {
     }
   }
 
+  if (createDir) makeDirectory(createDir);
   const created = [];
   const ensureDir = (parentFd, name, meta, full) => {
     let made = false;
@@ -1038,8 +1061,8 @@ function main() {
       throw new Error("open requires --out-dir DIR or --map ROOT=DIR");
     }
     // --out-dir itself may be new; its parent must exist.
-    if (options.out_dir) makeDirectory(options.out_dir);
     const result = restore(payload, bases, {
+      createDir: options.out_dir,
       force: !!options.force,
       chown: !!options.chown,
     });

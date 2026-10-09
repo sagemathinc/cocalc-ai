@@ -176,6 +176,11 @@ out="$("$NODE" "$ESCROW" open --master-key "$KEY" --in "$sealed" \
   fail "two roots restored to one directory"
 [[ "$out" == *"would both be restored to"* ]] || fail "conflict message: $out"
 [[ ! -e "${TMP_ROOT}/same/x" ]] || fail "a refused open wrote files"
+# The same through --out-dir: the conflict is found before it is created.
+"$NODE" "$ESCROW" open --master-key "$KEY" --in "$sealed" --out-dir "${TMP_ROOT}/fresh" \
+  --map "bay-secrets=${TMP_ROOT}/fresh/etc-cocalc" >/dev/null 2>&1 &&
+  fail "two roots restored to one directory under --out-dir"
+[[ ! -e "${TMP_ROOT}/fresh" ]] || fail "a refused open created --out-dir"
 
 # --map never follows a symbolic link in the destination: not in a component
 # below the mapped directory, and not the mapped directory itself.
@@ -207,6 +212,7 @@ if [[ "$(id -u)" != 0 ]]; then
   out="$("$NODE" "$ESCROW" open --master-key "$KEY" --in "$sealed" \
     --out-dir "${TMP_ROOT}/chowned" --chown 2>&1)" && fail "--chown accepted as non-root"
   [[ "$out" == *"must be run as root"* ]] || fail "--chown message: $out"
+  [[ ! -e "${TMP_ROOT}/chowned" ]] || fail "a refused open created --out-dir"
 fi
 
 # Ownership with injected root operations: a created mapped root and created
@@ -262,6 +268,9 @@ mkdir "${TMP_ROOT}/injected"
     [['a', '${TMP_ROOT}/injected/ab'], ['b', '${TMP_ROOT}/injected/ab']], /would both be restored/);
   refused({ dirs: [], files: [file('a', 'x', 'A'), file('b', 'y', 'B')] },
     [['a', '${TMP_ROOT}/injected/nest'], ['b', '${TMP_ROOT}/injected/nest/x/sub']], /below the file/);
+  // '/' + 'name' and '/name' are one path (refused before anything is written).
+  refused({ dirs: [], files: [file('a', 'cocalc-escrow-alias-test', 'A'), file('b', 'f', 'B')] },
+    [['a', '/'], ['b', '/cocalc-escrow-alias-test']], /would both be restored|below the file/);
 " || fail "directory-only restore or destination conflicts"
 [[ -d "${TMP_ROOT}/injected/e/empty/deeper" ]] || fail "nested empty directory not restored"
 [[ ! -e "${TMP_ROOT}/injected/ab" && ! -e "${TMP_ROOT}/injected/nest" ]] || fail "a refused restore wrote files"
