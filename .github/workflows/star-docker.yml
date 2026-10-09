@@ -69,6 +69,10 @@ jobs:
     env:
       RELEASE_ID: ${{ needs.release-id.outputs.id }}
       IMAGE: sagemathinc/star:${{ needs.release-id.outputs.id }}-${{ matrix.arch }}
+      # The container-runtime build pulls Ubuntu with Podman, anonymously; on
+      # shared runner IPs Docker Hub's anonymous pull limit often refuses it.
+      # AWS's public mirror of the same official image is not subject to it.
+      COCALC_CONTAINER_RUNTIME_BUILD_IMAGE: public.ecr.aws/docker/library/ubuntu:24.04
     steps:
       - name: Free disk space
         run: |
