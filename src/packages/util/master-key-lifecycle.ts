@@ -589,21 +589,65 @@ function writableRotationFiles(opts: RotationPaths) {
   return { site, keyring };
 }
 
+// Who holds a lock: a process id alone can be reused after a crash or reboot,
+// so the lock also records the boot and the process start time (Linux /proc;
+// without them only the process id is checked).
+type LockHolder = { pid: number; boot_id?: string; start?: string };
+
+async function processIdentity(pid: number): Promise<Omit<LockHolder, "pid">> {
+  const boot_id =
+    `${await readFile("/proc/sys/kernel/random/boot_id", "utf8").catch(() => "")}`.trim() ||
+    undefined;
+  let start: string | undefined;
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    // Field 22 (starttime); the command name in field 2 may contain spaces.
+    start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+  } catch {}
+  return { boot_id, start };
+}
+
+async function lockHolderAlive(text: string): Promise<boolean> {
+  let holder: LockHolder;
+  try {
+    holder = JSON.parse(text);
+  } catch {
+    holder = { pid: Number(text) }; // an older lock: a bare process id
+  }
+  const pid = Number(holder?.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const current = await processIdentity(pid);
+  if (holder.boot_id && current.boot_id && holder.boot_id !== current.boot_id) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+  } catch (err: any) {
+    if (err?.code !== "EPERM") return false;
+  }
+  return !(holder.start && current.start && holder.start !== current.start);
+}
+
 /**
  * Run one key-file change under `<keyring>.lock`, so two rotation commands
- * cannot interleave their reads and writes. A lock left by a process that no
- * longer exists is removed. The bay's root helper uses the same lock file.
+ * cannot interleave their reads and writes. A lock whose holder is gone
+ * (exited, or from before a reboot, even if its process id was reused) is
+ * removed. The bay's root helper uses the same lock file and format.
  */
 async function withKeyringLock<T>(
   keyringPath: string,
   fn: () => Promise<T>,
 ): Promise<T> {
   const lockPath = `${keyringPath}.lock`;
+  const me = JSON.stringify({
+    pid: process.pid,
+    ...(await processIdentity(process.pid)),
+  });
   for (let attempt = 0; ; attempt++) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       try {
-        await handle.writeFile(`${process.pid}\n`);
+        await handle.writeFile(`${me}\n`);
       } finally {
         await handle.close();
       }
@@ -612,17 +656,7 @@ async function withKeyringLock<T>(
       if (err?.code !== "EEXIST") throw err;
       const holder =
         `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
-      const pid = Number(holder);
-      let alive = false;
-      if (Number.isInteger(pid) && pid > 0) {
-        try {
-          process.kill(pid, 0);
-          alive = true;
-        } catch (killErr: any) {
-          alive = killErr?.code === "EPERM";
-        }
-      }
-      if (!alive) {
+      if (!(await lockHolderAlive(holder))) {
         // Remove only the stale lock we looked at, not a newer one.
         const now =
           `${await readFile(lockPath, "utf8").catch(() => "")}`.trim();
@@ -631,7 +665,7 @@ async function withKeyringLock<T>(
       }
       if (attempt >= 30) {
         throw new Error(
-          `another key rotation step (pid ${pid}) holds ${lockPath}; try again when it finishes`,
+          `another key rotation step holds ${lockPath} (${holder}); try again when it finishes, or remove the file if that process is not a rotation step`,
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));

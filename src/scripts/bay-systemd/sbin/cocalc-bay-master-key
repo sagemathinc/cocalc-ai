@@ -167,29 +167,43 @@ const state = () => {
     keyring: readKeyring().filter((e) => e.id !== activeId).map(({ id, role, added_at }) => ({ id, role, added_at })),
   };
 };
+// A lock records its holder process, boot and process start time: a process
+// id alone can be reused after a crash or reboot (same format as util).
+const identity = (pid) => {
+  let boot_id, start;
+  try { boot_id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || undefined; } catch {}
+  try { const stat = readFileSync(`/proc/${pid}/stat`, "utf8"); start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]; } catch {}
+  return { boot_id, start };
+};
+const holderAlive = (text) => {
+  let holder;
+  try { holder = JSON.parse(text); } catch { holder = { pid: Number(text) }; }
+  const pid = Number(holder?.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const current = identity(pid);
+  if (holder.boot_id && current.boot_id && holder.boot_id !== current.boot_id) return false;
+  try { process.kill(pid, 0); } catch (e) { if (e.code !== "EPERM") return false; }
+  return !(holder.start && current.start && holder.start !== current.start);
+};
 const lock = () => {
+  const me = JSON.stringify({ pid: process.pid, ...identity(process.pid) });
   for (let attempt = 0; ; attempt++) {
     try {
       const fd = openSync(LOCK, "wx", 0o600);
-      writeSync(fd, `${process.pid}\n`);
+      writeSync(fd, `${me}\n`);
       closeSync(fd);
       return;
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
       let holder = "";
       try { holder = readFileSync(LOCK, "utf8").trim(); } catch {}
-      const pid = Number(holder);
-      let alive = false;
-      if (Number.isInteger(pid) && pid > 0) {
-        try { process.kill(pid, 0); alive = true; } catch (e) { alive = e.code === "EPERM"; }
-      }
-      if (!alive) {
+      if (!holderAlive(holder)) {
         let now = "";
         try { now = readFileSync(LOCK, "utf8").trim(); } catch {}
         if (now === holder) { try { unlinkSync(LOCK); } catch {} }
         continue;
       }
-      if (attempt >= 30) throw new Error(`another key rotation step (pid ${pid}) holds ${LOCK}`);
+      if (attempt >= 30) throw new Error(`another key rotation step holds ${LOCK} (${holder}); remove it if that process is not a rotation step`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
     }
   }

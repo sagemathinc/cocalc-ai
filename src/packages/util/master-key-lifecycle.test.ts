@@ -273,6 +273,16 @@ describe("master-key-lifecycle", () => {
       await writeFile(lock, "999999999\n");
       await stageNextSiteMasterKey(paths());
       await expect(stat(lock)).rejects.toThrow();
+      // Nor does one whose process id now belongs to an unrelated live
+      // process: from another boot, or with a different start time.
+      for (const holder of [
+        { pid: process.pid, boot_id: "another-boot" },
+        { pid: process.pid, start: "1" },
+      ]) {
+        await writeFile(lock, JSON.stringify(holder));
+        await addRetiredSiteMasterKey(randomBytes(32), paths());
+        await expect(stat(lock)).rejects.toThrow();
+      }
       // Concurrent changes all apply.
       await Promise.all(
         [1, 2, 3].map((i) =>
@@ -281,7 +291,7 @@ describe("master-key-lifecycle", () => {
       );
       expect(
         (await ids()).filter((id) => id.startsWith("retired:")),
-      ).toHaveLength(3);
+      ).toHaveLength(5); // the two above, then these three
     }, 20000);
 
     it("refuses to rotate a read-only systemd credential", async () => {

@@ -148,6 +148,12 @@ printf '999999999\n' > "${etc2}/site-master-key.keyring.lock"
 COCALC_BAY_CONFIG_DIR="$etc2" bash "$TOOL" activate "$shared" --backed-up >/dev/null 2>&1 ||
   fail "activate with a stale lock"
 [[ ! -e "${etc2}/site-master-key.keyring.lock" ]] || fail "lock left behind"
+# Nor does a lock whose process id now belongs to an unrelated live process
+# (this shell) but which was taken in another boot.
+printf '{"pid":%s,"boot_id":"another-boot"}\n' "$$" > "${etc2}/site-master-key.keyring.lock"
+COCALC_BAY_CONFIG_DIR="$etc2" timeout 20 bash "$TOOL" add-retired --import "${TMP_ROOT}/old-key" >/dev/null 2>&1 ||
+  fail "a lock from another boot blocked"
+[[ ! -e "${etc2}/site-master-key.keyring.lock" ]] || fail "lock left behind"
 [[ "$(COCALC_BAY_CONFIG_DIR="$etc2" bash "$TOOL" status | field active_id)" == "$shared" ]] ||
   fail "second bay not on the shared key"
 
