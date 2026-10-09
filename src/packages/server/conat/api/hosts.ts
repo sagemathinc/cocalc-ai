@@ -9046,7 +9046,7 @@ export async function setHostPublicRouteMode({
 // While a relocation (or other maintenance) is in progress, its operation
 // owns the host's lifecycle; other starts, stops and changes would race it.
 function assertHostNotUnderMaintenance(row: any): void {
-  if (hostLifecycleFenced(row?.metadata?.maintenance)) {
+  if (hostLifecycleFenced(row?.maintenance)) {
     throw Object.assign(
       new Error(
         "this host is in a scheduled maintenance window; try again when it is over",
@@ -9175,7 +9175,7 @@ export async function setHostMaintenanceNotice({
   clear?: boolean;
 }): Promise<HostMaintenanceNotice | null> {
   const { row } = await requireAdminForHostMaintenance(account_id, id);
-  const current = row.metadata?.maintenance;
+  const current = row.maintenance;
   if (hostLifecycleFenced(current)) {
     // Only clearable once the operation that owns the window is gone (e.g.
     // the bay restarted mid-relocation), so a stuck fence can be lifted.

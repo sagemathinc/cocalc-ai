@@ -2296,7 +2296,7 @@ describe("cloud host start failures", () => {
       },
     });
     await getPool().query(
-      `UPDATE project_hosts SET metadata = jsonb_set(metadata, '{maintenance}', '{"kind":"relocation","state":"in_progress"}') WHERE id=$1`,
+      `UPDATE project_hosts SET maintenance = '{"kind":"relocation","state":"in_progress"}' WHERE id=$1`,
       [hostId],
     );
     const { cloudHostHandlers } = await import("./host-work");
@@ -3220,7 +3220,9 @@ describe("spot recovery fallback ladder", () => {
     const hostId = "1a7b2c3d-0000-4000-8000-000000000001";
     const startHost = jest
       .fn<Promise<void>, any[]>()
-      .mockRejectedValueOnce(new Error("ZONE_RESOURCE_POOL_EXHAUSTED: no t2d spot"))
+      .mockRejectedValueOnce(
+        new Error("ZONE_RESOURCE_POOL_EXHAUSTED: no t2d spot"),
+      )
       .mockResolvedValue(undefined);
     const setMachineType = jest.fn(async () => undefined);
     const setPricingModel = jest.fn(async () => undefined);
@@ -3536,9 +3538,11 @@ describe("spot recovery fallback ladder", () => {
 
   // A provider whose start outcome depends on the instance's current
   // configuration: no T2D Spot capacity, no standard T2D quota.
-  function configuredProvider(opts: {
-    setMachineTypeError?: (type: string) => string | undefined;
-  } = {}) {
+  function configuredProvider(
+    opts: {
+      setMachineTypeError?: (type: string) => string | undefined;
+    } = {},
+  ) {
     const current = { type: "t2d-standard-16", pricing: "spot" };
     const startHost = jest.fn(async () => {
       if (current.type === "t2d-standard-16") {
@@ -3581,7 +3585,9 @@ describe("spot recovery fallback ladder", () => {
   it("keeps configured Spot alternates when machine-type discovery fails", async () => {
     const hostId = "1a7b2c3d-0000-4000-8000-000000000007";
     loadGcpZoneMachineTypesMock.mockResolvedValue([]);
-    loadGcpCatalogPricesMock.mockRejectedValue(new Error("catalog unavailable"));
+    loadGcpCatalogPricesMock.mockRejectedValue(
+      new Error("catalog unavailable"),
+    );
     const { current } = configuredProvider();
     await spotHost(hostId);
     await getPool().query(
@@ -3602,7 +3608,9 @@ describe("spot recovery fallback ladder", () => {
     let flaky = 1;
     const { current } = configuredProvider({
       setMachineTypeError: (type) =>
-        type === "n2d-standard-32" && flaky-- > 0 ? "socket hang up" : undefined,
+        type === "n2d-standard-32" && flaky-- > 0
+          ? "socket hang up"
+          : undefined,
     });
     await spotHost(hostId);
 

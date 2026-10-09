@@ -4,7 +4,7 @@
  */
 
 // Maintenance windows announced to users of a host's projects, stored in
-// project_hosts.metadata.maintenance and shown as a banner on project pages.
+// project_hosts.maintenance and shown as a banner on project pages.
 
 import getPool from "@cocalc/database/pool";
 import type {
@@ -125,21 +125,13 @@ export async function setHostMaintenanceMetadata(
   host_id: string,
   notice: HostMaintenanceNotice | null,
 ): Promise<void> {
-  if (notice == null) {
-    await getPool().query(
-      `UPDATE project_hosts SET metadata = metadata - 'maintenance', updated=NOW() WHERE id=$1`,
-      [host_id],
-    );
-    return;
-  }
   await getPool().query(
-    `UPDATE project_hosts
-       SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{maintenance}', $2::jsonb),
-           updated=NOW()
-     WHERE id=$1`,
+    `UPDATE project_hosts SET maintenance=$2::jsonb, updated=NOW() WHERE id=$1`,
     [
       host_id,
-      JSON.stringify({ ...notice, updated_at: new Date().toISOString() }),
+      notice == null
+        ? null
+        : JSON.stringify({ ...notice, updated_at: new Date().toISOString() }),
     ],
   );
 }
@@ -179,19 +171,14 @@ export async function acquireRelocationLease({
   };
   const { rowCount } = await getPool().query(
     `UPDATE project_hosts
-        SET metadata = jsonb_set(
-              COALESCE(metadata, '{}'::jsonb),
-              '{maintenance}',
-              COALESCE(
-                CASE WHEN metadata->'maintenance'->>'state' = 'scheduled'
-                     THEN metadata->'maintenance' END,
-                '{}'::jsonb
-              ) || $2::jsonb
-            ),
+        SET maintenance = COALESCE(
+              CASE WHEN maintenance->>'state' = 'scheduled' THEN maintenance END,
+              '{}'::jsonb
+            ) || $2::jsonb,
             updated=NOW()
       WHERE id=$1
         AND deleted IS NULL
-        AND COALESCE(metadata->'maintenance'->>'state', '') NOT IN ${FENCED_STATES_SQL}`,
+        AND COALESCE(maintenance->>'state', '') NOT IN ${FENCED_STATES_SQL}`,
     [host_id, JSON.stringify(lease)],
   );
   return (rowCount ?? 0) > 0;
@@ -209,9 +196,9 @@ export async function attachRelocationLeaseOp({
 }): Promise<void> {
   await getPool().query(
     `UPDATE project_hosts
-        SET metadata = jsonb_set(metadata, '{maintenance,op_id}', to_jsonb($3::text)),
+        SET maintenance = maintenance || jsonb_build_object('op_id', $3::text),
             updated=NOW()
-      WHERE id=$1 AND metadata->'maintenance'->>'lease_id' = $2`,
+      WHERE id=$1 AND maintenance->>'lease_id' = $2`,
     [host_id, lease_id, op_id],
   );
 }
@@ -227,32 +214,21 @@ export async function setRelocationNotice({
   lease_id: string;
   notice: HostMaintenanceNotice | null;
 }): Promise<void> {
-  const { rowCount } =
-    notice == null
-      ? await getPool().query(
-          `UPDATE project_hosts SET metadata = metadata - 'maintenance', updated=NOW()
-            WHERE id=$1 AND metadata->'maintenance'->>'lease_id' = $2`,
-          [host_id, lease_id],
-        )
-      : // Also re-establishes the lease if a handler wrote back an older
-        // metadata object without it, unless something else fenced the host.
-        await getPool().query(
-          `UPDATE project_hosts
-              SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{maintenance}', $3::jsonb),
-                  updated=NOW()
-            WHERE id=$1
-              AND (metadata->'maintenance'->>'lease_id' = $2
-                   OR COALESCE(metadata->'maintenance'->>'state', '') NOT IN ${FENCED_STATES_SQL})`,
-          [
-            host_id,
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts SET maintenance=$3::jsonb, updated=NOW()
+      WHERE id=$1 AND maintenance->>'lease_id' = $2`,
+    [
+      host_id,
+      lease_id,
+      notice == null
+        ? null
+        : JSON.stringify({
+            ...notice,
             lease_id,
-            JSON.stringify({
-              ...notice,
-              lease_id,
-              updated_at: new Date().toISOString(),
-            }),
-          ],
-        );
+            updated_at: new Date().toISOString(),
+          }),
+    ],
+  );
   if (!rowCount) {
     throw new Error("the relocation no longer holds this host's lease");
   }
@@ -266,8 +242,8 @@ export async function releaseRelocationLease({
   lease_id: string;
 }): Promise<void> {
   await getPool().query(
-    `UPDATE project_hosts SET metadata = metadata - 'maintenance', updated=NOW()
-      WHERE id=$1 AND metadata->'maintenance'->>'lease_id' = $2`,
+    `UPDATE project_hosts SET maintenance=NULL, updated=NOW()
+      WHERE id=$1 AND maintenance->>'lease_id' = $2`,
     [host_id, lease_id],
   );
 }

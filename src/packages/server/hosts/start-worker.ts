@@ -224,7 +224,7 @@ async function updateProgressSummary(
 
 async function loadHostStatus(id: string) {
   const { rows } = await getPool().query(
-    "SELECT id, status, metadata, deleted, last_seen FROM project_hosts WHERE id=$1",
+    "SELECT id, status, metadata, maintenance, deleted, last_seen FROM project_hosts WHERE id=$1",
     [id],
   );
   return rows[0];
@@ -711,7 +711,7 @@ async function runHostRelocation({
   };
   const lease_id = `${input?.lease_id ?? ""}`.trim();
   const current = await loadHost();
-  if (!lease_id || current.metadata?.maintenance?.lease_id !== lease_id) {
+  if (!lease_id || current.maintenance?.lease_id !== lease_id) {
     throw new Error("this relocation does not hold the host's lease");
   }
   try {
@@ -720,7 +720,7 @@ async function runHostRelocation({
     // Failed before its window (planning, preflight, backups, warm
     // snapshot): nothing changed, so give the host back.
     const after = await loadHost().catch(() => undefined);
-    const notice = after?.metadata?.maintenance;
+    const notice = after?.maintenance;
     if (notice?.lease_id === lease_id && notice?.state === "preparing") {
       await releaseRelocationLease({ host_id, lease_id });
     }
@@ -2117,7 +2117,7 @@ async function handleOp(op: LroSummary): Promise<void> {
     if (kind !== "host-relocate" && kind !== "host-force-deprovision") {
       assertHostOpAllowedDuringMaintenance(
         kind,
-        (await loadHostStatus(host_id))?.metadata?.maintenance,
+        (await loadHostStatus(host_id))?.maintenance,
       );
     }
 

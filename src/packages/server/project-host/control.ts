@@ -1075,7 +1075,7 @@ export async function savePlacement(
 // the maintenance banner with the expected end.
 async function assertHostNotUnderMaintenance(host_id: string): Promise<void> {
   const { rows } = await pool().query<{ state: string | null }>(
-    "SELECT metadata->'maintenance'->>'state' AS state FROM project_hosts WHERE id=$1",
+    "SELECT maintenance->>'state' AS state FROM project_hosts WHERE id=$1",
     [host_id],
   );
   // A failed relocation stays fenced until an admin clears it.

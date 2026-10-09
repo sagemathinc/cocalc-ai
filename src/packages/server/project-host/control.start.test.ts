@@ -255,7 +255,7 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -314,7 +314,7 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -366,7 +366,7 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -438,7 +438,7 @@ describe("startProjectOnHost placement", () => {
         expect(sql).toContain("tier IS NOT NULL");
         return { rows: [] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -514,7 +514,7 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -641,7 +641,7 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("FROM project_copies")) {
         return { rows: [{ exists: false }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -752,7 +752,7 @@ describe("startProjectOnHost placement", () => {
         expect(params).toEqual(["host-1"]);
         return { rows: [{ metadata: { machine: {} } }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -783,7 +783,7 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -873,7 +873,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -990,7 +990,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1108,7 +1108,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: "in_progress" }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1228,7 +1228,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1266,7 +1266,7 @@ describe("startProjectOnHost placement", () => {
           rows: [{ owning_bay_id: "bay-0" }],
         };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1381,7 +1381,7 @@ describe("startProjectOnHost placement", () => {
         expect(params[1]).toMatchObject({ state: "running" });
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1493,7 +1493,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1606,7 +1606,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1716,7 +1716,7 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: "repo-1", provisioned: false }] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1819,7 +1819,7 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("UPDATE projects SET last_started")) {
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1936,7 +1936,7 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("UPDATE projects SET last_started")) {
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -2050,7 +2050,7 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("UPDATE projects SET last_started")) {
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -2107,7 +2107,7 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("SET state=$2::jsonb")) {
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("metadata->'maintenance'->>'state'")) {
+      if (sql.includes("maintenance->>'state'")) {
         return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);

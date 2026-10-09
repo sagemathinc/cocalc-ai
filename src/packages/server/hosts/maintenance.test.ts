@@ -9,6 +9,7 @@ import {
   normalizeHostMaintenanceNotice,
   quiesceHostActivity,
   releaseRelocationLease,
+  setHostMaintenanceMetadata,
   setRelocationNotice,
 } from "./maintenance";
 
@@ -32,7 +33,7 @@ async function newHost(metadata: Record<string, any> = {}): Promise<string> {
 
 async function maintenanceOf(host_id: string) {
   const { rows } = await getPool().query(
-    "SELECT metadata->'maintenance' AS m FROM project_hosts WHERE id=$1",
+    "SELECT maintenance AS m FROM project_hosts WHERE id=$1",
     [host_id],
   );
   return rows[0]?.m;
@@ -57,7 +58,7 @@ describe("relocation lease", () => {
   it("keeps a scheduled announcement and refuses while fenced", async () => {
     const host_id = await newHost();
     await getPool().query(
-      `UPDATE project_hosts SET metadata = jsonb_set(metadata, '{maintenance}', $2::jsonb) WHERE id=$1`,
+      `UPDATE project_hosts SET maintenance = $2::jsonb WHERE id=$1`,
       [
         host_id,
         JSON.stringify({
@@ -92,24 +93,41 @@ describe("relocation lease", () => {
     expect(await maintenanceOf(host_id)).toBeNull();
   });
 
-  it("re-establishes a lease dropped by a stale metadata write, but not one held by another relocation", async () => {
+  it("survives stale whole-metadata writes, and ends when an admin clears it", async () => {
     const host_id = await newHost();
     const lease_id = randomUUID();
     await acquireRelocationLease({ host_id, lease_id });
-    // A handler that read the row before the lease writes it back.
-    await getPool().query(
-      "UPDATE project_hosts SET metadata = metadata - 'maintenance' WHERE id=$1",
-      [host_id],
-    );
     await setRelocationNotice({
       host_id,
       lease_id,
       notice: { kind: "relocation", state: "in_progress" },
     });
-    expect(await maintenanceOf(host_id)).toMatchObject({
-      state: "in_progress",
-      lease_id,
-    });
+    // A cloud work handler read the row in the window ...
+    const {
+      rows: [stale],
+    } = await getPool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1",
+      [host_id],
+    );
+    await setRelocationNotice({ host_id, lease_id, notice: null });
+    // ... and writes its whole metadata object back after the window.
+    await getPool().query("UPDATE project_hosts SET metadata=$2 WHERE id=$1", [
+      host_id,
+      stale.metadata,
+    ]);
+    expect(await maintenanceOf(host_id)).toBeNull();
+
+    const second = randomUUID();
+    await acquireRelocationLease({ host_id, lease_id: second });
+    await setHostMaintenanceMetadata(host_id, null);
+    await expect(
+      setRelocationNotice({
+        host_id,
+        lease_id: second,
+        notice: { kind: "relocation", state: "in_progress" },
+      }),
+    ).rejects.toThrow(/no longer holds/);
+    expect(await maintenanceOf(host_id)).toBeNull();
 
     const other = await newHost();
     await acquireRelocationLease({ host_id: other, lease_id: randomUUID() });

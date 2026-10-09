@@ -3700,7 +3700,7 @@ async function handleProbeSpot(row: any) {
   if (!isSpotRecoveryManagedHost(host)) return;
   // A relocation owns the host (preparing, in its window, or failed and
   // awaiting an admin) and resets Spot recovery after.
-  if (hostLifecycleFenced(host.metadata?.maintenance)) return;
+  if (hostLifecycleFenced(host.maintenance)) return;
   const policy = spotRecoveryPolicy(host);
   const state = spotRecoveryState(host);
   const currentEffectivePricing = effectivePricingModel(host);

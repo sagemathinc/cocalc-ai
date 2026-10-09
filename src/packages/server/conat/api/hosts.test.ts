@@ -3774,7 +3774,7 @@ describe("hosts browser fresh auth gating", () => {
         }
         if (
           sql.includes("UPDATE project_hosts") &&
-          sql.includes("{maintenance}")
+          sql.includes("SET maintenance")
         ) {
           // A concurrent relocation took the host between our read and
           // this conditional update.
@@ -3817,8 +3817,8 @@ describe("hosts browser fresh auth gating", () => {
                 metadata: {
                   owner: ACCOUNT_ID,
                   machine: { cloud: "gcp", machine_type: "t2d-standard-16" },
-                  maintenance: { kind: "relocation", state },
                 },
+                maintenance: { kind: "relocation", state },
               },
             ],
           };
@@ -3861,13 +3861,11 @@ describe("hosts browser fresh auth gating", () => {
                 id: HOST_ID,
                 name: "host-name",
                 status: "deprovisioned",
-                metadata: {
-                  owner: ACCOUNT_ID,
-                  maintenance: {
-                    kind: "relocation",
-                    state: "in_progress",
-                    op_id: "op-dead",
-                  },
+                metadata: { owner: ACCOUNT_ID },
+                maintenance: {
+                  kind: "relocation",
+                  state: "in_progress",
+                  op_id: "op-dead",
                 },
               },
             ],
@@ -3909,7 +3907,7 @@ describe("hosts browser fresh auth gating", () => {
           clear: true,
         }),
       ).resolves.toBeNull();
-      expect(updates.join("\n")).toContain("metadata - 'maintenance'");
+      expect(updates.join("\n")).toContain("SET maintenance=");
     } finally {
       queryMock = previousQueryMock;
       isAdminMock = previousIsAdminMock;

@@ -63,6 +63,7 @@ type HostRow = {
   status?: string;
   region?: string;
   metadata?: Record<string, any>;
+  maintenance?: Record<string, any> | null;
   public_url?: string;
   internal_url?: string;
   ssh_server?: string | null;
@@ -126,7 +127,7 @@ const RESTORE_BLOCKING_PENDING_ACTIONS = [
 async function loadHosts(provider: Provider): Promise<HostRow[]> {
   const { rows } = await pool().query(
     `
-      SELECT id, name, status, region, metadata, public_url, internal_url, ssh_server, last_seen
+      SELECT id, name, status, region, metadata, maintenance, public_url, internal_url, ssh_server, last_seen
       FROM project_hosts
       WHERE metadata->'machine'->>'cloud' = $1
         AND deleted IS NULL
@@ -789,7 +790,7 @@ async function reconcileProvider(provider: Provider) {
     if (!instance_id) continue;
     // A relocation owns the host for its maintenance window: its VM and disks
     // come and go on purpose, and this row snapshot would be stale.
-    if (hostOfflineFenced(row.metadata?.maintenance)) continue;
+    if (hostOfflineFenced(row.maintenance)) continue;
     const now = new Date();
     const remote = remoteById.get(instance_id);
     const lastActionAt = parseLastActionAt(row);
