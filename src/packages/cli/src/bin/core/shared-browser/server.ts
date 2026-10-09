@@ -55,8 +55,34 @@ export interface SharedBrowserState {
   viewers: number;
 }
 
+// The screencast streams changes as JPEG at CSS pixels (headless Chromium
+// does not scale it); once the page is still, one frame at the viewer's
+// device pixels replaces it: lossless PNG (sharp) or high-quality JPEG
+// (balanced).  Fast skips that (slow links).
+export type ViewQuality = "sharp" | "balanced" | "fast";
+const QUALITY: Record<
+  ViewQuality,
+  {
+    jpeg: number;
+    maxScale: number;
+    rest: null | { format: string; quality?: number };
+  }
+> = {
+  sharp: { jpeg: 80, maxScale: 2, rest: { format: "png" } },
+  balanced: { jpeg: 75, maxScale: 2, rest: { format: "jpeg", quality: 92 } },
+  fast: { jpeg: 60, maxScale: 1, rest: null },
+};
+// A lossless frame this long after the last change, in sharp mode.
+const SETTLE_MS = 350;
+
 interface TabPage {
   targetId: string;
+  // Device pixels per CSS pixel the viewer draws at, and its quality.
+  scale: number;
+  quality: ViewQuality;
+  settleTimer: NodeJS.Timeout | null;
+  // The last screencast frame, to recognize frames without a change.
+  lastFrame: Buffer | null;
   session: string | null;
   ready: Promise<void> | null;
   casting: boolean;
@@ -319,6 +345,10 @@ export class SharedBrowserServer {
     if (!page) {
       page = {
         targetId,
+        scale: 1,
+        quality: "sharp",
+        settleTimer: null,
+        lastFrame: null,
         session: null,
         ready: null,
         casting: false,
@@ -446,7 +476,7 @@ export class SharedBrowserServer {
     await this.cdp
       .send(
         "Emulation.setDeviceMetricsOverride",
-        { width, height, deviceScaleFactor: 1, mobile: false },
+        { width, height, deviceScaleFactor: page.scale, mobile: false },
         page.session,
       )
       .catch(() => {});
@@ -466,17 +496,51 @@ export class SharedBrowserServer {
     const want = this.watchersOf(targetId).length > 0;
     if (want === page.casting) return;
     page.casting = want;
+    page.lastFrame = null;
     if (want) {
       const { width, height } = page.viewport;
       await this.cdp.send(
         "Page.startScreencast",
-        { format: "jpeg", quality: 70, maxWidth: width, maxHeight: height },
+        {
+          format: "jpeg",
+          quality: QUALITY[page.quality].jpeg,
+          // Frames at the device pixels the viewer draws: no upscaling blur.
+          maxWidth: Math.round(width * page.scale),
+          maxHeight: Math.round(height * page.scale),
+        },
         page.session,
       );
     } else {
       await this.cdp
         .send("Page.stopScreencast", {}, page.session)
         .catch(() => {});
+    }
+  }
+
+  private sendFrame(page: TabPage, frame: Buffer): void {
+    for (const ws of this.watchersOf(page.targetId)) {
+      // Drop frames for slow viewers instead of queueing them.
+      if (ws.bufferedAmount < 2 * 1024 * 1024) ws.send(frame, { binary: true });
+    }
+  }
+
+  // Once the page is still, send it once at full quality.
+  private async settle(page: TabPage): Promise<void> {
+    page.settleTimer = null;
+    const rest = QUALITY[page.quality].rest;
+    if (!page.session || !page.casting || !rest) return;
+    try {
+      const { data } = await this.cdp.send(
+        "Page.captureScreenshot",
+        rest,
+        page.session,
+        10_000,
+      );
+      // Skip it if the page changed meanwhile: a newer frame is coming.
+      if (!page.settleTimer && page.casting)
+        this.sendFrame(page, Buffer.from(data, "base64"));
+    } catch {
+      // e.g. the tab closed
     }
   }
 
@@ -555,10 +619,14 @@ export class SharedBrowserServer {
         sessionId,
       );
       const frame = Buffer.from(params.data, "base64");
-      for (const ws of this.watchersOf(page.targetId)) {
-        // Drop frames for slow viewers instead of queueing them.
-        if (ws.bufferedAmount < 2 * 1024 * 1024)
-          ws.send(frame, { binary: true });
+      // Capturing the still frame makes Chromium send the same picture
+      // again: forwarding it would replace the sharp frame and start over.
+      if (page.lastFrame?.equals(frame)) return;
+      page.lastFrame = frame;
+      this.sendFrame(page, frame);
+      if (QUALITY[page.quality].rest) {
+        if (page.settleTimer) clearTimeout(page.settleTimer);
+        page.settleTimer = setTimeout(() => void this.settle(page), SETTLE_MS);
       }
       return;
     }
@@ -703,11 +771,27 @@ export class SharedBrowserServer {
         const page = this.pageFor(view.tab);
         const width = clampInt(msg.width, 200, MAX_VIEWPORT);
         const height = clampInt(msg.height, 150, MAX_VIEWPORT);
+        const quality: ViewQuality =
+          msg.quality === "balanced" || msg.quality === "fast"
+            ? msg.quality
+            : "sharp";
+        const ratio = Number(msg.scale);
+        const scale = Math.min(
+          QUALITY[quality].maxScale,
+          Math.max(1, Number.isFinite(ratio) ? Math.round(ratio * 4) / 4 : 1),
+        );
         // New tabs start at the size the human last used.
         this.state.viewport = { width, height };
-        if (width === page.viewport.width && height === page.viewport.height)
+        if (
+          width === page.viewport.width &&
+          height === page.viewport.height &&
+          scale === page.scale &&
+          quality === page.quality
+        )
           return;
         page.viewport = { width, height };
+        page.scale = scale;
+        page.quality = quality;
         await this.applyViewport(page);
         this.broadcastState();
         return;

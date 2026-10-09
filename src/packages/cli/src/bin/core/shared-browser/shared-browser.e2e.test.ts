@@ -473,3 +473,97 @@ test(
     }
   },
 );
+
+test(
+  "frames match the viewer's pixel ratio, with a lossless frame at rest",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port, cdpPort } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      await page.goto("data:text/html,<title>t</title><h1>Sharp text</h1>");
+      page.close();
+      const viewer = await human.newPage({
+        viewport: { width: 800, height: 500 },
+        deviceScaleFactor: 2,
+      });
+      // Record each frame's type and width as the viewer decodes it.
+      await viewer.addInitScript(() => {
+        const decode = window.createImageBitmap.bind(window);
+        (window as any).__frames = [];
+        (window as any).createImageBitmap = async (
+          src: any,
+          ...rest: any[]
+        ) => {
+          const bmp = await decode(src, ...rest);
+          if (src instanceof Blob)
+            (window as any).__frames.push({ type: src.type, width: bmp.width });
+          return bmp;
+        };
+      });
+      await viewer.goto(`http://127.0.0.1:${port}/`);
+      const frames = () => viewer.evaluate(() => (window as any).__frames);
+      const until = async (ok: (f: any[]) => boolean) => {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          if (ok(await frames())) return;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        assert.fail(`frames: ${JSON.stringify(await frames())}`);
+      };
+      const stage = await viewer.evaluate(() =>
+        Math.round(
+          document.getElementById("stage")!.getBoundingClientRect().width,
+        ),
+      );
+      // At rest, a frame at device pixels: twice the stage's width.
+      await until((f) => f.some((x) => x.width === stage * 2));
+      // ...and then nothing more while nothing changes (no capture loop).
+      await new Promise((r) => setTimeout(r, 1000));
+      const settled = (await frames()).length;
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.equal((await frames()).length, settled, "no frames at rest");
+      const last = (await frames()).at(-1);
+      assert.equal(last.width, stage * 2, "the sharp frame stays");
+
+      // Fast: no full-resolution frame.
+      await viewer.selectOption("#quality", "fast");
+      await new Promise((r) => setTimeout(r, 500));
+      await viewer.evaluate(() => ((window as any).__frames = []));
+      const p2 = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      await p2.evaluate("document.body.style.background = 'yellow'");
+      p2.close();
+      await until((f) => f.length > 0);
+      await new Promise((r) => setTimeout(r, 1000));
+      assert.ok(!(await frames()).some((x: any) => x.width === stage * 2));
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);

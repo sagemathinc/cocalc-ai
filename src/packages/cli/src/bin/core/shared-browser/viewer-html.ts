@@ -19,6 +19,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #nav { display:flex; gap:4px; align-items:center; padding:4px 6px; background:var(--bg); border-bottom:1px solid var(--line); }
   #nav button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 8px; cursor:pointer; }
   #nav button.off { opacity:.45; }
+  #quality { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 4px; }
   #url { flex:1; min-width:0; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--fg); }
   #driver { display:flex; align-items:center; gap:8px; padding:4px 8px; border-bottom:1px solid var(--line); }
   #driver.ask, #driver.waiting { background:var(--warn); color:var(--warnfg); }
@@ -55,6 +56,9 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <button id="fwd" title="Forward">&#8594;</button>
     <button id="reload" title="Reload">&#8635;</button>
     <input id="url" spellcheck="false" placeholder="Address or search">
+    <select id="quality" title="Picture quality: Sharp sends crisp text once the page is still; Fast uses less bandwidth">
+      <option value="sharp">Sharp</option><option value="balanced">Balanced</option><option value="fast">Fast</option>
+    </select>
   </div>
   <div id="driver"><span class="msg"></span><button></button></div>
   <div id="stage">
@@ -131,6 +135,9 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     ctx.fillStyle = "#888"; ctx.fillRect(0, 0, w, h);
     // Frames are rendered at the viewport size, which follows this canvas.
     const scale = Math.min(w / bmp.width, h / bmp.height);
+    // Frames come at the canvas's device pixels: draw them 1:1 when they fit.
+    ctx.imageSmoothingEnabled = Math.abs(scale - 1) > 0.01;
+    ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bmp, 0, 0, bmp.width * scale, bmp.height * scale);
   }
 
@@ -147,6 +154,17 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   function updateVisible() { setVisible(!document.hidden && !tooSmall()); }
   document.addEventListener("visibilitychange", updateVisible);
 
+  // Picture quality: a display preference of this device.
+  const QUALITY_KEY = "cocalc-browser-quality";
+  function quality() { try { return localStorage.getItem(QUALITY_KEY) || "sharp"; } catch { return "sharp"; } }
+  $("quality").value = quality();
+  $("quality").addEventListener("change", () => { try { localStorage.setItem(QUALITY_KEY, $("quality").value); } catch {} sendSize(true); canvas.focus(); });
+  // Moving the window to a screen with another pixel ratio.
+  (function watchRatio() {
+    const mq = matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
+    mq.addEventListener("change", () => { sendSize(true); watchRatio(); }, { once: true });
+  })();
+
   let sizeTimer = null, lastSize = "";
   function sendSize(force) {
     if (tooSmall()) { updateVisible(); return; }
@@ -154,11 +172,11 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
     if (lastFrame) drawFrame(lastFrame);
-    const key = Math.round(r.width) + "x" + Math.round(r.height);
+    const key = Math.round(r.width) + "x" + Math.round(r.height) + "@" + dpr + quality();
     if (!force && key === lastSize) return;
     lastSize = key;
     clearTimeout(sizeTimer);
-    sizeTimer = setTimeout(() => send({ type: "resize", width: Math.round(r.width), height: Math.round(r.height) }), 150);
+    sizeTimer = setTimeout(() => send({ type: "resize", width: Math.round(r.width), height: Math.round(r.height), scale: dpr, quality: quality() }), 150);
   }
   new ResizeObserver(() => { updateVisible(); sendSize(false); }).observe(stage);
 
