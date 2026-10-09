@@ -1030,6 +1030,12 @@ describe("cloud host start failures", () => {
       [hostId],
     );
     expect(host.rows[0].desired).toBe("stopped");
+    // The stop ended that recovery: the next start begins from scratch.
+    const recovery = await getPool().query(
+      "SELECT metadata->'spot_recovery_state' AS state FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(recovery.rows[0].state).toEqual({ phase: "idle" });
   });
 
   it("queues RootFS pre-pull and reclaims a stale route migration", async () => {

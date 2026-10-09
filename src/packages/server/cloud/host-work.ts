@@ -3474,6 +3474,24 @@ async function handleVerifyHostReady(row: any) {
         provider: providerId,
         provider_status: observation?.provider_status,
       });
+      // The stop ends the recovery it was verifying; the next start must not
+      // count this attempt or skip the machine types it tried. Written as a
+      // partial update, conditional on the stop still being wanted.
+      await pool().query(
+        `UPDATE project_hosts
+            SET metadata = jsonb_set(metadata, '{spot_recovery_state}', $2::jsonb),
+                updated=NOW()
+          WHERE id=$1 AND deleted IS NULL
+            AND metadata->>'desired_state' = 'stopped'`,
+        [
+          host.id,
+          JSON.stringify(
+            compactIdleSpotRecoveryState(
+              host.metadata?.spot_recovery_state,
+            ) ?? { phase: "idle" },
+          ),
+        ],
+      );
       return;
     }
     if (stoppedStatus) {
