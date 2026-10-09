@@ -114,6 +114,10 @@ async function writeHostBillingChanges({
   status?: { status: string; clear_last_seen?: boolean };
 }): Promise<boolean> {
   const { set, remove } = metadataPatch(row.metadata, metadata);
+  if (!status && Object.keys(set).length === 0 && remove.length === 0) {
+    // Nothing changed relative to what this pass read.
+    return true;
+  }
   const params: any[] = [row.id];
   const sets: string[] = [];
   if (status) {
@@ -652,15 +656,17 @@ async function reconcileStoppedHost({
       started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
       ...retainedOwnerSpendPolicy(metadata),
     };
+    let written = true;
     if (
       JSON.stringify(nextBilling) !== JSON.stringify(metadata?.billing ?? {})
     ) {
-      await updateHostBillingMetadata({
+      written = await updateHostBillingMetadata({
         row,
         metadata: { ...metadata, billing: nextBilling },
       });
     }
-    if (previousEnforcement && previousEnforcement.state !== "ok") {
+    // Tell the owner only about a transition that was stored.
+    if (written && previousEnforcement && previousEnforcement.state !== "ok") {
       await notifyBillingEnforcementTransition({
         row,
         owner,
@@ -975,27 +981,47 @@ async function maybeSendDeprovisionReminder({
   }
   const owner = `${metadata?.owner ?? ""}`.trim();
   if (!owner) return false;
-  const sent = await notifyDedicatedHostDeprovisionReminderBestEffort({
-    owner_account_id: owner,
-    host_id: row.id,
-    host_name: row.name,
-    deprovision_after: enforcement.deprovision_after,
-  });
-  if (!sent) return false;
-  await updateHostBillingMetadata({
-    row,
-    metadata: {
-      ...metadata,
-      billing: {
-        ...(metadata.billing ?? {}),
-        enforcement: {
-          ...enforcement,
-          deprovision_reminder_sent_at: new Date().toISOString(),
-        },
-      },
-    },
-  });
-  return true;
+  // Reserve the reminder before sending it, so it is sent at most once: only
+  // the pass that records it sends, and nothing is sent for a host a
+  // relocation holds.
+  const reservation = new Date().toISOString();
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts
+        SET metadata = jsonb_set(
+              metadata,
+              '{billing,enforcement,deprovision_reminder_sent_at}',
+              to_jsonb($2::text)
+            ),
+            updated=NOW()
+      WHERE id=$1 AND deleted IS NULL${HOST_NOT_HELD}
+        AND metadata->'billing'->'enforcement'->>'state' = 'stopped_billing_blocked'
+        AND metadata->'billing'->'enforcement'->>'deprovision_reminder_sent_at' IS NULL`,
+    [row.id, reservation],
+  );
+  if (!rowCount) return false;
+  let sent = false;
+  try {
+    sent = await notifyDedicatedHostDeprovisionReminderBestEffort({
+      owner_account_id: owner,
+      host_id: row.id,
+      host_name: row.name,
+      deprovision_after: enforcement.deprovision_after,
+    });
+  } finally {
+    if (!sent) {
+      // Release only this pass's reservation, so a later pass can retry
+      // without erasing a newer reminder or state change.
+      await getPool().query(
+        `UPDATE project_hosts
+            SET metadata = metadata #- '{billing,enforcement,deprovision_reminder_sent_at}',
+                updated=NOW()
+          WHERE id=$1
+            AND metadata->'billing'->'enforcement'->>'deprovision_reminder_sent_at' = $2`,
+        [row.id, reservation],
+      );
+    }
+  }
+  return sent;
 }
 
 async function maybeProgressInactiveEnforcement({
@@ -1464,11 +1490,11 @@ async function runPass(): Promise<void> {
       JSON.stringify(nextMetadata.billing) !==
       JSON.stringify(metadata?.billing ?? {})
     ) {
-      await updateHostBillingMetadata({
+      const written = await updateHostBillingMetadata({
         row,
         metadata: nextMetadata,
       });
-      if (enforcementDecision.action !== "request_drain") {
+      if (written && enforcementDecision.action !== "request_drain") {
         await notifyBillingEnforcementTransition({
           row,
           owner,

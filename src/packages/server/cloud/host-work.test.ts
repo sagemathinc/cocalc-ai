@@ -1038,6 +1038,88 @@ describe("cloud host start failures", () => {
     expect(recovery.rows[0].state).toEqual({ phase: "idle" });
   });
 
+  it("does not restart a Spot host stopped while the provider status was being read", async () => {
+    // The handler read the row (wanted running), then the stop landed while
+    // the provider call was in flight: the decision must use the stop.
+    const hostId = "6d1e7b2f-8b3c-4d4e-9f0a-1b2c3d4e5f60";
+    await upsertProjectHost({
+      id: hostId,
+      name: "Stopped during verification",
+      region: "us-west4",
+      status: "starting",
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        desired_state: "running",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west4-c",
+          machine_type: "t2d-standard-2",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west4-c",
+          instance_id: `cocalc-host-${hostId}`,
+        },
+        spot_recovery_state: {
+          phase: "retrying_spot",
+          outage_started_at: new Date().toISOString(),
+        },
+      },
+    });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          getStatus: jest.fn(async () => {
+            // The admin stop commits while the provider is being asked.
+            await getPool().query(
+              `UPDATE project_hosts
+                  SET metadata = jsonb_set(metadata, '{desired_state}', '"stopped"')
+                WHERE id=$1`,
+              [hostId],
+            );
+            return "stopped";
+          }),
+          startHost: jest.fn(async () => undefined),
+        },
+      },
+      creds: {},
+    });
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready({
+      id: "verify-stopped-in-flight",
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload: {
+        provider: "gcp",
+        started_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    } as any);
+
+    const { rows } = await getPool().query(
+      "SELECT action FROM cloud_vm_work WHERE vm_id=$1",
+      [hostId],
+    );
+    expect(rows).toEqual([]);
+    const host = await getPool().query(
+      "SELECT metadata->>'desired_state' AS desired FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(host.rows[0].desired).toBe("stopped");
+    // The stop ended that recovery: the next start begins from scratch.
+    const recovery = await getPool().query(
+      "SELECT metadata->'spot_recovery_state' AS state FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(recovery.rows[0].state).toEqual({ phase: "idle" });
+  });
   it("queues RootFS pre-pull and reclaims a stale route migration", async () => {
     const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
     const startedAt = new Date(Date.now() - 60_000).toISOString();

@@ -653,6 +653,24 @@ async function updateHostRow(id: string, updates: Record<string, any>) {
   );
 }
 
+// Like updateHostRow, but only while the host is not wanted stopped, checked
+// in the same statement: recovery must never overwrite a stop that landed
+// after its row was read. Returns whether the row was written.
+async function updateHostRowUnlessStopped(
+  id: string,
+  updates: Record<string, any>,
+): Promise<boolean> {
+  const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
+  const sets = keys.map((key, idx) => `${key}=$${idx + 2}`);
+  const { rowCount } = await pool().query(
+    `UPDATE project_hosts SET ${[...sets, "updated=NOW()"].join(", ")}
+      WHERE id=$1 AND deleted IS NULL
+        AND COALESCE(metadata->>'desired_state', '') <> 'stopped'`,
+    [id, ...keys.map((key) => updates[key])],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 function runtimeSshServer(row: any, runtime: any): string | null | undefined {
   const providerId = normalizeProviderId(row?.metadata?.machine?.cloud);
   const publicIp = `${runtime?.public_ip ?? ""}`.trim();
@@ -966,11 +984,16 @@ async function scheduleSpotRetry(opts: {
     spot_recovery_state: clearVerificationFields(nextState),
   });
   nextMetadata.desired_state = "running";
-  await updateHostRow(opts.row.id, {
-    status: "starting",
-    metadata: nextMetadata,
-    last_seen: null,
-  });
+  // A stop that landed after the row was read wins: no retry.
+  if (
+    !(await updateHostRowUnlessStopped(opts.row.id, {
+      status: "starting",
+      metadata: nextMetadata,
+      last_seen: null,
+    }))
+  ) {
+    return false;
+  }
   await enqueueCloudVmFollowUpWork({
     vm_id: opts.row.id,
     action: "start",
@@ -992,6 +1015,7 @@ async function scheduleSpotRetry(opts: {
       reason: opts.reason,
     },
   });
+  return true;
 }
 
 function managesCloudflareTunnel(row: any): boolean {
@@ -3463,20 +3487,16 @@ async function handleVerifyHostReady(row: any) {
         providerId,
       }));
     const stoppedStatus = stoppedProviderStatus(observation);
-    if (
-      stoppedStatus &&
-      `${host.metadata?.desired_state ?? ""}`.trim() === "stopped"
-    ) {
-      // Stopped on purpose (a user or admin stop, or a relocation) while the
-      // start was still being verified: not an interruption to recover from.
+    // Stopped on purpose (a user or admin stop, or a relocation) while the
+    // start was still being verified: not an interruption to recover from.
+    // The stop ends the recovery it was verifying; the next start must not
+    // count this attempt or skip the machine types it tried.
+    const endForIntentionalStop = async () => {
       logger.info("verify host ready: host was stopped on purpose", {
         host_id: host.id,
         provider: providerId,
         provider_status: observation?.provider_status,
       });
-      // The stop ends the recovery it was verifying; the next start must not
-      // count this attempt or skip the machine types it tried. Written as a
-      // partial update, conditional on the stop still being wanted.
       await pool().query(
         `UPDATE project_hosts
             SET metadata = jsonb_set(metadata, '{spot_recovery_state}', $2::jsonb),
@@ -3492,6 +3512,12 @@ async function handleVerifyHostReady(row: any) {
           ),
         ],
       );
+    };
+    if (
+      stoppedStatus &&
+      `${host.metadata?.desired_state ?? ""}`.trim() === "stopped"
+    ) {
+      await endForIntentionalStop();
       return;
     }
     if (stoppedStatus) {
@@ -3515,14 +3541,21 @@ async function handleVerifyHostReady(row: any) {
         observation,
         message,
       });
-      await updateHostRow(host.id, {
-        status: stoppedStatus,
-        metadata: nextMetadata,
-        last_seen: null,
-        ...(observation?.instance_missing || !observation?.public_ip
-          ? { public_url: null, internal_url: null }
-          : {}),
-      });
+      // The row was read before the provider call; a stop may have landed
+      // since. Decide and write in one statement.
+      if (
+        !(await updateHostRowUnlessStopped(host.id, {
+          status: stoppedStatus,
+          metadata: nextMetadata,
+          last_seen: null,
+          ...(observation?.instance_missing || !observation?.public_ip
+            ? { public_url: null, internal_url: null }
+            : {}),
+        }))
+      ) {
+        await endForIntentionalStop();
+        return;
+      }
       await logCloudVmEvent({
         vm_id: host.id,
         action: "verify_host_ready",
@@ -3552,11 +3585,16 @@ async function handleVerifyHostReady(row: any) {
           })
         ) {
           nextMetadata.desired_state = "running";
-          await updateHostRow(host.id, {
-            status: "starting",
-            metadata: nextMetadata,
-            last_seen: null,
-          });
+          if (
+            !(await updateHostRowUnlessStopped(host.id, {
+              status: "starting",
+              metadata: nextMetadata,
+              last_seen: null,
+            }))
+          ) {
+            await endForIntentionalStop();
+            return;
+          }
           await enqueueCloudVmWorkOnce({
             vm_id: host.id,
             action: "start",
@@ -3570,15 +3608,20 @@ async function handleVerifyHostReady(row: any) {
           });
           await bumpReconcile(providerId, 1000);
         } else {
-          await scheduleSpotRetry({
-            row: nextHost,
-            provider: providerId,
-            policy,
-            state,
-            reason: providerStatusText
-              ? `provider-status:${providerStatusText}`
-              : "provider-stopped-before-ready",
-          });
+          if (
+            !(await scheduleSpotRetry({
+              row: nextHost,
+              provider: providerId,
+              policy,
+              state,
+              reason: providerStatusText
+                ? `provider-status:${providerStatusText}`
+                : "provider-stopped-before-ready",
+            }))
+          ) {
+            await endForIntentionalStop();
+            return;
+          }
           await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
         }
       }

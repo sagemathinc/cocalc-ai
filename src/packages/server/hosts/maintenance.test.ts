@@ -392,6 +392,32 @@ describe("tracked host work", () => {
   });
 });
 
+describe("tracked host work lease", () => {
+  it("stays counted past its first lease while the work is still running", async () => {
+    const host_id = await newHost();
+    let finish!: () => void;
+    const work = withTrackedHostWork({
+      host_id,
+      kind: "host-auto-grow-disk",
+      refused: () => "refused",
+      run: () =>
+        new Promise<string>((resolve) => (finish = () => resolve("ran"))),
+      leaseMs: 400,
+      renewMs: 100,
+    });
+    // Well past the first lease: a slow provider resize is still running.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(await hostActivity({ host_id })).toMatchObject({
+      host_operations: 1,
+    });
+    finish();
+    await expect(work).resolves.toBe("ran");
+    expect(await hostActivity({ host_id })).toMatchObject({
+      host_operations: 0,
+    });
+  });
+});
+
 describe("admin notice writes", () => {
   it("do not overwrite a lease taken after they read the notice", async () => {
     const host_id = await newHost();

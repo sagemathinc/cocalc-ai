@@ -1580,50 +1580,63 @@ describe("dedicated host spend maintenance", () => {
 
   it("sends and records the final reminder during the last 24 hours of grace", async () => {
     const deprovisionAfter = new Date(Date.now() + 12 * 3600_000).toISOString();
-    queryMock = jest.fn(async (sql: string, params?: any[]) => {
-      if (sql.includes("FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              id: "host-1",
-              name: "GPU Host",
-              region: "us-central1",
-              status: "off",
-              metadata: {
-                owner: "acc-1",
-                machine: {
-                  cloud: "gcp",
-                  machine_type: "n1-standard-4",
-                },
-                billing: {
-                  funding_mode: "account-prepaid",
-                  enforcement: {
-                    state: "stopped_billing_blocked",
-                    final_backup_status: "succeeded",
-                    deprovision_after: deprovisionAfter,
+    const run = async ({
+      reserved,
+      sent,
+    }: {
+      reserved: boolean;
+      sent: boolean;
+    }) => {
+      jest.resetModules();
+      const updates: Array<{ sql: string; params?: any[] }> = [];
+      notifyDedicatedHostDeprovisionReminderBestEffortMock = jest.fn(
+        async () => sent,
+      );
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                id: "host-1",
+                name: "GPU Host",
+                region: "us-central1",
+                status: "off",
+                metadata: {
+                  owner: "acc-1",
+                  machine: {
+                    cloud: "gcp",
+                    machine_type: "n1-standard-4",
+                  },
+                  billing: {
+                    funding_mode: "account-prepaid",
+                    enforcement: {
+                      state: "stopped_billing_blocked",
+                      final_backup_status: "succeeded",
+                      deprovision_after: deprovisionAfter,
+                    },
                   },
                 },
               },
-            },
-          ],
-        };
-      }
-      if (
-        sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET metadata=(")
-      ) {
-        expect(
-          params?.[1].billing.enforcement.deprovision_reminder_sent_at,
-        ).toBeTruthy();
-        return { rows: [], rowCount: 1 };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
+            ],
+          };
+        }
+        if (sql.includes("UPDATE project_hosts")) {
+          updates.push({ sql, params });
+          if (sql.includes("deprovision_reminder_sent_at' IS NULL")) {
+            return { rows: [], rowCount: reserved ? 1 : 0 };
+          }
+          return { rows: [], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
+      return updates;
+    };
 
-    const { runDedicatedHostSpendMaintenancePass } =
-      await import("./spend-maintenance");
-    await runDedicatedHostSpendMaintenancePass();
-
+    // Reserved first, then sent: recorded once, nothing to undo.
+    let updates = await run({ reserved: true, sent: true });
     expect(
       notifyDedicatedHostDeprovisionReminderBestEffortMock,
     ).toHaveBeenCalledWith({
@@ -1632,7 +1645,143 @@ describe("dedicated host spend maintenance", () => {
       host_name: "GPU Host",
       deprovision_after: deprovisionAfter,
     });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].sql).toContain(
+      "NOT IN ('preparing','in_progress','failed')",
+    );
     expect(createLroMock).not.toHaveBeenCalled();
+
+    // Another pass (or a relocation) got there first: nothing is sent.
+    updates = await run({ reserved: false, sent: true });
+    expect(
+      notifyDedicatedHostDeprovisionReminderBestEffortMock,
+    ).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(1);
+
+    // The send failed: only this pass's reservation is released.
+    updates = await run({ reserved: true, sent: false });
+    expect(updates).toHaveLength(2);
+    expect(updates[1].sql).toContain(
+      "#- '{billing,enforcement,deprovision_reminder_sent_at}'",
+    );
+    expect(updates[1].params?.[1]).toBe(updates[0].params?.[1]);
+  });
+
+  it("tells the owner of a running host about a change only once it is stored", async () => {
+    // A postpaid host whose credit lane has room again.
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: "acc-1",
+      membership_class: "member",
+      can_create_hosts: true,
+      funding_mode: "account-postpaid",
+      effective_limits: {
+        credit_spend_limit_5h_usd: 300,
+        credit_spend_limit_7d_usd: 1000,
+      },
+      has_active_second_factor: true,
+      has_payment_method: true,
+      has_usage_subscription: true,
+      balance: "0",
+      postpaid_unbilled_exposure_usd: "25",
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "100",
+        credit_7d_usd: "150",
+      },
+    }));
+    isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(() => true);
+    const readRows = queryMock;
+    for (const stored of [false, true]) {
+      jest.resetModules();
+      const admission = await import("./admission");
+      (admission.selectDedicatedHostFundingLane as jest.Mock).mockReturnValue(
+        "credit",
+      );
+      notifyDedicatedHostBillingEnforcementBestEffortMock.mockClear();
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("UPDATE project_hosts")) {
+          return { rows: [], rowCount: stored ? 1 : 0 };
+        }
+        const result = await readRows(sql, params);
+        if (sql.includes("FROM project_hosts")) {
+          // It was at risk; its lanes have recovered.
+          for (const row of result.rows ?? []) {
+            row.metadata = {
+              ...row.metadata,
+              billing: {
+                ...(row.metadata?.billing ?? {}),
+                enforcement: { state: "at_risk", reason: "low runway" },
+              },
+            };
+          }
+        }
+        return result;
+      });
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
+      expect(
+        notifyDedicatedHostBillingEnforcementBestEffortMock,
+      ).toHaveBeenCalledTimes(stored ? 1 : 0);
+    }
+  });
+
+  it("tells the owner billing recovered only once the change is stored", async () => {
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: "acc-1",
+      membership_class: "member",
+      can_create_hosts: true,
+      funding_mode: "site-funded",
+      effective_limits: {},
+      has_active_second_factor: true,
+      has_payment_method: false,
+      has_usage_subscription: false,
+      balance: "0",
+      postpaid_unbilled_exposure_usd: "0",
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    const readRows = queryMock;
+    for (const stored of [false, true]) {
+      jest.resetModules();
+      notifyDedicatedHostBillingEnforcementBestEffortMock.mockClear();
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("UPDATE project_hosts")) {
+          return { rows: [], rowCount: stored ? 1 : 0 };
+        }
+        if (sql.includes("COUNT(*)::text AS count")) {
+          return { rows: [{ count: "1" }] };
+        }
+        const result = await readRows(sql, params);
+        if (sql.includes("FROM project_hosts")) {
+          // A stopped host that was at risk, whose owner is now site-funded.
+          for (const row of result.rows ?? []) {
+            row.status = "off";
+            row.metadata = {
+              ...row.metadata,
+              desired_state: "stopped",
+              runtime: { instance_id: "instance-1" },
+              billing: {
+                ...(row.metadata?.billing ?? {}),
+                enforcement: { state: "at_risk", reason: "low runway" },
+              },
+            };
+          }
+        }
+        return result;
+      });
+      const { runDedicatedHostSpendMaintenancePass } =
+        await import("./spend-maintenance");
+      await runDedicatedHostSpendMaintenancePass();
+      expect(
+        notifyDedicatedHostBillingEnforcementBestEffortMock,
+      ).toHaveBeenCalledTimes(stored ? 1 : 0);
+    }
   });
 });
 

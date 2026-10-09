@@ -349,9 +349,10 @@ export async function assertProjectHostsNotUnderMaintenance({
 // relocation's quiesce waits for it; it is refused while a relocation holds
 // the host. Registering before checking the fence closes the race: work that
 // checked before the lease was taken is already registered when quiesce
-// looks. The registration expires, so a crashed process cannot block
-// relocations of the host for long.
-export const TRACKED_HOST_WORK_MAX_MS = 30 * 60 * 1000;
+// looks. The registration is a lease renewed while the work runs, however
+// long the provider takes; if the process dies it lapses within the lease.
+export const TRACKED_HOST_WORK_LEASE_MS = 5 * 60 * 1000;
+export const TRACKED_HOST_WORK_RENEW_MS = 60 * 1000;
 
 export async function withTrackedHostWork<T>({
   host_id,
@@ -359,12 +360,16 @@ export async function withTrackedHostWork<T>({
   input,
   refused,
   run,
+  leaseMs = TRACKED_HOST_WORK_LEASE_MS,
+  renewMs = TRACKED_HOST_WORK_RENEW_MS,
 }: {
   host_id: string;
   kind: string;
   input?: Record<string, any>;
   refused: () => T;
   run: () => Promise<T>;
+  leaseMs?: number;
+  renewMs?: number;
 }): Promise<T> {
   const op = await createLro({
     kind,
@@ -372,8 +377,20 @@ export async function withTrackedHostWork<T>({
     scope_id: host_id,
     status: "running",
     input,
-    expires_at: new Date(Date.now() + TRACKED_HOST_WORK_MAX_MS),
+    expires_at: new Date(Date.now() + leaseMs),
   });
+  const renew = setInterval(() => {
+    getPool()
+      .query(
+        `UPDATE long_running_operations
+            SET expires_at = NOW() + ($2::bigint * interval '1 millisecond'),
+                updated_at = NOW()
+          WHERE op_id=$1 AND status='running'`,
+        [op.op_id, leaseMs],
+      )
+      .catch(() => undefined);
+  }, renewMs);
+  renew.unref?.();
   let error: unknown;
   try {
     const { rows } = await getPool().query(
@@ -381,6 +398,7 @@ export async function withTrackedHostWork<T>({
       [host_id],
     );
     if (hostLifecycleFenced(rows[0]?.maintenance)) {
+      clearInterval(renew);
       await updateLro({
         op_id: op.op_id,
         status: "canceled",
@@ -393,6 +411,8 @@ export async function withTrackedHostWork<T>({
     error = err;
     throw err;
   } finally {
+    // No renewal may land after the registration is finished.
+    clearInterval(renew);
     await updateLro({
       op_id: op.op_id,
       status: error == null ? "succeeded" : "failed",
