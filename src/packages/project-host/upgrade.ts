@@ -27,6 +27,7 @@ import {
   beginProjectRuntimeMaintenance,
   endProjectRuntimeMaintenance,
 } from "./runtime-maintenance";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:upgrade");
 
@@ -76,7 +77,7 @@ function normalizeBaseUrl(baseUrl?: string): string {
     baseUrl ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     DEFAULT_BASE_URL;
-  return raw.replace(/\/+$/, "");
+  return trimTrailingSlashes(raw);
 }
 
 function canonicalizeArtifact(artifact: SoftwareArtifact): CanonicalArtifact {
@@ -725,7 +726,7 @@ function escapeRegExp(value: string): string {
 }
 
 function normalizeRootPath(root: string): string {
-  return `${root ?? ""}`.replace(/\/+$/, "");
+  return trimTrailingSlashes(`${root ?? ""}`);
 }
 
 function isArtifactVersionName(name: string): boolean {

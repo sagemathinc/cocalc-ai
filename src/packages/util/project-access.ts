@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { matchWildcard, type WildcardToken } from "./linear-text";
+
 export const PROJECT_USER_ROLES = ["owner", "collaborator", "viewer"] as const;
 
 export type ProjectUserRole = (typeof PROJECT_USER_ROLES)[number];
@@ -189,27 +191,35 @@ export function normalizeProjectViewerPolicyPath(
   return parts.join("/");
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-}
-
-function globToRegExp(pattern: string): RegExp {
-  let source = "^";
+// Rule globs: "**" matches any run of characters, "*" any run within one
+// path segment, and everything else itself. Match them with an explicit
+// automaton: as a backtracking regular expression each "*" multiplied the
+// cost, so a rule with a few dozen stars stalled the host. Unlike that
+// expression, "**" also matches line terminators, which are legal in paths.
+function globTokens(pattern: string): WildcardToken[] {
+  const tokens: WildcardToken[] = [];
   for (let i = 0; i < pattern.length; i += 1) {
     const char = pattern[i];
     if (char === "*") {
-      if (pattern[i + 1] === "*") {
-        source += ".*";
+      const crossSlash = pattern[i + 1] === "*";
+      if (crossSlash) {
         i += 1;
-      } else {
-        source += "[^/]*";
       }
+      tokens.push({ kind: "run", crossSlash });
     } else {
-      source += escapeRegExp(char);
+      tokens.push({ kind: "literal", char });
     }
   }
-  source += "$";
-  return new RegExp(source);
+  return tokens;
+}
+
+// PATH_MAX on Linux. Longer paths cannot name a file, and longer rules are
+// not real paths; both bound the matching work. Checks fail closed: an
+// oversized path is never readable, and an oversized exclude rule denies.
+const MAX_VIEWER_POLICY_PATH_LENGTH = 4096;
+
+function oversizedRulePath(rule: ProjectViewerReadRule): boolean {
+  return `${rule.path ?? ""}`.length > MAX_VIEWER_POLICY_PATH_LENGTH;
 }
 
 function viewerReadRuleMatches({
@@ -233,7 +243,7 @@ function viewerReadRuleMatches({
     const directory = normalizedRulePath.slice(0, -3);
     return path === directory || path.startsWith(`${directory}/`);
   }
-  return globToRegExp(normalizedRulePath).test(path);
+  return matchWildcard(globTokens(normalizedRulePath), path);
 }
 
 export function viewerReadPolicyAllowsPath({
@@ -244,12 +254,22 @@ export function viewerReadPolicyAllowsPath({
   path: string;
 }): boolean {
   const normalizedPath = normalizeProjectViewerPolicyPath(path);
-  if (normalizedPath == null || !Array.isArray(policy?.rules)) {
+  if (
+    normalizedPath == null ||
+    normalizedPath.length > MAX_VIEWER_POLICY_PATH_LENGTH ||
+    !Array.isArray(policy?.rules)
+  ) {
     return false;
   }
   let included = false;
   for (const rule of policy.rules) {
     if (rule?.action !== "include" && rule?.action !== "exclude") {
+      continue;
+    }
+    if (oversizedRulePath(rule)) {
+      if (rule.action === "exclude") {
+        return false;
+      }
       continue;
     }
     if (!viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
@@ -311,12 +331,19 @@ export function viewerReadPolicyMayAllowDescendant({
   path: string;
 }): boolean {
   const normalizedPath = normalizeProjectViewerPolicyPath(path);
-  if (normalizedPath == null || !Array.isArray(policy?.rules)) {
+  if (
+    normalizedPath == null ||
+    normalizedPath.length > MAX_VIEWER_POLICY_PATH_LENGTH ||
+    !Array.isArray(policy?.rules)
+  ) {
     return false;
   }
   for (const rule of policy.rules) {
     if (rule?.action !== "exclude") {
       continue;
+    }
+    if (oversizedRulePath(rule)) {
+      return false;
     }
     if (viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
       return false;

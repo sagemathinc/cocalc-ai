@@ -18,6 +18,7 @@ import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
+import { matchWildcard, type WildcardToken } from "@cocalc/util/linear-text";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -36,6 +37,9 @@ export const PROJECT_DOCUMENT_ACTIVITY_EVENTS_NAME =
 const MAX_RECENT_ACCOUNTS = 5;
 const DEFAULT_RECENT_LIMIT = 50;
 const MAX_RECENT_LIMIT = 500;
+const MAX_SEARCH_LENGTH = 256;
+// PATH_MAX on Linux; longer paths cannot name a file.
+const MAX_PATH_LENGTH = 4096;
 const DEFAULT_MAX_AGE_S = 90 * 24 * 60 * 60;
 const DOCUMENT_ACTIVITY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const FILE_ACCESS_THROTTLE_MS = 60_000;
@@ -132,37 +136,48 @@ function assertCollaborator({
   }
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function compileSearchPattern(search?: string): RegExp | undefined {
+// Search terms are SQL LIKE patterns ("%" any run, "_" any character, "\\"
+// escapes), matched case-insensitively against the whole path after wrapping
+// them in "%". Match them with an explicit automaton: as a backtracking
+// regular expression each "%" multiplied the cost, so a short search stalled
+// the host for minutes. Unlike that regular expression, wildcards also match
+// line terminators, which are legal in file names.
+function compileSearchPattern(search?: string): WildcardToken[] | undefined {
   const pattern = `${search ?? ""}`.trim();
   if (!pattern) {
     return;
   }
-  const wildcard = `%${pattern}%`;
-  let regex = "^";
+  if (pattern.length > MAX_SEARCH_LENGTH) {
+    throw new Error(
+      `search must be at most ${MAX_SEARCH_LENGTH} characters long`,
+    );
+  }
+  const tokens: WildcardToken[] = [];
   let escaped = false;
-  for (const ch of wildcard) {
-    if (!escaped && ch === "\\") {
+  for (const char of `%${pattern}%`) {
+    if (!escaped && char === "\\") {
       escaped = true;
       continue;
     }
-    if (!escaped && ch === "%") {
-      regex += ".*";
-    } else if (!escaped && ch === "_") {
-      regex += ".";
+    if (!escaped && char === "%") {
+      // Consecutive runs are equivalent to one.
+      if (tokens[tokens.length - 1]?.kind !== "run") {
+        tokens.push({ kind: "run", crossSlash: true });
+      }
+    } else if (!escaped && char === "_") {
+      tokens.push({ kind: "any" });
     } else {
-      regex += escapeRegExp(ch);
+      // Literal code points compare one UTF-16 code unit at a time.
+      for (let i = 0; i < char.length; i++) {
+        tokens.push({ kind: "literal", char: char[i] });
+      }
     }
     escaped = false;
   }
   if (escaped) {
-    regex += escapeRegExp("\\");
+    tokens.push({ kind: "literal", char: "\\" });
   }
-  regex += "$";
-  return new RegExp(regex, "i");
+  return tokens;
 }
 
 function normalizeLimit(limit?: number): number {
@@ -295,6 +310,9 @@ export async function handleMarkFileRequest(
   if (!path) {
     throw new Error("path must be specified");
   }
+  if (path.length > MAX_PATH_LENGTH) {
+    throw new Error(`path must be at most ${MAX_PATH_LENGTH} characters long`);
+  }
   if (action !== "open" && action !== "edit" && action !== "chat") {
     throw new Error(`invalid document activity action '${action ?? ""}'`);
   }
@@ -360,7 +378,7 @@ export async function handleListRecentRequest(
     if (lastAccessedMs < cutoffMs) {
       continue;
     }
-    if (search && !search.test(path)) {
+    if (search && !matchWildcard(search, path, { ignoreCase: true })) {
       continue;
     }
     rows.push({

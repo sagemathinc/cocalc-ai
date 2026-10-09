@@ -4,6 +4,7 @@
  */
 
 import { isCanonicalPublicSiteHost } from "./public-site-policy";
+import { trimTrailingSlashes } from "./linear-text";
 
 export interface PublicFeatureCard {
   body: string;
@@ -61,7 +62,7 @@ export function publicFeatureHref(
   if (!catalogHref.startsWith("/") || catalogHref.startsWith("//")) {
     return catalogHref;
   }
-  return `${basePath.replace(/\/+$/, "")}${catalogHref}`;
+  return `${trimTrailingSlashes(basePath)}${catalogHref}`;
 }
 
 // Only cocalc.ai can say this; see getPublicFeaturePage.

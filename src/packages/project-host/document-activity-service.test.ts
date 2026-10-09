@@ -187,6 +187,86 @@ describe("project document activity service", () => {
     expect(rows[0].path).toBe("notes/b.ipynb");
   });
 
+  describe("wildcard search", () => {
+    const subject =
+      "services.account-00000000-0000-4000-8000-000000000001._.11111111-1111-4111-8111-111111111111._.document-activity";
+
+    async function search(paths: string[], term: string): Promise<string[]> {
+      const recent = new Date(Date.now() - 60_000).toISOString();
+      const rows = Object.fromEntries(
+        paths.map((path) => [path, { path, last_accessed: recent }]),
+      );
+      dkvMock.mockResolvedValue(makeStore(rows));
+      dstreamMock.mockResolvedValue(makeStream());
+      const { handleListRecentRequest } =
+        await import("./document-activity-service");
+      const result = await handleListRecentRequest.call(
+        { subject },
+        { limit: 500, search: term },
+        {} as any,
+      );
+      return result.map((row) => row.path).sort();
+    }
+
+    it("matches LIKE patterns case-insensitively", async () => {
+      const paths = [
+        "Notes/Plan.md",
+        "notes/plan_v2.md",
+        "notes/planxv2.md",
+        "a%b.txt",
+        "a\\b.txt",
+        "data.csv",
+      ];
+      expect(await search(paths, "plan")).toEqual([
+        "Notes/Plan.md",
+        "notes/plan_v2.md",
+        "notes/planxv2.md",
+      ]);
+      expect(await search(paths, "PLAN_V2")).toEqual([
+        "notes/plan_v2.md",
+        "notes/planxv2.md",
+      ]);
+      expect(await search(paths, "plan\\_v2")).toEqual(["notes/plan_v2.md"]);
+      expect(await search(paths, "notes%.md")).toEqual([
+        "Notes/Plan.md",
+        "notes/plan_v2.md",
+        "notes/planxv2.md",
+      ]);
+      expect(await search(paths, "a\\%b")).toEqual(["a%b.txt"]);
+      expect(await search(paths, "a\\\\b")).toEqual(["a\\b.txt"]);
+      expect(await search(paths, "%%%")).toEqual([...paths].sort());
+    });
+
+    it("answers many-wildcard searches in linear time", async () => {
+      // As a regular expression this search took 35 s for one path.
+      const paths = Array.from(
+        { length: 50 },
+        (_, i) => `/home/user/${"a".repeat(4000)}${i}`,
+      );
+      const started = Date.now();
+      expect(await search(paths, `${"a%".repeat(120)}b`)).toEqual([]);
+      expect(await search(paths, `${"a%".repeat(120)}9`)).toHaveLength(5);
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it("bounds search and path lengths", async () => {
+      await expect(search([], "x".repeat(257))).rejects.toThrow(
+        "at most 256 characters",
+      );
+      dkvMock.mockResolvedValue(makeStore());
+      dstreamMock.mockResolvedValue(makeStream());
+      const { handleMarkFileRequest } =
+        await import("./document-activity-service");
+      await expect(
+        handleMarkFileRequest.call(
+          { subject },
+          { path: "x".repeat(4097), action: "open" },
+          {} as any,
+        ),
+      ).rejects.toThrow("at most 4096 characters");
+    });
+  });
+
   it("rejects invalid document activity subjects", async () => {
     const store = makeStore();
     const events = makeStream();

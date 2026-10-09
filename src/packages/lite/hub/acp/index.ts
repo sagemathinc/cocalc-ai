@@ -351,6 +351,7 @@ import {
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
+import { replaceAngleTags } from "@cocalc/util/linear-text";
 export {
   setHarnessAuthorityValidator,
   setHarnessLauncher,
@@ -4900,11 +4901,7 @@ export class ChatStreamWriter {
 
 function normalizeSummaryText(text: string | null | undefined): string {
   if (typeof text !== "string") return "";
-  return text
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return replaceAngleTags(text, " ").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function looksLikeErrorEcho(
