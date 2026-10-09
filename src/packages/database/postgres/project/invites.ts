@@ -107,6 +107,10 @@ export const INVITE_SEND_CLAIM_LEASE_MINUTES = 10;
 //  - the resend cooldown allows it: no successful send since `cutoff`, or
 //    the last attempt recorded an error.
 // Concurrent callers serialize on the project row, so exactly one wins.
+// The claim also records time (and drops any error) so that it looks like a
+// recent send to whenSentProjectInvite: servers running older code, which
+// only check that, fail closed during a rolling upgrade, and a send that
+// went out but was never finalized still counts against the cooldown.
 // Finish with sentProjectInvite (success, or an error to allow a retry),
 // which clears the claim.
 export async function claimProjectInviteSend(
@@ -118,8 +122,10 @@ export async function claimProjectInviteSend(
         SET invite = jsonb_set(
               COALESCE(invite, '{}'::jsonb),
               ARRAY[$2::text],
-              COALESCE(invite -> $2::text, '{}'::jsonb)
-                || jsonb_build_object('claimed_at', to_jsonb(NOW())),
+              jsonb_build_object(
+                'time', to_jsonb(NOW()),
+                'claimed_at', to_jsonb(NOW())
+              ),
               true
             )
       WHERE project_id = $1::uuid

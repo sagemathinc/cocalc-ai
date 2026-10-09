@@ -424,10 +424,10 @@ describe("Project invite methods", () => {
         ),
       );
       expect(results.filter(Boolean)).toHaveLength(1);
-      // an in-flight claim is not a completed send
-      expect(await when_sent_project_invite_wrapper({ project_id, to })).toBe(
-        0,
-      );
+      // older code only checks when_sent; an in-flight claim must look sent
+      expect(
+        await when_sent_project_invite_wrapper({ project_id, to }),
+      ).toBeInstanceOf(Date);
     });
 
     it("keeps one winner even with a zero-minute resend cooldown", async () => {
@@ -496,9 +496,18 @@ describe("Project invite methods", () => {
         to,
         error: "not sent: email_backend is none",
       });
+      expect(await when_sent_project_invite_wrapper({ project_id, to })).toBe(
+        0,
+      );
       expect(await claim_wrapper({ project_id, to, cutoff: hourAgo() })).toBe(
         true,
       );
+      // a new claim drops the previous error
+      const { rows } = await pool.query(
+        "SELECT invite -> $2::text AS entry FROM projects WHERE project_id=$1",
+        [project_id, to],
+      );
+      expect(rows[0].entry.error).toBeUndefined();
     });
   });
 });
