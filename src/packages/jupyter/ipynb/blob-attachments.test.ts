@@ -448,7 +448,7 @@ describe("portable Jupyter blob attachments", () => {
   it("keeps carriage returns and line separators in list sources", async () => {
     const live = notebook([
       "intro\r\n",
-      "a\rb c\n",
+      "a\rb\u2028c\n",
       `![diagram](/blobs/diagram.png?uuid=${pngUuid})`,
     ]);
     const loadBlob = jest.fn(async () => ({ bytes: png }));
@@ -457,7 +457,7 @@ describe("portable Jupyter blob attachments", () => {
 
     expect(saved.cells[0].source).toEqual([
       "intro\r\n",
-      "a\rb c\n",
+      "a\rb\u2028c\n",
       "![diagram](attachment:diagram.png)",
     ]);
   });
