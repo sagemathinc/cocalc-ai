@@ -420,7 +420,7 @@ export interface PostgreSQLMethods extends EventEmitter {
   remove_collaborator_from_project(opts: {
     account_id: string;
     project_id: string;
-    cb: CB;
+    cb: CB<boolean>;
   }): void;
 
   remove_user_from_project(opts: {

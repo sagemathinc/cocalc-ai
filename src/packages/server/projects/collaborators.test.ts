@@ -34,6 +34,12 @@ const unexpectedServiceCall = jest.fn((service: string) => {
   );
 });
 
+const centralLogMock = jest.fn(async () => undefined);
+jest.mock("@cocalc/database/postgres/central-log", () => ({
+  __esModule: true,
+  default: (...args: any[]) => (centralLogMock as any)(...args),
+}));
+
 jest.mock("@cocalc/server/conat/route-client", () => ({
   conatWithProjectRoutingForAccount: () =>
     unexpectedServiceCall("project routing"),
@@ -243,7 +249,7 @@ describe("project collaborators local bay access", () => {
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
   const TARGET_ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
   const COURSE_PROJECT_ID = "44444444-4444-4444-8444-444444444444";
-  const removeCollaboratorFromProject = jest.fn(async () => undefined);
+  const removeCollaboratorFromProject = jest.fn(async () => true);
   const addUserToProject = jest.fn(async () => undefined);
   const whenSentProjectInvite = jest.fn(async () => 0);
   const getServerSettingsCached = jest.fn(async () => ({
@@ -350,6 +356,8 @@ describe("project collaborators local bay access", () => {
     );
     appendProjectLogRowBestEffortMock = jest.fn(async () => true);
     removeCollaboratorFromProject.mockClear();
+    removeCollaboratorFromProject.mockImplementation(async () => true);
+    centralLogMock.mockClear();
     addUserToProject.mockClear();
     whenSentProjectInvite.mockClear();
     getServerSettingsCached.mockClear();
@@ -435,6 +443,16 @@ describe("project collaborators local bay access", () => {
       account_id: TARGET_ACCOUNT_ID,
       project_id: PROJECT_ID,
     });
+    // A real removal is recorded with who did it (support #20986).
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "project_collaborator_removed",
+      value: {
+        via: "collaborator",
+        project_id: PROJECT_ID,
+        actor_account_id: ACCOUNT_ID,
+        removed_account_ids: [TARGET_ACCOUNT_ID],
+      },
+    });
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("SET status='canceled'"),
       [PROJECT_ID, TARGET_ACCOUNT_ID],
@@ -475,6 +493,20 @@ describe("project collaborators local bay access", () => {
       }),
     ).rejects.toThrow("only project owners can remove collaborators");
     expect(removeCollaboratorFromProject).not.toHaveBeenCalled();
+  });
+
+  it("does not log a removal when nothing was removed", async () => {
+    removeCollaboratorFromProject.mockImplementation(async () => false);
+    const { removeCollaborator } = await import("./collaborators");
+    await removeCollaborator({
+      account_id: ACCOUNT_ID,
+      opts: {
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      },
+    });
+    expect(removeCollaboratorFromProject).toHaveBeenCalled();
+    expect(centralLogMock).not.toHaveBeenCalled();
   });
 
   it("allows collaborators to remove themselves when owner-only management is enabled", async () => {

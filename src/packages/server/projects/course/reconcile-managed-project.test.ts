@@ -362,6 +362,39 @@ describe("course managed project reconciliation", () => {
     expect(inviteCollaboratorMock).not.toHaveBeenCalled();
   });
 
+  it("refuses to reassign a project bound to a different student", async () => {
+    const OTHER = "88888888-8888-4888-8888-888888888888";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT users, course")) {
+        return {
+          rows: [
+            matchingState({
+              course: {
+                datastore: false,
+                path: "classes/main.course",
+                project_id: COURSE,
+                type: "student",
+                account_id: STUDENT,
+              },
+            }),
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { reconcileCourseManagedProjectLocal } =
+      await import("./reconcile-managed-project");
+    await expect(
+      reconcileCourseManagedProjectLocal(
+        request({ desired_account_ids: [OTHER] }),
+      ),
+    ).rejects.toThrow("student account binding conflict");
+    expect(
+      queryMock.mock.calls.some(([sql]) => sql.includes("UPDATE projects")),
+    ).toBe(false);
+    expect(centralLogMock).not.toHaveBeenCalled();
+  });
+
   it("defers collaborator cleanup while active student identity is unresolved", async () => {
     const { reconcileCourseManagedProjectLocal } =
       await import("./reconcile-managed-project");

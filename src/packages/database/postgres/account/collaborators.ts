@@ -66,13 +66,15 @@ export interface RemoveCollaboratorFromProjectOptions {
   account_id: string;
 }
 
+// Returns true if a (non-owner) member was actually removed.
 export async function removeCollaboratorFromProject(
   _db: PostgreSQL,
   opts: RemoveCollaboratorFromProjectOptions,
-): Promise<void> {
+): Promise<boolean> {
   // Validate inputs
   validateOpts(opts);
 
+  let removed = false;
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -81,13 +83,14 @@ export async function removeCollaboratorFromProject(
       project_id: opts.project_id,
       action: "remove project collaborator",
     });
-    await client.query(
+    const { rowCount } = await client.query(
       `UPDATE projects
           SET users = COALESCE(users, '{}'::JSONB) - $2::TEXT
         WHERE project_id = $1::UUID
           AND users #>> ARRAY[$2::TEXT, 'group'] != $3::TEXT`,
       [opts.project_id, opts.account_id, "owner"],
     );
+    removed = (rowCount ?? 0) > 0;
     await appendProjectOutboxEventForProject({
       db: client,
       event_type: "project.membership_changed",
@@ -103,6 +106,7 @@ export async function removeCollaboratorFromProject(
   await _db.publishProjectAccountFeedEventsBestEffort?.({
     project_id: opts.project_id,
   });
+  return removed;
 }
 
 export interface RemoveUserFromProjectOptions {

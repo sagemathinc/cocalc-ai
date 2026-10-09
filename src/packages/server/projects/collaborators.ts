@@ -960,19 +960,21 @@ export async function removeCollaborator({
     });
   }
   const database = db();
-  await callback2(
+  const removed = await callback2(
     database.remove_collaborator_from_project.bind(database),
     opts,
   );
-  await centralLog({
-    event: "project_collaborator_removed",
-    value: {
-      via: opts.account_id === account_id ? "self" : "collaborator",
-      project_id: opts.project_id,
-      actor_account_id: account_id,
-      removed_account_ids: [opts.account_id],
-    },
-  }).catch(() => undefined);
+  if (removed) {
+    await centralLog({
+      event: "project_collaborator_removed",
+      value: {
+        via: opts.account_id === account_id ? "self" : "collaborator",
+        project_id: opts.project_id,
+        actor_account_id: account_id,
+        removed_account_ids: [opts.account_id],
+      },
+    }).catch(() => undefined);
+  }
   await cancelPendingInvitesFromRemovedCollaborator({
     inviter_account_id: opts.account_id,
     project_id: opts.project_id,

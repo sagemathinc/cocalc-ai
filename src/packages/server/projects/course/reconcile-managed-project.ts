@@ -197,6 +197,18 @@ function planCourseManagedProjectReconciliation(
         ? requestedCourseAccountId
         : undefined) ?? requestedDesiredAccountId;
     const currentStudentAccountId = `${currentCourse?.account_id ?? ""}`.trim();
+    if (
+      requestedStudentAccountId &&
+      isValidUUID(currentStudentAccountId) &&
+      requestedStudentAccountId !== currentStudentAccountId
+    ) {
+      // The project is already bound to a (possibly just-accepted) student.
+      // A request naming someone else is stale or conflicting; never let it
+      // reassign the project and remove the bound student (support #20986).
+      throw new Error(
+        "student account binding conflict: the project is bound to a different student account",
+      );
+    }
     if (requestedStudentAccountId) {
       resolvedStudentAccountId = requestedStudentAccountId;
       desiredAccountIds.add(requestedStudentAccountId);
@@ -340,6 +352,7 @@ export async function reconcileCourseManagedProjectLocal(
   const client = await getPool().connect();
   let usersChanged = false;
   let removedAccountIds: string[] = [];
+  let previousCourse: any = null;
   let missingDesiredAccountIds: string[] = [];
   const changedFields = new Set<string>();
   try {
@@ -365,6 +378,7 @@ export async function reconcileCourseManagedProjectLocal(
     removedAccountIds = Object.keys(row.users ?? {}).filter(
       (id) => plan.users[id] == null,
     );
+    previousCourse = row.course ?? null;
     usersChanged = plan.usersChanged;
     missingDesiredAccountIds = plan.missingDesiredAccountIds;
     for (const field of plan.changedFields) changedFields.add(field);
@@ -417,6 +431,14 @@ export async function reconcileCourseManagedProjectLocal(
           type: request.type,
           student_id: request.student_id,
           student_deleted: request.student_deleted === true,
+          previous_course_type: previousCourse?.type ?? null,
+          previous_course_account_id: previousCourse?.account_id ?? null,
+          requested_course_account_id: request.course?.account_id ?? null,
+          requested_desired_account_ids: request.desired_account_ids ?? [],
+          allow_collabs: request.allow_collabs ?? null,
+          disable_collaborators:
+            request.course?.student_project_functionality
+              ?.disableCollaborators ?? null,
         },
       }).catch(() => undefined);
     }
