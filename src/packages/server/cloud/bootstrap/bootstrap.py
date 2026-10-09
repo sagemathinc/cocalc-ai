@@ -11810,6 +11810,12 @@ else
     exit 127
   fi
 fi
+# project-host serves every project's filesystem API from one process on the
+# shared libuv worker pool (default 4). Give it ample headroom so a few slow
+# or large native copy/removal operations cannot starve unrelated fs/dns/zlib
+# work for other projects. The sandbox layer additionally caps how many native
+# async operations run at once. Honor an operator override if already set.
+export UV_THREADPOOL_SIZE="${{UV_THREADPOOL_SIZE:-64}}"
 exec "$NODE_BIN" "{bundle_entry}" "$@"
 """
     wrapper_path = bin_dir / "project-host"

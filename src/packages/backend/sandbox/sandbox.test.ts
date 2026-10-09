@@ -1657,6 +1657,86 @@ describeIfLinux("openat2 motivation regressions", () => {
       code: "ENOENT",
     });
   });
+
+  // A project user can place a FIFO at a sandbox path. A blocking open of it on
+  // the Node fallback path pins a libuv worker forever; a handful would starve
+  // fs/dns/zlib/crypto for every project this process serves. The fallback must
+  // open nonblocking and reject special files instead of blocking.
+  it("readFile fallback rejects a FIFO without blocking", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-readfile-fallback");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    // disableOpenAt2 forces the Node fallback path (safe mode, no openat2).
+    const fs = new SandboxedFilesystem(sandboxRoot, {
+      unsafeMode: false,
+      disableOpenAt2: true,
+    });
+    await expect(fs.readFile("pipe", "utf8")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+  }, 5000);
+
+  it("readFile rejects a FIFO reached through an in-sandbox symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-readfile-symlink");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    symlinkSync("pipe", join(sandboxRoot, "link"));
+    // Native openRead rejects every symlink (ELOOP) and falls back to Node, so
+    // this exercises the fallback even with openat2 enabled.
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await expect(fs.readFile("link", "utf8")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+  }, 5000);
+
+  it("copyFile fallback rejects a FIFO source without blocking", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-copy-fallback");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    const fs = new SandboxedFilesystem(sandboxRoot, {
+      unsafeMode: false,
+      disableOpenAt2: true,
+    });
+    await expect(fs.copyFile("pipe", "copy")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+    await expect(stat(join(sandboxRoot, "copy"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 5000);
+
+  it("mkdir fallback rejects a FIFO ancestor without blocking", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-mkdir-fallback");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    const fs = new SandboxedFilesystem(sandboxRoot, {
+      unsafeMode: false,
+      disableOpenAt2: true,
+    });
+    await expect(fs.mkdir("pipe/child")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+  }, 5000);
+
+  it("many concurrent FIFO reads keep the event loop and threadpool responsive", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-threadpool");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    symlinkSync("pipe", join(sandboxRoot, "link"));
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+
+    // Far more than UV_THREADPOOL_SIZE; if any blocked, this would time out.
+    const reads = Array.from({ length: 32 }, () =>
+      fs.readFile("link", "utf8").then(
+        () => "resolved",
+        (err) => err?.code ?? "error",
+      ),
+    );
+    // An unrelated threadpool operation must still complete promptly.
+    await expect(readFile("/etc/hostname", "utf8")).resolves.toBeDefined();
+    const results = await Promise.all(reads);
+    expect(results.every((r) => r === "EINVAL")).toBe(true);
+  }, 10000);
 });
 
 describeIfLinux("read only sandbox", () => {

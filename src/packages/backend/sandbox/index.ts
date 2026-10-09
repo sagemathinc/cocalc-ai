@@ -39,7 +39,6 @@ Remaining work:
 */
 
 import {
-  chmod,
   cp,
   constants,
   link,
@@ -115,6 +114,48 @@ const OPENAT2_SETTING = (process.env.COCALC_SANDBOX_OPENAT2 ?? "")
   .trim()
   .toLowerCase();
 const OPENAT2_DISABLED = ["0", "false", "no", "off"].includes(OPENAT2_SETTING);
+
+// Native copyFile/copyFileNoReplace/rm run on the shared libuv worker pool.
+// Bound how many run at once, per process, so a burst of large or slow
+// operations cannot occupy every worker and stall unrelated fs/dns/zlib work
+// for the other projects this process serves. The cap leaves headroom below
+// the pool size (UV_THREADPOOL_SIZE, libuv default 4).
+const UV_POOL_SIZE = (() => {
+  const n = parseInt(process.env.UV_THREADPOOL_SIZE ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 4;
+})();
+const MAX_NATIVE_FS_CONCURRENCY = (() => {
+  const override = parseInt(
+    process.env.COCALC_SANDBOX_MAX_NATIVE_FS_CONCURRENCY ?? "",
+    10,
+  );
+  if (Number.isFinite(override) && override > 0) {
+    return override;
+  }
+  return Math.max(1, Math.floor(UV_POOL_SIZE / 2));
+})();
+
+let nativeFsActive = 0;
+const nativeFsWaiters: Array<() => void> = [];
+
+// Counting semaphore with direct slot handoff (no decrement/re-increment race).
+async function runNativeFsTask<T>(fn: () => Promise<T>): Promise<T> {
+  if (nativeFsActive < MAX_NATIVE_FS_CONCURRENCY) {
+    nativeFsActive++;
+  } else {
+    await new Promise<void>((resolve) => nativeFsWaiters.push(resolve));
+  }
+  try {
+    return await fn();
+  } finally {
+    const next = nativeFsWaiters.shift();
+    if (next != null) {
+      next(); // transfer this slot to the next waiter; active count unchanged
+    } else {
+      nativeFsActive--;
+    }
+  }
+}
 
 interface OpenAt2SandboxRoot {
   mkdir(path: string, recursive?: boolean | null, mode?: number | null): void;
@@ -1453,16 +1494,38 @@ export class SandboxedFilesystem {
     }
   };
 
+  // Reject FIFOs, sockets and device nodes. Regular files and directories pass;
+  // the caller's next operation yields the natural error (e.g. EISDIR).
+  private assertNotSpecialFile = async (
+    handle: Awaited<ReturnType<typeof open>>,
+    path: string,
+    code: "EINVAL" | "EACCES",
+  ): Promise<void> => {
+    const st = await handle.stat();
+    if (!st.isFile() && !st.isDirectory()) {
+      const reason =
+        code === "EACCES" ? "regular file required" : "unsupported file type";
+      const err: NodeJS.ErrnoException = new Error(
+        `${code}: ${reason}, open '${path}'`,
+      );
+      err.code = code;
+      err.path = path;
+      throw err;
+    }
+  };
+
   private openVerifiedHandle = async ({
     path,
     flags,
     mode,
     verify = true,
+    specialFileCode = "EINVAL",
   }: {
     path: string;
     flags: number;
     mode?: number;
     verify?: boolean;
+    specialFileCode?: "EINVAL" | "EACCES";
   }): Promise<{
     handle: Awaited<ReturnType<typeof open>>;
     pathInSandbox: string;
@@ -1481,9 +1544,21 @@ export class SandboxedFilesystem {
       absoluteHomeAlias,
       absoluteTempAlias,
     } = await this.resolvePathInSandbox(path);
-    const handle = await open(pathInSandbox, flags, mode);
-    if (verify) {
-      try {
+    // A project user can put a FIFO at any sandbox path. A blocking open of it
+    // never returns and pins one of the libuv workers shared by every project
+    // in this process. O_NONBLOCK returns immediately (ENXIO for a write-only
+    // open without a reader); special files are then rejected by type. It is a
+    // no-op for regular files and directories.
+    const handle = await open(
+      pathInSandbox,
+      this.unsafeMode ? flags : flags | constants.O_NONBLOCK,
+      mode,
+    );
+    try {
+      if (!this.unsafeMode) {
+        await this.assertNotSpecialFile(handle, path, specialFileCode);
+      }
+      if (verify) {
         await this.ensureFdInSandbox(handle.fd, sandboxBasePath, path);
         await this.ensureHandleMatchesPath(
           handle,
@@ -1491,12 +1566,12 @@ export class SandboxedFilesystem {
           sandboxBasePath,
           path,
         );
-      } catch (err) {
-        try {
-          await handle.close();
-        } catch {}
-        throw err;
       }
+    } catch (err) {
+      try {
+        await handle.close();
+      } catch {}
+      throw err;
     }
     return {
       handle,
@@ -1628,9 +1703,13 @@ export class SandboxedFilesystem {
     const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
     if (openAt2Target != null) {
       try {
-        await openAt2Target.root.copyFile(
-          openAt2Target.srcRel,
-          openAt2Target.destRel,
+        await runNativeFsTask(() =>
+          Promise.resolve(
+            openAt2Target.root.copyFile(
+              openAt2Target.srcRel,
+              openAt2Target.destRel,
+            ),
+          ),
         );
         return;
       } catch (err) {
@@ -1669,7 +1748,9 @@ export class SandboxedFilesystem {
       const data = await sourceHandle.readFile();
       await this.writeFile(dest, data);
       try {
-        await chmod(destPath, sourceStat.mode);
+        // Through the sandbox, not path-based chmod: a symlink swapped in at
+        // dest must not redirect the mode change outside the sandbox.
+        await this.chmod(dest, sourceStat.mode & 0o7777);
       } catch {
         // best-effort metadata parity with fs.copyFile behavior
       }
@@ -1845,7 +1926,11 @@ export class SandboxedFilesystem {
     }
 
     try {
-      await target.root.copyFileNoReplace(target.srcRel, target.destRel);
+      await runNativeFsTask(() =>
+        Promise.resolve(
+          target.root.copyFileNoReplace(target.srcRel, target.destRel),
+        ),
+      );
       return;
     } catch (err) {
       if (this.parseOpenAt2Error(err).code !== "EEXIST") {
@@ -2206,6 +2291,7 @@ export class SandboxedFilesystem {
     const opened = await this.openVerifiedHandle({
       path,
       flags: constants.O_RDONLY | constants.O_NONBLOCK,
+      specialFileCode: "EACCES",
     });
     try {
       authorizeCanonicalIdentity(
@@ -2716,7 +2802,11 @@ export class SandboxedFilesystem {
         // Keep non-recursive rm semantics from Node fs (including directory
         // error behavior) while using openat2 hardening for recursive removal.
         try {
-          await openAt2Target.root.rm(openAt2Target.rel, recursive, force);
+          await runNativeFsTask(() =>
+            Promise.resolve(
+              openAt2Target.root.rm!(openAt2Target.rel, recursive, force),
+            ),
+          );
           void this.notifySyncFsLocalDelete(inputPath);
           return;
         } catch (err) {
