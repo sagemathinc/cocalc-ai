@@ -3481,6 +3481,19 @@ async function handleVerifyHostReady(row: any) {
         providerId,
       }));
     const stoppedStatus = stoppedProviderStatus(observation);
+    if (
+      stoppedStatus &&
+      `${host.metadata?.desired_state ?? ""}`.trim() === "stopped"
+    ) {
+      // Stopped on purpose (a user or admin stop, or a relocation) while the
+      // start was still being verified: not an interruption to recover from.
+      logger.info("verify host ready: host was stopped on purpose", {
+        host_id: host.id,
+        provider: providerId,
+        provider_status: observation?.provider_status,
+      });
+      return;
+    }
     if (stoppedStatus) {
       const providerStatusText =
         observation?.provider_status ??

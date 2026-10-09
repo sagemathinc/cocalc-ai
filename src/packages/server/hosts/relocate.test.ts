@@ -277,6 +277,29 @@ describe("relocateHost", () => {
     ]);
   });
 
+  it("updates the runtime's machine type and re-applies a clobbered placement", async () => {
+    const { deps, getRow } = fakeDeps();
+    const start = deps.startHost;
+    deps.startHost = async (opts) => {
+      await start(opts);
+      // A stale full-metadata write from a concurrent handler.
+      const row = getRow();
+      row.metadata = {
+        ...row.metadata,
+        machine: { ...row.metadata.machine, machine_type: "t2d-standard-16" },
+      };
+    };
+    await relocateHost({
+      host_id: HOST_ID,
+      input: { machine_type: "n2-standard-32", skip_backups: true },
+      deps,
+    });
+    expect(getRow().metadata.machine.machine_type).toBe("n2-standard-32");
+    expect(getRow().metadata.runtime.metadata.machine_type).toBe(
+      "n2-standard-32",
+    );
+  });
+
   it("runs the preflight before touching anything", async () => {
     const { deps, calls } = fakeDeps();
     deps.preflight = async () => {

@@ -964,6 +964,74 @@ describe("cloud host start failures", () => {
     ]);
   });
 
+  it("does not restart a Spot host that was stopped on purpose during verification", async () => {
+    // Staging: an admin stop right after a start was read as a Spot
+    // interruption, and recovery started the host again.
+    const hostId = "5c0d6a1e-7a2b-4c3d-8e9f-0a1b2c3d4e5f";
+    await upsertProjectHost({
+      id: hostId,
+      name: "Stopped during verification",
+      region: "us-west4",
+      status: "stopping",
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        desired_state: "stopped",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west4-c",
+          machine_type: "t2d-standard-2",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west4-c",
+          instance_id: `cocalc-host-${hostId}`,
+        },
+        spot_recovery_state: {
+          phase: "retrying_spot",
+          outage_started_at: new Date().toISOString(),
+        },
+      },
+    });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          getStatus: jest.fn(async () => "stopped"),
+          startHost: jest.fn(async () => undefined),
+        },
+      },
+      creds: {},
+    });
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready({
+      id: "verify-stopped-on-purpose",
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload: {
+        provider: "gcp",
+        started_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    } as any);
+
+    const { rows } = await getPool().query(
+      "SELECT action FROM cloud_vm_work WHERE vm_id=$1",
+      [hostId],
+    );
+    expect(rows).toEqual([]);
+    const host = await getPool().query(
+      "SELECT metadata->>'desired_state' AS desired FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(host.rows[0].desired).toBe("stopped");
+  });
+
   it("queues RootFS pre-pull and reclaims a stale route migration", async () => {
     const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
     const startedAt = new Date(Date.now() - 60_000).toISOString();

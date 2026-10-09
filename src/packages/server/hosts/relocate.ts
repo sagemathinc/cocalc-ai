@@ -215,9 +215,32 @@ function withPlacement(
         ...(shape ? { cpu: shape.cpu, ram_gb: shape.ram_gb } : {}),
       },
     },
+    // Spot recovery reads the instance's current type from the runtime.
+    ...(metadata.runtime
+      ? {
+          runtime: {
+            ...metadata.runtime,
+            metadata: {
+              ...(metadata.runtime.metadata ?? {}),
+              machine_type: machineType,
+            },
+          },
+        }
+      : {}),
     // A new desired placement starts with a clean Spot recovery state.
     spot_recovery_state: { phase: "idle", active_machine_type: machineType },
   };
+}
+
+function placementMatches(
+  row: any,
+  target: { zone: string; machine_type: string },
+): boolean {
+  const machine = row?.metadata?.machine ?? {};
+  return (
+    `${machine.zone ?? ""}` === target.zone &&
+    `${machine.machine_type ?? ""}` === target.machine_type
+  );
 }
 
 export async function relocateHost({
@@ -382,6 +405,19 @@ export async function relocateHost({
     }
     await deps.progress("starting", `starting the host in ${plan.target.zone}`);
     await timed("start", deps.startHost);
+    // Host work writes whole metadata objects; one that read the row before
+    // the placement update can put the old machine back. Re-apply it.
+    const started = await deps.loadHost();
+    if (!placementMatches(started, plan.target)) {
+      await deps.updateHost({
+        region: plan.target.region,
+        metadata: withPlacement(started.metadata ?? {}, plan.target, shape),
+      });
+      await deps.progress(
+        "placement",
+        "re-applied the new placement after a concurrent metadata update",
+      );
+    }
   } catch (err) {
     const rollback = await rollBack({
       plan,
