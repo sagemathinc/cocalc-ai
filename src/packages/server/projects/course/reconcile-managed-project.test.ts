@@ -8,6 +8,7 @@ let syncProjectUsersOnHostMock: jest.Mock;
 let inviteCollaboratorMock: jest.Mock;
 let inviteCollaboratorWithoutAccountMock: jest.Mock;
 let queryMock: jest.Mock;
+let centralLogMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -15,6 +16,11 @@ jest.mock("@cocalc/database/pool", () => ({
     query: (...args: any[]) => queryMock(...args),
     connect: async () => ({ query: queryMock, release: jest.fn() }),
   })),
+}));
+
+jest.mock("@cocalc/database/postgres/central-log", () => ({
+  __esModule: true,
+  default: (...args: any[]) => centralLogMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -117,6 +123,7 @@ describe("course managed project reconciliation", () => {
       async () => undefined,
     );
     syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    centralLogMock = jest.fn(async () => undefined);
     inviteCollaboratorMock = jest.fn(async () => undefined);
     inviteCollaboratorWithoutAccountMock = jest.fn(async () => ({
       invites: [],
@@ -196,6 +203,18 @@ describe("course managed project reconciliation", () => {
       [MANAGER]: { group: "collaborator" },
     });
     expect(users[EXTRA]).toBeUndefined();
+    // The removal is recorded with who did it and why (support #20986).
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "project_collaborator_removed",
+      value: expect.objectContaining({
+        via: "course-reconcile",
+        project_id: PROJECT,
+        actor_account_id: ACTOR,
+        removed_account_ids: [EXTRA],
+        course_project_id: COURSE,
+        type: "student",
+      }),
+    });
     expect(inviteCollaboratorMock).toHaveBeenCalledWith({
       account_id: ACTOR,
       opts: {
@@ -364,6 +383,7 @@ describe("course managed project reconciliation", () => {
     );
     const users = JSON.parse(update[1][1]);
     expect(users[EXTRA]).toEqual({ group: "collaborator" });
+    expect(centralLogMock).not.toHaveBeenCalled();
   });
 
   it("rejects assigning a course manager as a student", async () => {

@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import centralLog from "@cocalc/database/postgres/central-log";
 import { isDeepStrictEqual } from "node:util";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -338,6 +339,7 @@ export async function reconcileCourseManagedProjectLocal(
   validateCourseManagedProjectRequest(request);
   const client = await getPool().connect();
   let usersChanged = false;
+  let removedAccountIds: string[] = [];
   let missingDesiredAccountIds: string[] = [];
   const changedFields = new Set<string>();
   try {
@@ -360,6 +362,9 @@ export async function reconcileCourseManagedProjectLocal(
       throw new Error(`project ${project_id} not found on its owning bay`);
     }
     const plan = planCourseManagedProjectReconciliation(request, row);
+    removedAccountIds = Object.keys(row.users ?? {}).filter(
+      (id) => plan.users[id] == null,
+    );
     usersChanged = plan.usersChanged;
     missingDesiredAccountIds = plan.missingDesiredAccountIds;
     for (const field of plan.changedFields) changedFields.add(field);
@@ -398,6 +403,23 @@ export async function reconcileCourseManagedProjectLocal(
       });
     }
     await client.query("COMMIT");
+    if (removedAccountIds.length > 0) {
+      // Membership removals must be traceable (support #20986: a student
+      // vanished from a project after accepting its invite, with no record).
+      await centralLog({
+        event: "project_collaborator_removed",
+        value: {
+          via: "course-reconcile",
+          project_id,
+          actor_account_id: account_id,
+          removed_account_ids: removedAccountIds,
+          course_project_id: request.course_project_id,
+          type: request.type,
+          student_id: request.student_id,
+          student_deleted: request.student_deleted === true,
+        },
+      }).catch(() => undefined);
+    }
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
