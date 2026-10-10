@@ -13,6 +13,11 @@ const publishAccountFeedEventBestEffortMock = jest.fn();
 const publishProjectAccountFeedEventsBestEffortMock = jest.fn();
 const syncProjectUsersOnHostMock = jest.fn();
 
+jest.mock("@cocalc/database/postgres/central-log", () => ({
+  __esModule: true,
+  default: jest.fn(async () => undefined),
+}));
+
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({

@@ -1402,7 +1402,9 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   async remove_collaborator_from_project(
     opts: PgMethodOpts<"remove_collaborator_from_project">,
   ) {
-    return runWithCb(opts.cb, () => removeCollaboratorFromProject(this, opts));
+    return runWithCbResultValue(opts.cb, () =>
+      removeCollaboratorFromProject(this, opts),
+    );
   }
 
   // remove any user, even an owner.

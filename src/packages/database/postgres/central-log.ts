@@ -5,6 +5,7 @@ import { uuid } from "@cocalc/util/misc";
 // log events, which contain personal information (email, account_id, ...)
 const PII_EVENTS = new Set([
   "create_account",
+  "project_collaborator_removed",
   "change_password",
   "change_email_address",
   "webapp-add_passport",

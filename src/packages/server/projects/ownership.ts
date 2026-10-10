@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import centralLog from "@cocalc/database/postgres/central-log";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import getLogger from "@cocalc/backend/logger";
@@ -273,6 +274,16 @@ async function removeProjectMember({
   } finally {
     client.release();
   }
+  // Best-effort diagnostic record of the removal (support #20986).
+  await centralLog({
+    event: "project_collaborator_removed",
+    value: {
+      via: "self-leave",
+      project_id,
+      actor_account_id: account_id,
+      removed_account_ids: [account_id],
+    },
+  }).catch(() => undefined);
   await publishMembershipChanged({
     project_id,
     old_owner_account_id: account_id,
