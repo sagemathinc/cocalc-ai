@@ -410,7 +410,6 @@ export class AssignmentsActions {
     assignment_id: string,
     enabled: boolean,
     run_at?: string,
-    opts: { force?: boolean; assigned?: Set<string> } = {},
   ): Promise<void> => {
     const { store, assignment } = this.course_actions.resolve({
       assignment_id,
@@ -449,7 +448,7 @@ export class AssignmentsActions {
       return;
     }
 
-    if (previousOpId && previousRunAt === runAt && !opts.force) {
+    if (previousOpId && previousRunAt === runAt) {
       this.set_assignment_fields(assignment_id, {
         auto_collect: true,
         auto_collect_error: null,
@@ -461,7 +460,6 @@ export class AssignmentsActions {
       assignment_id,
       new_only: true,
       mark_started: false,
-      assigned: opts.assigned,
     });
     if (!items.length) {
       const err =
@@ -500,41 +498,134 @@ export class AssignmentsActions {
     }
   };
 
+  // Per assignment: the refresh in progress, and the students just assigned
+  // that it must include (the course store applies changes on a throttle).
+  // (A plain object: this module's Map is immutable.js.)
+  private auto_collect_refreshes: {
+    [assignment_id: string]: {
+      assigned: Set<string>;
+      again: boolean;
+      done: Promise<void>;
+    };
+  } = {};
+
   // A scheduled collection lists the student projects to collect when it is
-  // scheduled. After the assignment reaches more students, reschedule it at
-  // the same time so it includes them (support #20954). `assigned` lists
-  // students just copied to, which the course store may not show yet.
-  private refresh_auto_collect = async (
+  // scheduled. After the assignment reaches more students, replace it with
+  // one at the same time that includes them (support #20954). Refreshes of
+  // one assignment run one at a time and merge their students.
+  private refresh_auto_collect = (
     assignment_id: string,
     assigned: string[] = [],
   ): Promise<void> => {
-    try {
-      const { assignment } = this.course_actions.resolve({ assignment_id });
-      if (!assignment?.get("auto_collect")) return;
-      const op_id = assignment.get("auto_collect_op_id");
-      const runAt = assignment.get("auto_collect_run_at");
-      if (!op_id || !runAt) return;
-      const assignedSet = new Set(assigned);
-      const { items } = this.build_collect_assignment_items({
-        assignment_id,
-        new_only: true,
-        mark_started: false,
-        assigned: assignedSet,
-      });
-      const summary = await webapp_client.conat_client.hub.lro.get({ op_id });
-      const missing = autoCollectMissingStudents({
-        summary,
-        runAt,
-        eligibleStudentIds: items.map((item) => item.student_id),
-      });
-      if (missing.length === 0) return;
-      await this.set_auto_collect(assignment_id, true, runAt, {
-        force: true,
-        assigned: assignedSet,
-      });
-    } catch (err) {
-      this.course_actions.set_error(`update scheduled collection: ${err}`);
+    const running = this.auto_collect_refreshes[assignment_id];
+    if (running != null) {
+      for (const student_id of assigned) running.assigned.add(student_id);
+      running.again = true;
+      return running.done;
     }
+    const state = {
+      assigned: new Set(assigned),
+      again: true,
+      done: Promise.resolve(),
+    };
+    this.auto_collect_refreshes[assignment_id] = state;
+    state.done = (async () => {
+      try {
+        while (state.again) {
+          state.again = false;
+          await this.refresh_auto_collect_once(assignment_id, state.assigned);
+        }
+      } catch (err) {
+        this.course_actions.set_error(`update scheduled collection: ${err}`);
+      } finally {
+        delete this.auto_collect_refreshes[assignment_id];
+      }
+    })();
+    return state.done;
+  };
+
+  // The assignment's current schedule, read from the sync document so that a
+  // concurrent change by the instructor is seen immediately.
+  private current_auto_collect = (
+    assignment_id: string,
+  ): { op_id: string; run_at: string } | undefined => {
+    const assignment: any = this.course_actions.get_one({
+      table: "assignments",
+      assignment_id,
+    } as any);
+    if (
+      !assignment?.auto_collect ||
+      !assignment.auto_collect_op_id ||
+      !assignment.auto_collect_run_at
+    ) {
+      return undefined;
+    }
+    return {
+      op_id: assignment.auto_collect_op_id,
+      run_at: assignment.auto_collect_run_at,
+    };
+  };
+
+  private refresh_auto_collect_once = async (
+    assignment_id: string,
+    assigned: Set<string>,
+  ): Promise<void> => {
+    const before = this.current_auto_collect(assignment_id);
+    if (before == null) return;
+    // Back off if the instructor disabled or rescheduled meanwhile.
+    const unchanged = () => {
+      const now = this.current_auto_collect(assignment_id);
+      return now?.op_id === before.op_id && now?.run_at === before.run_at;
+    };
+    const summary = await webapp_client.conat_client.hub.lro.get({
+      op_id: before.op_id,
+    });
+    if (!unchanged()) return;
+    const { items, store } = this.build_collect_assignment_items({
+      assignment_id,
+      new_only: true,
+      mark_started: false,
+      assigned,
+    });
+    const missing = autoCollectMissingStudents({
+      summary,
+      runAt: before.run_at,
+      eligibleStudentIds: items.map((item) => item.student_id),
+    });
+    if (missing.length === 0 || store == null) return;
+    await this.course_actions.student_projects.ensure_course_manager_access({
+      project_ids: items.map((item) => item.student_project_id),
+    });
+    if (!unchanged()) return;
+    // Schedule the replacement before canceling the old collection, so a
+    // failure never leaves the assignment without one.
+    const op = await webapp_client.project_client.collectAssignment({
+      course_project_id: store.get("course_project_id"),
+      assignment_id,
+      items,
+      options: { recursive: true },
+      run_at: before.run_at,
+    });
+    const discard = () =>
+      this.cancel_auto_collect_op(op.op_id).catch(() => undefined);
+    if (!unchanged()) {
+      await discard();
+      return;
+    }
+    try {
+      await this.cancel_auto_collect_op(before.op_id);
+    } catch (err) {
+      await discard();
+      throw err;
+    }
+    if (!unchanged()) {
+      await discard();
+      return;
+    }
+    this.set_assignment_fields(assignment_id, {
+      auto_collect_op_id: op.op_id,
+      auto_collect_error: null,
+    });
   };
 
   private apply_collect_lro_summary = (summary: LroSummary): void => {
