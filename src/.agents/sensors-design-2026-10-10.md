@@ -1,6 +1,7 @@
 # Sensors: scheduled scripts that wake agents
 
-Status: design for review (2026-10-10). Replaces thread "scheduled automations".
+Status: phase 1 implemented (2026-10-10). Replaces thread "scheduled automations".
+The sections below describe what was built; "Decisions" records William's answers.
 
 ## Idea
 
@@ -49,15 +50,24 @@ Kept and reused:
 ## Design
 
 ### Ownership and wake path
-- A sensor belongs to **one registered agent**: project and agent id, its thread and its owner account. That owner's payment selection pays for the woken turns.
-- A wake is delivered through the **Agent RPC service** (`lite/hub/acp/agent-rpc-service.ts`), the path Agent Network messages use. That service already:
-  - resolves the agent's runtime, so it works for Codex, Claude Code and other ACP harnesses;
-  - starts the project when allowed;
-  - queues behind a running turn, or adds guidance, according to its delivery rules;
-  - handles payment and admission.
-
-  The new part is a source kind `{kind: "sensor", sensor_id, run_id}`.
-- Phase 2: a sensor may also wake **other agents the owner agent can message** (same Agent Network rules), for triage then delegation.
+- A sensor belongs to **one registered agent** (project and agent id). Its
+  records live on the project's bay next to the agent identity
+  (`agent_sensors`, `agent_sensor_runs`, project-owning).
+- The person who approves (or resumes) a sensor is its **approver**: wakes
+  run, and are paid, as that account. The approver must stay a collaborator.
+- The **hub's scheduler** (`server/agents/sensor-scheduler.ts`) claims due
+  sensors with row leases (`FOR UPDATE SKIP LOCKED`) and asks the project's
+  host to run the script (`runAgentSensor`). The hub alone parses the result
+  and applies limits, so they never depend on host or project state.
+- On a wake, the hub asks the host to deliver it (`deliverAgentSensorWake`):
+  the host prepares a turn in the agent's thread with the same
+  `prepareChatSend`/`admitPreparedChatSend` path as a person's message, so it
+  works for Codex, Claude Code and other ACP agents and queues behind a
+  running turn. The request is marked `agent_message` and carries
+  `sensor_wake`, an authorization the hub rechecks when the queued turn
+  executes (`agent.authorizeSensorExecution`): sensor still active, same
+  approved hash, same approver, approver still a collaborator.
+- Phase 2: a sensor may also wake **other agents the owner agent can message**.
 
 ### What the agent sees
 
@@ -72,10 +82,10 @@ Data:
 
 - The message is built by CoCalc from the script's structured output, not from free text, and is size-capped (summary ≤ 500 characters, data ≤ 16 KB).
 - The chat shows a "Sensor" sender, not the user.
-- Wakes are **coalesced**: if a wake from the same sensor is still queued and not started, the new one replaces it, with a count.
+- Coalescing queued wakes is deferred to phase 2; the minimum interval and the daily wake limit bound them in phase 1.
 
 ### The script contract
-- The script runs with the working directory set to the agent's directory, with:
+- The script runs in a fresh (ephemeral) container of the project, in the agent's chat directory, with:
   - `COCALC_SENSOR_ID`;
   - `COCALC_SENSOR_STATE`: a private JSON file the script reads and writes, kept across runs (under `~/.local/share/cocalc/sensors/<id>/`);
   - the project's normal environment (so `gh` works if the user ran `gh auth login`).
@@ -87,31 +97,34 @@ Data:
 ### Approval: exactly the code that was approved
 - An agent proposes a sensor with `cocalc sensor propose --file spec.json`. The spec has a title, purpose, script language, script body, schedule, wake target and limits.
 - That creates a **pending** sensor and a proposed-action card in the agent's thread. The human sees the full script, schedule, interval and wake limits, then approves or rejects.
-- The approved record stores the **script body and its hash** at the hub. The host runs only that body, and a read-only copy is written into the project for transparency.
+- The approved record stores the **spec and its hash** at the hub. The host receives the body with each run and executes it as a quoted argument, never from a file the project could swap.
 - Any change (script, schedule, target) creates a new pending revision. The active revision keeps running until the new one is approved.
 - Approval requires a human session. Fresh auth is not required in phase 1, which has no connector access; it will be once sensors get connector leases (phase 3).
 
 ### Limits
-- Active sensors per project: `acp_max_active_automations_per_project`, renamed in the UI to sensors (free tier 0).
-- New entitlement: minimum interval (suggested 15 min on the basic paid tier, 5 min on the higher tier).
-- Wakes per sensor per day, default 24, settable lower. The account can pause all sensors with one switch.
-- Runs need a running project: the scheduler starts it under the existing project autostart/sponsor rules, which ACP jobs already use. Projects without network access can still run sensors that only look at local files.
+- Active sensors per project: `acp_max_active_automations_per_project`, shown as "Active sensors per project" (free tier 0; unset means 20).
+- `sensor_min_interval_minutes` (unset: 15; templates: 15 basic/student, 5 instructor/pro/admin) and `sensor_max_wakes_per_day` (unset: 24; 48 instructor, 96 pro/admin), editable per membership tier and per account override.
+- Each sensor also has its own `max_wakes_per_day` up to the tier limit.
+- **Sensors require project internet access** (paid), checked at proposal, approval and every run.
+- Five failed runs in a row, loss of the approver's access, loss of internet access or of the membership pause the sensor with a reason.
 
 ### Storage and authority
-- **Hub (account home bay):** table `agent_sensors`, holding the approved spec (script, hash, schedule, target, limits), owner, agent and project, revision, status and approval metadata. Proposal and approval RPCs are account-scoped like grants. Writes use revision CAS.
-- **Project host:** schedule and run state (next run, consecutive failures, wakes today, last run), kept in sqlite as the automations are today. Specs are synced from the hub at startup and on change. The host never trusts a spec it didn't get from the hub.
+- Postgres on the project's bay: the approved spec, its hash, the pending proposal, revision (CAS for every change), approver, schedule state, wake counts and the last 50 runs (16 KB of output each).
+- Agents propose, list, show, pause and delete through their runtime identity (`{action: "sensor"}` on agent messaging). People list through `agent.listSensors` and change through `agent.manageSensor`, which requires a bound browser session and refuses agent credentials.
 
 ### UI
 - An agent's details get a **Sensors** list: title, schedule, status, last run, last wake, next run, and actions (pause/resume, run now, view script and log, delete).
-- Pending proposals appear as cards in the thread.
+- The agent's Connectors menu has a **Sensors** entry and the chip warns while something waits for review. (Proposal cards in the thread are a later improvement.)
 - The thread menu's "Automation" item is removed.
 
 ### CLI and skill
-- `cocalc sensor propose|list|show|logs|pause|resume|run|delete`.
+- `cocalc sensor test|propose|list|show|pause|delete` (resume, approve and run now are people's actions in the UI).
 - The skill text teaches agents when a sensor fits (cheap periodic check, rare wakes), the contract, and to keep scripts small and dependency-free.
 
 ### Retiring automations
-Existing thread automations are disabled and listed so their owners can convert them. A `command` automation maps to a sensor whose script is that command and that always wakes. A `codex` prompt automation maps to a phase-2 rhythm sensor.
+Thread automations no longer run (the poller is gone) and cannot be created or
+resumed; the UI and CLI only inspect, pause and delete old ones. The remaining
+automation code (store, projections, form) is removed in a follow-up PR.
 
 ## Phases
 1. **Core sensors**:
@@ -127,7 +140,7 @@ Existing thread automations are disabled and listed so their owners can convert 
 3. **Connector leases for sensor runs** (after #899 is live): short-lived, preferably read-only tokens, re-checked every run; fresh auth for sensors that use connectors.
 4. **Push sensors**: webhooks (e.g. GitHub) feeding the same wake path.
 
-## Open questions
-1. Retire automations outright (and convert the few in use by hand), or migrate them automatically?
-2. Are the defaults right (minimum interval, 24 wakes per day, 60 s timeout)?
-3. Should a project without internet access be allowed to run sensors (they could still watch files), or should sensors require a paid project?
+## Decisions
+1. Retire automations outright.
+2. Defaults are fine, as long as admins can change them via membership tiers.
+3. Sensors require internet access (paid), to reduce abuse and motivate upgrades.
