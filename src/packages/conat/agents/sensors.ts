@@ -166,12 +166,6 @@ export interface RunSensorRequest {
   timeout_seconds: number;
   /** Absolute chat path of the agent; the script runs in its directory. */
   path: string;
-  /**
-   * The project's configured base image, from the hub's project record (not
-   * a file the project can write). Runs use it without the project's own
-   * RootFS changes.
-   */
-  image: string;
 }
 
 export interface RunSensorResult {

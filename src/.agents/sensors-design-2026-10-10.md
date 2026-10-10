@@ -124,9 +124,9 @@ Data:
   reports the hash of the queued prompt, so an edited prompt would fail the
   permit anyway.
 - **Nothing the project controls runs before the body.** The container's
-  root filesystem is a throwaway overlay of the pristine base image (named by
-  the hub's `projects.rootfs_image`, not a file in the project), without the
-  project's own RootFS changes, mounted read-only with no-new-privileges (no
+  root filesystem is a throwaway overlay of the platform's pristine default
+  project image, never the project's chosen RootFS image (collaborators can
+  change that, and tags are mutable) nor its own RootFS changes, mounted read-only with no-new-privileges (no
   sudo or setuid). It runs an explicit argv: `env -i` (no BASH_ENV,
   LD_PRELOAD, NODE_OPTIONS, PYTHON* or project variables), a PATH of CoCalc
   tools and image directories only (no `~/bin`), `/usr/bin/timeout`, bash

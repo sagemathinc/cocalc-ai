@@ -28,8 +28,8 @@ To wake the agent, print one JSON line:
   {"wake": true, "summary": "2 new issues", "data": {...}}
 (summary up to 500 characters, data up to 16 KB; the last such line wins).
 The script gets COCALC_SENSOR_ID and COCALC_SENSOR_STATE, a JSON file it may
-read and write to remember what it saw. It runs on the project's base image
-(without software installed into the project, and without sudo) with a clean
+read and write to remember what it saw. It runs on CoCalc's standard project
+image (not the project's custom image or installed software, and no sudo) with a clean
 environment: PATH has only system and CoCalc tools (not ~/bin), Python runs
 isolated (-I, no user packages), and project environment variables are not
 set. Nothing

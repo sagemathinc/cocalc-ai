@@ -31,7 +31,8 @@ const TIMEOUT_EXIT = 124;
 
 /**
  * The container's command. Nothing the project can change runs before the
- * approved body: the container is the pristine base image (see runSensor),
+ * approved body: the container is the platform's pristine default image (see
+ * runSensor),
  * there is no login shell or startup file, the environment is cleared (no
  * BASH_ENV, LD_PRELOAD, NODE_OPTIONS, PYTHON* or project variables) and PATH
  * excludes the project's own bin directories.
@@ -102,9 +103,10 @@ export async function runSensor(
     }),
     // The agent's chat directory.
     cwd: posix.dirname(path),
-    // The pristine base image, read-only, no sudo: the project cannot replace
-    // the programs that run (or run before) the approved body.
-    baseImage: { image: `${request.image ?? ""}`, run_id: request.run_id },
+    // The platform's default image, pristine, read-only and without sudo:
+    // neither the project nor a collaborator choosing its RootFS image can
+    // replace the programs that run (or run before) the approved body.
+    platformImage: { run_id: request.run_id },
     timeoutMs: seconds * 1000 + CONTAINER_OVERHEAD_MS,
     maxOutputBytes: MAX_OUTPUT_BYTES,
     useEphemeral: true,

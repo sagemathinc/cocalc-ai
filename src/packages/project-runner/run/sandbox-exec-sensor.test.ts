@@ -4,7 +4,7 @@
  */
 
 // Sensor runs: an explicit argv on a throwaway, read-only overlay of the
-// pristine base image, never the project's own RootFS.
+// platform's pristine default image, never the project's RootFS or image.
 
 import { sandboxExec } from "./sandbox-exec";
 
@@ -41,7 +41,7 @@ jest.mock("./rootfs", () => ({
   unmount: async () => {},
 }));
 jest.mock("./podman", () => ({
-  getImage: ({ image }: { image?: string }) => image || "default-image",
+  getImage: (config?: { image?: string }) => config?.image || "default-image",
   networkArgument: () => "--network=pasta",
   podmanRuntimeArgs: async () => [],
   projectPoolPodmanLauncher: () => undefined,
@@ -77,12 +77,12 @@ describe("sandboxExec for sensors", () => {
       script: "",
       useEphemeral: true,
       argv: ["/usr/bin/env", "-i", "/bin/true"],
-      baseImage: { image: "trusted:1", run_id: RUN },
+      platformImage: { run_id: RUN },
     });
-    // The hub's image, not the file in the project's home.
+    // The platform's default image, never the project's own choice.
     expect(readImageMock).not.toHaveBeenCalled();
     expect(mountSensorRootfsMock).toHaveBeenCalledWith({
-      image: "trusted:1",
+      image: "default-image",
       run_id: RUN,
     });
     expect(mountRootFsMock).not.toHaveBeenCalled();
@@ -111,18 +111,18 @@ describe("sandboxExec for sensors", () => {
       script: "",
       useEphemeral: true,
       argv: ["/bin/false"],
-      baseImage: { image: "trusted:1", run_id: RUN },
+      platformImage: { run_id: RUN },
     });
     expect(disposeMock).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a base image without an explicit argv", async () => {
+  it("refuses a platform image run without an explicit argv", async () => {
     await expect(
       sandboxExec({
         project_id: "00000000-0000-4000-8000-000000000001",
         script: "true",
         useEphemeral: true,
-        baseImage: { image: "trusted:1", run_id: RUN },
+        platformImage: { run_id: RUN },
       }),
     ).rejects.toThrow(/argv/);
   });

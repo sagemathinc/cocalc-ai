@@ -506,9 +506,10 @@ cocalc sensor delete <id>
 - The script runs in your chat's directory with `COCALC_SENSOR_ID` and
   `COCALC_SENSOR_STATE`, a JSON file it may read and write to remember what it
   already reported. Keep scripts short and dependency-free (bash, python3 or
-  node; `gh` works if the user signed in). Sensors run on the project's base
-  image with a clean environment: software installed into the project with
-  apt or sudo is not there, there is no sudo, PATH has only system and CoCalc
+  node; `gh` works if the user signed in). Sensors run on CoCalc's standard
+  project image (not a custom image the project uses) with a clean
+  environment: software installed into the project with apt or sudo is not
+  there, there is no sudo, PATH has only system and CoCalc
   tools (not `~/bin` or `~/.local/bin`), Python runs isolated (no
   user-installed packages), and project environment variables are not set.
   `cocalc sensor test` runs here, so check what the script needs.

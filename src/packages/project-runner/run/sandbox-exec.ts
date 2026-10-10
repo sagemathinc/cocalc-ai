@@ -63,12 +63,11 @@ export interface SandboxExecOptions {
    */
   argv?: string[];
   /**
-   * Run on a throwaway overlay of this pristine base image instead of the
-   * project's RootFS, read-only and without privilege escalation (sudo,
-   * setuid). The image must come from a trusted source, not the project.
-   * Requires argv.
+   * Run on a throwaway overlay of the platform's default project image
+   * instead of the project's RootFS or chosen image, read-only and without
+   * privilege escalation (sudo, setuid). Requires argv.
    */
-  baseImage?: { image: string; run_id: string };
+  platformImage?: { run_id: string };
 }
 
 export interface SandboxExecResult {
@@ -114,11 +113,11 @@ export async function sandboxExec({
   onOutput,
   onCleanupConfirmed,
   argv,
-  baseImage,
+  platformImage,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
   if (argv && (!useEphemeral || signal || argv.length === 0))
     throw Error("argv requires a plain ephemeral run");
-  if (baseImage && !argv) throw Error("baseImage requires argv");
+  if (platformImage && !argv) throw Error("platformImage requires argv");
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
   if (onOutput && useEphemeral)
@@ -222,9 +221,9 @@ export async function sandboxExec({
       const { home, scratch } = await localPath({
         project_id,
       });
-      const image = baseImage
-        ? getImage({ image: baseImage.image })
-        : await getContainerImage(home);
+      // Never the project's choice for platform runs: neither the image file
+      // in its home nor its configured (possibly arbitrary) RootFS image.
+      const image = platformImage ? getImage() : await getContainerImage(home);
       const env = await getEnvironment({
         project_id,
         HOME,
@@ -277,10 +276,10 @@ export async function sandboxExec({
       // Name the container for easier debugging; allow reuse without conflicts.
       args.push("--name", `sandbox-${project_id}-${Date.now()}`);
 
-      if (baseImage) {
+      if (platformImage) {
         const base = await mountSensorRootfs({
           image,
-          run_id: baseImage.run_id,
+          run_id: platformImage.run_id,
         });
         disposeBase = base.dispose;
         args.push(

@@ -24,7 +24,6 @@ describe("runSensor", () => {
         script: "print('it''s')",
         timeout_seconds: 9999,
         path: "/home/user/work/a.chat",
-        image: "ubuntu:26.04",
       },
       exec as any,
     );
@@ -39,7 +38,7 @@ describe("runSensor", () => {
       project_id: ids.project_id,
       useEphemeral: true,
       cwd: "/home/user/work",
-      baseImage: { image: "ubuntu:26.04", run_id: ids.run_id },
+      platformImage: { run_id: ids.run_id },
       // The timeout is capped at the contract's maximum.
       timeoutMs: 300_000 + 60_000,
     });
