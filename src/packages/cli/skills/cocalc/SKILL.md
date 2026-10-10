@@ -495,7 +495,7 @@ when it happens (or when it gives up, after 24 hours by default):
 
 ```bash
 cocalc sensor watch ci --repo owner/name --pr 123      # PR checks finished
-cocalc sensor watch file --path build.log --match 'DONE|FAILED'
+cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123 merged"
 ```
 
@@ -528,7 +528,8 @@ cocalc sensor delete <id>
   `[Reminder]` turn is your own note; a `[Scheduled prompt]` turn is a prompt
   a person scheduled or approved.
 - Sensors need a project with internet access, and memberships limit how
-  often they run and how many wakes a day they cause.
+  often they run and how many turns a person's sensors and watchers may start
+  in any 24 hours.
 
 ## Codex Activity Logs
 

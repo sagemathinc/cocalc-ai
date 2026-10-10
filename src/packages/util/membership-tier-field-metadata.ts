@@ -864,7 +864,7 @@ export const MEMBERSHIP_TIER_FIELDS = [
     path: ["usage_limits", "sensor_max_wakes_per_day"],
     card: "codex-acp",
     label: "Sensor wakes per day",
-    help: "Most times one sensor may wake its agent per day (UTC). Unset: 24.",
+    help: "Most agent turns all of one account's sensors and watchers may start in any 24 hours; each sensor may set a lower limit. Unset: 24.",
     input: "integer",
     valueType: "number",
     risks: ["capacity", "abuse"],

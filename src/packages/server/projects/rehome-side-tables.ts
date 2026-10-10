@@ -62,6 +62,11 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     status: "not-portable",
     reason: "Run logs of project-owned sensors that do not move.",
   },
+  agent_sensor_events: {
+    table: "agent_sensor_events",
+    status: "not-portable",
+    reason: "Recent wake and watcher budget events of project-owned sensors.",
+  },
   agent_rpc_admission_state: {
     table: "agent_rpc_admission_state",
     status: "operation-local",

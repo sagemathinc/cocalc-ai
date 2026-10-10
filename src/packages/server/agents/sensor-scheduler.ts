@@ -35,6 +35,8 @@ import { issueSensorRunCredentials } from "./sensor-credentials";
 import {
   projectHasInternet,
   projectImage,
+  releaseWake,
+  reserveWake,
   sensorLimits,
   sensorPermitHash,
   sensorSpecHash,
@@ -56,6 +58,8 @@ interface ClaimedSensor {
   spec: SensorSpec;
   script_hash: string;
   approved_by: string;
+  /** Exact (microsecond) text, to compare in SQL. */
+  approved_at_text: string;
   approved_image: string | null;
   revision: number;
   lease_id: string;
@@ -77,7 +81,8 @@ export async function claimDueSensors(
      UPDATE agent_sensors s SET lease_id=gen_random_uuid(),
        lease_until=now()+make_interval(mins => $2), run_requested_by=NULL
      FROM due WHERE s.sensor_id=due.sensor_id
-     RETURNING s.*, due.run_requested_by AS manual_by`,
+     RETURNING s.*, s.approved_at::text AS approved_at_text,
+       due.run_requested_by AS manual_by`,
     [limit, LEASE_MINUTES],
   );
   return rows;
@@ -132,6 +137,54 @@ async function pauseReason(row: ClaimedSensor): Promise<string | undefined> {
   return undefined;
 }
 
+/**
+ * The sensor as claimed is still what may run: active, the same approved
+ * spec, approver and approval, and (for scripts) the project's software is
+ * still the approved image. One statement, checked right before credentials
+ * are issued and again right before dispatch; returns the image to run.
+ */
+async function currentDispatch(
+  row: ClaimedSensor,
+): Promise<{ image: string } | undefined> {
+  const { rows } = await agentStore().query<{ image: string }>(
+    `SELECT COALESCE(p.rootfs_image, '') AS image
+     FROM agent_sensors s JOIN projects p ON p.project_id=s.project_id
+     WHERE s.sensor_id=$1 AND s.lease_id=$2 AND s.status='active'
+       AND s.script_hash=$3 AND s.approved_by=$4 AND s.approved_at::text=$5
+       AND p.deleted IS NOT TRUE
+       AND (COALESCE(s.spec->>'kind', 'script') <> 'script'
+            OR s.approved_image IS NULL
+            OR s.approved_image = COALESCE(p.rootfs_image, ''))`,
+    [
+      row.sensor_id,
+      row.lease_id,
+      row.script_hash,
+      row.approved_by,
+      row.approved_at_text,
+    ],
+  );
+  return rows[0];
+}
+
+/** Why the claimed sensor may no longer run: pause it if that is the fix. */
+async function changedReason(row: ClaimedSensor): Promise<string | undefined> {
+  const { rows } = await agentStore().query(
+    "SELECT *, approved_at::text AS approved_at_text FROM agent_sensors WHERE sensor_id=$1",
+    [row.sensor_id],
+  );
+  const current = rows[0];
+  if (!current || current.status !== "active") return undefined;
+  return await pauseReason({ ...row, ...current });
+}
+
+let beforeDispatchHook: (() => Promise<void>) | undefined;
+/** Tests only: run something between credential issuance and dispatch. */
+export function setSensorDispatchHookForTests(
+  hook: (() => Promise<void>) | undefined,
+) {
+  beforeDispatchHook = hook;
+}
+
 function errorText(error: unknown): string {
   const text = error instanceof Error ? error.message : `${error}`;
   return text.length > 500 ? `${text.slice(0, 499)}…` : text;
@@ -178,6 +231,17 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       return;
     }
     const spec = row.spec;
+    const changed = async () => {
+      pause = await changedReason(row);
+      outcome = "skipped";
+      failed = false;
+      error = pause ?? "The sensor changed before it ran.";
+      finished = false;
+    };
+    if (!(await currentDispatch(row))) {
+      await changed();
+      return;
+    }
     const agent = await db.get(row.agent_id);
     const host = await hostFor({
       project_id: row.project_id,
@@ -252,6 +316,14 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
           60_000,
         );
         try {
+          await beforeDispatchHook?.();
+          // Checked again now that credentials exist, and the exact image
+          // checked is the one run.
+          const dispatch = await currentDispatch(row);
+          if (!dispatch) {
+            await changed();
+            return;
+          }
           result = await host.api.runAgentSensor({
             project_id: row.project_id,
             sensor_id: row.sensor_id,
@@ -260,7 +332,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
             script,
             timeout_seconds,
             path: agent.path,
-            image: await projectImage(row.project_id),
+            image: dispatch.image,
             credentials: lease.credentials,
           });
         } finally {
@@ -302,10 +374,26 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       finished = !!watch;
     }
     failed = false;
+    if (!(await currentDispatch(row))) {
+      await changed();
+      return;
+    }
     const day = utcDay(started);
     const today = row.wakes_day === day ? row.wakes_today : 0;
     const limits = await sensorLimits(row.approved_by);
-    if (today >= Math.min(spec.max_wakes_per_day, limits.maxWakesPerDay)) {
+    // This sensor's own limit, and the approver's budget across all their
+    // sensors and watchers (which a deleted or finished sensor cannot reset).
+    const reservation =
+      today < spec.max_wakes_per_day
+        ? await reserveWake({
+            account_id: row.approved_by,
+            project_id: row.project_id,
+            agent_id: row.agent_id,
+            sensor_id: row.sensor_id,
+            limit: limits.maxWakesPerDay,
+          })
+        : undefined;
+    if (!reservation) {
       outcome = "wake-limited";
       finished = false;
       return;
@@ -351,6 +439,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       failed = true;
       finished = false;
       error = `The wake could not start a turn: ${errorText(err)}`;
+      await releaseWake(reservation).catch(() => undefined);
     }
   } catch (err) {
     error = errorText(err);
@@ -458,6 +547,10 @@ export async function removeDoneWatchers(): Promise<void> {
     `DELETE FROM agent_sensors WHERE spec->>'kind'='watch'
        AND next_run_at IS NULL AND lease_id IS NULL
        AND last_run_at < now() - interval '1 day'`,
+  );
+  // Budgets look back one day.
+  await agentStore().query(
+    "DELETE FROM agent_sensor_events WHERE created < now() - interval '2 days'",
   );
 }
 

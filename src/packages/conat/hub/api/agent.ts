@@ -392,7 +392,10 @@ export interface AgentApi {
   ): Promise<CliConnectorGrant>;
   /** Tokens for one verified agent turn (project host only). */
   beginCliConnectorTurn(
-    opts: CocalcConnectorTurnRequest,
+    opts: CocalcConnectorTurnRequest & {
+      /** Only these connectors (a sensor's `uses`); default all granted. */
+      connectors?: CliConnector[];
+    },
   ): Promise<CliConnectorTurnToken[]>;
   beginCocalcConnectorTurn(
     opts: CocalcConnectorTurnRequest & { idempotency_key: string },

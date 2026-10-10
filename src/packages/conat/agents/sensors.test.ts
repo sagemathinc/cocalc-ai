@@ -264,7 +264,7 @@ describe("watchers", () => {
       kind: "watch",
       title: "CI on sagemathinc/cocalc-ai#992",
       max_wakes_per_day: 1,
-      schedule: { kind: "interval", minutes: 2 },
+      schedule: { kind: "interval", minutes: 3 },
       expires_at: "2026-10-11T12:00:00.000Z",
     });
     expect(
@@ -273,7 +273,7 @@ describe("watchers", () => {
         { now, hours: 3 },
       ),
     ).toMatchObject({
-      title: "log.txt matches /DONE/",
+      title: 'log.txt contains "DONE"',
       expires_at: "2026-10-10T15:00:00.000Z",
     });
     expect(
@@ -292,7 +292,6 @@ describe("watchers", () => {
     for (const watch of [
       { type: "ci", repo: "no-slash", pr: 1 },
       { type: "ci", repo: "a/b", pr: 0 },
-      { type: "file", path: "x", match: "(" },
       { type: "at", at: "2026-10-09T00:00:00Z", note: "past" },
       { type: "at", at: "2026-12-01T00:00:00Z", note: "too far" },
       { type: "cron", expr: "* * * * *" },
@@ -300,7 +299,7 @@ describe("watchers", () => {
     ])
       expect(() => validateSensorWatch(watch, { now })).toThrow();
     expect(() =>
-      validateSensorWatch({ type: "file", path: "x" }, { now, hours: 1000 }),
+      validateSensorWatch({ type: "file", path: "x" }, { now, hours: 73 }),
     ).toThrow(/hours/);
   });
 
@@ -315,23 +314,54 @@ describe("watchers", () => {
     ).toEqual([]);
   });
 
-  it("the file watcher's script wakes only when the file appears and matches", () => {
+  it("the file watcher's script wakes only when the file appears and contains the text", () => {
     const dir = mkdtempSync(join(tmpdir(), "watch-"));
+    // Plain text, not a regular expression: "(" and "^" are literal.
     const script = sensorWatchScript({
       type: "file",
       path: "out.log",
-      match: "^DONE",
+      match: "DONE (",
     })!;
-    const run = () =>
-      execFileSync("python3", ["-c", script], { cwd: dir, encoding: "utf8" });
+    const run = (cwd = dir) =>
+      execFileSync("python3", ["-c", script], { cwd, encoding: "utf8" });
     expect(run()).toBe("");
     writeFileSync(join(dir, "out.log"), "working\n");
     expect(run()).toBe("");
-    writeFileSync(join(dir, "out.log"), "working\nDONE in 3s\n");
+    writeFileSync(join(dir, "out.log"), "working\nDONE (3s)\n");
     expect(parseSensorWake(run())).toEqual({
-      summary: "out.log now matches /^DONE/",
-      data: { path: "out.log", line: "DONE in 3s" },
+      summary: 'out.log now contains "DONE ("',
+      data: { path: "out.log", line: "DONE (3s)" },
     });
+  });
+
+  it("the file watcher reads only regular files, and only their end", () => {
+    const dir = mkdtempSync(join(tmpdir(), "watch-bounded-"));
+    const run = (path: string, match?: string) =>
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          sensorWatchScript({
+            type: "file",
+            path,
+            ...(match ? { match } : {}),
+          })!,
+        ],
+        { cwd: dir, encoding: "utf8", timeout: 10_000 },
+      );
+    // Devices and directories never count, so /dev/zero is never read.
+    expect(run("/dev/zero", "x")).toBe("");
+    expect(run("/dev/null")).toBe("");
+    expect(run(dir)).toBe("");
+    // A large file: only the last 1 MB is read.
+    writeFileSync(
+      join(dir, "big.log"),
+      "EARLY\n" + "x".repeat(2_000_000) + "\nLATE\n",
+    );
+    expect(run("big.log", "EARLY")).toBe("");
+    expect(parseSensorWake(run("big.log", "LATE"))?.summary).toBe(
+      'big.log now contains "LATE"',
+    );
   });
 
   it("the CI watcher's script waits for pending checks and reports failures", () => {

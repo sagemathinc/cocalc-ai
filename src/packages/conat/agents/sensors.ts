@@ -39,13 +39,17 @@ export const SENSOR_LIMITS = {
   /** Sensors (any status) per agent, to bound proposals. */
   maxSensorsPerAgent: 20,
   maxPromptBytes: 8_000,
-  /** Active built-in watchers per agent. */
-  maxWatchersPerAgent: 5,
+  /** Active built-in watchers per account. */
+  maxWatchersPerAccount: 5,
   /** How often a ci or file watcher checks. */
-  watchIntervalMinutes: 2,
+  watchIntervalMinutes: 3,
   /** Watchers give up (and say so) after this long. */
-  maxWatchHours: 7 * 24,
+  maxWatchHours: 72,
   defaultWatchHours: 24,
+  /** How far ahead a reminder may be set. */
+  maxReminderHours: 7 * 24,
+  /** How much of the end of a file a file watcher reads. */
+  maxWatchFileBytes: 1_000_000,
 } as const;
 
 /** Tier defaults; admins override them per membership tier. */
@@ -90,6 +94,7 @@ export interface PromptSensorSpec extends SensorSpecBase {
 
 export type SensorWatch =
   | { type: "ci"; repo: string; pr: number }
+  /** match is plain text (not a regular expression). */
   | { type: "file"; path: string; match?: string }
   | { type: "at"; at: string; note: string };
 
@@ -462,25 +467,18 @@ export function validateSensorWatch(
   } else if (w.type === "file") {
     onlyFields(w, ["type", "path", "match"]);
     const path = oneLine(w.path, "path", 1_000);
-    let match: string | undefined;
-    if (w.match != null) {
-      match = oneLine(w.match, "match", 200);
-      try {
-        new RegExp(match);
-      } catch {
-        throw new Error("match must be a regular expression");
-      }
-    }
+    // Plain text, matched in linear time: no regular expressions.
+    const match = w.match != null ? oneLine(w.match, "match", 200) : undefined;
     watch = { type: "file", path, ...(match ? { match } : {}) };
-    title = match ? `${path} matches /${match}/` : `${path} exists`;
+    title = match ? `${path} contains "${match}"` : `${path} exists`;
   } else if (w.type === "at") {
     onlyFields(w, ["type", "at", "note"]);
     const at = typeof w.at === "string" ? Date.parse(w.at) : NaN;
     if (!Number.isFinite(at) || at <= now)
       throw new Error("at must be a future time, like 2026-10-16T15:00:00Z");
-    if (at > now + SENSOR_LIMITS.maxWatchHours * 3_600_000)
+    if (at > now + SENSOR_LIMITS.maxReminderHours * 3_600_000)
       throw new Error(
-        `at must be within ${SENSOR_LIMITS.maxWatchHours / 24} days`,
+        `at must be within ${SENSOR_LIMITS.maxReminderHours / 24} days`,
       );
     const note = oneLine(w.note, "note", 500);
     watch = { type: "at", at: new Date(at).toISOString(), note };
@@ -531,19 +529,25 @@ print(json.dumps({"wake": True, "summary": summary, "data": {"repo": P["repo"], 
   if (watch.type === "file")
     return (
       params +
-      `path = os.path.expanduser(P["path"])
-if not os.path.exists(path):
+      `import stat
+path = os.path.expanduser(P["path"])
+try:
+    info = os.stat(path)
+except OSError:
+    sys.exit(0)
+if not stat.S_ISREG(info.st_mode):
     sys.exit(0)
 if P.get("match"):
-    try:
-        with open(path, errors="replace") as f:
-            content = f.read()[-1000000:]
-    except OSError:
+    limit = ${SENSOR_LIMITS.maxWatchFileBytes}
+    with open(path, "rb") as f:
+        if info.st_size > limit:
+            f.seek(info.st_size - limit)
+        content = f.read(limit).decode("utf-8", "replace")
+    found = content.rfind(P["match"])
+    if found < 0:
         sys.exit(0)
-    found = re.search(P["match"], content, re.M)
-    if not found:
-        sys.exit(0)
-    print(json.dumps({"wake": True, "summary": "%s now matches /%s/" % (P["path"], P["match"]), "data": {"path": P["path"], "line": content[content.rfind("\\n", 0, found.start()) + 1:].split("\\n", 1)[0][:500]}}))
+    line = content[content.rfind("\\n", 0, found) + 1:].split("\\n", 1)[0][:500]
+    print(json.dumps({"wake": True, "summary": "%s now contains %s" % (P["path"], json.dumps(P["match"])), "data": {"path": P["path"], "line": line}}))
 else:
     print(json.dumps({"wake": True, "summary": "%s now exists" % P["path"], "data": {"path": P["path"]}}))
 `

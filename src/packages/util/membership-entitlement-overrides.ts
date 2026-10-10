@@ -274,8 +274,9 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       label: "Sensor wakes per day",
       unit: "wakes",
       adminDescription:
-        "Most times one sensor may wake its agent per day (UTC); each wake starts a paid agent turn. Unset: 24.",
-      userDescription: "Most times one sensor may wake its agent per day.",
+        "Most agent turns all of one account's sensors and watchers may start in any 24 hours; each wake starts a paid agent turn, and each sensor may set a lower limit of its own. Unset: 24.",
+      userDescription:
+        "Most agent turns your sensors and watchers may start in any 24 hours.",
     },
     blob_account_total_bytes: {
       label: "Blob storage per account",

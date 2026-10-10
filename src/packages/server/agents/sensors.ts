@@ -244,6 +244,10 @@ export async function agentSensorRequest(
     if (!rowCount) throw new Error("sensor not found");
     return { deleted: request.sensor_id };
   }
+  // Code running in a sensor run never sets up sensors: no chains of
+  // scheduled work without a person or a model turn in between.
+  if (await isSensorRun(run.run_id))
+    throw new Error("a sensor run cannot set up sensors");
   if (request.op === "watch") return await createWatcher(run, agent, request);
   // propose
   const limits = await sensorLimits(run.account_id);
@@ -311,6 +315,22 @@ export async function agentSensorRequest(
  * approval, as the account of the agent's current turn (which pays for its
  * single wake). It fires once, then deletes itself, or reports expiry.
  */
+async function isSensorRun(run_id: string): Promise<boolean> {
+  const { rows } = await agentStore().query(
+    "SELECT 1 FROM agent_sensor_runs WHERE run_id=$1",
+    [run_id],
+  );
+  return rows.length > 0;
+}
+
+/** Serialize one account's sensor budget (wakes, watchers) on this bay. */
+async function lockAccountSensors(client: Querier, account_id: string) {
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended('agent-sensor-budget:' || $1::text, 0))",
+    [account_id],
+  );
+}
+
 async function createWatcher(
   run: AgentRun,
   agent: AgentIdentity,
@@ -328,31 +348,50 @@ async function createWatcher(
       ? new Date(spec.watch.at)
       : new Date(Date.now() + 30_000);
   const { rows } = await agentStore().transaction(async (client) => {
-    await lockProjectSensors(client, agent.project_id);
-    return await client.query(
+    await lockAccountSensors(client, run.account_id);
+    // Budgets are per account and survive watchers finishing or being
+    // deleted: a few running at once, and no more set per day than the
+    // account may be woken.
+    const { rows: counts } = await client.query<{
+      active: string;
+      recent: string;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM agent_sensors WHERE approved_by=$1
+            AND status='active' AND spec->>'kind'='watch'
+            AND next_run_at IS NOT NULL) AS active,
+         (SELECT count(*) FROM agent_sensor_events WHERE account_id=$1
+            AND kind='watch' AND created > now() - interval '1 day') AS recent`,
+      [run.account_id],
+    );
+    if (Number(counts[0]?.active) >= SENSOR_LIMITS.maxWatchersPerAccount)
+      throw new Error(
+        `at most ${SENSOR_LIMITS.maxWatchersPerAccount} watchers may be active at once for this account`,
+      );
+    if (Number(counts[0]?.recent) >= limits.maxWakesPerDay)
+      throw new Error(
+        `this account may set at most ${limits.maxWakesPerDay} watchers a day`,
+      );
+    const inserted = await client.query(
       `INSERT INTO agent_sensors (sensor_id, project_id, agent_id, status,
          spec, script_hash, revision, approved_by, approved_at, next_run_at,
          consecutive_failures, wakes_today)
-       SELECT gen_random_uuid(), $1, $2, 'active', $3, $4, 1, $5, now(), $6, 0, 0
-       WHERE (SELECT count(*) FROM agent_sensors WHERE agent_id=$2
-              AND status='active' AND spec->>'kind'='watch'
-              AND next_run_at IS NOT NULL) < $7
+       VALUES (gen_random_uuid(), $1, $2, 'active', $3, $4, 1, $5, now(), $6, 0, 0)
        RETURNING *`,
+      [agent.project_id, agent.agent_id, spec, hash, run.account_id, first],
+    );
+    await client.query(
+      `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id, agent_id, sensor_id)
+       VALUES (gen_random_uuid(), 'watch', $1, $2, $3, $4)`,
       [
+        run.account_id,
         agent.project_id,
         agent.agent_id,
-        spec,
-        hash,
-        run.account_id,
-        first,
-        SENSOR_LIMITS.maxWatchersPerAgent,
+        inserted.rows[0].sensor_id,
       ],
     );
+    return inserted;
   });
-  if (!rows[0])
-    throw new Error(
-      `an agent may have at most ${SENSOR_LIMITS.maxWatchersPerAgent} active watchers`,
-    );
   return {
     sensor: toSensor(rows[0]),
     message:
@@ -429,6 +468,7 @@ async function verifySensorRunLocal(
     `SELECT 1 FROM agent_sensor_runs r JOIN agent_sensors s ON s.sensor_id=r.sensor_id
      WHERE r.run_id=$1 AND s.agent_id=$2 AND s.project_id=$3
        AND s.approved_by=$4 AND s.status='active' AND s.lease_id=r.run_id
+       AND r.script_hash=s.script_hash AND r.started_at >= s.approved_at
        AND r.finished_at IS NULL AND r.started_at > now() - interval '15 minutes'`,
     [run_id, agent_id, project_id, account_id],
   );
@@ -635,6 +675,46 @@ export async function sensorControlLocal(
     }
   }
   throw new Error("unsupported sensor operation");
+}
+
+/**
+ * Reserve one of the approver's wakes for the last 24 hours, across all
+ * their sensors and watchers on this bay (the membership's
+ * sensor_max_wakes_per_day). Returns the reservation, or undefined when the
+ * budget is used up. Release it if the wake is not delivered.
+ */
+export async function reserveWake({
+  account_id,
+  project_id,
+  agent_id,
+  sensor_id,
+  limit,
+}: {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+  sensor_id: string;
+  limit: number;
+}): Promise<string | undefined> {
+  return await agentStore().transaction(async (client) => {
+    await lockAccountSensors(client, account_id);
+    const { rows } = await client.query<{ event_id: string }>(
+      `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id, agent_id, sensor_id)
+       SELECT gen_random_uuid(), 'wake', $1, $2, $3, $4
+       WHERE (SELECT count(*) FROM agent_sensor_events WHERE account_id=$1
+              AND kind='wake' AND created > now() - interval '1 day') < $5
+       RETURNING event_id`,
+      [account_id, project_id, agent_id, sensor_id, limit],
+    );
+    return rows[0]?.event_id;
+  });
+}
+
+export async function releaseWake(event_id: string): Promise<void> {
+  await agentStore().query(
+    "DELETE FROM agent_sensor_events WHERE event_id=$1",
+    [event_id],
+  );
 }
 
 export function sensorPermitHash(permit: string): string {

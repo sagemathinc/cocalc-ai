@@ -28,7 +28,7 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
 1. Watchers: CoCalc's own one-shot checks. No approval; use them instead of
    polling, then end your turn. You get one turn when it happens:
      cocalc sensor watch ci --repo owner/name --pr 123
-     cocalc sensor watch file --path out.log [--match 'DONE|FAILED']
+     cocalc sensor watch file --path out.log [--match 'BUILD DONE']
      cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
 2. Scripts: a small program you write and a person approves. It runs like a
    command in your turn: in this project's software, as the approving person,
@@ -211,10 +211,13 @@ export function registerSensorCommand(
   watch
     .command("file")
     .description(
-      "when a file exists (relative to this chat's directory), optionally once it matches a regular expression",
+      "when a regular file exists (relative to this chat's directory), optionally once its last 1 MB contains some text",
     )
     .requiredOption("--path <path>", "file to watch")
-    .option("--match <regex>", "wait until its content matches this")
+    .option(
+      "--match <text>",
+      "wait until it contains this text (plain text, not a regular expression)",
+    )
     .option("--hours <n>", "give up after this many hours (default 24)")
     .action(async (opts, cmd) =>
       send(

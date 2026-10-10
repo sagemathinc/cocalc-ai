@@ -404,14 +404,15 @@ gave the agent. People approve, resume and run sensors in the agent's
 
 ~~~bash
 cocalc sensor watch ci --repo sagemathinc/cocalc-ai --pr 992
-cocalc sensor watch file --path build.log --match 'DONE|FAILED'
+cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check that PR 992 merged"
 ~~~
 
 Watchers are CoCalc's own one-shot checks, so they need no approval. The agent
 ends its turn and gets exactly one turn when it happens, or when the watcher
-gives up (after 24 hours unless \`--hours\` says otherwise). An agent may have
-five at a time.
+gives up (after 24 hours unless \`--hours\` says otherwise). One person's
+agents may have five watchers at a time in total, and watchers count toward
+the same daily wake budget as sensors.
 
 ## Watch over time: propose a script
 

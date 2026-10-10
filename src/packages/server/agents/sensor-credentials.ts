@@ -123,8 +123,13 @@ export async function issueSensorRunCredentials({
       (c): c is "github" | "cloudflare" => c === "github" || c === "cloudflare",
     );
     if (cli.length > 0) {
+      // Only the connectors this sensor uses are minted at the account's home.
       const tokens = (
-        (await sensorConnectors.beginCli({ ...base, turn_ref })) ?? []
+        (await sensorConnectors.beginCli({
+          ...base,
+          turn_ref,
+          connectors: cli,
+        })) ?? []
       ).filter((token) => cli.includes(token.connector as any));
       credentials.cli_tokens = tokens;
       for (const connector of cli)

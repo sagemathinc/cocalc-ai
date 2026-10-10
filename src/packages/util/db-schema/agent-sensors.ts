@@ -187,3 +187,35 @@ Table({
     },
   },
 });
+
+// Wakes and watcher creations, per account, kept apart from the sensors so
+// deleting a sensor (or a watcher finishing) never resets a daily budget.
+Table({
+  name: "agent_sensor_events",
+  rules: {
+    primary_key: "event_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_sensor_events_account",
+        query: "(account_id,kind,created)",
+      },
+      { name: "agent_sensor_events_project", query: "(project_id)" },
+    ],
+  },
+  fields: {
+    event_id: required("uuid", "Event id."),
+    kind: required("string", "wake or watch (a watcher was set)."),
+    account_id: required(
+      "uuid",
+      "The account the wake runs as, or that set the watcher.",
+    ),
+    project_id: required("uuid", "Project, for hard deletion."),
+    agent_id: required("uuid", "Agent."),
+    sensor_id: { type: "uuid", desc: "Sensor, if it still exists." },
+    created: {
+      ...timestamp("When it happened."),
+      not_null: true,
+      pg_default: "now()",
+    },
+  },
+});

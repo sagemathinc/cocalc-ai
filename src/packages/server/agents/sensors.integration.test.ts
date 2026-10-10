@@ -61,7 +61,11 @@ import {
   sensorControlLocal,
   setSensorConsumeHookForTests,
 } from "./sensors";
-import { claimDueSensors, runClaimedSensor } from "./sensor-scheduler";
+import {
+  claimDueSensors,
+  runClaimedSensor,
+  setSensorDispatchHookForTests,
+} from "./sensor-scheduler";
 
 const HOST = "44444444-4444-4444-8444-444444444444";
 
@@ -90,6 +94,7 @@ describeDb("agent sensors", () => {
       agent_identities: SCHEMA.agent_identities,
       agent_sensors: SCHEMA.agent_sensors,
       agent_sensor_runs: SCHEMA.agent_sensor_runs,
+      agent_sensor_events: SCHEMA.agent_sensor_events,
     });
   });
 
@@ -655,7 +660,7 @@ describeDb("agent sensors", () => {
     );
     expect(rows[0]).toMatchObject({ next_run_at: null, status: "active" });
     for (let i = 0; i < 5; i++) await make();
-    await expect(make()).rejects.toThrow(/at most 5 active watchers/);
+    await expect(make()).rejects.toThrow(/at most 5 watchers may be active/);
   });
 
   test("a reminder runs no code and wakes the agent with its own note", async () => {
@@ -770,6 +775,149 @@ describeDb("agent sensors", () => {
       op: "list",
     })) as any;
     expect(sensors.filter((s: any) => s.status === "active")).toHaveLength(2);
+  });
+
+  test("a sensor-woken chain is bounded by the account's daily budget", async () => {
+    limits.sensor_max_wakes_per_day = 3;
+    const watch = () =>
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "file", path: "out.txt" },
+      }) as any;
+    // Each woken turn sets its successor; finishing or deleting watchers
+    // does not give the budget back.
+    for (let i = 0; i < 3; i++) {
+      const { sensor } = await watch();
+      await makeDue(sensor.sensor_id);
+      await runDue();
+      await agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "delete",
+        sensor_id: sensor.sensor_id,
+      });
+    }
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(3);
+    await expect(watch()).rejects.toThrow(/at most 3 watchers a day/);
+  });
+
+  test("wakes are limited per account across sensors, and deleting one does not reset it", async () => {
+    limits.sensor_max_wakes_per_day = 2;
+    const a = (await approve((await propose({ ...spec, title: "A" })).sensor))
+      .sensor;
+    const b = (await approve((await propose({ ...spec, title: "B" })).sensor))
+      .sensor;
+    await makeDue(a.sensor_id);
+    await runDue();
+    await sensorControlLocal(owner, project_id, {
+      op: "delete",
+      sensor_id: a.sensor_id,
+    });
+    await makeDue(b.sensor_id);
+    await runDue();
+    await makeDue(b.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    const { runs } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: b.sensor_id,
+    })) as any;
+    expect(runs[0].outcome).toBe("wake-limited");
+  });
+
+  test("code in a sensor run cannot set up sensors", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const sensorRunId = lease.issued[0].run_id;
+    const sensorRun = { ...run, run_id: sensorRunId };
+    await expect(
+      agentSensorRequest(sensorRun, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "file", path: "x" },
+      }),
+    ).rejects.toThrow(/sensor run cannot set up sensors/);
+    await expect(
+      agentSensorRequest(sensorRun, agent, {
+        action: "sensor",
+        op: "propose",
+        spec,
+      }),
+    ).rejects.toThrow(/sensor run cannot set up sensors/);
+  });
+
+  test.each([
+    [
+      "paused",
+      (id: string) =>
+        getPool().query(
+          "UPDATE agent_sensors SET status='paused' WHERE sensor_id=$1",
+          [id],
+        ),
+      undefined,
+    ],
+    [
+      "approved again",
+      (id: string) =>
+        getPool().query(
+          "UPDATE agent_sensors SET approved_at=now() + interval '1 second' WHERE sensor_id=$1",
+          [id],
+        ),
+      undefined,
+    ],
+    [
+      "running in changed software",
+      () =>
+        getPool().query(
+          "UPDATE projects SET rootfs_image='other:9' WHERE project_id=$1",
+          [project_id],
+        ),
+      /software/,
+    ],
+  ])(
+    "nothing runs if the sensor is %s right before dispatch",
+    async (_label, change, reason) => {
+      const active = (await approve((await propose()).sensor)).sensor;
+      await makeDue(active.sensor_id);
+      setSensorDispatchHookForTests(async () => {
+        await change(active.sensor_id);
+      });
+      try {
+        await runDue();
+      } finally {
+        setSensorDispatchHookForTests(undefined);
+      }
+      expect(host.runAgentSensor).not.toHaveBeenCalled();
+      expect(lease.released).toBe(1);
+      if (reason) {
+        const { sensors } = (await sensorControlLocal(owner, project_id, {
+          op: "list",
+        })) as any;
+        expect(sensors[0].status).toBe("paused");
+        expect(sensors[0].pause_reason).toMatch(reason);
+      }
+    },
+  );
+
+  test("verify-run refuses a run that started before the current approval", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    let verdict: unknown;
+    host.runAgentSensor.mockImplementation(async (req: any) => {
+      await getPool().query(
+        "UPDATE agent_sensors SET approved_at=now() + interval '1 second' WHERE sensor_id=$1",
+        [active.sensor_id],
+      );
+      verdict = await sensorControlLocal(owner, project_id, {
+        op: "verify-run",
+        agent_id,
+        run_id: req.run_id,
+      }).catch((err) => err.message);
+      return { exit_code: 0, timed_out: false, stdout: "", stderr: "" };
+    });
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(verdict).toMatch(/not live/);
   });
 
   test("agents see and manage only their own sensors", async () => {

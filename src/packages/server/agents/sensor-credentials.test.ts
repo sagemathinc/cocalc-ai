@@ -89,6 +89,8 @@ test("connectors are narrowed to what the spec uses", async () => {
   });
   expect(lease.credentials.connector_key).toBe("key");
   expect(lease.credentials.cli_tokens).toEqual([github]);
+  // Only the used connectors are requested from the account's home.
+  expect(beginCli.mock.calls[0][0].connectors).toEqual(["github"]);
   expect(lease.missing).toEqual([]);
   const ref = begin.mock.calls[0][0].turn_ref;
   expect(ref).toMatchObject({
