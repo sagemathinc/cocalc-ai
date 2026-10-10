@@ -238,6 +238,17 @@ export class ProjectClient {
     return await this.client.conat_client.hub.projects.collectAssignment(opts);
   };
 
+  addScheduledCollectionStudents = async (opts: {
+    course_project_id: string;
+    assignment_id: string;
+    op_id: string;
+    items: CourseCollectAssignmentItem[];
+  }): Promise<{ updated: boolean; item_count?: number }> => {
+    return await this.client.conat_client.hub.projects.addScheduledCollectionStudents(
+      opts,
+    );
+  };
+
   reconfigureCourseProjects = async (
     opts: import("@cocalc/conat/hub/api/projects").CourseReconfigureRequest,
   ): Promise<

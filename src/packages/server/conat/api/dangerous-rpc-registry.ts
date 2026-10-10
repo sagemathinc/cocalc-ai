@@ -1075,6 +1075,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.addScheduledCollectionStudents": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "adds already-assigned students to the course's own still-queued scheduled collection, with the same course-manager checks as collectAssignment; removes no safety control",
+  },
   "projects.createBackup": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

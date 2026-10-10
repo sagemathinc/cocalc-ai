@@ -88,6 +88,7 @@ import {
   waitForCourseCopyLro,
 } from "../copy-lro";
 import { projectRelativeCoursePath } from "./paths";
+import { autoCollectMissingStudents } from "./auto-collect-refresh";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 const TERMINAL_LRO_STATUSES = new Set([
@@ -495,6 +496,112 @@ export class AssignmentsActions {
       });
       this.course_actions.set_error(`schedule assignment collection: ${err}`);
     }
+  };
+
+  // Per assignment: the refresh in progress, and the students just assigned
+  // that it must include (the course store applies changes on a throttle).
+  // (A plain object: this module's Map is immutable.js.)
+  private auto_collect_refreshes: {
+    [assignment_id: string]: {
+      assigned: Set<string>;
+      again: boolean;
+      done: Promise<void>;
+    };
+  } = {};
+
+  // A scheduled collection lists the student projects to collect when it is
+  // scheduled. After the assignment reaches more students, add them to it
+  // (support #20954). Refreshes of one assignment run one at a time and
+  // merge their students.
+  private refresh_auto_collect = (
+    assignment_id: string,
+    assigned: string[] = [],
+  ): Promise<void> => {
+    const running = this.auto_collect_refreshes[assignment_id];
+    if (running != null) {
+      for (const student_id of assigned) running.assigned.add(student_id);
+      running.again = true;
+      return running.done;
+    }
+    const state = {
+      assigned: new Set(assigned),
+      again: true,
+      done: Promise.resolve(),
+    };
+    this.auto_collect_refreshes[assignment_id] = state;
+    state.done = (async () => {
+      try {
+        while (state.again) {
+          state.again = false;
+          await this.refresh_auto_collect_once(assignment_id, state.assigned);
+        }
+      } catch (err) {
+        this.course_actions.set_error(`update scheduled collection: ${err}`);
+      } finally {
+        delete this.auto_collect_refreshes[assignment_id];
+      }
+    })();
+    return state.done;
+  };
+
+  // The assignment's current schedule, read from the sync document (the
+  // store applies changes on a throttle).
+  private current_auto_collect = (
+    assignment_id: string,
+  ): { op_id: string; run_at: string } | undefined => {
+    const assignment: any = this.course_actions.get_one({
+      table: "assignments",
+      assignment_id,
+    } as any);
+    if (
+      !assignment?.auto_collect ||
+      !assignment.auto_collect_op_id ||
+      !assignment.auto_collect_run_at
+    ) {
+      return undefined;
+    }
+    return {
+      op_id: assignment.auto_collect_op_id,
+      run_at: assignment.auto_collect_run_at,
+    };
+  };
+
+  private refresh_auto_collect_once = async (
+    assignment_id: string,
+    assigned: Set<string>,
+  ): Promise<void> => {
+    const schedule = this.current_auto_collect(assignment_id);
+    if (schedule == null) return;
+    const summary = await webapp_client.conat_client.hub.lro.get({
+      op_id: schedule.op_id,
+    });
+    const { items, store } = this.build_collect_assignment_items({
+      assignment_id,
+      new_only: true,
+      mark_started: false,
+      assigned,
+    });
+    const missing = new Set(
+      autoCollectMissingStudents({
+        summary,
+        runAt: schedule.run_at,
+        eligibleStudentIds: items.map((item) => item.student_id),
+      }),
+    );
+    if (missing.size === 0 || store == null) return;
+    const added = items.filter((item) => missing.has(item.student_id));
+    await this.course_actions.student_projects.ensure_course_manager_access({
+      project_ids: added.map((item) => item.student_project_id),
+    });
+    // The server adds them only while this collection is still queued and
+    // keeps the students it already lists, so this cannot undo a change by
+    // the instructor or race other browsers.
+    await webapp_client.project_client.addScheduledCollectionStudents({
+      course_project_id: store.get("course_project_id"),
+      assignment_id,
+      op_id: schedule.op_id,
+      items: added,
+    });
   };
 
   private apply_collect_lro_summary = (summary: LroSummary): void => {
@@ -1156,7 +1263,9 @@ ${details}
     } catch (err) {
       // error somewhere along the way
       finish(err);
+      return;
     }
+    await this.refresh_auto_collect(assignment_id, [student_id]);
   };
 
   private assignment_src_path = (assignment): string => {
@@ -1391,6 +1500,10 @@ ${details}
           );
         }
         this.set_assignment_field(assignment_id, "last_assignment_op_id", null);
+        await this.refresh_auto_collect(
+          assignment_id,
+          startedStudentIds.filter((student_id) => !result[student_id]),
+        );
       } catch (err) {
         if (op) {
           const reconciled = await this.reconcile_assignment_distribution({
@@ -1456,6 +1569,12 @@ ${details}
       );
     }
     this.set_assignment_field(assignment_id, "last_assignment_op_id", null);
+    await this.refresh_auto_collect(
+      assignment_id,
+      dests
+        .map(({ student_id }) => student_id)
+        .filter((student_id) => !result[student_id]),
+    );
     return true;
   };
 
@@ -1678,6 +1797,14 @@ ${details}
         },
         errors || undefined,
       );
+      // Students reached here for the first time must be in a scheduled
+      // collection too (support #20954).
+      await this.refresh_auto_collect(
+        assignment_id,
+        courseCopyDests
+          .map(({ student_id }) => student_id)
+          .filter((student_id) => !result[student_id]),
+      );
     } catch (err) {
       finish({ status: "failed", error: `${err}` }, err);
     }
@@ -1687,10 +1814,13 @@ ${details}
     assignment_id,
     new_only,
     mark_started,
+    assigned,
   }: {
     assignment_id: string;
     new_only: boolean;
     mark_started: boolean;
+    // students just assigned, which the store may not show yet
+    assigned?: Set<string>;
   }): {
     items: CourseCollectAssignmentItem[];
     startedStudentIds: string[];
@@ -1708,7 +1838,10 @@ ${details}
     const prev_step = previous_step("collect", peer);
     for (const student_id of store.get_student_ids({ deleted: false })) {
       if (this.course_actions.is_closed()) break;
-      if (!store.last_copied(prev_step, assignment_id, student_id, true)) {
+      if (
+        !store.last_copied(prev_step, assignment_id, student_id, true) &&
+        !(prev_step === "assignment" && assigned?.has(student_id))
+      ) {
         continue;
       }
       if (
