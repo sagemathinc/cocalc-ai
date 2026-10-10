@@ -159,6 +159,20 @@ describe("getCachedPool", () => {
     expect(Buffer.isBuffer(rows[0].data)).toBe(true);
   });
 
+  it("gives each caller its own rows array", async () => {
+    const { getCachedPool, pool } = await loadCached();
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+
+    const cached = getCachedPool("short");
+    const first = await cached.query("SELECT 1");
+    first.rows.unshift({ id: 0 });
+    first.rows.sort((a, b) => b.id - a.id);
+    const second = await cached.query("SELECT 1");
+
+    expect(second.rows).toEqual([{ id: 1 }]);
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
   it("throws on invalid cache names", async () => {
     const { getCachedPool } = await loadCached();
     const cached = getCachedPool("invalid" as any);

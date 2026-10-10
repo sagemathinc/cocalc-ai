@@ -24,7 +24,8 @@ of multiple projects.
 Only plain reads are cached: anything that writes, locks rows, or calls a
 function with side effects goes straight to the database, uncached and never
 merged with a concurrent identical call (see cacheable-query.ts). Outside
-production, cached results are frozen, since every caller shares them.
+production, cached rows are frozen, since every caller shares them; each
+caller gets its own rows array.
 
 Do not use a cached pool for permission, membership, or billing checks: a
 cached answer can be up to the cache time out of date in either direction.
@@ -76,8 +77,8 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
-// Cached results are shared by every caller; outside production freeze them
-// so a caller that mutates one fails loudly instead of changing it for all.
+// Cached rows are shared by every caller; outside production freeze them so a
+// caller that mutates one fails loudly instead of changing it for all.
 const FREEZE_CACHED_RESULTS = process.env.NODE_ENV !== "production";
 
 const cachedQuery = reuseInFlight(
@@ -107,7 +108,9 @@ const cachedQuery = reuseInFlight(
       }
       if (result.rows.length > 0) {
         // We only cache query if it returned something.
-        if (FREEZE_CACHED_RESULTS) deepFreeze(result.rows);
+        if (FREEZE_CACHED_RESULTS) {
+          for (const row of result.rows) deepFreeze(row);
+        }
         cache.set(key, result);
       }
       return result;
@@ -137,11 +140,16 @@ export default function getCachedPool(options?: PoolOptionInput) {
     return getPool({ ensureExists });
   }
   return {
-    query: async (...args: Parameters<Pool["query"]>) =>
-      isCacheableQuery(args)
-        ? await cachedQuery(cacheTime, ensureExists, ...args)
-        : await getPool({ ensureExists }).query(
-            ...(args as Parameters<Pool["query"]>),
-          ),
+    query: async (...args: Parameters<Pool["query"]>) => {
+      if (!isCacheableQuery(args)) {
+        return await getPool({ ensureExists }).query(
+          ...(args as Parameters<Pool["query"]>),
+        );
+      }
+      const result = await cachedQuery(cacheTime, ensureExists, ...args);
+      // Each caller gets its own rows array (to sort, add to or remove
+      // from); the rows themselves are shared.
+      return { ...result, rows: [...result.rows] };
+    },
   } as any as Pool; // obviously not really a Pool, but is enough for what we're doing.
 }
