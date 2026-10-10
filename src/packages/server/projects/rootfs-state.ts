@@ -183,7 +183,8 @@ async function loadProjectRootfsStateRows(
 async function loadProjectRootfsStateEntries(
   project_id: string,
 ): Promise<ProjectRootfsStateEntry[]> {
-  const rows = await loadProjectRootfsStateRows(project_id);
+  // A copy: the rows may be a cached result that other callers share.
+  const rows = [...(await loadProjectRootfsStateRows(project_id))];
   const hasCurrent = rows.some((row) => row.state_role === "current");
   if (!hasCurrent) {
     const projectRow = await loadProjectRow(project_id);

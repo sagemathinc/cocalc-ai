@@ -83,4 +83,41 @@ describe("project RootFS state transaction affinity", () => {
     expect(transactionQueryMock).toHaveBeenNthCalledWith(2, "ROLLBACK");
     expect(transactionReleaseMock).toHaveBeenCalledTimes(1);
   });
+
+  it("adds the legacy current image without changing a shared cached result", async () => {
+    // As a cached result: frozen rows, shared by every caller.
+    const stateRows = Object.freeze([]);
+    poolQueryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_rootfs_states"))
+        return { rows: stateRows };
+      if (sql.includes("FROM projects")) {
+        return {
+          rows: [
+            Object.freeze({
+              rootfs_image: "buildpack-deps:26.04",
+              rootfs_image_id: "image-1",
+            }),
+          ],
+        };
+      }
+      if (sql.includes("FROM rootfs_images")) {
+        return {
+          rows: [
+            Object.freeze({
+              runtime_image: "buildpack-deps:26.04",
+              release_id: "release-1",
+            }),
+          ],
+        };
+      }
+      throw new Error(`unexpected pooled query: ${sql}`);
+    });
+    const { getProjectRootfsStates } = await import("./rootfs-state");
+
+    const states = await getProjectRootfsStates({ project_id });
+
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ state_role: "current" });
+    expect(stateRows).toHaveLength(0);
+  });
 });
