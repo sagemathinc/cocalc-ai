@@ -235,7 +235,12 @@ async function waitForProviderStatus(opts: {
   const intervalMs = opts.intervalMs ?? 5000;
   const deadline = Date.now() + timeoutMs;
   let lastStatus:
-    "running" | "starting" | "off" | "stopped" | "error" | undefined;
+    | "running"
+    | "starting"
+    | "off"
+    | "stopped"
+    | "error"
+    | undefined;
   while (Date.now() < deadline) {
     try {
       if (opts.entry.provider.getStatus) {
@@ -346,7 +351,8 @@ async function observeProviderReadyStatus(opts: {
       }
       const mapped =
         (entry.provider.mapStatus?.(remote.status) as
-          ProviderReadyObservation["mapped_status"] | undefined) ??
+          | ProviderReadyObservation["mapped_status"]
+          | undefined) ??
         (remote.status as ProviderReadyObservation["mapped_status"]);
       return {
         mapped_status: mapped,
@@ -673,8 +679,9 @@ async function updateHostRowUnlessStopped(
 
 // Record a recovery transition and queue its start in one transaction,
 // holding the host row: a stop either commits first (and the transition is
-// refused) or waits and commits after the start is queued (and the start
-// handler then skips it). Returns whether the start was queued.
+// refused) or waits and commits after the start is queued, in which case the
+// start handler skips the start if it sees the stop when it begins. Returns
+// whether the start was queued.
 async function transitionAndQueueRecoveryStart({
   host_id,
   updates,
@@ -1693,18 +1700,21 @@ async function handleStart(row: any) {
         const nextMachineMeta = { ...(nextMachine.metadata ?? {}) };
         if (providerId === "gcp") {
           const runtimeMeta = runtime.metadata as
-            { data_disk_name?: string } | undefined;
+            | { data_disk_name?: string }
+            | undefined;
           nextMachineMeta.data_disk_name =
             runtimeMeta?.data_disk_name ?? `${runtime.instance_id}-data`;
         } else if (providerId === "nebius") {
           const runtimeMeta = runtime.metadata as
-            { diskIds?: { data?: string } } | undefined;
+            | { diskIds?: { data?: string } }
+            | undefined;
           if (runtimeMeta?.diskIds?.data) {
             nextMachineMeta.data_disk_id = runtimeMeta.diskIds.data;
           }
         } else if (providerId === "hyperstack") {
           const runtimeMeta = runtime.metadata as
-            { data_volume_id?: number; data_volume_name?: string } | undefined;
+            | { data_volume_id?: number; data_volume_name?: string }
+            | undefined;
           if (runtimeMeta?.data_volume_id) {
             nextMachineMeta.data_volume_id = runtimeMeta.data_volume_id;
           }
@@ -2670,7 +2680,12 @@ async function handleStart(row: any) {
       }
     }
     let statusAfterStart:
-      "running" | "starting" | "off" | "stopped" | "error" | undefined;
+      | "running"
+      | "starting"
+      | "off"
+      | "stopped"
+      | "error"
+      | undefined;
     if (
       providerId === "gcp" ||
       providerId === "nebius" ||
@@ -3265,7 +3280,12 @@ async function handleRefreshRuntime(row: any) {
     network,
   });
   const mappedProviderStatus = network?.mapped_status as
-    "running" | "starting" | "off" | "stopped" | "error" | undefined;
+    | "running"
+    | "starting"
+    | "off"
+    | "stopped"
+    | "error"
+    | undefined;
   const nextMetadata = {
     ...(host.metadata ?? {}),
     runtime: {
@@ -4056,9 +4076,11 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
   start: async (row) => {
     const host = await loadHostRow(row.vm_id);
     if (!host) return;
-    // Every start request marks the host wanted running before queueing;
-    // a stop since then wins, including over recovery retries queued
-    // earlier. Checked before handleStart's own side effects.
+    // Every start request marks the host wanted running before queueing, so
+    // a stop recorded before this start begins (including one recorded after
+    // a recovery retry was queued) skips it, before handleStart's side
+    // effects. A stop that lands after this check is not fenced here: start
+    // and stop work for one host are not yet serialized (follow-up).
     if (`${host.metadata?.desired_state ?? ""}`.trim() === "stopped") {
       logger.info("skipping start: the host is wanted stopped", {
         host_id: host.id,

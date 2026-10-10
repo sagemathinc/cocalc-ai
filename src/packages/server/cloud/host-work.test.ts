@@ -1121,10 +1121,12 @@ describe("cloud host start failures", () => {
     );
     expect(recovery.rows[0].state).toEqual({ phase: "idle" });
   });
-  it("does not start a host whose stop landed after its recovery start was queued", async () => {
+  it("skips a queued recovery start when the stop is recorded before it runs", async () => {
     // Immediate (verify's standard fallback) and delayed (a Spot retry
     // queued minutes earlier) recovery starts: the stop commits after they
-    // are queued; when they run, the provider must not be asked to start.
+    // are queued but before the start handler runs; the provider must not be
+    // asked to start. (A stop landing while the handler already runs is the
+    // separate per-host serialization follow-up.)
     for (const source of ["verify_host_ready", "spot_recovery_retry"]) {
       const hostId = randomUUID();
       await upsertProjectHost({
