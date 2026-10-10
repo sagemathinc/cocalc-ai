@@ -3223,6 +3223,33 @@ async function canCopyInviteLink(account_id: string): Promise<boolean> {
   return limits.invite_email_link_copy_enabled !== false;
 }
 
+async function claimInviteEmailSend(opts: {
+  project_id: string;
+  to: string;
+  cutoff: Date;
+}): Promise<boolean> {
+  const database = db();
+  return !!(await callback2(database.claim_project_invite_send, opts));
+}
+
+// A claimed send that did not go out must not block a later retry.
+async function releaseInviteEmailClaim({
+  project_id,
+  to,
+  reason,
+}: {
+  project_id: string;
+  to: string;
+  reason: string;
+}): Promise<void> {
+  const database = db();
+  await callback2(database.sent_project_invite, {
+    project_id,
+    to,
+    error: `not sent: ${reason}`,
+  });
+}
+
 async function getInviteEmailResendCutoff(account_id: string): Promise<Date> {
   const resolution = await resolveMembershipForAccount(account_id);
   const limits = getEffectiveMembershipUsageLimits(resolution);
@@ -4124,21 +4151,21 @@ export async function inviteCollaborator({
   if (!email_address) {
     return delivery;
   }
-  const when_sent = await callback2(database.when_sent_project_invite, {
-    project_id: opts.project_id,
-    to: email_address,
-  });
-  if (
-    when_sent &&
-    when_sent >= (await getInviteEmailResendCutoff(account_id))
-  ) {
-    delivery.email_blocked_reason = "cooldown";
-    return delivery;
-  }
   const settings = await callback2(database.get_server_settings_cached);
   if (!settings) {
     delivery.email_available = false;
     delivery.email_blocked_reason = "email_not_configured";
+    return delivery;
+  }
+  // Claim atomically so near-simultaneous invites send one email (#20961).
+  if (
+    !(await claimInviteEmailSend({
+      project_id: opts.project_id,
+      to: email_address,
+      cutoff: await getInviteEmailResendCutoff(account_id),
+    }))
+  ) {
+    delivery.email_blocked_reason = "cooldown";
     return delivery;
   }
   dbg(`send_email invite to ${email_address}`);
@@ -4168,6 +4195,11 @@ export async function inviteCollaborator({
       settings,
     });
     if (`${sendMessage ?? ""}`.trim()) {
+      await releaseInviteEmailClaim({
+        project_id: opts.project_id,
+        to: email_address,
+        reason: `${sendMessage}`,
+      });
       delivery.email_available = !emailUnavailableFromSendMessage(sendMessage);
       delivery.email_blocked_reason = delivery.email_available
         ? "tier_disallows_email"
@@ -4303,23 +4335,23 @@ export async function inviteCollaboratorWithoutAccount({
       return created.invite;
     }
 
-    const when_sent = await callback2(database.when_sent_project_invite, {
-      project_id: opts.project_id,
-      to: email_address,
-    });
-    if (
-      when_sent &&
-      when_sent >= (await getInviteEmailResendCutoff(policyAccountId))
-    ) {
-      // recent email -- nothing more to do
-      blockEmail({ reason: "cooldown" });
-      return created.invite;
-    }
-
-    // 4. Get settings
+    // 3. Get settings
     const settings = await callback2(database.get_server_settings_cached);
     if (!settings) {
       blockEmail({ reason: "email_not_configured", available: false });
+      return created.invite;
+    }
+
+    // 4. Claim atomically so near-simultaneous invites send one email
+    // (#20961); a recent send or claim means nothing more to do.
+    if (
+      !(await claimInviteEmailSend({
+        project_id: opts.project_id,
+        to: email_address,
+        cutoff: await getInviteEmailResendCutoff(policyAccountId),
+      }))
+    ) {
+      blockEmail({ reason: "cooldown" });
       return created.invite;
     }
 
@@ -4349,6 +4381,11 @@ export async function inviteCollaboratorWithoutAccount({
         },
       );
       if (`${sendMessage ?? ""}`.trim()) {
+        await releaseInviteEmailClaim({
+          project_id: opts.project_id,
+          to: email_address,
+          reason: `${sendMessage}`,
+        });
         blockEmail({
           reason: emailUnavailableFromSendMessage(sendMessage)
             ? "email_not_configured"
@@ -4357,13 +4394,6 @@ export async function inviteCollaboratorWithoutAccount({
         });
         return created.invite;
       }
-      await getPool().query(
-        `UPDATE project_collab_invites
-            SET last_sent=NOW(), resend_count=COALESCE(resend_count, 0) + 1, updated=NOW()
-          WHERE invite_id=$1`,
-        [created.invite.invite_id],
-      );
-      email_sent = true;
     } catch (err) {
       dbg(`FAILED to send email to ${email_address}  -- err=${err}`);
       await callback2(database.sent_project_invite, {
@@ -4373,12 +4403,24 @@ export async function inviteCollaboratorWithoutAccount({
       });
       throw err;
     }
-    // Record successful send (without error):
+    // The email went out: record it at once (this also ends the send claim)
+    // so later bookkeeping failures can never reopen it for a duplicate.
     await callback2(database.sent_project_invite, {
       project_id: opts.project_id,
       to: email_address,
       error: undefined,
     });
+    email_sent = true;
+    try {
+      await getPool().query(
+        `UPDATE project_collab_invites
+            SET last_sent=NOW(), resend_count=COALESCE(resend_count, 0) + 1, updated=NOW()
+          WHERE invite_id=$1`,
+        [created.invite.invite_id],
+      );
+    } catch (err) {
+      dbg(`failed to record invite send metadata -- err=${err}`);
+    }
     return created.invite;
   };
 

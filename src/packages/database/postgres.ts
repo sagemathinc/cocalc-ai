@@ -78,6 +78,7 @@ import { nameToAccountOrOrganization } from "./postgres/account/name-to-account-
 import {
   sentProjectInvite,
   whenSentProjectInvite,
+  claimProjectInviteSend,
 } from "./postgres/project/invites";
 import { getScopedQueryClient } from "./postgres/query-client-context";
 import { setRunQuota } from "./postgres/project/set-run-quota";
@@ -1516,6 +1517,15 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   ) {
     return runWithCbResultValue(opts.cb, () =>
       whenSentProjectInvite(this, opts),
+    );
+  }
+
+  // atomically claim sending an invite email (see claimProjectInviteSend)
+  async claim_project_invite_send(
+    opts: PgMethodOpts<"claim_project_invite_send">,
+  ) {
+    return runWithCbResultValue(opts.cb, () =>
+      claimProjectInviteSend(this, opts),
     );
   }
 
