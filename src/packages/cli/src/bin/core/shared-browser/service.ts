@@ -43,7 +43,10 @@ import {
   SharedBrowserServer,
 } from "./server";
 import { recentSites } from "./start-page";
-import type { StartPageSite } from "@cocalc/util/shared-browser-protocol";
+import type {
+  SharedBrowserNetwork,
+  StartPageSite,
+} from "@cocalc/util/shared-browser-protocol";
 import { serveViewers } from "./viewer-socket";
 import { openCurrentProjectConnection } from "../../../api/current-project";
 
@@ -252,6 +255,22 @@ export async function runSharedBrowserService({
   let isolate = !!client && !!projectId && existsSync(SHARED_BROWSER_RUN_DIR);
   const runDir = join(SHARED_BROWSER_RUN_DIR, profileId);
 
+  // The browser, while it runs in the project or in its own container (not
+  // on the user's computer).
+  interface Local {
+    // The project key it runs with (null: a temporary profile).
+    keyId: string | null;
+    pages(): Promise<string[]>;
+    stop(): Promise<void>;
+    recent(): StartPageSite[];
+    // What a page's file chooser gets for these project files.
+    offerFiles(paths: string[]): string[];
+  }
+  let local: Local | null = null;
+  let stopping = false;
+  // Switches (where it runs, its network, a new key) happen one at a time.
+  let switching: Promise<void> = Promise.resolve();
+
   const server = new SharedBrowserServer({
     host,
     port,
@@ -261,6 +280,7 @@ export async function runSharedBrowserService({
     title: file ? basename(file) : "Web browser",
     recent: () => local?.recent() ?? [],
     offerFiles: (paths) => local?.offerFiles(paths) ?? paths,
+    onNetwork: (value) => switchNetwork(value),
     ...(file
       ? {
           runsOn,
@@ -282,20 +302,6 @@ export async function runSharedBrowserService({
         log,
       })
     : null;
-
-  // The browser, while it runs in the project or in its own container (not
-  // on the user's computer).
-  interface Local {
-    // The project key it runs with (null: a temporary profile).
-    keyId: string | null;
-    pages(): Promise<string[]>;
-    stop(): Promise<void>;
-    recent(): StartPageSite[];
-    // What a page's file chooser gets for these project files.
-    offerFiles(paths: string[]): string[];
-  }
-  let local: Local | null = null;
-  let stopping = false;
 
   // Sign-ins are kept only with the project's browser key: Chromium encrypts
   // cookies with it (see ./keyring.ts), and drops the ones it cannot
@@ -369,6 +375,7 @@ export async function runSharedBrowserService({
       (await devToolsRequest(endpoint, "/json/version")).text,
     );
     await server.attachChrome(version.webSocketDebuggerUrl);
+    server.setNetwork(null);
     log(
       `${version.Browser} in the project, without Chromium's sandbox; profile in ${profile.backing}; ${describeKey(keyring)}`,
     );
@@ -394,7 +401,7 @@ export async function runSharedBrowserService({
     try {
       info = await hostApi.start({
         appId: profileId,
-        network: "own",
+        network: readBrowserNetwork(profileId),
         keyFingerprint: keyFingerprint(key),
         urls,
       });
@@ -421,6 +428,8 @@ export async function runSharedBrowserService({
     }
     const path = new URL(version.webSocketDebuggerUrl).pathname;
     await server.attachChrome(`ws+unix://${info.socket}:${path}`);
+    // The host decides: a project without internet shares its network.
+    server.setNetwork(info.network === "project" ? "project" : "own");
     log(
       `${version.Browser} in its own container (${info.network} network) with Chromium's sandbox; ${describeKey(keyring)}`,
     );
@@ -479,6 +488,23 @@ export async function runSharedBrowserService({
     await startLocal(urls.length > 0 ? urls : undefined);
   };
 
+  // On its own network or the project's: start it over on the other, with
+  // the same pages open.
+  const switchNetwork = (value: SharedBrowserNetwork) => {
+    switching = switching
+      .then(async () => {
+        writeBrowserNetwork(profileId, value);
+        const current = local;
+        if (!current || !isolate) return;
+        log(`network: ${value}`);
+        const urls = await current.pages();
+        await stopLocal();
+        await startLocal(urls.length > 0 ? urls : undefined);
+      })
+      .catch((err) => log(`network: ${err?.message ?? err}`));
+    return switching;
+  };
+
   // The user's computer, through the reverse tunnel of
   // `cocalc project browser connect --browser <file>`.
   const remoteVersion = async (): Promise<any | null> => {
@@ -505,7 +531,6 @@ export async function runSharedBrowserService({
     return true;
   };
 
-  let switching: Promise<void> = Promise.resolve();
   const switchTo = (value: SharedBrowserRunsOn, write: boolean) => {
     switching = switching
       .then(async () => {
@@ -517,6 +542,7 @@ export async function runSharedBrowserService({
         log(`runs on: ${value}`);
         if (value === "computer") {
           await stopLocal();
+          server.setNetwork(null);
           await attachRemote();
         } else {
           server.detachChrome();
@@ -568,6 +594,33 @@ export async function runSharedBrowserService({
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
     process.on(signal, () => void stop(signal));
   await new Promise(() => {});
+}
+
+// Which network a browser in its own container uses, as last chosen.
+function browserSettingsPath(appId: string, home = homedir()) {
+  return join(
+    home,
+    ".local",
+    "share",
+    "cocalc",
+    "browser-settings",
+    `${appId}.json`,
+  );
+}
+
+export function readBrowserNetwork(appId: string): SharedBrowserNetwork {
+  try {
+    const value = JSON.parse(readFileSync(browserSettingsPath(appId), "utf8"));
+    return value?.network === "project" ? "project" : "own";
+  } catch {
+    return "own";
+  }
+}
+
+function writeBrowserNetwork(appId: string, network: SharedBrowserNetwork) {
+  const path = browserSettingsPath(appId);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ network })}\n`);
 }
 
 // The start page's recent sites, which a browser in its own container

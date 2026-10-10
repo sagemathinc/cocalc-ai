@@ -91,6 +91,7 @@ function browserState(
     connectCommand: null,
     title: "Web browser",
     zoom: 1,
+    network: null,
     ...overrides,
   };
 }
@@ -233,6 +234,28 @@ describe("SharedBrowserViewer", () => {
     controlRef.current.setRunsOn("project");
     expect(connection.sent).toContainEqual({
       type: "runsOn",
+      value: "project",
+    });
+  });
+
+  it("offers the project's network to a browser with its own", async () => {
+    const { connection, show } = open();
+    show(
+      browserState({
+        driver: "human",
+        network: "own",
+        tabs: [{ id: "t1", url: "about:blank", title: "" }],
+      }),
+    );
+    expect(
+      await screen.findByText(/cannot reach this project's servers/),
+    ).toBeTruthy();
+    // Its servers wait for the switch.
+    fireEvent.click(await screen.findByText("localhost:5173"));
+    expect(connection.sent.some((m) => m.type === "navigate")).toBe(false);
+    fireEvent.click(screen.getByText("Connect to this project's network"));
+    expect(connection.sent).toContainEqual({
+      type: "network",
       value: "project",
     });
   });

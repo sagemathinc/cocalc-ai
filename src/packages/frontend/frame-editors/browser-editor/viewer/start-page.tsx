@@ -9,7 +9,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { StartPageData } from "@cocalc/util/shared-browser-protocol";
+import type {
+  SharedBrowserNetwork,
+  StartPageData,
+} from "@cocalc/util/shared-browser-protocol";
 
 import type { SharedBrowserConnection } from "./connection";
 import { useIcon } from "./icons";
@@ -98,6 +101,8 @@ export function StartPage({
   name,
   driving,
   canRunOnComputer,
+  network,
+  setNetwork,
   go,
   onAskAgent,
   flash,
@@ -106,6 +111,9 @@ export function StartPage({
   name: string;
   driving: boolean;
   canRunOnComputer: boolean;
+  // A browser in its own container: its network (null otherwise).
+  network: SharedBrowserNetwork | null;
+  setNetwork: (network: SharedBrowserNetwork) => void;
   go: (text: string) => void;
   onAskAgent?: (text: string) => void;
   flash: (text: string) => void;
@@ -167,9 +175,20 @@ export function StartPage({
             autoComplete="off"
           />
         </form>
-        {data.servers.length > 0 && (
+        {(data.servers.length > 0 || network === "own") && (
           <div className="cc-sbv-sp-section">
             <div className="cc-sbv-sp-label">Running in this project</div>
+            {network === "own" && (
+              <div className="cc-sbv-sp-network">
+                <span>
+                  This browser has a network of its own: it cannot reach this
+                  project's servers.
+                </span>
+                <button type="button" onClick={() => setNetwork("project")}>
+                  Connect to this project's network
+                </button>
+              </div>
+            )}
             <div className="cc-sbv-sp-tiles">
               {data.servers.map((server) => (
                 <button
@@ -177,7 +196,11 @@ export function StartPage({
                   type="button"
                   className="cc-sbv-sp-tile"
                   title={server.url}
-                  onClick={() => go(server.url)}
+                  onClick={() =>
+                    network === "own"
+                      ? flash("Connect to this project's network first")
+                      : go(server.url)
+                  }
                 >
                   <Badge text={`${server.port}`} colorKey={`${server.port}`} />
                   <b>localhost:{server.port}</b>
@@ -238,6 +261,12 @@ export function StartPage({
             copy and paste
           </span>
           <span>Take over and hand back any time</span>
+          {network === "project" && (
+            <span>
+              On this project's network ·{" "}
+              <a onClick={() => setNetwork("own")}>use its own</a>
+            </span>
+          )}
           {canRunOnComputer && (
             <span>Sites that block cloud servers: Runs on my computer</span>
           )}

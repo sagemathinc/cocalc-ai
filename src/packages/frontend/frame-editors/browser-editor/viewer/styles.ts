@@ -91,6 +91,10 @@ const CSS = `
 .cc-sbv-sp-agent button { border:0; background:#fff; color:#1677ff; font-weight:650; border-radius:8px; padding:7px 14px; cursor:pointer; }
 .cc-sbv-sp-hints { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; color:var(--muted); font-size:12px; }
 .cc-sbv-sp-hints span { background:var(--bg); border:1px solid var(--line); border-radius:999px; padding:4px 11px; }
+.cc-sbv-sp-hints a { color:var(--accent); cursor:pointer; }
+.cc-sbv-sp-network { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 10px; padding:10px 12px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); font-size:12.5px; }
+.cc-sbv-sp-network span { flex:1; min-width:200px; }
+.cc-sbv-sp-network button { border:0; background:var(--accent); color:#fff; font-weight:600; border-radius:8px; padding:6px 12px; cursor:pointer; }
 .cc-sbv kbd { font:11px ui-monospace, monospace; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 4px; }
 `;
 

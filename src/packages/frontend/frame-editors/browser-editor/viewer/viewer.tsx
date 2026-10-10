@@ -587,6 +587,15 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
             name={state?.title || "Web browser"}
             driving={driving}
             canRunOnComputer={!!state?.runsOn}
+            network={state?.network ?? null}
+            setNetwork={(value) => {
+              send({ type: "network", value });
+              flash(
+                value === "project"
+                  ? "Connecting to this project's network..."
+                  : "Switching to its own network...",
+              );
+            }}
             go={go}
             onAskAgent={props.onAskAgent}
             flash={flash}

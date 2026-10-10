@@ -35,6 +35,7 @@ import type { SharedBrowserRunsOn } from "@cocalc/util/shared-browser";
 import type {
   Driver,
   FaviconData,
+  SharedBrowserNetwork,
   ServiceMessage,
   SharedBrowserState,
   StartPageData,
@@ -126,6 +127,8 @@ export interface SharedBrowserServerOptions {
   runsOn?: SharedBrowserRunsOn;
   connectCommand?: string;
   onRunsOn?: (runsOn: SharedBrowserRunsOn) => void | Promise<void>;
+  // A browser in its own container: switch its network.
+  onNetwork?: (network: SharedBrowserNetwork) => void | Promise<void>;
   // For the start page: this browser's name, and the sites it visited.
   title?: string;
   recent?: () => StartPageData["recent"];
@@ -222,6 +225,7 @@ export class SharedBrowserServer {
       connectCommand: options.connectCommand ?? null,
       title: options.title ?? "Web browser",
       zoom: 1,
+      network: null,
     };
   }
 
@@ -244,6 +248,12 @@ export class SharedBrowserServer {
     if (origin === this.siteOrigin || !this.options.connectCommand) return;
     this.siteOrigin = origin;
     this.state.connectCommand = `${this.options.connectCommand} --api ${origin}`;
+  }
+
+  setNetwork(network: SharedBrowserNetwork | null): void {
+    if (this.state.network === network) return;
+    this.state.network = network;
+    this.broadcastState();
   }
 
   setRunsOn(runsOn: SharedBrowserRunsOn): void {
@@ -1071,6 +1081,13 @@ export class SharedBrowserServer {
           (msg.value === "project" || msg.value === "computer")
         )
           await this.options.onRunsOn?.(msg.value);
+        return;
+      case "network":
+        if (
+          this.state.network &&
+          (msg.value === "own" || msg.value === "project")
+        )
+          await this.options.onNetwork?.(msg.value);
         return;
       case "resize": {
         if (!view.tab) return;

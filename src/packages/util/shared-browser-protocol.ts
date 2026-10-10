@@ -65,7 +65,13 @@ export interface SharedBrowserState {
   // The tab's page zoom (1 = 100%), like a browser's zoom: the page lays out
   // for a narrower window at a higher pixel ratio.  New tabs get the last one.
   zoom: number;
+  // A browser in its own container: on its own network ("own": the internet,
+  // as the project's policy allows) or the project's ("project": its
+  // localhost servers too).  null: it runs in the project or on a computer.
+  network: SharedBrowserNetwork | null;
 }
+
+export type SharedBrowserNetwork = "own" | "project";
 
 // The screen's picture quality: see the service's QUALITY.
 export type ViewQuality = "sharp" | "balanced" | "fast";
@@ -97,6 +103,7 @@ export type ViewerMessage =
   | { type: "takeover" }
   | { type: "handback" }
   | { type: "runsOn"; value: SharedBrowserRunsOn }
+  | { type: "network"; value: SharedBrowserNetwork }
   // The rest act on the page, and only while the human drives.
   | { type: "newTab" }
   | { type: "closeTab"; id: string }
