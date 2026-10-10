@@ -117,6 +117,8 @@ export function ArtifactCard({
         github_pr: current.github_pr,
         actions: current.actions,
         commit: current.commit,
+        app: current.app,
+        terminal: current.terminal,
         theme: current.theme,
       }
     : published;
@@ -131,17 +133,28 @@ export function ArtifactCard({
       JSON.stringify(current.commit) !== JSON.stringify(published.commit));
   const theme = current?.theme ?? s.theme;
   const title = theme?.title || s.title;
-  const kind = s.commit
-    ? "Git commit"
-    : s.github_pr
-      ? "GitHub pull request"
-      : s.actions
-        ? "Proposed actions"
-        : s.file
-          ? "File reference"
-          : "Collaborative document";
-  const icon: IconName =
-    s.commit || s.github_pr ? "git" : s.actions ? "tasks" : "file";
+  const kind = s.terminal
+    ? "Live terminal"
+    : s.app
+      ? "Live app"
+      : s.commit
+        ? "Git commit"
+        : s.github_pr
+          ? "GitHub pull request"
+          : s.actions
+            ? "Proposed actions"
+            : s.file
+              ? "File reference"
+              : "Collaborative document";
+  const icon: IconName = s.terminal
+    ? "terminal"
+    : s.app
+      ? "global"
+      : s.commit || s.github_pr
+        ? "git"
+        : s.actions
+          ? "tasks"
+          : "file";
   const excerpt =
     theme?.description ||
     (s.actions
@@ -154,15 +167,19 @@ export function ArtifactCard({
     theme?.image_blob ||
     (projectId && s.file && /\.(png|jpe?g|gif|webp)$/i.test(s.file.path))
   );
-  const metadata = s.commit
-    ? `${s.commit.sha.slice(0, 12)}${s.commit.branch ? ` · ${s.commit.branch}` : ""}`
-    : s.github_pr
-      ? `${s.github_pr.repository} #${s.github_pr.number} · ${s.github_pr.draft ? "Draft" : s.github_pr.state} · Checks: ${s.github_pr.checks}`
-      : s.actions
-        ? `${s.actions.length} proposed actions · Review drafts`
-        : s.file
-          ? s.file.path
-          : excerpt;
+  const metadata = s.terminal
+    ? excerpt || "Open to watch and type"
+    : s.app
+      ? excerpt || "Open to view and use it"
+      : s.commit
+        ? `${s.commit.sha.slice(0, 12)}${s.commit.branch ? ` · ${s.commit.branch}` : ""}`
+        : s.github_pr
+          ? `${s.github_pr.repository} #${s.github_pr.number} · ${s.github_pr.draft ? "Draft" : s.github_pr.state} · Checks: ${s.github_pr.checks}`
+          : s.actions
+            ? `${s.actions.length} proposed actions · Review drafts`
+            : s.file
+              ? s.file.path
+              : excerpt;
   const details = [
     kind,
     metadata,

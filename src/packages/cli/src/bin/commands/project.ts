@@ -174,7 +174,7 @@ export function registerProjectCommand(
   registerProjectEnvSecretCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);
   registerProjectAppCommands(project, deps);
-  registerProjectBrowserCommands(project, deps);
+  registerProjectBrowserCommands(project, dataDeps);
   registerProjectTerminalCommands(project, dataDeps);
   registerProjectDocumentBuildCommands(project, dataDeps);
   registerProjectBuildSmokeCommand(project, deps);

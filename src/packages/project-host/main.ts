@@ -166,6 +166,7 @@ import { maybeHandleStaticAppRequest } from "./static-apps";
 import { runPrivilegedRmHelper } from "./privileged-rm-helper";
 import { initProjectTouchService } from "./touch-service";
 import { initProjectStorageInfoService } from "./storage-info-service";
+import { initSharedBrowserService } from "./shared-browser-containers";
 import { initProjectDocumentActivityService } from "./document-activity-service";
 import { initProjectChatSessionService } from "./project-chat-session-service";
 import { initProjectEditJournalService } from "./edit-journal-service";
@@ -525,6 +526,7 @@ export async function main(
     await initProjectDocumentActivityService(conatClient);
   const projectArchiveInfoService =
     await initProjectArchiveInfoService(conatClient);
+  const sharedBrowserService = await initSharedBrowserService(conatClient);
 
   // ACP runs inside project-host in container mode (no env flag needed).
   setPreferContainerExecutor(true);
@@ -1589,6 +1591,7 @@ export async function main(
     projectDocumentActivityService?.close?.();
     projectChatSessionService?.close?.();
     projectArchiveInfoService?.close?.();
+    sharedBrowserService?.close?.();
     masterRegistration?.stop();
     stopReconciler?.();
     stopDataPermissionHardener?.();

@@ -252,7 +252,9 @@ export async function createChatMessage(
     `User request: ${request}`,
     frameType === "terminal"
       ? "Use the current CoCalc terminal context as the live source of truth."
-      : "Inspect the current document through CoCalc live document APIs before editing.",
+      : frameType === "browser"
+        ? `This is a shared web browser (a \`.browser\` file) that the user watches. Act in it with \`cocalc project browser goto|text|click|type|press|eval|screenshot --browser ${location.absolute_path}\`; \`cocalc project browser status --browser ${location.absolute_path}\` shows its tabs and whether it runs in the project or on the user's computer. While the user drives, your actions wait until they hand back; for logins ask them with \`cocalc project browser ask-human --browser ${location.absolute_path} --message ...\`.`
+        : "Inspect the current document through CoCalc live document APIs before editing.",
     frameType !== "terminal"
       ? `The document is ${describeAgentFileLocation(docLocation)}.`
       : undefined,

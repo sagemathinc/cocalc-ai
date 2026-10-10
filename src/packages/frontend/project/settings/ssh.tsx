@@ -14,14 +14,12 @@ import { CopyToClipboard } from "react-copy-to-clipboard";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
-import {
-  COCALC_CLI_DOWNLOAD_URL,
-  COCALC_CLI_INSTALL_COMMAND,
-} from "@cocalc/util/consts/ui";
+import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
 import { Project } from "./types";
 import { lite } from "@cocalc/frontend/lite";
 import { ProjectToProjectSsh } from "./project-to-project-ssh";
 import { DocsLink } from "@cocalc/frontend/docs/link";
+import { InstallCocalcCli } from "@cocalc/frontend/components/install-cocalc-cli";
 
 const { Text, Paragraph } = Typography;
 const COPYABLE_PROPS = {
@@ -176,13 +174,7 @@ export function SSHPanel({
                   </DocsLink>
                 }
               />
-              <div>
-                <Text strong>Install CoCalc CLI</Text>
-                <CopyToClipBoard
-                  value={COCALC_CLI_INSTALL_COMMAND}
-                  {...COPYABLE_PROPS}
-                />
-              </div>
+              <InstallCocalcCli />
               <div>
                 <Text strong>Set up SSH for this {projectLabelLower}</Text>
                 <div style={{ marginTop: 6 }}>

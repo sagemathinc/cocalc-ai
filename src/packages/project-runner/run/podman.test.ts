@@ -222,6 +222,12 @@ function mockProjectStartPodman(project_id: string) {
   });
 }
 
+// A project stops its browser containers first (podman refuses to remove a
+// project's container while a browser shares its network): none here.
+function noBrowserContainers() {
+  mockPodman.mockResolvedValueOnce({ stdout: "" });
+}
+
 describe("project-runner podman orphan fallback", () => {
   const project1 = "11111111-1111-4111-8111-111111111111";
   const project2 = "22222222-2222-4222-8222-222222222222";
@@ -385,6 +391,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills an orphaned live project when podman metadata is missing", async () => {
+    noBrowserContainers();
     mockPodman
       .mockRejectedValueOnce(new Error("no such container"))
       .mockRejectedValueOnce(new Error("no such container"));
@@ -436,6 +443,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills a live project when podman rm reports success but conmon is still alive", async () => {
+    noBrowserContainers();
     mockPodman
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ stdout: "" });
@@ -484,18 +492,30 @@ describe("project-runner podman orphan fallback", () => {
 
     await stop({ project_id: project1 });
 
-    expect(mockPodman).toHaveBeenNthCalledWith(1, [
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      1,
+      [
+        "ps",
+        "-a",
+        "--format",
+        "{{.Names}}",
+        "--filter",
+        `name=^cocalc-browser-${project1}`,
+      ],
+      { timeout: 30 },
+    );
+    expect(mockPodman).toHaveBeenNthCalledWith(2, [
       "container",
       "exists",
       `project-${project1}`,
     ]);
     expect(mockPodman).toHaveBeenNthCalledWith(
-      2,
+      3,
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
     expect(mockPodman).toHaveBeenNthCalledWith(
-      3,
+      4,
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
@@ -516,6 +536,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills a live project when podman rm times out and the retry still leaves conmon alive", async () => {
+    noBrowserContainers();
     mockPodman
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("timeout"))
@@ -552,16 +573,11 @@ describe("project-runner podman orphan fallback", () => {
 
     await stop({ project_id: project1 });
 
-    expect(mockPodman).toHaveBeenNthCalledWith(1, [
+    expect(mockPodman).toHaveBeenNthCalledWith(2, [
       "container",
       "exists",
       `project-${project1}`,
     ]);
-    expect(mockPodman).toHaveBeenNthCalledWith(
-      2,
-      ["rm", "-f", "-t", "5", `project-${project1}`],
-      { timeout: 10 },
-    );
     expect(mockPodman).toHaveBeenNthCalledWith(
       3,
       ["rm", "-f", "-t", "5", `project-${project1}`],
@@ -569,6 +585,11 @@ describe("project-runner podman orphan fallback", () => {
     );
     expect(mockPodman).toHaveBeenNthCalledWith(
       4,
+      ["rm", "-f", "-t", "5", `project-${project1}`],
+      { timeout: 10 },
+    );
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      5,
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
@@ -582,6 +603,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills every duplicate main conmon tree for one project", async () => {
+    noBrowserContainers();
     mockPodman
       .mockRejectedValueOnce(new Error("no such container"))
       .mockRejectedValueOnce(new Error("no such container"));

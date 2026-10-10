@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Build a tools tarball containing the project host helper binaries
-# (dropbear, rg, rustic, codex, Claude Code, etc.) from the local build output.
+# (dropbear, rg, rustic, codex, Claude Code, headless Chromium, etc.) from the local build output.
 #
 # Usage:
 #   ./build-tools.sh [output-directory]
@@ -24,6 +24,7 @@ CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
 X11_LAUNCHER="$(dirname "$0")/cocalc-x11"
 CLAUDE_INSTALLER="$(cd "$(dirname "$0")" && pwd)/install-claude-code.sh"
 CLAUDE_SOURCE="$ROOT/packages/project/managed-harnesses"
+CHROMIUM_INSTALLER="$(cd "$(dirname "$0")" && pwd)/install-chromium.sh"
 
 source "$(dirname "$0")/tools-cache.sh"
 CACHE_ROOT="$(cocalc_tools_cache_root)"
@@ -110,6 +111,33 @@ install_claude_code() {
   rm -rf "$stage"
 }
 
+# Headless Chromium for the shared browser, cached by its pinned installer
+# and the library pins it reads.
+chromium_cache_key() {
+  local arch="$1"
+  printf 'tools-chromium-%s-%s-%s-%s\n' "$OS" "$arch" \
+    "$(cocalc_tools_hash_file "$CHROMIUM_INSTALLER")" \
+    "$(cocalc_tools_hash_file "$(dirname "$CHROMIUM_INSTALLER")/chromium-libs.lock")"
+}
+
+install_chromium() {
+  local arch="$1"
+  local work_dir="$2"
+  local cache_dir="$CACHE_ROOT/$(chromium_cache_key "$arch")"
+  local stage="$work_dir.chromium"
+  rm -rf "$stage"
+  mkdir -p "$stage/bin" "$stage/share"
+  if cocalc_tools_restore_cache "$cache_dir" "$stage"; then
+    echo "  - Restored Chromium from cache: $cache_dir"
+  else
+    bash "$CHROMIUM_INSTALLER" "$arch" "$stage/bin"
+    cocalc_tools_save_cache "$cache_dir" "$stage"
+  fi
+  rm -rf "$work_dir/bin/cocalc-chromium"
+  mv "$stage/bin/cocalc-chromium" "$work_dir/bin/cocalc-chromium"
+  rm -rf "$stage"
+}
+
 # Each architecture is built in its own work directory, so both are built in
 # parallel; compression uses all cores (xz -T0).
 build_arch() {
@@ -135,6 +163,7 @@ build_arch() {
     echo "  - Saved downloaded tools cache: $CACHE_DIR"
   fi
   install_claude_code "$ARCH" "$ARCH_WORK_DIR"
+  install_chromium "$ARCH" "$ARCH_WORK_DIR"
   install_cocalc_cli_runtime "$ARCH_WORK_DIR"
   local TARGET="$OUT_DIR/tools-${OS}-${ARCH}.tar.xz"
   rm -f "$TARGET"
@@ -147,6 +176,7 @@ PIDS=()
 for ARCH in "${ARCHES[@]}"; do
   CACHE_DIRS_USED+=("$CACHE_ROOT/$(cocalc_tools_cache_key "$ROOT" "tools" "$OS" "$ARCH" "all")")
   CACHE_DIRS_USED+=("$CACHE_ROOT/$(claude_code_cache_key "$ARCH")")
+  CACHE_DIRS_USED+=("$CACHE_ROOT/$(chromium_cache_key "$ARCH")")
   build_arch "$ARCH" &
   PIDS+=("$!")
 done

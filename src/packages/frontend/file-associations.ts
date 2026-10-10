@@ -403,6 +403,13 @@ file_associations["term"] = {
   name: "Terminal",
 };
 
+file_associations["browser"] = {
+  editor: "browser",
+  icon: "global",
+  opts: {},
+  name: "Web Browser",
+};
+
 file_associations["x11"] = {
   editor: "x11",
   icon: "window-restore",

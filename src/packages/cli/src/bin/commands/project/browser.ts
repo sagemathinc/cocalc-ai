@@ -9,6 +9,7 @@
  * or Ctrl-C ends the tunnel and removes the profile.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { join, posix } from "node:path";
 import { Command } from "commander";
 
 import {
@@ -31,6 +32,18 @@ import {
   startReverseTunnel,
   type ReverseTunnel,
 } from "../../core/reverse-tunnel";
+import {
+  persistentProfile,
+  runSharedBrowserService,
+  sharedBrowserTarget,
+} from "../../core/shared-browser/service";
+import {
+  sharedBrowserAppSpec,
+  sharedBrowserFileAppId,
+  sharedBrowserTunnelPort,
+} from "@cocalc/util/shared-browser";
+import { registerSharedBrowserCommands } from "./shared-browser";
+import { runBrowserContainerEntry } from "../../core/shared-browser/container-entry";
 import type { ProjectCommandDeps } from "../project";
 import {
   ensureManagedProjectSshConfigEntry,
@@ -59,7 +72,51 @@ type ConnectOptions = {
   compress?: boolean;
   keyPath?: string;
   installKey?: boolean;
+  browser?: string;
+  signIn?: boolean;
 };
+
+// Chrome with no remote debugging at all: some sites (X) refuse to sign in
+// when it is on, but accept the session afterwards.
+export function signInLaunchArgs(profileDir: string, url: string): string[] {
+  return [
+    `--user-data-dir=${profileDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--",
+    url,
+  ];
+}
+
+// A .browser file named on this computer: its absolute path in the project
+// (relative paths are relative to the project's home directory).
+export function projectBrowserFile(value: string, home = "/home/user"): string {
+  const text = value.trim();
+  if (!text.endsWith(".browser"))
+    throw new Error(`--browser must be a .browser file, got '${value}'`);
+  const relative = text.startsWith("~/") ? text.slice(2) : text;
+  return posix.normalize(
+    relative.startsWith("/") ? relative : posix.join(home, relative),
+  );
+}
+
+// Where this computer keeps the Chrome profile of a project's .browser file:
+// it persists, so logins made in it last.
+export function computerBrowserProfileDir(
+  projectId: string,
+  appId: string,
+  sys: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; home: string },
+): string {
+  const base =
+    sys.platform === "win32" && sys.env.LOCALAPPDATA
+      ? join(sys.env.LOCALAPPDATA, "cocalc")
+      : join(sys.home, ".local", "share", "cocalc");
+  return join(base, "browser-profiles", `${projectId}-${appId}`);
+}
+
+function shellQuote(arg: string): string {
+  return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+}
 
 function parseStorage(value: string | undefined): ProfileStorage {
   const storage = `${value ?? "memory"}`.trim().toLowerCase();
@@ -69,9 +126,9 @@ function parseStorage(value: string | undefined): ProfileStorage {
   return storage;
 }
 
-function parsePort(value: string | undefined): number {
+function parsePort(value: string | undefined, allowZero = false): number {
   const port = Number(value ?? 9222);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  if (!Number.isInteger(port) || port < (allowZero ? 0 : 1) || port > 65535) {
     throw new Error("--port must be an integer between 1 and 65535");
   }
   return port;
@@ -197,7 +254,12 @@ async function runBrowserConnect(
     ensureCloudflaredBinary,
   } = deps;
   const storage = parseStorage(opts.profileStorage);
-  const projectPort = parsePort(opts.port);
+  // A .browser file's browser: its own project port and a lasting profile.
+  const file = opts.browser ? projectBrowserFile(opts.browser) : null;
+  const appId = file ? sharedBrowserFileAppId(file) : null;
+  const projectPort = appId
+    ? sharedBrowserTunnelPort(appId)
+    : parsePort(opts.port);
   const url = startUrl(opts.url);
   const sys = defaultLocalBrowserSystem();
   const executable = findChrome(opts.chrome, sys);
@@ -257,15 +319,43 @@ async function runBrowserConnect(
   let endedBy = "browser closed";
   let cleanedUp = false;
   try {
-    profile = await createProfileDir(storage, sys);
+    profile =
+      file && appId
+        ? persistentProfile(computerBrowserProfileDir(projectId, appId, sys))
+        : await createProfileDir(storage, sys);
+    if (opts.signIn) {
+      if (!file) throw new Error("--sign-in needs --browser <file>");
+      const args = signInLaunchArgs(profile.path, url);
+      say(
+        `Sign in to the sites you need in the Chrome window that opens (no automation is attached), then close it to connect. Starting: ${[executable, ...args].map(shellQuote).join(" ")}`,
+      );
+      const signIn = spawn(executable, args, { stdio: "ignore" });
+      const result = await Promise.race([
+        new Promise<string>((resolve) => {
+          signIn.once("exit", () => resolve("closed"));
+          signIn.once("error", (err) => resolve(`error: ${err.message}`));
+        }),
+        stopped,
+      ]);
+      if (result !== "closed") {
+        signIn.kill();
+        throw new Error(
+          result.startsWith("error") ? result : `stopped (${result})`,
+        );
+      }
+      // Chrome may leave its lock for a moment.
+      persistentProfile(profile.path);
+    }
+    const launchArgs = chromeLaunchArgs({
+      profileDir: profile.path,
+      url,
+      headless: opts.headless,
+    });
+    say(`Starting: ${[executable, ...launchArgs].map(shellQuote).join(" ")}`);
     browser = await launchBrowser({
       executable,
       profileDir: profile.path,
-      args: chromeLaunchArgs({
-        profileDir: profile.path,
-        url,
-        headless: opts.headless,
-      }),
+      args: launchArgs,
     });
     // If this process dies without reaching `finally` (crash, SIGKILL), the
     // detached browser would outlive it; the watchdog stops it and releases
@@ -309,12 +399,25 @@ async function runBrowserConnect(
     if (verified !== "verified") {
       endedBy = verified;
     } else {
+      if (file && appId) {
+        // The file's browser service attaches to this browser (and switches
+        // the file to run on this computer) once it is running.
+        const { api } = await deps.resolveProjectProjectApi(ctx, projectId);
+        await api.apps.upsertAppSpec(
+          sharedBrowserAppSpec({ exec: "cocalc", args: [], appId, file }),
+        );
+        await api.apps.ensureRunning(appId, { timeout: 60_000, interval: 500 });
+      }
       say(
         [
-          `Browser ready: agents in the project can use http://127.0.0.1:${projectPort} (Chrome DevTools Protocol).`,
-          storage === "memory"
-            ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
-            : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
+          file
+            ? `Browser ready: ${file} in project ${projectId} now uses this Chrome; open the file in CoCalc to watch it, and agents use it with --browser ${file}.`
+            : `Browser ready: agents in the project can use http://127.0.0.1:${projectPort} (Chrome DevTools Protocol).`,
+          file
+            ? `Its profile (logins, cookies) stays in ${profile.path} for next time.`
+            : storage === "memory"
+              ? `Profile is in RAM (${profile.backing}) and is discarded on exit.`
+              : `Profile is a temporary directory (${profile.path}), deleted on exit.`,
           "Close the browser or press Ctrl-C to end the session.",
         ].join("\n"),
       );
@@ -361,7 +464,7 @@ export function registerProjectBrowserCommands(
   const browser = project
     .command("browser")
     .description(
-      "a browser on this computer that agents in the project can drive",
+      "browsers shared by agents and humans: a shared browser in the project (start) or a browser on this computer (connect)",
     );
 
   browser
@@ -396,6 +499,14 @@ export function registerProjectBrowserCommands(
       "ssh key base path (default: ~/.ssh/id_ed25519)",
     )
     .option(
+      "-b, --browser <file>",
+      "connect this .browser file in the project to this computer's Chrome: a lasting profile for that file (log in once), shown in the file and usable by agents with --browser <file>",
+    )
+    .option(
+      "--sign-in",
+      "with --browser: first open Chrome without remote debugging so you can sign in to sites that block automated browsers (e.g. X); close it to connect",
+    )
+    .option(
       "--no-install-key",
       "skip automatic local ssh key ensure + project authorized_keys install",
     )
@@ -404,4 +515,74 @@ export function registerProjectBrowserCommands(
         runBrowserConnect(ctx, deps, opts),
       );
     });
+
+  registerSharedBrowserCommands(browser, deps);
+
+  browser
+    .command("container-entry", { hidden: true })
+    .description(
+      "run a shared browser in its own container (the project host starts this)",
+    )
+    .requiredOption("--run-dir <dir>", "the directory shared with the project")
+    .option(
+      "--profile-dir <dir>",
+      "persistent profile (with --key-fingerprint)",
+    )
+    .option("--key-fingerprint <fp>", "the project's browser key fingerprint")
+    .option("--url <url...>", "pages to open")
+    .option("--chrome <path>", "browser executable")
+    .action(
+      async (opts: {
+        runDir: string;
+        profileDir?: string;
+        keyFingerprint?: string;
+        url?: string[];
+        chrome?: string;
+      }) => {
+        await runBrowserContainerEntry({
+          runDir: opts.runDir,
+          profileDir: opts.profileDir,
+          keyFingerprint: opts.keyFingerprint,
+          urls: opts.url,
+          chrome: opts.chrome,
+        });
+      },
+    );
+
+  browser
+    .command("serve")
+    .description(
+      "run the shared browser service in this project (`start` runs it for you as a project app)",
+    )
+    .option("--port <port>", "viewer and API port (default: $PORT)")
+    .option("--cdp-port <port>", "loopback port for agents' CDP", "9222")
+    .option("--chrome <path>", "browser executable")
+    .option(
+      "--browser <file>",
+      "serve the browser of this .browser file, with a persistent profile",
+    )
+    .option(
+      "--profile-storage <where>",
+      "disk (default: a temporary directory under /tmp) or memory (/dev/shm, often too small in containers); either way deleted on exit",
+      "disk",
+    )
+    .action(
+      async (opts: {
+        port?: string;
+        cdpPort: string;
+        chrome?: string;
+        browser?: string;
+        profileStorage?: string;
+      }) => {
+        const target = sharedBrowserTarget(opts.browser);
+        await runSharedBrowserService({
+          port: parsePort(opts.port ?? process.env.PORT ?? "0", true),
+          cdpPort: parsePort(opts.cdpPort, true),
+          chrome: opts.chrome,
+          profileStorage: parseStorage(opts.profileStorage),
+          file: target.file,
+          appId: target.appId,
+        });
+      },
+    );
 }

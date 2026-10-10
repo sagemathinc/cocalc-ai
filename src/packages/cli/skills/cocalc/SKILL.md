@@ -1,6 +1,6 @@
 ---
 name: cocalc
-description: Use when working with CoCalc-native documents and workflows, including agent memory (saved notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR cards); complete project-side document builds; live tasks, chats, boards, slides and notebooks; document history; and CoCalc export/import workflows.
+description: Use when working with CoCalc-native documents and workflows, including agent memory (saved notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR cards); complete project-side document builds; live tasks, chats, boards, slides and notebooks; a shared web browser and terminal the agent drives and the human can take over; document history; and CoCalc export/import workflows.
 ---
 
 # CoCalc
@@ -299,6 +299,8 @@ Choose the supported object that fits the task:
 | File reference       | An existing compliance document, source file, image, or PDF       | Preview the current saved file with an Open file escape hatch; not historical file bytes.                                 |
 | Proposed action list | Draft support replies, email actions, or decisions needing review | Users edit, comment, approve/reject, then return decisions to the originating chat. Nothing executes in the card.         |
 | GitHub PR            | A PR summary with a GitHub link and local Git review              | Cached status has a retrieval time; refresh uses project-side `gh`; local review pins revisions and fetching is explicit. |
+| Live browser         | A web page the agent drives and the human watches or takes over   | Only `cocalc project browser start` makes it (see Shared Browser); never publish an `app` card by hand.                   |
+| Live terminal        | A shell the agent works in and the human watches or types in      | Only `cocalc project terminal start` makes it (see Shared Terminal); never publish a card by hand.                        |
 
 ### Discover And Publish
 
@@ -654,6 +656,86 @@ Use these first:
 
 This is the preferred path for conversions such as turning slides into another presentation format.
 
+## Shared Browser: Browse The Web With The Human Watching
+
+When a task needs a real web browser (testing a web app served from the
+project, reading pages that need JavaScript, filling forms, screenshots), use
+the project's shared browser. A headless Chromium ships with CoCalc, so there
+is nothing to install. The human sees it live in a chat card and can take over
+at any time; prefer it over launching your own browser.
+
+```bash
+cocalc project browser start --path <chat> --thread-id <thread> \
+  --message-date <this turn's message date>
+```
+
+The three values are the current turn's publication context (they default to
+`COCALC_CODEX_CHAT_PATH`, `COCALC_CODEX_THREAD_ID` and
+`COCALC_CODEX_MESSAGE_DATE` when those are set).
+
+`start` is idempotent: it starts the browser (or reuses it) and publishes the
+card once per thread. Then act on the tab the human sees with the built-in
+commands (no library needed):
+
+```bash
+cocalc project browser goto http://localhost:5173   # URL, host or search words
+cocalc project browser text                         # URL, title, visible text
+cocalc project browser click 'button[type=submit]'  # CSS selector, real click
+cocalc project browser type 'hello' --selector '#q'
+cocalc project browser press Enter
+cocalc project browser eval 'document.querySelectorAll("a").length'
+cocalc project browser screenshot --out /tmp/page.png   # then view the image
+```
+
+For heavier automation, `start` also prints `cdp`, a loopback Chrome DevTools
+endpoint for any CDP client (Playwright `chromium.connectOverCDP(cdp)` and
+then its existing context and page, Puppeteer `connect({ browserURL: cdp })`,
+`chrome-devtools-mcp --browser-url <cdp>`). Disconnect when done; do not close
+the browser or its last page.
+
+- While the human drives, your commands wait until they hand back (all but
+  protocol housekeeping, e.g. attaching to a tab). Do not treat the wait as a
+  hang, and never work around it, e.g. through another connection to the
+  browser: take-over is a cooperation rule, not a barrier.
+- For logins, CAPTCHAs, payments or anything needing the human's judgment or
+  credentials, ask them to take over:
+  `cocalc project browser ask-human --message "Please log in" --wait`.
+  Never ask for passwords in chat.
+- `cocalc project browser status` lists tabs and the driver;
+  `cocalc project browser stop` stops it.
+- Browsers keep sign-ins (encrypted with the `COCALC_BROWSER_KEY` project
+  secret) once the human has opened a browser in the project. Never change or
+  delete that secret: it signs every browser out.
+- Pages on the project's own servers are reachable as `http://localhost:<port>`
+  once the browser is on the project's network: a browser in its own
+  container starts on its own (`goto` says so). Run
+  `cocalc project browser network project` first; it restarts the browser
+  there, keeping its pages.
+- User documentation: `cocalc docs show projects/web-browser`.
+- A `.browser` file is a browser of its own (`--browser <file>` on every
+  command; it has its own sign-ins). It can run on the user's computer instead
+  of the project, so sites see their network and accounts (needed for sites
+  that block cloud servers, e.g. X/Twitter sign-in). If it is not connected,
+  commands say so: ask the user to run the printed
+  `cocalc project browser connect --browser <file>` on their computer.
+
+## Shared Terminal: Work Where The Human Can Watch
+
+When the human should see what you run (long builds, servers, interactive
+programs), work in a shared terminal shown live in a chat card. The human can
+type in it too.
+
+```bash
+cocalc project terminal start --path <chat> --thread-id <thread> \
+  --message-date <this turn's message date>
+cocalc project terminal write <id> --enter 'make test'
+cocalc project terminal history <id> --max-chars 4000
+```
+
+`start` is idempotent: one terminal per chat thread, and the card is
+published once. It prints the session `id`. While the human is typing,
+`write` returns `written: false`; wait and retry instead of using `--force`.
+
 ## Browser Exec Is For UI Work
 
 Inspect the browser API with:
@@ -661,6 +743,9 @@ Inspect the browser API with:
 ```bash
 cocalc browser exec-api
 ```
+
+This drives the user's CoCalc web UI, not the web in general; for browsing
+websites use the shared browser above.
 
 Use `cocalc browser exec` only when the task is specifically about:
 
@@ -692,3 +777,4 @@ Use this skill for requests like:
 - "Convert this slides file into another format by exporting it first."
 - "Work on this CoCalc document through the backend exec API rather than the browser UI."
 - "What do you have in your memory notes?" or "Remember that I prefer draft PRs."
+- "Open my app on port 5173 in a browser and check the signup flow; I will log in for you."
