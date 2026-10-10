@@ -16,10 +16,11 @@ import {
   SENSOR_LIMITS,
   sensorSpecCanonicalJson,
   validateSensorSpec,
+  validateSensorWatch,
+  sensorKind,
   type AgentSensor,
   type AgentSensorRequest,
   type AgentSensorRun,
-  type AgentSensorRunSummary,
   type SensorControlRequest,
   type SensorDeliveryBinding,
   type SensorExecutionAuthorization,
@@ -145,28 +146,6 @@ export function toSensorRun(row: any): AgentSensorRun {
 
 export const utcDay = (date: Date) => date.toISOString().slice(0, 10);
 
-/** Runs as an agent may see them: no output or errors, which may hold secrets. */
-export function toAgentRunSummary(run: AgentSensorRun): AgentSensorRunSummary {
-  const {
-    run_id,
-    started_at,
-    finished_at,
-    outcome,
-    exit_code,
-    summary,
-    manual,
-  } = run;
-  return {
-    run_id,
-    started_at,
-    finished_at,
-    outcome,
-    exit_code,
-    summary,
-    manual,
-  };
-}
-
 async function recentRuns(
   sensor_id: string,
   limit: number,
@@ -191,15 +170,29 @@ async function lockProjectSensors(client: Querier, project_id: string) {
   );
 }
 
+/** Watchers are short-lived and counted separately (per agent). */
+const NOT_WATCH =
+  "COALESCE(spec->>'kind', pending_spec->>'kind', 'script') <> 'watch'";
+
 async function activeCount(
   client: Querier,
   project_id: string,
 ): Promise<number> {
   const { rows } = await client.query<{ n: string }>(
-    "SELECT count(*) AS n FROM agent_sensors WHERE project_id=$1 AND status='active'",
+    `SELECT count(*) AS n FROM agent_sensors
+     WHERE project_id=$1 AND status='active' AND ${NOT_WATCH}`,
     [project_id],
   );
   return Number(rows[0]?.n ?? 0);
+}
+
+/** The project's RootFS image, as the host runs it. */
+export async function projectImage(project_id: string): Promise<string> {
+  const { rows } = await agentStore().query<{ image: string | null }>(
+    "SELECT rootfs_image AS image FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  return `${rows[0]?.image ?? ""}`;
 }
 
 /**
@@ -228,7 +221,9 @@ export async function agentSensorRequest(
     if (!rows[0]) throw new Error("sensor not found");
     return {
       sensor: toSensor(rows[0]),
-      runs: (await recentRuns(request.sensor_id, 10)).map(toAgentRunSummary),
+      // A sensor runs with the agent's own access, so its log is the agent's
+      // to read, like the output of its own commands.
+      runs: await recentRuns(request.sensor_id, 10),
     };
   }
   if (request.op === "pause") {
@@ -249,6 +244,7 @@ export async function agentSensorRequest(
     if (!rowCount) throw new Error("sensor not found");
     return { deleted: request.sensor_id };
   }
+  if (request.op === "watch") return await createWatcher(run, agent, request);
   // propose
   const limits = await sensorLimits(run.account_id);
   if (limits.maxActive === 0) throw new Error(NO_SENSORS);
@@ -284,7 +280,8 @@ export async function agentSensorRequest(
            pending_spec, pending_hash, proposed_at, proposed_run_id, revision,
            consecutive_failures, wakes_today)
          SELECT gen_random_uuid(), $1, $2, 'pending', $3, $4, now(), $5, 1, 0, 0
-         WHERE (SELECT count(*) FROM agent_sensors WHERE agent_id=$2) < $6
+         WHERE (SELECT count(*) FROM agent_sensors
+                WHERE agent_id=$2 AND ${NOT_WATCH}) < $6
          RETURNING *`,
         [
           agent.project_id,
@@ -307,6 +304,136 @@ export async function agentSensorRequest(
     message:
       "Proposed. Nothing runs until a person approves this exact spec in the agent's Sensors panel. Tell the user what it does and ask them to review it.",
   };
+}
+
+/**
+ * A built-in watcher: CoCalc's own code, so it is active at once, without
+ * approval, as the account of the agent's current turn (which pays for its
+ * single wake). It fires once, then deletes itself, or reports expiry.
+ */
+async function createWatcher(
+  run: AgentRun,
+  agent: AgentIdentity,
+  request: Extract<AgentSensorRequest, { op: "watch" }>,
+) {
+  const limits = await sensorLimits(run.account_id);
+  if (limits.maxActive === 0 || limits.maxWakesPerDay === 0)
+    throw new Error(NO_SENSORS);
+  const spec = validateSensorWatch(request.watch, { hours: request.hours });
+  if (!(await projectHasInternet(agent.project_id)))
+    throw new Error(NO_INTERNET);
+  const hash = sensorSpecHash(spec);
+  const first =
+    spec.watch.type === "at"
+      ? new Date(spec.watch.at)
+      : new Date(Date.now() + 30_000);
+  const { rows } = await agentStore().transaction(async (client) => {
+    await lockProjectSensors(client, agent.project_id);
+    return await client.query(
+      `INSERT INTO agent_sensors (sensor_id, project_id, agent_id, status,
+         spec, script_hash, revision, approved_by, approved_at, next_run_at,
+         consecutive_failures, wakes_today)
+       SELECT gen_random_uuid(), $1, $2, 'active', $3, $4, 1, $5, now(), $6, 0, 0
+       WHERE (SELECT count(*) FROM agent_sensors WHERE agent_id=$2
+              AND status='active' AND spec->>'kind'='watch'
+              AND next_run_at IS NOT NULL) < $7
+       RETURNING *`,
+      [
+        agent.project_id,
+        agent.agent_id,
+        spec,
+        hash,
+        run.account_id,
+        first,
+        SENSOR_LIMITS.maxWatchersPerAgent,
+      ],
+    );
+  });
+  if (!rows[0])
+    throw new Error(
+      `an agent may have at most ${SENSOR_LIMITS.maxWatchersPerAgent} active watchers`,
+    );
+  return {
+    sensor: toSensor(rows[0]),
+    message:
+      spec.watch.type === "at"
+        ? `Set. You will get a [Reminder] turn at ${spec.watch.at}. You can end your turn now.`
+        : `Watching. You will get one [Sensor wake] turn when it happens, or when it expires at ${spec.expires_at}. You can end your turn now.`,
+  };
+}
+
+/**
+ * A person sets up a scheduled prompt for an agent directly: they are the
+ * approver, so it is active at once (like the old thread automations).
+ */
+async function createScheduledPrompt(
+  account_id: string,
+  project_id: string,
+  request: Extract<SensorControlRequest, { op: "create-prompt" }>,
+) {
+  requireUuid(request.agent_id, "agent_id");
+  const agent = await agentStore().get(request.agent_id);
+  if (agent.project_id !== project_id) throw new Error("agent not found");
+  await assertAgent(agent);
+  const limits = await sensorLimits(account_id);
+  if (limits.maxActive === 0) throw new Error(NO_SENSORS);
+  const spec = validateSensorSpec(request.spec, {
+    minIntervalMinutes: limits.minIntervalMinutes,
+    maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
+  });
+  if (spec.kind !== "prompt")
+    throw new Error("people create scheduled prompts; agents propose scripts");
+  if (!(await projectHasInternet(project_id))) throw new Error(NO_INTERNET);
+  const next = nextSensorRunAt(spec.schedule, Date.now());
+  const { rows } = await agentStore().transaction(async (client) => {
+    await lockProjectSensors(client, project_id);
+    if ((await activeCount(client, project_id)) >= limits.maxActive)
+      throw new Error(
+        `This project already has ${limits.maxActive} active sensors, the most your membership allows. Pause or delete one first.`,
+      );
+    return await client.query(
+      `INSERT INTO agent_sensors (sensor_id, project_id, agent_id, status,
+         spec, script_hash, revision, approved_by, approved_at, next_run_at,
+         approved_image, consecutive_failures, wakes_today)
+       VALUES (gen_random_uuid(), $1, $2, 'active', $3, $4, 1, $5, now(), $6,
+         $7, 0, 0)
+       RETURNING *`,
+      [
+        project_id,
+        agent.agent_id,
+        spec,
+        sensorSpecHash(spec),
+        account_id,
+        next ? new Date(next) : null,
+        await projectImage(project_id),
+      ],
+    );
+  });
+  return { sensor: toSensor(rows[0]) };
+}
+
+/**
+ * Is this run of one of the agent's sensors live right now, as the account
+ * that approved it? The account's home bay asks this before it issues the
+ * run's connector credentials, in place of checking a live chat turn.
+ */
+async function verifySensorRunLocal(
+  account_id: string,
+  project_id: string,
+  agent_id: string,
+  run_id: string,
+): Promise<{ live: true }> {
+  requireUuid(agent_id, "agent_id");
+  requireUuid(run_id, "run_id");
+  const { rows } = await agentStore().query(
+    `SELECT 1 FROM agent_sensor_runs r JOIN agent_sensors s ON s.sensor_id=r.sensor_id
+     WHERE r.run_id=$1 AND s.agent_id=$2 AND s.project_id=$3
+       AND s.approved_by=$4 AND s.status='active' AND s.lease_id=r.run_id
+       AND r.finished_at IS NULL AND r.started_at > now() - interval '15 minutes'`,
+    [run_id, agent_id, project_id, account_id],
+  );
+  if (!rows[0]) throw new Error("sensor run is not live");
+  return { live: true };
 }
 
 async function loadForProject(
@@ -340,10 +467,12 @@ async function assertCanActivate(
   const limits = await sensorLimits(account_id);
   if (limits.maxActive === 0) throw new Error(NO_SENSORS);
   // The approver's own membership limits apply: their account pays for wakes.
-  validateSensorSpec(spec, {
-    minIntervalMinutes: limits.minIntervalMinutes,
-    maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
-  });
+  // Watchers are CoCalc's own fixed code and schedule.
+  if (sensorKind(spec) !== "watch")
+    validateSensorSpec(spec, {
+      minIntervalMinutes: limits.minIntervalMinutes,
+      maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
+    });
   if (!(await projectHasInternet(row.project_id))) throw new Error(NO_INTERNET);
   await assertSensorAgent(row.agent_id);
   return limits.maxActive;
@@ -368,8 +497,17 @@ export async function sensorControlLocal(
       request.authorization,
       request.delivery,
     );
+  if (request.op === "verify-run")
+    return await verifySensorRunLocal(
+      account_id,
+      project_id,
+      request.agent_id,
+      request.run_id,
+    );
   await assertActor(account_id, project_id);
   const db = agentStore();
+  if (request.op === "create-prompt")
+    return await createScheduledPrompt(account_id, project_id, request);
   if (request.op === "list") {
     if (request.sensor_id) {
       const row = await loadForProject(request.sensor_id, project_id);
@@ -431,12 +569,17 @@ export async function sensorControlLocal(
         throw new Error("pending spec does not match its hash");
       const maxActive = await assertCanActivate(account_id, row, spec);
       const next = nextSensorRunAt(spec.schedule, Date.now());
+      // A script runs in the project's software: the approval is for this image.
       return await update(
         `spec=pending_spec, script_hash=pending_hash, pending_spec=NULL,
          pending_hash=NULL, proposed_at=NULL, proposed_run_id=NULL,
          status='active', approved_by=$3, approved_at=now(), pause_reason=NULL,
-         consecutive_failures=0, next_run_at=$4`,
-        [account_id, next ? new Date(next) : null],
+         consecutive_failures=0, next_run_at=$4, approved_image=$5`,
+        [
+          account_id,
+          next ? new Date(next) : null,
+          await projectImage(project_id),
+        ],
         maxActive,
       );
     }
@@ -459,11 +602,16 @@ export async function sensorControlLocal(
         throw new Error("only a paused, approved sensor can be resumed");
       const maxActive = await assertCanActivate(account_id, row, row.spec);
       const next = nextSensorRunAt(row.spec.schedule, Date.now());
-      // Whoever resumes takes over the approval: wakes run as them.
+      // Whoever resumes takes over the approval: runs and wakes are theirs,
+      // in the project's current software.
       return await update(
         `status='active', pause_reason=NULL, consecutive_failures=0,
-         approved_by=$3, approved_at=now(), next_run_at=$4`,
-        [account_id, next ? new Date(next) : null],
+         approved_by=$3, approved_at=now(), next_run_at=$4, approved_image=$5`,
+        [
+          account_id,
+          next ? new Date(next) : null,
+          await projectImage(project_id),
+        ],
         maxActive,
       );
     }

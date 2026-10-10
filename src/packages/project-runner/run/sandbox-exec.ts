@@ -2,12 +2,7 @@ import { execFile } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import { localPath } from "./filesystem";
-import {
-  getImageNamePath,
-  mount as mountRootFs,
-  mountSensorRootfs,
-  unmount,
-} from "./rootfs";
+import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
 import { readFile } from "fs/promises";
 import {
   getImage,
@@ -63,11 +58,21 @@ export interface SandboxExecOptions {
    */
   argv?: string[];
   /**
-   * Run on a throwaway overlay of the platform's default project image
-   * instead of the project's RootFS or chosen image, read-only and without
-   * privilege escalation (sudo, setuid). Requires argv.
+   * Ephemeral runs only: use this image (from a trusted record) instead of
+   * the image name stored in the project's home.
    */
-  platformImage?: { run_id: string };
+  image?: string;
+  /** Ephemeral runs only: more bind mounts, e.g. a run's credentials. */
+  extraMounts?: { source: string; target: string; readOnly?: boolean }[];
+  /**
+   * Ephemeral runs only: empty in-memory directories over these paths; "/tmp"
+   * replaces the project's scratch mount.
+   */
+  tmpfs?: string[];
+  /** Ephemeral runs only: no sudo or setuid, like agent commands. */
+  noNewPrivileges?: boolean;
+  /** Ephemeral runs only: directories put first on the environment's PATH. */
+  pathPrefix?: string[];
 }
 
 export interface SandboxExecResult {
@@ -113,11 +118,23 @@ export async function sandboxExec({
   onOutput,
   onCleanupConfirmed,
   argv,
-  platformImage,
+  image: imageOverride,
+  extraMounts,
+  tmpfs,
+  noNewPrivileges,
+  pathPrefix,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
   if (argv && (!useEphemeral || signal || argv.length === 0))
     throw Error("argv requires a plain ephemeral run");
-  if (platformImage && !argv) throw Error("platformImage requires argv");
+  if (
+    !useEphemeral &&
+    (imageOverride != null ||
+      extraMounts?.length ||
+      tmpfs?.length ||
+      noNewPrivileges ||
+      pathPrefix?.length)
+  )
+    throw Error("these options require an ephemeral run");
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
   if (onOutput && useEphemeral)
@@ -215,7 +232,6 @@ export async function sandboxExec({
   };
 
   let rootfs: string | undefined;
-  let disposeBase: (() => Promise<void>) | undefined;
   try {
     if (useEphemeral) {
       const { home, scratch } = await localPath({
@@ -223,7 +239,10 @@ export async function sandboxExec({
       });
       // Never the project's choice for platform runs: neither the image file
       // in its home nor its configured (possibly arbitrary) RootFS image.
-      const image = platformImage ? getImage() : await getContainerImage(home);
+      const image =
+        imageOverride != null
+          ? getImage({ image: imageOverride })
+          : await getContainerImage(home);
       const env = await getEnvironment({
         project_id,
         HOME,
@@ -253,6 +272,8 @@ export async function sandboxExec({
       }
       args.push("--workdir", getWorkdir());
 
+      if (pathPrefix?.length)
+        env.PATH = [...pathPrefix, env.PATH].filter(Boolean).join(":");
       for (const key in env) {
         args.push("-e", `${key}=${env[key]}`);
       }
@@ -263,9 +284,24 @@ export async function sandboxExec({
       }
 
       args.push(mountArg({ source: home, target: HOME }));
-      if (scratch) {
+      if (scratch && !tmpfs?.includes("/tmp")) {
         args.push(mountArg({ source: scratch, target: "/tmp" }));
       }
+      for (const path of tmpfs ?? []) {
+        if (!path.startsWith("/") || /[,:\s]/.test(path))
+          throw Error("Invalid sandbox tmpfs path");
+        args.push("--tmpfs", path);
+      }
+      for (const mount of extraMounts ?? []) {
+        args.push(
+          mountArg({
+            source: mount.source,
+            target: mount.target,
+            readOnly: mount.readOnly,
+          }),
+        );
+      }
+      if (noNewPrivileges) args.push("--security-opt=no-new-privileges");
       const mounts = getCoCalcMounts();
       for (const path in mounts) {
         args.push(
@@ -276,22 +312,8 @@ export async function sandboxExec({
       // Name the container for easier debugging; allow reuse without conflicts.
       args.push("--name", `sandbox-${project_id}-${Date.now()}`);
 
-      if (platformImage) {
-        const base = await mountSensorRootfs({
-          image,
-          run_id: platformImage.run_id,
-        });
-        disposeBase = base.dispose;
-        args.push(
-          "--read-only",
-          "--security-opt=no-new-privileges",
-          "--rootfs",
-          base.rootfs,
-        );
-      } else {
-        rootfs = await mountRootFs({ project_id, home, config: { image } });
-        args.push("--rootfs", rootfs);
-      }
+      rootfs = await mountRootFs({ project_id, home, config: { image } });
+      args.push("--rootfs", rootfs);
       args.push(
         ...(argv
           ? argv
@@ -346,7 +368,6 @@ export async function sandboxExec({
     // cgroup. Admit both run and exec launchers so no project command escapes.
     return await runPodman(args, projectPoolPodmanLauncher(project_id));
   } finally {
-    await disposeBase?.();
     if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when
       // no other users (e.g., the main project container) are using it.

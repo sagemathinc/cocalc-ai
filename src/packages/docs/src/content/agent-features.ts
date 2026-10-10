@@ -158,7 +158,7 @@ that recipient execution completed.
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
 | [Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported | Includes objective editing, usage, pause/resume, stop, and automatic continuations; not a guaranteed provider spending cap. |
-| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified | Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes need a subscription or site-funded credential, not an account API key. |
+| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified | Scheduled prompts, one-shot watchers (CI, file, time) and approved scripts that run with the agent's own access. Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes need a subscription or site-funded credential, not an account API key. |
 | [Completion/failure/attention notifications](/docs/ai/codex-notifications) | Supported | Unverified | Channels and browser permission matter. Do not assume every Claude event has Codex notification parity. |
 | [Account session inventory and stop controls](/docs/ai/codex-notifications) | Supported | Unverified | The Codex panel is a bounded inventory, not proof that every provider process has stopped. |
 | [Inspect durable chat activity and submission state](/docs/cli/command-reference) | Supported | Preview | Activity can outlive a browser connection. Unknown outcomes require inspection, not automatic retries. |

@@ -1216,6 +1216,7 @@ export async function issueCliConnectorTurnTokens({
     message_date: string;
     message_id: string;
     thread_id: string;
+    sensor_run_id?: string;
   };
 }): Promise<CliConnectorTurnToken[]> {
   // Server time only: never a value from the request.

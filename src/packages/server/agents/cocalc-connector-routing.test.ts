@@ -126,3 +126,30 @@ test("missing authenticated host identity fails before routing", async () => {
   expect(remoteBegin).not.toHaveBeenCalled();
   expect(localBegin).not.toHaveBeenCalled();
 });
+
+test("a host cannot present a sensor run; only the hub's scheduler can", async () => {
+  const { beginCocalcConnectorTurn, sensorConnectors } =
+    await import("./cocalc-connector-routing");
+  const turn_ref = {
+    chat_path: "work.chat",
+    message_date: "date",
+    message_id: "run",
+    thread_id: "thread",
+    sensor_run_id: "run",
+  };
+  const opts = {
+    account_id: accountId,
+    host_id: hostId,
+    agent_id: "agent",
+    source_project_id: "source",
+    run_id: "run",
+    idempotency_key: "retry",
+    turn_ref,
+  };
+  await beginCocalcConnectorTurn(opts);
+  expect(localBegin.mock.calls[0][0].turn_ref).not.toHaveProperty(
+    "sensor_run_id",
+  );
+  await sensorConnectors.begin(opts);
+  expect(localBegin.mock.calls[1][0].turn_ref.sensor_run_id).toBe("run");
+});

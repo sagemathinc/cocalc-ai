@@ -61,7 +61,7 @@ Table({
       "pending (never approved), active, paused or rejected.",
     ),
     spec: json(
-      "Approved spec (title, purpose, language, script, schedule, limits); null until first approval.",
+      "Approved spec (kind script, prompt or watch, with its schedule and limits); null until first approval.",
     ),
     script_hash: {
       type: "string",
@@ -86,6 +86,10 @@ Table({
       desc: "Human who approved the active spec; wakes run as this account.",
     },
     approved_at: timestamp("When the active spec was approved."),
+    approved_image: {
+      type: "string",
+      desc: "The project's RootFS image when the sensor was approved or resumed; a script sensor pauses if it changes.",
+    },
     pause_reason: { type: "string", desc: "Why the sensor is paused." },
     next_run_at: timestamp("Next scheduled run."),
     lease_until: timestamp("A scheduler holds this sensor until then."),

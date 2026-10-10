@@ -163,11 +163,11 @@ export const AUTOMATION_ENTRIES: DocsEntry[] = [
     noActionReason:
       "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
     searchKeywords:
-      "sensor propose test schedule wake automation interval daily",
+      "sensor watch propose test schedule wake automation interval daily ci",
     slug: "cli/scheduled-agents",
     status: "ready",
     summary:
-      "How an agent writes, tests and proposes a sensor with cocalc sensor.",
+      "How an agent sets watchers and writes, tests and proposes sensors with cocalc sensor.",
     title: "Propose sensors with the CLI",
   },
   {

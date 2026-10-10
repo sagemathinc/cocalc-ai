@@ -123,23 +123,33 @@ Data:
   a queued wake's prompt (`applyQueuedUserMessageEditToRequest`), and the host
   reports the hash of the queued prompt, so an edited prompt would fail the
   permit anyway.
-- **Nothing the project controls runs before the body.** The container's
-  root filesystem is a throwaway overlay of the platform's pristine default
-  project image, never the project's chosen RootFS image (collaborators can
-  change that, and tags are mutable) nor its own RootFS changes, mounted read-only with no-new-privileges (no
-  sudo or setuid). It runs an explicit argv: `env -i` (no BASH_ENV,
-  LD_PRELOAD, NODE_OPTIONS, PYTHON* or project variables), a PATH of CoCalc
-  tools and image directories only (no `~/bin`), `/usr/bin/timeout`, bash
-  with `--noprofile --norc`, `python3 -I`. Files and modules the script
-  itself reads from the project home are the script's explicit inputs.
+- **A sensor is the agent on a schedule, without the model** (access model
+  approved by William, see `sensors-access-model-2026-10-10.md`). A script or
+  ci/file watcher runs like one of the agent's commands: an ephemeral
+  container in the project's software (image named by the hub's project
+  record, not the file in the project's home), no-new-privileges, in the
+  chat's directory, as the approver. The hub issues the run's own credentials
+  (sensor-credentials.ts): the agent identity and project CLI token always;
+  CoCalc access, GitHub and Cloudflare only if the spec lists them in `uses`
+  and the approver gave them to the agent. They are issued through the same
+  account-home paths, scopes and audit as a turn's, with "this sensor run is
+  live and leased" (verified on the project's bay) in place of "this chat
+  turn is live on the host"; hosts cannot present a sensor run. They are
+  mounted read-only, ended or removed when the run finishes, and other turns'
+  credential directories are hidden. Script sensors pause when the project's
+  image changes. Scheduled prompts and reminders run no code.
+- **Watchers need no approval** because their code is CoCalc's own
+  (`sensorWatchScript`), read-only, one-shot, at most five per agent, and they
+  expire. A finished watcher stays active with no next run so its queued wake
+  can still be authorized, and is removed a day later.
 - **Execution reauthorization is one statement.** The permit is consumed by
   a single UPDATE that re-checks the sensor (active, hash, approver, approval
   time after the run started), the identity's thread, project membership and
   host, so a revocation committed before it leaves nothing to consume.
 - **Permits stay out of logs**, and the in-memory request drops the permit
   once consumed.
-- **Agents never see run output**, which may contain secrets; people see it
-  in the run log.
+- **The agent can read its sensors' run logs**, like its own commands'
+  output; wake data is labeled untrusted either way.
 - **Quota checks are serialized** per project with an advisory transaction
   lock; every run re-checks the approver's current membership (interval,
   active count by approval order, internet access).

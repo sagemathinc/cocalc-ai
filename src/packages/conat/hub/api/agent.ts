@@ -71,6 +71,7 @@ export const agent = {
   // Approving or resuming decides what code runs and wakes an agent: a
   // person's bound session only, never an agent credential.
   manageSensor: authFirstRequireAccountWithBoundSession,
+  createScheduledPrompt: authFirstRequireAccountWithBoundSession,
   authorizeSensorExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccount,
@@ -259,6 +260,12 @@ export interface CocalcConnectorTurnRef {
   message_date: string;
   message_id: string;
   thread_id: string;
+  /**
+   * Set only by the hub's sensor scheduler (never accepted from a host): the
+   * credentials are for this live sensor run instead of a chat turn, and
+   * message_id is the run id.
+   */
+  sensor_run_id?: string;
 }
 
 export interface CocalcConnectorTurnRequest extends AgentHostAuth {
@@ -511,6 +518,15 @@ export interface AgentApi {
     sensor?: import("@cocalc/conat/agents/sensors").AgentSensor;
     deleted?: string;
   }>;
+  /** A person schedules a prompt for an agent: a normal turn on a schedule. */
+  createScheduledPrompt(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      agent_id: string;
+      /** {kind: "prompt", title, prompt, schedule, max_wakes_per_day?} */
+      spec: unknown;
+    },
+  ): Promise<{ sensor: import("@cocalc/conat/agents/sensors").AgentSensor }>;
   authorizeSensorExecution(
     opts: AgentHostAuth & {
       authorization: import("@cocalc/conat/agents/sensors").SensorExecutionAuthorization;

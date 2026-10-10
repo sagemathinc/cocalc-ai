@@ -4,25 +4,37 @@
  */
 
 // Runs due sensors on this bay. Each hub process polls; row leases with
-// SKIP LOCKED make sure only one of them runs a given sensor. The project's
-// host executes the approved script, and the hub alone decides whether its
-// result wakes the agent, so limits never depend on host or project state.
+// SKIP LOCKED make sure only one of them runs a given sensor.
+// - script sensors and ci/file watchers: the project's host runs the code in
+//   the project's own software, with credentials issued for this run only
+//   (sensor-credentials.ts), and the hub alone decides whether the result
+//   wakes the agent, so limits never depend on host or project state;
+// - scheduled prompts and reminders: no code runs; the hub starts the turn.
 
 import getLogger from "@cocalc/backend/logger";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  SENSOR_CONNECTOR_LABELS,
   SENSOR_LIMITS,
   parseSensorWake,
+  reminderText,
+  scheduledPromptText,
+  sensorKind,
+  sensorUses,
   sensorWakePrompt,
+  sensorWatchScript,
   validateSensorSpec,
   type SensorRunOutcome,
   type SensorSpec,
+  type SensorWake,
 } from "@cocalc/conat/agents/sensors";
 import { nextSensorRunAt } from "@cocalc/util/ai/sensor-schedule";
 import { assertActor } from "./access";
 import { hostFor } from "./rpc";
+import { issueSensorRunCredentials } from "./sensor-credentials";
 import {
   projectHasInternet,
+  projectImage,
   sensorLimits,
   sensorPermitHash,
   sensorSpecHash,
@@ -44,6 +56,7 @@ interface ClaimedSensor {
   spec: SensorSpec;
   script_hash: string;
   approved_by: string;
+  approved_image: string | null;
   revision: number;
   lease_id: string;
   wakes_day: string | null;
@@ -86,23 +99,34 @@ async function pauseReason(row: ClaimedSensor): Promise<string | undefined> {
   const limits = await sensorLimits(row.approved_by);
   if (limits.maxActive === 0)
     return "The approver's membership no longer includes sensors.";
-  try {
-    // Memberships change: the approved schedule must still fit them.
-    validateSensorSpec(row.spec, {
-      minIntervalMinutes: limits.minIntervalMinutes,
-      maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
-    });
-  } catch (err) {
-    return `The sensor no longer fits the approver's membership: ${errorText(err)}`;
+  const kind = sensorKind(row.spec);
+  if (kind !== "watch") {
+    try {
+      // Memberships change: the approved schedule must still fit them.
+      validateSensorSpec(row.spec, {
+        minIntervalMinutes: limits.minIntervalMinutes,
+        maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
+      });
+    } catch (err) {
+      return `The sensor no longer fits the approver's membership: ${errorText(err)}`;
+    }
+    // Over the active limit after a downgrade, the earliest approved keep
+    // running. Watchers are short-lived and limited per agent instead.
+    const { rows: kept } = await agentStore().query(
+      `SELECT sensor_id FROM agent_sensors WHERE project_id=$1 AND status='active'
+         AND COALESCE(spec->>'kind', 'script') <> 'watch'
+       ORDER BY approved_at, sensor_id LIMIT $2`,
+      [row.project_id, limits.maxActive],
+    );
+    if (!kept.some((r) => r.sensor_id === row.sensor_id))
+      return `This project has more active sensors than the approver's membership allows (${limits.maxActive}).`;
   }
-  // Over the active limit after a downgrade, the earliest approved keep running.
-  const { rows: kept } = await agentStore().query(
-    `SELECT sensor_id FROM agent_sensors WHERE project_id=$1 AND status='active'
-     ORDER BY approved_at, sensor_id LIMIT $2`,
-    [row.project_id, limits.maxActive],
-  );
-  if (!kept.some((r) => r.sensor_id === row.sensor_id))
-    return `This project has more active sensors than the approver's membership allows (${limits.maxActive}).`;
+  if (
+    kind === "script" &&
+    row.approved_image != null &&
+    row.approved_image !== (await projectImage(row.project_id))
+  )
+    return "The project's software (its RootFS image) changed since this sensor was approved. Review it and resume it to run it in the new software.";
   if (!(await projectHasInternet(row.project_id)))
     return "The project no longer has internet access.";
   return undefined;
@@ -137,6 +161,8 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   let output: string | null = null;
   let error: string | null = null;
   let pause: string | undefined;
+  // A watcher that has fired (or expired) is done: never scheduled again.
+  let finished = false;
   try {
     await db.query(
       // Database time, comparable with approved_at when the wake executes.
@@ -151,58 +177,140 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       error = pause;
       return;
     }
+    const spec = row.spec;
     const agent = await db.get(row.agent_id);
     const host = await hostFor({
       project_id: row.project_id,
       agent_id: row.agent_id,
     });
-    const result = await host.api.runAgentSensor({
-      project_id: row.project_id,
-      sensor_id: row.sensor_id,
-      run_id,
-      language: row.spec.language,
-      script: row.spec.script,
-      timeout_seconds: row.spec.timeout_seconds,
-      path: agent.path,
-    });
-    exit_code = result.exit_code;
-    output = logOutput(result.stdout, result.stderr);
-    if (result.timed_out) {
-      outcome = "timeout";
-      error = `The script ran longer than ${row.spec.timeout_seconds} seconds.`;
-      return;
-    }
-    if (exit_code !== 0) {
-      error = `The script exited with code ${exit_code}.`;
-      return;
-    }
-    let wake;
-    try {
-      wake = parseSensorWake(result.stdout);
-    } catch (err) {
-      error = errorText(err);
-      return;
-    }
-    failed = false;
-    if (!wake) {
-      outcome = "quiet";
-      return;
-    }
-    summary = wake.summary;
-    const day = utcDay(started);
-    const today = row.wakes_day === day ? row.wakes_today : 0;
-    const limits = await sensorLimits(row.approved_by);
-    if (today >= Math.min(row.spec.max_wakes_per_day, limits.maxWakesPerDay)) {
-      outcome = "wake-limited";
-      return;
-    }
-    try {
-      const prompt = sensorWakePrompt({
-        title: row.spec.title,
+    let prompt: string | undefined;
+    if (spec.kind === "prompt") {
+      prompt = scheduledPromptText({
+        title: spec.title,
+        sensor_id: row.sensor_id,
+        prompt: spec.prompt,
+      });
+      summary = "Scheduled prompt";
+    } else if (spec.kind === "watch" && spec.watch.type === "at") {
+      prompt = reminderText({
+        sensor_id: row.sensor_id,
+        note: spec.watch.note,
+        at: spec.watch.at,
+      });
+      summary = spec.watch.note;
+      finished = true;
+    } else if (
+      spec.kind === "watch" &&
+      Date.now() >= Date.parse(spec.expires_at)
+    ) {
+      const wake: SensorWake = {
+        summary: `Gave up: "${spec.title}" did not happen before ${spec.expires_at}.`,
+      };
+      prompt = sensorWakePrompt({
+        title: spec.title,
         sensor_id: row.sensor_id,
         ran_at: started,
         wake,
       });
+      summary = wake.summary;
+      finished = true;
+    } else {
+      // Code runs: an approved script, or a ci/file watcher's built-in one.
+      const watch = spec.kind === "watch" ? spec.watch : undefined;
+      const script = watch ? sensorWatchScript(watch) : (spec as any).script;
+      if (!script) throw new Error("this watcher has nothing to run");
+      const timeout_seconds = watch
+        ? SENSOR_LIMITS.defaultTimeoutSeconds
+        : (spec as any).timeout_seconds;
+      const lease = await issueSensorRunCredentials({
+        agent,
+        account_id: row.approved_by,
+        host_id: host.host_id,
+        run_id,
+        uses: sensorUses(spec),
+      });
+      let result;
+      try {
+        if (lease.missing.length > 0) {
+          const names = lease.missing
+            .map((c) => SENSOR_CONNECTOR_LABELS[c])
+            .join(" and ");
+          pause = `This sensor uses ${names}, which the person who approved it has not turned on for this agent (its Connectors menu). Turn it on, then resume the sensor.`;
+          outcome = "skipped";
+          failed = false;
+          error = pause;
+          return;
+        }
+        const renewal = setInterval(
+          () =>
+            void lease.renew().catch((err) =>
+              logger.warn("sensor connector renewal failed", {
+                run_id,
+                err: errorText(err),
+              }),
+            ),
+          60_000,
+        );
+        try {
+          result = await host.api.runAgentSensor({
+            project_id: row.project_id,
+            sensor_id: row.sensor_id,
+            run_id,
+            language: watch ? "python" : (spec as any).language,
+            script,
+            timeout_seconds,
+            path: agent.path,
+            image: await projectImage(row.project_id),
+            credentials: lease.credentials,
+          });
+        } finally {
+          clearInterval(renewal);
+        }
+      } finally {
+        await lease.release();
+      }
+      exit_code = result.exit_code;
+      output = logOutput(result.stdout, result.stderr);
+      if (result.timed_out) {
+        outcome = "timeout";
+        error = `The script ran longer than ${timeout_seconds} seconds.`;
+        return;
+      }
+      if (exit_code !== 0) {
+        error = `The script exited with code ${exit_code}.`;
+        return;
+      }
+      let wake;
+      try {
+        wake = parseSensorWake(result.stdout);
+      } catch (err) {
+        error = errorText(err);
+        return;
+      }
+      failed = false;
+      if (!wake) {
+        outcome = "quiet";
+        return;
+      }
+      summary = wake.summary;
+      prompt = sensorWakePrompt({
+        title: spec.title,
+        sensor_id: row.sensor_id,
+        ran_at: started,
+        wake,
+      });
+      finished = !!watch;
+    }
+    failed = false;
+    const day = utcDay(started);
+    const today = row.wakes_day === day ? row.wakes_today : 0;
+    const limits = await sensorLimits(row.approved_by);
+    if (today >= Math.min(spec.max_wakes_per_day, limits.maxWakesPerDay)) {
+      outcome = "wake-limited";
+      finished = false;
+      return;
+    }
+    try {
       // A one-time secret for exactly this wake: the turn it starts must run
       // this prompt, in this thread, as the approver. Only its hash is kept.
       const permit = randomBytes(32).toString("base64url");
@@ -224,7 +332,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
         account_id: row.approved_by,
         path: agent.path,
         thread_id: agent.thread_id,
-        title: row.spec.title,
+        title: spec.title,
         prompt,
         authorization: {
           version: 1,
@@ -241,71 +349,116 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     } catch (err) {
       outcome = "wake-failed";
       failed = true;
+      finished = false;
       error = `The wake could not start a turn: ${errorText(err)}`;
     }
   } catch (err) {
     error = errorText(err);
   } finally {
-    const failures = failed ? row.consecutive_failures + 1 : 0;
-    if (!pause && failures >= SENSOR_LIMITS.maxConsecutiveFailures)
-      pause = `Paused after ${failures} failed runs in a row. Last error: ${error ?? outcome}`;
-    const next =
-      nextSensorRunAt(row.spec.schedule, Date.now()) ??
-      Date.now() + 24 * 60 * 60_000;
-    const day = utcDay(started);
-    await db
-      .query(
-        `UPDATE agent_sensors SET lease_id=NULL, lease_until=NULL,
-           last_run_at=$3, last_outcome=$4, consecutive_failures=$5,
-           wakes_today=(CASE WHEN wakes_day=$6 THEN wakes_today ELSE 0 END)+$7,
-           wakes_day=$6,
-           last_wake_at=CASE WHEN $7=1 THEN now() ELSE last_wake_at END,
-           next_run_at=CASE WHEN revision=$8 THEN $9 ELSE next_run_at END,
-           status=CASE WHEN $10::text IS NOT NULL AND status='active'
-             THEN 'paused' ELSE status END,
-           pause_reason=CASE WHEN $10::text IS NOT NULL AND status='active'
-             THEN $10 ELSE pause_reason END,
-           revision=CASE WHEN $10::text IS NOT NULL AND status='active'
-             THEN revision+1 ELSE revision END,
-           updated=now()
-         WHERE sensor_id=$1 AND lease_id=$2`,
-        [
-          row.sensor_id,
-          run_id,
-          started,
-          outcome,
-          failures,
-          day,
-          woke,
-          row.revision,
-          new Date(next),
-          pause ?? null,
-        ],
-      )
-      .catch((err) =>
-        logger.warn("could not record sensor run", {
-          sensor_id: row.sensor_id,
-          err: errorText(err),
-        }),
-      );
-    await db
-      .query(
-        `UPDATE agent_sensor_runs SET finished_at=now(), outcome=$2,
-           exit_code=$3, summary=$4, output=$5, error=$6 WHERE run_id=$1`,
-        [run_id, outcome, exit_code, summary, output, error],
-      )
-      .then(() =>
-        db.query(
-          `DELETE FROM agent_sensor_runs WHERE sensor_id=$1 AND run_id NOT IN
-           (SELECT run_id FROM agent_sensor_runs WHERE sensor_id=$1
-            ORDER BY started_at DESC LIMIT $2)`,
-          [row.sensor_id, SENSOR_LIMITS.keepRuns],
-        ),
-      )
-      .catch(() => undefined);
-    if (pause)
-      logger.info("sensor paused", { sensor_id: row.sensor_id, pause });
+    await finishRun(row, {
+      run_id,
+      started,
+      outcome,
+      failed,
+      woke,
+      exit_code,
+      summary,
+      output,
+      error,
+      pause,
+      finished,
+    });
   }
+}
+
+async function finishRun(
+  row: ClaimedSensor,
+  r: {
+    run_id: string;
+    started: Date;
+    outcome: SensorRunOutcome;
+    failed: boolean;
+    woke: number;
+    exit_code: number | null;
+    summary: string | null;
+    output: string | null;
+    error: string | null;
+    pause: string | undefined;
+    finished: boolean;
+  },
+): Promise<void> {
+  const db = agentStore();
+  let pause = r.pause;
+  const failures = r.failed ? row.consecutive_failures + 1 : 0;
+  if (!pause && failures >= SENSOR_LIMITS.maxConsecutiveFailures)
+    pause = `Paused after ${failures} failed runs in a row. Last error: ${r.error ?? r.outcome}`;
+  await db
+    .query(
+      `UPDATE agent_sensor_runs SET finished_at=now(), outcome=$2,
+         exit_code=$3, summary=$4, output=$5, error=$6 WHERE run_id=$1`,
+      [r.run_id, r.outcome, r.exit_code, r.summary, r.output, r.error],
+    )
+    .catch(() => undefined);
+  // A watcher fires once. It stays active (its queued wake is authorized
+  // against it) with no next run, and is removed a day later.
+  const next = r.finished
+    ? null
+    : (nextSensorRunAt(row.spec.schedule, Date.now()) ??
+      Date.now() + 24 * 60 * 60_000);
+  const day = utcDay(r.started);
+  await db
+    .query(
+      `UPDATE agent_sensors SET lease_id=NULL, lease_until=NULL,
+         last_run_at=$3, last_outcome=$4, consecutive_failures=$5,
+         wakes_today=(CASE WHEN wakes_day=$6 THEN wakes_today ELSE 0 END)+$7,
+         wakes_day=$6,
+         last_wake_at=CASE WHEN $7=1 THEN now() ELSE last_wake_at END,
+         next_run_at=CASE WHEN revision=$8 THEN $9 ELSE next_run_at END,
+         status=CASE WHEN $10::text IS NOT NULL AND status='active'
+           THEN 'paused' ELSE status END,
+         pause_reason=CASE WHEN $10::text IS NOT NULL AND status='active'
+           THEN $10 ELSE pause_reason END,
+         revision=CASE WHEN $10::text IS NOT NULL AND status='active'
+           THEN revision+1 ELSE revision END,
+         updated=now()
+       WHERE sensor_id=$1 AND lease_id=$2`,
+      [
+        row.sensor_id,
+        r.run_id,
+        r.started,
+        r.outcome,
+        failures,
+        day,
+        r.woke,
+        row.revision,
+        next == null ? null : new Date(next),
+        pause ?? null,
+      ],
+    )
+    .catch((err) =>
+      logger.warn("could not record sensor run", {
+        sensor_id: row.sensor_id,
+        err: errorText(err),
+      }),
+    );
+  await db
+    .query(
+      `DELETE FROM agent_sensor_runs WHERE sensor_id=$1 AND run_id NOT IN
+       (SELECT run_id FROM agent_sensor_runs WHERE sensor_id=$1
+        ORDER BY started_at DESC LIMIT $2)`,
+      [row.sensor_id, SENSOR_LIMITS.keepRuns],
+    )
+    .catch(() => undefined);
+  if (pause) logger.info("sensor paused", { sensor_id: row.sensor_id, pause });
+}
+
+/** Watchers that fired more than a day ago; their wakes have long run. */
+export async function removeDoneWatchers(): Promise<void> {
+  await agentStore().query(
+    `DELETE FROM agent_sensors WHERE spec->>'kind'='watch'
+       AND next_run_at IS NULL AND lease_id IS NULL
+       AND last_run_at < now() - interval '1 day'`,
+  );
 }
 
 export function startSensorScheduler(): () => void {
@@ -315,6 +468,7 @@ export function startSensorScheduler(): () => void {
   const tick = async () => {
     if (stopped) return;
     try {
+      await removeDoneWatchers();
       const due = await claimDueSensors();
       const queue = [...due];
       await Promise.all(

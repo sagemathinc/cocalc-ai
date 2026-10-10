@@ -3,9 +3,11 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// `cocalc sensor`: an agent proposes and inspects its sensors with its
-// runtime identity. People approve, resume and run them in the agent's
-// Sensors panel; there is deliberately no CLI path for that.
+// `cocalc sensor`: an agent proposes, sets and inspects its sensors with its
+// runtime identity. A sensor is the agent on a schedule, without the model:
+// it runs with the access the approving person gave the agent. People approve,
+// resume and run sensors in the agent's Sensors dialog; there is deliberately
+// no CLI path for that.
 
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
@@ -13,7 +15,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import {
-  SENSOR_TRUSTED_PATH,
   parseSensorWake,
   sensorInterpreterArgv,
   validateSensorSpec,
@@ -22,25 +23,30 @@ import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
 import { sendIdentityMessage } from "../core/agent-message";
 import type { ProjectCommandDeps } from "./project";
 
-const CONTRACT = `A sensor is a small script CoCalc runs on a schedule in this project. It
-should be cheap and quiet: most runs find nothing and print no wake line.
-To wake the agent, print one JSON line:
-  {"wake": true, "summary": "2 new issues", "data": {...}}
-(summary up to 500 characters, data up to 16 KB; the last such line wins).
-The script gets COCALC_SENSOR_ID and COCALC_SENSOR_STATE, a JSON file it may
-read and write to remember what it saw. It runs on CoCalc's standard project
-image (not the project's custom image or installed software, and no sudo) with a clean
-environment: PATH has only system and CoCalc tools (not ~/bin), Python runs
-isolated (-I, no user packages), and project environment variables are not
-set. Nothing
-runs until a person approves the exact spec. Test first with
-"cocalc sensor test --file spec.json".
+const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. Three kinds:
 
-Spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node", "script",
+1. Watchers: CoCalc's own one-shot checks. No approval; use them instead of
+   polling, then end your turn. You get one turn when it happens:
+     cocalc sensor watch ci --repo owner/name --pr 123
+     cocalc sensor watch file --path out.log [--match 'DONE|FAILED']
+     cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
+2. Scripts: a small program you write and a person approves. It runs like a
+   command in your turn: in this project's software, as the approving person,
+   with the connectors the spec lists in "uses" (if they gave them to you).
+   Most runs find nothing and print no wake line. To wake yourself, print
+     {"wake": true, "summary": "2 new issues", "data": {...}}
+   (summary up to 500 characters, data up to 16 KB; the last such line wins).
+   It gets COCALC_SENSOR_STATE, a JSON file to remember what it saw, and your
+   identity (cocalc agent send works). Test it first with "cocalc sensor test".
+3. Scheduled prompts: a prompt sent to you on a schedule, a normal turn.
+
+Script spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node",
+  "script", "uses": ["cocalc"|"github"|"cloudflare", ...] (default none),
   "schedule": {"kind": "interval", "minutes": 30}
            or {"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"},
   optional "days" [0-6, 0=Sunday], interval "window" {"start","end"},
-  "timeout_seconds" (default 60, max 300), "max_wakes_per_day" (default 24)}`;
+  "timeout_seconds" (default 60, max 300), "max_wakes_per_day" (default 24)}
+Prompt spec: {"kind": "prompt", "title", "prompt", "schedule", "max_wakes_per_day"}`;
 
 async function readSpec(opts: { file?: string; stdin?: boolean }) {
   let text: string;
@@ -57,19 +63,20 @@ async function readSpec(opts: { file?: string; stdin?: boolean }) {
 }
 
 /**
- * Run a spec's script here with a sensor's clean environment and report the
- * result. Scheduled runs use CoCalc's standard image instead of this project's
- * RootFS, so software only this project has will be missing there.
+ * Run a script spec's code here once, the way a scheduled run does (a login
+ * shell in this project's software, the body as an argument, the sensor
+ * variables), and report what the run would do. It uses this turn's
+ * credentials; a scheduled run gets its own, for the connectors it lists.
  */
 async function testSpec(spec: any) {
   const checked = validateSensorSpec(spec, {
     minIntervalMinutes: 1,
     maxWakesPerDay: 1_000,
   });
+  if (checked.kind !== "script")
+    throw new Error("only script sensors have code to test");
   const dir = join(homedir(), ".local/share/cocalc/sensors/test");
   await mkdir(dir, { recursive: true });
-  // The same clean environment and interpreter flags as a scheduled run, but
-  // in this project's own RootFS: scheduled runs use CoCalc's standard image.
   const argv = sensorInterpreterArgv(checked.language, checked.script);
   const started = Date.now();
   const result = await new Promise<{
@@ -77,15 +84,9 @@ async function testSpec(spec: any) {
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
-    const child = spawn(argv[0], argv.slice(1), {
+    const child = spawn("bash", ["-lc", 'exec "$@"', "sensor", ...argv], {
       env: {
-        HOME: homedir(),
-        USER: process.env.USER ?? "user",
-        LOGNAME: process.env.USER ?? "user",
-        LANG: "C.UTF-8",
-        TERM: "dumb",
-        PATH: SENSOR_TRUSTED_PATH,
-        COCALC_PROJECT_ID: process.env.COCALC_PROJECT_ID ?? "",
+        ...process.env,
         COCALC_SENSOR_ID: "test",
         COCALC_SENSOR_RUN_ID: "test",
         COCALC_SENSOR_STATE: join(dir, "state.json"),
@@ -110,6 +111,7 @@ async function testSpec(spec: any) {
   }
   return {
     schedule: describeSensorSchedule(checked.schedule),
+    uses: checked.uses,
     exit_code: result.code,
     seconds: Math.round((Date.now() - started) / 100) / 10,
     outcome:
@@ -136,7 +138,7 @@ export function registerSensorCommand(
   const sensor = program
     .command("sensor")
     .description(
-      "propose and inspect this agent's sensors: approved scripts that run on a schedule and can wake the agent (uses the runtime agent identity)",
+      "watch for events, propose scheduled scripts and prompts, and inspect this agent's sensors (uses the runtime agent identity)",
     )
     .addHelpText("after", `\n${CONTRACT}\n`);
   const send = async (cmd: Command, request: any, label: string) => {
@@ -170,7 +172,7 @@ export function registerSensorCommand(
   sensor
     .command("test")
     .description(
-      "run a spec's script here once with a sensor's clean environment and show whether it would wake the agent (scheduled runs use CoCalc's standard image, which may lack software this project has)",
+      "run a script spec's code here once, as a scheduled run would, and show whether it would wake the agent",
     )
     .option("--file <path>", "spec JSON file")
     .option("--stdin", "read the spec JSON from standard input")
@@ -179,6 +181,71 @@ export function registerSensorCommand(
         { globals: globalsFrom(cmd) },
         "sensor test",
         await testSpec(await readSpec(opts)),
+      ),
+    );
+  const watch = sensor
+    .command("watch")
+    .description(
+      "wake this agent once when something happens (no approval needed); end your turn after setting it",
+    );
+  const hours = (value?: string) =>
+    value == null ? {} : { hours: Number(value) };
+  watch
+    .command("ci")
+    .description("when a GitHub pull request's checks have all finished")
+    .requiredOption("--repo <owner/name>", "repository")
+    .requiredOption("--pr <number>", "pull request number")
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .action(async (opts, cmd) =>
+      send(
+        cmd,
+        {
+          action: "sensor",
+          op: "watch",
+          watch: { type: "ci", repo: opts.repo, pr: Number(opts.pr) },
+          ...hours(opts.hours),
+        },
+        "sensor watch ci",
+      ),
+    );
+  watch
+    .command("file")
+    .description(
+      "when a file exists (relative to this chat's directory), optionally once it matches a regular expression",
+    )
+    .requiredOption("--path <path>", "file to watch")
+    .option("--match <regex>", "wait until its content matches this")
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .action(async (opts, cmd) =>
+      send(
+        cmd,
+        {
+          action: "sensor",
+          op: "watch",
+          watch: {
+            type: "file",
+            path: opts.path,
+            ...(opts.match ? { match: opts.match } : {}),
+          },
+          ...hours(opts.hours),
+        },
+        "sensor watch file",
+      ),
+    );
+  watch
+    .command("at")
+    .description("a reminder: wake at a time with a note to yourself")
+    .requiredOption("--at <time>", "ISO time, e.g. 2026-10-16T15:00:00Z")
+    .requiredOption("--note <text>", "what to do then")
+    .action(async (opts, cmd) =>
+      send(
+        cmd,
+        {
+          action: "sensor",
+          op: "watch",
+          watch: { type: "at", at: opts.at, note: opts.note },
+        },
+        "sensor watch at",
       ),
     );
   sensor

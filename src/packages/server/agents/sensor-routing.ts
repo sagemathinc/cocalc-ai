@@ -34,6 +34,25 @@ export async function sensorControl(
   });
 }
 
+/** Ask the project's bay whether this sensor run is live (see sensors.ts). */
+export async function verifySensorRun({
+  account_id,
+  project_id,
+  agent_id,
+  run_id,
+}: {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+  run_id: string;
+}): Promise<void> {
+  await sensorControl(account_id, project_id, {
+    op: "verify-run",
+    agent_id,
+    run_id,
+  });
+}
+
 export const listSensors: AgentApi["listSensors"] = async (opts) => {
   requireUuid(opts.account_id, "account_id");
   return await sensorControl(opts.account_id!, opts.project_id, {
@@ -55,6 +74,20 @@ export const manageSensor: AgentApi["manageSensor"] = async (opts) => {
     op: opts.op,
     sensor_id: opts.sensor_id,
     ...(opts.revision !== undefined ? { revision: opts.revision } : {}),
+  });
+};
+
+export const createScheduledPrompt: AgentApi["createScheduledPrompt"] = async (
+  opts,
+) => {
+  requireUuid(opts.account_id, "account_id");
+  if (typeof opts.session_hash !== "string" || !opts.session_hash)
+    throw new Error("sensors are managed from a signed-in browser session");
+  requireUuid(opts.agent_id, "agent_id");
+  return await sensorControl(opts.account_id!, opts.project_id, {
+    op: "create-prompt",
+    agent_id: opts.agent_id,
+    spec: opts.spec,
   });
 };
 

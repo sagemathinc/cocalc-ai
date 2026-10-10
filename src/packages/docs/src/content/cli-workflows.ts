@@ -394,49 +394,61 @@ before sharing it. Clear or stop capture deliberately when finished.
 export const CLI_SCHEDULED_AGENTS_BODY = `
 ## Sensors from the agent's side
 
-Agents create sensors with \`cocalc sensor\`, using their runtime identity.
-A person approves each sensor in the agent's **Sensors** dialog; there is no
-CLI command for approving, resuming or running a sensor. See
+Agents use \`cocalc sensor\` with their runtime identity. A sensor is the
+agent on a schedule, without the model, with the access the approving person
+gave the agent. People approve, resume and run sensors in the agent's
+**Sensors** dialog; there is no CLI command for that. See
 [Watch for events with sensors](/docs/ai/codex-automation) for that side.
 
-## Step 1: Write a spec
+## Wait for something: set a watcher
+
+~~~bash
+cocalc sensor watch ci --repo sagemathinc/cocalc-ai --pr 992
+cocalc sensor watch file --path build.log --match 'DONE|FAILED'
+cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check that PR 992 merged"
+~~~
+
+Watchers are CoCalc's own one-shot checks, so they need no approval. The agent
+ends its turn and gets exactly one turn when it happens, or when the watcher
+gives up (after 24 hours unless \`--hours\` says otherwise). An agent may have
+five at a time.
+
+## Watch over time: propose a script
 
 ~~~json
 {
   "title": "GitHub: new urgent issues",
   "purpose": "Wake me when an issue labeled urgent is opened in our repository.",
   "language": "python",
+  "uses": ["github"],
   "script": "import json, os, subprocess\\n...",
   "schedule": {"kind": "interval", "minutes": 30},
   "max_wakes_per_day": 12
 }
 ~~~
 
-The script runs in the chat's directory with \`COCALC_SENSOR_ID\` and
-\`COCALC_SENSOR_STATE\`, a JSON file for remembering what it already
-reported. It runs on CoCalc's standard project image (not a custom image
-the project uses, nor software installed into it) without sudo, and with a clean environment: PATH holds
-only system and CoCalc tools, not \`~/bin\`, and Python runs isolated without
-user-installed packages. To wake the agent it prints one line such as
-\`{"wake": true, "summary": "2 new issues", "data": {"issues": [...]}}\`.
-A run that prints no wake line is quiet. Daily schedules use
+The script runs like a command in the agent's turn: in the project's software,
+in the chat's directory, as the approving person, with the connectors listed
+in \`uses\` (\`cocalc\`, \`github\`, \`cloudflare\`) if that person gave them to the
+agent. It gets \`COCALC_SENSOR_STATE\`, a JSON file for remembering what it
+already reported. To wake the agent it prints one line such as
+\`{"wake": true, "summary": "2 new issues", "data": {"issues": [...]}}\`. A run
+that prints no wake line is quiet. Daily schedules use
 \`{"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"}\`.
 \`cocalc sensor --help\` prints the full contract.
-
-## Step 2: Test, then propose
 
 ~~~bash
 cocalc sensor test --file spec.json
 cocalc sensor propose --file spec.json
 ~~~
 
-\`test\` runs the script once in the project and reports whether it would
-wake the agent. \`propose\` records the exact spec for review; nothing runs
-until a person approves it. To change an approved sensor, propose again with
-\`--sensor <id>\`. The approved version keeps running until the change is
-approved.
+\`test\` runs the script once and reports whether it would wake the agent.
+\`propose\` records the exact spec for review; nothing runs until a person
+approves it. To change an approved sensor, propose again with
+\`--sensor <id>\`. A spec with \`"kind": "prompt"\`, a \`title\`, a \`prompt\` and a
+\`schedule\` proposes a scheduled prompt instead.
 
-## Step 3: Inspect
+## Inspect
 
 ~~~bash
 cocalc sensor list
@@ -445,7 +457,7 @@ cocalc sensor pause <id>
 cocalc sensor delete <id>
 ~~~
 
-\`show\` includes recent runs with their outcome, summary and errors.
+\`show\` includes recent runs with their outcome, summary, output and errors.
 
 ## Retired automations
 

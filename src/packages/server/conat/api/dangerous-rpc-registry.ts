@@ -72,10 +72,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.createScheduledPrompt": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "a project collaborator's bound human session schedules a prompt for an agent in that project: a normal agent turn on a schedule, paid by that person and capped per day",
+  },
   "agent.manageSensor": {
     decision: "fresh-auth-not-required",
     reason:
-      "a project collaborator's bound human session approves, pauses or deletes an agent's sensor in that project; the code runs only in that project, which the collaborator can already run code in, and wakes are capped per day",
+      "a project collaborator's bound human session approves, pauses or deletes an agent's sensor in that project; it runs like the agent's own commands, with only the access that person already gave the agent, and wakes are capped per day",
   },
   "agent.registerIdentity": {
     decision: "fresh-auth-not-required",

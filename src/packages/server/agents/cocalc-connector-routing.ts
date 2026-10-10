@@ -80,8 +80,36 @@ function requiredHost<T extends { account_id?: string; host_id?: string }>(
   if (!isValidUUID(opts.account_id) || !isValidUUID(opts.host_id)) {
     throw Error("authenticated project host required");
   }
+  // Only the hub's sensor scheduler may present a sensor run; a host request
+  // is always about a chat turn on that host.
+  const turn_ref = (opts as { turn_ref?: { sensor_run_id?: string } }).turn_ref;
+  if (turn_ref && "sensor_run_id" in turn_ref) {
+    const { sensor_run_id: _ignored, ...rest } = turn_ref;
+    return { ...opts, turn_ref: rest } as T & {
+      account_id: string;
+      host_id: string;
+    };
+  }
   return opts as T & { account_id: string; host_id: string };
 }
+
+/**
+ * The sensor scheduler's credentials for one run, issued on the approver's
+ * home bay with the same grants, scopes and audit as a chat turn's. The run
+ * itself (live, leased, approved by this account) replaces the live-turn
+ * check. Internal: never reachable from a host or browser.
+ */
+export const sensorConnectors = {
+  begin: async (opts: Parameters<InterBayAgentConnectorApi["begin"]>[0]) =>
+    await (await accountHomeApi(opts.account_id)).begin(opts),
+  renew: async (opts: Parameters<InterBayAgentConnectorApi["renew"]>[0]) =>
+    await (await accountHomeApi(opts.account_id)).renew(opts),
+  end: async (opts: Parameters<InterBayAgentConnectorApi["end"]>[0]) =>
+    await (await accountHomeApi(opts.account_id)).end(opts),
+  beginCli: async (
+    opts: Parameters<InterBayAgentConnectorApi["beginCliTurn"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).beginCliTurn(opts),
+};
 
 export const beginCocalcConnectorTurn: AgentApi["beginCocalcConnectorTurn"] =
   async (input) => {

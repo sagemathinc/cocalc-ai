@@ -32,6 +32,28 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
 jest.mock("./rpc", () => ({
   hostFor: async () => ({ host_id: "host", api: host }),
 }));
+// The credentials a run gets (sensor-credentials.test.ts covers issuance).
+const lease = {
+  missing: [] as string[],
+  issued: [] as any[],
+  released: 0,
+};
+jest.mock("./sensor-credentials", () => ({
+  issueSensorRunCredentials: async (opts: any) => {
+    lease.issued.push(opts);
+    return {
+      credentials: {
+        identity: { agent_id: opts.agent.agent_id, run_id: opts.run_id },
+        bearer: "bearer",
+      },
+      missing: lease.missing,
+      renew: async () => {},
+      release: async () => {
+        lease.released++;
+      },
+    };
+  },
+}));
 
 import {
   agentSensorRequest,
@@ -74,6 +96,9 @@ describeDb("agent sensors", () => {
   beforeEach(async () => {
     access.denied.clear();
     for (const key of Object.keys(limits)) delete limits[key];
+    lease.missing = [];
+    lease.issued = [];
+    lease.released = 0;
     host.runAgentSensor.mockReset().mockResolvedValue({
       exit_code: 0,
       timed_out: false,
@@ -88,7 +113,7 @@ describeDb("agent sensors", () => {
     owner = randomUUID();
     const pool = getPool();
     await pool.query(
-      "INSERT INTO projects (project_id, run_quota, users, host_id) VALUES ($1, $2, $3, $4)",
+      "INSERT INTO projects (project_id, run_quota, users, host_id, rootfs_image) VALUES ($1, $2, $3, $4, 'img:1')",
       [project_id, { network: true }, { [owner]: { group: "owner" } }, HOST],
     );
     await pool.query(
@@ -455,14 +480,81 @@ describeDb("agent sensors", () => {
     expect(rows[0].wake_state).toBe("consumed");
   });
 
-  test("agents see run outcomes but never run output", async () => {
+  test("a run gets the agent's access as the approver, in the project's software", async () => {
+    const active = (
+      await approve((await propose({ ...spec, uses: ["github"] })).sensor)
+    ).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(lease.issued[0]).toMatchObject({
+      account_id: owner,
+      host_id: "host",
+      uses: ["github"],
+      agent: expect.objectContaining({ agent_id }),
+    });
+    expect(lease.issued[0].run_id).toBe(
+      host.runAgentSensor.mock.calls[0][0].run_id,
+    );
+    expect(host.runAgentSensor.mock.calls[0][0]).toMatchObject({
+      image: "img:1",
+      credentials: { bearer: "bearer" },
+      path: "/home/user/a.chat",
+    });
+    expect(lease.released).toBe(1);
+  });
+
+  test("a sensor whose connector is off for the agent pauses instead of running", async () => {
+    const active = (
+      await approve((await propose({ ...spec, uses: ["github"] })).sensor)
+    ).sensor;
+    lease.missing = ["github"];
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    expect(lease.released).toBe(1);
+    const { sensors } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+    })) as any;
+    expect(sensors[0].status).toBe("paused");
+    expect(sensors[0].pause_reason).toMatch(/uses GitHub/);
+  });
+
+  test("a script sensor pauses when the project's software changes", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    await getPool().query(
+      "UPDATE projects SET rootfs_image='other:2' WHERE project_id=$1",
+      [project_id],
+    );
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    let { sensors } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+    })) as any;
+    expect(sensors[0].pause_reason).toMatch(/software/);
+    // Resuming approves it for the new software.
+    await sensorControlLocal(owner, project_id, {
+      op: "resume",
+      sensor_id: active.sensor_id,
+      revision: sensors[0].revision,
+    });
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.runAgentSensor).toHaveBeenCalledTimes(1);
+    ({ sensors } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+    })) as any);
+    expect(sensors[0].status).toBe("active");
+  });
+
+  test("agents can read their sensor's run log", async () => {
     const { sensor } = await propose();
     const active = (await approve(sensor)).sensor;
     host.runAgentSensor.mockResolvedValue({
       exit_code: 1,
       timed_out: false,
       stdout: "",
-      stderr: "token=SECRET",
+      stderr: "connection refused",
     });
     await makeDue(active.sensor_id);
     await runDue();
@@ -472,12 +564,170 @@ describeDb("agent sensors", () => {
       sensor_id: active.sensor_id,
     })) as any;
     expect(shown.runs[0]).toMatchObject({ outcome: "failed", exit_code: 1 });
-    expect(JSON.stringify(shown)).not.toContain("SECRET");
-    const human = (await sensorControlLocal(owner, project_id, {
-      op: "list",
-      sensor_id: active.sensor_id,
+    expect(shown.runs[0].output).toContain("connection refused");
+  });
+
+  test("a person's scheduled prompt is a normal turn on a schedule", async () => {
+    const created = (await sensorControlLocal(owner, project_id, {
+      op: "create-prompt",
+      agent_id,
+      spec: {
+        kind: "prompt",
+        title: "Morning briefing",
+        prompt: "Summarize today's calendar and open PRs.",
+        schedule: { kind: "daily", times: ["07:00"], timezone: "UTC" },
+      },
     })) as any;
-    expect(human.runs[0].output).toContain("SECRET");
+    expect(created.sensor).toMatchObject({
+      status: "active",
+      approved_by: owner,
+    });
+    await makeDue(created.sensor.sensor_id);
+    await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    const delivery = host.deliverAgentSensorWake.mock.calls[0][0];
+    expect(delivery.prompt).toMatch(/^\[Scheduled prompt\] "Morning briefing"/);
+    expect(delivery.prompt).toContain("Summarize today's calendar");
+    // Agents propose prompts like scripts; people create them directly.
+    await expect(
+      sensorControlLocal(owner, project_id, {
+        op: "create-prompt",
+        agent_id,
+        spec,
+      }),
+    ).rejects.toThrow(/scheduled prompts/);
+  });
+
+  test("a CI watcher needs no approval, fires once, and stays authorizable", async () => {
+    const watched = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+    })) as any;
+    expect(watched.sensor).toMatchObject({
+      status: "active",
+      approved_by: owner,
+    });
+    host.runAgentSensor.mockResolvedValueOnce({
+      exit_code: 0,
+      timed_out: false,
+      stdout: "",
+      stderr: "",
+    });
+    await makeDue(watched.sensor.sensor_id);
+    await runDue();
+    expect(lease.issued[0].uses).toEqual(["github"]);
+    expect(host.runAgentSensor.mock.calls[0][0]).toMatchObject({
+      language: "python",
+      script: expect.stringContaining("gh"),
+    });
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+    // Second check: CI finished.
+    await makeDue(watched.sensor.sensor_id);
+    await runDue();
+    const { authorization, prompt, path, thread_id } =
+      host.deliverAgentSensorWake.mock.calls[0][0];
+    // Done: never runs again, but its queued wake is still authorized.
+    expect(await runDue()).toBe(0);
+    expect(host.runAgentSensor).toHaveBeenCalledTimes(2);
+    await expect(
+      authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
+        prompt_sha256: sha(prompt),
+        path,
+        thread_id,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("a finished watcher is not scheduled again and frees its slot", async () => {
+    const make = () =>
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "file", path: "out.txt" },
+      }) as any;
+    const first = (await make()).sensor;
+    await makeDue(first.sensor_id);
+    await runDue();
+    const { rows } = await getPool().query(
+      "SELECT next_run_at, status FROM agent_sensors WHERE sensor_id=$1",
+      [first.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({ next_run_at: null, status: "active" });
+    for (let i = 0; i < 5; i++) await make();
+    await expect(make()).rejects.toThrow(/at most 5 active watchers/);
+  });
+
+  test("a reminder runs no code and wakes the agent with its own note", async () => {
+    const at = new Date(Date.now() + 3_600_000).toISOString();
+    const set = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "at", at, note: "Check that PR 992 merged" },
+    })) as any;
+    expect(set.sensor.next_run_at).toBe(at);
+    await makeDue(set.sensor.sensor_id);
+    await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toMatch(
+      /^\[Reminder\] You set this reminder for .*Check that PR 992 merged/,
+    );
+  });
+
+  test("an expired watcher says so once", async () => {
+    const set = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "never.txt" },
+      hours: 1,
+    })) as any;
+    await getPool().query(
+      "UPDATE agent_sensors SET spec=jsonb_set(spec, '{expires_at}', to_jsonb(now()::text)), script_hash=NULL WHERE sensor_id=$1",
+      [set.sensor.sensor_id],
+    );
+    // The stored spec changed, so its integrity check fails: that is the
+    // point of the hash. Recompute it as the server would for a real expiry.
+    const { rows } = await getPool().query(
+      "SELECT spec FROM agent_sensors WHERE sensor_id=$1",
+      [set.sensor.sensor_id],
+    );
+    const { sensorSpecHash } = await import("./sensors");
+    await getPool().query(
+      "UPDATE agent_sensors SET script_hash=$2 WHERE sensor_id=$1",
+      [set.sensor.sensor_id, sensorSpecHash(rows[0].spec)],
+    );
+    await makeDue(set.sensor.sensor_id);
+    await runDue();
+    expect(host.runAgentSensor).not.toHaveBeenCalled();
+    expect(host.deliverAgentSensorWake.mock.calls[0][0].prompt).toContain(
+      "Gave up",
+    );
+  });
+
+  test("verify-run accepts only a live, leased run of an active sensor", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    let liveRun: string | undefined;
+    let verdict: unknown;
+    host.runAgentSensor.mockImplementation(async (req: any) => {
+      liveRun = req.run_id;
+      verdict = await sensorControlLocal(owner, project_id, {
+        op: "verify-run",
+        agent_id,
+        run_id: req.run_id,
+      });
+      return { exit_code: 0, timed_out: false, stdout: "", stderr: "" };
+    });
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(verdict).toEqual({ live: true });
+    // After the run, or as someone else, it is not live.
+    await expect(
+      sensorControlLocal(owner, project_id, {
+        op: "verify-run",
+        agent_id,
+        run_id: liveRun!,
+      }),
+    ).rejects.toThrow(/not live/);
   });
 
   test("a membership downgrade pauses sensors that no longer fit", async () => {

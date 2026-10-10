@@ -94,6 +94,10 @@ jest.mock("./identity-routing", () => ({
 jest.mock("./api", () => ({
   getIdentity: (...args: any[]) => identity(...args),
 }));
+const sensorRun = jest.fn();
+jest.mock("./sensor-routing", () => ({
+  verifySensorRun: (...args: any[]) => sensorRun(...args),
+}));
 jest.mock("./cocalc-connector-config", () => ({
   assertAccountHome: (...args: any[]) => accountHome(...args),
 }));
@@ -219,6 +223,7 @@ beforeEach(() => {
     ensureSchema,
     deleteDirectory,
     hostLease,
+    sensorRun,
   ]) {
     mock.mockResolvedValue(undefined);
   }
@@ -519,4 +524,46 @@ test("throttled renewal still attests the live turn without extending expiry", a
     "turn finished",
   );
   expect(savedKey.expire.valueOf()).toBe(firstExpiry);
+});
+
+test("a sensor run gets its key when the project's bay confirms the run is live", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const sensorRequest = {
+    ...request,
+    turn_ref: { ...request.turn_ref, message_id: runId, sensor_run_id: runId },
+  };
+  const issued = await beginManagedCocalcConnectorTurn(sensorRequest);
+  expect(issued?.secret).toMatch(/^test\./);
+  expect(sensorRun).toHaveBeenCalledWith({
+    account_id: accountId,
+    project_id: projectId,
+    agent_id: agentId,
+    run_id: runId,
+  });
+  // No chat turn to attest on the host for a sensor run.
+  expect(hostLease).not.toHaveBeenCalled();
+});
+
+test("a sensor run that is not live, or a mismatched reference, gets nothing", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  sensorRun.mockRejectedValueOnce(new Error("sensor run is not live"));
+  await expect(
+    beginManagedCocalcConnectorTurn({
+      ...request,
+      turn_ref: {
+        ...request.turn_ref,
+        message_id: runId,
+        sensor_run_id: runId,
+      },
+    }),
+  ).rejects.toThrow("sensor run is not live");
+  await expect(
+    beginManagedCocalcConnectorTurn({
+      ...request,
+      turn_ref: { ...request.turn_ref, sensor_run_id: runId },
+    }),
+  ).rejects.toThrow("invalid sensor run reference");
+  expect(savedKey).toBeUndefined();
 });

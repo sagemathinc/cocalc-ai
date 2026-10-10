@@ -45,17 +45,25 @@ export function useAgentSensors(
   return { sensors, error, refresh };
 }
 
-/** "2 active, 1 to review" for menus and labels. */
+/** "2 active, 1 to review, 1 watching" for menus and labels. */
 export function sensorsSummary(sensors: AgentSensor[] | undefined): string {
   if (!sensors) return "";
   if (sensors.length === 0) return "None";
-  const active = sensors.filter((s) => s.status === "active").length;
+  const isWatch = (s: AgentSensor) =>
+    ((s.spec ?? s.pending_spec) as any)?.kind === "watch";
+  const active = sensors.filter(
+    (s) => s.status === "active" && !isWatch(s),
+  ).length;
+  const watching = sensors.filter(
+    (s) => s.status === "active" && isWatch(s) && s.next_run_at,
+  ).length;
   const review = sensors.filter((s) => s.pending_spec != null).length;
   const paused = sensors.filter((s) => s.status === "paused").length;
   return (
     [
       active ? `${active} active` : "",
       review ? `${review} to review` : "",
+      watching ? `${watching} watching` : "",
       paused ? `${paused} paused` : "",
     ]
       .filter(Boolean)

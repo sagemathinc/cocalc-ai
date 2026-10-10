@@ -3,8 +3,13 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Shared rules for sensors: small scripts an agent proposes and a human
-// approves, which CoCalc runs on a schedule and which may wake the agent.
+// Shared rules for sensors. A sensor is the agent, on a schedule, without the
+// model: it runs with the access the approving person gave the agent, and it
+// can wake the agent with a normal turn. Three kinds:
+// - script: a small program the agent proposes and a person approves;
+// - prompt: a scheduled prompt (the old thread automation);
+// - watch: a built-in, one-shot watcher (CI finished, file appeared, time
+//   reached) whose code is CoCalc's own, so the agent sets it without approval.
 // The hub enforces these authoritatively; the CLI and frontend use them for
 // early errors and display.
 
@@ -33,6 +38,14 @@ export const SENSOR_LIMITS = {
   maxConsecutiveFailures: 5,
   /** Sensors (any status) per agent, to bound proposals. */
   maxSensorsPerAgent: 20,
+  maxPromptBytes: 8_000,
+  /** Active built-in watchers per agent. */
+  maxWatchersPerAgent: 5,
+  /** How often a ci or file watcher checks. */
+  watchIntervalMinutes: 2,
+  /** Watchers give up (and say so) after this long. */
+  maxWatchHours: 7 * 24,
+  defaultWatchHours: 24,
 } as const;
 
 /** Tier defaults; admins override them per membership tier. */
@@ -42,17 +55,52 @@ export const SENSOR_DEFAULT_MAX_WAKES_PER_DAY = 24;
 export const SENSOR_LANGUAGES = ["sh", "python", "node"] as const;
 export type SensorLanguage = (typeof SENSOR_LANGUAGES)[number];
 
-/** What an agent proposes. */
-export interface SensorSpec {
+/** Access a script sensor may use, from the agent's Connectors menu. */
+export const SENSOR_CONNECTORS = ["cocalc", "github", "cloudflare"] as const;
+export type SensorConnector = (typeof SENSOR_CONNECTORS)[number];
+export const SENSOR_CONNECTOR_LABELS: Record<SensorConnector, string> = {
+  cocalc: "CoCalc access",
+  github: "GitHub",
+  cloudflare: "Cloudflare",
+};
+
+interface SensorSpecBase {
   title: string;
+  schedule: SensorSchedule;
+  max_wakes_per_day: number;
+}
+
+/** A program the agent wrote, run like a command in the agent's turn. */
+export interface ScriptSensorSpec extends SensorSpecBase {
+  kind: "script";
   /** Why this sensor exists and what a wake means, shown to the approver. */
   purpose: string;
   language: SensorLanguage;
   script: string;
-  schedule: SensorSchedule;
   timeout_seconds: number;
-  max_wakes_per_day: number;
+  /** Connectors the run gets (if the agent has them); nothing else. */
+  uses: SensorConnector[];
 }
+
+/** A prompt sent to the agent on a schedule: a normal turn. */
+export interface PromptSensorSpec extends SensorSpecBase {
+  kind: "prompt";
+  prompt: string;
+}
+
+export type SensorWatch =
+  | { type: "ci"; repo: string; pr: number }
+  | { type: "file"; path: string; match?: string }
+  | { type: "at"; at: string; note: string };
+
+/** A built-in, one-shot watcher; CoCalc writes its code. */
+export interface WatchSensorSpec extends SensorSpecBase {
+  kind: "watch";
+  watch: SensorWatch;
+  expires_at: string;
+}
+
+export type SensorSpec = ScriptSensorSpec | PromptSensorSpec | WatchSensorSpec;
 
 export type SensorStatus = "pending" | "active" | "paused" | "rejected";
 
@@ -92,18 +140,6 @@ export type SensorRunOutcome =
   | "timeout"
   | "skipped";
 
-/** What an agent sees of a run: never the output, which may hold secrets. */
-export type AgentSensorRunSummary = Pick<
-  AgentSensorRun,
-  | "run_id"
-  | "started_at"
-  | "finished_at"
-  | "outcome"
-  | "exit_code"
-  | "summary"
-  | "manual"
->;
-
 export interface AgentSensorRun {
   run_id: string;
   sensor_id: string;
@@ -112,7 +148,7 @@ export interface AgentSensorRun {
   outcome: SensorRunOutcome | null;
   exit_code: number | null;
   summary: string | null;
-  /** Combined, truncated output for the log; never shown to the agent. */
+  /** Combined, truncated output for the log. */
   output: string | null;
   error: string | null;
   manual: boolean;
@@ -127,6 +163,14 @@ export type AgentSensorRequest =
       spec: unknown;
       /** Revise this sensor instead of creating a new one. */
       sensor_id?: string;
+    }
+  | {
+      action: "sensor";
+      op: "watch";
+      /** {type: "ci" | "file" | "at", ...}; see validateSensorWatch. */
+      watch: unknown;
+      /** Give up after this many hours (default 24, at most 168). */
+      hours?: number;
     }
   | { action: "sensor"; op: "pause"; sensor_id: string }
   | { action: "sensor"; op: "delete"; sensor_id: string };
@@ -156,6 +200,23 @@ export interface SensorExecutionAuthorization {
   permit: string;
 }
 
+/**
+ * The credentials of one sensor run, issued by the hub for this run only, as
+ * an agent turn gets them: the agent identity and the project CLI token
+ * always, CoCalc access and CLI connector tokens only if the spec uses them.
+ */
+export interface SensorRunCredentials {
+  identity: {
+    agent_id: string;
+    run_id: string;
+    token: string;
+    expires_at: number;
+  };
+  bearer: string;
+  connector_key?: string;
+  cli_tokens?: import("@cocalc/util/ai/cli-connectors").CliConnectorTurnToken[];
+}
+
 /** Hub to host: run an approved script once. */
 export interface RunSensorRequest {
   project_id: string;
@@ -166,6 +227,9 @@ export interface RunSensorRequest {
   timeout_seconds: number;
   /** Absolute chat path of the agent; the script runs in its directory. */
   path: string;
+  /** The project's RootFS image, from the hub's project record. */
+  image: string;
+  credentials: SensorRunCredentials;
 }
 
 export interface RunSensorResult {
@@ -195,7 +259,11 @@ export type SensorControlRequest =
       host_id: string;
       authorization: SensorExecutionAuthorization;
       delivery: SensorDeliveryBinding;
-    };
+    }
+  /** A person sets up a scheduled prompt directly; no approval needed. */
+  | { op: "create-prompt"; agent_id: string; spec: unknown }
+  /** Is this sensor run live, for issuing its connector credentials? */
+  | { op: "verify-run"; agent_id: string; run_id: string };
 
 /** What the executing turn is, as the host reports it from its own queue. */
 export interface SensorDeliveryBinding {
@@ -234,74 +302,51 @@ function boundedInt(
   return value;
 }
 
+function oneLine(value: unknown, name: string, maxBytes: number): string {
+  if (typeof value !== "string" || !value.trim())
+    throw new Error(`${name} must be non-empty text`);
+  if (LINE_CONTROL_RE.test(value))
+    throw new Error(`${name} must be one line without control characters`);
+  if (bytes(value) > maxBytes)
+    throw new Error(`${name} must be at most ${maxBytes} bytes`);
+  return value.trim();
+}
+
+function text(value: unknown, name: string, maxBytes: number): string {
+  if (typeof value !== "string" || !value.trim())
+    throw new Error(`${name} must be non-empty text`);
+  if (SCRIPT_CONTROL_RE.test(value))
+    throw new Error(
+      `${name} must not contain control characters or bidirectional overrides`,
+    );
+  if (bytes(value) > maxBytes)
+    throw new Error(`${name} must be at most ${maxBytes} bytes`);
+  return value;
+}
+
+function onlyFields(s: Record<string, unknown>, allowed: string[]) {
+  const unknown = Object.keys(s).find((key) => !allowed.includes(key));
+  if (unknown) throw new Error(`unknown sensor spec field "${unknown}"`);
+}
+
 /**
- * Validate a proposed spec against the proposer's membership limits.
- * Returns a normalized copy; unknown fields are refused.
+ * Validate a proposed script or prompt spec against the membership limits.
+ * Returns a normalized copy; unknown fields are refused. A spec without a
+ * kind is a script. Watchers are made with validateSensorWatch instead.
  */
 export function validateSensorSpec(
   input: unknown,
   limits: { minIntervalMinutes: number; maxWakesPerDay: number },
-): SensorSpec {
+): ScriptSensorSpec | PromptSensorSpec {
   const s = input as Record<string, unknown>;
   if (!s || typeof s !== "object" || Array.isArray(s))
     throw new Error("sensor spec must be a JSON object");
-  const allowed = [
-    "title",
-    "purpose",
-    "language",
-    "script",
-    "schedule",
-    "timeout_seconds",
-    "max_wakes_per_day",
-  ];
-  const unknown = Object.keys(s).find((key) => !allowed.includes(key));
-  if (unknown) throw new Error(`unknown sensor spec field "${unknown}"`);
-  const { title, purpose, language, script } = s;
-  if (typeof title !== "string" || !title.trim())
-    throw new Error("sensor title must be non-empty text");
-  if (LINE_CONTROL_RE.test(title))
-    throw new Error("sensor title must be one line without control characters");
-  if (bytes(title) > SENSOR_LIMITS.maxTitleBytes)
-    throw new Error(
-      `sensor title must be at most ${SENSOR_LIMITS.maxTitleBytes} bytes`,
-    );
-  if (typeof purpose !== "string" || !purpose.trim())
-    throw new Error("sensor purpose must be non-empty text");
-  if (SCRIPT_CONTROL_RE.test(purpose))
-    throw new Error("sensor purpose must not contain control characters");
-  if (bytes(purpose) > SENSOR_LIMITS.maxPurposeBytes)
-    throw new Error(
-      `sensor purpose must be at most ${SENSOR_LIMITS.maxPurposeBytes} bytes`,
-    );
-  if (!SENSOR_LANGUAGES.includes(language as SensorLanguage))
-    throw new Error(
-      `sensor language must be one of ${SENSOR_LANGUAGES.join(", ")}`,
-    );
-  if (typeof script !== "string" || !script.trim())
-    throw new Error("sensor script must be non-empty text");
-  if (SCRIPT_CONTROL_RE.test(script))
-    throw new Error(
-      "sensor script must not contain control characters or bidirectional overrides",
-    );
-  if (bytes(script) > SENSOR_LIMITS.maxScriptBytes)
-    throw new Error(
-      `sensor script must be at most ${SENSOR_LIMITS.maxScriptBytes} bytes; keep sensors small`,
-    );
-  return {
-    title: title.trim(),
-    purpose: purpose.trim(),
-    language: language as SensorLanguage,
-    script,
+  const kind = s.kind ?? "script";
+  const common = () => ({
+    title: oneLine(s.title, "sensor title", SENSOR_LIMITS.maxTitleBytes),
     schedule: validateSensorSchedule(s.schedule, {
       minIntervalMinutes: limits.minIntervalMinutes,
     }),
-    timeout_seconds: boundedInt(
-      s.timeout_seconds,
-      "timeout_seconds",
-      SENSOR_LIMITS.minTimeoutSeconds,
-      SENSOR_LIMITS.maxTimeoutSeconds,
-      SENSOR_LIMITS.defaultTimeoutSeconds,
-    ),
     max_wakes_per_day: boundedInt(
       s.max_wakes_per_day,
       "max_wakes_per_day",
@@ -309,7 +354,201 @@ export function validateSensorSpec(
       limits.maxWakesPerDay,
       SENSOR_DEFAULT_MAX_WAKES_PER_DAY,
     ),
+  });
+  if (kind === "prompt") {
+    onlyFields(s, ["kind", "title", "prompt", "schedule", "max_wakes_per_day"]);
+    return {
+      kind: "prompt",
+      ...common(),
+      prompt: text(s.prompt, "prompt", SENSOR_LIMITS.maxPromptBytes).trim(),
+    };
+  }
+  if (kind === "watch")
+    throw new Error(
+      "watchers are set with `cocalc sensor watch`, not proposed",
+    );
+  if (kind !== "script")
+    throw new Error('sensor kind must be "script" or "prompt"');
+  onlyFields(s, [
+    "kind",
+    "title",
+    "purpose",
+    "language",
+    "script",
+    "schedule",
+    "timeout_seconds",
+    "max_wakes_per_day",
+    "uses",
+  ]);
+  const { language } = s;
+  if (!SENSOR_LANGUAGES.includes(language as SensorLanguage))
+    throw new Error(
+      `sensor language must be one of ${SENSOR_LANGUAGES.join(", ")}`,
+    );
+  if (
+    s.uses != null &&
+    (!Array.isArray(s.uses) ||
+      s.uses.some((c) => !SENSOR_CONNECTORS.includes(c as SensorConnector)))
+  )
+    throw new Error(
+      `sensor uses must list connectors from: ${SENSOR_CONNECTORS.join(", ")}`,
+    );
+  const uses = SENSOR_CONNECTORS.filter((c) =>
+    ((s.uses as unknown[]) ?? []).includes(c),
+  );
+  return {
+    kind: "script",
+    ...common(),
+    purpose: text(
+      s.purpose,
+      "sensor purpose",
+      SENSOR_LIMITS.maxPurposeBytes,
+    ).trim(),
+    language: language as SensorLanguage,
+    script: text(s.script, "sensor script", SENSOR_LIMITS.maxScriptBytes),
+    timeout_seconds: boundedInt(
+      s.timeout_seconds,
+      "timeout_seconds",
+      SENSOR_LIMITS.minTimeoutSeconds,
+      SENSOR_LIMITS.maxTimeoutSeconds,
+      SENSOR_LIMITS.defaultTimeoutSeconds,
+    ),
+    uses,
   };
+}
+
+/** The kind of a stored spec; specs from before kinds are scripts. */
+export function sensorKind(spec: SensorSpec | null | undefined) {
+  return (spec as any)?.kind ?? "script";
+}
+
+/** Which connectors a run gets: a script's `uses`, GitHub for CI watchers. */
+export function sensorUses(spec: SensorSpec): SensorConnector[] {
+  if (spec.kind === "watch") return spec.watch.type === "ci" ? ["github"] : [];
+  if (spec.kind === "prompt") return [];
+  return spec.uses ?? [];
+}
+
+const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+
+/**
+ * A built-in watcher from the agent's parameters. Its code is CoCalc's own
+ * (sensorWatchScript), so it needs no approval; it fires once and expires.
+ */
+export function validateSensorWatch(
+  input: unknown,
+  { hours, now = Date.now() }: { hours?: unknown; now?: number } = {},
+): WatchSensorSpec {
+  const w = input as Record<string, unknown>;
+  if (!w || typeof w !== "object" || Array.isArray(w))
+    throw new Error("watch must be a JSON object");
+  const lifetimeHours = boundedInt(
+    hours,
+    "hours",
+    1,
+    SENSOR_LIMITS.maxWatchHours,
+    SENSOR_LIMITS.defaultWatchHours,
+  );
+  let watch: SensorWatch;
+  let title: string;
+  let expires = now + lifetimeHours * 3_600_000;
+  if (w.type === "ci") {
+    onlyFields(w, ["type", "repo", "pr"]);
+    if (typeof w.repo !== "string" || !REPO_RE.test(w.repo))
+      throw new Error("repo must look like owner/name");
+    const pr = boundedInt(w.pr, "pr", 1, 1e9, 0);
+    watch = { type: "ci", repo: w.repo, pr };
+    title = `CI on ${w.repo}#${pr}`;
+  } else if (w.type === "file") {
+    onlyFields(w, ["type", "path", "match"]);
+    const path = oneLine(w.path, "path", 1_000);
+    let match: string | undefined;
+    if (w.match != null) {
+      match = oneLine(w.match, "match", 200);
+      try {
+        new RegExp(match);
+      } catch {
+        throw new Error("match must be a regular expression");
+      }
+    }
+    watch = { type: "file", path, ...(match ? { match } : {}) };
+    title = match ? `${path} matches /${match}/` : `${path} exists`;
+  } else if (w.type === "at") {
+    onlyFields(w, ["type", "at", "note"]);
+    const at = typeof w.at === "string" ? Date.parse(w.at) : NaN;
+    if (!Number.isFinite(at) || at <= now)
+      throw new Error("at must be a future time, like 2026-10-16T15:00:00Z");
+    if (at > now + SENSOR_LIMITS.maxWatchHours * 3_600_000)
+      throw new Error(
+        `at must be within ${SENSOR_LIMITS.maxWatchHours / 24} days`,
+      );
+    const note = oneLine(w.note, "note", 500);
+    watch = { type: "at", at: new Date(at).toISOString(), note };
+    title = `Reminder: ${note}`.slice(0, 90);
+    expires = at + 3_600_000;
+  } else {
+    throw new Error('watch type must be "ci", "file" or "at"');
+  }
+  return {
+    kind: "watch",
+    title,
+    watch,
+    schedule: {
+      kind: "interval",
+      minutes: SENSOR_LIMITS.watchIntervalMinutes,
+      timezone: "UTC",
+    },
+    max_wakes_per_day: 1,
+    expires_at: new Date(expires).toISOString(),
+  };
+}
+
+/** The script a ci or file watcher runs; parameters are embedded as JSON. */
+export function sensorWatchScript(watch: SensorWatch): string | undefined {
+  const params = `import json, os, re, subprocess, sys\nP = json.loads(${JSON.stringify(JSON.stringify(watch))})\n`;
+  if (watch.type === "ci")
+    return (
+      params +
+      `r = subprocess.run(["gh", "pr", "checks", str(P["pr"]), "--repo", P["repo"], "--json", "name,bucket"], capture_output=True, text=True)
+try:
+    checks = json.loads(r.stdout or "null")
+except ValueError:
+    checks = None
+if not isinstance(checks, list):
+    message = (r.stderr or r.stdout or "").strip()
+    if "no checks" in message:
+        sys.exit(0)
+    print(message[-1000:], file=sys.stderr)
+    sys.exit(1)
+if not checks or any(c.get("bucket") == "pending" for c in checks):
+    sys.exit(0)
+failed = [c.get("name", "?") for c in checks if c.get("bucket") in ("fail", "cancel")]
+where = P["repo"] + "#" + str(P["pr"])
+summary = ("CI finished on %s: all %d checks passed" % (where, len(checks))) if not failed else ("CI finished on %s: %d of %d checks failed: %s" % (where, len(failed), len(checks), ", ".join(failed[:5])))
+print(json.dumps({"wake": True, "summary": summary, "data": {"repo": P["repo"], "pr": P["pr"], "checks": [{"name": c.get("name"), "bucket": c.get("bucket")} for c in checks[:50]]}}))
+`
+    );
+  if (watch.type === "file")
+    return (
+      params +
+      `path = os.path.expanduser(P["path"])
+if not os.path.exists(path):
+    sys.exit(0)
+if P.get("match"):
+    try:
+        with open(path, errors="replace") as f:
+            content = f.read()[-1000000:]
+    except OSError:
+        sys.exit(0)
+    found = re.search(P["match"], content, re.M)
+    if not found:
+        sys.exit(0)
+    print(json.dumps({"wake": True, "summary": "%s now matches /%s/" % (P["path"], P["match"]), "data": {"path": P["path"], "line": content[content.rfind("\\n", 0, found.start()) + 1:].split("\\n", 1)[0][:500]}}))
+else:
+    print(json.dumps({"wake": True, "summary": "%s now exists" % P["path"], "data": {"path": P["path"]}}))
+`
+    );
+  return undefined;
 }
 
 /** A stable serialization of everything an approval covers. */
@@ -336,6 +575,7 @@ export function validateAgentSensorRequest(
     list: ["action", "op"],
     show: ["action", "op", "sensor_id"],
     propose: ["action", "op", "spec", "sensor_id"],
+    watch: ["action", "op", "watch", "hours"],
     pause: ["action", "op", "sensor_id"],
     delete: ["action", "op", "sensor_id"],
   };
@@ -344,13 +584,15 @@ export function validateAgentSensorRequest(
   if (Object.keys(r).some((key) => !keys.includes(key)))
     throw new Error("unknown sensor request field");
   if (
-    (r.op !== "list" && r.op !== "propose") ||
+    (r.op !== "list" && r.op !== "propose" && r.op !== "watch") ||
     (r.op === "propose" && r.sensor_id !== undefined)
   ) {
     if (!isValidUUID(r.sensor_id)) throw new Error("sensor_id must be a UUID");
   }
   if (r.op === "propose" && (r.spec == null || typeof r.spec !== "object"))
     throw new Error("sensor proposal requires a spec object");
+  if (r.op === "watch" && (r.watch == null || typeof r.watch !== "object"))
+    throw new Error("a watcher needs a watch object");
   return r as AgentSensorRequest;
 }
 
@@ -444,16 +686,42 @@ export function sensorWakePrompt({
 }
 
 /**
- * Directories a sensor may run programs from: CoCalc's read-only tools and the
- * image's system directories, never the project's ~/bin or ~/.local/bin.
+ * The turn a scheduled prompt starts. A person wrote or approved the prompt,
+ * so it is a normal turn, labeled so the agent knows why it is running.
  */
-export const SENSOR_TRUSTED_PATH =
-  "/opt/cocalc/bin2:/opt/cocalc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+export function scheduledPromptText({
+  title,
+  sensor_id,
+  prompt,
+}: {
+  title: string;
+  sensor_id: string;
+  prompt: string;
+}): string {
+  return [
+    `[Scheduled prompt] "${inert(title)}" (sensor ${sensor_id}): a turn a person scheduled or approved.`,
+    "",
+    prompt,
+  ].join("\n");
+}
+
+/** The turn a reminder watcher starts: the agent's own note, at its time. */
+export function reminderText({
+  sensor_id,
+  note,
+  at,
+}: {
+  sensor_id: string;
+  note: string;
+  at: string;
+}): string {
+  return `[Reminder] You set this reminder for ${at} (sensor ${sensor_id}): ${inert(note)}`;
+}
 
 /**
- * The interpreter command for an approved body. The body is an argument,
- * never a file the project could swap; shells skip their startup files and
- * Python runs isolated (no user site-packages or PYTHON* variables).
+ * The interpreter command for an approved body, run like a command in the
+ * agent's turn (the project's own software and environment). The body is an
+ * argument, never a file the project could swap.
  */
 export function sensorInterpreterArgv(
   language: SensorLanguage,
@@ -461,9 +729,9 @@ export function sensorInterpreterArgv(
 ): string[] {
   switch (language) {
     case "sh":
-      return ["/bin/bash", "--noprofile", "--norc", "-c", script, "sensor"];
+      return ["bash", "-c", script, "sensor"];
     case "python":
-      return ["python3", "-I", "-c", script];
+      return ["python3", "-c", script];
     case "node":
       return ["node", "-e", script];
   }

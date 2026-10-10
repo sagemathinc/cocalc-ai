@@ -65,6 +65,7 @@ export async function manageAgentMemory(opts: {
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const listSensors = sensors.listSensors;
 export const manageSensor = sensors.manageSensor;
+export const createScheduledPrompt = sensors.createScheduledPrompt;
 export const authorizeSensorExecution = sensors.authorizeSensorExecution;
 export const registerIdentity = identities.registerIdentity;
 export const startFreshConversation = identities.startFreshConversation;

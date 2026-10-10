@@ -8,6 +8,7 @@ import { sensorsSummary } from "./sensors-store";
 const mockApi = {
   listSensors: jest.fn(),
   manageSensor: jest.fn(),
+  createScheduledPrompt: jest.fn(),
 };
 jest.mock("./api", () => ({
   personalAgentApi: () => mockApi,
@@ -22,6 +23,8 @@ const agent = {
 } as any;
 
 const spec = {
+  kind: "script" as const,
+  uses: ["github" as const],
   title: "GitHub: new issues",
   purpose: "Wake me when an issue is opened.",
   language: "python" as const,
@@ -79,8 +82,12 @@ test("a proposal shows the full script and approves the revision reviewed", asyn
     name: "Sensor GitHub: new issues",
   });
   expect(
+    within(card).getByText(/proposed this. Nothing runs until you approve it/),
+  ).toBeTruthy();
+  // The access it gets is the agent's, narrowed to what it uses.
+  expect(
     within(card).getByText(
-      /proposed this sensor. Nothing runs until you approve it/,
+      /in this project's software, as you, with: This project's files and software, and GitHub/,
     ),
   ).toBeTruthy();
   expect(within(card).getByText("Every 30 minutes")).toBeTruthy();
@@ -161,4 +168,92 @@ test("sensorsSummary names what needs attention", () => {
       sensor({ status: "paused", spec, pending_spec: null }),
     ]),
   ).toBe("1 active, 1 to review, 1 paused");
+  expect(
+    sensorsSummary([
+      sensor({
+        status: "active",
+        pending_spec: null,
+        spec: { kind: "watch" } as any,
+        next_run_at: "2026-10-10T12:02:00.000Z",
+      }),
+    ]),
+  ).toBe("1 watching");
+});
+
+test("a person schedules a prompt for the agent", async () => {
+  mockApi.createScheduledPrompt.mockResolvedValue({});
+  const refresh = jest.fn();
+  render(
+    <AgentSensorsModal
+      agent={agent}
+      open
+      onClose={() => {}}
+      sensors={[]}
+      error=""
+      refresh={refresh}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Schedule a prompt" }),
+  );
+  const form = screen.getByRole("region", { name: "Schedule a prompt" });
+  const schedule = within(form).getByRole("button", { name: "Schedule" });
+  expect((schedule as HTMLButtonElement).disabled).toBe(true);
+  await userEvent.type(within(form).getByLabelText("Title"), "Briefing");
+  await userEvent.type(
+    within(form).getByLabelText("Prompt"),
+    "Summarize today.",
+  );
+  const times = within(form).getByLabelText(/Times/);
+  await userEvent.clear(times);
+  await userEvent.type(times, "07:00, 17:30");
+  await userEvent.click(within(form).getByLabelText("Weekdays only"));
+  await userEvent.click(schedule);
+  await waitFor(() => expect(refresh).toHaveBeenCalled());
+  const call = mockApi.createScheduledPrompt.mock.calls[0][0];
+  expect(call).toMatchObject({
+    project_id: agent.endpoint.project_id,
+    agent_id: agent.endpoint.agent_id,
+    spec: {
+      kind: "prompt",
+      title: "Briefing",
+      prompt: "Summarize today.",
+      schedule: {
+        kind: "daily",
+        times: ["07:00", "17:30"],
+        days: [1, 2, 3, 4, 5],
+      },
+    },
+  });
+});
+
+test("a watcher shows what it waits for, and is done once it fired", () => {
+  render(
+    <AgentSensorsModal
+      agent={agent}
+      open
+      onClose={() => {}}
+      sensors={[
+        sensor({
+          status: "active",
+          pending_spec: null,
+          spec: {
+            kind: "watch",
+            title: "CI on a/b#7",
+            watch: { type: "ci", repo: "a/b", pr: 7 },
+            schedule: { kind: "interval", minutes: 2, timezone: "UTC" },
+            max_wakes_per_day: 1,
+            expires_at: "2026-10-11T12:00:00.000Z",
+          },
+          next_run_at: null,
+        }),
+      ]}
+      error=""
+      refresh={() => {}}
+    />,
+  );
+  const card = screen.getByRole("region", { name: "Sensor CI on a/b#7" });
+  expect(within(card).getByText("CI checks on a/b#7 finish")).toBeTruthy();
+  expect(within(card).getByText("done")).toBeTruthy();
+  expect(within(card).queryByRole("button", { name: "Run now" })).toBeNull();
 });

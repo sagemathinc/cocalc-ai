@@ -603,58 +603,78 @@ Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used an agent 
 
 ## What a sensor is
 
-A **sensor** is a small script that CoCalc runs on a schedule in your project.
-Most runs find nothing and end quietly. When the script finds something, such
-as a new GitHub issue, a failing nightly build, or a deadline passing, it
-**wakes** the agent: the agent gets a new turn, clearly marked as coming from
-the sensor rather than from a person, with the script's summary and data.
-Cheap, deterministic checks decide when a paid agent turn is worth starting.
+A **sensor** is an agent on a schedule, without the model. It does a cheap
+check, or nothing at all, until something is worth a turn, then **wakes** the
+agent with a normal turn. It runs with the access you gave the agent in its
+**Connectors** menu (CoCalc access, GitHub, Cloudflare), and no more. If you
+know what your agent can do, you know what its sensors can do.
+
+There are three kinds:
+
+- **Scheduled prompts**: a prompt sent to the agent on a schedule, such as a
+  weekday 07:00 briefing. You set these up yourself.
+- **Watchers**: CoCalc's own one-shot checks that an agent sets for itself
+  (for example "wake me when the CI checks on this pull request finish").
+  They need no approval; they wake the agent once, or give up after a day.
+- **Scripts**: a small program the agent writes to watch something over time,
+  such as new GitHub issues. You approve the exact script first.
 
 Sensors work with Codex, Claude Code and other agents registered in a project.
 They need a project with internet access, which comes with a paid membership.
 Your membership also sets how many sensors a project may run, how often they
-may run, and how many times a day each may wake its agent.
+may run, and how many times a day each may wake its agent. Each wake is a turn
+paid by the person who set up or approved the sensor.
 
-## Ask the agent for a sensor
+## Schedule a prompt
 
-Describe what to watch, for example "tell me when someone opens a GitHub issue
-labeled urgent, checking every 30 minutes". The agent writes the script, tests
-it once in the project, and proposes it. Nothing runs yet.
+Open the chat's **Connectors** menu (the plug button next to the message box),
+choose **Sensors**, then **Schedule a prompt**. Give it a title and the prompt,
+choose **Daily at** (times in your time zone) or **Every** some minutes, and
+optionally **Weekdays only**. Each scheduled turn starts with
+"[Scheduled prompt]", so the agent knows why it is running.
 
-## Review and approve
+## Approve a script
 
-Open the chat's **Connectors** menu (the plug button next to the message box)
-and choose **Sensors**. A proposed sensor shows its purpose, schedule, limits
-and the complete script.
+Ask the agent for what you want watched, for example "tell me when someone
+opens a GitHub issue labeled urgent, checking every 30 minutes". The agent
+writes the script, tests it, and proposes it. In the **Sensors** dialog the
+proposal shows its purpose, schedule, limits, the access it uses and the
+complete script.
 
-- Read the script before you click **Approve and run**. It runs in the
-  project with the project's files and credentials, and each wake starts an
-  agent turn paid by your account.
+- A script runs like one of the agent's commands: in this project's software,
+  as you, with only the connectors it lists, if you turned them on for the
+  agent. Read it before you click **Approve and run**.
 - **Reject** discards the proposal.
 - Any change the agent proposes later needs approval again. The approved
   version keeps running until you approve the change.
+- If the project's software (its RootFS image) changes, script sensors pause
+  until you review and resume them.
+
+A script's data comes from outside sources, so its wakes say that they are
+not from a person and that the data is information, not instructions.
 
 ## Watch and control sensors
 
-The same dialog shows each sensor's status, last run and its outcome, the next
+The same dialog shows each sensor's status, last run and outcome, the next
 run, and how many times it woke the agent today (UTC).
 
-- **Run now** runs the sensor once, outside its schedule.
+- **Run now** runs it once, outside its schedule.
 - **Pause** stops scheduled runs; **Resume** starts them again. Whoever
-  resumes a sensor takes over its approval, so its wakes then run as them.
-- **Run log** lists recent runs with their output and errors.
+  resumes a sensor takes over its approval, so its runs and wakes are then
+  theirs.
+- **Run log** lists recent runs with their output and errors. The agent can
+  read its own sensors' logs too.
 - **Delete** removes the sensor and its log.
 
 A sensor pauses itself after five failed runs in a row, when its approver
-loses access to the project, or when the project loses internet access. The
-dialog shows the reason. Wakes beyond the daily limit are recorded but do not
-start a turn.
+loses access to the project, when a connector it uses is turned off, or when
+the project loses internet access. The dialog shows the reason.
 
 ## Scheduled thread automations
 
-Sensors replace the earlier scheduled thread automations. Automations no
-longer run; a thread that still has one shows a notice where you can delete
-it. Ask the agent to propose a sensor for the same job.
+Sensors replace the earlier scheduled thread automations, which no longer run.
+A thread that still has one shows a notice where you can delete it. Schedule a
+prompt for the same job instead.
 
 ## Related guides
 

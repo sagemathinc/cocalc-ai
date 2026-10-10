@@ -3,28 +3,36 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// An agent's sensors: scripts it proposed that CoCalc runs on a schedule and
-// that may wake it. People review and approve the exact script here; nothing
-// runs before that.
+// An agent's sensors. A sensor is the agent on a schedule, without the model:
+// it runs with the access you gave the agent, and wakes it with a normal turn.
+// - Scripts the agent proposes run only after you approve the exact code.
+// - Scheduled prompts are turns you schedule (or approve).
+// - Watchers are CoCalc's own one-shot checks the agent sets itself.
 
 import { useState } from "react";
 import {
   Alert,
   Button,
+  Checkbox,
   Descriptions,
   Empty,
+  Input,
+  InputNumber,
   Modal,
   Popconfirm,
+  Radio,
   Space,
   Spin,
   Tag,
 } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
-import type {
-  AgentSensor,
-  AgentSensorRun,
-  SensorManageOp,
-  SensorSpec,
+import {
+  SENSOR_CONNECTOR_LABELS,
+  type AgentSensor,
+  type AgentSensorRun,
+  type ScriptSensorSpec,
+  type SensorManageOp,
+  type SensorSpec,
 } from "@cocalc/conat/agents/sensors";
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -32,7 +40,7 @@ import { TimeAgo } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi } from "./api";
 
-const LANGUAGE: Record<SensorSpec["language"], string> = {
+const LANGUAGE: Record<ScriptSensorSpec["language"], string> = {
   sh: "Shell (bash)",
   python: "Python 3",
   node: "JavaScript (Node.js)",
@@ -55,10 +63,31 @@ const OUTCOME: Record<string, string> = {
   skipped: "Skipped",
 };
 
-function ScriptBlock({ spec }: { spec: SensorSpec }) {
+/** Specs from before kinds are scripts. */
+function kindOf(spec: SensorSpec): SensorSpec["kind"] {
+  return (spec as any).kind ?? "script";
+}
+
+const KIND_LABEL: Record<SensorSpec["kind"], string> = {
+  script: "script",
+  prompt: "scheduled prompt",
+  watch: "watcher",
+};
+
+export function sensorAccessText(spec: SensorSpec): string {
+  if (kindOf(spec) !== "script") return "";
+  const uses = (spec as ScriptSensorSpec).uses ?? [];
+  return uses.length > 0
+    ? `This project's files and software, and ${uses
+        .map((c) => SENSOR_CONNECTOR_LABELS[c])
+        .join(", ")}`
+    : "This project's files and software only";
+}
+
+function CodeBlock({ label, children }: { label: string; children: string }) {
   return (
     <pre
-      aria-label={`${LANGUAGE[spec.language]} script`}
+      aria-label={label}
       tabIndex={0}
       style={{
         maxHeight: 320,
@@ -68,38 +97,89 @@ function ScriptBlock({ spec }: { spec: SensorSpec }) {
         color: UI_COLORS.codeText,
         padding: 8,
         borderRadius: 4,
-        whiteSpace: "pre",
+        whiteSpace: "pre-wrap",
       }}
     >
-      {spec.script}
+      {children}
     </pre>
   );
 }
 
+function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
+  const w = spec.watch;
+  if (w.type === "ci") return `CI checks on ${w.repo}#${w.pr} finish`;
+  if (w.type === "file")
+    return w.match ? `${w.path} matches /${w.match}/` : `${w.path} exists`;
+  return `${new Date(w.at).toLocaleString()}: ${w.note}`;
+}
+
 function SpecDetails({ spec }: { spec: SensorSpec }) {
+  const kind = kindOf(spec);
+  if (kind === "watch") {
+    const watch = spec as Extract<SensorSpec, { kind: "watch" }>;
+    return (
+      <Descriptions
+        size="small"
+        column={1}
+        items={[
+          { key: "when", label: "Wakes once when", children: watchText(watch) },
+          {
+            key: "expires",
+            label: "Gives up",
+            children: new Date(watch.expires_at).toLocaleString(),
+          },
+        ]}
+      />
+    );
+  }
+  if (kind === "prompt") {
+    const prompt = spec as Extract<SensorSpec, { kind: "prompt" }>;
+    return (
+      <>
+        <Descriptions
+          size="small"
+          column={1}
+          items={[
+            {
+              key: "schedule",
+              label: "Schedule",
+              children: describeSensorSchedule(prompt.schedule),
+            },
+          ]}
+        />
+        <CodeBlock label="Prompt">{prompt.prompt}</CodeBlock>
+      </>
+    );
+  }
+  const script = spec as ScriptSensorSpec;
   return (
-    <Descriptions
-      size="small"
-      column={1}
-      items={[
-        { key: "purpose", label: "Purpose", children: spec.purpose },
-        {
-          key: "schedule",
-          label: "Schedule",
-          children: describeSensorSchedule(spec.schedule),
-        },
-        {
-          key: "language",
-          label: "Language",
-          children: LANGUAGE[spec.language],
-        },
-        {
-          key: "limits",
-          label: "Limits",
-          children: `${spec.timeout_seconds} s per run, at most ${spec.max_wakes_per_day} wakes per day`,
-        },
-      ]}
-    />
+    <>
+      <Descriptions
+        size="small"
+        column={1}
+        items={[
+          { key: "purpose", label: "Purpose", children: script.purpose },
+          {
+            key: "schedule",
+            label: "Schedule",
+            children: describeSensorSchedule(script.schedule),
+          },
+          {
+            key: "access",
+            label: "Access",
+            children: sensorAccessText(script),
+          },
+          {
+            key: "limits",
+            label: "Limits",
+            children: `${script.timeout_seconds} s per run, at most ${script.max_wakes_per_day} wakes per day`,
+          },
+        ]}
+      />
+      <CodeBlock label={`${LANGUAGE[script.language]} script`}>
+        {script.script}
+      </CodeBlock>
+    </>
   );
 }
 
@@ -166,6 +246,9 @@ function SensorCard({
   const [error, setError] = useState("");
   const [showCurrent, setShowCurrent] = useState(false);
   const spec = sensor.spec ?? sensor.pending_spec!;
+  const kind = kindOf(spec);
+  const done =
+    kind === "watch" && sensor.status === "active" && !sensor.next_run_at;
   const act = async (op: SensorManageOp) => {
     setBusy(op);
     setError("");
@@ -195,6 +278,7 @@ function SensorCard({
       {label}
     </Button>
   );
+  const pending = sensor.pending_spec;
   return (
     <section
       aria-label={`Sensor ${spec.title}`}
@@ -207,10 +291,11 @@ function SensorCard({
     >
       <Space wrap style={{ marginBottom: 8 }}>
         <strong>{spec.title}</strong>
-        <Tag color={STATUS_COLOR[sensor.status]}>{sensor.status}</Tag>
-        {sensor.pending_spec && sensor.spec && (
-          <Tag color="gold">change to review</Tag>
-        )}
+        <Tag>{KIND_LABEL[kind]}</Tag>
+        <Tag color={done ? "default" : STATUS_COLOR[sensor.status]}>
+          {done ? "done" : sensor.status}
+        </Tag>
+        {pending && sensor.spec && <Tag color="gold">change to review</Tag>}
       </Space>
       {error && (
         <Alert
@@ -220,7 +305,7 @@ function SensorCard({
           style={{ marginBottom: 8 }}
         />
       )}
-      {sensor.pending_spec && (
+      {pending && (
         <div style={{ marginBottom: 8 }}>
           <Alert
             type="warning"
@@ -229,12 +314,15 @@ function SensorCard({
             title={
               sensor.spec
                 ? `@${agent.name} proposed a change. The approved version keeps running until you approve it.`
-                : `@${agent.name} proposed this sensor. Nothing runs until you approve it.`
+                : `@${agent.name} proposed this. Nothing runs until you approve it.`
             }
-            description="It runs in this project with the project's files and credentials, on the schedule below, and each wake starts a turn paid by your account. Read the script before approving."
+            description={
+              kindOf(pending) === "script"
+                ? `It runs like a command of @${agent.name}: in this project's software, as you, with: ${sensorAccessText(pending)}. Each wake starts a turn paid by your account. Read the script before approving.`
+                : `It starts a turn of @${agent.name} with this prompt on this schedule, paid by your account.`
+            }
           />
-          <SpecDetails spec={sensor.pending_spec} />
-          <ScriptBlock spec={sensor.pending_spec} />
+          <SpecDetails spec={pending} />
           <Space>
             {button("approve", "Approve and run", true)}
             {button("reject", "Reject")}
@@ -248,14 +336,8 @@ function SensorCard({
           </Space>
         </div>
       )}
-      {sensor.spec && (!sensor.pending_spec || showCurrent) && (
-        <>
-          <SpecDetails spec={sensor.spec} />
-          <details style={{ marginBottom: 8 }}>
-            <summary>Approved script</summary>
-            <ScriptBlock spec={sensor.spec} />
-          </details>
-        </>
+      {sensor.spec && (!pending || showCurrent) && (
+        <SpecDetails spec={sensor.spec} />
       )}
       {sensor.spec && (
         <div style={{ color: UI_COLORS.secondary, marginBottom: 8 }}>
@@ -276,15 +358,17 @@ function SensorCard({
               Next run <TimeAgo date={sensor.next_run_at} />
             </div>
           )}
-          <div>
-            Woke the agent {sensor.wakes_today} of{" "}
-            {sensor.spec.max_wakes_per_day} times today (UTC)
-          </div>
+          {kind !== "watch" && (
+            <div>
+              Woke the agent {sensor.wakes_today} of{" "}
+              {sensor.spec.max_wakes_per_day} times today (UTC)
+            </div>
+          )}
         </div>
       )}
       <Space wrap>
-        {sensor.status === "active" && button("run", "Run now")}
-        {sensor.status === "active" && button("pause", "Pause")}
+        {sensor.status === "active" && !done && button("run", "Run now")}
+        {sensor.status === "active" && !done && button("pause", "Pause")}
         {sensor.status === "paused" &&
           sensor.spec &&
           button("resume", "Resume")}
@@ -298,6 +382,133 @@ function SensorCard({
           </Button>
         </Popconfirm>
         {sensor.spec && <Runs sensor={sensor} />}
+      </Space>
+    </section>
+  );
+}
+
+const WEEKDAYS = [1, 2, 3, 4, 5];
+
+/** A person schedules a prompt for the agent: the old thread automation. */
+function SchedulePromptForm({
+  agent,
+  onDone,
+}: {
+  agent: NamedAgent;
+  onDone: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [kind, setKind] = useState<"daily" | "interval">("daily");
+  const [times, setTimes] = useState("07:00");
+  const [minutes, setMinutes] = useState<number | null>(60);
+  const [weekdays, setWeekdays] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const days = weekdays ? { days: WEEKDAYS } : {};
+      await personalAgentApi().createScheduledPrompt({
+        project_id: agent.endpoint.project_id,
+        agent_id: agent.endpoint.agent_id,
+        spec: {
+          kind: "prompt",
+          title,
+          prompt,
+          schedule:
+            kind === "daily"
+              ? {
+                  kind: "daily",
+                  times: times
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean),
+                  timezone,
+                  ...days,
+                }
+              : { kind: "interval", minutes: minutes ?? 0, timezone, ...days },
+        },
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${err}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section
+      aria-label="Schedule a prompt"
+      style={{
+        border: `1px solid ${UI_COLORS.border}`,
+        borderRadius: 6,
+        padding: 12,
+        marginBottom: 12,
+      }}
+    >
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <label>
+          Title
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Morning briefing"
+          />
+        </label>
+        <label>
+          Prompt
+          <Input.TextArea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            autoSize={{ minRows: 3, maxRows: 10 }}
+            placeholder="Summarize today's calendar, open PRs and new support tickets."
+          />
+        </label>
+        <Radio.Group
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+          aria-label="Schedule"
+        >
+          <Radio value="daily">Daily at</Radio>
+          <Radio value="interval">Every</Radio>
+        </Radio.Group>
+        {kind === "daily" ? (
+          <label>
+            Times ({timezone}), separated by commas
+            <Input value={times} onChange={(e) => setTimes(e.target.value)} />
+          </label>
+        ) : (
+          <label>
+            Minutes between turns
+            <InputNumber
+              min={1}
+              value={minutes}
+              onChange={(value) => setMinutes(value)}
+              style={{ display: "block" }}
+            />
+          </label>
+        )}
+        <Checkbox
+          checked={weekdays}
+          onChange={(e) => setWeekdays(e.target.checked)}
+        >
+          Weekdays only
+        </Checkbox>
+        {error && <Alert type="error" title={error} showIcon />}
+        <Space>
+          <Button
+            type="primary"
+            loading={saving}
+            disabled={!title.trim() || !prompt.trim()}
+            onClick={() => void save()}
+          >
+            Schedule
+          </Button>
+          <Button onClick={onDone}>Cancel</Button>
+        </Space>
       </Space>
     </section>
   );
@@ -318,6 +529,7 @@ export function AgentSensorsModal({
   error: string;
   refresh: () => Promise<void> | void;
 }) {
+  const [creating, setCreating] = useState(false);
   return (
     <Modal
       open={open}
@@ -328,12 +540,26 @@ export function AgentSensorsModal({
       modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
     >
       <p style={{ color: UI_COLORS.secondary }}>
-        A sensor is a small script CoCalc runs on a schedule in this project.
-        When it finds something, it wakes the agent with a message marked as
-        coming from the sensor, not from a person. Ask the agent to propose one,
-        for example: "check for new GitHub issues every 30 minutes and triage
-        them". Sensors need a project with internet access.
+        A sensor is @{agent.name} on a schedule, without the model. It runs with
+        the access you gave @{agent.name} (its Connectors menu) and wakes it
+        with a normal turn, paid by you. Scripts the agent proposes run only
+        after you approve the exact code. Sensors need a project with internet
+        access.
       </p>
+      {!creating && (
+        <Button style={{ marginBottom: 12 }} onClick={() => setCreating(true)}>
+          Schedule a prompt
+        </Button>
+      )}
+      {creating && (
+        <SchedulePromptForm
+          agent={agent}
+          onDone={() => {
+            setCreating(false);
+            void refresh();
+          }}
+        />
+      )}
       {error && (
         <Alert
           type="error"
@@ -344,8 +570,10 @@ export function AgentSensorsModal({
         />
       )}
       {!sensors && !error && <Spin aria-label="Loading sensors" />}
-      {sensors?.length === 0 && (
-        <Empty description="This agent has no sensors yet." />
+      {sensors?.length === 0 && !creating && (
+        <Empty
+          description={`@${agent.name} has no sensors yet. Schedule a prompt, or ask it to watch for something.`}
+        />
       )}
       {sensors?.map((sensor) => (
         <SensorCard

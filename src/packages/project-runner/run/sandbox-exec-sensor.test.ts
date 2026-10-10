@@ -3,19 +3,15 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Sensor runs: an explicit argv on a throwaway, read-only overlay of the
-// platform's pristine default image, never the project's RootFS or image.
+// Sensor runs: an ephemeral container in the project's own software, with the
+// run's credentials mounted read-only, other turns' credentials hidden, and
+// no privilege escalation.
 
 import { sandboxExec } from "./sandbox-exec";
 
 const execFileMock = jest.fn();
-const mountRootFsMock = jest.fn();
-const disposeMock = jest.fn(async () => {});
-const mountSensorRootfsMock = jest.fn(async () => ({
-  rootfs: "/mnt/cocalc/data/cache/project-roots/run-overlay",
-  dispose: disposeMock,
-}));
-const readImageMock = jest.fn(async () => "project-chose-this:latest");
+const mountRootFsMock = jest.fn(async () => "/roots/project");
+const readImageMock = jest.fn(async () => "image-file-in-home:latest");
 
 jest.mock("node:child_process", () => ({
   ...jest.requireActual("node:child_process"),
@@ -27,7 +23,7 @@ jest.mock("fs/promises", () => ({
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({ podmanEnv: () => ({}) }));
 jest.mock("./filesystem", () => ({
-  localPath: async () => ({ home: "/projects/p/home", scratch: undefined }),
+  localPath: async () => ({ home: "/projects/p/home", scratch: "/scratch/p" }),
 }));
 jest.mock("./env", () => ({
   getEnvironment: async () => ({ PATH: "/home/user/bin:/usr/bin" }),
@@ -35,9 +31,7 @@ jest.mock("./env", () => ({
 jest.mock("./mounts", () => ({ getCoCalcMounts: () => ({}) }));
 jest.mock("./rootfs", () => ({
   getImageNamePath: () => "/projects/p/home/current-image.txt",
-  mount: (...args: any[]) => mountRootFsMock(...args),
-  mountSensorRootfs: (...args: any[]) =>
-    (mountSensorRootfsMock as any)(...args),
+  mount: (...args: any[]) => (mountRootFsMock as any)(...args),
   unmount: async () => {},
 }));
 jest.mock("./podman", () => ({
@@ -56,7 +50,7 @@ jest.mock("@cocalc/backend/logger", () => {
   return { __esModule: true, default: factory, getLogger: factory };
 });
 
-const RUN = "33333333-3333-4333-8333-333333333333";
+const PROJECT = "00000000-0000-4000-8000-000000000001";
 
 describe("sandboxExec for sensors", () => {
   beforeEach(() => {
@@ -65,65 +59,60 @@ describe("sandboxExec for sensors", () => {
       .mockImplementation((_c, _a, _o, callback) =>
         callback(undefined, "ok\n", ""),
       );
-    mountRootFsMock.mockReset();
-    mountSensorRootfsMock.mockClear();
-    disposeMock.mockClear();
+    mountRootFsMock.mockClear();
     readImageMock.mockClear();
   });
 
-  it("runs the argv on a read-only base image overlay without sudo", async () => {
+  it("runs in the trusted image, with the run's mounts and nothing else", async () => {
     await sandboxExec({
-      project_id: "00000000-0000-4000-8000-000000000001",
+      project_id: PROJECT,
       script: "",
       useEphemeral: true,
-      argv: ["/usr/bin/env", "-i", "/bin/true"],
-      platformImage: { run_id: RUN },
+      argv: ["/bin/bash", "-lc", "true"],
+      image: "hub-record-image:1",
+      extraMounts: [
+        { source: "/host/run", target: "/run/cocalc-sensor", readOnly: true },
+      ],
+      tmpfs: ["/tmp", "/home/user/.local/share/cocalc/runtime"],
+      noNewPrivileges: true,
+      pathPrefix: ["/run/cocalc-sensor/cli/bin"],
     });
-    // The platform's default image, never the project's own choice.
+    // The hub's image, not the file in the project's home; the project's
+    // own RootFS changes still apply (it is the project's software).
     expect(readImageMock).not.toHaveBeenCalled();
-    expect(mountSensorRootfsMock).toHaveBeenCalledWith({
-      image: "default-image",
-      run_id: RUN,
-    });
-    expect(mountRootFsMock).not.toHaveBeenCalled();
+    expect(mountRootFsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ config: { image: "hub-record-image:1" } }),
+    );
     const args: string[] = execFileMock.mock.calls[0][1];
+    const joined = args.join(" ");
     expect(args).toEqual(
       expect.arrayContaining([
-        "--read-only",
         "--security-opt=no-new-privileges",
+        "--tmpfs",
+        "/tmp",
+        "/home/user/.local/share/cocalc/runtime",
+        "PATH=/run/cocalc-sensor/cli/bin:/home/user/bin:/usr/bin",
       ]),
     );
-    const rootfs = args.indexOf("--rootfs");
-    expect(args[rootfs + 1]).toBe(
-      "/mnt/cocalc/data/cache/project-roots/run-overlay",
-    );
-    expect(args.slice(-3)).toEqual(["/usr/bin/env", "-i", "/bin/true"]);
-    expect(args).not.toContain("-lc");
-    expect(disposeMock).toHaveBeenCalledTimes(1);
+    // Scratch is not mounted over the in-memory /tmp.
+    expect(joined).not.toContain("/scratch/p");
+    expect(joined).toContain("/host/run");
+    expect(joined).toMatch(/\/run\/cocalc-sensor[^ ]*ro/);
+    expect(args.slice(-3)).toEqual(["/bin/bash", "-lc", "true"]);
   });
 
-  it("removes the overlay even when the run fails", async () => {
-    execFileMock.mockImplementation((_c, _a, _o, callback) =>
-      callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"),
-    );
-    await sandboxExec({
-      project_id: "00000000-0000-4000-8000-000000000001",
-      script: "",
-      useEphemeral: true,
-      argv: ["/bin/false"],
-      platformImage: { run_id: RUN },
-    });
-    expect(disposeMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("refuses a platform image run without an explicit argv", async () => {
+  it("refuses these options outside an ephemeral run, and bad tmpfs paths", async () => {
+    await expect(
+      sandboxExec({ project_id: PROJECT, script: "true", image: "x" }),
+    ).rejects.toThrow(/ephemeral/);
     await expect(
       sandboxExec({
-        project_id: "00000000-0000-4000-8000-000000000001",
-        script: "true",
+        project_id: PROJECT,
+        script: "",
         useEphemeral: true,
-        platformImage: { run_id: RUN },
+        argv: ["/bin/true"],
+        tmpfs: ["/tmp,uid=0"],
       }),
-    ).rejects.toThrow(/argv/);
+    ).rejects.toThrow(/tmpfs/);
   });
 });

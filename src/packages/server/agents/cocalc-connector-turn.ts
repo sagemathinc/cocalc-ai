@@ -104,6 +104,7 @@ interface ActiveTurnRef {
   message_date: string;
   message_id: string;
   thread_id: string;
+  sensor_run_id?: string;
 }
 
 export async function assertLiveTurn({
@@ -137,6 +138,20 @@ export async function assertLiveTurn({
     identity.thread_id !== turn.thread_id
   ) {
     throw Error("ACP turn does not belong to the registered agent");
+  }
+  if (turn.sensor_run_id) {
+    // A sensor run gets the agent's connector credentials like a turn does;
+    // its liveness is the hub's own record of the run, on the project's bay.
+    if (turn.message_id !== turn.sensor_run_id)
+      throw Error("invalid sensor run reference");
+    const { verifySensorRun } = await import("./sensor-routing");
+    await verifySensorRun({
+      account_id,
+      project_id: source_project_id,
+      agent_id,
+      run_id: turn.sensor_run_id,
+    });
+    return;
   }
   const api = createHostControlClient({
     host_id,

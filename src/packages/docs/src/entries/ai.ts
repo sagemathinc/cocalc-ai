@@ -209,7 +209,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     searchKeywords:
       "sensor sensors schedule automation wake watch periodic approve script cron",
     summary:
-      "Let an agent watch for events with an approved script that runs on a schedule and wakes it.",
+      "Schedule prompts for an agent, and let it watch for events with one-shot watchers or approved scripts that wake it.",
     title: "Watch for events with sensors",
   },
   {
