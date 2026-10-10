@@ -164,27 +164,38 @@ Every browser in a project keeps its sign-ins, so you sign in to a site once,
 not every time the browser or the project restarts. The first time someone
 opens a browser, CoCalc adds a project secret named \`COCALC_BROWSER_KEY\`
 (see **Settings**, **Secrets**), and the browsers encrypt the cookies they
-save with it. Project secrets are never in snapshots or backups, so the
-cookies in those copies are useless on their own. A browser that an agent
-starts before anyone has opened one keeps no sign-ins until you open it.
+save with it. A browser that an agent starts before anyone has opened one
+keeps no sign-ins until you open it.
+
+A browser's profile (its cookies, history and sites' data) is kept on the
+project's host, outside the project: it is not among the project's files,
+snapshots or backups. When the project moves to another host, its browsers
+start over, signed out.
 
 To sign every browser in the project out of every website, click **Forget
 sign-ins** in the address bar. This replaces the key and starts the browsers
-over with empty profiles and the same pages open. Cookies saved in copies of
-the old profiles (snapshots, backups) can then no longer be read. Deleting
-the secret also signs them out, and they keep nothing until someone opens a
-browser again.
+over with empty profiles and the same pages open. Deleting the secret also
+signs them out, and they keep nothing until someone opens a browser again.
+To end a session everywhere, sign out on the site (or revoke the session in
+the site's account settings): the site then ends it on its servers too.
 
-Only cookies are encrypted. Sites also keep data in a browser's local
-storage and IndexedDB, sometimes including sign-in tokens, and old copies of
-that stay readable. To end a session everywhere, sign out on the site (or
-revoke the session in the site's account settings): the site then ends it on
-its servers too.
+## Isolation
+
+Each browser runs in a container of its own next to the project, with
+Chromium's own sandbox, as Chrome runs on a desktop. A site that breaks into
+the browser finds none of the project's files.
+
+It also has a network of its own: it reaches the internet, but not the
+servers running in the project. To open a development server on
+\`localhost\`, click **Connect to this project's network** on a new tab's
+start page; the browser starts over on the project's network with the same
+pages open. The browser remembers the choice.
 
 ## Projects without internet access
 
 Free projects have no internet access, so their browser can only open pages
-served by the project itself, such as a development server on \`localhost\`.
+served by the project itself, such as a development server on \`localhost\`:
+it is always on the project's network.
 The browser says so and links to the membership page. A \`.browser\` file can
 also run on your computer, which uses your network.
 
@@ -212,4 +223,8 @@ also run on your computer, which uses your network.
   before the browser is connected.
 - **Clicks or typing do nothing**: someone else is driving; take over first.
 - **The page looks soft**: choose **Sharp** in the quality menu.
+- **"Cannot reach" a server on \`localhost\`**: the browser is on its own
+  network; connect it to the project's (see Isolation).
+- **The browser runs in the project, not a container of its own**: the
+  project started before its host was updated; restart the project.
 `;
