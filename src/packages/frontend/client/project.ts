@@ -249,6 +249,44 @@ export class ProjectClient {
     );
   };
 
+  // Collections live on the course project's owning bay (#1001). Ones made
+  // before that live on the bay of whoever made them: fall back to this
+  // account's bay, which is where the old code looked, but only for a
+  // collection of this course.
+  getCourseCollectionOperation = async (opts: {
+    course_project_id: string;
+    op_id: string;
+    timeout?: number;
+  }): Promise<import("@cocalc/conat/hub/api/lro").LroSummary | undefined> => {
+    const hub = this.client.conat_client.hub;
+    const op = await hub.projects.getCourseCollectionOperation(opts);
+    if (op) return op;
+    const local = await hub.lro.get({
+      op_id: opts.op_id,
+      timeout: opts.timeout,
+    });
+    return isCourseCollection(local, opts.course_project_id)
+      ? local
+      : undefined;
+  };
+
+  cancelCourseCollectionOperation = async (opts: {
+    course_project_id: string;
+    op_id: string;
+  }): Promise<void> => {
+    const hub = this.client.conat_client.hub;
+    const { found } = await hub.projects.cancelCourseCollectionOperation(opts);
+    if (found) return;
+    const local = await hub.lro.get({ op_id: opts.op_id });
+    if (!isCourseCollection(local, opts.course_project_id)) {
+      // Not canceled: it may still run. Fail rather than report success.
+      throw new Error(
+        "scheduled collection not found on the course project's bay or yours; if a collaborator scheduled it, they can change it",
+      );
+    }
+    await hub.lro.cancel({ op_id: opts.op_id });
+  };
+
   reconfigureCourseProjects = async (
     opts: import("@cocalc/conat/hub/api/projects").CourseReconfigureRequest,
   ): Promise<
@@ -872,4 +910,15 @@ if (
       },
     };
   };
+}
+
+function isCourseCollection(
+  op: import("@cocalc/conat/hub/api/lro").LroSummary | undefined,
+  course_project_id: string,
+): op is import("@cocalc/conat/hub/api/lro").LroSummary {
+  return (
+    op?.kind === "course-collect-assignment" &&
+    op.scope_type === "project" &&
+    op.scope_id === course_project_id
+  );
 }

@@ -1067,6 +1067,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin project disk entitlement override removal",
   },
+  "projects.cancelCourseCollectionOperation": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "cancels this course's own collection operation, with the same checks as lro.cancel; removes no safety control",
+  },
   "projects.cleanupRestoreStaging": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

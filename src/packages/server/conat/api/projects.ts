@@ -136,6 +136,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
+import { cancel as cancelLro } from "./lro";
 import {
   workspaceChatStoreDelete,
   workspaceChatStoreListSegments,
@@ -759,6 +760,66 @@ export async function collectAssignment({
   }
   triggerCourseCollectLroWorker();
   return courseCollectLroResponse(op);
+}
+
+function assertCourseCollectionOperation(
+  op: LroSummary,
+  course_project_id: string,
+): void {
+  if (
+    op.kind !== COURSE_COLLECT_ASSIGNMENT_LRO_KIND ||
+    op.scope_type !== "project" ||
+    op.scope_id !== course_project_id
+  ) {
+    throw new Error("not a collection operation of this course");
+  }
+}
+
+// Collections (collectAssignment) are created, read and canceled on the
+// course project's owning bay; these calls are routed there (see
+// @cocalc/conat/hub/api/routes, #1001).
+export async function getCourseCollectionOperation({
+  account_id,
+  course_project_id,
+  op_id,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  op_id: string;
+}): Promise<LroSummary | undefined> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!isValidUUID(op_id)) {
+    throw new Error("invalid op_id");
+  }
+  await assertCollabAllowRemoteProjectAccess({
+    account_id,
+    project_id: course_project_id,
+  });
+  const op = await getLro(op_id);
+  if (!op) return;
+  assertCourseCollectionOperation(op, course_project_id);
+  return op;
+}
+
+export async function cancelCourseCollectionOperation({
+  account_id,
+  course_project_id,
+  op_id,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  op_id: string;
+}): Promise<{ found: boolean }> {
+  const op = await getCourseCollectionOperation({
+    account_id,
+    course_project_id,
+    op_id,
+  });
+  if (!op) return { found: false };
+  await cancelLro({ account_id, op_id });
+  return { found: true };
 }
 
 // Students who receive an assignment after its collection was scheduled are

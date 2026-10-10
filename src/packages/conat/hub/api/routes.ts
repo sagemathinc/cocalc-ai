@@ -88,6 +88,11 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.reconfigureCourseProjects": courseProjectFromOpts,
   "projects.getCourseReconfigureOperation": courseProjectFromOpts,
   "projects.cancelCourseReconfigureOperation": courseProjectFromOpts,
+  // Course collections live on the course project's owning bay (#1001).
+  "projects.collectAssignment": courseProjectFromOpts,
+  "projects.addScheduledCollectionStudents": courseProjectFromOpts,
+  "projects.getCourseCollectionOperation": courseProjectFromOpts,
+  "projects.cancelCourseCollectionOperation": courseProjectFromOpts,
   "projects.listCourseShareableSecrets": courseProjectFromOpts,
   "projects.getCourseSecretPolicy": courseProjectFromOpts,
   "projects.previewCourseSecretSync": courseProjectFromOpts,
