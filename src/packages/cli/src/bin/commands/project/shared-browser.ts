@@ -52,6 +52,31 @@ async function serviceState(port?: number): Promise<SharedBrowserState | null> {
   }
 }
 
+// The service answers before its browser is attached (a browser in its own
+// container takes a few seconds to start): wait for it, unless it waits for
+// the user's computer to connect.
+async function attachedState(
+  port: number | undefined,
+  appId: string,
+  timeoutMs = 90_000,
+): Promise<SharedBrowserState | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const state = await serviceState(port);
+    if (
+      !state ||
+      state.connection === "connected" ||
+      state.runsOn === "computer"
+    )
+      return state;
+    if (Date.now() > deadline)
+      throw Error(
+        `the shared browser did not start; see \`cocalc project app logs ${appId}\``,
+      );
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
 async function post(port: number, path: string, body: object) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
@@ -143,7 +168,7 @@ export function registerSharedBrowserCommands(
           timeout: 60_000,
           interval: 500,
         });
-        let state = await serviceState(status.port);
+        let state = await attachedState(status.port, target.appId);
         let opened: { url: string; title: string } | undefined;
         if (opts.url) {
           if (!state)
@@ -251,7 +276,9 @@ export function registerSharedBrowserCommands(
   ): Promise<T> => {
     const { status } = await running(ctx, project, browser);
     const state =
-      status.state === "running" ? await serviceState(status.port) : null;
+      status.state === "running"
+        ? await attachedState(status.port, sharedBrowserTarget(browser).appId)
+        : null;
     if (!state)
       throw Error(
         "the shared browser is not running here; run `cocalc project browser start` in the project first",
