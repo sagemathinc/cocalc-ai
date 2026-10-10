@@ -159,6 +159,27 @@ export async function listCloudVmLog(opts: {
   return rows;
 }
 
+// A stop or delete makes starts queued before it moot; running them after
+// would undo it.
+async function dropStartsSupersededBy(
+  row: { vm_id: string; action: string },
+  client: { query: (sql: string, params: any[]) => Promise<any> },
+): Promise<void> {
+  if (row.action !== "stop" && row.action !== "delete") return;
+  await client.query(
+    `
+      UPDATE cloud_vm_work
+      SET state='failed',
+          error=$3,
+          updated_at=NOW()
+      WHERE vm_id=$1
+        AND state='queued'
+        AND action = ANY($2::text[])
+    `,
+    [row.vm_id, SUPERSEDED_BY_STOP, `superseded by a later ${row.action}`],
+  );
+}
+
 export async function enqueueCloudVmWork(row: {
   vm_id: string;
   action: string;
@@ -167,6 +188,7 @@ export async function enqueueCloudVmWork(row: {
 }): Promise<string> {
   const id = randomUUID();
   const notBefore = normalizeNotBefore(row.not_before);
+  await dropStartsSupersededBy(row, pool());
   await pool().query(
     `
       INSERT INTO cloud_vm_work
@@ -267,6 +289,7 @@ export async function enqueueCloudVmWorkOnce(
     row.vm_id,
     row.action,
     async (client) => {
+      await dropStartsSupersededBy(row, client);
       const existing = await lockQueuedWork(client, row.vm_id, row.action, [
         "queued",
         "in_progress",
@@ -311,6 +334,7 @@ export async function enqueueCloudVmFollowUpWork(
     row.vm_id,
     row.action,
     async (client) => {
+      await dropStartsSupersededBy(row, client);
       const existing = await lockQueuedWork(client, row.vm_id, row.action, [
         "queued",
       ]);
@@ -387,25 +411,70 @@ export async function requeueStaleCloudVmWork(
   return rowCount ?? 0;
 }
 
+// Work that acts on a VM's provider state or records it. At most one of these
+// runs per VM at a time, in queue order, so a stop cannot run while a start
+// for the same VM is still in flight (and finish before it). Other work
+// (RootFS pre-pulls, DNS, bootstrap) runs alongside.
+export const SERIALIZED_CLOUD_VM_ACTIONS = [
+  "provision",
+  "start",
+  "stop",
+  "restart",
+  "hard_restart",
+  "delete",
+  "probe_spot",
+  "verify_host_ready",
+  "refresh_runtime",
+];
+
+// Starts a later stop or delete makes moot: they are dropped when it is queued.
+const SUPERSEDED_BY_STOP = ["start", "restart", "hard_restart"];
+
 export async function claimCloudVmWork(opts: {
   limit?: number;
   worker_id: string;
 }): Promise<CloudVmWorkRow[]> {
+  const limit = opts.limit ?? 1;
   const client = await pool().connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query<CloudVmWorkRow>(
+    // Claims are serialized, so two workers cannot both take work for a VM
+    // that has none in flight.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      "cloud_vm_work:claim",
+    ]);
+    const { rows: candidates } = await client.query<CloudVmWorkRow>(
       `
         SELECT *
-        FROM cloud_vm_work
+        FROM cloud_vm_work w
         WHERE state='queued'
           AND (not_before IS NULL OR not_before <= NOW())
+          AND (
+            w.action <> ALL($2::text[])
+            OR NOT EXISTS (
+              SELECT 1 FROM cloud_vm_work busy
+               WHERE busy.vm_id = w.vm_id
+                 AND busy.state = 'in_progress'
+                 AND busy.action = ANY($2::text[])
+            )
+          )
         ORDER BY COALESCE(not_before, created_at), created_at
         LIMIT $1
         FOR UPDATE SKIP LOCKED
       `,
-      [opts.limit ?? 1],
+      [limit * 4, SERIALIZED_CLOUD_VM_ACTIONS],
     );
+    // At most one serialized item per VM from this batch, the oldest.
+    const seen = new Set<string>();
+    const rows: CloudVmWorkRow[] = [];
+    for (const row of candidates) {
+      if (rows.length >= limit) break;
+      if (SERIALIZED_CLOUD_VM_ACTIONS.includes(row.action)) {
+        if (seen.has(row.vm_id)) continue;
+        seen.add(row.vm_id);
+      }
+      rows.push(row);
+    }
     if (rows.length) {
       const ids = rows.map((r) => r.id);
       await client.query(

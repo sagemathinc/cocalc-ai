@@ -235,12 +235,7 @@ async function waitForProviderStatus(opts: {
   const intervalMs = opts.intervalMs ?? 5000;
   const deadline = Date.now() + timeoutMs;
   let lastStatus:
-    | "running"
-    | "starting"
-    | "off"
-    | "stopped"
-    | "error"
-    | undefined;
+    "running" | "starting" | "off" | "stopped" | "error" | undefined;
   while (Date.now() < deadline) {
     try {
       if (opts.entry.provider.getStatus) {
@@ -351,8 +346,7 @@ async function observeProviderReadyStatus(opts: {
       }
       const mapped =
         (entry.provider.mapStatus?.(remote.status) as
-          | ProviderReadyObservation["mapped_status"]
-          | undefined) ??
+          ProviderReadyObservation["mapped_status"] | undefined) ??
         (remote.status as ProviderReadyObservation["mapped_status"]);
       return {
         mapped_status: mapped,
@@ -639,6 +633,19 @@ function runtimeProviderStatusIsStopped(runtime: any): boolean {
   return ["off", "stopped", "stopping", "terminated"].includes(status);
 }
 
+// Host work writes back whole metadata objects read earlier, but never
+// decides whether the host should run: the stored desired_state is kept, so a
+// stop recorded while a handler runs is not undone. (Recovery transitions set
+// it explicitly in transitionAndQueueRecoveryStart.)
+function hostUpdateAssignment(key: string, param: number): string {
+  if (key !== "metadata") return `${key}=$${param}`;
+  return `metadata = CASE
+      WHEN project_hosts.metadata ? 'desired_state'
+        THEN jsonb_set($${param}::jsonb, '{desired_state}', project_hosts.metadata->'desired_state')
+      ELSE $${param}::jsonb - 'desired_state'
+    END`;
+}
+
 async function updateHostRow(id: string, updates: Record<string, any>) {
   const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
   if (!keys.length) return;
@@ -652,7 +659,7 @@ async function updateHostRow(id: string, updates: Record<string, any>) {
         : {}),
     });
   }
-  const sets = keys.map((key, idx) => `${key}=$${idx + 2}`);
+  const sets = keys.map((key, idx) => hostUpdateAssignment(key, idx + 2));
   await pool().query(
     `UPDATE project_hosts SET ${sets.join(", ")}, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
     [id, ...keys.map((key) => updates[key])],
@@ -667,7 +674,7 @@ async function updateHostRowUnlessStopped(
   updates: Record<string, any>,
 ): Promise<boolean> {
   const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
-  const sets = keys.map((key, idx) => `${key}=$${idx + 2}`);
+  const sets = keys.map((key, idx) => hostUpdateAssignment(key, idx + 2));
   const { rowCount } = await pool().query(
     `UPDATE project_hosts SET ${[...sets, "updated=NOW()"].join(", ")}
       WHERE id=$1 AND deleted IS NULL
@@ -1700,21 +1707,18 @@ async function handleStart(row: any) {
         const nextMachineMeta = { ...(nextMachine.metadata ?? {}) };
         if (providerId === "gcp") {
           const runtimeMeta = runtime.metadata as
-            | { data_disk_name?: string }
-            | undefined;
+            { data_disk_name?: string } | undefined;
           nextMachineMeta.data_disk_name =
             runtimeMeta?.data_disk_name ?? `${runtime.instance_id}-data`;
         } else if (providerId === "nebius") {
           const runtimeMeta = runtime.metadata as
-            | { diskIds?: { data?: string } }
-            | undefined;
+            { diskIds?: { data?: string } } | undefined;
           if (runtimeMeta?.diskIds?.data) {
             nextMachineMeta.data_disk_id = runtimeMeta.diskIds.data;
           }
         } else if (providerId === "hyperstack") {
           const runtimeMeta = runtime.metadata as
-            | { data_volume_id?: number; data_volume_name?: string }
-            | undefined;
+            { data_volume_id?: number; data_volume_name?: string } | undefined;
           if (runtimeMeta?.data_volume_id) {
             nextMachineMeta.data_volume_id = runtimeMeta.data_volume_id;
           }
@@ -2680,12 +2684,7 @@ async function handleStart(row: any) {
       }
     }
     let statusAfterStart:
-      | "running"
-      | "starting"
-      | "off"
-      | "stopped"
-      | "error"
-      | undefined;
+      "running" | "starting" | "off" | "stopped" | "error" | undefined;
     if (
       providerId === "gcp" ||
       providerId === "nebius" ||
@@ -3280,12 +3279,7 @@ async function handleRefreshRuntime(row: any) {
     network,
   });
   const mappedProviderStatus = network?.mapped_status as
-    | "running"
-    | "starting"
-    | "off"
-    | "stopped"
-    | "error"
-    | undefined;
+    "running" | "starting" | "off" | "stopped" | "error" | undefined;
   const nextMetadata = {
     ...(host.metadata ?? {}),
     runtime: {
