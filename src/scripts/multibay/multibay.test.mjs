@@ -430,6 +430,29 @@ describe("course secrets across bays", () => {
   });
 });
 
+describe("project control across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, reads its state and stops it there.
+  it("reads the project's state and active operation on its bay", async () => {
+    const state = await alice.client.call("projects.getProjectState", {
+      project_id: bob.project,
+    });
+    assert.ok(state && typeof state === "object", JSON.stringify(state));
+    const op = await alice.client.call("projects.getProjectActiveOperation", {
+      project_id: bob.project,
+    });
+    assert.ok(op === null || op?.project_id === bob.project);
+  });
+
+  it("stops the project on its bay", async () => {
+    await alice.client.call("projects.stop", { project_id: bob.project });
+    const state = await alice.client.call("projects.getProjectState", {
+      project_id: bob.project,
+    });
+    assert.notEqual(state?.state, "running");
+  });
+});
+
 describe("access requests across bays", () => {
   // The project lives on the seed; its owner (bob) and the requesters are
   // homed on either bay, so requests and their management cross bays.
