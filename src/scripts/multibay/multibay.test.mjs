@@ -445,6 +445,11 @@ describe("course reconfiguration across bays", () => {
         description: "",
         allow_collabs: false,
         datastore: true,
+        invite: {
+          subject: "Course invitation",
+          message: "Please join",
+          email_html: "<p>Please join</p>",
+        },
       },
       students: [],
     });
