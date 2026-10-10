@@ -79,12 +79,13 @@ test(
       await viewer.mouse.click(canvas!.x + 40, canvas!.y + 18);
       const typed = `f(x) = 'a' . 100% & "b"`;
       await viewer.keyboard.type(typed);
-      // One paste, delivered the way a real paste arrives (on the canvas).
+      // One paste, delivered the way a real paste arrives (on the field that
+      // takes the keyboard).
       await viewer.evaluate(() => {
         const data = new DataTransfer();
         data.setData("text", "[pasted]");
         document
-          .getElementById("screen")!
+          .getElementById("keys")!
           .dispatchEvent(
             new ClipboardEvent("paste", { clipboardData: data, bubbles: true }),
           );
@@ -100,6 +101,161 @@ test(
       await server.close();
       await browser.stop();
       await profile.cleanup();
+    }
+  },
+);
+
+test(
+  "the human's clipboard: copy a selection (keys and button), a page's own copy button, and paste",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const { createServer } = require("node:http");
+    // On 127.0.0.1, a secure context: the page has navigator.clipboard.
+    const site = createServer((_req: any, res: any) => {
+      res.setHeader("content-type", "text/html");
+      res.end(
+        `<title>clip</title><p id=p style="font:30px sans-serif;margin:0;padding:4px">Hello copy world</p>` +
+          `<input id=t style="font-size:20px;width:400px"><button id=b style="font-size:20px" onclick="navigator.clipboard.writeText('from the page button')">copy</button>`,
+      );
+    });
+    await new Promise<void>((resolve) =>
+      site.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port, cdpPort } = await server.start();
+    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const page = agent.contexts()[0].pages()[0];
+      await page.goto(`http://127.0.0.1:${site.address().port}/`);
+      const context = await human.newContext({
+        viewport: { width: 900, height: 600 },
+      });
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin: `http://127.0.0.1:${port}`,
+      });
+      const viewer = await context.newPage();
+      await viewer.goto(`http://127.0.0.1:${port}/`);
+      await viewer.waitForFunction(
+        () => document.getElementById("status")?.textContent === "live",
+      );
+      // Where things are, at the viewer's size (asked while the agent drives).
+      await page.waitForFunction(() => innerWidth > 0 && innerWidth <= 900);
+      await new Promise((r) => setTimeout(r, 500));
+      const at = await page.evaluate(() =>
+        Object.fromEntries(
+          ["p", "t", "b"].map((id) => {
+            const r = document.getElementById(id)!.getBoundingClientRect();
+            return [id, { x: r.x + 10, y: r.y + r.height / 2 }];
+          }),
+        ),
+      );
+      await viewer.click("#driver button"); // take over
+      await viewer.waitForFunction(() =>
+        document
+          .querySelector("#driver button")
+          ?.textContent?.startsWith("Hand back"),
+      );
+      const canvas = (await viewer.locator("#screen").boundingBox())!;
+      const click = (p: { x: number; y: number }, clickCount = 1) =>
+        viewer.mouse.click(canvas.x + p.x, canvas.y + p.y, { clickCount });
+      const clipboard = () =>
+        viewer.evaluate(() => navigator.clipboard.readText());
+      const until = async (ok: () => Promise<boolean>, what: string) => {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          if (await ok()) return;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        assert.fail(`${what}: clipboard has ${JSON.stringify(await clipboard())}`);
+      };
+
+      // Select the paragraph in the page, and copy it with the keyboard.
+      await click(at.p, 3);
+      await viewer.waitForFunction(
+        () => getComputedStyle(document.getElementById("copy")!).display !== "none",
+      );
+      await viewer.keyboard.press("Control+C");
+      await until(
+        async () => (await clipboard()).trim() === "Hello copy world",
+        "copied with the keyboard",
+      );
+
+      // The Copy button.
+      await viewer.evaluate(() => navigator.clipboard.writeText("other"));
+      await viewer.click("#copy");
+      await until(
+        async () => (await clipboard()).trim() === "Hello copy world",
+        "copied with the button",
+      );
+
+      // The page's own copy button reaches the human's clipboard.
+      await click(at.b);
+      await until(
+        async () => (await clipboard()) === "from the page button",
+        "the page's copy",
+      );
+
+      // Paste from the clipboard into the page.
+      await viewer.evaluate(() =>
+        navigator.clipboard.writeText("pasted from the clipboard"),
+      );
+      await click(at.t);
+      await viewer.keyboard.press("Control+V");
+      await new Promise((r) => setTimeout(r, 500));
+
+      // On a Mac or iPad, Cmd does what Ctrl does in the page: Cmd+A selects
+      // the field's text, which the viewer then holds for a copy.
+      const mac = await context.newPage();
+      await mac.addInitScript(() =>
+        Object.defineProperty(navigator, "platform", { get: () => "MacIntel" }),
+      );
+      await mac.goto(`http://127.0.0.1:${port}/`);
+      await mac.waitForFunction(
+        () => document.getElementById("status")?.textContent === "live",
+      );
+      const macCanvas = (await mac.locator("#screen").boundingBox())!;
+      await mac.mouse.click(macCanvas.x + at.t.x, macCanvas.y + at.t.y);
+      await mac.keyboard.press("Meta+A");
+      await mac.waitForFunction(
+        () =>
+          (document.getElementById("keys") as HTMLTextAreaElement).value ===
+          "pasted from the clipboard",
+      );
+      await mac.close();
+      await viewer.click("#driver button"); // hand back
+      assert.equal(
+        await page.$eval("#t", (el: HTMLInputElement) => el.value),
+        "pasted from the clipboard",
+      );
+    } finally {
+      await agent.close().catch(() => {});
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+      site.close();
     }
   },
 );

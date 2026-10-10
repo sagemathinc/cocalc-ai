@@ -21,6 +21,7 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import { CdpClient, type CdpEvent } from "./cdp-client";
 import {
+  MAX_CLIPBOARD_TEXT,
   pickSelectExpression,
   SELECT_BINDING,
   selectScript,
@@ -100,6 +101,8 @@ interface TabPage {
   fileChooserNode: number | null;
   selectContext: number | null;
   scriptId: string | null;
+  // The page's selected text, for the human's clipboard.
+  selection: string;
 }
 
 export interface SharedBrowserServerOptions {
@@ -445,6 +448,7 @@ export class SharedBrowserServer {
         fileChooserNode: null,
         selectContext: null,
         scriptId: null,
+        selection: "",
       };
       this.pages.set(targetId, page);
     }
@@ -554,6 +558,7 @@ export class SharedBrowserServer {
       await this.updateCasting(previous);
       await this.release(previous);
     }
+    this.sendSelection(ws);
     this.broadcastState();
   }
 
@@ -746,9 +751,25 @@ export class SharedBrowserServer {
       this.broadcastState();
       return;
     }
+    if (
+      method === "Page.frameNavigated" &&
+      !params.frame?.parentId &&
+      page.selection
+    ) {
+      this.setSelection(page, "");
+      return;
+    }
     if (method === "Runtime.bindingCalled" && params.name === SELECT_BINDING) {
       try {
         const payload = JSON.parse(params.payload);
+        if (payload.type === "selection" || payload.type === "copied") {
+          const text = `${payload.text ?? ""}`.slice(0, MAX_CLIPBOARD_TEXT);
+          if (payload.type === "selection") this.setSelection(page, text);
+          else
+            for (const ws of this.viewersOf(page.targetId))
+              ws.send(JSON.stringify({ type: "copied", text }));
+          return;
+        }
         page.selectContext = params.executionContextId;
         page.select = {
           options: (payload.options ?? []).slice(0, 2000),
@@ -759,6 +780,18 @@ export class SharedBrowserServer {
         // ignore malformed payloads from the page
       }
     }
+  }
+
+  private setSelection(page: TabPage, text: string): void {
+    page.selection = text;
+    for (const ws of this.viewersOf(page.targetId)) this.sendSelection(ws);
+  }
+
+  // What is selected in the tab a viewer shows.
+  private sendSelection(ws: WebSocket): void {
+    const tab = this.views.get(ws)?.tab;
+    const text = (tab && this.pages.get(tab)?.selection) || "";
+    ws.send(JSON.stringify({ type: "selection", text }));
   }
 
   // --- viewers -------------------------------------------------------------
@@ -788,6 +821,7 @@ export class SharedBrowserServer {
     if (this.options.humanFirst && this.agentSockets.size === 0)
       this.setDriver("human");
     ws.send(JSON.stringify({ type: "state", state: this.stateFor(tab) }));
+    this.sendSelection(ws);
     if (tab)
       void this.attach(this.pageFor(tab))
         .then(() => this.updateCasting(tab))

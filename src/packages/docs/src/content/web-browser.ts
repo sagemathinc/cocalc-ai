@@ -71,6 +71,17 @@ If you close the browser while you are driving, it is handed back to the
 agent after a short delay, so an agent never waits on a browser nobody is
 looking at.
 
+## Copy and paste
+
+- **Paste** with Ctrl+V (Cmd+V on a Mac or iPad) while you drive.
+- **Copy** text you select in the page with Ctrl+C (Cmd+C), or click **Copy**
+  in the address bar, which appears while text is selected. Copying works
+  even while the agent drives.
+- When a site's own copy button copies something, it goes to your clipboard.
+  If your browser asks for a click first (Safari does), click **Copy it**.
+- On a Mac or iPad, Cmd works like Ctrl in the page: Cmd+A selects all, for
+  example.
+
 ## Ask an agent to use it
 
 In a \`.browser\` file, click **Agent** in the title bar and describe the task,

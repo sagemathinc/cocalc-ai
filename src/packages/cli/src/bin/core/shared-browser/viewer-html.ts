@@ -51,6 +51,9 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #select div.dis { opacity:.45; cursor:default; }
   #select div.grp { font-weight:600; cursor:default; }
   #filechooser { left:50%; top:40px; transform:translateX(-50%); padding:12px; width:360px; display:none; }
+  #keys { position:absolute; left:0; top:0; width:1px; height:1px; opacity:0; border:0; padding:0; margin:0; resize:none; overflow:hidden; pointer-events:none; }
+  #copied { right:12px; bottom:28px; padding:10px 12px; display:none; max-width:320px; }
+  #copied p { margin:0 0 8px; }
   #status { position:absolute; right:8px; bottom:6px; font-size:11px; color:#fff; background:rgba(0,0,0,.5); padding:1px 6px; border-radius:4px; }
 </style>
 </head>
@@ -68,25 +71,31 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <select id="quality" title="Picture quality: Sharp sends crisp text once the page is still; Fast uses less bandwidth">
       <option value="sharp">Sharp</option><option value="balanced">Balanced</option><option value="fast">Fast</option>
     </select>
+    <button id="copy" title="Copy the selected text to your clipboard" style="display:none">Copy</button>
     <button id="forget" title="Sign every web browser in this project out of all websites" style="display:none">Forget sign-ins</button>
     <button id="shutdown" title="Shut down this browser (agents cannot use it until it is started again)" style="display:none">Shut down</button>
   </div>
   <div id="driver"><span class="msg"></span><button></button></div>
   <div id="stage">
-    <canvas id="screen" tabindex="0"></canvas>
+    <canvas id="screen"></canvas>
+    <!-- Takes the keyboard: a text field gets paste, copy and input-method
+         events everywhere (iPad included); a canvas does not.  It holds the
+         page's selection, selected, so a copy copies that. -->
+    <textarea id="keys" tabindex="-1" aria-hidden="true" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
     <div id="hint"></div>
     <div id="notdriving" class="overlay"><p></p><button>Take over</button></div>
     <div id="waiting" class="overlay"><p><b>Waiting for your computer.</b> This browser runs in Chrome on your computer, so sites see your network and your logins. Run this there (it needs the CoCalc CLI); a Chrome window opens, and stays connected while it runs:</p><pre></pre><div class="row"><button data-a="project">Run it in the project instead</button><button data-a="copy">Copy command</button></div></div>
     <div id="dialog" class="overlay"><pre></pre><input><div class="row"><button data-a="0">Cancel</button><button data-a="1">OK</button></div></div>
     <div id="select" class="overlay"></div>
     <div id="filechooser" class="overlay"><div style="margin-bottom:6px">Upload a project file (path relative to your home directory):</div><input placeholder="e.g. Documents/report.pdf"><div class="row"><button data-a="0">Cancel</button><button data-a="1">Upload</button></div></div>
+    <div id="copied" class="overlay"><p>The page copied text.</p><div class="row"><button data-a="0">Dismiss</button><button data-a="1">Copy it</button></div></div>
     <div id="status">connecting...</div>
   </div>
 </div>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const canvas = $("screen"), ctx = canvas.getContext("2d"), stage = $("stage");
+  const canvas = $("screen"), ctx = canvas.getContext("2d"), stage = $("stage"), keys = $("keys");
   let ws = null, state = null, retry = 0, lastPointer = { x: 20, y: 20 };
   // A browser on the user's computer: they use its window; this is a preview.
   const preview = () => state && state.runsOn === "computer";
@@ -113,6 +122,8 @@ export const VIEWER_HTML = String.raw`<!doctype html>
       }
       const msg = JSON.parse(ev.data);
       if (msg.type === "state") { state = msg.state; render(); }
+      else if (msg.type === "selection") { selection = msg.text || ""; mirror(); showCopy(); }
+      else if (msg.type === "copied") pageCopied(msg.text || "");
       else if (msg.type === "error") flash(msg.message);
     };
   }
@@ -172,7 +183,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   const QUALITY_KEY = "cocalc-browser-quality";
   function quality() { try { return localStorage.getItem(QUALITY_KEY) || "balanced"; } catch { return "balanced"; } }
   $("quality").value = quality();
-  $("quality").addEventListener("change", () => { try { localStorage.setItem(QUALITY_KEY, $("quality").value); } catch {} sendSize(true); canvas.focus(); });
+  $("quality").addEventListener("change", () => { try { localStorage.setItem(QUALITY_KEY, $("quality").value); } catch {} sendSize(true); focusKeys(); });
   // Moving the window to a screen with another pixel ratio.
   (function watchRatio() {
     const mq = matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
@@ -241,6 +252,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     runson.style.display = state.runsOn ? "" : "none";
     // On the user's computer, sign-ins are that Chrome's own business.
     $("forget").style.display = window.parent !== window && !preview() ? "" : "none";
+    showCopy();
     if (state.runsOn && document.activeElement !== runson) runson.value = state.runsOn;
     const waiting = $("waiting");
     const waitingForComputer = state.connection === "waiting" && state.runsOn === "computer";
@@ -303,7 +315,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     clearTimeout(notDrivingTimer);
     notDrivingTimer = setTimeout(() => (box.style.display = "none"), 5000);
   }
-  $("notdriving").querySelector("button").onclick = () => { $("notdriving").style.display = "none"; send({ type: "takeover" }); canvas.focus(); };
+  $("notdriving").querySelector("button").onclick = () => { $("notdriving").style.display = "none"; send({ type: "takeover" }); focusKeys(); };
   $("dialog").addEventListener("click", (e) => {
     const a = e.target.dataset && e.target.dataset.a; if (a == null) return;
     send({ type: "dialog", accept: a === "1", promptText: $("dialog").querySelector("input").value });
@@ -336,7 +348,10 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   function flash(text) { const h = $("hint"); h.textContent = text; h.style.display = "block"; clearTimeout(hintTimer); hintTimer = setTimeout(() => (h.style.display = "none"), 2500); }
 
   // --- input ---------------------------------------------------------------
-  const mods = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+  // The browser runs on Linux: on a Mac or iPad, Cmd does what Ctrl does there.
+  const apple = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
+  const mods = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey || (apple && e.metaKey) ? 2 : 0) | (e.metaKey && !apple ? 4 : 0) | (e.shiftKey ? 8 : 0);
+  const accel = (e) => (apple ? e.metaKey : e.ctrlKey) && !e.altKey;
   const BUTTONS = ["left", "middle", "right"];
   function point(e) {
     const r = canvas.getBoundingClientRect();
@@ -350,7 +365,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     const p = point(e);
     send(Object.assign({ type: "mouse", event, x: p.x, y: p.y, modifiers: mods(e), buttons: e.buttons }, extra));
   }
-  canvas.addEventListener("mousedown", (e) => { canvas.focus(); if (state && state.select) send({ type: "select", index: -1 }); mouse("mousePressed", e, { button: BUTTONS[e.button] || "left", clickCount: e.detail || 1 }); e.preventDefault(); });
+  canvas.addEventListener("mousedown", (e) => { focusKeys(); if (state && state.select) send({ type: "select", index: -1 }); mouse("mousePressed", e, { button: BUTTONS[e.button] || "left", clickCount: e.detail || 1 }); e.preventDefault(); });
   canvas.addEventListener("mouseup", (e) => mouse("mouseReleased", e, { button: BUTTONS[e.button] || "left", clickCount: e.detail || 1 }));
   let moveQueued = null;
   canvas.addEventListener("mousemove", (e) => {
@@ -364,11 +379,20 @@ export const VIEWER_HTML = String.raw`<!doctype html>
 
   const SPECIAL = { Backspace: 8, Tab: 9, Enter: 13, Escape: 27, " ": 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46 };
   function key(event, e) {
+    const shortcut = accel(e) ? e.key.toLowerCase() : "";
+    // Copy and cut: the system's copy event takes the page's selection (see
+    // below), driving or not; the page gets the keys too, for its own copy
+    // handlers (and so a cut deletes there).
+    if (shortcut === "c" || shortcut === "x") { if (human()) sendKey(event, e); return; }
+    // Paste arrives as a paste event.
+    if (shortcut === "v") return;
     if (!human()) { if (event === "keyDown") notDriving(); return; }
-    // Let the system paste; it arrives as a paste event.
-    if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) return;
-    if (e.isComposing) return;
+    // An input method or a virtual keyboard: the text arrives as input.
+    if (e.isComposing || e.key === "Unidentified" || e.keyCode === 229) return;
     e.preventDefault();
+    sendKey(event, e);
+  }
+  function sendKey(event, e) {
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
     const text = printable ? e.key : e.key === "Enter" ? "\r" : undefined;
     // The browser's own key code is the Windows virtual key code CDP wants.
@@ -376,14 +400,79 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     const keyCode = e.keyCode || SPECIAL[e.key] || (/^[a-z0-9]$/i.test(e.key) ? e.key.toUpperCase().charCodeAt(0) : 0);
     send({ type: "key", event: event === "keyDown" ? (text ? "keyDown" : "rawKeyDown") : "keyUp", key: e.key, code: e.code, text: event === "keyDown" ? text : undefined, keyCode, modifiers: mods(e) });
   }
-  canvas.addEventListener("keydown", (e) => key("keyDown", e));
-  canvas.addEventListener("keyup", (e) => key("keyUp", e));
-  canvas.addEventListener("compositionend", (e) => { if (human() && e.data) send({ type: "text", text: e.data }); });
-  // One paste listener only: a paste on the canvas also bubbles to the document.
-  document.addEventListener("paste", (e) => { if (document.activeElement !== canvas || !human()) return; e.preventDefault(); send({ type: "text", text: e.clipboardData.getData("text") }); });
+  keys.addEventListener("keydown", (e) => key("keyDown", e));
+  keys.addEventListener("keyup", (e) => key("keyUp", e));
+  let composing = false;
+  keys.addEventListener("compositionstart", () => (composing = true));
+  keys.addEventListener("compositionend", (e) => { composing = false; if (human() && e.data) send({ type: "text", text: e.data }); mirror(); });
+  // Text that came without a key (dictation, a virtual keyboard).
+  keys.addEventListener("input", (e) => {
+    if (composing) return;
+    if (human() && e.inputType === "insertText" && e.data) send({ type: "text", text: e.data });
+    mirror();
+  });
+  document.addEventListener("paste", (e) => { if (document.activeElement !== keys || !human()) return; e.preventDefault(); send({ type: "text", text: e.clipboardData.getData("text") }); });
+
+  // --- clipboard -------------------------------------------------------------
+  // The page's selection, kept selected in the keyboard's field.
+  let selection = "", copyText = null, localCopy = { text: "", at: 0 };
+  function focusKeys() { keys.focus({ preventScroll: true }); mirror(); }
+  function mirror() {
+    if (composing) return;
+    if (keys.value !== selection) keys.value = selection;
+    if (document.activeElement === keys) keys.select();
+  }
+  function showCopy() { $("copy").style.display = selection && !preview() ? "" : "none"; }
+  for (const type of ["copy", "cut"])
+    document.addEventListener(type, (e) => {
+      if (document.activeElement !== keys) return;
+      e.preventDefault();
+      const text = copyText != null ? copyText : selection;
+      if (!text) return;
+      e.clipboardData.setData("text/plain", text);
+      localCopy = { text, at: Date.now() };
+    });
+  // Within a click or a key press.
+  function copy(text) {
+    localCopy = { text, at: Date.now() };
+    const fallback = () => {
+      copyText = text; keys.value = text; keys.focus({ preventScroll: true }); keys.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch {}
+      copyText = null; mirror();
+      return ok ? Promise.resolve() : Promise.reject(new Error("copy failed"));
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).catch(fallback);
+    return fallback();
+  }
+  $("copy").onclick = () => { copy(selection).then(() => flash("Copied"), () => flash("Could not copy: press " + (apple ? "Cmd" : "Ctrl") + "+C")); focusKeys(); };
+  // The page copied something (its copy button): to the clipboard, or, where
+  // that needs a click of the user's own (Safari), offer one.
+  let copiedTimer;
+  function pageCopied(text) {
+    if (!text || (text === localCopy.text && Date.now() - localCopy.at < 3000)) return;
+    if (!document.hasFocus()) return;
+    const offer = () => {
+      const box = $("copied");
+      box.dataset.text = text;
+      box.style.display = "block";
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => (box.style.display = "none"), 15000);
+    };
+    localCopy = { text, at: Date.now() };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => flash("Copied"), offer);
+    else offer();
+  }
+  $("copied").addEventListener("click", (e) => {
+    const a = e.target.dataset && e.target.dataset.a; if (a == null) return;
+    const box = $("copied");
+    box.style.display = "none";
+    if (a === "1") copy(box.dataset.text || "").then(() => flash("Copied"), () => flash("Could not copy"));
+    focusKeys();
+  });
 
   $("url").addEventListener("mousedown", () => { if (!human()) notDriving(); });
-  $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") { send({ type: "navigate", url: $("url").value }); canvas.focus(); } });
+  $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") { send({ type: "navigate", url: $("url").value }); focusKeys(); } });
   const navButton = (id, msg) => { $(id).onclick = () => (human() ? send(msg) : notDriving()); };
   navButton("back", { type: "history", delta: -1 });
   navButton("fwd", { type: "history", delta: 1 });
