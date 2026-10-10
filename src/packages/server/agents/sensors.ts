@@ -98,6 +98,7 @@ export function toSensorRun(row: any): AgentSensorRun {
     output: row.output ?? null,
     error: row.error ?? null,
     manual: !!row.manual,
+    connectors: Array.isArray(row.connectors) ? row.connectors : [],
   };
 }
 

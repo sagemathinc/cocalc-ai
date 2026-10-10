@@ -124,6 +124,20 @@ test("an active sensor offers run, pause and its log, and shows errors", async (
         output: "stdout:\nok",
         error: null,
         manual: false,
+        connectors: ["github"],
+      },
+      {
+        run_id: "r0",
+        sensor_id: "s",
+        started_at: "2026-10-10T11:30:00.000Z",
+        finished_at: "2026-10-10T11:30:01.000Z",
+        outcome: "wake-coalesced",
+        exit_code: 0,
+        summary: "2 new issues",
+        output: null,
+        error: null,
+        manual: false,
+        connectors: [],
       },
     ],
   });
@@ -156,6 +170,10 @@ test("an active sensor offers run, pause and its log, and shows errors", async (
   expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: "Run log" }));
   expect(await screen.findByText(/Woke the agent · 1 new issue/)).toBeTruthy();
+  expect(screen.getByText("Used GitHub")).toBeTruthy();
+  expect(
+    screen.getByText(/Held while an earlier wake waited.*2 new issues/),
+  ).toBeTruthy();
 });
 
 test("sensorsSummary names what needs attention", () => {

@@ -58,6 +58,7 @@ const OUTCOME: Record<string, string> = {
   wake: "Woke the agent",
   "wake-limited": "Wanted to wake; daily limit reached",
   "wake-failed": "Wake failed",
+  "wake-coalesced": "Held while an earlier wake waited; goes with the next",
   failed: "Failed",
   timeout: "Timed out",
   skipped: "Skipped",
@@ -109,7 +110,8 @@ function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
   const w = spec.watch;
   if (w.type === "ci") return `CI checks on ${w.repo}#${w.pr} finish`;
   if (w.type === "file")
-    return w.match ? `${w.path} matches /${w.match}/` : `${w.path} exists`;
+    return w.match ? `${w.path} contains "${w.match}"` : `${w.path} exists`;
+  if (w.type === "exit") return `${w.command} exits`;
   return `${new Date(w.at).toLocaleString()}: ${w.note}`;
 }
 
@@ -221,6 +223,12 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
           </summary>
           {run.error && (
             <div style={{ color: UI_COLORS.danger }}>{run.error}</div>
+          )}
+          {run.connectors?.length > 0 && (
+            <div>
+              Used{" "}
+              {run.connectors.map((c) => SENSOR_CONNECTOR_LABELS[c]).join(", ")}
+            </div>
           )}
           {run.output && (
             <pre style={{ maxHeight: 240, overflow: "auto", fontSize: 12 }}>

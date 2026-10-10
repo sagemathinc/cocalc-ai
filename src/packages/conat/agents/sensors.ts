@@ -50,6 +50,12 @@ export const SENSOR_LIMITS = {
   maxReminderHours: 7 * 24,
   /** How much of the end of a file a file watcher reads. */
   maxWatchFileBytes: 1_000_000,
+  /** How much of the end of a command's output an exit watcher reports. */
+  maxExitLogBytes: 4_000,
+  /** Wakes held while an earlier one is queued, combined into the next. */
+  maxCoalescedWakes: 20,
+  /** A queued wake older than this no longer holds back later ones. */
+  coalesceWindowHours: 6,
 } as const;
 
 /** Tier defaults; admins override them per membership tier. */
@@ -96,7 +102,23 @@ export type SensorWatch =
   | { type: "ci"; repo: string; pr: number }
   /** match is plain text (not a regular expression). */
   | { type: "file"; path: string; match?: string }
-  | { type: "at"; at: string; note: string };
+  | { type: "at"; at: string; note: string }
+  /**
+   * A command `cocalc sensor watch exit` started in a project terminal; it
+   * records its exit code and output under sensorExitPaths(id).
+   */
+  | { type: "exit"; id: string; command: string };
+
+/** Where an exit watcher's command records its output and exit code. */
+export function sensorExitPaths(id: string): {
+  dir: string;
+  status: string;
+  log: string;
+} {
+  if (!isValidUUID(id)) throw new Error("exit watcher id must be a UUID");
+  const dir = "~/.local/share/cocalc/sensors/exits";
+  return { dir, status: `${dir}/${id}.json`, log: `${dir}/${id}.log` };
+}
 
 /** A built-in, one-shot watcher; CoCalc writes its code. */
 export interface WatchSensorSpec extends SensorSpecBase {
@@ -141,6 +163,8 @@ export type SensorRunOutcome =
   | "wake"
   | "wake-limited"
   | "wake-failed"
+  /** Held while an earlier wake was queued; the next wake includes it. */
+  | "wake-coalesced"
   | "failed"
   | "timeout"
   | "skipped";
@@ -157,6 +181,8 @@ export interface AgentSensorRun {
   output: string | null;
   error: string | null;
   manual: boolean;
+  /** Connectors whose credentials this run was given. */
+  connectors: SensorConnector[];
 }
 
 export type AgentSensorRequest =
@@ -172,7 +198,7 @@ export type AgentSensorRequest =
   | {
       action: "sensor";
       op: "watch";
-      /** {type: "ci" | "file" | "at", ...}; see validateSensorWatch. */
+      /** {type: "ci" | "file" | "at" | "exit", ...}; see validateSensorWatch. */
       watch: unknown;
       /** Give up after this many hours (default 24, at most 168). */
       hours?: number;
@@ -493,8 +519,15 @@ export function validateSensorWatch(
     watch = { type: "at", at: new Date(at).toISOString(), note };
     title = `Reminder: ${note}`.slice(0, 90);
     expires = at + 3_600_000;
+  } else if (w.type === "exit") {
+    onlyFields(w, ["type", "id", "command"]);
+    if (typeof w.id !== "string" || !isValidUUID(w.id))
+      throw new Error("an exit watcher needs the UUID of its command");
+    const command = oneLine(w.command, "command", 200);
+    watch = { type: "exit", id: w.id, command };
+    title = `Exit of ${command}`.slice(0, 90);
   } else {
-    throw new Error('watch type must be "ci", "file" or "at"');
+    throw new Error('watch type must be "ci", "file", "at" or "exit"');
   }
   return {
     kind: "watch",
@@ -510,7 +543,7 @@ export function validateSensorWatch(
   };
 }
 
-/** The script a ci or file watcher runs; parameters are embedded as JSON. */
+/** The script a ci, file or exit watcher runs; parameters are embedded as JSON. */
 export function sensorWatchScript(watch: SensorWatch): string | undefined {
   const params = `import json, os, re, subprocess, sys\nP = json.loads(${JSON.stringify(JSON.stringify(watch))})\n`;
   if (watch.type === "ci")
@@ -561,6 +594,30 @@ else:
     print(json.dumps({"wake": True, "summary": "%s now exists" % P["path"], "data": {"path": P["path"]}}))
 `
     );
+  if (watch.type === "exit") {
+    const paths = sensorExitPaths(watch.id);
+    return (
+      params +
+      `status = os.path.expanduser(${JSON.stringify(paths.status)})
+log = os.path.expanduser(${JSON.stringify(paths.log)})
+try:
+    with open(status) as f:
+        code = json.load(f).get("exit_code")
+except (OSError, ValueError, AttributeError):
+    sys.exit(0)
+tail = ""
+try:
+    size = os.path.getsize(log)
+    with open(log, "rb") as f:
+        if size > ${SENSOR_LIMITS.maxExitLogBytes}:
+            f.seek(size - ${SENSOR_LIMITS.maxExitLogBytes})
+        tail = f.read(${SENSOR_LIMITS.maxExitLogBytes}).decode("utf-8", "replace")
+except OSError:
+    pass
+print(json.dumps({"wake": True, "summary": "%s exited with code %s" % (json.dumps(P["command"]), code), "data": {"exit_code": code, "output_file": ${JSON.stringify(paths.log)}, "output_tail": tail}}))
+`
+    );
+  }
   return undefined;
 }
 
@@ -652,6 +709,51 @@ export function parseSensorWake(stdout: string): SensorWake | undefined {
     return wake;
   }
   return undefined;
+}
+
+/**
+ * One wake for several: the ones held while an earlier wake was queued, and
+ * the newest. Keeps every summary (shortened to fit) and as much of the data
+ * as fits, newest first, so a combined wake stays within the usual limits.
+ */
+export function combineSensorWakes(
+  wakes: { ran_at: Date | string; wake: SensorWake }[],
+): SensorWake {
+  if (wakes.length === 0) throw new Error("no wakes to combine");
+  if (wakes.length === 1) return wakes[0].wake;
+  const shown = wakes.slice(-SENSOR_LIMITS.maxCoalescedWakes);
+  const dropped = wakes.length - shown.length;
+  const per = Math.max(
+    20,
+    Math.floor(SENSOR_LIMITS.maxSummaryChars / shown.length) - 3,
+  );
+  const short = (text: string) =>
+    text.length > per ? `${text.slice(0, per - 1)}…` : text;
+  let summary = `${wakes.length} events: ${shown
+    .map(({ wake }) => short(wake.summary))
+    .join(" | ")}`;
+  if (summary.length > SENSOR_LIMITS.maxSummaryChars)
+    summary = `${summary.slice(0, SENSOR_LIMITS.maxSummaryChars - 1)}…`;
+  const events: { ran_at: string; summary: string; data?: unknown }[] =
+    shown.map(({ ran_at, wake }) => ({
+      ran_at: new Date(ran_at).toISOString(),
+      summary: wake.summary,
+    }));
+  // Data, newest first, while it fits.
+  let size = bytes(JSON.stringify({ events, dropped }));
+  for (let i = shown.length - 1; i >= 0; i--) {
+    const data = shown[i].wake.data;
+    if (data === undefined) continue;
+    const extra = bytes(JSON.stringify(data)) + 10;
+    if (size + extra > SENSOR_LIMITS.maxDataBytes) continue;
+    events[i].data = data;
+    size += extra;
+  }
+  return {
+    summary,
+    data:
+      dropped > 0 ? { events, earlier_events_not_shown: dropped } : { events },
+  };
 }
 
 /** Neutralize text that could pose as our own framing lines. */

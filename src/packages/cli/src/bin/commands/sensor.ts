@@ -9,6 +9,7 @@
 // resume and run sensors in the agent's Sensors dialog; there is deliberately
 // no CLI path for that.
 
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -16,12 +17,14 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import {
   parseSensorWake,
+  sensorExitPaths,
   sensorInterpreterArgv,
   validateSensorSpec,
 } from "@cocalc/conat/agents/sensors";
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
 import { sendIdentityMessage } from "../core/agent-message";
 import type { ProjectCommandDeps } from "./project";
+import { spawnProjectTerminalSession } from "./project/terminal";
 
 const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. Three kinds:
 
@@ -30,6 +33,7 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
      cocalc sensor watch ci --repo owner/name --pr 123
      cocalc sensor watch file --path out.log [--match 'BUILD DONE']
      cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
+     cocalc sensor watch exit -- make test   # runs it in a project terminal
 2. Scripts: a small program you write and a person approves. It runs like a
    command in your turn: in this project's software, as the approving person,
    with the connectors the spec lists in "uses" (if they gave them to you).
@@ -38,6 +42,8 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
    (summary up to 500 characters, data up to 16 KB; the last such line wins).
    It gets COCALC_SENSOR_STATE, a JSON file to remember what it saw, and your
    identity (cocalc agent send works). Test it first with "cocalc sensor test".
+   While one of its wakes waits for you, later ones are held and arrive
+   together in the next wake.
 3. Scheduled prompts: a prompt sent to you on a schedule, a normal turn.
 
 Script spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node",
@@ -130,9 +136,43 @@ async function testSpec(spec: any) {
   };
 }
 
+/**
+ * The command an exit watcher waits for, as a terminal runs it: its output
+ * goes to the log (and the terminal), then its exit code to the status file.
+ * The command is an argument, never spliced into the script.
+ */
+export function exitWatcherArgs(command: string, id: string): string[] {
+  const home = homedir();
+  const abs = (path: string) => path.replace(/^~/, home);
+  const paths = sensorExitPaths(id);
+  const script = [
+    'mkdir -p -- "$2"',
+    'bash -lc "$1" 2>&1 | tee -- "$3"',
+    "code=${PIPESTATUS[0]}",
+    `printf '{"exit_code": %d}\\n' "$code" > "$4.tmp" && mv -- "$4.tmp" "$4"`,
+    'echo "[exit $code]"',
+  ].join("; ");
+  return [
+    "-lc",
+    script,
+    "sensor-exit",
+    command,
+    abs(paths.dir),
+    abs(paths.log),
+    abs(paths.status),
+  ];
+}
+
 export function registerSensorCommand(
   program: Command,
-  deps: Pick<ProjectCommandDeps, "emitSuccess" | "globalsFrom">,
+  deps: Pick<
+    ProjectCommandDeps,
+    | "emitSuccess"
+    | "globalsFrom"
+    | "withContext"
+    | "resolveProjectFromArgOrContext"
+    | "resolveProjectConatClient"
+  >,
 ): Command {
   const { emitSuccess, globalsFrom } = deps;
   const sensor = program
@@ -250,6 +290,59 @@ export function registerSensorCommand(
         },
         "sensor watch at",
       ),
+    );
+  watch
+    .command("exit")
+    .description(
+      "run a command in a project terminal (it keeps running after your turn) and wake once when it exits, with its exit code and the end of its output",
+    )
+    .argument("<command...>", "the command and its arguments, after --")
+    .option("--cwd <path>", "working directory in the project")
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .action(async (commandParts: string[], opts, cmd) =>
+      deps.withContext(cmd, "sensor watch exit", async (ctx: any) => {
+        const command = commandParts.join(" ").trim();
+        if (!command) throw new Error("give the command after --");
+        const id = randomUUID();
+        const api = globalsFrom(cmd).api;
+        // The watcher first: nothing runs if it cannot be set.
+        const set: any = await sendIdentityMessage(
+          {
+            action: "sensor",
+            op: "watch",
+            watch: { type: "exit", id, command: command.slice(0, 200) },
+            ...hours(opts.hours),
+          },
+          api,
+        );
+        const terminal_id = `sensor-exit-${id.slice(0, 8)}`;
+        try {
+          await spawnProjectTerminalSession({
+            ctx,
+            resolveProjectFromArgOrContext: deps.resolveProjectFromArgOrContext,
+            resolveProjectConatClient: deps.resolveProjectConatClient,
+            id: terminal_id,
+            command: "bash",
+            args: exitWatcherArgs(command, id),
+            cwd: `${opts.cwd ?? ""}`.trim() || undefined,
+          });
+        } catch (err) {
+          // It never started, so nothing will exit: remove the watcher.
+          const sensor_id = set?.sensor?.sensor_id;
+          if (sensor_id)
+            await sendIdentityMessage(
+              { action: "sensor", op: "delete", sensor_id },
+              api,
+            ).catch(() => undefined);
+          throw err;
+        }
+        return {
+          ...set,
+          terminal_id,
+          output_file: sensorExitPaths(id).log,
+          message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output. You can end your turn now.`,
+        };
+      }),
     );
   sensor
     .command("list")

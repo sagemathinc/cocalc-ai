@@ -29,6 +29,8 @@ export interface SensorRunLease {
   credentials: SensorRunCredentials;
   /** Connectors the spec uses that this agent does not have for the account. */
   missing: SensorConnector[];
+  /** Connectors whose credentials the run was given, for its log. */
+  given: SensorConnector[];
   /** Keep short-lived connector keys alive during a long run. */
   renew: () => Promise<void>;
   /** End everything issued for the run. Never throws. */
@@ -136,7 +138,8 @@ export async function issueSensorRunCredentials({
         if (!tokens.some((token) => token.connector === connector))
           missing.push(connector);
     }
-    return { credentials, missing, renew, release };
+    const given = uses.filter((c) => !missing.includes(c));
+    return { credentials, missing, given, renew, release };
   } catch (err) {
     await release();
     throw err;
