@@ -1198,6 +1198,8 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
   ...adHocEntries(
     [
       "account_rehome_operations",
+      // Forwarded hub API calls this bay ran, for exactly-once repeats.
+      "hub_api_forwarded_calls",
       "long_running_operations",
       "parallel_ops_limits",
       "project_rehome_operations",
