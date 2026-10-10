@@ -6,6 +6,7 @@
 import type { ChatSnapshot, ProjectedChatMessage } from "./types";
 import { getAgentMessageTexts } from "@cocalc/chat";
 import { markdownToSpeechText } from "./speech-text";
+import { trimTrailingChars } from "@cocalc/util/linear-text";
 
 const MAX_COMMENTARY = 3;
 const MAX_COMMENTARY_CHARS = 220;
@@ -120,10 +121,7 @@ export function buildLiveProgress(
 }
 
 export function isProgressQuestion(text: string): boolean {
-  const question = text
-    .trim()
-    .toLowerCase()
-    .replace(/[?.!]+$/, "");
+  const question = trimTrailingChars(text.trim().toLowerCase(), "?.!");
   return /^(what(?:'s| is| has| have) (?:happening|happened|going on|the (?:status|progress)|you (?:done|found|working on))|how(?:'s| is) (?:it|the (?:work|task|progress)) (?:going|doing)|which tests? (?:are |is )?(?:still )?running|are you (?:waiting(?: for me)?|blocked|still working)|any (?:updates|progress|blockers)|give me (?:an? )?(?:update|status)|what happened recently|what have you found)$/.test(
     question,
   );

@@ -12,6 +12,7 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { COPY_CANCELED_CODE, copyProjectFiles } from "./copy";
 import { admitCopyDestinations } from "./copy-admission";
 import { listCopiesByOpId } from "./copy-db";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:copy-worker");
 
@@ -176,6 +177,12 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({
+      project_ids: [
+        src?.project_id,
+        ...dests.map((dest: any) => dest?.project_id),
+      ],
+    });
     await admitCopyDestinations({
       account_id,
       dests,

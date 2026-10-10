@@ -1610,7 +1610,13 @@ export class PersonalAgentStore {
           member.kind === "registered"
             ? `registered/${member.endpoint.project_id}/${member.endpoint.agent_id}`
             : agentRpcSourceKey(member.source);
-        const current = peers.get(key) ?? { member, networks: [] };
+        const current = peers.get(key) ?? {
+          member,
+          ...(member.kind === "registered" && !isExternalAgentSource(source)
+            ? { same_project: member.endpoint.project_id === source.project_id }
+            : {}),
+          networks: [],
+        };
         current.networks.push({
           agent_network_id: network.agent_network_id,
           title: network.title,

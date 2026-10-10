@@ -256,6 +256,7 @@ changes data. With an account profile, for example:
 | \`account api-key list\` | Lists key metadata without requiring fresh authentication. |
 | \`account api-key create\` and \`account api-key delete\` | Require fresh authentication with recent second-factor verification. Creating a key returns its secret; keep that output private. |
 | \`admin data datasets\` and \`admin data views list\` | These reads require an admin account and fresh authentication with recent second-factor verification. |
+| \`project snapshot delete\` | Removing snapshots requires fresh account authentication and project permissions. \`--dry-run\` previews the selection without deleting it. |
 
 Use the supported credential for each command and handle permission errors
 separately from expired approval. Elevation does not grant an admin role or
@@ -380,12 +381,14 @@ with \`--help\` for its arguments, selectors, defaults, and examples.
 | Find documentation and agent context | \`cocalc docs --help\` |
 | Sign in, inspect profiles, request fresh authentication | \`cocalc auth --help\` |
 | Find, select, start, or inspect projects | \`cocalc project --help\` |
+| Inspect and remove retained project snapshots | \`cocalc project snapshot --help\` |
 | List, read, upload, download, and search files | \`cocalc project file --help\` |
 | Run a shell command or retrieve its asynchronous result | \`cocalc project exec --help\` |
 | Work with a persistent terminal session | \`cocalc project terminal --help\` |
 | Inspect, edit, run, and save live notebooks | \`cocalc project jupyter --help\` |
 | Build supported documents | \`cocalc project build --help\` |
 | Work with project chats and scheduled agent tasks | \`cocalc project chat --help\` |
+| Find, copy, and manage named agents | \`cocalc agent --help\` |
 | Start project Codex work | \`cocalc project codex --help\` |
 | Inspect and control active Codex sessions | \`cocalc codex --help\` |
 | Manage workspaces and select one in a browser | \`cocalc workspaces --help\` |

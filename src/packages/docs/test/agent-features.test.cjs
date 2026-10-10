@@ -79,7 +79,9 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
     assert.ok(body.includes(phrase), phrase);
   const claude = full.getDocsEntry("ai/claude-code").body;
   assert.match(claude, /still need live qualification/);
-  assert.match(claude, /privately stored selection and connectors choice/);
+  assert.match(claude, /stored payment selection/);
+  assert.match(claude, /including its claude\.ai connector preference/);
+  assert.match(claude, /most recent human turn in the recipient/);
   assert.match(claude, /request_user_input_async/);
   assert.match(claude, /if that turn has already finished/);
   assert.doesNotMatch(claude, /recipient path rejects ACP guidance/);

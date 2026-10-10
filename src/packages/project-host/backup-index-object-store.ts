@@ -14,6 +14,7 @@ import { createGunzip, createGzip } from "node:zlib";
 import getLogger from "@cocalc/backend/logger";
 import { getR2ObjectToFile, putR2ObjectFromFile } from "@cocalc/backend/r2";
 import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:backup-index-object-store");
 
@@ -26,7 +27,7 @@ export interface UploadedBackupIndexObject {
 }
 
 function normalizeKeyPrefix(prefix: string): string {
-  return prefix.replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimTrailingSlashes(prefix.replace(/^\/+/, ""));
 }
 
 export function buildBackupIndexObjectKey({

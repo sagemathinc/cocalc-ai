@@ -278,6 +278,7 @@ import {
   replacePathFromStaging,
 } from "./path-copy-archive";
 import { flushJupyterNotebooksToDisk } from "./jupyter-collaborative-flush";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -4076,7 +4077,7 @@ async function getOversizedFiles({
   paths?: string[];
 }): Promise<OversizedFilesReport | null> {
   let subpaths = (paths ?? []).map((path) =>
-    path.replace(/^(\.\/)+/, "").replace(/\/+$/, ""),
+    trimTrailingSlashes(path.replace(/^(\.\/)+/, "")),
   );
   // Scanning the home directory itself means scanning everything.
   if (subpaths.some((path) => path === "" || path === ".")) {

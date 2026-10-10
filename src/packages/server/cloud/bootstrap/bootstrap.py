@@ -4595,20 +4595,40 @@ JOB = re.compile(r"job-(\d+)-(\d+)-(\d+)-(\d+)-(\d+)-(" + UUID + r")$")
 PROJECT_OOM_SCORE_ADJ = "500"
 LEGACY_JOB = re.compile(r"job-\d+-\d+-\d+-\d+-" + UUID + r"$")
 
+class LifecycleBusy(RuntimeError):
+    pass
+
+class AdmissionBlocked(RuntimeError):
+    pass
+
+class AdmissionCancelled(RuntimeError):
+    pass
+
+def stdin_closed():
+    # The runtime cancels by ending stdin, then SIGKILLs 20s later, while
+    # admission may wait much longer for the lifecycle lock. Detect the hangup
+    # without reading: the job configuration may still be queued unread.
+    hangup = select.POLLHUP | select.POLLERR | getattr(select, "POLLRDHUP", 0)
+    poller = select.poll()
+    poller.register(0, select.POLLIN | getattr(select, "POLLRDHUP", 0))
+    return any(events & hangup for _, events in poller.poll(0))
+
 @contextmanager
-def lifecycle_lock():
+def lifecycle_lock(wait=15, cancelled=None):
     fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         if os.fstat(fd).st_uid != 0:
             raise RuntimeError("untrusted lifecycle lock")
-        until = time.monotonic() + 15
+        until = time.monotonic() + wait
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                if cancelled is not None and cancelled():
+                    raise AdmissionCancelled("cancelled while waiting for the lifecycle lock")
                 if time.monotonic() >= until:
-                    raise RuntimeError("project lifecycle busy")
+                    raise LifecycleBusy("project lifecycle busy")
                 time.sleep(0.05)
         yield fd
     finally:
@@ -4659,7 +4679,7 @@ def active_state(project):
     if (not value or value["status"] != "active" or
         value["inode"] != parent.stat().st_ino or
         not alive(value["init"], value["start"]) or not member(value["init"], parent)):
-        raise RuntimeError("project job admission is blocked")
+        raise AdmissionBlocked("project job admission is blocked")
     return value
 
 def activate(project, init):
@@ -5058,23 +5078,60 @@ def launcher_config(config):
     # Enforced here, not trusted from the caller.
     return args, dict(env, DBUS_SESSION_BUS_ADDRESS=NO_USER_BUS)
 
+class ProjectRestarted(RuntimeError):
+    pass
+
+# Host maintenance (e.g. the I/O policy reconcile) can hold the lifecycle lock
+# for a minute or more. Admission waits it out instead of failing the command.
+ADMISSION_LOCK_WAIT_SECONDS = 120
+
+def admission_wait(deadline):
+    return max(0, min(ADMISSION_LOCK_WAIT_SECONDS, deadline - time.monotonic()))
+
+def rejection_reason(error):
+    # Fixed codes only: privileged diagnostics never reach the runtime.
+    if isinstance(error, LifecycleBusy):
+        return "host-busy"
+    if isinstance(error, AdmissionBlocked):
+        return "project-not-running"
+    if isinstance(error, ProjectRestarted):
+        return "project-restarted"
+    if isinstance(error, AdmissionCancelled):
+        return "cancelled"
+    if isinstance(error, ValueError):
+        return "invalid-request"
+    return "admission-failed"
+
+def reject(error):
+    # Only before the scope exists, so no process was launched. Without this
+    # frame the runtime could not tell a refusal from an unconfirmed cleanup.
+    frame = json.dumps({"type": "rejected", "reason": rejection_reason(error)}).encode() + b"\n"
+    try:
+        os.write(1, frame)
+    except OSError:
+        pass
+
 def supervise(project, job, owner, timeout_ms):
     admitted = time.monotonic()
-    if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
-        raise ValueError("invalid job identity")
-    if not 0 < timeout_ms <= 86400000:
-        raise ValueError("invalid deadline")
-    account = pwd.getpwnam(RUNTIME_USER)
-    if account.pw_uid == 0 or account.pw_gid == 0:
-        raise ValueError("managed jobs require an unprivileged runtime account")
-    if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
-        raise ValueError("job owner is not the runtime user")
-    owner_start = identity(owner)
-    with lifecycle_lock():
-        generation = active_state(project)["generation"]
-    args, env = launcher_config(config_from_stdin())
+    try:
+        if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
+            raise ValueError("invalid job identity")
+        if not 0 < timeout_ms <= 86400000:
+            raise ValueError("invalid deadline")
+        deadline = admitted + timeout_ms / 1000
+        account = pwd.getpwnam(RUNTIME_USER)
+        if account.pw_uid == 0 or account.pw_gid == 0:
+            raise ValueError("managed jobs require an unprivileged runtime account")
+        if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
+            raise ValueError("job owner is not the runtime user")
+        owner_start = identity(owner)
+        with lifecycle_lock(admission_wait(deadline), cancelled=stdin_closed):
+            generation = active_state(project)["generation"]
+        args, env = launcher_config(config_from_stdin())
+    except Exception as error:
+        reject(error)
+        raise
     parent = POOL / ("project-" + project)
-    deadline = admitted + timeout_ms / 1000
     # Kernel-owned directory name is durable reaper metadata, including the
     # monotonic hard deadline. A SIGSTOP'ed but live guard cannot renew it.
     scope = parent / f"job-{owner}-{owner_start}-{os.getpid()}-{identity(os.getpid())}-{int(deadline * 1000)}-{job}"
@@ -5088,6 +5145,9 @@ def supervise(project, job, owner, timeout_ms):
     stopped = False
     result = 1
     final_until = None
+    # Set just before the scope is created; until then nothing can need cleanup.
+    attempted = False
+    rejection = None
     def stop(*_):
         nonlocal stopped
         stopped = True
@@ -5099,14 +5159,16 @@ def supervise(project, job, owner, timeout_ms):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        with lifecycle_lock():
+        with lifecycle_lock(admission_wait(deadline),
+                            cancelled=lambda: stopped or stdin_closed()):
             reap_project_locked(project)
             if active_state(project)["generation"] != generation:
-                raise RuntimeError("project generation changed before admission")
+                raise ProjectRestarted("project generation changed before admission")
             # Observe cancellation after the sweep/lock wait, not before it.
             if stopped or time.monotonic() >= deadline or not alive(owner, owner_start) or not lease_connected():
                 result = 130
                 return
+            attempted = True
             scope.mkdir(mode=0o755)
             if not (scope / "cgroup.kill").exists():
                 raise RuntimeError("atomic job cancellation unavailable")
@@ -5171,14 +5233,22 @@ def supervise(project, job, owner, timeout_ms):
                 break
         if stopped:
             result = 130
+    except Exception as error:
+        if not attempted:
+            rejection = error
+        raise
     finally:
         # Even success kills detached leftovers. Do not report success until
         # populated=0 AND rmdir confirm that there is no remaining authority.
         final_until = time.monotonic() + OUTPUT_FINAL_DRAIN_SECONDS
         try:
-            with lifecycle_lock():
-                leftovers = live_scope_processes(scope) if completed and not stopped else 0
-                kill_scope(scope)
+            leftovers = 0
+            # Before the scope was attempted there is nothing to kill, so do not
+            # wait for the lock again (it may be why admission failed).
+            if attempted:
+                with lifecycle_lock():
+                    leftovers = live_scope_processes(scope) if completed and not stopped else 0
+                    kill_scope(scope)
             if child is not None:
                 os.waitpid(child, 0)
             for fd in ([pipes[0][0]] + [pair[1] for pair in pipes]) if pipes else []:
@@ -5201,7 +5271,10 @@ def supervise(project, job, owner, timeout_ms):
                         "use cocalc project terminal spawn for persistent services.\n")
                 emit({"type": "output", "stream": "stderr",
                       "data": base64.b64encode(note.encode()).decode("ascii")})
-            emit({"type": "exit", "code": result, "cleanup": True})
+            if rejection is not None:
+                emit({"type": "rejected", "reason": rejection_reason(rejection)})
+            else:
+                emit({"type": "exit", "code": result, "cleanup": True})
         except Exception:
             # Leave the cgroup for the independent orphan sweep; no clean exit frame.
             raise RuntimeError("job containment cleanup not confirmed") from None
@@ -6568,6 +6641,9 @@ PROJECT_NETWORK_NFT="/usr/sbin/nft"
 PROJECT_NETWORK_TABLE="cocalc_project_network"
 PROJECT_NETWORK_CHAIN="output"
 PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"
+# Background maintenance takes the lock once per project, so it waits longer
+# rather than failing the whole sweep on one busy moment.
+PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS="60"
 # A recovered host can legitimately hold the global cgroup lock while its
 # project I/O policy is reconciled. Foreground starts should wait for that
 # bounded maintenance pass instead of failing after the short mutation timeout.
@@ -6720,9 +6796,10 @@ prepare_privileged_rustic_cache() {
 }
 
 acquire_project_cgroup_lock() {
+  local wait="${1:-$PROJECT_CGROUP_LOCK_WAIT_SECONDS}"
   exec 9>/run/lock/cocalc-project-cgroups.lock
-  if ! flock -x -w "$PROJECT_CGROUP_LOCK_WAIT_SECONDS" 9; then
-    deny "project-cgroup-lock-timeout" "$PROJECT_CGROUP_LOCK_WAIT_SECONDS"
+  if ! flock -x -w "$wait" 9; then
+    deny "project-cgroup-lock-timeout" "$wait"
   fi
 }
 
@@ -7435,13 +7512,20 @@ reconcile_project_io_policy() {
   normalize_project_io_class_state
   configure_project_pool_hierarchy
   configure_maintenance_cgroup
+  release_project_lock
+  # Lock each project separately: the whole sweep can take minutes on a busy
+  # host, and holding the host-wide lock that long fails job admission,
+  # snapshots and project starts, whose waits are seconds. Starts apply their
+  # own policy under the lock, and a project that stopped meanwhile is skipped.
   for pool in "${PROJECT_POOL_CGROUP_DEFAULT}"/project-*; do
-    [ -d "$pool" ] || continue
     project_id="${pool##*/project-}"
     is_project_uuid "$project_id" || continue
-    apply_existing_project_io_policy "$pool" "$project_id"
+    acquire_project_cgroup_lock "$PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS"
+    if [ -d "$pool" ]; then
+      apply_existing_project_io_policy "$pool" "$project_id"
+    fi
+    release_project_lock
   done
-  release_project_lock
 }
 
 enable_cgroup_controllers() {
@@ -12590,7 +12674,16 @@ EOF
     echo "Podman runroot validation failed: expected=${desired_runroot} reported=${reported_runroot}" >&2
     return 1
   fi
-  podman_ps_once "${runtime_dir}" "${cgroup_manager}"
+  podman_ps_once "${runtime_dir}" "${cgroup_manager}" || return "$?"
+  # Cgroup io.max does not survive a reboot. Restore the project I/O policy
+  # before project-host starts: its startup conformance check fails closed
+  # on a missing limit, which cost an extra project-host restart per boot.
+  # Best effort; the regular reconcile and that check still enforce it.
+  if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
+    timeout --kill-after=5s 90s /usr/local/sbin/cocalc-runtime-storage \
+      reconcile-project-io-policy >&2 ||
+      echo "warning: unable to restore project I/O policy before project-host start" >&2
+  fi
 }
 
 preflight_podman_runtime() {
@@ -13980,6 +14073,97 @@ exit 0
     os.chmod("/etc/cron.d/cocalc-nvidia-cdi", 0o644)
 
 
+def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
+    """Digests of what a running project-host stack loaded at startup.
+
+    The boot-time reconcile rewrites everything; it must only restart the
+    stack (which systemd already started at boot) when one of these changed.
+    Keys name the component so a restart can say why; values are digests.
+    """
+    parts: dict[str, str] = {}
+
+    def digest_bytes(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    def add_file(key: str, path: Path | str) -> None:
+        try:
+            parts[key] = digest_bytes(Path(path).read_bytes())
+        except FileNotFoundError:
+            parts[key] = "missing"
+        except OSError as exc:
+            # Unknown is a change: never skip a restart on a read failure.
+            parts[key] = f"unreadable:{os.urandom(8).hex()}:{exc.errno}"
+
+    for name, bundle in (
+        ("project_host_bundle", cfg.project_host_bundle),
+        ("project_bundle", cfg.project_bundle),
+        ("tools_bundle", cfg.tools_bundle),
+        ("container_runtime_bundle", cfg.container_runtime_bundle),
+    ):
+        if bundle is not None:
+            parts[f"bundle:{name}"] = (
+                os.path.realpath(bundle.current) if bundle.current else ""
+            )
+    parts["node"] = f"{cfg.node_version}"
+    bin_dir = project_host_runtime_root(cfg) / "bin"
+    try:
+        for entry in sorted(bin_dir.iterdir()):
+            if entry.is_file():
+                add_file(f"bin:{entry.name}", entry)
+    except FileNotFoundError:
+        parts["bin"] = "missing"
+    env_path = Path(cfg.env_file)
+    local_env_path = env_path.with_name(
+        env_path.name[:-4] + ".local.env"
+        if env_path.name.endswith(".env")
+        else "project-host.local.env"
+    )
+    # Per key, so a restart names the setting that changed (never its value).
+    for label, path in (("env", env_path), ("local_env", local_env_path)):
+        try:
+            env = read_env_assignments(path)
+            for key, value in env.items():
+                # A GCP Spot VM gets a new ephemeral IP on every start, so this
+                # changes on every boot. The control plane takes the endpoint
+                # from the provider for GCP, so it is not worth a restart.
+                if (
+                    key == "PROJECT_HOST_SSH_SERVER"
+                    and env.get("PROJECT_HOST_CLOUD_PROVIDER") == "gcp"
+                ):
+                    continue
+                parts[f"{label}:{key}"] = digest_bytes(value.encode())
+        except Exception as exc:
+            parts[label] = f"unreadable:{os.urandom(8).hex()}:{type(exc).__name__}"
+    add_file("master_conat_token", "/mnt/cocalc/data/secrets/master-conat-token")
+    containers = Path(runtime_home(cfg)) / ".config" / "containers"
+    add_file("podman:storage.conf", containers / "storage.conf")
+    add_file("podman:containers.conf", containers / "containers.conf")
+    return parts
+
+
+def changed_fingerprint_parts(
+    before: dict[str, str], after: dict[str, str]
+) -> list[str]:
+    return sorted(
+        key for key in set(before) | set(after) if before.get(key) != after.get(key)
+    )
+
+
+def project_host_running(cfg: BootstrapConfig) -> bool:
+    ctl_path = project_host_runtime_root(cfg) / "bin" / "ctl"
+    if not ctl_path.exists():
+        return False
+    status = run_cmd(
+        cfg,
+        [str(ctl_path), "status"],
+        "project-host status",
+        check=False,
+        as_user=cfg.ssh_user,
+        cwd=runtime_home(cfg),
+    )
+    return status.returncode == 0
+
+
 def start_project_host(cfg: BootstrapConfig) -> None:
     ctl_path = str(project_host_runtime_root(cfg) / "bin" / "ctl")
     ctl_cwd = runtime_home(cfg)
@@ -14105,10 +14289,15 @@ def run_provision(cfg: BootstrapConfig) -> int:
         raise
 
 
-def run_reconcile(cfg: BootstrapConfig) -> int:
+def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int:
     log_line(cfg, "bootstrap: starting reconcile")
     report_bootstrap_status(cfg, "running", "Reconciling host software")
     record_operation_start(cfg, "reconcile")
+    # At boot, systemd has already started the stack; restarting it again
+    # minutes later interrupted users and freshly resumed agent turns.
+    fingerprint_before = (
+        project_host_restart_fingerprint(cfg) if restart_if_changed else None
+    )
     try:
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
@@ -14151,8 +14340,32 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         configure_cloudflared_with_options(cfg, install_package=False)
         configure_critical_service_oom_protection(cfg)
         configure_autostart(cfg)
-        report_bootstrap_status(cfg, "running", "Restarting project-host services")
-        start_project_host(cfg)
+        keep_running = False
+        if fingerprint_before is not None:
+            changed = changed_fingerprint_parts(
+                fingerprint_before, project_host_restart_fingerprint(cfg)
+            )
+            if changed:
+                log_line(
+                    cfg,
+                    "bootstrap: project-host software changed ("
+                    + ", ".join(changed)
+                    + "); restarting the stack",
+                )
+            elif not project_host_running(cfg):
+                log_line(cfg, "bootstrap: project-host not running; starting it")
+            else:
+                keep_running = True
+                log_line(
+                    cfg,
+                    "bootstrap: project-host software unchanged and running; "
+                    "leaving the running stack alone",
+                )
+        if not keep_running:
+            report_bootstrap_status(
+                cfg, "running", "Restarting project-host services"
+            )
+            start_project_host(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")
@@ -14244,6 +14457,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--bootstrap-dir")
     parser.add_argument("--config", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--restart-if-changed",
+        action="store_true",
+        help="reconcile: keep a running project-host unless its software changed",
+    )
+    parser.add_argument(
         "--only",
         help="Comma-separated subset (container_runtime_bundle, project_bundle, project_host_bundle, tools_bundle, cloudflared)",
     )
@@ -14299,6 +14517,8 @@ def main(argv: list[str]) -> int:
         if args.mode == "reconcile":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
+                if args.restart_if_changed:
+                    return run_reconcile(cfg, restart_if_changed=True)
                 return run_reconcile(cfg)
         if args.mode == "helpers":
             with bootstrap_operation_lock(cfg):

@@ -10,10 +10,13 @@ export type NewAgentRuntimeKind = "codex-native" | "claude-code" | "acp";
 export function NewAgentRuntimeSelect({
   value,
   disabled,
+  includeCustom = true,
   onChange,
 }: {
   value: NewAgentRuntimeKind;
   disabled?: boolean;
+  // The experimental custom harness is not offered on the first-run screen.
+  includeCustom?: boolean;
   onChange: (value: NewAgentRuntimeKind) => void;
 }) {
   return (
@@ -27,7 +30,9 @@ export function NewAgentRuntimeSelect({
       options={[
         { value: "codex-native", label: "Codex" },
         { value: "claude-code", label: "Claude" },
-        { value: "acp", label: "Custom ACP harness (experimental)" },
+        ...(includeCustom
+          ? [{ value: "acp", label: "Custom ACP harness (experimental)" }]
+          : []),
       ]}
       onChange={onChange}
     />

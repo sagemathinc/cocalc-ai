@@ -18,14 +18,14 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
           cache: pnpm
@@ -57,7 +57,7 @@ jobs:
       - name: Archive portable application bundle
         run: tar -C src/packages/plus/build -czf "$RUNNER_TEMP/cocalc-plus-bundle-windows.tar.gz" bundle-windows
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cocalc-plus-bundle-windows
           path: ${{ runner.temp }}/cocalc-plus-bundle-windows.tar.gz
@@ -69,13 +69,13 @@ jobs:
     timeout-minutes: 60
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cocalc-plus-bundle-windows
           path: ${{ runner.temp }}\cocalc-plus-bundle
@@ -101,7 +101,7 @@ jobs:
             -Archive "$env:RUNNER_TEMP\cocalc-plus-artifacts\cocalc-plus-${{ needs.bundle.outputs.release_id }}-x86_64-windows.zip" `
             -ReleaseId "${{ needs.bundle.outputs.release_id }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cocalc-plus-windows-amd64
           path: |

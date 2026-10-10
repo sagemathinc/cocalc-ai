@@ -51,9 +51,10 @@ export const DEFAULT_SPOT_RECOVERY_POLICY: Required<HostSpotRecoveryPolicy> =
     rapid_preemption_standard_hold_minutes: 24 * 60,
     spot_probe_interval_minutes: 10,
     spot_return_requires_probe: true,
-    // Give each Spot machine type one restore attempt before advancing.
+    // Give each Spot machine type one restore attempt before advancing: the
+    // attempt counter is incremented before the check, so 2 means one try.
     // This avoids spending the full retry window on capacity that is being
-    // preempted immediately after boot.
+    // preempted immediately after boot. Values <= 0 also mean this default.
     max_restore_attempts_before_fallback: 2,
     max_standard_runtime_minutes: 24 * 60,
     alternate_spot_machine_types: [],
@@ -242,6 +243,10 @@ export function normalizeSpotRecoveryState(
   const triedMachineTypes = normalizeStringArray(
     (value as any).spot_machine_types_tried,
   );
+  const triedRungs = normalizeStringArray((value as any).fallback_rungs_tried);
+  const ladderCycle = parsePositiveInt((value as any).fallback_ladder_cycle);
+  const transientRetries = parsePositiveInt((value as any).transient_retries);
+  const transientRung = `${(value as any).transient_rung ?? ""}`.trim();
   return {
     phase,
     ...(normalizeIsoTimestamp((value as any).outage_started_at)
@@ -313,6 +318,12 @@ export function normalizeSpotRecoveryState(
     ...(triedMachineTypes.length
       ? { spot_machine_types_tried: triedMachineTypes }
       : {}),
+    ...(triedRungs.length ? { fallback_rungs_tried: triedRungs } : {}),
+    ...(ladderCycle != null ? { fallback_ladder_cycle: ladderCycle } : {}),
+    ...(transientRetries != null
+      ? { transient_retries: transientRetries }
+      : {}),
+    ...(transientRung ? { transient_rung: transientRung } : {}),
   };
 }
 
@@ -471,9 +482,28 @@ export function recordProviderSpotPreemption(opts: {
         now.getTime() + rapidPreemptionStandardHoldMs(opts.policy),
       )
     : existingHoldUntil;
+  // A new outage starts its own retry budget. Counters kept from an earlier
+  // recovery made every later preemption skip Spot as "retry-window-exhausted".
+  // Repeated preemptions are handled by the circuit breaker above instead.
+  const {
+    attempt: _attempt,
+    next_retry_at: _nextRetryAt,
+    fallback_started_at: _fallbackStartedAt,
+    machine_type_attempt_started_at: _machineTypeAttemptStartedAt,
+    spot_machine_types_tried: _spotMachineTypesTried,
+    outage_started_at: _outageStartedAt,
+    last_recovered_at: _lastRecoveredAt,
+    verification_started_at: _verificationStartedAt,
+    verification_deadline_at: _verificationDeadlineAt,
+    fallback_rungs_tried: _fallbackRungsTried,
+    fallback_ladder_cycle: _fallbackLadderCycle,
+    transient_retries: _transientRetries,
+    transient_rung: _transientRung,
+    ...persistent
+  } = previous;
   return {
     state: {
-      ...previous,
+      ...persistent,
       last_preempted_at: now.toISOString(),
       ...(nextHoldUntil != null
         ? { standard_hold_until: new Date(nextHoldUntil).toISOString() }

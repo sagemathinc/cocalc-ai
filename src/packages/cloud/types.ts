@@ -119,6 +119,15 @@ export type PublicIngressResult = {
   };
 };
 
+export interface DataDiskSnapshot {
+  name: string;
+  disk_name: string;
+  disk_type?: string;
+  disk_size_gb?: number;
+  // Bytes stored by this snapshot (incremental on earlier snapshots).
+  storage_bytes?: number;
+}
+
 export interface CloudProvider {
   createHost(spec: HostSpec, creds: any): Promise<HostRuntime>;
   startHost(runtime: HostRuntime, creds: any): Promise<void>;
@@ -138,6 +147,28 @@ export interface CloudProvider {
     creds: any,
     opts?: { stableForMs?: number },
   ): Promise<boolean>;
+  // Free regional quota by metric (limit - usage), e.g. T2D_CPUS. Used to
+  // skip recovery options that would fail with QUOTA_EXCEEDED anyway.
+  regionalQuotaHeadroom?(
+    region: string,
+    creds: any,
+  ): Promise<Record<string, number>>;
+  // Whether the instance's network interface is gVNIC, which some machine
+  // families require and which cannot be changed on an existing instance.
+  instanceUsesGvnic?(runtime: HostRuntime, creds: any): Promise<boolean>;
+  // Every machine type offered in a zone (not just user-selectable ones),
+  // so Spot recovery can look across machine families.
+  listZoneMachineTypes?(
+    zone: string,
+    creds: any,
+  ): Promise<
+    Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }>
+  >;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureStartupScript?(runtime: HostRuntime, creds: any): Promise<void>;
@@ -157,6 +188,30 @@ export interface CloudProvider {
     newSizeGb: number,
     creds: any,
   ): Promise<number | void>;
+  // Host relocation: snapshot the data disk (resolves when READY), restore
+  // it as a new disk in another zone, and clean up.
+  snapshotDataDisk?(
+    runtime: HostRuntime,
+    snapshotName: string,
+    creds: any,
+  ): Promise<DataDiskSnapshot>;
+  createDataDiskFromSnapshot?(
+    opts: {
+      zone: string;
+      disk_name: string;
+      snapshot_name: string;
+      disk_type?: string;
+      size_gb?: number;
+      // Keep a disk that already exists under this name instead of failing.
+      reuse_existing?: boolean;
+    },
+    creds: any,
+  ): Promise<"created" | "exists">;
+  deleteDataDisk?(
+    opts: { zone: string; disk_name: string },
+    creds: any,
+  ): Promise<void>;
+  deleteSnapshot?(snapshotName: string, creds: any): Promise<void>;
   ensureSharedScratchDisk?(
     runtime: HostRuntime,
     spec: HostSpec,

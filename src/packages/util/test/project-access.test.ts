@@ -162,4 +162,126 @@ describe("viewer read policy path matching", () => {
       false,
     );
   });
+
+  it("an include grants exactly what the old regular expression granted", () => {
+    // globToRegExp from before the linear automaton, verbatim: "**" was ".*"
+    // (stops at line terminators), "*" was "[^/]*".
+    const oldMatches = (pattern: string, path: string) => {
+      let source = "^";
+      for (let i = 0; i < pattern.length; i += 1) {
+        const char = pattern[i];
+        if (char === "*") {
+          if (pattern[i + 1] === "*") {
+            source += ".*";
+            i += 1;
+          } else {
+            source += "[^/]*";
+          }
+        } else {
+          source += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+        }
+      }
+      return new RegExp(`${source}$`).test(path);
+    };
+    const pieces = ["*", "**", "a", "/", ".md"];
+    const rules: string[] = [];
+    for (let n = 0; rules.length < 400; n++) {
+      let rule = "";
+      for (let k = n; k > 0; k = Math.floor(k / pieces.length)) {
+        rule += pieces[k % pieces.length];
+      }
+      // Keep rules that are already normalized and avoid the "/**" prefix
+      // form, which both versions match by prefix rather than as a glob.
+      rule = rule.replace(/^\/+|\/+$/g, "");
+      if (rule && !rule.includes("//") && !rule.endsWith("/**")) {
+        rules.push(rule);
+      }
+    }
+    const paths = [
+      "a.md",
+      "a/a.md",
+      "a\nb/a.md",
+      "a/\n.md",
+      "a\u2028a",
+      "a\r/a",
+      "\na",
+      "a/a/a",
+    ];
+    for (const rule of new Set(rules.filter(Boolean))) {
+      const policy = { rules: [{ action: "include" as const, path: rule }] };
+      for (const path of paths) {
+        expect([rule, path, viewerReadPolicyAllowsPath({ policy, path })]).toEqual([
+          rule,
+          path,
+          path === rule || oldMatches(rule, path),
+        ]);
+      }
+    }
+  });
+
+  it("an include's ** does not cross line terminators; an exclude's does", () => {
+    const include = { rules: [{ action: "include" as const, path: "**/*.md" }] };
+    expect(viewerReadPolicyAllowsPath({ policy: include, path: "a/b.md" })).toBe(
+      true,
+    );
+    for (const path of ["a\nb/c.md", "a\rb/c.md", "a\u2028b/c.md"]) {
+      expect(viewerReadPolicyAllowsPath({ policy: include, path })).toBe(false);
+    }
+    const exclude = {
+      rules: [
+        { action: "include" as const, path: "." },
+        { action: "exclude" as const, path: "**/.env" },
+      ],
+    };
+    expect(
+      viewerReadPolicyAllowsPath({ policy: exclude, path: "a\nb/.env" }),
+    ).toBe(false);
+    expect(
+      viewerReadPolicyMayAllowDescendant({ policy: exclude, path: "a\nb/.env" }),
+    ).toBe(false);
+    expect(viewerReadPolicyAllowsPath({ policy: exclude, path: "a\nb/x" })).toBe(
+      true,
+    );
+  });
+
+  it("fails closed on oversized paths and rules", () => {
+    const long = `secret/${"x".repeat(4096)}`;
+    // An oversized include grants nothing, not even ancestor listings.
+    const include = { rules: [{ action: "include" as const, path: long }] };
+    for (const path of ["", "secret", long]) {
+      expect(viewerReadPolicyAllowsPath({ policy: include, path })).toBe(false);
+      expect(
+        viewerReadPolicyMayAllowDescendant({ policy: include, path }),
+      ).toBe(false);
+    }
+    // An oversized exclude denies everything.
+    const exclude = {
+      rules: [
+        { action: "include" as const, path: "." },
+        { action: "exclude" as const, path: long },
+      ],
+    };
+    expect(viewerReadPolicyAllowsPath({ policy: exclude, path: "a.txt" })).toBe(
+      false,
+    );
+    expect(
+      viewerReadPolicyMayAllowDescendant({ policy: exclude, path: "" }),
+    ).toBe(false);
+    // An oversized path is never readable.
+    const all = { rules: [{ action: "include" as const, path: "." }] };
+    expect(
+      viewerReadPolicyAllowsPath({ policy: all, path: "a".repeat(4097) }),
+    ).toBe(false);
+  });
+
+  it("matches many-star globs quickly", () => {
+    const policy = {
+      rules: [{ action: "include" as const, path: `${"*a".repeat(60)}b` }],
+    };
+    const started = Date.now();
+    expect(viewerReadPolicyAllowsPath({ policy, path: "a".repeat(4000) })).toBe(
+      false,
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
