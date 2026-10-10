@@ -210,6 +210,20 @@ run_install() {
   chmod 0644 "$INSTALL_MARKER" "$CONTAINER_MARKER"
 }
 
+# The volume keeps the managed container runtime (see the entrypoint); once a
+# release is installed, remove the runtimes it no longer uses.
+prune_container_runtimes() {
+  local root=/opt/cocalc/container-runtime current dir
+  current="$(readlink -f "${root}/current" 2>/dev/null || true)"
+  [ -n "$current" ] && [ -x "${current}/bin/podman" ] || return 0
+  for dir in "$root"/podman-* "$root"/.install.*; do
+    [ -d "$dir" ] || continue
+    [ "$(readlink -f "$dir")" = "$current" ] && continue
+    log "removing unused container runtime $(basename "$dir")"
+    rm -rf "$dir"
+  done
+}
+
 start_services() {
   systemctl daemon-reload
   systemctl enable caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host >/dev/null
@@ -261,6 +275,7 @@ main() {
     log "CoCalc Star ${IMAGE_RELEASE_ID} is installed; starting services"
   else
     run_install
+    prune_container_runtimes
   fi
 
   start_services
