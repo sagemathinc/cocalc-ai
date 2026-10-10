@@ -21,6 +21,12 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #nav button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 8px; cursor:pointer; }
   #nav button.off { opacity:.45; }
   #nav #shutdown { color:#cf1322; border-color:#ffa39e; }
+  #zoom { display:flex; }
+  #zoom button { padding:2px 7px; border-radius:0; margin-left:-1px; }
+  #zoom button:first-child { border-radius:4px 0 0 4px; margin-left:0; }
+  #zoom button:last-child { border-radius:0 4px 4px 0; }
+  #zoom #zoomlevel { min-width:46px; font-variant-numeric:tabular-nums; }
+  #zoom.zoomed #zoomlevel { color:var(--accent); font-weight:600; }
   #runson, #quality { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 4px; }
   #url { flex:1; min-width:0; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--fg); }
   #driver { display:flex; align-items:center; gap:8px; padding:4px 8px; border-bottom:1px solid var(--line); }
@@ -97,6 +103,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <select id="runson" title="Where this browser runs" style="display:none">
       <option value="project">Runs in the project</option><option value="computer">Runs on my computer</option>
     </select>
+    <span id="zoom"><button data-z="-1" title="Zoom out">&#8722;</button><button data-z="0" id="zoomlevel" title="Page zoom: click to reset to 100%">100%</button><button data-z="1" title="Zoom in">+</button></span>
     <select id="quality" title="Picture quality: Sharp sends crisp text once the page is still; Fast uses less bandwidth">
       <option value="sharp">Sharp</option><option value="balanced">Balanced</option><option value="fast">Fast</option>
     </select>
@@ -297,6 +304,11 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     }
     canvas.classList.toggle("view-only", !human());
     $("quality").style.display = preview() ? "none" : "";
+    // Zoom is the user's own Chrome's, on their computer.
+    $("zoom").style.display = preview() ? "none" : "";
+    const zoom = state.zoom || 1;
+    $("zoomlevel").textContent = Math.round(zoom * 100) + "%";
+    $("zoom").classList.toggle("zoomed", Math.abs(zoom - 1) > 0.001);
     // Where a .browser file's browser runs, and waiting for the computer.
     const runson = $("runson");
     runson.style.display = state.runsOn ? "" : "none";
@@ -426,12 +438,26 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     moveQueued = e;
     requestAnimationFrame(() => { const ev = moveQueued; moveQueued = null; mouse("mouseMoved", ev, { button: ev.buttons & 1 ? "left" : "none" }); });
   });
-  canvas.addEventListener("wheel", (e) => { e.preventDefault(); mouse("mouseWheel", e, { deltaX: e.deltaX, deltaY: e.deltaY }); }, { passive: false });
+  // Ctrl+wheel zooms, as in a browser; so does a trackpad pinch (which
+  // arrives as Ctrl+wheel).
+  let pinch = 0;
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (e.ctrlKey) {
+      pinch += e.deltaY;
+      if (Math.abs(pinch) >= 40) { zoomStep(pinch < 0 ? 1 : -1); pinch = 0; }
+      return;
+    }
+    mouse("mouseWheel", e, { deltaX: e.deltaX, deltaY: e.deltaY });
+  }, { passive: false });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
   const SPECIAL = { Backspace: 8, Tab: 9, Enter: 13, Escape: 27, " ": 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46 };
   function key(event, e) {
     const shortcut = accel(e) ? e.key.toLowerCase() : "";
+    // Page zoom, as in a browser (watching is enough).
+    const zoomKey = { "=": 1, "+": 1, "-": -1, "_": -1, "0": 0 }[shortcut];
+    if (zoomKey !== undefined) { e.preventDefault(); if (event === "keyDown") zoomStep(zoomKey); return; }
     // Copy and cut: the system's copy event takes the page's selection (see
     // below), driving or not; the page gets the keys too, for its own copy
     // handlers (and so a cut deletes there).
@@ -529,6 +555,26 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   navButton("back", { type: "history", delta: -1 });
   navButton("fwd", { type: "history", delta: 1 });
   navButton("reload", { type: "reload" });
+
+  // --- page zoom -------------------------------------------------------------
+  const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+  let zoomAt = 0;
+  function zoomStep(direction) {
+    if (!state || preview()) return;
+    // Repeats (a held key, a pinch) step from what was asked, not yet shown.
+    const current = Date.now() - zoomAt < 600 && zoomStep.asked ? zoomStep.asked : state.zoom || 1;
+    const next = direction === 0 ? 1
+      : direction > 0 ? ZOOMS.find((z) => z > current + 0.001) || ZOOMS[ZOOMS.length - 1]
+      : [...ZOOMS].reverse().find((z) => z < current - 0.001) || ZOOMS[0];
+    zoomAt = Date.now(); zoomStep.asked = next;
+    $("zoomlevel").textContent = Math.round(next * 100) + "%";
+    send({ type: "zoom", zoom: next });
+    flash("Zoom " + Math.round(next * 100) + "%");
+  }
+  $("zoom").addEventListener("click", (e) => {
+    const z = e.target.dataset && e.target.dataset.z;
+    if (z != null) { zoomStep(Number(z)); focusKeys(); }
+  });
 
   // --- for the page around it (CoCalc) ----------------------------------------
   // The page shows its own start screen until this shows something.

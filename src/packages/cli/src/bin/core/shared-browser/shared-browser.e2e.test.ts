@@ -188,13 +188,16 @@ test(
           if (await ok()) return;
           await new Promise((r) => setTimeout(r, 100));
         }
-        assert.fail(`${what}: clipboard has ${JSON.stringify(await clipboard())}`);
+        assert.fail(
+          `${what}: clipboard has ${JSON.stringify(await clipboard())}`,
+        );
       };
 
       // Select the paragraph in the page, and copy it with the keyboard.
       await click(at.p, 3);
       await viewer.waitForFunction(
-        () => getComputedStyle(document.getElementById("copy")!).display !== "none",
+        () =>
+          getComputedStyle(document.getElementById("copy")!).display !== "none",
       );
       await viewer.keyboard.press("Control+C");
       await until(
@@ -304,6 +307,7 @@ test(
       cdpPort: 0,
       humanFirst: true,
       title: "work.browser",
+      startPagePorts: [sitePort],
     });
     const { port } = await server.start();
     const human = await chromium.launch({
@@ -340,7 +344,9 @@ test(
       await viewer.waitForSelector("#start", { state: "hidden" });
       // Its tab shows the site's icon.
       await viewer.waitForFunction(() => {
-        const img = document.querySelector(".tab.active img") as HTMLImageElement;
+        const img = document.querySelector(
+          ".tab.active img",
+        ) as HTMLImageElement;
         return !!img && img.complete && img.naturalWidth > 0;
       });
       // The page around gets a picture to start from next time.
@@ -361,6 +367,120 @@ test(
       await browser.stop();
       await profile.cleanup();
       site.close();
+    }
+  },
+);
+
+test(
+  "page zoom: the page lays out as a zoomed browser's would, and clicks still land (also after screenshots)",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const ZOOM_PAGE =
+      "data:text/html," +
+      encodeURIComponent(
+        `<title>z</title><style>body{margin:0}@media (max-width:600px){#mq{color:rgb(255,0,0)}}</style><div id=mq>mq</div>` +
+          `<button id=b style="position:absolute;left:300px;top:200px;width:100px;height:40px" onclick="document.title='clicked '+(++window.n)">B</button><script>window.n=0</script>`,
+      );
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port, cdpPort } = await server.start();
+    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const page = agent.contexts()[0].pages()[0];
+      await page.goto(ZOOM_PAGE);
+      const viewer = await human.newPage({
+        viewport: { width: 1000, height: 700 },
+      });
+      await viewer.goto(`http://127.0.0.1:${port}/`);
+      await viewer.waitForFunction(
+        () => document.getElementById("status")?.textContent === "live",
+      );
+      const stage = (await viewer.locator("#screen").boundingBox())!;
+      await page.waitForFunction(
+        (w: number) => innerWidth === w,
+        Math.round(stage.width),
+      );
+
+      // Zoom in to 200% from the keyboard, just watching (the agent drives).
+      await viewer.click("#zoomlevel");
+      for (let i = 0; i < 5; i++) await viewer.keyboard.press("Control+=");
+      await viewer.waitForFunction(
+        () => document.getElementById("zoomlevel")?.textContent === "200%",
+      );
+      await page.waitForFunction(() => devicePixelRatio === 2);
+      const seen = await page.evaluate(() => [
+        innerWidth,
+        getComputedStyle(document.getElementById("mq")!).color,
+      ]);
+      // Half as wide, so the narrow layout applies, as in a zoomed browser.
+      assert.deepEqual(seen, [Math.round(stage.width / 2), "rgb(255, 0, 0)"]);
+      assert.equal(server.getState().zoom, 2);
+
+      // The human clicks the (twice as large) button where they see it.
+      const clickButton = async () => {
+        await viewer.click("#driver button"); // take over
+        await viewer.waitForFunction(() =>
+          document
+            .querySelector("#driver button")
+            ?.textContent?.startsWith("Hand back"),
+        );
+        await viewer.mouse.click(stage.x + 2 * 350, stage.y + 2 * 220);
+        await new Promise((r) => setTimeout(r, 300));
+        await viewer.click("#driver button"); // hand back
+      };
+      await clickButton();
+      assert.equal(await page.title(), "clicked 1");
+      // A screenshot (the agent's) does not shift where clicks land.
+      const shot = await page.screenshot();
+      assert.ok(shot.length > 0);
+      // ...and the page stays zoomed (Chromium resets it after a clipped
+      // screenshot such as Playwright's; the server zooms it again).
+      await page.waitForFunction(() => devicePixelRatio === 2);
+      assert.equal(
+        await page.evaluate(() => innerWidth),
+        Math.round(stage.width / 2),
+      );
+      await clickButton();
+      assert.equal(await page.title(), "clicked 2");
+
+      // Ctrl+0: back to 100%.
+      await viewer.click("#zoomlevel"); // the keyboard goes to the page again
+      await viewer.keyboard.press("Control+0");
+      await page.waitForFunction(() => devicePixelRatio === 1);
+      assert.equal(
+        await page.evaluate(() => innerWidth),
+        Math.round(stage.width),
+      );
+      await viewer.waitForFunction(
+        () => document.getElementById("zoomlevel")?.textContent === "100%",
+      );
+    } finally {
+      await agent.close().catch(() => {});
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
     }
   },
 );
@@ -1401,8 +1521,13 @@ test(
   },
   async () => {
     const { spawn } = require("node:child_process");
-    const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } =
-      require("node:fs");
+    const {
+      existsSync,
+      mkdirSync,
+      mkdtempSync,
+      rmSync,
+      writeFileSync,
+    } = require("node:fs");
     const { createServer } = require("node:http");
     const { tmpdir } = require("node:os");
     const { join } = require("node:path");
@@ -1480,7 +1605,10 @@ test(
         return null;
       }
     };
-    const until = async (ok: () => Promise<boolean> | boolean, what: string) => {
+    const until = async (
+      ok: () => Promise<boolean> | boolean,
+      what: string,
+    ) => {
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
         if (await ok()) return;

@@ -68,6 +68,9 @@ export interface SharedBrowserState {
   connectCommand: string | null;
   // What the start page calls this browser (e.g. the file's name).
   title: string;
+  // The tab's page zoom (1 = 100%), like a browser's zoom: the page lays out
+  // for a narrower window at a higher pixel ratio.  New tabs get the last one.
+  zoom: number;
 }
 
 // The screencast streams changes as JPEG; once the page is still, one frame
@@ -109,6 +112,7 @@ interface TabPage {
   scriptId: string | null;
   // The page's selected text, for the human's clipboard.
   selection: string;
+  zoom: number;
 }
 
 export interface SharedBrowserServerOptions {
@@ -134,6 +138,8 @@ export interface SharedBrowserServerOptions {
   // For the start page: this browser's name, and its profile's history.
   title?: string;
   historyFile?: () => string | null;
+  // Only these ports for the start page's servers (tests).
+  startPagePorts?: number[];
   log?: (message: string) => void;
 }
 
@@ -196,6 +202,7 @@ export class SharedBrowserServer {
       runsOn: options.runsOn ?? null,
       connectCommand: options.connectCommand ?? null,
       title: options.title ?? "Web browser",
+      zoom: 1,
     };
   }
 
@@ -285,6 +292,7 @@ export class SharedBrowserServer {
       ...this.state,
       active: tab,
       viewport: page?.viewport ?? this.state.viewport,
+      zoom: page?.zoom ?? this.state.zoom,
       dialog: page?.dialog ?? null,
       select: page?.select ?? null,
       fileChooser: page?.fileChooser ?? null,
@@ -464,6 +472,7 @@ export class SharedBrowserServer {
         selectContext: null,
         scriptId: null,
         selection: "",
+        zoom: this.state.zoom,
       };
       this.pages.set(targetId, page);
     }
@@ -580,13 +589,22 @@ export class SharedBrowserServer {
   private async applyViewport(page: TabPage): Promise<void> {
     if (!page.session || this.lightTouch) return;
     const { width, height } = page.viewport;
+    const zoom = page.zoom;
     await this.cdp
       .send(
         "Emulation.setDeviceMetricsOverride",
-        // Never the viewer's pixel ratio: with it, a screenshot leaves input
+        // Not the viewer's pixel ratio: with it, a screenshot left input
         // scaled (clicks at half the distance), and scaled-clip screenshots
-        // misrender on some hosts (tiled, shifted).  Everything is 1x.
-        { width, height, deviceScaleFactor: 1, mobile: false },
+        // misrendered on some hosts (tiled, shifted).  Page zoom is a pixel
+        // ratio too, but with the viewport divided by it, as a browser zooms
+        // (the viewer's coordinates are divided by it in turn; tested with
+        // screenshots).
+        {
+          width: Math.max(1, Math.round(width / zoom)),
+          height: Math.max(1, Math.round(height / zoom)),
+          deviceScaleFactor: zoom,
+          mobile: false,
+        },
         page.session,
       )
       .catch(() => {});
@@ -596,6 +614,28 @@ export class SharedBrowserServer {
         .catch(() => {});
       page.casting = false;
       await this.updateCasting(page.targetId);
+    }
+  }
+
+  private async reapplyZoom(): Promise<void> {
+    for (const page of this.pages.values()) {
+      if (!page.session || page.zoom === 1 || this.lightTouch) continue;
+      // The same override again is ignored (Chromium 149): clear it first.
+      await this.cdp
+        .send("Emulation.clearDeviceMetricsOverride", {}, page.session)
+        .catch(() => {});
+      await this.cdp
+        .send(
+          "Emulation.setDeviceMetricsOverride",
+          {
+            width: Math.max(1, Math.round(page.viewport.width / page.zoom)),
+            height: Math.max(1, Math.round(page.viewport.height / page.zoom)),
+            deviceScaleFactor: page.zoom,
+            mobile: false,
+          },
+          page.session,
+        )
+        .catch(() => {});
     }
   }
 
@@ -639,7 +679,7 @@ export class SharedBrowserServer {
   // Once the page is still, send it once at full quality.
   private async settle(page: TabPage): Promise<void> {
     page.settleTimer = null;
-    const rest = QUALITY[page.quality].rest;
+    const rest = restFrame(page);
     if (!page.session || !page.casting || !rest) return;
     try {
       // The page exactly as the stream shows it, without JPEG artifacts.
@@ -738,7 +778,7 @@ export class SharedBrowserServer {
       if (page.lastFrame?.equals(frame)) return;
       page.lastFrame = frame;
       this.sendFrame(page, frame);
-      if (QUALITY[page.quality].rest && !this.lightTouch) {
+      if (restFrame(page) && !this.lightTouch) {
         if (page.settleTimer) clearTimeout(page.settleTimer);
         // At most one still frame a second, whatever keeps the page busy.
         const wait = Math.max(SETTLE_MS, page.settledAt + 1000 - Date.now());
@@ -967,6 +1007,18 @@ export class SharedBrowserServer {
       case "tab":
         if (typeof msg.id === "string") await this.show(ws, msg.id);
         return;
+      // A viewing preference, so whoever watches may zoom, driving or not.
+      case "zoom": {
+        if (!view.tab || this.lightTouch) return;
+        const zoom = clampZoom(msg.zoom);
+        const page = this.pageFor(view.tab);
+        this.state.zoom = zoom;
+        if (zoom === page.zoom) return;
+        page.zoom = zoom;
+        await this.applyViewport(page);
+        this.broadcastState();
+        return;
+      }
       case "visible": {
         view.hidden = !msg.visible;
         if (!view.tab) return;
@@ -1015,13 +1067,14 @@ export class SharedBrowserServer {
             "Input.dispatchMouseEvent",
             {
               type: msg.event,
-              x: num(msg.x),
-              y: num(msg.y),
+              // The viewer's pixels; the page's are larger when zoomed.
+              x: num(msg.x) / page.zoom,
+              y: num(msg.y) / page.zoom,
               button: msg.button ?? "none",
               buttons: msg.buttons,
               clickCount: msg.clickCount ?? 0,
-              deltaX: num(msg.deltaX),
-              deltaY: num(msg.deltaY),
+              deltaX: num(msg.deltaX) / page.zoom,
+              deltaY: num(msg.deltaY) / page.zoom,
               modifiers: msg.modifiers ?? 0,
             },
             s,
@@ -1149,7 +1202,14 @@ export class SharedBrowserServer {
     if (path.endsWith("/api/start") && req.method === "GET") {
       const lightTouch = this.lightTouch;
       void (async () => {
-        const servers = lightTouch ? [] : await projectServers(this.ownPorts);
+        const only = this.options.startPagePorts;
+        const servers = lightTouch
+          ? []
+          : await projectServers(
+              this.ownPorts,
+              undefined,
+              only ? new Set(only) : undefined,
+            );
         const recent = lightTouch
           ? []
           : recentSites(this.options.historyFile?.() ?? null);
@@ -1251,6 +1311,8 @@ export class SharedBrowserServer {
     );
     const pending: Array<WebSocket.RawData> = [];
     let open = false;
+    // Screenshots of part of the page, by message id (see below).
+    const clipShots = new Set<number>();
     this.agentSockets.add(client);
     this.state.agents = this.agentSockets.size;
     this.broadcastState();
@@ -1276,6 +1338,8 @@ export class SharedBrowserServer {
         return;
       }
       this.followAgent(msg);
+      if (msg?.method === "Page.captureScreenshot" && msg.params?.clip)
+        clipShots.add(msg.id);
       upstream.send(text);
     };
     upstream.on("open", () => {
@@ -1284,7 +1348,14 @@ export class SharedBrowserServer {
         this.forwardAgent(data, deliver, client);
     });
     upstream.on("message", (data) => {
-      if (client.readyState === WebSocket.OPEN) client.send(data.toString());
+      const text = data.toString();
+      if (client.readyState === WebSocket.OPEN) client.send(text);
+      // A clipped screenshot (Playwright's) leaves a zoomed page at pixel
+      // ratio 1: zoom it again.  Replies start with their id.
+      if (clipShots.size > 0) {
+        const id = Number(text.match(/^\{"id":(\d+)/)?.[1]);
+        if (clipShots.delete(id)) void this.reapplyZoom();
+      }
     });
     client.on("message", (data) => {
       if (!open) pending.push(data);
@@ -1357,6 +1428,24 @@ function listen(
       resolvePort((server.address() as any).port);
     });
   });
+}
+
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 5;
+
+export function clampZoom(value: unknown): number {
+  const zoom = Number(value);
+  if (!Number.isFinite(zoom)) return 1;
+  return Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom)) * 100) / 100;
+}
+
+// The still frame once the page rests.  A zoomed-in page gets one even at
+// Fast: its stream is at the page's (smaller) size, and soft when enlarged.
+function restFrame(page: TabPage): { format: string; quality?: number } | null {
+  return (
+    QUALITY[page.quality].rest ??
+    (page.zoom > 1 ? { format: "jpeg", quality: 80 } : null)
+  );
 }
 
 // The conventional DevTools port when free, otherwise the next free one.

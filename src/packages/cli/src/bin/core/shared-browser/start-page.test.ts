@@ -26,10 +26,13 @@ test("listening ports come from /proc/net/tcp and tcp6", () => {
     "   0: 00000000000000000000000000000000:22B8 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  2000        0 333 1 0",
   ].join("\n");
   const ports = listeningPorts((path) => (path.endsWith("6") ? tcp6 : tcp));
-  assert.deepEqual([...ports.entries()], [
-    [5173, ["111"]],
-    [8888, ["333"]],
-  ]);
+  assert.deepEqual(
+    [...ports.entries()],
+    [
+      [5173, ["111"]],
+      [8888, ["333"]],
+    ],
+  );
 });
 
 test("what runs a server, and a page's title", () => {
@@ -37,7 +40,10 @@ test("what runs a server, and a page's title", () => {
     describeCommand("node /home/user/app/node_modules/.bin/vite --port 5173"),
     "node vite",
   );
-  assert.equal(describeCommand("/usr/bin/python3 -m http.server"), "python3 http.server");
+  assert.equal(
+    describeCommand("/usr/bin/python3 -m http.server"),
+    "python3 http.server",
+  );
   assert.equal(describeCommand("jupyter-lab"), "jupyter-lab");
   assert.equal(
     pageTitle("<html><head><title>\n  My &amp; App </title></head>"),
@@ -45,9 +51,22 @@ test("what runs a server, and a page's title", () => {
   );
   assert.equal(pageTitle("<p>no title</p>"), "");
   // Users' servers may run on CoCalc's node; CoCalc's own programs do not count.
-  assert.equal(isInfrastructure("/opt/cocalc/bin/node /home/user/app/server.js"), false);
-  assert.equal(isInfrastructure("/opt/cocalc/bin/node /opt/cocalc/bin2/cocalc-cli.js project browser serve"), true);
-  assert.equal(isInfrastructure("/opt/cocalc/bin2/cocalc-chromium/browser/headless_shell --headless"), true);
+  assert.equal(
+    isInfrastructure("/opt/cocalc/bin/node /home/user/app/server.js"),
+    false,
+  );
+  assert.equal(
+    isInfrastructure(
+      "/opt/cocalc/bin/node /opt/cocalc/bin2/cocalc-cli.js project browser serve",
+    ),
+    true,
+  );
+  assert.equal(
+    isInfrastructure(
+      "/opt/cocalc/bin2/cocalc-chromium/browser/headless_shell --headless",
+    ),
+    true,
+  );
   assert.equal(isInfrastructure("python3 -m http.server"), false);
 });
 
@@ -58,11 +77,17 @@ test("the project's web servers: titled, ours excluded, non-HTTP skipped", async
   });
   const ours = createServer((_req, res) => res.end("ok"));
   const listen = (s: any) =>
-    new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r(s.address().port)));
+    new Promise<number>((r) =>
+      s.listen(0, "127.0.0.1", () => r(s.address().port)),
+    );
   const appPort = await listen(app);
   const ourPort = await listen(ours);
   try {
-    const servers = await projectServers(new Set([ourPort]), 1000);
+    const servers = await projectServers(
+      new Set([ourPort]),
+      1000,
+      new Set([appPort, ourPort]),
+    );
     const mine = servers.find((s) => s.port === appPort);
     assert.deepEqual(mine, {
       port: appPort,
@@ -128,7 +153,10 @@ test("site icons: images only, cached, http(s) only", async () => {
     const icons = new Favicons();
     const png = await icons.get(`http://127.0.0.1:${port}/icon.png`);
     assert.equal(png?.type, "image/png");
-    assert.equal((await icons.get(`http://127.0.0.1:${port}/favicon.ico`))?.type, "image/x-icon");
+    assert.equal(
+      (await icons.get(`http://127.0.0.1:${port}/favicon.ico`))?.type,
+      "image/x-icon",
+    );
     assert.equal(await icons.get(`http://127.0.0.1:${port}/page`), null);
     assert.equal(await icons.get("file:///etc/passwd"), null);
     const before = hits;

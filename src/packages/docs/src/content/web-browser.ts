@@ -134,6 +134,14 @@ Some sites (X, for example) refuse to sign in to a browser that tools can
 control. Add \`--sign-in\`: Chrome first opens without any automation so you
 can sign in; close it, and it reopens connected, still signed in.
 
+## Zoom
+
+Zoom a tab with **-** and **+** next to the address bar, Ctrl and + or -
+(Cmd on a Mac), or Ctrl and the mouse wheel (a pinch on a trackpad). Click the
+percentage or press Ctrl+0 to go back to 100%. As in any browser, the page
+lays out again at the larger size, so text stays sharp and lines fit the
+window. Each tab keeps its zoom; new tabs start at the last one.
+
 ## Picture quality
 
 The quality menu next to the address bar sets how the browser is shown:

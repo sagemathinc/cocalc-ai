@@ -4,7 +4,14 @@
  * recently.  Plus site icons for it and for the tabs, fetched from where the
  * browser runs (the project's network, its localhost).
  */
-import { copyFileSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -143,9 +150,13 @@ async function probe(port: number): Promise<string | null> {
 export async function projectServers(
   exclude: Set<number>,
   limit = 12,
+  // Only these ports (tests: probing every port reaches other tests' servers).
+  only?: Set<number>,
 ): Promise<ProjectServer[]> {
   const ports = listeningPorts();
   for (const port of exclude) ports.delete(port);
+  if (only)
+    for (const port of ports.keys()) if (!only.has(port)) ports.delete(port);
   const owners = socketOwners(new Set([...ports.values()].flat()));
   const candidates = [...ports.entries()]
     .map(([port, inodes]) => ({
@@ -173,7 +184,10 @@ export async function projectServers(
 
 // The most recently visited sites (one entry per host), from the profile's
 // history, read from a copy since Chromium holds the database open.
-export function recentSites(historyFile: string | null, limit = 8): RecentSite[] {
+export function recentSites(
+  historyFile: string | null,
+  limit = 8,
+): RecentSite[] {
   if (!historyFile) return [];
   let dir: string | null = null;
   try {
@@ -222,7 +236,9 @@ export function recentSites(historyFile: string | null, limit = 8): RecentSite[]
 export class Favicons {
   private cache = new Map<
     string,
-    { type: string; body: Buffer } | null | Promise<{ type: string; body: Buffer } | null>
+    | { type: string; body: Buffer }
+    | null
+    | Promise<{ type: string; body: Buffer } | null>
   >();
 
   async get(url: string): Promise<{ type: string; body: Buffer } | null> {
@@ -243,7 +259,9 @@ export class Favicons {
       this.cache.delete(this.cache.keys().next().value!);
   }
 
-  private async fetch(url: string): Promise<{ type: string; body: Buffer } | null> {
+  private async fetch(
+    url: string,
+  ): Promise<{ type: string; body: Buffer } | null> {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
       const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();

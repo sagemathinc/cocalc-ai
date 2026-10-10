@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { networkHint } from "./agent-page";
 import { pickSelectExpression, selectScript } from "./page-script";
-import { HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
+import { clampZoom, HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
 import {
   BUNDLED_CHROMIUM,
   connectCommandFor,
@@ -197,4 +197,13 @@ test("a network failure outside the project explains the free-project limit", ()
     "",
   );
   assert.equal(networkHint("https://x.com/", "net::ERR_ABORTED"), "");
+});
+
+test("page zoom stays between 25% and 500%, in hundredths", () => {
+  assert.equal(clampZoom(2), 2);
+  assert.equal(clampZoom(1.333333), 1.33);
+  assert.equal(clampZoom(0.1), 0.25);
+  assert.equal(clampZoom(9), 5);
+  assert.equal(clampZoom("x"), 1);
+  assert.equal(clampZoom(undefined), 1);
 });
