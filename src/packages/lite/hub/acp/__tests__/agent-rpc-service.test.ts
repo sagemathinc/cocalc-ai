@@ -174,8 +174,21 @@ test.each([
     expect(request.chat.send_mode).toBe("immediate");
     expect(request.chat.agent_rpc_execution.source).toEqual(e.source);
     expect(request.prompt).toContain(`@${sender}-sender`);
+    expect(request.prompt).toContain(
+      `in project ${e.source.project_id}, a different project from yours`,
+    );
   },
 );
+
+test("a same-project sender is named as sharing the recipient's project", async () => {
+  const { e, deps, service } = fixture();
+  e.source = { ...e.source, project_id: e.target.project_id };
+  expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+  const request = (deps.admit as jest.Mock).mock.calls[0][0].request;
+  expect(request.prompt).toContain(
+    `in project ${e.target.project_id}, the same project as yours).`,
+  );
+});
 
 test("external snapshot send preserves attribution and target execution account without a fake run", async () => {
   const { e, deps, service, db, files } = attachmentFixture();
