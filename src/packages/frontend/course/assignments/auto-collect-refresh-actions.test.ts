@@ -7,6 +7,8 @@ let lroGet: jest.Mock;
 let addStudents: jest.Mock;
 let collectAssignment: jest.Mock;
 let lroCancel: jest.Mock;
+let waitForCopy: jest.Mock;
+let sendPatch: jest.Mock;
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -21,8 +23,15 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     project_client: {
       addScheduledCollectionStudents: (...args: any[]) => addStudents(...args),
       collectAssignment: (...args: any[]) => collectAssignment(...args),
+      sendCourseAssignmentPatch: (...args: any[]) => sendPatch(...args),
     },
+    server_time: () => new Date(),
   },
+}));
+
+jest.mock("../copy-lro", () => ({
+  ...jest.requireActual("../copy-lro"),
+  waitForCourseCopyLro: (...args: any[]) => waitForCopy(...args),
 }));
 
 import { fromJS } from "immutable";
@@ -63,6 +72,7 @@ function setup(assignedInStore: string[]) {
         ? "done"
         : undefined,
     get_student_name_extra: (student_id: string) => ({ simple: student_id }),
+    get_student_name: (student_id: string) => student_id,
   };
   const errors: string[] = [];
   const courseActions: any = {
@@ -81,6 +91,8 @@ function setup(assignedInStore: string[]) {
     get_one: () => ({ ...record }),
     set: (obj: any) => Object.assign(record, obj),
     set_error: (err: string) => errors.push(err),
+    set_activity: () => "activity",
+    clear_activity: () => undefined,
     student_projects: {
       ensure_course_manager_access: jest.fn(async () => undefined),
     },
@@ -192,5 +204,22 @@ describe("adding later-assigned students to a scheduled collection", () => {
     await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
     expect(record.auto_collect_op_id).toBe("op-old");
     expect(errors.join()).toContain("timeout");
+  });
+
+  it("adds students first reached by sending selected files", async () => {
+    const { actions } = setup(["s1"]);
+    server(["s1"]);
+    actions.update_listing = jest.fn(async () => undefined);
+    sendPatch = jest.fn(async () => ({ op_id: "patch-op" }));
+    waitForCopy = jest.fn(async () => ({ s3: "copy failed" }));
+    await actions.send_selected_assignment_paths_to_students({
+      assignment_id: ASSIGNMENT,
+      relative_paths: ["hw1.ipynb"],
+      include_not_assigned: true,
+    });
+    expect(sendPatch).toHaveBeenCalledTimes(1);
+    // s3's copy failed, s1 was already scheduled
+    expect(addStudents).toHaveBeenCalledTimes(1);
+    expect(added(addStudents.mock.calls[0])).toEqual(["s2", "s4"]);
   });
 });

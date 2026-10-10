@@ -1797,6 +1797,14 @@ ${details}
         },
         errors || undefined,
       );
+      // Students reached here for the first time must be in a scheduled
+      // collection too (support #20954).
+      await this.refresh_auto_collect(
+        assignment_id,
+        courseCopyDests
+          .map(({ student_id }) => student_id)
+          .filter((student_id) => !result[student_id]),
+      );
     } catch (err) {
       finish({ status: "failed", error: `${err}` }, err);
     }
