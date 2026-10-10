@@ -5,6 +5,7 @@ import { localPath } from "./filesystem";
 import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
 import { readFile } from "fs/promises";
 import {
+  containerConatHostArgs,
   getImage,
   networkArgument,
   podmanRuntimeArgs,
@@ -268,7 +269,11 @@ export async function sandboxExec({
       );
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
-        args.push(networkArgument());
+        const network = networkArgument();
+        args.push(network);
+        // Like the project container: the project's own API relay and conat
+        // are on the host, under the host.containers.internal alias.
+        args.push(...(await containerConatHostArgs(network, env)));
       }
       args.push("--workdir", getWorkdir());
 
