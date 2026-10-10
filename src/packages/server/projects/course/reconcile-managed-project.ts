@@ -229,6 +229,26 @@ function planCourseManagedProjectReconciliation(
       );
     }
   }
+  if (type === "student" && request.student_deleted === true) {
+    // Deleting a student removes their access (below, subject to the
+    // collaborator policy), but must not rewrite who the project belongs to.
+    // The roster entry may never have learned the account that accepted the
+    // invite; erasing the binding then would leave a restored (undeleted)
+    // student with no way back into their project.
+    const requestedCourseAccountId = `${course.account_id ?? ""}`.trim();
+    const currentStudentAccountId = `${currentCourse?.account_id ?? ""}`.trim();
+    if (isValidUUID(currentStudentAccountId)) {
+      if (
+        isValidUUID(requestedCourseAccountId) &&
+        requestedCourseAccountId !== currentStudentAccountId
+      ) {
+        throw new Error(
+          "student account binding conflict: the project is bound to a different student account",
+        );
+      }
+      course = { ...course, account_id: currentStudentAccountId };
+    }
+  }
   const nextCourse = preserveStudentCourse ? currentCourse : course;
   const hasResolvedStudentAccount = resolvedStudentAccountId != null;
   const missingDesiredAccountIds = [...desiredAccountIds].filter(
