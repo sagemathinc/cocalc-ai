@@ -430,6 +430,122 @@ describe("course secrets across bays", () => {
   });
 });
 
+describe("course reconfiguration across bays", () => {
+  // bob's project, on the attached bay, is the course; alice, a collaborator
+  // homed on the seed, reconfigures it. The operation lives on the course
+  // project's owning bay, where bob reads and cancels it.
+  let op_id;
+
+  it("runs a reconfiguration on the course project's bay", async () => {
+    const op = await alice.client.call("projects.reconfigureCourseProjects", {
+      course_project_id: bob.project,
+      course_path: "multibay.course",
+      settings: {
+        title: "Multibay course",
+        description: "",
+        allow_collabs: false,
+        datastore: true,
+        invite: {
+          subject: "Course invitation",
+          message: "Please join",
+          email_html: "<p>Please join</p>",
+        },
+      },
+      students: [],
+    });
+    op_id = op.op_id;
+    assert.ok(op_id, "a reconfiguration operation");
+    const seen = await bob.client.call(
+      "projects.getCourseReconfigureOperation",
+      { course_project_id: bob.project, op_id },
+    );
+    assert.equal(seen?.scope_id, bob.project);
+  });
+
+  it("lets a collaborator on the other bay read and cancel it", async () => {
+    await bob.client.call("projects.cancelCourseReconfigureOperation", {
+      course_project_id: bob.project,
+      op_id,
+    });
+    const seen = await alice.client.call(
+      "projects.getCourseReconfigureOperation",
+      { course_project_id: bob.project, op_id },
+    );
+    assert.ok(
+      ["canceled", "succeeded"].includes(seen?.status),
+      `status ${seen?.status}`,
+    );
+  });
+});
+
+describe("course collections across bays", () => {
+  // bob's project, on the attached bay, is the course; alice, a collaborator
+  // homed on the seed, schedules a collection of a student project. The
+  // collection lives on the course project's owning bay (#1001), so bob, on
+  // that bay, sees and cancels it.
+  const assignment_id = "multibay-assignment";
+  const run_at = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+  let op_id;
+  let studentProjects;
+
+  const item = (student_project_id, n) => ({
+    student_id: `student-${n}`,
+    student_project_id,
+    src_path: "hw",
+    dest_path: `hw-collect/student-${n}`,
+  });
+
+  it("schedules a collection on the course project's bay", async () => {
+    studentProjects = [
+      await createProject(alice.client, "student one"),
+      await createProject(alice.client, "student two"),
+    ];
+    const op = await alice.client.call("projects.collectAssignment", {
+      course_project_id: bob.project,
+      assignment_id,
+      items: [item(studentProjects[0], 1)],
+      run_at,
+    });
+    op_id = op.op_id;
+    assert.ok(op_id, "a collection operation");
+    const seen = await bob.client.call(
+      "projects.getCourseCollectionOperation",
+      {
+        course_project_id: bob.project,
+        op_id,
+      },
+    );
+    assert.equal(seen?.status, "queued");
+    assert.equal(seen?.scope_id, bob.project);
+  });
+
+  it("adds a later student to the scheduled collection", async () => {
+    const added = await alice.client.call(
+      "projects.addScheduledCollectionStudents",
+      {
+        course_project_id: bob.project,
+        assignment_id,
+        op_id,
+        items: [item(studentProjects[1], 2)],
+      },
+    );
+    assert.deepEqual(added, { updated: true, item_count: 2 });
+  });
+
+  it("lets a collaborator on the other bay cancel it", async () => {
+    const result = await bob.client.call(
+      "projects.cancelCourseCollectionOperation",
+      { course_project_id: bob.project, op_id },
+    );
+    assert.deepEqual(result, { found: true });
+    const seen = await alice.client.call(
+      "projects.getCourseCollectionOperation",
+      { course_project_id: bob.project, op_id },
+    );
+    assert.equal(seen?.status, "canceled");
+  });
+});
+
 describe("access requests across bays", () => {
   // The project lives on the seed; its owner (bob) and the requesters are
   // homed on either bay, so requests and their management cross bays.

@@ -1054,10 +1054,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "course-project collaborator cancellation of an in-project durable reconciliation operation",
   },
-  "projects.cancelCourseReconfigureOperationLocal": {
-    decision: "internal-auth-only",
-    reason: INTERNAL_AUTH_ONLY,
-  },
   "projects.cancelProjectRootfsBuild": {
     decision: "fresh-auth-not-required",
     reason:
@@ -1070,6 +1066,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "projects.clearAdminProjectEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin project disk entitlement override removal",
+  },
+  "projects.cancelCourseCollectionOperation": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "cancels this course's own collection operation, with the same checks as lro.cancel; removes no safety control",
   },
   "projects.cleanupRestoreStaging": {
     decision: "fresh-auth-not-required",
