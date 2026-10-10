@@ -4,6 +4,9 @@ import {
   GlobalOperationsClient,
   ImagesClient,
   InstancesClient,
+  MachineTypesClient,
+  RegionsClient,
+  SnapshotsClient,
   ZoneOperationsClient,
 } from "@google-cloud/compute";
 import { randomUUID } from "crypto";
@@ -11,6 +14,7 @@ import logger from "./logger";
 import { gcpInternalHostname } from "./gcp-internal";
 import type {
   CloudProvider,
+  DataDiskSnapshot,
   HostRuntime,
   HostSpec,
   PublicIngressResult,
@@ -404,6 +408,39 @@ async function waitUntilOperationComplete({
       .join("; ");
     throw new Error(summary || "gcp operation failed");
   }
+}
+
+// The host's data disk: recorded at create time, or the first non-boot,
+// non-scratch disk attached to the instance.
+async function resolveDataDiskName(
+  runtime: HostRuntime,
+  credentials: any,
+): Promise<string> {
+  const runtimeMetadata = runtime.metadata as
+    | { data_disk_name?: string; data_disk_uri?: string }
+    | undefined;
+  let diskName = runtimeMetadata?.data_disk_name;
+  if (!diskName && runtimeMetadata?.data_disk_uri) {
+    diskName = runtimeMetadata.data_disk_uri.split("/").pop();
+  }
+  if (!diskName) {
+    const instanceClient = new InstancesClient(credentials);
+    const [instance] = await instanceClient.get({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      instance: runtime.instance_id,
+    });
+    const disks = instance?.disks ?? [];
+    const dataDisk =
+      disks.find((disk) => !disk.boot && disk.type !== "SCRATCH") ??
+      disks.find((disk) => !disk.boot) ??
+      disks[0];
+    diskName = `${dataDisk?.source ?? ""}`.split("/").pop();
+  }
+  if (!diskName) {
+    throw new Error("gcp: could not determine the data disk name");
+  }
+  return diskName;
 }
 
 async function waitUntilGlobalOperationComplete({
@@ -1452,6 +1489,76 @@ export class GcpProvider implements CloudProvider {
     });
   }
 
+  async regionalQuotaHeadroom(
+    region: string,
+    creds: any,
+  ): Promise<Record<string, number>> {
+    const credentials = parseCredentials(creds ?? {});
+    const client = new RegionsClient(credentials);
+    const [result] = await client.get({
+      project: credentials.projectId,
+      region,
+    });
+    const headroom: Record<string, number> = {};
+    for (const quota of result?.quotas ?? []) {
+      const metric = `${quota?.metric ?? ""}`;
+      const limit = Number(quota?.limit);
+      const usage = Number(quota?.usage);
+      if (metric && Number.isFinite(limit) && Number.isFinite(usage)) {
+        headroom[metric] = limit - usage;
+      }
+    }
+    return headroom;
+  }
+
+  async listZoneMachineTypes(
+    zone: string,
+    creds: any,
+  ): Promise<
+    Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }>
+  > {
+    const credentials = parseCredentials(creds ?? {});
+    const client = new MachineTypesClient(credentials);
+    const result: Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }> = [];
+    for await (const type of client.listAsync({
+      project: credentials.projectId,
+      zone,
+    })) {
+      if (!type?.name || type.deprecated?.state) continue;
+      result.push({
+        name: type.name,
+        guestCpus: Number(type.guestCpus ?? 0) || undefined,
+        memoryMb: Number(type.memoryMb ?? 0) || undefined,
+        isSharedCpu: !!type.isSharedCpu,
+      });
+    }
+    return result;
+  }
+
+  async instanceUsesGvnic(runtime: HostRuntime, creds: any): Promise<boolean> {
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) return false;
+    const client = new InstancesClient(credentials);
+    const [instance] = await client.get({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      instance: runtime.instance_id,
+    });
+    return (instance?.networkInterfaces ?? []).some(
+      (nic) => `${nic?.nicType ?? ""}`.toUpperCase() === "GVNIC",
+    );
+  }
+
   async probeSpotAvailability(
     spec: HostSpec,
     creds: any,
@@ -1701,16 +1808,21 @@ export class GcpProvider implements CloudProvider {
           err,
         });
       }
-      const [response] = await client.delete({
-        project: credentials.projectId,
-        zone: runtime.zone,
-        instance: runtime.instance_id,
-      });
-      await waitUntilOperationComplete({
-        response,
-        zone: runtime.zone,
-        credentials,
-      });
+      try {
+        const [response] = await client.delete({
+          project: credentials.projectId,
+          zone: runtime.zone,
+          instance: runtime.instance_id,
+        });
+        await waitUntilOperationComplete({
+          response,
+          zone: runtime.zone,
+          credentials,
+        });
+      } catch (err) {
+        // Already gone (e.g. an interrupted provisioning): nothing to delete.
+        if (!isNotFoundError(err)) throw err;
+      }
       if (!opts?.preserveDataDisk && dataDiskName) {
         try {
           const [diskResponse] = await diskClient.delete({
@@ -1937,6 +2049,130 @@ export class GcpProvider implements CloudProvider {
     }
   }
 
+  async snapshotDataDisk(
+    runtime: HostRuntime,
+    snapshotName: string,
+    creds: any,
+  ): Promise<DataDiskSnapshot> {
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.snapshotDataDisk requires zone");
+    }
+    const diskClient = new DisksClient(credentials);
+    const diskName = await resolveDataDiskName(runtime, credentials);
+    const [disk] = await diskClient.get({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      disk: diskName,
+    });
+    const [response] = await diskClient.createSnapshot({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      disk: diskName,
+      snapshotResource: {
+        name: snapshotName,
+        description: `cocalc host data disk ${diskName}`,
+      },
+    });
+    // The zonal operation finishes when the snapshot is READY.
+    await waitUntilOperationComplete({
+      response,
+      zone: runtime.zone,
+      credentials,
+    });
+    const [snapshot] = await new SnapshotsClient(credentials).get({
+      project: credentials.projectId,
+      snapshot: snapshotName,
+    });
+    const storageBytes = Number(snapshot?.storageBytes);
+    const sizeGb = Number(disk?.sizeGb);
+    return {
+      name: snapshotName,
+      disk_name: diskName,
+      disk_type: `${disk?.type ?? ""}`.split("/").pop() || undefined,
+      disk_size_gb: Number.isFinite(sizeGb) ? sizeGb : undefined,
+      storage_bytes: Number.isFinite(storageBytes) ? storageBytes : undefined,
+    };
+  }
+
+  async createDataDiskFromSnapshot(
+    opts: {
+      zone: string;
+      disk_name: string;
+      snapshot_name: string;
+      disk_type?: string;
+      size_gb?: number;
+      reuse_existing?: boolean;
+    },
+    creds: any,
+  ): Promise<"created" | "exists"> {
+    const credentials = parseCredentials(creds ?? {});
+    const diskClient = new DisksClient(credentials);
+    const diskType = opts.disk_type || "pd-balanced";
+    if (opts.reuse_existing) {
+      try {
+        await diskClient.get({
+          project: credentials.projectId,
+          zone: opts.zone,
+          disk: opts.disk_name,
+        });
+        return "exists";
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+      }
+    }
+    const [response] = await diskClient.insert({
+      project: credentials.projectId,
+      zone: opts.zone,
+      diskResource: {
+        name: opts.disk_name,
+        sourceSnapshot: `projects/${credentials.projectId}/global/snapshots/${opts.snapshot_name}`,
+        type: `projects/${credentials.projectId}/zones/${opts.zone}/diskTypes/${diskType}`,
+        ...(opts.size_gb ? { sizeGb: `${opts.size_gb}` } : {}),
+      },
+    });
+    await waitUntilOperationComplete({
+      response,
+      zone: opts.zone,
+      credentials,
+    });
+    return "created";
+  }
+
+  async deleteDataDisk(
+    opts: { zone: string; disk_name: string },
+    creds: any,
+  ): Promise<void> {
+    const credentials = parseCredentials(creds ?? {});
+    try {
+      const [response] = await new DisksClient(credentials).delete({
+        project: credentials.projectId,
+        zone: opts.zone,
+        disk: opts.disk_name,
+      });
+      await waitUntilOperationComplete({
+        response,
+        zone: opts.zone,
+        credentials,
+      });
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+  }
+
+  async deleteSnapshot(snapshotName: string, creds: any): Promise<void> {
+    const credentials = parseCredentials(creds ?? {});
+    try {
+      const [response] = await new SnapshotsClient(credentials).delete({
+        project: credentials.projectId,
+        snapshot: snapshotName,
+      });
+      await waitUntilGlobalOperationComplete({ response, credentials });
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+  }
+
   async resizeDisk(
     runtime: HostRuntime,
     newSizeGb: number,
@@ -1947,31 +2183,7 @@ export class GcpProvider implements CloudProvider {
       throw new Error("gcp.resizeDisk requires zone");
     }
     const diskClient = new DisksClient(credentials);
-    const instanceClient = new InstancesClient(credentials);
-    const runtimeMetadata = runtime.metadata as
-      | { data_disk_name?: string; data_disk_uri?: string }
-      | undefined;
-    let diskName = runtimeMetadata?.data_disk_name;
-    if (!diskName && runtimeMetadata?.data_disk_uri) {
-      diskName = runtimeMetadata.data_disk_uri.split("/").pop();
-    }
-    if (!diskName) {
-      const [instance] = await instanceClient.get({
-        project: credentials.projectId,
-        zone: runtime.zone,
-        instance: runtime.instance_id,
-      });
-      const disks = instance?.disks ?? [];
-      const dataDisk =
-        disks.find((disk) => !disk.boot && disk.type !== "SCRATCH") ??
-        disks.find((disk) => !disk.boot) ??
-        disks[0];
-      const source = dataDisk?.source ?? "";
-      diskName = source.split("/").pop();
-    }
-    if (!diskName) {
-      throw new Error("gcp.resizeDisk could not determine disk name");
-    }
+    const diskName = await resolveDataDiskName(runtime, credentials);
     const targetSizeGb = Math.max(1, Math.ceil(newSizeGb));
     const getObservedSizeGb = async (): Promise<number | undefined> => {
       const [disk] = await diskClient.get({

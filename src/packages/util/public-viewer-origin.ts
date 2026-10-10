@@ -3,8 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { trimTrailingSlashes } from "./linear-text";
+
 function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
+  return trimTrailingSlashes(value);
 }
 
 function splitOriginish(value: string): {

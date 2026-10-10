@@ -229,6 +229,10 @@ lost. Read that warning; do not assume that archiving always creates a final
 backup. Starting an archived project restores its files from a backup and can
 take longer than starting a stopped project.
 
+If archiving asks you to skip files larger than the backup file-size limit,
+preserve those files elsewhere first. They will not be present after
+restoration. See [Project host storage, backups, and snapshots](/docs/hosts/storage).
+
 Selecting project checkboxes reveals bulk actions. **Leave or Delete...** can
 transfer an owned project to its most recently active collaborator and remove
 you, or permanently delete an owned project with no eligible collaborator.

@@ -750,7 +750,7 @@ function OperatingModelSection() {
       title: "Hosted CoCalc.ai",
     },
     {
-      body: "Local one-user and shared single-VM paths you operate.",
+      body: "Use Plus on your own computer, or run a shared Star site in one Docker container.",
       title: "CoCalc Plus or Star",
     },
     {

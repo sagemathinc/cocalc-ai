@@ -12,6 +12,7 @@ import {
   parseNonNegativeInteger,
   parsePositiveInteger,
 } from "../../core/persist-decode";
+import { projectToLocalForwardArgs } from "../../core/reflect-forward-args";
 import type { ProjectCommandDeps } from "../project";
 
 type SyncKeyInfo = any;
@@ -249,24 +250,20 @@ export function registerProjectSyncCommands(
               });
             }
 
-            const remoteEndpoint = `${target.ssh_target}:${remotePort}`;
             const localEndpoint = `${localHost}:${localPort}`;
             const forwardName =
               opts.name ??
               `project-${target.project.project_id.slice(0, 8)}-${remotePort}-to-${localPort}`;
-            const createArgs = [
-              "forward",
-              "create",
-              remoteEndpoint,
-              localEndpoint,
-            ];
-            if (forwardName.trim()) {
-              createArgs.push("--name", forwardName);
-            }
-            if (opts.compress) {
-              createArgs.push("--compress");
-            }
-            const created = await runReflectSyncCli(createArgs);
+            const created = await runReflectSyncCli(
+              projectToLocalForwardArgs({
+                sshTarget: target.ssh_target,
+                remotePort,
+                localHost,
+                localPort,
+                name: forwardName,
+                compress: opts.compress,
+              }),
+            );
             const createdId = parseCreatedForwardId(
               `${created.stdout}\n${created.stderr}`,
             );

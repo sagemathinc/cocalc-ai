@@ -68,7 +68,7 @@ export function HostRecoveryBanner({
             <div style={{ flex: "1 1 360px", minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.35 }}>
                 {canReconnectAutomatically
-                  ? "Reconnecting to your project"
+                  ? (recovery.headline ?? "Reconnecting to your project")
                   : "Project host is unavailable"}
               </div>
               <Space
@@ -93,12 +93,21 @@ export function HostRecoveryBanner({
                   ) : startedAt ? (
                     <>
                       Started{" "}
-                      <TimeAgo click_to_toggle={false} date={startedAt} live />
+                      <TimeAgo click_to_toggle={false} date={startedAt} live />{" "}
+                      (
+                      {startedAt.toLocaleTimeString([], {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                      )
                     </>
                   ) : (
                     "Recovery is in progress"
                   )}
                 </Text>
+                {canReconnectAutomatically && recovery.summary ? (
+                  <Text strong>{recovery.summary}</Text>
+                ) : null}
               </Space>
             </div>
             <Button

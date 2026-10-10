@@ -35,6 +35,9 @@ case "$TEST_PROBE" in
     if [[ -f "$TEST_LOG.recovered" ]]; then echo '{"ready":true,"generation":8}';
     else touch "$TEST_LOG.recovered"; echo '{"ready":true,"generation":7}'; fi ;;
   hang) exec sleep 30 ;;
+  slow-once)
+    if [[ -f "$TEST_LOG.slow" ]]; then echo '{"ready":true,"generation":7}';
+    else touch "$TEST_LOG.slow"; exec sleep 30; fi ;;
   error) echo 'database failed' >&2; exit 1 ;;
   *) echo '{"ready":false,"generation":7}'; exit 1 ;;
 esac
@@ -69,6 +72,18 @@ export TEST_PROBE=not-ready
 test "$(bash "$tmp/health" --generation)" = 7
 export TEST_PROBE=error
 if bash "$tmp/health" --generation >/dev/null; then echo 'failed snapshot passed' >&2; exit 1; fi
+
+# A slow cold start right after a worker roll is retried, not fatal; a probe
+# that never answers still aborts once the budget is spent.
+export TEST_PROBE=slow-once COCALC_BAY_BILLING_PROBE_TIMEOUT_S=1 COCALC_BAY_BILLING_GENERATION_TIMEOUT_S=10
+test "$(bash "$tmp/health" --generation 2>/dev/null)" = 7
+export TEST_PROBE=hang COCALC_BAY_BILLING_GENERATION_TIMEOUT_S=2
+status=0
+bash "$tmp/health" --generation >/dev/null 2>&1 || status=$?
+if (( status != 124 && status != 137 )); then echo "hung snapshot returned $status" >&2; exit 1; fi
+export COCALC_BAY_BILLING_PROBE_TIMEOUT_S=0
+if bash "$tmp/health" --generation >/dev/null 2>&1; then echo 'invalid probe timeout passed' >&2; exit 1; fi
+unset COCALC_BAY_BILLING_PROBE_TIMEOUT_S COCALC_BAY_BILLING_GENERATION_TIMEOUT_S
 
 before="$(wc -l < "$TEST_LOG")"
 export COCALC_CLUSTER_ROLE=attached

@@ -10,6 +10,7 @@ import { stat } from "node:fs/promises";
 import https from "node:https";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const REQUEST_MAX_ATTEMPTS = 4;
 const REQUEST_RETRY_BASE_DELAY_MS = 1000;
@@ -181,7 +182,7 @@ export function signR2Request({
   }
   const endpointPath =
     parsed.pathname && parsed.pathname !== "/"
-      ? parsed.pathname.replace(/\/+$/, "")
+      ? trimTrailingSlashes(parsed.pathname)
       : "";
   const host = parsed.host;
   const bucketPath = bucketInPath ? canonicalizePath(auth.bucket, key) : "/";

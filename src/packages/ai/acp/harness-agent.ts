@@ -29,6 +29,11 @@ import type {
   CodexAttentionContext,
   CodexAttentionHandler,
 } from "./codex-project";
+import {
+  countLeadingChars,
+  countTrailingChars,
+} from "@cocalc/util/linear-text";
+import { hasBlobImageReference } from "./blob-image-reference";
 
 const logger = getLogger("ai:acp:harness-agent");
 
@@ -281,8 +286,8 @@ export class HarnessAgent implements AcpAgent {
                 : toolBoundary;
             let text = event.text;
             if (newMessage && activityText) {
-              const trailing = activityText.match(/\n*$/)![0].length;
-              const leading = text.match(/^\n*/)![0].length;
+              const trailing = countTrailingChars(activityText, "\n");
+              const leading = countLeadingChars(text, "\n");
               text = "\n".repeat(Math.max(0, 2 - trailing - leading)) + text;
             }
             lastMessageId =
@@ -428,7 +433,7 @@ export class HarnessAgent implements AcpAgent {
       request.local_images?.length ||
       // Images arrive as image_attachments, with their references rewritten;
       // a remaining blob reference was not materialized.
-      /(?:<img\b[^>]*\bsrc=|!\[[^\]]*\]\()[^\n]*\/blobs\//i.test(request.prompt)
+      hasBlobImageReference(request.prompt)
     )
       return { state: "not_steerable", threadId };
     await this.validateAuthority?.(this.binding);

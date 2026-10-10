@@ -7,6 +7,7 @@ import { URL } from "node:url";
 import type { IncomingMessage } from "node:http";
 import TTL from "@isaacs/ttlcache";
 import { isValidUUID } from "@cocalc/util/misc";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 export const PRIVATE_APP_HOST_HEADER = "x-cocalc-private-app-host";
 export const APP_HOSTNAME_ROUTING_PENDING_URL =
@@ -69,7 +70,7 @@ export function createAppHostnameRequestRewriteBarrier({
 
 function normalizePrefix(value: string): string {
   const withLeading = value.startsWith("/") ? value : `/${value}`;
-  return withLeading.replace(/\/+$/, "") || "/";
+  return trimTrailingSlashes(withLeading) || "/";
 }
 
 function normalizeHostHeader(value: unknown): string {

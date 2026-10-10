@@ -10,6 +10,9 @@ const mockHardDeleteProject = jest.fn();
 const mockProcessDueDeletedProjectBackupPurges = jest.fn();
 const mockUpdateLro = jest.fn();
 
+jest.mock("@cocalc/server/hosts/maintenance", () => ({
+  assertProjectHostsNotUnderMaintenance: jest.fn(async () => undefined),
+}));
 jest.mock("@cocalc/server/lro/stream", () => ({
   publishLroEvent: jest.fn(async () => undefined),
   publishLroSummary: jest.fn(async () => undefined),

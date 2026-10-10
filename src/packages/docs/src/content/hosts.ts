@@ -682,8 +682,9 @@ Check these items before starting the move:
 3. The destination has enough disk and RAM for the project.
 4. The source host has a recent backup, especially if the source host is
    stopped or deprovisioned.
-5. The user understands that \`/tmp\` files and previous host-local snapshots
-   will not follow the project.
+5. The user understands that \`/tmp\` files, previous host-local snapshots, and
+   files omitted from the backup will not follow the project. Review any
+   skipped-file warning before confirming the move.
 6. SSH access may need to be configured again after the move.
 
 If the move changes backup region, CoCalc restores from the current backup
@@ -1101,6 +1102,13 @@ protection before lifecycle actions. Use provider snapshots or host-local
 snapshots only when the UI or provider explicitly exposes that workflow for the
 host; they are infrastructure recovery tools, not a substitute for project
 backups.
+
+Project backups can skip files whose apparent size exceeds the backup file-size
+limit, which normally follows the project's disk quota. Sparse or compressed
+files can exceed this limit while occupying less disk space. Review any
+skipped-file report before relying on a backup. Those files are also absent
+from an archive, move, or cross-host copy that restores from that backup.
+Preserve them separately before confirming an operation that skips them.
 
 Before deprovisioning, deleting, moving, or changing storage mode, make sure
 important projects have current backups. If a project has changed region, verify
