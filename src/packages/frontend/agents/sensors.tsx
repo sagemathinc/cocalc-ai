@@ -40,6 +40,7 @@ import { TimeAgo } from "@cocalc/frontend/components";
 import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi } from "./api";
+import { SensorReviewPanel } from "./sensor-review-panel";
 
 const LANGUAGE: Record<ScriptSensorSpec["language"], string> = {
   sh: "Shell (bash)",
@@ -379,11 +380,19 @@ function SensorCard({
             }
             description={
               kindOf(pending) === "script"
-                ? `It runs like a command of @${agent.name}: in this project's software, as you, with: ${sensorAccessText(pending)}. Each wake starts a turn paid by your account. Read the script before approving.`
+                ? `It runs like a command of @${agent.name}: in this project's software, as you, with: ${sensorAccessText(pending)}. Each wake starts a turn paid by your account. Have an agent review the script, or read it yourself, before approving.`
                 : `It starts a turn of @${agent.name} with this prompt on this schedule, paid by your account.`
             }
           />
           <SpecDetails spec={pending} />
+          {kindOf(pending) === "script" && sensor.pending_hash && (
+            <SensorReviewPanel
+              agent={agent}
+              sensor={sensor}
+              spec={pending as ScriptSensorSpec}
+              hash={sensor.pending_hash}
+            />
+          )}
           <Space>
             {button("approve", "Approve and run", true)}
             {button("reject", "Reject")}
