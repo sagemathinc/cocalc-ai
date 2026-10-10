@@ -608,14 +608,25 @@ async function processIdentity(pid: number): Promise<Omit<LockHolder, "pid">> {
   return { boot_id, start };
 }
 
-async function lockHolderAlive(text: string): Promise<boolean> {
-  let holder: LockHolder;
-  try {
-    holder = JSON.parse(text);
-  } catch {
-    holder = { pid: Number(text) }; // an older lock: a bare process id
+// The lock's holder: a JSON record, or (written by an older version, e.g.
+// during a mixed-version rollout) a bare process id. JSON.parse would accept
+// the bare id as a number, so it is recognised first.
+function parseLockHolder(text: string): LockHolder | undefined {
+  const trimmed = text.trim();
+  if (trimmed !== "" && Number.isSafeInteger(Number(trimmed))) {
+    return { pid: Number(trimmed) };
   }
-  const pid = Number(holder?.pid);
+  try {
+    const value = JSON.parse(trimmed);
+    if (value && typeof value === "object") return value;
+  } catch {}
+  return undefined;
+}
+
+async function lockHolderAlive(text: string): Promise<boolean> {
+  const holder = parseLockHolder(text);
+  if (!holder) return false;
+  const pid = Number(holder.pid);
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const current = await processIdentity(pid);
   if (holder.boot_id && current.boot_id && holder.boot_id !== current.boot_id) {

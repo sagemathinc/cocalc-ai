@@ -176,9 +176,14 @@ const identity = (pid) => {
   return { boot_id, start };
 };
 const holderAlive = (text) => {
+  // A JSON record, or (from an older version) a bare process id, which
+  // JSON.parse would accept as a number, so it is recognised first.
   let holder;
-  try { holder = JSON.parse(text); } catch { holder = { pid: Number(text) }; }
-  const pid = Number(holder?.pid);
+  const trimmed = text.trim();
+  if (trimmed !== "" && Number.isSafeInteger(Number(trimmed))) holder = { pid: Number(trimmed) };
+  else { try { holder = JSON.parse(trimmed); } catch {} }
+  if (!holder || typeof holder !== "object") return false;
+  const pid = Number(holder.pid);
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const current = identity(pid);
   if (holder.boot_id && current.boot_id && holder.boot_id !== current.boot_id) return false;

@@ -148,6 +148,17 @@ printf '999999999\n' > "${etc2}/site-master-key.keyring.lock"
 COCALC_BAY_CONFIG_DIR="$etc2" bash "$TOOL" activate "$shared" --backed-up >/dev/null 2>&1 ||
   fail "activate with a stale lock"
 [[ ! -e "${etc2}/site-master-key.keyring.lock" ]] || fail "lock left behind"
+# A live lock in the older bare process id format is waited for, not taken.
+sleep 30 &
+holder=$!
+printf '%s\n' "$holder" > "${etc2}/site-master-key.keyring.lock"
+head -c 32 /dev/urandom | base64 > "${TMP_ROOT}/old-key-2"
+COCALC_BAY_CONFIG_DIR="$etc2" bash "$TOOL" add-retired --import "${TMP_ROOT}/old-key-2" >/dev/null 2>&1 &
+waiter=$!
+sleep 2
+kill -0 "$waiter" 2>/dev/null || fail "took a live lock in the older format"
+kill "$holder"; wait "$holder" 2>/dev/null || true
+wait "$waiter" || fail "add-retired after the old-format holder exited"
 # Nor does a lock whose process id now belongs to an unrelated live process
 # (this shell) but which was taken in another boot.
 printf '{"pid":%s,"boot_id":"another-boot"}\n' "$$" > "${etc2}/site-master-key.keyring.lock"

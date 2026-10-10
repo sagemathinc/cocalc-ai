@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
@@ -267,6 +268,24 @@ describe("master-key-lifecycle", () => {
         `retired:${siteMasterKeyId(old)}`,
       ]);
     });
+
+    it("waits for a live lock in the older bare process id format", async () => {
+      await getOrCreateSiteMasterKey(paths());
+      const lock = `${keyPath()}.keyring.lock`;
+      const holder = spawn("sleep", ["30"]);
+      await writeFile(lock, `${holder.pid}\n`);
+      let done = false;
+      const step = addRetiredSiteMasterKey(randomBytes(32), paths()).then(
+        () => (done = true),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(done).toBe(false); // the live holder's lock was not taken
+      holder.kill();
+      await step;
+      expect(
+        (await ids()).filter((id) => id.startsWith("retired:")),
+      ).toHaveLength(1);
+    }, 20000);
 
     it("serializes key-file changes and clears a stale lock", async () => {
       await getOrCreateSiteMasterKey(paths());
