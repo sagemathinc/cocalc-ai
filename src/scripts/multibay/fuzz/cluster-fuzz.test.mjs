@@ -84,9 +84,10 @@ describe("multibay fuzz", () => {
         allow: ALLOW,
         outDir: process.env.MULTIBAY_DIR ?? cluster.dir,
       });
-      const { violations, warnings, timings } = await run.run();
+      const { violations, warnings, timings, unknownOutcomes } =
+        await run.run();
       console.log(
-        `seed ${seed} timings outside faults: ${JSON.stringify(timings)}`,
+        `seed ${seed} timings outside faults: ${JSON.stringify(timings)}; outcome unknown: ${unknownOutcomes}`,
       );
       for (const w of warnings) {
         console.log(

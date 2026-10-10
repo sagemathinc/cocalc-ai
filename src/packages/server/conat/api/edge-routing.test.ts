@@ -8,6 +8,12 @@ const forward = jest.fn();
 const createInterBayHubApiClient = jest.fn(() => ({ call: forward }));
 const isAccountBannedCached = jest.fn(() => false);
 const resolveProjectCollabInviteDirectory = jest.fn();
+// The owning bay's call record, in memory: each call id runs once.
+const recorded = new Map<string, any>();
+const runForwardedCallOnce = jest.fn(async ({ call_id, run }) => {
+  if (!recorded.has(call_id)) recorded.set(call_id, await run());
+  return recorded.get(call_id);
+});
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
@@ -26,6 +32,10 @@ jest.mock("@cocalc/server/accounts/security-state", () => ({
 }));
 jest.mock("@cocalc/server/projects/collab-invite-directory", () => ({
   resolveProjectCollabInviteDirectory,
+}));
+jest.mock("@cocalc/server/inter-bay/forwarded-calls", () => ({
+  OUTCOME_UNKNOWN: "OUTCOME_UNKNOWN",
+  runForwardedCallOnce,
 }));
 jest.mock("@cocalc/server/projects/collaborators", () => ({
   hashProjectCollabInviteToken: async (token: string) => `hash:${token}`,
@@ -52,6 +62,7 @@ const routed = (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  recorded.clear();
   registerHubApiLocalExecutor(local);
   isAccountBannedCached.mockReturnValue(false);
 });
@@ -85,11 +96,46 @@ describe("executeHubApiCall at the edge", () => {
     expect(createInterBayHubApiClient).toHaveBeenCalledWith(
       expect.objectContaining({ bay_id: "bay-1" }),
     );
+    expect(forward).toHaveBeenCalledTimes(1);
     expect(forward).toHaveBeenCalledWith({
       ...routed(),
       source_bay_id: "bay-0",
+      call_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
     expect(local).not.toHaveBeenCalled();
+  });
+
+  it("sends an unanswered call again with the same call id", async () => {
+    resolveProjectBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+    forward
+      .mockRejectedValueOnce(Object.assign(new Error("timeout"), { code: 408 }))
+      .mockResolvedValueOnce({ ok: true, result: { done: true } });
+    expect(await executeHubApiCall(routed())).toEqual({ done: true });
+    expect(forward).toHaveBeenCalledTimes(2);
+    const [first, second] = forward.mock.calls.map(([call]) => call.call_id);
+    expect(second).toBe(first);
+  });
+
+  it("says the outcome is unknown when the owning bay never answers", async () => {
+    resolveProjectBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+    forward.mockRejectedValue(
+      Object.assign(new Error("timeout"), { code: 408 }),
+    );
+    await expect(executeHubApiCall(routed())).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      message: expect.stringContaining("may or may not have been applied"),
+    });
+    expect(forward).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a call no hub of the owning bay received as a plain failure", async () => {
+    resolveProjectBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+    forward.mockRejectedValue(
+      Object.assign(new Error("no subscribers"), { code: 503 }),
+    );
+    await expect(executeHubApiCall(routed())).rejects.toMatchObject({
+      code: 503,
+    });
   });
 
   it("raises the owning bay's error as if the call had run here", async () => {
@@ -119,6 +165,17 @@ describe("handleForwardedHubApiCall on the owning bay", () => {
       ok: true,
       result: { ranHere: "projects.setProjectMetadata" },
     });
+    expect(local).toHaveBeenCalledWith(routed());
+  });
+
+  it("runs a repeated call id once and returns the first outcome", async () => {
+    resolveProjectBay.mockResolvedValue({ bay_id: "bay-0", epoch: 0 });
+    const call = forwarded({ call_id: "11111111-1111-4111-8111-111111111111" });
+    const first = await handleForwardedHubApiCall(call);
+    const again = await handleForwardedHubApiCall(call);
+    expect(again).toEqual(first);
+    expect(local).toHaveBeenCalledTimes(1);
+    // The call id is transport, not an argument of the method.
     expect(local).toHaveBeenCalledWith(routed());
   });
 
