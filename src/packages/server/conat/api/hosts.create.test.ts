@@ -997,7 +997,7 @@ describe("hosts.startHostInternal", () => {
     expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith({
       vm_id: "host-1",
       action: "start",
-      payload: { provider: "gcp" },
+      payload: { provider: "gcp", intent_generation: 0 },
     });
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,

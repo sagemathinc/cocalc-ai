@@ -45,6 +45,10 @@ import {
   syncAccountBanTimestampSchema,
 } from "./account-ban-timestamp";
 import {
+  ensureProjectHostDesiredStateSchema,
+  projectHostDesiredStateSchemaNeedsSync,
+} from "./project-host-desired-state";
+import {
   agentIdentityRecoverySchemaNeedsSync,
   ensureAgentIdentityRecoverySchema,
 } from "./agent-identity-recovery";
@@ -489,6 +493,9 @@ export async function syncSchema(
     ) {
       await syncAccountBanTimestampSchema(db);
     }
+    if (dbSchema.project_hosts != null) {
+      await ensureProjectHostDesiredStateSchema(db);
+    }
     if (dbSchema.commercial_orders != null) {
       await ensureCommercialNextActionSchema(db);
     }
@@ -608,6 +615,13 @@ export async function schemaNeedsSync(
       !(await accountBanTimestampSchemaReady(db))
     ) {
       dbg("detected missing account ban timestamp guard");
+      return true;
+    }
+    if (
+      dbSchema.project_hosts != null &&
+      (await projectHostDesiredStateSchemaNeedsSync(db))
+    ) {
+      dbg("detected missing project host desired-state guard");
       return true;
     }
     if (

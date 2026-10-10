@@ -390,3 +390,52 @@ describe("per-VM serialization of lifecycle work", () => {
     expect(await states()).not.toContain("vm-u:start queued");
   });
 });
+
+describe("claim fairness and intent-aware supersession", () => {
+  it("does not let one VM's lifecycle backlog crowd out other VMs", async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 2));
+    for (let i = 0; i < 12; i++) {
+      await enqueueCloudVmWork({
+        vm_id: "vm-busy",
+        action: i % 2 ? "verify_host_ready" : "refresh_runtime",
+      });
+      await tick();
+    }
+    await enqueueCloudVmWork({ vm_id: "vm-a", action: "start" });
+    await tick();
+    await enqueueCloudVmWork({ vm_id: "vm-b", action: "stop" });
+    const batch = await claimCloudVmWork({ worker_id: "worker-a", limit: 3 });
+    expect(batch.map((row) => row.vm_id).sort()).toEqual([
+      "vm-a",
+      "vm-b",
+      "vm-busy",
+    ]);
+  });
+
+  it("drops only starts from the stop's own or older intents", async () => {
+    await enqueueCloudVmWork({
+      vm_id: "vm-g",
+      action: "start",
+      payload: { intent_generation: 3 },
+    });
+    await enqueueCloudVmWork({
+      vm_id: "vm-g",
+      action: "restart",
+      payload: { intent_generation: 7 },
+    });
+    await enqueueCloudVmWork({
+      vm_id: "vm-g",
+      action: "stop",
+      payload: { intent_generation: 5 },
+    });
+    const { rows } = await getPool().query(
+      `SELECT action, state FROM cloud_vm_work WHERE vm_id='vm-g' ORDER BY action`,
+    );
+    expect(rows).toEqual([
+      // Requested after the stop's intent: kept, and wins.
+      { action: "restart", state: "queued" },
+      { action: "start", state: "failed" },
+      { action: "stop", state: "queued" },
+    ]);
+  });
+});
