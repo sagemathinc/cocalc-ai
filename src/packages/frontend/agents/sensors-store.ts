@@ -4,14 +4,16 @@
  */
 
 // An agent's sensors, for its message box and Sensors dialog. Agents propose
-// sensors from their own turns, so the list refreshes while it is shown.
+// sensors from their own turns, so the list refreshes now and then while
+// shown (every open message box polls, so keep it rare) and whenever the
+// dialog opens.
 
 import { useCallback, useEffect, useState } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { AgentSensor } from "@cocalc/conat/agents/sensors";
 import { personalAgentApi } from "./api";
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 5 * 60_000;
 
 export function useAgentSensors(
   agent: NamedAgent | undefined,
