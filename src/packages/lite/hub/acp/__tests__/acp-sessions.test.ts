@@ -19,6 +19,7 @@ import {
   publishActiveAcpSessions,
   publishPendingAcpSessions,
   setAcpSessionPublisher,
+  terminalizeRetiredAutomationSessions,
   upsertAcpSession,
   upsertAcpSessionFromRequest,
 } from "../../sqlite/acp-sessions";
@@ -321,6 +322,56 @@ describe("acp session registry", () => {
       "assistant-3:running:0",
       "assistant-3:running:0",
     ]);
+  });
+
+  it("ends the sessions of retired thread automations and publishes that once", async () => {
+    const published: string[] = [];
+    const sessions = ["automation", "command", "interactive"].map((kind, i) => {
+      const request = makeRequest({
+        userMessageId: `user-legacy-${i}`,
+        assistantMessageId: `assistant-legacy-${i}`,
+      });
+      upsertAcpSessionFromRequest({
+        request,
+        state: "running",
+        op_id: request.chat.message_id,
+        session_id: request.session_id,
+      });
+      // As older versions recorded them (their jobs may be gone already).
+      getAcpDatabase()
+        .prepare("UPDATE acp_sessions SET run_kind=? WHERE op_id=?")
+        .run(kind, request.chat.message_id);
+      return request.chat.message_id;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    setAcpSessionPublisher((row) => {
+      published.push(`${row.op_id}:${row.state}:${row.terminal}`);
+    });
+    expect(terminalizeRetiredAutomationSessions(getAcpDatabase())).toBe(2);
+    expect(getAcpSessionByOpId(sessions[0])).toMatchObject({
+      state: "canceled",
+      terminal: 1,
+    });
+    expect(getAcpSessionByOpId(sessions[2])).toMatchObject({
+      state: "running",
+      terminal: 0,
+    });
+    // Startup republishes only the real active session...
+    getAcpDatabase()
+      .prepare("UPDATE acp_sessions SET publication_attempted_at=0")
+      .run();
+    expect(publishActiveAcpSessions()).toBe(1);
+    await Promise.resolve();
+    expect(published).toEqual(["assistant-legacy-2:running:0"]);
+    // ...and the ended ones are published as ended, once.
+    published.length = 0;
+    await publishPendingAcpSessions();
+    await Promise.resolve();
+    expect(published.sort()).toEqual([
+      "assistant-legacy-0:canceled:1",
+      "assistant-legacy-1:canceled:1",
+    ]);
+    expect(terminalizeRetiredAutomationSessions(getAcpDatabase())).toBe(0);
   });
 
   it("republishes active local sessions during startup reconciliation", async () => {

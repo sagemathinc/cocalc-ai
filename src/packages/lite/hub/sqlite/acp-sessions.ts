@@ -195,6 +195,32 @@ function init(): void {
     `CREATE INDEX IF NOT EXISTS acp_sessions_session_id_idx ON ${TABLE}(session_id) WHERE session_id IS NOT NULL`,
   );
   ensureAcpTableMigrated(TABLE);
+  terminalizeRetiredAutomationSessions(db);
+}
+
+/**
+ * Scheduled thread automations were retired for agent sensors, and their
+ * jobs are deleted (see removeRetiredAutomationJobs). Their sessions end as
+ * canceled and are published once more, so none stays active here or
+ * centrally. This runs before active sessions are republished on startup.
+ */
+export function terminalizeRetiredAutomationSessions(
+  db: ReturnType<typeof getAcpDatabase>,
+  now = Date.now(),
+): number {
+  return Number(
+    db
+      .prepare(
+        `UPDATE ${TABLE} SET state='canceled', terminal=1,
+           finished_at=COALESCE(finished_at, ?), updated_at=?,
+           error=COALESCE(error, 'Scheduled thread automations were retired.'),
+           publication_revision=publication_revision+1, publication_pending=1
+         WHERE terminal=0 AND (run_kind IN ('automation', 'command')
+           OR agent_kind='command'
+           OR json_extract(metadata_json, '$.automation_id') IS NOT NULL)`,
+      )
+      .run(now, now).changes ?? 0,
+  );
 }
 
 let initialized = false;
