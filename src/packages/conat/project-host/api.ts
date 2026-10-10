@@ -746,7 +746,7 @@ export interface HostControlApi {
   /** Start a turn in the agent's thread for a sensor wake. */
   deliverAgentSensorWake: (
     opts: import("@cocalc/conat/agents/sensors").SensorWakeDelivery,
-  ) => Promise<{ message_id: string }>;
+  ) => Promise<import("@cocalc/conat/agents/sensors").SensorWakeDeliveryResult>;
   probePublicRouteOrigin: () => Promise<ProjectHostOriginHealth>;
   restartCloudflared: (opts: {
     reason: "public-route-probe";

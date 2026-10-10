@@ -8,11 +8,9 @@
 // project's bay, next to the agent identity they belong to. Every function
 // here runs on that bay; callers route there first (see sensor-routing.ts).
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { requireUuid, type AgentIdentity } from "@cocalc/conat/agents/protocol";
 import {
-  SENSOR_DEFAULT_MAX_WAKES_PER_DAY,
-  SENSOR_DEFAULT_MIN_INTERVAL_MINUTES,
   SENSOR_LIMITS,
   sensorSpecCanonicalJson,
   validateSensorSpec,
@@ -27,59 +25,18 @@ import {
   type SensorSpec,
 } from "@cocalc/conat/agents/sensors";
 import { nextSensorRunAt } from "@cocalc/util/ai/sensor-schedule";
-import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
-import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { assertActor, assertAgent } from "./access";
 import { agentStore, type AgentRun } from "./store";
+import { sensorBudget } from "./cocalc-connector-routing";
+import { NO_SENSORS, sensorLimits } from "./sensor-budget";
 import type { PoolClient } from "@cocalc/database/pool";
 
-/** Active sensors per project when a tier does not set a limit. */
-const DEFAULT_MAX_ACTIVE = 20;
 /** People may start a sensor by hand at most this often. */
 const MANUAL_RUN_MIN_GAP_MS = 60_000;
 
-export interface SensorLimits {
-  maxActive: number;
-  minIntervalMinutes: number;
-  maxWakesPerDay: number;
-}
+export { sensorLimits, type SensorLimits } from "./sensor-budget";
 
-export async function sensorLimits(account_id: string): Promise<SensorLimits> {
-  const trust = await getAccountProductAccessTrust(account_id);
-  if (!trust.trusted)
-    return {
-      maxActive: 0,
-      minIntervalMinutes: SENSOR_DEFAULT_MIN_INTERVAL_MINUTES,
-      maxWakesPerDay: 0,
-    };
-  const limits =
-    (await resolveMembershipForAccount(account_id)).effective_limits ?? {};
-  const count = (value: unknown, fallback: number) =>
-    typeof value === "number" && Number.isFinite(value) && value >= 0
-      ? Math.floor(value)
-      : fallback;
-  return {
-    maxActive: count(
-      limits.acp_max_active_automations_per_project,
-      DEFAULT_MAX_ACTIVE,
-    ),
-    minIntervalMinutes: Math.max(
-      1,
-      count(
-        limits.sensor_min_interval_minutes,
-        SENSOR_DEFAULT_MIN_INTERVAL_MINUTES,
-      ),
-    ),
-    maxWakesPerDay: count(
-      limits.sensor_max_wakes_per_day,
-      SENSOR_DEFAULT_MAX_WAKES_PER_DAY,
-    ),
-  };
-}
-
-const NO_SENSORS =
-  "Your membership does not include agent sensors. Upgrade your membership to use them.";
 const NO_INTERNET =
   "Sensors need a project with internet access. Upgrade the project's membership to enable internet access, then try again.";
 
@@ -237,11 +194,14 @@ export async function agentSensorRequest(
     return { sensor: toSensor(rows[0]) };
   }
   if (request.op === "delete") {
-    const { rowCount } = await db.query(
-      "DELETE FROM agent_sensors WHERE sensor_id=$1 AND agent_id=$2",
+    const { rows } = await db.query(
+      `DELETE FROM agent_sensors WHERE sensor_id=$1 AND agent_id=$2
+       RETURNING approved_by, spec->>'kind' AS kind`,
       [request.sensor_id, agent.agent_id],
     );
-    if (!rowCount) throw new Error("sensor not found");
+    if (!rows[0]) throw new Error("sensor not found");
+    if (rows[0].kind === "watch")
+      await releaseWatcher(rows[0].approved_by, request.sensor_id);
     return { deleted: request.sensor_id };
   }
   // Code running in a sensor run never sets up sensors: no chains of
@@ -323,14 +283,6 @@ async function isSensorRun(run_id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Serialize one account's sensor budget (wakes, watchers) on this bay. */
-async function lockAccountSensors(client: Querier, account_id: string) {
-  await client.query(
-    "SELECT pg_advisory_xact_lock(hashtextextended('agent-sensor-budget:' || $1::text, 0))",
-    [account_id],
-  );
-}
-
 async function createWatcher(
   run: AgentRun,
   agent: AgentIdentity,
@@ -347,51 +299,40 @@ async function createWatcher(
     spec.watch.type === "at"
       ? new Date(spec.watch.at)
       : new Date(Date.now() + 30_000);
-  const { rows } = await agentStore().transaction(async (client) => {
-    await lockAccountSensors(client, run.account_id);
-    // Budgets are per account and survive watchers finishing or being
-    // deleted: a few running at once, and no more set per day than the
-    // account may be woken.
-    const { rows: counts } = await client.query<{
-      active: string;
-      recent: string;
-    }>(
-      `SELECT
-         (SELECT count(*) FROM agent_sensors WHERE approved_by=$1
-            AND status='active' AND spec->>'kind'='watch'
-            AND next_run_at IS NOT NULL) AS active,
-         (SELECT count(*) FROM agent_sensor_events WHERE account_id=$1
-            AND kind='watch' AND created > now() - interval '1 day') AS recent`,
-      [run.account_id],
-    );
-    if (Number(counts[0]?.active) >= SENSOR_LIMITS.maxWatchersPerAccount)
-      throw new Error(
-        `at most ${SENSOR_LIMITS.maxWatchersPerAccount} watchers may be active at once for this account`,
-      );
-    if (Number(counts[0]?.recent) >= limits.maxWakesPerDay)
-      throw new Error(
-        `this account may set at most ${limits.maxWakesPerDay} watchers a day`,
-      );
-    const inserted = await client.query(
+  const sensor_id = randomUUID();
+  // Counted on the account's home bay, whichever bay this project is on: a
+  // few active at once, and no more set per day than the account may be
+  // woken. Finishing or deleting a watcher never resets the daily count.
+  await sensorBudget.reserveWatcher({
+    account_id: run.account_id,
+    project_id: agent.project_id,
+    agent_id: agent.agent_id,
+    sensor_id,
+    expires_at: spec.expires_at,
+  });
+  let rows: any[];
+  try {
+    ({ rows } = await agentStore().query(
       `INSERT INTO agent_sensors (sensor_id, project_id, agent_id, status,
          spec, script_hash, revision, approved_by, approved_at, next_run_at,
          consecutive_failures, wakes_today)
-       VALUES (gen_random_uuid(), $1, $2, 'active', $3, $4, 1, $5, now(), $6, 0, 0)
+       VALUES ($1, $2, $3, 'active', $4, $5, 1, $6, now(), $7, 0, 0)
        RETURNING *`,
-      [agent.project_id, agent.agent_id, spec, hash, run.account_id, first],
-    );
-    await client.query(
-      `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id, agent_id, sensor_id)
-       VALUES (gen_random_uuid(), 'watch', $1, $2, $3, $4)`,
       [
-        run.account_id,
+        sensor_id,
         agent.project_id,
         agent.agent_id,
-        inserted.rows[0].sensor_id,
+        spec,
+        hash,
+        run.account_id,
+        first,
       ],
-    );
-    return inserted;
-  });
+    ));
+  } catch (err) {
+    // No watcher exists, so it is certainly not active.
+    await releaseWatcher(run.account_id, sensor_id);
+    throw err;
+  }
   return {
     sensor: toSensor(rows[0]),
     message:
@@ -671,6 +612,8 @@ export async function sensorControlLocal(
         "DELETE FROM agent_sensors WHERE sensor_id=$1 AND project_id=$2",
         [row.sensor_id, project_id],
       );
+      if (row.spec?.kind === "watch")
+        await releaseWatcher(row.approved_by, row.sensor_id);
       return { deleted: row.sensor_id };
     }
   }
@@ -678,43 +621,18 @@ export async function sensorControlLocal(
 }
 
 /**
- * Reserve one of the approver's wakes for the last 24 hours, across all
- * their sensors and watchers on this bay (the membership's
- * sensor_max_wakes_per_day). Returns the reservation, or undefined when the
- * budget is used up. Release it if the wake is not delivered.
+ * A watcher fired, gave up or was deleted: it no longer counts as active in
+ * its account's budget. A lost release only keeps it counted until it
+ * expires, so failures are not errors.
  */
-export async function reserveWake({
-  account_id,
-  project_id,
-  agent_id,
-  sensor_id,
-  limit,
-}: {
-  account_id: string;
-  project_id: string;
-  agent_id: string;
-  sensor_id: string;
-  limit: number;
-}): Promise<string | undefined> {
-  return await agentStore().transaction(async (client) => {
-    await lockAccountSensors(client, account_id);
-    const { rows } = await client.query<{ event_id: string }>(
-      `INSERT INTO agent_sensor_events (event_id, kind, account_id, project_id, agent_id, sensor_id)
-       SELECT gen_random_uuid(), 'wake', $1, $2, $3, $4
-       WHERE (SELECT count(*) FROM agent_sensor_events WHERE account_id=$1
-              AND kind='wake' AND created > now() - interval '1 day') < $5
-       RETURNING event_id`,
-      [account_id, project_id, agent_id, sensor_id, limit],
-    );
-    return rows[0]?.event_id;
-  });
-}
-
-export async function releaseWake(event_id: string): Promise<void> {
-  await agentStore().query(
-    "DELETE FROM agent_sensor_events WHERE event_id=$1",
-    [event_id],
-  );
+export async function releaseWatcher(
+  account_id: string | null | undefined,
+  sensor_id: string,
+): Promise<void> {
+  if (!account_id) return;
+  await sensorBudget
+    .releaseWatcher({ account_id, sensor_id })
+    .catch(() => undefined);
 }
 
 export function sensorPermitHash(permit: string): string {

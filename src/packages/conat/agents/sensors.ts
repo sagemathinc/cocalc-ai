@@ -255,6 +255,15 @@ export interface SensorWakeDelivery {
   authorization: SensorExecutionAuthorization;
 }
 
+/**
+ * What the host did with a wake. not_sent means it certainly wrote nothing
+ * to the chat, so no turn can start from it. Any error thrown instead is
+ * ambiguous: the turn may have been queued.
+ */
+export type SensorWakeDeliveryResult =
+  | { message_id: string }
+  | { not_sent: string };
+
 /** Requests routed to the project's bay. */
 export type SensorControlRequest =
   | { op: "list"; agent_id?: string; sensor_id?: string }

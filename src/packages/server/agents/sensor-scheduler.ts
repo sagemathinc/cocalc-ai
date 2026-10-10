@@ -32,11 +32,12 @@ import { nextSensorRunAt } from "@cocalc/util/ai/sensor-schedule";
 import { assertActor } from "./access";
 import { hostFor } from "./rpc";
 import { issueSensorRunCredentials } from "./sensor-credentials";
+import { sensorBudget } from "./cocalc-connector-routing";
+import { pruneSensorEvents } from "./sensor-budget";
 import {
   projectHasInternet,
   projectImage,
-  releaseWake,
-  reserveWake,
+  releaseWatcher,
   sensorLimits,
   sensorPermitHash,
   sensorSpecHash,
@@ -380,28 +381,28 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     }
     const day = utcDay(started);
     const today = row.wakes_day === day ? row.wakes_today : 0;
-    const limits = await sensorLimits(row.approved_by);
     // This sensor's own limit, and the approver's budget across all their
-    // sensors and watchers (which a deleted or finished sensor cannot reset).
-    const reservation =
+    // sensors and watchers, kept on their home bay (which a deleted or
+    // finished sensor cannot reset). Keyed by this run.
+    const budget = { account_id: row.approved_by, run_id };
+    const { reserved } =
       today < spec.max_wakes_per_day
-        ? await reserveWake({
-            account_id: row.approved_by,
+        ? await sensorBudget.reserveWake({
+            ...budget,
             project_id: row.project_id,
             agent_id: row.agent_id,
             sensor_id: row.sensor_id,
-            limit: limits.maxWakesPerDay,
           })
-        : undefined;
-    if (!reservation) {
+        : { reserved: false };
+    if (!reserved) {
       outcome = "wake-limited";
       finished = false;
       return;
     }
+    // A one-time secret for exactly this wake: the turn it starts must run
+    // this prompt, in this thread, as the approver. Only its hash is kept.
+    const permit = randomBytes(32).toString("base64url");
     try {
-      // A one-time secret for exactly this wake: the turn it starts must run
-      // this prompt, in this thread, as the approver. Only its hash is kept.
-      const permit = randomBytes(32).toString("base64url");
       await db.query(
         `UPDATE agent_sensor_runs SET wake_permit_hash=$2,
            wake_prompt_sha256=$3, wake_account_id=$4, wake_path=$5,
@@ -416,7 +417,14 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
           agent.thread_id,
         ],
       );
-      await host.api.deliverAgentSensorWake({
+    } catch (err) {
+      // Nothing was sent, so the wake is unused.
+      await sensorBudget.releaseWake(budget).catch(() => undefined);
+      throw err;
+    }
+    let delivered;
+    try {
+      delivered = await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
         path: agent.path,
         thread_id: agent.thread_id,
@@ -432,15 +440,35 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
           permit,
         },
       });
-      outcome = "wake";
-      woke = 1;
     } catch (err) {
+      // Ambiguous: a lost acknowledgement or timeout, and the turn may be
+      // queued. It stays counted, and its permit can still start that one
+      // turn. A watcher does not try again, so it never wakes the agent twice.
       outcome = "wake-failed";
       failed = true;
-      finished = false;
-      error = `The wake could not start a turn: ${errorText(err)}`;
-      await releaseWake(reservation).catch(() => undefined);
+      finished = spec.kind === "watch";
+      error = `The wake may not have started a turn: ${errorText(err)}${finished ? " This watcher will not try again." : ""}`;
+      return;
     }
+    if ("not_sent" in delivered) {
+      // The host wrote nothing. Void the permit first; only a wake whose
+      // permit was still unused is given back.
+      const { rows: voided } = await db.query(
+        `UPDATE agent_sensor_runs SET wake_permit_hash=NULL, wake_state='not-sent'
+         WHERE run_id=$1 AND wake_state='issued' RETURNING run_id`,
+        [run_id],
+      );
+      if (voided.length > 0) {
+        await sensorBudget.releaseWake(budget).catch(() => undefined);
+        outcome = "wake-failed";
+        failed = true;
+        finished = false;
+        error = `The wake could not start a turn: ${delivered.not_sent}`;
+        return;
+      }
+    }
+    outcome = "wake";
+    woke = 1;
   } catch (err) {
     error = errorText(err);
   } finally {
@@ -538,6 +566,9 @@ async function finishRun(
       [row.sensor_id, SENSOR_LIMITS.keepRuns],
     )
     .catch(() => undefined);
+  // A watcher that fired or gave up no longer counts as active.
+  if (r.finished && row.spec.kind === "watch")
+    await releaseWatcher(row.approved_by, row.sensor_id);
   if (pause) logger.info("sensor paused", { sensor_id: row.sensor_id, pause });
 }
 
@@ -548,10 +579,8 @@ export async function removeDoneWatchers(): Promise<void> {
        AND next_run_at IS NULL AND lease_id IS NULL
        AND last_run_at < now() - interval '1 day'`,
   );
-  // Budgets look back one day.
-  await agentStore().query(
-    "DELETE FROM agent_sensor_events WHERE created < now() - interval '2 days'",
-  );
+  // The budgets of accounts whose home is this bay.
+  await pruneSensorEvents();
 }
 
 export function startSensorScheduler(): () => void {

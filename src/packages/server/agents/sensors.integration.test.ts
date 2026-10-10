@@ -55,6 +55,28 @@ jest.mock("./sensor-credentials", () => ({
   },
 }));
 
+// Budgets live on the approver's home bay; here that is this database. Every
+// call is recorded, to show which account's home is asked.
+const budget = { calls: [] as string[], failRelease: false };
+jest.mock("./cocalc-connector-routing", () => {
+  const home = jest.requireActual("./sensor-budget");
+  const call =
+    (name: string, fn: (opts: any) => Promise<any>) => async (opts: any) => {
+      budget.calls.push(`${name}:${opts.account_id}`);
+      if (budget.failRelease && name.startsWith("release"))
+        throw new Error("home bay unreachable");
+      return await fn(opts);
+    };
+  return {
+    sensorBudget: {
+      reserveWake: call("reserveWake", home.reserveSensorWakeAtHome),
+      releaseWake: call("releaseWake", home.releaseSensorWakeAtHome),
+      reserveWatcher: call("reserveWatcher", home.reserveSensorWatcherAtHome),
+      releaseWatcher: call("releaseWatcher", home.releaseSensorWatcherAtHome),
+    },
+  };
+});
+
 import {
   agentSensorRequest,
   authorizeSensorExecutionLocal,
@@ -104,6 +126,8 @@ describeDb("agent sensors", () => {
     lease.missing = [];
     lease.issued = [];
     lease.released = 0;
+    budget.calls = [];
+    budget.failRelease = false;
     host.runAgentSensor.mockReset().mockResolvedValue({
       exit_code: 0,
       timed_out: false,
@@ -823,6 +847,162 @@ describeDb("agent sensors", () => {
       sensor_id: b.sensor_id,
     })) as any;
     expect(runs[0].outcome).toBe("wake-limited");
+  });
+
+  test("an ambiguous delivery stays counted, and a watcher does not retry it", async () => {
+    limits.sensor_max_wakes_per_day = 2;
+    const set = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    })) as any;
+    // The acknowledgement is lost: the turn may well be queued.
+    host.deliverAgentSensorWake.mockRejectedValueOnce(
+      new Error("timeout waiting for the host"),
+    );
+    await makeDue(set.sensor.sensor_id);
+    await runDue();
+    const { rows } = await getPool().query(
+      `SELECT s.next_run_at, r.outcome, r.error, r.wake_state
+       FROM agent_sensors s JOIN agent_sensor_runs r USING (sensor_id)
+       WHERE s.sensor_id=$1`,
+      [set.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      next_run_at: null,
+      outcome: "wake-failed",
+      // Its permit can still start that one turn.
+      wake_state: "issued",
+    });
+    expect(rows[0].error).toMatch(/may not have started.*will not try again/);
+    expect(await runDue()).toBe(0);
+    // Counted: one wake left in the budget, and the watcher is released.
+    const { rows: events } = await getPool().query(
+      `SELECT kind, released_at FROM agent_sensor_events WHERE account_id=$1
+       ORDER BY kind`,
+      [owner],
+    );
+    expect(events.map((e) => e.kind)).toEqual(["wake", "watch"]);
+    expect(events[1].released_at).not.toBeNull();
+    const active = (await approve((await propose()).sensor)).sensor;
+    host.deliverAgentSensorWake.mockRejectedValueOnce(new Error("lost"));
+    await makeDue(active.sensor_id);
+    await runDue();
+    // A script keeps its schedule; its next wake finds the budget used up.
+    await makeDue(active.sensor_id);
+    await runDue();
+    const { runs } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: active.sensor_id,
+    })) as any;
+    expect(runs.map((r: any) => r.outcome)).toEqual([
+      "wake-limited",
+      "wake-failed",
+    ]);
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+  });
+
+  test("a wake the host certainly did not send is voided and given back", async () => {
+    limits.sensor_max_wakes_per_day = 1;
+    const set = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    })) as any;
+    host.deliverAgentSensorWake.mockResolvedValueOnce({
+      not_sent: "the agent's thread is unavailable",
+    });
+    await makeDue(set.sensor.sensor_id);
+    await runDue();
+    const first = host.deliverAgentSensorWake.mock.calls[0][0];
+    const { rows } = await getPool().query(
+      "SELECT wake_state, wake_permit_hash FROM agent_sensor_runs WHERE run_id=$1",
+      [first.authorization.run_id],
+    );
+    expect(rows[0]).toEqual({ wake_state: "not-sent", wake_permit_hash: null });
+    // Its permit is void, even if the message turned up after all.
+    await expect(
+      authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        first.authorization,
+        {
+          prompt_sha256: sha(first.prompt),
+          path: first.path,
+          thread_id: first.thread_id,
+        },
+      ),
+    ).rejects.toThrow();
+    // The watcher tries again, and the wake it gave back is available.
+    await makeDue(set.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    const { rows: done } = await getPool().query(
+      "SELECT next_run_at, last_outcome FROM agent_sensors WHERE sensor_id=$1",
+      [set.sensor.sensor_id],
+    );
+    expect(done[0]).toMatchObject({ next_run_at: null, last_outcome: "wake" });
+  });
+
+  test("watcher limits count the account's watchers in every project, through its home", async () => {
+    const otherProject = randomUUID();
+    const otherAgentId = randomUUID();
+    await getPool().query(
+      "INSERT INTO projects (project_id, run_quota, users, host_id, rootfs_image) VALUES ($1, $2, $3, $4, 'img:1')",
+      [otherProject, { network: true }, { [owner]: { group: "owner" } }, HOST],
+    );
+    await getPool().query(
+      `INSERT INTO agent_identities (agent_id, project_id, path, thread_id, name, created_by)
+       VALUES ($1, $2, '/home/user/b.chat', 't2', 'other', $3)`,
+      [otherAgentId, otherProject, owner],
+    );
+    const otherAgent = (
+      await getPool().query(
+        "SELECT * FROM agent_identities WHERE agent_id=$1",
+        [otherAgentId],
+      )
+    ).rows[0];
+    const otherRun = {
+      ...run,
+      agent_id: otherAgentId,
+      project_id: otherProject,
+      run_id: randomUUID(),
+    };
+    const make = (r: any, a: any) =>
+      agentSensorRequest(r, a, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "file", path: "out.txt" },
+      }) as any;
+    for (let i = 0; i < 3; i++) await make(run, agent);
+    const last = (await make(otherRun, otherAgent)).sensor;
+    await make(otherRun, otherAgent);
+    await expect(make(otherRun, otherAgent)).rejects.toThrow(
+      /at most 5 watchers may be active/,
+    );
+    expect(budget.calls.filter((c) => c.startsWith("reserveWatcher"))).toEqual(
+      Array(6).fill(`reserveWatcher:${owner}`),
+    );
+    // A lost release keeps the watcher counted (until it expires).
+    budget.failRelease = true;
+    await agentSensorRequest(otherRun, otherAgent, {
+      action: "sensor",
+      op: "delete",
+      sensor_id: last.sensor_id,
+    });
+    await expect(make(run, agent)).rejects.toThrow(/at most 5 watchers/);
+    budget.failRelease = false;
+    await sensorControlLocal(owner, otherProject, {
+      op: "delete",
+      sensor_id: (
+        await getPool().query(
+          "SELECT sensor_id FROM agent_sensors WHERE project_id=$1",
+          [otherProject],
+        )
+      ).rows[0].sensor_id,
+    });
+    await expect(make(run, agent)).resolves.toBeTruthy();
   });
 
   test("code in a sensor run cannot set up sensors", async () => {

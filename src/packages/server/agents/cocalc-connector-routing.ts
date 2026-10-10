@@ -34,6 +34,12 @@ import {
   listCliConnectorGrants as listCliGrantsAtHome,
   saveCliConnectorGrant as saveCliGrantAtHome,
 } from "./cli-connectors";
+import {
+  releaseSensorWakeAtHome,
+  releaseSensorWatcherAtHome,
+  reserveSensorWakeAtHome,
+  reserveSensorWatcherAtHome,
+} from "./sensor-budget";
 
 export const agentConnectorControl: InterBayAgentConnectorApi = {
   getConfig: getConfigAtHome,
@@ -52,6 +58,10 @@ export const agentConnectorControl: InterBayAgentConnectorApi = {
   begin: beginManagedCocalcConnectorTurn,
   renew: renewManagedCocalcConnectorTurn,
   end: endManagedCocalcConnectorTurn,
+  reserveSensorWake: reserveSensorWakeAtHome,
+  releaseSensorWake: releaseSensorWakeAtHome,
+  reserveSensorWatcher: reserveSensorWatcherAtHome,
+  releaseSensorWatcher: releaseSensorWatcherAtHome,
 };
 
 function requiredAccount<T extends { account_id?: string }>(
@@ -109,6 +119,26 @@ export const sensorConnectors = {
   beginCli: async (
     opts: Parameters<InterBayAgentConnectorApi["beginCliTurn"]>[0],
   ) => await (await accountHomeApi(opts.account_id)).beginCliTurn(opts),
+};
+
+/**
+ * Sensor budgets per account (wakes in any 24 hours, active watchers), kept
+ * on the account's home bay so they hold across all of its projects' bays.
+ * Internal: never reachable from a host or browser.
+ */
+export const sensorBudget = {
+  reserveWake: async (
+    opts: Parameters<InterBayAgentConnectorApi["reserveSensorWake"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).reserveSensorWake(opts),
+  releaseWake: async (
+    opts: Parameters<InterBayAgentConnectorApi["releaseSensorWake"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).releaseSensorWake(opts),
+  reserveWatcher: async (
+    opts: Parameters<InterBayAgentConnectorApi["reserveSensorWatcher"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).reserveSensorWatcher(opts),
+  releaseWatcher: async (
+    opts: Parameters<InterBayAgentConnectorApi["releaseSensorWatcher"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).releaseSensorWatcher(opts),
 };
 
 export const beginCocalcConnectorTurn: AgentApi["beginCocalcConnectorTurn"] =

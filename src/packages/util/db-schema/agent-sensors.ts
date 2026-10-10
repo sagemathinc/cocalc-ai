@@ -183,12 +183,14 @@ Table({
     },
     wake_state: {
       type: "string",
-      desc: "issued, then consumed when the turn starts executing.",
+      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void).",
     },
   },
 });
 
-// Wakes and watcher creations, per account, kept apart from the sensors so
+// Each account's sensor budgets, on the account's home bay so they hold
+// across all bays its projects are on: wakes and watcher creations in the
+// last 24 hours, and active watchers. Kept apart from the sensors, so
 // deleting a sensor (or a watcher finishing) never resets a daily budget.
 Table({
   name: "agent_sensor_events",
@@ -199,17 +201,19 @@ Table({
         name: "agent_sensor_events_account",
         query: "(account_id,kind,created)",
       },
-      { name: "agent_sensor_events_project", query: "(project_id)" },
     ],
   },
   fields: {
-    event_id: required("uuid", "Event id."),
+    event_id: required(
+      "uuid",
+      "The sensor run for a wake, the sensor for a watcher.",
+    ),
     kind: required("string", "wake or watch (a watcher was set)."),
     account_id: required(
       "uuid",
       "The account the wake runs as, or that set the watcher.",
     ),
-    project_id: required("uuid", "Project, for hard deletion."),
+    project_id: required("uuid", "Project of the sensor (information only)."),
     agent_id: required("uuid", "Agent."),
     sensor_id: { type: "uuid", desc: "Sensor, if it still exists." },
     created: {
@@ -217,5 +221,9 @@ Table({
       not_null: true,
       pg_default: "now()",
     },
+    expires_at: timestamp(
+      "Watchers: counts as active until then, unless released first.",
+    ),
+    released_at: timestamp("Watchers: when it fired, gave up or was deleted."),
   },
 });

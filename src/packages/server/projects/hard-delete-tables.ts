@@ -5,7 +5,6 @@
 
 export const PROJECT_HARD_DELETE_PROJECT_ID_TABLES = [
   "agent_sensor_runs",
-  "agent_sensor_events",
   "agent_sensors",
   "agent_identity_watchers",
   "agent_identities",

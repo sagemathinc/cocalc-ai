@@ -1444,7 +1444,7 @@ export async function startMasterRegistration({
     async deliverAgentSensorWake(opts) {
       await awaitReadyForControl("deliverAgentSensorWake", waitUntilReady);
       if (!controlClient)
-        throw new Error("host messaging transport unavailable");
+        return { not_sent: "host messaging transport unavailable" };
       const { deliverSensorWake } =
         await import("@cocalc/lite/hub/acp/sensor-wake");
       const { ensureProjectContainerRunning } =
