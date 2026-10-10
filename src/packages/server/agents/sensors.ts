@@ -19,7 +19,9 @@ import {
   type AgentSensor,
   type AgentSensorRequest,
   type AgentSensorRun,
+  type AgentSensorRunSummary,
   type SensorControlRequest,
+  type SensorDeliveryBinding,
   type SensorExecutionAuthorization,
   type SensorSpec,
 } from "@cocalc/conat/agents/sensors";
@@ -29,6 +31,7 @@ import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { assertActor, assertAgent } from "./access";
 import { agentStore, type AgentRun } from "./store";
+import type { PoolClient } from "@cocalc/database/pool";
 
 /** Active sensors per project when a tier does not set a limit. */
 const DEFAULT_MAX_ACTIVE = 20;
@@ -142,6 +145,28 @@ export function toSensorRun(row: any): AgentSensorRun {
 
 export const utcDay = (date: Date) => date.toISOString().slice(0, 10);
 
+/** Runs as an agent may see them: no output or errors, which may hold secrets. */
+export function toAgentRunSummary(run: AgentSensorRun): AgentSensorRunSummary {
+  const {
+    run_id,
+    started_at,
+    finished_at,
+    outcome,
+    exit_code,
+    summary,
+    manual,
+  } = run;
+  return {
+    run_id,
+    started_at,
+    finished_at,
+    outcome,
+    exit_code,
+    summary,
+    manual,
+  };
+}
+
 async function recentRuns(
   sensor_id: string,
   limit: number,
@@ -153,8 +178,24 @@ async function recentRuns(
   return rows.map(toSensorRun);
 }
 
-async function activeCount(project_id: string): Promise<number> {
-  const { rows } = await agentStore().query<{ n: string }>(
+type Querier = Pick<PoolClient, "query">;
+
+/**
+ * Serialize quota-checked changes to one project's sensors, so concurrent
+ * approvals or proposals cannot all see room under a limit.
+ */
+async function lockProjectSensors(client: Querier, project_id: string) {
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended('agent-sensors:' || $1::text, 0))",
+    [project_id],
+  );
+}
+
+async function activeCount(
+  client: Querier,
+  project_id: string,
+): Promise<number> {
+  const { rows } = await client.query<{ n: string }>(
     "SELECT count(*) AS n FROM agent_sensors WHERE project_id=$1 AND status='active'",
     [project_id],
   );
@@ -187,7 +228,7 @@ export async function agentSensorRequest(
     if (!rows[0]) throw new Error("sensor not found");
     return {
       sensor: toSensor(rows[0]),
-      runs: await recentRuns(request.sensor_id, 10),
+      runs: (await recentRuns(request.sensor_id, 10)).map(toAgentRunSummary),
     };
   }
   if (request.op === "pause") {
@@ -236,22 +277,25 @@ export async function agentSensorRequest(
       );
     row = rows[0];
   } else {
-    const { rows } = await db.query(
-      `INSERT INTO agent_sensors (sensor_id, project_id, agent_id, status,
-         pending_spec, pending_hash, proposed_at, proposed_run_id, revision,
-         consecutive_failures, wakes_today)
-       SELECT gen_random_uuid(), $1, $2, 'pending', $3, $4, now(), $5, 1, 0, 0
-       WHERE (SELECT count(*) FROM agent_sensors WHERE agent_id=$2) < $6
-       RETURNING *`,
-      [
-        agent.project_id,
-        agent.agent_id,
-        spec,
-        hash,
-        run.run_id,
-        SENSOR_LIMITS.maxSensorsPerAgent,
-      ],
-    );
+    const { rows } = await db.transaction(async (client) => {
+      await lockProjectSensors(client, agent.project_id);
+      return await client.query(
+        `INSERT INTO agent_sensors (sensor_id, project_id, agent_id, status,
+           pending_spec, pending_hash, proposed_at, proposed_run_id, revision,
+           consecutive_failures, wakes_today)
+         SELECT gen_random_uuid(), $1, $2, 'pending', $3, $4, now(), $5, 1, 0, 0
+         WHERE (SELECT count(*) FROM agent_sensors WHERE agent_id=$2) < $6
+         RETURNING *`,
+        [
+          agent.project_id,
+          agent.agent_id,
+          spec,
+          hash,
+          run.run_id,
+          SENSOR_LIMITS.maxSensorsPerAgent,
+        ],
+      );
+    });
     if (!rows[0])
       throw new Error(
         `an agent may have at most ${SENSOR_LIMITS.maxSensorsPerAgent} sensors; delete one first`,
@@ -283,12 +327,16 @@ async function assertSensorAgent(agent_id: string): Promise<void> {
   await assertAgent(agent);
 }
 
-/** Checks that must hold whenever a person makes a sensor active. */
+/**
+ * Checks that must hold whenever a person makes a sensor active, except the
+ * active count, which the activating transaction checks under a lock.
+ * Returns the approver's limit on active sensors.
+ */
 async function assertCanActivate(
   account_id: string,
   row: any,
   spec: SensorSpec,
-): Promise<void> {
+): Promise<number> {
   const limits = await sensorLimits(account_id);
   if (limits.maxActive === 0) throw new Error(NO_SENSORS);
   // The approver's own membership limits apply: their account pays for wakes.
@@ -297,14 +345,8 @@ async function assertCanActivate(
     maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
   });
   if (!(await projectHasInternet(row.project_id))) throw new Error(NO_INTERNET);
-  if (
-    row.status !== "active" &&
-    (await activeCount(row.project_id)) >= limits.maxActive
-  )
-    throw new Error(
-      `This project already has ${limits.maxActive} active sensors, the most your membership allows. Pause or delete one first.`,
-    );
   await assertSensorAgent(row.agent_id);
+  return limits.maxActive;
 }
 
 /**
@@ -324,6 +366,7 @@ export async function sensorControlLocal(
       project_id,
       request.host_id,
       request.authorization,
+      request.delivery,
     );
   await assertActor(account_id, project_id);
   const db = agentStore();
@@ -348,12 +391,30 @@ export async function sensorControlLocal(
     throw new Error(
       "This sensor changed since you looked at it. Review it again.",
     );
-  const update = async (sql: string, values: unknown[]) => {
-    const { rows } = await db.query(
-      `UPDATE agent_sensors SET ${sql}, revision=revision+1, updated=now()
-       WHERE sensor_id=$1 AND revision=$2 RETURNING *`,
-      [row.sensor_id, row.revision, ...values],
-    );
+  // Revision CAS on every change. Activations also take the project's sensor
+  // lock and count active sensors inside the same transaction.
+  const update = async (
+    sql: string,
+    values: unknown[],
+    activateWithin?: number,
+  ) => {
+    const { rows } = await db.transaction(async (client) => {
+      if (activateWithin !== undefined) {
+        await lockProjectSensors(client, project_id);
+        if (
+          row.status !== "active" &&
+          (await activeCount(client, project_id)) >= activateWithin
+        )
+          throw new Error(
+            `This project already has ${activateWithin} active sensors, the most your membership allows. Pause or delete one first.`,
+          );
+      }
+      return await client.query(
+        `UPDATE agent_sensors SET ${sql}, revision=revision+1, updated=now()
+         WHERE sensor_id=$1 AND revision=$2 RETURNING *`,
+        [row.sensor_id, row.revision, ...values],
+      );
+    });
     if (!rows[0])
       throw new Error(
         "This sensor changed since you looked at it. Review it again.",
@@ -368,7 +429,7 @@ export async function sensorControlLocal(
       const spec = row.pending_spec as SensorSpec;
       if (sensorSpecHash(spec) !== row.pending_hash)
         throw new Error("pending spec does not match its hash");
-      await assertCanActivate(account_id, row, spec);
+      const maxActive = await assertCanActivate(account_id, row, spec);
       const next = nextSensorRunAt(spec.schedule, Date.now());
       return await update(
         `spec=pending_spec, script_hash=pending_hash, pending_spec=NULL,
@@ -376,6 +437,7 @@ export async function sensorControlLocal(
          status='active', approved_by=$3, approved_at=now(), pause_reason=NULL,
          consecutive_failures=0, next_run_at=$4`,
         [account_id, next ? new Date(next) : null],
+        maxActive,
       );
     }
     case "reject":
@@ -395,13 +457,14 @@ export async function sensorControlLocal(
     case "resume": {
       if (row.status !== "paused" || !row.spec)
         throw new Error("only a paused, approved sensor can be resumed");
-      await assertCanActivate(account_id, row, row.spec);
+      const maxActive = await assertCanActivate(account_id, row, row.spec);
       const next = nextSensorRunAt(row.spec.schedule, Date.now());
       // Whoever resumes takes over the approval: wakes run as them.
       return await update(
         `status='active', pause_reason=NULL, consecutive_failures=0,
          approved_by=$3, approved_at=now(), next_run_at=$4`,
         [account_id, next ? new Date(next) : null],
+        maxActive,
       );
     }
     case "run": {
@@ -426,23 +489,38 @@ export async function sensorControlLocal(
   throw new Error("unsupported sensor operation");
 }
 
+export function sensorPermitHash(permit: string): string {
+  return createHash("sha256").update(permit).digest("hex");
+}
+
 /**
- * The destination host asks this before it executes a queued sensor wake:
- * the sensor must still be active, unchanged, and approved by the account
- * the turn runs as, which must still have access to the project.
+ * The destination host asks this before it executes a queued sensor wake.
+ * The wake's one-time permit must match the one the scheduler issued for
+ * that run, bound to the exact prompt, chat thread and account; it is
+ * consumed here, so it can authorize one turn only. The sensor must still be
+ * active as approved and its approver must still have access to the project.
  */
 export async function authorizeSensorExecutionLocal(
   account_id: string,
   project_id: string,
   host_id: string,
   authorization: SensorExecutionAuthorization,
+  delivery: SensorDeliveryBinding,
 ): Promise<void> {
+  const denied = () => new Error("sensor wake is not authorized");
   requireUuid(host_id, "host_id");
-  if (authorization?.version !== 1)
-    throw new Error("invalid sensor execution authorization");
+  if (
+    authorization?.version !== 1 ||
+    authorization.project_id !== project_id ||
+    typeof authorization.permit !== "string" ||
+    authorization.permit.length < 32 ||
+    typeof delivery?.prompt_sha256 !== "string" ||
+    typeof delivery.path !== "string" ||
+    typeof delivery.thread_id !== "string"
+  )
+    throw denied();
   requireUuid(authorization.sensor_id, "sensor_id");
-  if (authorization.project_id !== project_id)
-    throw new Error("invalid sensor execution authorization");
+  requireUuid(authorization.run_id, "run_id");
   await assertProjectHostAgentTokenAccess({ account_id, host_id, project_id });
   const row = await loadForProject(authorization.sensor_id, project_id);
   if (
@@ -453,5 +531,25 @@ export async function authorizeSensorExecutionLocal(
   )
     throw new Error("sensor is no longer active as approved");
   await assertActor(account_id, project_id);
-  await assertSensorAgent(row.agent_id);
+  const agent = await agentStore().get(row.agent_id);
+  await assertAgent(agent);
+  if (agent.path !== delivery.path || agent.thread_id !== delivery.thread_id)
+    throw denied();
+  const { rowCount } = await agentStore().query(
+    `UPDATE agent_sensor_runs SET wake_state='consumed'
+     WHERE run_id=$1 AND sensor_id=$2 AND wake_state='issued'
+       AND wake_permit_hash=$3 AND wake_prompt_sha256=$4
+       AND wake_account_id=$5 AND wake_path=$6 AND wake_thread_id=$7
+       AND started_at > now() - interval '1 day'`,
+    [
+      authorization.run_id,
+      authorization.sensor_id,
+      sensorPermitHash(authorization.permit),
+      delivery.prompt_sha256,
+      account_id,
+      delivery.path,
+      delivery.thread_id,
+    ],
+  );
+  if (rowCount !== 1) throw denied();
 }

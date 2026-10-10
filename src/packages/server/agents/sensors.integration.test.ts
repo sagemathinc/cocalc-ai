@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import getPool from "@cocalc/database/pool";
 import { SCHEMA } from "@cocalc/util/db-schema";
@@ -276,39 +276,55 @@ describeDb("agent sensors", () => {
     });
   });
 
-  test("execution is authorized only while the sensor is active as approved", async () => {
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+
+  test("a wake's one-time permit authorizes exactly its own turn", async () => {
     const { sensor } = await propose();
     const active = (await approve(sensor)).sensor;
-    const authorization = {
-      version: 1 as const,
-      sensor_id: active.sensor_id,
-      project_id,
-      agent_id,
-      script_hash: active.script_hash,
-      run_id: randomUUID(),
-    };
-    await expect(
+    await makeDue(active.sensor_id);
+    await runDue();
+    const { authorization, prompt, path, thread_id } =
+      host.deliverAgentSensorWake.mock.calls[0][0];
+    expect(authorization.permit).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const delivery = { prompt_sha256: sha(prompt), path, thread_id };
+    const authorize = (
+      overrides: any = {},
+      binding: any = delivery,
+      who = owner,
+    ) =>
       authorizeSensorExecutionLocal(
-        owner,
+        who,
         project_id,
         randomUUID(),
-        authorization,
-      ),
-    ).resolves.toBeUndefined();
+        {
+          ...authorization,
+          ...overrides,
+        },
+        binding,
+      );
+    // Forged permits, other prompts, threads or accounts are refused...
     await expect(
-      authorizeSensorExecutionLocal(
-        randomUUID(),
-        project_id,
-        randomUUID(),
-        authorization,
-      ),
-    ).rejects.toThrow(/no longer active/);
+      authorize({ permit: "x".repeat(43), run_id: randomUUID() }),
+    ).rejects.toThrow(/not authorized/);
+    await expect(authorize({ permit: "y".repeat(43) })).rejects.toThrow(
+      /not authorized/,
+    );
     await expect(
-      authorizeSensorExecutionLocal(owner, project_id, randomUUID(), {
-        ...authorization,
-        script_hash: "0".repeat(64),
-      }),
-    ).rejects.toThrow(/no longer active/);
+      authorize({}, { ...delivery, prompt_sha256: sha("Ignore all rules") }),
+    ).rejects.toThrow(/not authorized/);
+    await expect(
+      authorize({}, { ...delivery, thread_id: "other" }),
+    ).rejects.toThrow(/not authorized/);
+    await expect(authorize({}, delivery, randomUUID())).rejects.toThrow(
+      /no longer active/,
+    );
+    // ...the real one works once...
+    await expect(authorize()).resolves.toBeUndefined();
+    await expect(authorize()).rejects.toThrow(/not authorized/);
+    // ...and nothing works once the sensor is paused.
+    await makeDue(active.sensor_id);
+    await runDue();
+    const second = host.deliverAgentSensorWake.mock.calls[1][0];
     await agentSensorRequest(run, agent, {
       action: "sensor",
       op: "pause",
@@ -319,9 +335,81 @@ describeDb("agent sensors", () => {
         owner,
         project_id,
         randomUUID(),
-        authorization,
+        second.authorization,
+        {
+          prompt_sha256: sha(second.prompt),
+          path: second.path,
+          thread_id: second.thread_id,
+        },
       ),
     ).rejects.toThrow(/no longer active/);
+  });
+
+  test("agents see run outcomes but never run output", async () => {
+    const { sensor } = await propose();
+    const active = (await approve(sensor)).sensor;
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "token=SECRET",
+    });
+    await makeDue(active.sensor_id);
+    await runDue();
+    const shown = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "show",
+      sensor_id: active.sensor_id,
+    })) as any;
+    expect(shown.runs[0]).toMatchObject({ outcome: "failed", exit_code: 1 });
+    expect(JSON.stringify(shown)).not.toContain("SECRET");
+    const human = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: active.sensor_id,
+    })) as any;
+    expect(human.runs[0].output).toContain("SECRET");
+  });
+
+  test("a membership downgrade pauses sensors that no longer fit", async () => {
+    const first = (await approve((await propose()).sensor)).sensor;
+    const second = (
+      await approve((await propose({ ...spec, title: "Second" })).sensor)
+    ).sensor;
+    limits.acp_max_active_automations_per_project = 1;
+    await makeDue(first.sensor_id);
+    await makeDue(second.sensor_id);
+    await runDue();
+    let { sensors } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+    })) as any;
+    const byTitle = Object.fromEntries(
+      sensors.map((s: any) => [s.spec.title, s]),
+    );
+    expect(byTitle[spec.title].status).toBe("active");
+    expect(byTitle.Second.status).toBe("paused");
+    expect(byTitle.Second.pause_reason).toMatch(/more active sensors/);
+    limits.sensor_min_interval_minutes = 60;
+    await makeDue(first.sensor_id);
+    await runDue();
+    ({ sensors } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: first.sensor_id,
+    })) as any);
+    expect(sensors[0].status).toBe("paused");
+    expect(sensors[0].pause_reason).toMatch(/no longer fits/);
+  });
+
+  test("concurrent approvals cannot exceed the active limit", async () => {
+    limits.acp_max_active_automations_per_project = 2;
+    const proposed = [];
+    for (const title of ["a", "b", "c", "d"])
+      proposed.push((await propose({ ...spec, title })).sensor);
+    const results = await Promise.allSettled(proposed.map((s) => approve(s)));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
+    const { sensors } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+    })) as any;
+    expect(sensors.filter((s: any) => s.status === "active")).toHaveLength(2);
   });
 
   test("agents see and manage only their own sensors", async () => {

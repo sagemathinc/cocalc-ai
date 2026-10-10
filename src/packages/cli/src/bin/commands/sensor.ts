@@ -13,9 +13,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import {
+  SENSOR_TRUSTED_PATH,
   parseSensorWake,
+  sensorInterpreterArgv,
   validateSensorSpec,
-  type SensorLanguage,
 } from "@cocalc/conat/agents/sensors";
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
 import { sendIdentityMessage } from "../core/agent-message";
@@ -27,8 +28,11 @@ To wake the agent, print one JSON line:
   {"wake": true, "summary": "2 new issues", "data": {...}}
 (summary up to 500 characters, data up to 16 KB; the last such line wins).
 The script gets COCALC_SENSOR_ID and COCALC_SENSOR_STATE, a JSON file it may
-read and write to remember what it saw. Nothing runs until a person approves
-the exact spec. Test first with "cocalc sensor test --file spec.json".
+read and write to remember what it saw. It runs with a clean environment:
+PATH has only system and CoCalc tools (not ~/bin), Python runs isolated (-I,
+no user packages), and project environment variables are not set. Nothing
+runs until a person approves the exact spec. Test first with
+"cocalc sensor test --file spec.json".
 
 Spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node", "script",
   "schedule": {"kind": "interval", "minutes": 30}
@@ -50,12 +54,6 @@ async function readSpec(opts: { file?: string; stdin?: boolean }) {
   }
 }
 
-const INTERPRETER: Record<SensorLanguage, [string, string]> = {
-  sh: ["bash", "-c"],
-  python: ["python3", "-c"],
-  node: ["node", "-e"],
-};
-
 /** Run a spec's script here, the way CoCalc would, and report the result. */
 async function testSpec(spec: any) {
   const checked = validateSensorSpec(spec, {
@@ -64,16 +62,23 @@ async function testSpec(spec: any) {
   });
   const dir = join(homedir(), ".local/share/cocalc/sensors/test");
   await mkdir(dir, { recursive: true });
-  const [command, flag] = INTERPRETER[checked.language];
+  // The same clean environment and interpreter flags as a scheduled run.
+  const argv = sensorInterpreterArgv(checked.language, checked.script);
   const started = Date.now();
   const result = await new Promise<{
     code: number | null;
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
-    const child = spawn(command, [flag, checked.script], {
+    const child = spawn(argv[0], argv.slice(1), {
       env: {
-        ...process.env,
+        HOME: homedir(),
+        USER: process.env.USER ?? "user",
+        LOGNAME: process.env.USER ?? "user",
+        LANG: "C.UTF-8",
+        TERM: "dumb",
+        PATH: SENSOR_TRUSTED_PATH,
+        COCALC_PROJECT_ID: process.env.COCALC_PROJECT_ID ?? "",
         COCALC_SENSOR_ID: "test",
         COCALC_SENSOR_RUN_ID: "test",
         COCALC_SENSOR_STATE: join(dir, "state.json"),

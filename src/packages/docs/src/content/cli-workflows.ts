@@ -414,7 +414,9 @@ CLI command for approving, resuming or running a sensor. See
 
 The script runs in the chat's directory with \`COCALC_SENSOR_ID\` and
 \`COCALC_SENSOR_STATE\`, a JSON file for remembering what it already
-reported. To wake the agent it prints one line such as
+reported. It runs with a clean environment: PATH holds only system and
+CoCalc tools, not \`~/bin\`, and Python runs isolated without user-installed
+packages. To wake the agent it prints one line such as
 \`{"wake": true, "summary": "2 new issues", "data": {"issues": [...]}}\`.
 A run that prints no wake line is quiet. Daily schedules use
 \`{"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"}\`.

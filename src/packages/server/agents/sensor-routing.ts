@@ -9,7 +9,6 @@
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type { SensorControlRequest } from "@cocalc/conat/agents/sensors";
-import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { withAgentIdentityOwner } from "./identity-routing";
 import { sensorControlLocal } from "./sensors";
 
@@ -47,14 +46,11 @@ export const listSensors: AgentApi["listSensors"] = async (opts) => {
 export const manageSensor: AgentApi["manageSensor"] = async (opts) => {
   requireUuid(opts.account_id, "account_id");
   if (!MANAGE_OPS.has(opts.op)) throw new Error("unsupported sensor operation");
-  // Only a person in a signed-in browser session changes what runs; agent
-  // credentials never reach here (the API policy refuses them).
-  await requireDangerousSessionAuth({
-    account_id: opts.account_id!,
-    session_hash: opts.session_hash,
-    require_second_factor: "if_enabled",
-    allow_actor_impersonation: false,
-  });
+  // Only a person in a signed-in browser session changes what runs: the API
+  // policy refuses agent credentials and binds the caller's session, which
+  // API keys do not have.
+  if (typeof opts.session_hash !== "string" || !opts.session_hash)
+    throw new Error("sensors are managed from a signed-in browser session");
   return await sensorControl(opts.account_id!, opts.project_id, {
     op: opts.op,
     sensor_id: opts.sensor_id,
@@ -74,5 +70,6 @@ export const authorizeSensorExecution: AgentApi["authorizeSensorExecution"] =
       op: "authorize-execution",
       host_id,
       authorization: opts.authorization,
+      delivery: opts.delivery,
     });
   };

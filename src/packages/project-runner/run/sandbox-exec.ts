@@ -51,6 +51,11 @@ export interface SandboxExecOptions {
 
   /** Optionally disable network for ephemeral runs */
   noNetwork?: boolean;
+  /**
+   * Run this program and arguments instead of `/bin/bash -lc script`, so no
+   * shell startup file in the project runs first. Ephemeral runs only.
+   */
+  argv?: string[];
 }
 
 export interface SandboxExecResult {
@@ -95,7 +100,10 @@ export async function sandboxExec({
   signal,
   onOutput,
   onCleanupConfirmed,
+  argv,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
+  if (argv && (!useEphemeral || signal || argv.length === 0))
+    throw Error("argv requires a plain ephemeral run");
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
   if (onOutput && useEphemeral)
@@ -254,15 +262,17 @@ export async function sandboxExec({
       rootfs = await mountRootFs({ project_id, home, config: { image } });
       args.push("--rootfs", rootfs);
       args.push(
-        ...(signal
-          ? [
-              "/opt/cocalc/bin/node",
-              "-e",
-              SANDBOX_COMMAND_SUPERVISOR,
-              "--",
-              script,
-            ]
-          : ["/bin/bash", "-lc", script]),
+        ...(argv
+          ? argv
+          : signal
+            ? [
+                "/opt/cocalc/bin/node",
+                "-e",
+                SANDBOX_COMMAND_SUPERVISOR,
+                "--",
+                script,
+              ]
+            : ["/bin/bash", "-lc", script]),
       );
     } else {
       args.push(

@@ -9,10 +9,12 @@
 // result wakes the agent, so limits never depend on host or project state.
 
 import getLogger from "@cocalc/backend/logger";
+import { createHash, randomBytes } from "node:crypto";
 import {
   SENSOR_LIMITS,
   parseSensorWake,
   sensorWakePrompt,
+  validateSensorSpec,
   type SensorRunOutcome,
   type SensorSpec,
 } from "@cocalc/conat/agents/sensors";
@@ -22,6 +24,7 @@ import { hostFor } from "./rpc";
 import {
   projectHasInternet,
   sensorLimits,
+  sensorPermitHash,
   sensorSpecHash,
   utcDay,
 } from "./sensors";
@@ -80,8 +83,26 @@ async function pauseReason(row: ClaimedSensor): Promise<string | undefined> {
   } catch {
     return "The person who approved this sensor can no longer use the project. A current collaborator must resume it.";
   }
-  if ((await sensorLimits(row.approved_by)).maxActive === 0)
+  const limits = await sensorLimits(row.approved_by);
+  if (limits.maxActive === 0)
     return "The approver's membership no longer includes sensors.";
+  try {
+    // Memberships change: the approved schedule must still fit them.
+    validateSensorSpec(row.spec, {
+      minIntervalMinutes: limits.minIntervalMinutes,
+      maxWakesPerDay: Math.max(1, limits.maxWakesPerDay),
+    });
+  } catch (err) {
+    return `The sensor no longer fits the approver's membership: ${errorText(err)}`;
+  }
+  // Over the active limit after a downgrade, the earliest approved keep running.
+  const { rows: kept } = await agentStore().query(
+    `SELECT sensor_id FROM agent_sensors WHERE project_id=$1 AND status='active'
+     ORDER BY approved_at, sensor_id LIMIT $2`,
+    [row.project_id, limits.maxActive],
+  );
+  if (!kept.some((r) => r.sensor_id === row.sensor_id))
+    return `This project has more active sensors than the approver's membership allows (${limits.maxActive}).`;
   if (!(await projectHasInternet(row.project_id)))
     return "The project no longer has internet access.";
   return undefined;
@@ -182,17 +203,35 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       return;
     }
     try {
+      const prompt = sensorWakePrompt({
+        title: row.spec.title,
+        sensor_id: row.sensor_id,
+        ran_at: started,
+        wake,
+      });
+      // A one-time secret for exactly this wake: the turn it starts must run
+      // this prompt, in this thread, as the approver. Only its hash is kept.
+      const permit = randomBytes(32).toString("base64url");
+      await db.query(
+        `UPDATE agent_sensor_runs SET wake_permit_hash=$2,
+           wake_prompt_sha256=$3, wake_account_id=$4, wake_path=$5,
+           wake_thread_id=$6, wake_state='issued'
+         WHERE run_id=$1`,
+        [
+          run_id,
+          sensorPermitHash(permit),
+          createHash("sha256").update(prompt).digest("hex"),
+          row.approved_by,
+          agent.path,
+          agent.thread_id,
+        ],
+      );
       await host.api.deliverAgentSensorWake({
         account_id: row.approved_by,
         path: agent.path,
         thread_id: agent.thread_id,
         title: row.spec.title,
-        prompt: sensorWakePrompt({
-          title: row.spec.title,
-          sensor_id: row.sensor_id,
-          ran_at: started,
-          wake,
-        }),
+        prompt,
         authorization: {
           version: 1,
           sensor_id: row.sensor_id,
@@ -200,6 +239,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
           agent_id: row.agent_id,
           script_hash: row.script_hash,
           run_id,
+          permit,
         },
       });
       outcome = "wake";

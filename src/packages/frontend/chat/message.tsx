@@ -429,6 +429,19 @@ export function getFocusMessageButtonStyle(): CSSProperties {
   };
 }
 
+/**
+ * The sensor a wake message says it came from. Chat rows are editable, so
+ * this only labels the message; it never replaces the stored sender.
+ */
+function sensorWakeTitle(message: ChatMessageTyped): string | undefined {
+  const raw = field<any>(message, "sensor_wake");
+  const sensor = typeof raw?.toJS === "function" ? raw.toJS() : raw;
+  if (!sensor?.sensor_id) return;
+  return typeof sensor.title === "string" && sensor.title.trim()
+    ? sensor.title.trim().slice(0, 100)
+    : "sensor";
+}
+
 function rpcSourceAttribution(message: ChatMessageTyped):
   | {
       label: string;
@@ -440,23 +453,6 @@ function rpcSourceAttribution(message: ChatMessageTyped):
       attempt_id?: string;
     }
   | undefined {
-  // A sensor wake is stored as the approver's message for execution, but it
-  // was written by CoCalc for the sensor: never show it as that person's.
-  const rawSensor = field<any>(message, "sensor_wake");
-  const sensor =
-    typeof rawSensor?.toJS === "function" ? rawSensor.toJS() : rawSensor;
-  if (sensor?.sensor_id) {
-    const title =
-      typeof sensor.title === "string" && sensor.title.trim()
-        ? sensor.title.trim().slice(0, 100)
-        : "sensor";
-    return {
-      direction: "incoming",
-      label: "Sensor wake",
-      source_label: `Sensor: ${title}`,
-      source_agent_id: "",
-    };
-  }
   const raw = field<any>(message, "agent_rpc");
   const rpc = typeof raw?.toJS === "function" ? raw.toJS() : raw;
   const source = rpc?.source;
@@ -1218,13 +1214,16 @@ export default function Message({
     threadMetadata?.agent_runtime?.profile?.id === "claude-code"
       ? "Claude Code"
       : "ACP agent";
+  const sensorTitle = sensorWakeTitle(message);
   const senderName = rpcAttribution
     ? rpcAttribution.label
     : isGenericAgentMessage
       ? acpDisplayName
       : isCodexAgentMessage
         ? codexAgentName(senderId)
-        : get_user_name(senderId);
+        : sensorTitle
+          ? `${get_user_name(senderId)} (sensor wake: ${sensorTitle})`
+          : get_user_name(senderId);
   const messageRuntimeKind =
     (field(message, "acp_runtime_kind") ??
       threadMetadata?.agent_runtime?.kind) === "acp"

@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { runSensor } from "./sensors";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runSensor, sensorArgv } from "./sensors";
 
 const ids = {
   project_id: "11111111-1111-4111-8111-111111111111",
@@ -8,7 +11,7 @@ const ids = {
 };
 
 describe("runSensor", () => {
-  it("runs the approved body in an ephemeral container with the sensor environment", async () => {
+  it("runs the approved body in an ephemeral container with a clean environment", async () => {
     const exec = jest.fn(async () => ({
       stdout: '{"wake": true, "summary": "x"}\n',
       stderr: "",
@@ -34,93 +37,80 @@ describe("runSensor", () => {
     expect(opts).toMatchObject({
       project_id: ids.project_id,
       useEphemeral: true,
-      env: {
-        COCALC_SENSOR_ID: ids.sensor_id,
-        COCALC_SENSOR_RUN_ID: ids.run_id,
-        COCALC_SENSOR_STATE: `/home/user/.local/share/cocalc/sensors/${ids.sensor_id}/state.json`,
-      },
+      cwd: "/home/user/work",
       // The timeout is capped at the contract's maximum.
       timeoutMs: 300_000 + 60_000,
     });
-    expect(opts.script).toContain("cd '/home/user/work'");
-    expect(opts.script).toContain("timeout -k 5 300 bash -c ");
+    expect(opts.env).toBeUndefined();
+    const argv: string[] = opts.argv;
+    expect(argv.slice(0, 2)).toEqual(["/usr/bin/env", "-i"]);
+    expect(argv).toContain(
+      `COCALC_SENSOR_STATE=/home/user/.local/share/cocalc/sensors/${ids.sensor_id}/state.json`,
+    );
+    const path = argv.find((arg) => arg.startsWith("PATH="))!;
+    expect(path).not.toMatch(/\/home\/user/);
+    expect(argv.slice(-5)).toEqual([
+      "300",
+      "python3",
+      "-I",
+      "-c",
+      "print('it''s')",
+    ]);
   });
 
-  it("quotes the body so the shell passes it through unchanged", async () => {
-    const exec = jest.fn(async () => ({ stdout: "", stderr: "", code: 0 }));
-    const body = `echo "a'b" $HOME \`date\` ; exit 3`;
-    await runSensor(
+  it("runs nothing the project controls before the body", () => {
+    // Execute the real argv locally (without env -i's path to a container):
+    // a planted BASH_ENV, profile and PATH entry must not run.
+    const home = mkdtempSync(join(tmpdir(), "sensor-"));
+    mkdirSync(join(home, "bin"));
+    writeFileSync(join(home, "bin", "timeout"), "#!/bin/sh\necho HIJACK\n", {
+      mode: 0o755,
+    });
+    writeFileSync(join(home, "evil.sh"), "echo HIJACK\n");
+    writeFileSync(join(home, ".bash_profile"), "echo HIJACK\n");
+    const argv = sensorArgv(
       {
-        ...ids,
+        project_id: ids.project_id,
         language: "sh",
-        script: body,
-        timeout_seconds: 60,
-        path: "a.chat",
+        script: 'echo "body ran"; echo "$PATH"',
       },
-      exec as any,
+      {
+        sensor_id: ids.sensor_id,
+        run_id: ids.run_id,
+        seconds: 5,
+        state: join(home, "state", "state.json"),
+      },
+    ).map((arg) => (arg.startsWith("HOME=") ? `HOME=${home}` : arg));
+    const out = execFileSync(argv[0], argv.slice(1), {
+      encoding: "utf8",
+      env: {
+        BASH_ENV: join(home, "evil.sh"),
+        PATH: `${join(home, "bin")}:/usr/bin:/bin`,
+      },
+    });
+    expect(out).not.toContain("HIJACK");
+    expect(out).toContain("body ran");
+    expect(readFileSync(join(home, "bin", "timeout"), "utf8")).toContain(
+      "HIJACK",
     );
-    const script: string = (exec.mock.calls[0] as any)[0].script;
-    const inner = script
-      .split("\n")
-      .at(-1)!
-      .replace(/^timeout -k 5 60 /, "");
-    // Evaluate the quoted command without running it: print its arguments.
-    const args = execFileSync(
-      "bash",
-      ["-c", `set -- ${inner.replace(/^bash -c /, "")}; printf '%s' "$1"`],
-      { encoding: "utf8" },
-    );
-    const innerArgs = execFileSync(
-      "bash",
-      [
-        "-c",
-        `set -- ${args.replace(/^exec bash -c /, "").replace(/ sensor$/, "")}; printf '%s' "$1"`,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(innerArgs).toBe(body);
   });
 
   it("reports timeouts and refuses malformed requests", async () => {
     const exec = jest.fn(async () => ({ stdout: "", stderr: "", code: 124 }));
-    expect(
-      (
-        await runSensor(
-          {
-            ...ids,
-            language: "node",
-            script: "x",
-            timeout_seconds: 5,
-            path: "a.chat",
-          },
-          exec as any,
-        )
-      ).timed_out,
-    ).toBe(true);
+    const base = {
+      language: "node" as const,
+      script: "x",
+      timeout_seconds: 5,
+      path: "a.chat",
+    };
+    expect((await runSensor({ ...ids, ...base }, exec as any)).timed_out).toBe(
+      true,
+    );
     await expect(
-      runSensor(
-        {
-          ...ids,
-          sensor_id: "x",
-          language: "sh",
-          script: "x",
-          timeout_seconds: 5,
-          path: "a.chat",
-        },
-        exec as any,
-      ),
+      runSensor({ ...ids, ...base, sensor_id: "x" }, exec as any),
     ).rejects.toThrow(/invalid/);
     await expect(
-      runSensor(
-        {
-          ...ids,
-          language: "ruby" as any,
-          script: "x",
-          timeout_seconds: 5,
-          path: "a.chat",
-        },
-        exec as any,
-      ),
+      runSensor({ ...ids, ...base, language: "ruby" as any }, exec as any),
     ).rejects.toThrow(/language/);
   });
 });

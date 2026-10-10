@@ -514,6 +514,7 @@ export interface AgentApi {
   authorizeSensorExecution(
     opts: AgentHostAuth & {
       authorization: import("@cocalc/conat/agents/sensors").SensorExecutionAuthorization;
+      delivery: import("@cocalc/conat/agents/sensors").SensorDeliveryBinding;
     },
   ): Promise<void>;
   /** This account's payment selections for some agents, plus its defaults. */

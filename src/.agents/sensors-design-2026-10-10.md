@@ -112,6 +112,33 @@ Data:
 - Postgres on the project's bay: the approved spec, its hash, the pending proposal, revision (CAS for every change), approver, schedule state, wake counts and the last 50 runs (16 KB of output each).
 - Agents propose, list, show, pause and delete through their runtime identity (`{action: "sensor"}` on agent messaging). People list through `agent.listSensors` and change through `agent.manageSensor`, which requires a bound browser session and refuses agent credentials.
 
+### Security properties (after the first security review)
+- **One-time wake permits.** For each wake the scheduler creates a random
+  secret, stores only its hash on the run, bound to the exact prompt (SHA-256),
+  account, chat path and thread, and passes it to the host inside the queued
+  request (never in the chat row). At execution the hub consumes it atomically.
+  A forged or replayed `chat.sensor_wake` (for example from an agent-scoped
+  credential submitting its own ACP request) cannot run.
+- **Queued wakes are immutable.** Edits to the visible chat row never replace
+  a queued wake's prompt (`applyQueuedUserMessageEditToRequest`), and the host
+  reports the hash of the queued prompt, so an edited prompt would fail the
+  permit anyway.
+- **Nothing the project controls runs before the body.** The ephemeral
+  container runs an explicit argv: `env -i` (no BASH_ENV, LD_PRELOAD,
+  NODE_OPTIONS, PYTHON* or project variables), a PATH of CoCalc tools and
+  image directories only (no `~/bin`), `/usr/bin/timeout`, bash with
+  `--noprofile --norc`, `python3 -I`. The image itself is the project's, so a
+  project owner with sudo still controls system programs; the hub's limits
+  bound what a hijacked run could do (it can only wake within the daily limit,
+  with framed, untrusted data).
+- **Agents never see run output**, which may contain secrets; people see it
+  in the run log.
+- **Quota checks are serialized** per project with an advisory transaction
+  lock; every run re-checks the approver's current membership (interval,
+  active count by approval order, internet access).
+- **The chat label never hides the sender**: a wake shows the approver's name
+  with "(sensor wake: title)", since chat rows are editable.
+
 ### UI
 - An agent's details get a **Sensors** list: title, schedule, status, last run, last wake, next run, and actions (pause/resume, run now, view script and log, delete).
 - The agent's Connectors menu has a **Sensors** entry and the chip warns while something waits for review. (Proposal cards in the thread are a later improvement.)

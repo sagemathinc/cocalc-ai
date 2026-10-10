@@ -92,6 +92,18 @@ export type SensorRunOutcome =
   | "timeout"
   | "skipped";
 
+/** What an agent sees of a run: never the output, which may hold secrets. */
+export type AgentSensorRunSummary = Pick<
+  AgentSensorRun,
+  | "run_id"
+  | "started_at"
+  | "finished_at"
+  | "outcome"
+  | "exit_code"
+  | "summary"
+  | "manual"
+>;
+
 export interface AgentSensorRun {
   run_id: string;
   sensor_id: string;
@@ -128,7 +140,12 @@ export type SensorManageOp =
   | "delete"
   | "run";
 
-/** Proof a queued sensor wake carries; the hub rechecks it at execution. */
+/**
+ * What a queued sensor wake carries. `permit` is a one-time secret the hub
+ * created for this run's wake; the hub stores only its hash, bound to the
+ * prompt, thread and account, and consumes it when the turn executes. It is
+ * never written to the chat or shown to agents.
+ */
 export interface SensorExecutionAuthorization {
   version: 1;
   sensor_id: string;
@@ -136,6 +153,7 @@ export interface SensorExecutionAuthorization {
   agent_id: string;
   script_hash: string;
   run_id: string;
+  permit: string;
 }
 
 /** Hub to host: run an approved script once. */
@@ -176,7 +194,16 @@ export type SensorControlRequest =
       op: "authorize-execution";
       host_id: string;
       authorization: SensorExecutionAuthorization;
+      delivery: SensorDeliveryBinding;
     };
+
+/** What the executing turn is, as the host reports it from its own queue. */
+export interface SensorDeliveryBinding {
+  /** SHA-256 (hex) of the prompt the turn will run, before queue notes. */
+  prompt_sha256: string;
+  path: string;
+  thread_id: string;
+}
 
 const LINE_CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
@@ -416,20 +443,28 @@ export function sensorWakePrompt({
   return lines.join("\n");
 }
 
-/** Shell command that runs an approved script body in the sandbox. */
-export function sensorCommand(
+/**
+ * Directories a sensor may run programs from: CoCalc's read-only tools and the
+ * image's system directories, never the project's ~/bin or ~/.local/bin.
+ */
+export const SENSOR_TRUSTED_PATH =
+  "/opt/cocalc/bin2:/opt/cocalc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/**
+ * The interpreter command for an approved body. The body is an argument,
+ * never a file the project could swap; shells skip their startup files and
+ * Python runs isolated (no user site-packages or PYTHON* variables).
+ */
+export function sensorInterpreterArgv(
   language: SensorLanguage,
   script: string,
-): string {
-  // The body travels as one single-quoted argument, never through a file the
-  // project could swap between approval checks and execution.
-  const quoted = `'${script.replace(/'/g, `'\\''`)}'`;
+): string[] {
   switch (language) {
     case "sh":
-      return `exec bash -c ${quoted} sensor`;
+      return ["/bin/bash", "--noprofile", "--norc", "-c", script, "sensor"];
     case "python":
-      return `exec python3 -c ${quoted}`;
+      return ["python3", "-I", "-c", script];
     case "node":
-      return `exec node -e ${quoted}`;
+      return ["node", "-e", script];
   }
 }

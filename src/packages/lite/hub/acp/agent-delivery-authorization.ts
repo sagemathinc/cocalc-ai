@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 
@@ -7,9 +8,29 @@ export async function authorizeAgentDeliveryExecution(
 ): Promise<void> {
   const chat = request.chat;
   if (chat?.sensor_wake) {
+    // The prompt CoCalc built for the wake, optionally after the queue's own
+    // one-line note; the hub checks it against the wake's one-time permit.
+    const content = chat.user_message_content;
+    const prompt = request.prompt ?? "";
+    if (
+      typeof content !== "string" ||
+      !(
+        prompt === content ||
+        (prompt.startsWith("System note: ") &&
+          prompt.endsWith(content) &&
+          prompt.slice(0, prompt.length - content.length).split("\n").length ===
+            3)
+      )
+    )
+      throw new Error("sensor wake prompt does not match its authorization");
     await api.authorizeSensorExecution({
       account_id: request.account_id,
       authorization: chat.sensor_wake,
+      delivery: {
+        prompt_sha256: createHash("sha256").update(content).digest("hex"),
+        path: chat.path,
+        thread_id: `${chat.thread_id ?? ""}`,
+      },
     });
     return;
   }

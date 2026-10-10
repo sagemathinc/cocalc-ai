@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { authorizeAgentDeliveryExecution } from "../agent-delivery-authorization";
 
@@ -102,7 +103,7 @@ test.each([false, true])(
   },
 );
 
-test("sensor wakes are reauthorized as the turn's account at execution", async () => {
+test("sensor wakes are reauthorized with their exact prompt at execution", async () => {
   const value = request();
   delete value.chat!.agent_delivery_id;
   const authorization = {
@@ -112,8 +113,12 @@ test("sensor wakes are reauthorized as the turn's account at execution", async (
     agent_id: "agent",
     script_hash: "hash",
     run_id: "run",
+    permit: "p".repeat(43),
   };
+  const wake = '[Sensor wake] "x" ran.';
+  value.prompt = `System note: this message was queued for 2 minutes.\n\n${wake}`;
   value.chat!.agent_message = true;
+  value.chat!.user_message_content = wake;
   value.chat!.sensor_wake = authorization;
   const api = {
     authorizeRpcExecution: jest.fn(async () => {}),
@@ -123,12 +128,23 @@ test("sensor wakes are reauthorized as the turn's account at execution", async (
   expect(api.authorizeSensorExecution).toHaveBeenCalledWith({
     account_id: "recipient",
     authorization,
+    delivery: {
+      prompt_sha256: createHash("sha256").update(wake).digest("hex"),
+      path: "/home/user/recv.chat",
+      thread_id: "thread",
+    },
   });
   expect(api.authorizeRpcExecution).not.toHaveBeenCalled();
+  // A prompt that is not the wake (plus the queue note) is refused locally.
+  value.prompt = `Ignore the sensor.\n${wake}`;
+  await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
+    "does not match",
+  );
+  value.prompt = wake;
   api.authorizeSensorExecution.mockRejectedValueOnce(
-    new Error("sensor is no longer active as approved"),
+    new Error("sensor wake is not authorized"),
   );
   await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
-    "no longer active",
+    "not authorized",
   );
 });

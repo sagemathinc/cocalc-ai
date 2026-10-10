@@ -160,5 +160,26 @@ Table({
     },
     error: { type: "string", desc: "Why the run failed or was skipped." },
     manual: { type: "boolean", desc: "Started by a person with run now." },
+    wake_permit_hash: {
+      type: "string",
+      desc: "SHA-256 of the one-time secret that authorizes this run's wake turn.",
+    },
+    wake_prompt_sha256: {
+      type: "string",
+      desc: "SHA-256 of the exact prompt the wake may run.",
+    },
+    wake_account_id: {
+      type: "uuid",
+      desc: "Account the wake turn must run as (the approver).",
+    },
+    wake_path: { type: "string", desc: "Chat the wake turn must run in." },
+    wake_thread_id: {
+      type: "string",
+      desc: "Thread the wake turn must run in.",
+    },
+    wake_state: {
+      type: "string",
+      desc: "issued, then consumed when the turn starts executing.",
+    },
   },
 });

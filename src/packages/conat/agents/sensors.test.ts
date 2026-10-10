@@ -1,6 +1,6 @@
 import {
   parseSensorWake,
-  sensorCommand,
+  sensorInterpreterArgv,
   sensorSpecCanonicalJson,
   sensorWakePrompt,
   validateAgentSensorRequest,
@@ -166,13 +166,21 @@ describe("sensorWakePrompt", () => {
   });
 });
 
-describe("sensorCommand", () => {
-  it("passes the body as a single quoted argument", () => {
-    expect(sensorCommand("python", "print('hi')")).toBe(
-      `exec python3 -c 'print('\\''hi'\\'')'`,
-    );
-    expect(sensorCommand("sh", "echo $HOME")).toBe(
-      "exec bash -c 'echo $HOME' sensor",
-    );
+describe("sensorInterpreterArgv", () => {
+  it("passes the body as an argument and skips startup files", () => {
+    expect(sensorInterpreterArgv("python", "print('hi')")).toEqual([
+      "python3",
+      "-I",
+      "-c",
+      "print('hi')",
+    ]);
+    expect(sensorInterpreterArgv("sh", "echo $HOME")).toEqual([
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      "echo $HOME",
+      "sensor",
+    ]);
   });
 });
