@@ -111,11 +111,13 @@ install_claude_code() {
   rm -rf "$stage"
 }
 
-# Headless Chromium for the shared browser, cached by its pinned installer.
+# Headless Chromium for the shared browser, cached by its pinned installer
+# and the library pins it reads.
 chromium_cache_key() {
   local arch="$1"
-  printf 'tools-chromium-%s-%s-%s\n' "$OS" "$arch" \
-    "$(cocalc_tools_hash_file "$CHROMIUM_INSTALLER")"
+  printf 'tools-chromium-%s-%s-%s-%s\n' "$OS" "$arch" \
+    "$(cocalc_tools_hash_file "$CHROMIUM_INSTALLER")" \
+    "$(cocalc_tools_hash_file "$(dirname "$CHROMIUM_INSTALLER")/chromium-libs.lock")"
 }
 
 install_chromium() {

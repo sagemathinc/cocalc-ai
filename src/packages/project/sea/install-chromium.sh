@@ -6,11 +6,20 @@ set -Eeuo pipefail
 # This is part of the project tools bundle, so every project has a working
 # browser at /opt/cocalc/bin2/cocalc-chromium/chromium with nothing to install.
 #
-# The browser is Playwright's chromium-headless-shell build (no GTK, Pango or
-# Cairo). The shared libraries it needs beyond glibc are taken from Ubuntu
-# 20.04 packages, so they need nothing newer than glibc 2.31 and do not depend
-# on what the project image provides. The wrapper puts them on
-# LD_LIBRARY_PATH for the browser process only.
+# The browser is Chrome for Testing's headless shell (no GTK, Pango or Cairo),
+# the Stable channel's, pinned by SHA256.  Keep it current: it loads
+# arbitrary websites.  To update, take the Stable version from
+# https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json
+# (check-chromium-version.py says when it is behind), set CHROME_VERSION and
+# both ZIP_SHA256 below, and rebuild the tools. The shared libraries it needs beyond glibc are
+# taken from Ubuntu 20.04 packages, so they need nothing newer than glibc 2.31
+# and do not depend on what the project image provides. The wrapper puts them
+# on LD_LIBRARY_PATH for the browser process only.
+#
+# Every input is pinned: the .deb files and their SHA256 are listed in
+# chromium-libs.lock (made by pin-chromium-libs.py from Ubuntu's signed
+# indexes), so a build downloads nothing it has not checked, and builds are
+# reproducible.
 #
 # Usage:
 #   ./install-chromium.sh <amd64|arm64> <dest-dir>
@@ -18,37 +27,24 @@ set -Eeuo pipefail
 ARCH="${1:?architecture required}"
 DEST="${2:?destination required}"
 
-# Playwright 1.57 (Chromium 143.0.7499.4).
-CHROMIUM_REVISION="1200"
+CHROME_VERSION="155.0.8059.39"
 case "$ARCH" in
   amd64)
-    ZIP="chromium-headless-shell-linux.zip"
-    ZIP_SHA256="a9a525cb3832d59a810f78f8ba6c5ed3592a6a488984627f5d827c2a365c8a5a"
-    ZIP_DIR="chrome-headless-shell-linux64"
-    ZIP_BIN="chrome-headless-shell"
-    MIRROR="http://archive.ubuntu.com/ubuntu"
+    PLATFORM="linux64"
+    ZIP_SHA256="39dcb8c46550632a3d911850ab3b8af840b4e3f6d8622faa2018eb8756278786"
+    MIRROR="https://archive.ubuntu.com/ubuntu"
     ;;
   arm64)
-    ZIP="chromium-headless-shell-linux-arm64.zip"
-    ZIP_SHA256="2321e3d1d497b21b79aa822d6c9e13c5b155249a9df7cf028f009f1159907c75"
-    ZIP_DIR="chrome-linux"
-    ZIP_BIN="headless_shell"
-    MIRROR="http://ports.ubuntu.com/ubuntu-ports"
+    PLATFORM="linux-arm64"
+    ZIP_SHA256="9fb86f7c0b2734c5febc0bbb4e85f37da43553f3f8a7970949828c5713e87e94"
+    MIRROR="https://ports.ubuntu.com/ubuntu-ports"
     ;;
   *) echo "Unsupported Chromium architecture: $ARCH" >&2; exit 1 ;;
 esac
 SUITE="focal"
-
-# Packages providing every library the browser needs that is not part of
-# glibc/libgcc (checked below, so a missing one fails the build).
-PACKAGES=(
-  libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libblkid1 libbsd0
-  libdbus-1-3 libdrm2 libexpat1 libffi7 libgbm1 libgcrypt20 libglib2.0-0
-  libgpg-error0 liblz4-1 liblzma5 libmount1 libnspr4 libnss3 libpcre2-8-0
-  libpcre3 libselinux1 libsqlite3-0 libsystemd0 libudev1 libwayland-server0 libx11-6
-  libxau6 libxcb-randr0 libxcb1 libxcomposite1 libxdamage1 libxdmcp6 libxext6
-  libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libzstd1
-)
+# The library packages and their exact files (checked below too: a missing
+# library fails the build).
+LOCK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/chromium-libs.lock"
 # Provided by every glibc system.
 BASE_LIBS=" libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 \
 libresolv.so.2 libgcc_s.so.1 libz.so.1 ld-linux-x86-64.so.2 \
@@ -61,56 +57,43 @@ trap 'rm -rf "$WORK"' EXIT
 rm -rf "$INSTALL"
 mkdir -p "$INSTALL"
 
-echo "  - Downloading Chromium headless shell r$CHROMIUM_REVISION ($ARCH)"
-curl -sSfL --retry 3 -o "$WORK/$ZIP" \
-  "https://cdn.playwright.dev/builds/chromium/$CHROMIUM_REVISION/$ZIP"
+ZIP="chrome-headless-shell-$PLATFORM.zip"
+echo "  - Downloading Chrome headless shell $CHROME_VERSION ($ARCH)"
+curl -sSfL --proto '=https' --retry 3 -o "$WORK/$ZIP" \
+  "https://storage.googleapis.com/chrome-for-testing-public/$CHROME_VERSION/$PLATFORM/$ZIP"
 echo "$ZIP_SHA256  $WORK/$ZIP" | sha256sum -c --quiet -
 python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
   "$WORK/$ZIP" "$WORK/unzip"
-mv "$WORK/unzip/$ZIP_DIR" "$INSTALL/browser"
-if [ "$ZIP_BIN" != chrome-headless-shell ]; then
-  mv "$INSTALL/browser/$ZIP_BIN" "$INSTALL/browser/chrome-headless-shell"
-fi
+mv "$WORK/unzip/chrome-headless-shell-$PLATFORM" "$INSTALL/browser"
 chmod +x "$INSTALL/browser/chrome-headless-shell"
 # Packaging metadata for distro installers; not used here.
 rm -f "$INSTALL/browser/deb.deps" "$INSTALL/browser/rpm.deps"
 
-echo "  - Downloading Ubuntu $SUITE libraries ($ARCH)"
-INDEX="$WORK/Packages"
-for pocket in "$SUITE" "$SUITE-updates" "$SUITE-security"; do
-  for component in main universe; do
-    curl -sSfL --retry 3 \
-      "$MIRROR/dists/$pocket/$component/binary-$ARCH/Packages.xz" |
-      xz -dc >>"$INDEX"
-    echo >>"$INDEX"
-  done
-done
+echo "  - Downloading pinned Ubuntu $SUITE libraries ($ARCH)"
 mkdir -p "$WORK/debs" "$WORK/root" "$INSTALL/lib" "$INSTALL/share/licenses"
-for package in "${PACKAGES[@]}"; do
-  # Pick the highest version across the release, updates and security pockets.
-  read -r version filename sha256 < <(
-    awk -v p="$package" '
-      $1 == "Package:" { cur = $2; v = ""; f = ""; s = "" }
-      cur == p && $1 == "Version:" { v = $2 }
-      cur == p && $1 == "Filename:" { f = $2 }
-      cur == p && $1 == "SHA256:" { s = $2 }
-      cur == p && $0 == "" && f != "" { print v, f, s; cur = "" }
-    ' "$INDEX" | sort -V -k1,1 | tail -1
-  ) || true
-  if [ -z "${filename:-}" ]; then
-    echo "Missing Ubuntu package $package for $ARCH" >&2
+count=0
+while read -r arch package version filename sha256; do
+  case "$arch" in "" | "#"*) continue ;; esac
+  [ "$arch" = "$ARCH" ] || continue
+  case "$filename" in pool/*.deb) ;; *)
+    echo "Bad file in $LOCK: $filename" >&2
     exit 1
-  fi
+    ;;
+  esac
   deb="$WORK/debs/$(basename "$filename")"
-  curl -sSfL --retry 3 -o "$deb" "$MIRROR/$filename"
+  curl -sSfL --proto '=https' --retry 3 -o "$deb" "$MIRROR/$filename"
   echo "$sha256  $deb" | sha256sum -c --quiet -
   dpkg-deb -x "$deb" "$WORK/root"
   if [ -f "$WORK/root/usr/share/doc/$package/copyright" ]; then
     cp "$WORK/root/usr/share/doc/$package/copyright" \
       "$INSTALL/share/licenses/$package.copyright"
   fi
-  unset version filename sha256
-done
+  count=$((count + 1))
+done <"$LOCK"
+if [ "$count" -eq 0 ]; then
+  echo "No pinned libraries for $ARCH in $LOCK" >&2
+  exit 1
+fi
 # Flatten into lib/: copy the real files, then point each symlink at the
 # file it resolves to (some, like NSS's, are relative to other directories).
 find "$WORK/root" -name '*.so*' -type f -exec cp -a {} "$INSTALL/lib/" \;
@@ -155,6 +138,6 @@ export LD_LIBRARY_PATH GIO_MODULE_DIR
 exec "$DIR/browser/chrome-headless-shell" "$@"
 EOF
 chmod +x "$INSTALL/chromium"
-printf 'chromium-headless-shell r%s (%s), libraries from Ubuntu %s\n' \
-  "$CHROMIUM_REVISION" "$ARCH" "$SUITE" >"$INSTALL/VERSION"
+printf 'chrome-headless-shell %s (%s), libraries from Ubuntu %s\n' \
+  "$CHROME_VERSION" "$ARCH" "$SUITE" >"$INSTALL/VERSION"
 du -sh "$INSTALL" | awk '{print "  - Chromium installed: " $1}'
