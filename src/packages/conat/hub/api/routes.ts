@@ -56,6 +56,11 @@ const collabInviteFromOpts: HubApiRoute = {
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  // Project control reads and stop run on the owning bay's handlers.
+  "projects.stop": projectFromOpts,
+  "projects.getProjectState": projectFromOpts,
+  "projects.getProjectAddress": projectFromOpts,
+  "projects.getProjectActiveOperation": projectFromOpts,
   "projects.setProjectMetadata": projectFromOpts,
   "projects.setProjectDeletionProtection": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
@@ -84,6 +89,15 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.previewEmailProjectInvite": collabInviteFromOpts,
   "projects.respondEmailProjectInvite": collabInviteFromOpts,
   // Course secrets live on the course project's owning bay.
+  // Course reconfigure operations live on the course project's owning bay.
+  "projects.reconfigureCourseProjects": courseProjectFromOpts,
+  "projects.getCourseReconfigureOperation": courseProjectFromOpts,
+  "projects.cancelCourseReconfigureOperation": courseProjectFromOpts,
+  // Course collections live on the course project's owning bay (#1001).
+  "projects.collectAssignment": courseProjectFromOpts,
+  "projects.addScheduledCollectionStudents": courseProjectFromOpts,
+  "projects.getCourseCollectionOperation": courseProjectFromOpts,
+  "projects.cancelCourseCollectionOperation": courseProjectFromOpts,
   "projects.listCourseShareableSecrets": courseProjectFromOpts,
   "projects.getCourseSecretPolicy": courseProjectFromOpts,
   "projects.previewCourseSecretSync": courseProjectFromOpts,

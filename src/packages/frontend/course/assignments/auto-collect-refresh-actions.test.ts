@@ -21,6 +21,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       },
     },
     project_client: {
+      getCourseCollectionOperation: (...args: any[]) => lroGet(...args),
+      cancelCourseCollectionOperation: (...args: any[]) => lroCancel(...args),
       addScheduledCollectionStudents: (...args: any[]) => addStudents(...args),
       collectAssignment: (...args: any[]) => collectAssignment(...args),
       sendCourseAssignmentPatch: (...args: any[]) => sendPatch(...args),
@@ -77,6 +79,7 @@ function setup(assignedInStore: string[]) {
   const errors: string[] = [];
   const courseActions: any = {
     is_closed: () => false,
+    get_store: () => store,
     resolve: ({ student_id }: { student_id?: string }) => ({
       store,
       assignment,

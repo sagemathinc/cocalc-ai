@@ -109,6 +109,15 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+// Routed methods run the owning bay's handlers directly (edge routing).
+jest.mock("@cocalc/server/inter-bay/project-control", () => ({
+  __esModule: true,
+  handleProjectControlState: (...args: any[]) => interBayStateMock(...args),
+  handleProjectControlAddress: (...args: any[]) => interBayAddressMock(...args),
+  handleProjectControlActiveOperation: (...args: any[]) =>
+    interBayActiveOpMock(...args),
+}));
+
 jest.mock("@cocalc/server/projects/copy-db", () => ({
   __esModule: true,
   cancelCopy: jest.fn(),
@@ -319,7 +328,7 @@ describe("projects.getProjectState / getProjectAddress", () => {
     deleteProjectSshKeyInDbMock = jest.fn(async () => true);
   });
 
-  it("routes project state reads through the owning bay", async () => {
+  it("reads project state with the owning bay's handler", async () => {
     const { getProjectState } = await import("./projects");
     await expect(
       getProjectState({
@@ -330,13 +339,10 @@ describe("projects.getProjectState / getProjectAddress", () => {
       state: "running",
       ip: "10.0.0.1",
     });
-    expect(interBayStateMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      epoch: 7,
-    });
+    expect(interBayStateMock).toHaveBeenCalledWith({ project_id: "proj-1" });
   });
 
-  it("routes project address reads through the owning bay", async () => {
+  it("reads the project address with the owning bay's handler", async () => {
     const { getProjectAddress } = await import("./projects");
     await expect(
       getProjectAddress({
@@ -351,11 +357,10 @@ describe("projects.getProjectState / getProjectAddress", () => {
     expect(interBayAddressMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       account_id: "acct-1",
-      epoch: 7,
     });
   });
 
-  it("routes project active operation reads through the owning bay", async () => {
+  it("reads the active operation with the owning bay's handler", async () => {
     const { getProjectActiveOperation } = await import("./projects");
     await expect(
       getProjectActiveOperation({
@@ -370,10 +375,7 @@ describe("projects.getProjectState / getProjectAddress", () => {
       status: "running",
       phase: "runner_start",
     });
-    expect(interBayActiveOpMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      epoch: 7,
-    });
+    expect(interBayActiveOpMock).toHaveBeenCalledWith({ project_id: "proj-1" });
   });
 
   it("does not contact a project host for runtime logs when the project is not running", async () => {
