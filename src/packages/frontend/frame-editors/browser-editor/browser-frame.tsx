@@ -7,8 +7,12 @@
 // chat cards show), for a browser of this file's own, which keeps its
 // profile.  Agents reach it with `cocalc project browser ... --browser <file>`.
 
-import { Alert, Button, Flex, Spin, Typography } from "antd";
+import { Alert, Button, Flex, Typography } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { redux } from "@cocalc/frontend/app-framework";
+import { resolveAssistantCodexModel } from "@cocalc/frontend/frame-editors/ai/create-chat";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
+import { BrowserStartScreen, type BrowserStartStep } from "./start-screen";
 import { AppArtifact } from "@cocalc/frontend/chat/app-artifact";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { InstallCocalcCli } from "@cocalc/frontend/components/install-cocalc-cli";
@@ -31,10 +35,17 @@ interface Props {
   project_id: string;
   path: string;
   reload?: number;
+  actions?: any;
 }
 
 // Each frame (e.g. after a split) shows its own tab of the file's browser.
-export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
+export function BrowserFrame({
+  id: frameId,
+  project_id,
+  path,
+  reload,
+  actions,
+}: Props) {
   const [app, setApp] = useState<{ id: string; title: string; file: string }>();
   // What the viewer reports: where the browser runs and whether it is there.
   const [remote, setRemote] = useState<{
@@ -48,18 +59,54 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
       { type: "cocalc-browser-runs-on", value },
       "*",
     );
-  const onMessage = useCallback((data: any) => {
-    if (data?.type === "cocalc-browser-state")
-      setRemote({ runsOn: data.runsOn, connection: data.connection });
-  }, []);
+  // The start page's "ask an agent": like the Agent button, in a new thread.
+  const agentEnabled = !!redux
+    .getStore("projects")
+    ?.hasLanguageModelEnabled?.(project_id, "assistant");
+  const askAgent = (text: string) => {
+    if (!actions?.languageModel || !text.trim()) return;
+    void actions
+      .languageModel(
+        frameId,
+        {
+          command: text.trim(),
+          codegen: false,
+          allowEmpty: true,
+          model: resolveAssistantCodexModel(),
+          tag: "custom",
+          createNewThread: true,
+          submitToAgent: true,
+          frameType: "browser",
+        },
+        actions.languageModelGetContext?.(frameId) ?? "",
+      )
+      .catch((err) => setError(`${err?.message ?? err}`));
+  };
+  const onMessage = useCallback(
+    (data: any) => {
+      if (data?.type === "cocalc-browser-state")
+        setRemote({ runsOn: data.runsOn, connection: data.connection });
+      else if (data?.type === "cocalc-browser-agent")
+        askAgent(`${data.text ?? ""}`);
+    },
+    [actions, frameId],
+  );
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
+  const [step, setStep] = useState<BrowserStartStep>("browser");
 
   useEffect(() => {
     let canceled = false;
     setApp(undefined);
     setError(undefined);
     void (async () => {
+      // Like a terminal: opening it starts the project.
+      if (redux.getStore("projects")?.get_state?.(project_id) !== "running") {
+        setStep("project");
+        if (!(await ensure_project_running(project_id, "use this browser")))
+          throw Error("The project is not running. Start it to use this browser.");
+      }
+      if (!canceled) setStep("browser");
       const file = normalizeAbsolutePath(
         path,
         await resolveProjectHomeDirectory(project_id),
@@ -109,9 +156,12 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
     );
   if (!app)
     return (
-      <Flex align="center" justify="center" style={{ height: "100%" }}>
-        <Spin />
-      </Flex>
+      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+        <BrowserStartScreen
+          name={path.split("/").pop() || path}
+          step={step}
+        />
+      </div>
     );
   return (
     <div className="smc-vfill" style={{ minHeight: 0 }}>
@@ -122,7 +172,8 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
         title={app.title}
         view={`frame:${frameId}`}
         // We draw the "waiting for your computer" panel (below).
-        params={{ panel: "host" }}
+        // ...and offer agents on the start page.
+        params={agentEnabled ? { panel: "host", agent: "1" } : { panel: "host" }}
         onMessage={onMessage}
         frameRef={frame}
         notice={

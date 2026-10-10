@@ -7,14 +7,15 @@ export const VIEWER_HTML = String.raw`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shared browser</title>
 <style>
-  :root { color-scheme: light dark; --bg:#fff; --fg:#1f1f1f; --muted:#666; --bar:#f3f3f3; --line:#d9d9d9; --accent:#1677ff; --warn:#fff4d6; --warnfg:#5c3d00; --tab:#e8e8e8; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#141414; --fg:#e6e6e6; --muted:#9a9a9a; --bar:#1f1f1f; --line:#333; --accent:#4c8dff; --warn:#3a2f12; --warnfg:#ffd77a; --tab:#2a2a2a; } }
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1f1f1f; --muted:#666; --bar:#f3f3f3; --line:#d9d9d9; --accent:#1677ff; --warn:#fff4d6; --warnfg:#5c3d00; --tab:#e8e8e8; --sp1:#eef4ff; --sp2:#f8fafc; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141414; --fg:#e6e6e6; --muted:#9a9a9a; --bar:#1f1f1f; --line:#333; --accent:#4c8dff; --warn:#3a2f12; --warnfg:#ffd77a; --tab:#2a2a2a; --sp1:#12233f; --sp2:#0f141b; } }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px system-ui, sans-serif; overflow:hidden; }
   #app { display:flex; flex-direction:column; height:100%; }
   #tabs { display:flex; gap:2px; padding:4px 6px 0; background:var(--bar); overflow-x:auto; }
   .tab { display:flex; align-items:center; gap:6px; max-width:200px; padding:4px 8px; border-radius:6px 6px 0 0; background:var(--tab); cursor:pointer; white-space:nowrap; }
   .tab.active { background:var(--bg); }
   .tab span { overflow:hidden; text-overflow:ellipsis; }
+  .tab img { width:14px; height:14px; flex:none; }
   .tab button, #newtab { border:none; background:none; color:var(--muted); cursor:pointer; padding:0 2px; font-size:13px; }
   #nav { display:flex; gap:4px; align-items:center; padding:4px 6px; background:var(--bg); border-bottom:1px solid var(--line); }
   #nav button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 8px; cursor:pointer; }
@@ -36,8 +37,36 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #notdriving button { border:none; border-radius:4px; padding:6px 16px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; font-size:14px; }
   #driver .msg { flex:1; min-width:0; }
   #driver button { border:none; border-radius:4px; padding:4px 12px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
-  #stage { position:relative; flex:1; min-height:0; background:#888; }
-  #screen { position:absolute; inset:0; width:100%; height:100%; outline:none; }
+  #stage { position:relative; flex:1; min-height:0; background:var(--bg); }
+  #screen { position:absolute; inset:0; width:100%; height:100%; outline:none; opacity:0; transition:opacity .3s ease; }
+  #screen.shown { opacity:1; }
+  /* A new tab's start page. */
+  #start { position:absolute; inset:0; overflow:auto; display:none; background:radial-gradient(1100px 520px at 50% 18%, var(--sp1) 0%, var(--sp2) 50%, var(--bg) 100%); }
+  .sp { display:flex; flex-direction:column; align-items:center; gap:20px; padding:56px 16px 32px; max-width:680px; margin:0 auto; }
+  .sp-logo { display:flex; align-items:center; gap:12px; max-width:100%; }
+  .sp-logo svg { width:46px; height:46px; flex:none; }
+  .sp-logo h1 { margin:0; font-size:28px; font-weight:650; letter-spacing:-.02em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #sp-form { width:100%; height:48px; box-sizing:border-box; border-radius:24px; background:var(--bg); border:1px solid var(--line); box-shadow:0 8px 28px rgba(22,119,255,.10); display:flex; align-items:center; gap:10px; padding:0 18px; }
+  #sp-form input { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--fg); font:16px system-ui, sans-serif; }
+  .sp-section { width:100%; display:none; }
+  .sp-label { font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 8px 4px; }
+  .sp-tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; }
+  .sp-tile { background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:5px; cursor:pointer; min-width:0; text-align:left; color:var(--fg); font:inherit; }
+  .sp-tile:hover { border-color:var(--accent); box-shadow:0 4px 14px rgba(22,119,255,.12); }
+  .sp-tile b, .sp-tile small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sp-tile b { font-size:13px; }
+  .sp-tile small { color:var(--muted); font-size:11.5px; }
+  .sp-tile img { width:22px; height:22px; border-radius:4px; }
+  .sp-badge { height:22px; min-width:22px; width:fit-content; padding:0 6px; box-sizing:border-box; border-radius:6px; color:#fff; font-weight:700; font-size:11.5px; display:flex; align-items:center; justify-content:center; }
+  .sp-live { display:flex; align-items:center; gap:5px; }
+  .sp-live:before { content:""; width:7px; height:7px; border-radius:50%; background:#52c41a; flex:none; }
+  #sp-agent { width:100%; box-sizing:border-box; display:none; align-items:center; gap:10px; background:linear-gradient(135deg,#1677ff,#13a8c2); color:#fff; border-radius:14px; padding:12px 14px; }
+  #sp-agent input { flex:1; min-width:0; border:0; outline:0; background:rgba(255,255,255,.18); color:#fff; border-radius:8px; padding:8px 10px; font:inherit; }
+  #sp-agent input::placeholder { color:rgba(255,255,255,.82); }
+  #sp-agent button { border:0; background:#fff; color:#1677ff; font-weight:650; border-radius:8px; padding:7px 14px; cursor:pointer; }
+  .sp-hints { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; color:var(--muted); font-size:12px; }
+  .sp-hints span { background:var(--bg); border:1px solid var(--line); border-radius:999px; padding:4px 11px; }
+  kbd { font:11px ui-monospace, monospace; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 4px; }
   #screen.view-only { cursor:not-allowed; }
   #hint { position:absolute; left:50%; top:12px; transform:translateX(-50%); background:rgba(0,0,0,.75); color:#fff; padding:6px 12px; border-radius:6px; display:none; }
   .overlay { position:absolute; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,.25); }
@@ -82,6 +111,14 @@ export const VIEWER_HTML = String.raw`<!doctype html>
          events everywhere (iPad included); a canvas does not.  It holds the
          page's selection, selected, so a copy copies that. -->
     <textarea id="keys" tabindex="-1" aria-hidden="true" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+    <div id="start"><div class="sp">
+      <div class="sp-logo"><svg viewBox="0 0 64 64" fill="none" stroke-width="2.6"><defs><linearGradient id="spg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1677ff"/><stop offset="1" stop-color="#13c2c2"/></linearGradient></defs><circle cx="32" cy="32" r="26" stroke="url(#spg)"/><ellipse cx="32" cy="32" rx="11" ry="26" stroke="url(#spg)"/><path d="M6 32h52M10 19h44M10 45h44" stroke="url(#spg)"/></svg><h1 id="sp-name"></h1></div>
+      <form id="sp-form"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8a94a6" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="sp-q" placeholder="Search the web or type an address" spellcheck="false" autocomplete="off"></form>
+      <div id="sp-servers" class="sp-section"><div class="sp-label">Running in this project</div><div class="sp-tiles"></div></div>
+      <div id="sp-recent" class="sp-section"><div class="sp-label">Recent</div><div class="sp-tiles"></div></div>
+      <form id="sp-agent"><b>Ask an agent</b><input placeholder="e.g. test the sign-up flow on localhost:5173 and report bugs"><button>Start</button></form>
+      <div class="sp-hints"><span id="sp-keys"><kbd>Ctrl+C</kbd> <kbd>Ctrl+V</kbd> copy and paste</span><span>Take over and hand back any time</span><span id="sp-computer">Sites that block cloud servers: Runs on my computer</span></div>
+    </div></div>
     <div id="hint"></div>
     <div id="notdriving" class="overlay"><p></p><button>Take over</button></div>
     <div id="waiting" class="overlay"><p><b>Waiting for your computer.</b> This browser runs in Chrome on your computer, so sites see your network and your logins. Run this there (it needs the CoCalc CLI); a Chrome window opens, and stays connected while it runs:</p><pre></pre><div class="row"><button data-a="project">Run it in the project instead</button><button data-a="copy">Copy command</button></div></div>
@@ -102,11 +139,15 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   const human = () => state && state.driver === "human" && !preview();
   const send = (msg) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
 
-  function wsUrl() {
+  function basePath() {
     let path = location.pathname.replace(/\/index\.html$/, "/");
     if (!path.endsWith("/")) path += "/";
-    return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path + "viewer" + location.search;
+    return path;
   }
+  function wsUrl() {
+    return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + basePath() + "viewer" + location.search;
+  }
+  const iconUrl = (url) => basePath() + "favicon?url=" + encodeURIComponent(url);
   function connect() {
     ws = new WebSocket(wsUrl());
     ws.binaryType = "blob";
@@ -117,7 +158,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     };
     ws.onmessage = async (ev) => {
       if (typeof ev.data !== "string") {
-        try { const bmp = await createImageBitmap(ev.data); drawFrame(bmp); saveFrame(ev.data); } catch {}
+        try { const bmp = await createImageBitmap(ev.data); drawFrame(bmp); saveFrame(ev.data); ready(); schedulePicture(); } catch {}
         return;
       }
       const msg = JSON.parse(ev.data);
@@ -152,12 +193,14 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   })();
 
   let lastFrame = null;
+  const background = () => getComputedStyle(stage).backgroundColor;
   function drawFrame(bmp) {
     // Redrawing the current frame (e.g. on resize) must not close it first.
     if (lastFrame && lastFrame !== bmp && lastFrame.close) lastFrame.close();
     lastFrame = bmp;
+    canvas.classList.add("shown");
     const w = canvas.width, h = canvas.height;
-    ctx.fillStyle = "#888"; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = background(); ctx.fillRect(0, 0, w, h);
     // Frames are rendered at the viewport size, which follows this canvas.
     const scale = Math.min(w / bmp.width, h / bmp.height);
     // Frames come at the canvas's device pixels: draw them 1:1 when they fit.
@@ -211,8 +254,15 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     for (const tab of state.tabs) {
       const el = document.createElement("div");
       el.className = "tab" + (tab.id === state.active ? " active" : "");
+      if (tab.icon) {
+        const icon = document.createElement("img");
+        icon.src = iconUrl(tab.icon); icon.alt = "";
+        icon.onerror = () => icon.remove();
+        el.appendChild(icon);
+      }
       const label = document.createElement("span");
-      label.textContent = tab.title || tab.url || "New tab"; el.title = tab.url;
+      const blank = !tab.url || tab.url === "about:blank";
+      label.textContent = blank ? "New tab" : tab.title || tab.url; el.title = blank ? "New tab" : tab.url;
       el.appendChild(label);
       el.onclick = () => send({ type: "tab", id: tab.id });
       if (human()) {
@@ -245,7 +295,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
         : state.agents ? "The agent is driving." : "No agent connected. Take over to use the browser.";
       button.textContent = "Take over";
     }
-    canvas.className = human() ? "" : "view-only";
+    canvas.classList.toggle("view-only", !human());
     $("quality").style.display = preview() ? "none" : "";
     // Where a .browser file's browser runs, and waiting for the computer.
     const runson = $("runson");
@@ -263,7 +313,8 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     if (window.parent !== window)
       window.parent.postMessage({ type: "cocalc-browser-state", runsOn: state.runsOn, connection: state.connection, connectCommand: state.connectCommand }, "*");
     waiting.querySelector("pre").textContent = state.connectCommand || "";
-    if (state.connection === "waiting" && lastFrame) { ctx.fillStyle = "#888"; ctx.fillRect(0, 0, canvas.width, canvas.height); lastFrame = null; }
+    if (state.connection === "waiting" && lastFrame) { ctx.fillStyle = background(); ctx.fillRect(0, 0, canvas.width, canvas.height); lastFrame = null; }
+    if (waitingForComputer) ready();
     // overlays (only meaningful while the human drives)
     const dlg = $("dialog");
     if (state.dialog && human()) {
@@ -276,6 +327,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     } else { dlg.style.display = "none"; delete dlg.querySelector("input").dataset.init; }
     renderSelect();
     $("filechooser").style.display = state.fileChooser && human() ? "block" : "none";
+    renderStart();
   }
   // In CoCalc, the page asks for confirmation and stops the app.
   if (window.parent !== window) {
@@ -477,6 +529,110 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   navButton("back", { type: "history", delta: -1 });
   navButton("fwd", { type: "history", delta: 1 });
   navButton("reload", { type: "reload" });
+
+  // --- for the page around it (CoCalc) ----------------------------------------
+  // The page shows its own start screen until this shows something.
+  let readySent = false;
+  function ready() {
+    if (readySent || window.parent === window) return;
+    readySent = true;
+    window.parent.postMessage({ type: "cocalc-browser-ready" }, "*");
+  }
+  // A small picture of this view now and then, for the page to start from
+  // next time.
+  let pictureAt = 0, pictureTimer = null;
+  function postPicture() {
+    clearTimeout(pictureTimer); pictureTimer = null;
+    if (window.parent === window || !lastFrame || !state || blankTab() || preview()) return;
+    pictureAt = Date.now();
+    try {
+      const w = Math.min(640, lastFrame.width), h = Math.round(lastFrame.height * w / lastFrame.width);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(lastFrame, 0, 0, w, h);
+      window.parent.postMessage({ type: "cocalc-browser-picture", picture: c.toDataURL("image/jpeg", 0.6) }, "*");
+    } catch {}
+  }
+  function schedulePicture() {
+    if (!pictureTimer) pictureTimer = setTimeout(postPicture, Math.max(0, pictureAt + 5000 - Date.now()));
+  }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) postPicture(); });
+
+  // --- a new tab's start page --------------------------------------------------
+  if (new URLSearchParams(location.search).get("agent") === "1") $("sp-agent").style.display = "flex";
+  if (apple) $("sp-keys").innerHTML = "<kbd>&#8984;C</kbd> <kbd>&#8984;V</kbd> copy and paste";
+  function blankTab() {
+    const tab = state && state.tabs.find((t) => t.id === state.active);
+    return !!tab && (!tab.url || tab.url === "about:blank");
+  }
+  let startShown = false, startLoadedAt = 0;
+  function renderStart() {
+    const show = blankTab() && !preview() && state.connection === "connected";
+    $("start").style.display = show ? "block" : "none";
+    $("sp-name").textContent = state.title || "Web browser";
+    $("sp-computer").style.display = state.runsOn ? "" : "none";
+    if (show) ready();
+    if (show && !startShown) {
+      if (Date.now() - startLoadedAt > 3000) loadStart();
+      if (human()) $("sp-q").focus({ preventScroll: true });
+    }
+    startShown = show;
+  }
+  const COLORS = ["#722ed1", "#fa8c16", "#13c2c2", "#1677ff", "#eb2f96", "#52c41a", "#2f54eb", "#fa541c"];
+  const colorOf = (text) => COLORS[[...String(text)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length];
+  function badge(text, key) {
+    const b = document.createElement("span");
+    b.className = "sp-badge"; b.textContent = text; b.style.background = colorOf(key);
+    return b;
+  }
+  function tile({ mark, title, sub, url, live }) {
+    const el = document.createElement("button");
+    el.type = "button"; el.className = "sp-tile"; el.title = url;
+    el.appendChild(mark);
+    const b = document.createElement("b"); b.textContent = title; el.appendChild(b);
+    const small = document.createElement("small"); small.textContent = sub;
+    if (live) small.className = "sp-live";
+    el.appendChild(small);
+    el.onclick = () => go(url);
+    return el;
+  }
+  function fill(id, tiles) {
+    const section = $(id), box = section.querySelector(".sp-tiles");
+    box.textContent = "";
+    for (const t of tiles) box.appendChild(t);
+    section.style.display = tiles.length ? "block" : "none";
+  }
+  async function loadStart() {
+    startLoadedAt = Date.now();
+    let data = { servers: [], recent: [] };
+    try { data = await (await fetch(basePath() + "api/start")).json(); } catch {}
+    fill("sp-servers", (data.servers || []).map((s) => tile({ mark: badge(String(s.port), s.port), title: "localhost:" + s.port, sub: s.label, url: s.url, live: true })));
+    fill("sp-recent", (data.recent || []).map((r) => {
+      let host = r.url; try { host = new URL(r.url).hostname.replace(/^www\./, ""); } catch {}
+      const letter = badge(host.slice(0, 1).toUpperCase(), host);
+      const icon = document.createElement("img");
+      icon.alt = ""; icon.src = iconUrl(new URL(r.url).origin + "/favicon.ico");
+      icon.onerror = () => icon.replaceWith(letter);
+      return tile({ mark: icon, title: r.title || host, sub: host, url: r.url });
+    }));
+  }
+  function go(text) {
+    if (!human()) { notDriving(); return; }
+    send({ type: "navigate", url: text });
+    focusKeys();
+  }
+  $("sp-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = $("sp-q").value.trim();
+    if (q) { $("sp-q").value = ""; go(q); }
+  });
+  $("sp-agent").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("sp-agent").querySelector("input"), text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    window.parent.postMessage({ type: "cocalc-browser-agent", text }, "*");
+    flash("Asking an agent...");
+  });
 
   connect();
 })();

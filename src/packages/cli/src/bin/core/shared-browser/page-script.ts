@@ -101,3 +101,12 @@ export function pickSelectExpression(index: number): string {
   return true;
 })()`;
 }
+
+// The page's icon, for its tab: what it declares, else /favicon.ico.
+export const ICON_EXPRESSION = `(() => {
+  try {
+    const link = document.querySelector('link[rel~="icon"]');
+    if (link && link.href) return link.href;
+    return /^https?:$/.test(location.protocol) ? location.origin + "/favicon.ico" : "";
+  } catch { return ""; }
+})()`;

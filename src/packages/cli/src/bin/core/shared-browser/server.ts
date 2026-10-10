@@ -23,11 +23,13 @@ import { CdpClient, type CdpEvent } from "./cdp-client";
 import {
   MAX_CLIPBOARD_TEXT,
   pickSelectExpression,
+  ICON_EXPRESSION,
   SELECT_BINDING,
   selectScript,
 } from "./page-script";
 import type { SharedBrowserRunsOn } from "@cocalc/util/shared-browser";
 import { VIEWER_HTML } from "./viewer-html";
+import { Favicons, projectServers, recentSites } from "./start-page";
 
 export type Driver = "agent" | "human";
 
@@ -35,6 +37,8 @@ export interface SharedBrowserTab {
   id: string;
   url: string;
   title: string;
+  // The page's icon (its URL; the viewer gets it through /favicon).
+  icon?: string;
 }
 
 export interface SharedBrowserState {
@@ -62,6 +66,8 @@ export interface SharedBrowserState {
   // which always runs in the project), and how to connect a computer.
   runsOn: SharedBrowserRunsOn | null;
   connectCommand: string | null;
+  // What the start page calls this browser (e.g. the file's name).
+  title: string;
 }
 
 // The screencast streams changes as JPEG; once the page is still, one frame
@@ -125,6 +131,9 @@ export interface SharedBrowserServerOptions {
   runsOn?: SharedBrowserRunsOn;
   connectCommand?: string;
   onRunsOn?: (runsOn: SharedBrowserRunsOn) => void | Promise<void>;
+  // For the start page: this browser's name, and its profile's history.
+  title?: string;
+  historyFile?: () => string | null;
   log?: (message: string) => void;
 }
 
@@ -142,6 +151,9 @@ export class SharedBrowserServer {
   private cdp!: CdpClient;
   private chromeHttp = "";
   private appServer!: http.Server;
+  private favicons = new Favicons();
+  // Ours, not the user's servers.
+  private ownPorts = new Set<number>();
   private cdpServer!: http.Server;
   // Each viewer (a chat card, a frame of a .browser file) shows its own tab.
   // key: the place showing it ("frame:<id>" for an editor frame, "card:<id>"),
@@ -183,6 +195,7 @@ export class SharedBrowserServer {
       connection: "waiting",
       runsOn: options.runsOn ?? null,
       connectCommand: options.connectCommand ?? null,
+      title: options.title ?? "Web browser",
     };
   }
 
@@ -219,6 +232,7 @@ export class SharedBrowserServer {
     const cdp = await CdpClient.connect(webSocketUrl);
     this.cdp = cdp;
     this.chromeHttp = `http://${new URL(webSocketUrl).host}`;
+    this.ownPorts.add(Number(new URL(webSocketUrl).port));
     cdp.on((event) => {
       if (this.cdp === cdp) this.onCdpEvent(event);
     });
@@ -333,6 +347,7 @@ export class SharedBrowserServer {
       this.options.cdpPort,
     );
     this.state.cdp = `http://127.0.0.1:${cdpPort}`;
+    this.ownPorts.add(port).add(cdpPort);
     this.log(
       `viewer on ${this.options.host}:${port}, agent CDP on ${this.state.cdp}`,
     );
@@ -751,12 +766,17 @@ export class SharedBrowserServer {
       this.broadcastState();
       return;
     }
-    if (
-      method === "Page.frameNavigated" &&
-      !params.frame?.parentId &&
-      page.selection
-    ) {
-      this.setSelection(page, "");
+    if (method === "Page.frameNavigated" && !params.frame?.parentId) {
+      if (page.selection) this.setSelection(page, "");
+      const tab = this.state.tabs.find((t) => t.id === page.targetId);
+      if (tab?.icon) {
+        delete tab.icon;
+        this.broadcastState();
+      }
+      return;
+    }
+    if (method === "Page.loadEventFired") {
+      void this.updateIcon(page);
       return;
     }
     if (method === "Runtime.bindingCalled" && params.name === SELECT_BINDING) {
@@ -780,6 +800,24 @@ export class SharedBrowserServer {
         // ignore malformed payloads from the page
       }
     }
+  }
+
+  // The page's icon, for its tab.
+  private async updateIcon(page: TabPage): Promise<void> {
+    if (!page.session) return;
+    const { result } = await this.cdp
+      .send(
+        "Runtime.evaluate",
+        { expression: ICON_EXPRESSION, returnByValue: true },
+        page.session,
+      )
+      .catch(() => ({ result: null as any }));
+    const icon = typeof result?.value === "string" ? result.value : "";
+    const tab = this.state.tabs.find((t) => t.id === page.targetId);
+    if (!tab || (tab.icon ?? "") === icon) return;
+    if (icon) tab.icon = icon;
+    else delete tab.icon;
+    this.broadcastState();
   }
 
   private setSelection(page: TabPage, text: string): void {
@@ -1106,6 +1144,35 @@ export class SharedBrowserServer {
     }
     if (path.endsWith("/api/state") && req.method === "GET") {
       return json(res, 200, this.getState());
+    }
+    // A new tab's start page: servers running in the project, recent sites.
+    if (path.endsWith("/api/start") && req.method === "GET") {
+      const lightTouch = this.lightTouch;
+      void (async () => {
+        const servers = lightTouch ? [] : await projectServers(this.ownPorts);
+        const recent = lightTouch
+          ? []
+          : recentSites(this.options.historyFile?.() ?? null);
+        json(res, 200, { servers, recent });
+      })().catch(() => json(res, 200, { servers: [], recent: [] }));
+      return;
+    }
+    if (path.endsWith("/favicon") && req.method === "GET") {
+      const url = new URL(req.url ?? "/", "http://x").searchParams.get("url");
+      void this.favicons.get(`${url ?? ""}`).then((icon) => {
+        if (!icon) {
+          res.writeHead(404, { "cache-control": "max-age=300" });
+          res.end();
+          return;
+        }
+        res.writeHead(200, {
+          "content-type": icon.type,
+          "cache-control": "max-age=86400",
+          "x-content-type-options": "nosniff",
+        });
+        res.end(icon.body);
+      });
+      return;
     }
     if (
       req.method === "POST" &&

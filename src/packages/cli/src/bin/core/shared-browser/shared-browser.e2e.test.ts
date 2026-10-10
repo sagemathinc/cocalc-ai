@@ -260,6 +260,111 @@ test(
   },
 );
 
+test(
+  "a new tab's start page offers the project's servers; tabs show site icons; the page around the viewer gets ready, pictures and agent requests",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const { createServer } = require("node:http");
+    const PNG = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const site = createServer((req: any, res: any) => {
+      if (req.url === "/icon.png") {
+        res.setHeader("content-type", "image/png");
+        res.end(PNG);
+        return;
+      }
+      res.setHeader("content-type", "text/html");
+      res.end(
+        `<title>My dev app</title><link rel=icon href="/icon.png"><h1 style="font-size:60px">Hello dev app</h1>`,
+      );
+    });
+    await new Promise<void>((resolve) =>
+      site.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const sitePort = site.address().port;
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+      humanFirst: true,
+      title: "work.browser",
+    });
+    const { port } = await server.start();
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const parent = await human.newPage({
+        viewport: { width: 1000, height: 720 },
+      });
+      // Embedded the way CoCalc does, with the agent box.
+      await parent.setContent(
+        `<script>window.got = []; addEventListener("message", (e) => got.push(e.data));</script>` +
+          `<iframe src="http://127.0.0.1:${port}/?agent=1" style="width:960px;height:680px;border:0"></iframe>`,
+      );
+      const got = (type: string, test = "true") =>
+        parent.waitForFunction(
+          `window.got.some((m) => m && m.type === ${JSON.stringify(type)} && (${test}))`,
+          null,
+          { timeout: 20_000 },
+        );
+      await got("cocalc-browser-ready");
+      const viewer = parent
+        .frames()
+        .find((f: any) => f.url().includes(`:${port}/`))!;
+      await viewer.waitForSelector("#start", { state: "visible" });
+      assert.equal(await viewer.textContent("#sp-name"), "work.browser");
+
+      // The project's server, one click away.
+      const tile = `#sp-servers .sp-tile[title="http://localhost:${sitePort}/"]`;
+      await viewer.waitForSelector(tile);
+      assert.match(await viewer.textContent(tile), /My dev app/);
+      await viewer.click(tile);
+      await viewer.waitForSelector("#start", { state: "hidden" });
+      // Its tab shows the site's icon.
+      await viewer.waitForFunction(() => {
+        const img = document.querySelector(".tab.active img") as HTMLImageElement;
+        return !!img && img.complete && img.naturalWidth > 0;
+      });
+      // The page around gets a picture to start from next time.
+      await got(
+        "cocalc-browser-picture",
+        `m.picture.startsWith("data:image/jpeg")`,
+      );
+
+      // A new tab: the start page again; asking an agent goes to the page.
+      await viewer.click("#newtab");
+      await viewer.waitForSelector("#start", { state: "visible" });
+      await viewer.fill("#sp-agent input", "check the dev app");
+      await viewer.click("#sp-agent button");
+      await got("cocalc-browser-agent", `m.text === "check the dev app"`);
+    } finally {
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+      site.close();
+    }
+  },
+);
+
 const FORM =
   "data:text/html,<title>form</title><input id=q><button id=go onclick=\"document.title='clicked '+q.value\">Go</button>" +
   "<form onsubmit=\"document.title='submitted';return false\"><input id=s></form><p>Hello text</p>";
@@ -496,7 +601,10 @@ test(
       await viewer.click("#driver button"); // hand back
       assert.equal(await held, 2);
 
-      // Clicking while the agent drives explains why nothing happens.
+      // Clicking on a page while the agent drives explains why nothing
+      // happens.  (A blank tab shows the start page instead.)
+      await page.goto("data:text/html,<title>t</title><p>a page</p>");
+      await viewer.waitForSelector("#start", { state: "hidden" });
       await viewer.click("#screen");
       await viewer.waitForSelector("#notdriving", { state: "visible" });
       await viewer.click("#notdriving button");

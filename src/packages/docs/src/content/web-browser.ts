@@ -52,6 +52,10 @@ agent.
    \`.browser\`.
 3. Type an address or search words in the address bar.
 
+Opening a browser starts the project if it is stopped. A new tab shows a
+start page: search or type an address, open a web server running in the
+project with one click, go back to a recent site, or ask an agent.
+
 A browser file opens with **you driving**, so you can use it right away. Each
 frame of a split shows its own tab of the same browser: same logins, separate
 pages and scroll positions. Open more tabs with **+**.

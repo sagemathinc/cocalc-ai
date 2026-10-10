@@ -8,6 +8,7 @@
 // proxy.  Opening the card starts the app if it is not running.
 
 import { Alert, Button, Flex, Modal, Spin } from "antd";
+import { redux } from "@cocalc/frontend/app-framework";
 import {
   type MutableRefObject,
   type ReactNode,
@@ -28,6 +29,13 @@ import {
   NoNetworkNotice,
   useProjectNetworkDisabled,
 } from "@cocalc/frontend/frame-editors/browser-editor/no-network-notice";
+import {
+  BrowserStartScreen,
+  type BrowserStartStep,
+  loadBrowserPicture,
+  saveBrowserPicture,
+} from "@cocalc/frontend/frame-editors/browser-editor/start-screen";
+import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import {
   SHARED_BROWSER_APP_ID,
   sharedBrowserAppSpec,
@@ -63,6 +71,23 @@ export function AppArtifact({
   // Shown above the app.
   notice?: ReactNode;
 }) {
+  const isSharedBrowser = app.id.startsWith(SHARED_BROWSER_APP_ID);
+  // A browser's start screen, until the viewer shows the page.
+  const [step, setStep] = useState<BrowserStartStep>("browser");
+  const [ready, setReady] = useState(false);
+  const [picture, setPicture] = useState<string>();
+  const stateSeen = useRef(false);
+  const pictureKey = `${projectId}/${app.id}/${view ?? ""}`;
+  useEffect(() => {
+    if (!isSharedBrowser) return;
+    let canceled = false;
+    void loadBrowserPicture(pictureKey).then((p) => {
+      if (!canceled && p) setPicture(p);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [pictureKey, isSharedBrowser]);
   const client = webapp_client.browser_id;
   const networkDisabled = useProjectNetworkDisabled(projectId);
   const ownFrame = useRef<HTMLIFrameElement | null>(null);
@@ -124,6 +149,20 @@ export function AppArtifact({
         });
         return;
       }
+      if (event.data?.type === "cocalc-browser-ready") {
+        setReady(true);
+        return;
+      }
+      if (event.data?.type === "cocalc-browser-picture") {
+        if (typeof event.data.picture === "string")
+          void saveBrowserPicture(pictureKey, event.data.picture);
+        return;
+      }
+      if (event.data?.type === "cocalc-browser-state" && !stateSeen.current) {
+        // A viewer from before "ready" (its project has older tools).
+        stateSeen.current = true;
+        setTimeout(() => setReady(true), 4000);
+      }
       if (event.data?.type === "cocalc-browser-forget") {
         Modal.confirm({
           title: "Forget all sign-ins?",
@@ -142,19 +181,27 @@ export function AppArtifact({
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, [onMessage, iframe, title, projectId, app.id]);
+  }, [onMessage, iframe, title, projectId, app.id, pictureKey]);
 
   const cacheKey = `${projectId}/${app.id}`;
-  const isSharedBrowser = app.id.startsWith(SHARED_BROWSER_APP_ID);
   useEffect(() => {
     if (stopped) return;
     let canceled = false;
+    const projectRunning =
+      redux.getStore("projects")?.get_state?.(projectId) === "running";
     // Showing the app again (another tab or frame was in front) should be
     // instant: use the URL it had and check that it still runs meanwhile.
-    const known = OPEN_URLS.get(cacheKey);
+    const known = projectRunning ? OPEN_URLS.get(cacheKey) : undefined;
     setSrc(known ? withQuery(known, query) : known);
     setError(undefined);
+    setReady(false);
+    stateSeen.current = false;
+    setStep(projectRunning ? "browser" : "project");
     void (async () => {
+      // Like a terminal: opening it starts the project.
+      if (!(await ensure_project_running(projectId, `use ${title}`)))
+        throw Error("The project is not running. Start it to use this.");
+      if (!canceled) setStep("browser");
       const api = webapp_client.conat_client.projectApi({
         project_id: projectId,
       });
@@ -206,7 +253,10 @@ export function AppArtifact({
       });
       if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
       OPEN_URLS.set(cacheKey, url);
-      if (!canceled) setSrc(withQuery(url, query));
+      if (!canceled) {
+        setStep("connecting");
+        setSrc(withQuery(url, query));
+      }
     })().catch((err) => {
       if (!canceled) setError(`${err?.message ?? err}`);
     });
@@ -263,6 +313,16 @@ export function AppArtifact({
         />
       </Flex>
     );
+  const name =
+    app.id === SHARED_BROWSER_APP_ID
+      ? "Web browser"
+      : title.replace(/^Browser:\s*/, "");
+  if (!src && isSharedBrowser)
+    return (
+      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+        <BrowserStartScreen name={name} step={step} picture={picture} />
+      </div>
+    );
   if (!src)
     return (
       <Flex align="center" justify="center" style={{ height: "100%" }}>
@@ -293,9 +353,51 @@ export function AppArtifact({
           allow="clipboard-read; clipboard-write"
           style={{ border: 0, width: "100%", height: "100%", display: "block" }}
         />
+        {isSharedBrowser ? (
+          <StartScreenUntilReady
+            name={name}
+            picture={picture}
+            ready={ready}
+            onTimeout={() => setReady(true)}
+          />
+        ) : null}
         {children}
       </div>
     </div>
+  );
+}
+
+// Over the viewer until it shows the page; then it fades out.
+function StartScreenUntilReady({
+  name,
+  picture,
+  ready,
+  onTimeout,
+}: {
+  name: string;
+  picture?: string;
+  ready: boolean;
+  onTimeout: () => void;
+}) {
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    if (!ready) {
+      setGone(false);
+      // Whatever happens, never hide a working browser for long.
+      const timer = setTimeout(onTimeout, 30_000);
+      return () => clearTimeout(timer);
+    }
+    const timer = setTimeout(() => setGone(true), 400);
+    return () => clearTimeout(timer);
+  }, [ready]);
+  if (gone) return null;
+  return (
+    <BrowserStartScreen
+      name={name}
+      step="connecting"
+      picture={picture}
+      done={ready}
+    />
   );
 }
 

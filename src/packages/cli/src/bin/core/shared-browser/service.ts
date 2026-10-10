@@ -23,7 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   keyFingerprint,
@@ -224,6 +224,9 @@ export async function runSharedBrowserService({
     cdpPort,
     // A .browser file's browser is the human's first.
     humanFirst: !!file,
+    title: file ? basename(file) : "Web browser",
+    historyFile: () =>
+      local ? join(local.profile.path, "Default", "History") : null,
     ...(file
       ? {
           runsOn,
