@@ -1054,10 +1054,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "course-project collaborator cancellation of an in-project durable reconciliation operation",
   },
-  "projects.cancelCourseReconfigureOperationLocal": {
-    decision: "internal-auth-only",
-    reason: INTERNAL_AUTH_ONLY,
-  },
   "projects.cancelProjectRootfsBuild": {
     decision: "fresh-auth-not-required",
     reason:
