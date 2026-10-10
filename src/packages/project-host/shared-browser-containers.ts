@@ -103,6 +103,26 @@ export function sharedBrowserProfilesHostPath(project_id: string): string {
 // One lease on the project's rootfs per running browser container.
 const rootfsLeases = new Set<string>();
 
+// A project's browser containers start and stop one at a time: a start that
+// arrives while a stop removes the container must not reuse it, and two
+// starts must not both pass the limit.
+const projectQueues = new Map<string, Promise<unknown>>();
+export function oneAtATime<T>(
+  project_id: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const next = (projectQueues.get(project_id) ?? Promise.resolve())
+    .catch(() => {})
+    .then(fn);
+  projectQueues.set(project_id, next);
+  const forget = () => {
+    if (projectQueues.get(project_id) === next)
+      projectQueues.delete(project_id);
+  };
+  next.then(forget, forget);
+  return next;
+}
+
 function projectOf(context: { subject?: string } | undefined): string {
   const project_id = extractProjectSubject(`${context?.subject ?? ""}`);
   if (!project_id) throw Error("not a project subject");
@@ -238,8 +258,19 @@ export async function startSharedBrowserContainer(
   project_id: string,
   request: SharedBrowserStartRequest,
 ): Promise<SharedBrowserContainerInfo> {
-  const { appId, keyFingerprint, urls, ...rest } =
-    validateStartRequest(request);
+  const valid = validateStartRequest(request);
+  return await oneAtATime(project_id, () => startContainer(project_id, valid));
+}
+
+async function startContainer(
+  project_id: string,
+  {
+    appId,
+    keyFingerprint,
+    urls,
+    ...rest
+  }: ReturnType<typeof validateStartRequest>,
+): Promise<SharedBrowserContainerInfo> {
   const runRoot = projectBrowserRunHostPath(project_id);
   if (!existsSync(runRoot))
     throw Error(
@@ -366,9 +397,8 @@ export async function stopSharedBrowserContainer(
   appId: string,
 ): Promise<void> {
   if (!isSharedBrowserAppId(appId)) throw Error("invalid shared browser id");
-  await removeContainer(
-    project_id,
-    sharedBrowserContainerName(project_id, appId),
+  await oneAtATime(project_id, () =>
+    removeContainer(project_id, sharedBrowserContainerName(project_id, appId)),
   );
 }
 

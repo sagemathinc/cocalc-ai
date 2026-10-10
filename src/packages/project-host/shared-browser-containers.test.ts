@@ -4,9 +4,40 @@
  */
 
 import {
+  oneAtATime,
   ownNetworkArgument,
   validateStartRequest,
 } from "./shared-browser-containers";
+
+describe("a project's browser containers", () => {
+  it("start and stop one at a time, past failures", async () => {
+    const events: string[] = [];
+    const step =
+      (name: string, ms: number, fail = false) =>
+      async () => {
+        events.push(`${name} begins`);
+        await new Promise((r) => setTimeout(r, ms));
+        events.push(`${name} ends`);
+        if (fail) throw Error(name);
+        return name;
+      };
+    const project = "11111111-1111-4111-8111-111111111111";
+    const other = "22222222-2222-4222-8222-222222222222";
+    const stop = oneAtATime(project, step("stop", 30, true));
+    const start = oneAtATime(project, step("start", 1));
+    const elsewhere = oneAtATime(other, step("elsewhere", 1));
+    await expect(stop).rejects.toThrow("stop");
+    await expect(start).resolves.toBe("start");
+    await expect(elsewhere).resolves.toBe("elsewhere");
+    expect(events.indexOf("start begins")).toBeGreaterThan(
+      events.indexOf("stop ends"),
+    );
+    // Another project's waits for nobody.
+    expect(events.indexOf("elsewhere ends")).toBeLessThan(
+      events.indexOf("stop ends"),
+    );
+  });
+});
 
 describe("a browser's own network", () => {
   it("never maps the host into it, whatever the project's network does", () => {
