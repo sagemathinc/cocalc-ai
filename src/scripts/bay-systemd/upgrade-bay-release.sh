@@ -515,27 +515,35 @@ EOF
   log "Stage project-host software into current bay release"
   remote_exec "sudo bash -s" <<EOF | tee "${REPORT_DIR}/stage-host-software.log"
 set -euo pipefail
+# The release belongs to the bay account: root only reads the uploaded
+# bundle; the bay account unpacks it and writes the release.
+as_bay() { runuser -u $(q "$BAY_USER") -- "\$@"; }
 current="\$(readlink -f /opt/cocalc/bay/current)"
 if [[ -z "\$current" || ! -d "\$current" ]]; then
   echo "current bay release does not exist: /opt/cocalc/bay/current" >&2
   exit 1
 fi
-extract="\$(mktemp -d /tmp/cocalc-host-software.XXXXXX)"
+extract="\$(as_bay mktemp -d /tmp/cocalc-host-software.XXXXXX)"
 cleanup() {
-  rm -rf "\$extract"
+  as_bay rm -rf "\$extract"
 }
 trap cleanup EXIT
-tar -xf $(q "$REMOTE_HOST_SOFTWARE_BUNDLE") -C "\$extract" --strip-components=1
-test -f "\$extract/runtime/packages/project-host/build/bundle-linux.tar.xz"
-test -f "\$extract/runtime/packages/project/build/bundle-linux.tar.xz"
-test -f "\$extract/runtime/packages/server/cloud/bootstrap/bootstrap.py"
-rm -rf "\$current/runtime/packages"
-mkdir -p "\$current/runtime"
-rsync -a --delete "\$extract/runtime/packages/" "\$current/runtime/packages/"
-if [[ -f "\$extract/project-host-software-manifest.json" ]]; then
-  cp "\$extract/project-host-software-manifest.json" "\$current/project-host-software-manifest.json"
+bundle=$(q "$REMOTE_HOST_SOFTWARE_BUNDLE")
+case "\$(head -c 6 "\$bundle" | od -An -tx1 | tr -d ' \\n')" in
+  fd377a585a00) decompress=(xz -dc) ;;
+  1f8b*) decompress=(gzip -dc) ;;
+  *) decompress=(cat) ;;
+esac
+"\${decompress[@]}" "\$bundle" | as_bay tar --no-same-owner -xf - -C "\$extract" --strip-components=1
+as_bay test -f "\$extract/runtime/packages/project-host/build/bundle-linux.tar.xz"
+as_bay test -f "\$extract/runtime/packages/project/build/bundle-linux.tar.xz"
+as_bay test -f "\$extract/runtime/packages/server/cloud/bootstrap/bootstrap.py"
+as_bay rm -rf "\$current/runtime/packages"
+as_bay mkdir -p "\$current/runtime"
+as_bay rsync -a --delete "\$extract/runtime/packages/" "\$current/runtime/packages/"
+if as_bay test -f "\$extract/project-host-software-manifest.json"; then
+  as_bay cp "\$extract/project-host-software-manifest.json" "\$current/project-host-software-manifest.json"
 fi
-chown -R $(q "$BAY_USER"):$(q "$BAY_USER") "\$current/runtime/packages" "\$current/project-host-software-manifest.json" 2>/dev/null || true
 echo "project_host_software_staged=\$current/runtime/packages"
 EOF
 }
@@ -544,47 +552,56 @@ restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     if [[ "$RESTART_HUB_WORKERS" -eq 0 ]]; then
       log "Run health checks without touching services"
-      remote_exec "sudo /opt/cocalc/bay/current/bin/bay-status && sudo /opt/cocalc/bay/current/bin/bay-health" \
+      remote_exec "sudo /usr/local/sbin/cocalc-bay-run bay-status && sudo /usr/local/sbin/cocalc-bay-run bay-health" \
         | tee "${REPORT_DIR}/bay-health.txt"
       return 0
     fi
     log "Restart hub workers one at a time and run health checks"
     remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
+# Release commands run as the bay account (root-owned runner); root never
+# executes code from the bay-owned release.
+bay_run() { /usr/local/sbin/cocalc-bay-run "$@"; }
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
 systemctl start cocalc-bay-frontdoor.service
 roll_worker() {
   local worker_id="$1"
-  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  bay_run bay-frontdoor-drain "$worker_id"
   if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
-    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
-    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
-    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    && bay_run bay-worker-health "$worker_id"; then
+    bay_run bay-frontdoor-undrain "$worker_id"
+    bay_run bay-frontdoor-health
     return 0
   fi
   local status=$?
-  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  bay_run bay-frontdoor-undrain "$worker_id" || true
   return "$status"
 }
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
-/opt/cocalc/bay/current/bin/bay-status
-/opt/cocalc/bay/current/bin/bay-health
+bay_run bay-status
+bay_run bay-health
 EOF
   elif [[ "$SCAFFOLD_ONLY" -eq 1 ]]; then
     log "Reload bay scaffold and run health checks"
     remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
+# Release commands run as the bay account (root-owned runner); root never
+# executes code from the bay-owned release.
+bay_run() { /usr/local/sbin/cocalc-bay-run "$@"; }
 systemctl daemon-reload
-/opt/cocalc/bay/current/bin/bay-status
-/opt/cocalc/bay/current/bin/bay-health
+bay_run bay-status
+bay_run bay-health
 EOF
   elif [[ -n "$RESTART_BAY_SERVICE" ]]; then
     log "Run migrations, restart bay service ${RESTART_BAY_SERVICE}, and run health checks"
     remote_exec "sudo env BAY_SERVICE=$(q "$RESTART_BAY_SERVICE") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
+# Release commands run as the bay account (root-owned runner); root never
+# executes code from the bay-owned release.
+bay_run() { /usr/local/sbin/cocalc-bay-run "$@"; }
 systemctl daemon-reload
 systemctl start cocalc-bay.target
 systemctl start cocalc-bay-frontdoor.service
@@ -626,29 +643,32 @@ esac
 
 case "$BAY_SERVICE" in
   conat-persist)
-    /opt/cocalc/bay/current/bin/bay-persist-health
+    bay_run bay-persist-health
     ;;
   frontdoor)
-    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    bay_run bay-frontdoor-health
     ;;
   cloudflared)
     systemctl is-active --quiet cocalc-bay-cloudflared.service
     ;;
   *)
-    /opt/cocalc/bay/current/bin/bay-health
+    bay_run bay-health
     ;;
 esac
-/opt/cocalc/bay/current/bin/bay-status
-/opt/cocalc/bay/current/bin/bay-health
+bay_run bay-status
+bay_run bay-health
 EOF
   elif [[ "$HUB_ONLY" -eq 1 ]]; then
     log "Restart frontdoor, run migrations, roll hub workers, and run health checks"
     remote_exec "sudo env BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
+# Release commands run as the bay account (root-owned runner); root never
+# executes code from the bay-owned release.
+bay_run() { /usr/local/sbin/cocalc-bay-run "$@"; }
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
 systemctl restart cocalc-bay-frontdoor.service
-/opt/cocalc/bay/current/bin/bay-frontdoor-health
+bay_run bay-frontdoor-health
 
 credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
 cleanup() {
@@ -665,35 +685,38 @@ runuser -u "$BAY_USER" -- env \
 
 roll_worker() {
   local worker_id="$1"
-  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  bay_run bay-frontdoor-drain "$worker_id"
   if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
-    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
-    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
-    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    && bay_run bay-worker-health "$worker_id"; then
+    bay_run bay-frontdoor-undrain "$worker_id"
+    bay_run bay-frontdoor-health
     return 0
   fi
   local status=$?
-  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  bay_run bay-frontdoor-undrain "$worker_id" || true
   return "$status"
 }
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
-billing_generation="$(/opt/cocalc/bay/current/bin/bay-billing-health --generation)"
+billing_generation="$(bay_run bay-billing-health --generation)"
 systemctl restart cocalc-bay-billing.service
-/opt/cocalc/bay/current/bin/bay-billing-health --wait --after-generation "$billing_generation"
-/opt/cocalc/bay/current/bin/bay-status
-/opt/cocalc/bay/current/bin/bay-health
+bay_run bay-billing-health --wait --after-generation "$billing_generation"
+bay_run bay-status
+bay_run bay-health
 EOF
   else
     log "Restart frontdoor, run migrations, roll hub workers, and run health checks"
     remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") RESTART_CLOUDFLARED=$(q "$RESTART_CLOUDFLARED") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
 set -euo pipefail
+# Release commands run as the bay account (root-owned runner); root never
+# executes code from the bay-owned release.
+bay_run() { /usr/local/sbin/cocalc-bay-run "$@"; }
 source /etc/cocalc/bay-workers.env
 systemctl daemon-reload
 systemctl start cocalc-bay.target
 systemctl restart cocalc-bay-frontdoor.service
-/opt/cocalc/bay/current/bin/bay-frontdoor-health
+bay_run bay-frontdoor-health
 if [[ "$RESTART_CLOUDFLARED" -eq 1 ]]; then
   systemctl restart cocalc-bay-cloudflared.service
   systemctl is-active --quiet cocalc-bay-cloudflared.service
@@ -720,25 +743,25 @@ fi
 
 roll_worker() {
   local worker_id="$1"
-  /opt/cocalc/bay/current/bin/bay-frontdoor-drain "$worker_id"
+  bay_run bay-frontdoor-drain "$worker_id"
   if systemctl restart "cocalc-bay-hub@${worker_id}.service" \
-    && /opt/cocalc/bay/current/bin/bay-worker-health "$worker_id"; then
-    /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id"
-    /opt/cocalc/bay/current/bin/bay-frontdoor-health
+    && bay_run bay-worker-health "$worker_id"; then
+    bay_run bay-frontdoor-undrain "$worker_id"
+    bay_run bay-frontdoor-health
     return 0
   fi
   local status=$?
-  /opt/cocalc/bay/current/bin/bay-frontdoor-undrain "$worker_id" || true
+  bay_run bay-frontdoor-undrain "$worker_id" || true
   return "$status"
 }
 for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
   roll_worker "$worker_id"
 done
-billing_generation="$(/opt/cocalc/bay/current/bin/bay-billing-health --generation)"
+billing_generation="$(bay_run bay-billing-health --generation)"
 systemctl restart cocalc-bay-billing.service
-/opt/cocalc/bay/current/bin/bay-billing-health --wait --after-generation "$billing_generation"
-/opt/cocalc/bay/current/bin/bay-status
-/opt/cocalc/bay/current/bin/bay-health
+bay_run bay-billing-health --wait --after-generation "$billing_generation"
+bay_run bay-status
+bay_run bay-health
 EOF
   fi
 }

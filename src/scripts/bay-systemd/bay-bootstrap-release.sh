@@ -114,6 +114,8 @@ stage_trusted_scaffold() {
     run chown -R root:root "$stage"
   fi
   run chmod -R go-w "$stage"
+  # Readable (not writable) by the bay account, which installs bin/ from it.
+  run chmod 0755 "$stage"
   TRUSTED_SCAFFOLD_DIR="${stage}/scripts/bay-systemd"
   # Removed by remove_trusted_scaffold; a stage left by a failed bootstrap is
   # root-only (0700) and goes with /run at the next boot.
@@ -135,9 +137,56 @@ remove_trusted_scaffold() {
   fi
 }
 
-make_target_release_accessible() {
-  run chown "${BAY_USER}:${BAY_GROUP}" "$TARGET_RELEASE"
-  run chmod 0755 "$TARGET_RELEASE"
+# The release tree under INSTALL_BASE and the state tree under BAY_ROOT belong
+# to the bay account, which can replace anything in them (even files it does
+# not own, by renaming their directory). Root therefore never reads, writes,
+# follows or executes anything there: that work runs as the bay account.
+# Root only reads the operator's bundle or source and installs from the
+# trusted scaffold copy into root-owned places.
+as_bay() {
+  if [[ "$(id -u)" == 0 ]]; then
+    runuser -u "$BAY_USER" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+# Create INSTALL_BASE and BAY_ROOT for the bay account if missing (their
+# parents are root's), then normalise ownership of the release tree so the bay
+# account can hard-link and prune everything in it. chown -R walks physically
+# and does not follow symbolic links, not even the argument itself.
+ensure_install_dirs() {
+  local dir
+  for dir in "$INSTALL_BASE" "$BAY_ROOT"; do
+    if [[ ! -e "$dir" ]]; then
+      if [[ "$(id -u)" == 0 ]]; then
+        run install -d -o "$BAY_USER" -g "$BAY_GROUP" -m 0755 "$dir"
+      else
+        run mkdir -p "$dir"
+      fi
+    fi
+  done
+  run as_bay mkdir -p "$RELEASES_DIR"
+  if [[ "$(id -u)" == 0 ]]; then
+    run chown -R "${BAY_USER}:${BAY_GROUP}" "$RELEASES_DIR"
+  fi
+}
+
+# Unpack an operator-supplied tarball into a bay-owned directory: root reads
+# the bundle (which the bay account may not be able to read), the bay account
+# writes the files.
+extract_as_bay() {
+  local bundle="$1" destination="$2"
+  shift 2
+  local decompress=(cat) magic
+  magic="$(head -c 6 "$bundle" | od -An -tx1 | tr -d ' \n')"
+  case "$magic" in
+    fd377a585a00) decompress=(xz -dc) ;;
+    1f8b*) decompress=(gzip -dc) ;;
+    28b52ffd*) decompress=(zstd -dc) ;;
+  esac
+  echo "+ ${decompress[*]} ${bundle} | as_bay tar -xf - -C ${destination} $*"
+  "${decompress[@]}" "$bundle" | as_bay tar --no-same-owner -xf - -C "$destination" "$@"
 }
 
 # needrestart evaluates this policy as root, so it comes from the trusted
@@ -309,8 +358,7 @@ ensure_bay_database() {
   local db_name="$9"
   local started_here=0
 
-  mkdir -p "$postgres_socket_dir" "$(dirname "$postgres_log")"
-  chown "${BAY_USER}:${BAY_GROUP}" "$postgres_socket_dir" "$(dirname "$postgres_log")"
+  run as_bay mkdir -p "$postgres_socket_dir" "$(dirname "$postgres_log")"
 
   if ! postgres_ready "$psql_bin" "$postgres_socket_dir" "$db_user" "$postgres_port"; then
     run runuser -u "$BAY_USER" -- "$pg_ctl_bin" \
@@ -363,14 +411,13 @@ stage_source_release() {
     exit 1
   fi
 
-  run mkdir -p "$TARGET_RELEASE"
-  make_target_release_accessible
-  run rsync -a --delete \
-    --exclude '/.git' \
-    --exclude '/.local' \
-    --exclude '/data' \
-    --exclude '/.build-home' \
-    "${SOURCE_ROOT}/" "${TARGET_RELEASE}/"
+  run as_bay rm -rf "$TARGET_RELEASE"
+  run as_bay mkdir -p "$TARGET_RELEASE"
+  # Root reads the operator's tree; the bay account writes the release.
+  echo "+ tar -C ${SOURCE_ROOT} -cf - . | as_bay tar -xf - -C ${TARGET_RELEASE}"
+  tar -C "$SOURCE_ROOT" \
+    --exclude=./.git --exclude=./.local --exclude=./data --exclude=./.build-home \
+    -cf - . | as_bay tar --no-same-owner -xf - -C "$TARGET_RELEASE"
 }
 
 stage_bundle_release() {
@@ -379,11 +426,9 @@ stage_bundle_release() {
     exit 1
   fi
 
-  run rm -rf "$TARGET_RELEASE"
-  run mkdir -p "$TARGET_RELEASE"
-  make_target_release_accessible
-  run tar -xf "$BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
-  make_target_release_accessible
+  run as_bay rm -rf "$TARGET_RELEASE"
+  run as_bay mkdir -p "$TARGET_RELEASE"
+  extract_as_bay "$BUNDLE_PATH" "$TARGET_RELEASE" --strip-components=1
   preserve_previous_static_assets
   preserve_previous_cdn_assets
 }
@@ -405,37 +450,26 @@ stage_static_bundle_release() {
     exit 1
   fi
 
-  run rm -rf "$TARGET_RELEASE"
-  run mkdir -p "$TARGET_RELEASE"
-  make_target_release_accessible
-  run cp -al "${current_release}/." "$TARGET_RELEASE/"
-  make_target_release_accessible
+  run as_bay rm -rf "$TARGET_RELEASE"
+  run as_bay mkdir -p "$TARGET_RELEASE"
+  run as_bay cp -al "${current_release}/." "$TARGET_RELEASE/"
 
   local extract_dir
-  extract_dir="$(mktemp -d "${TARGET_RELEASE}.static-bundle.XXXXXX")"
-  trap 'rm -rf "$extract_dir"' RETURN
-  run tar --no-same-owner -xf "$STATIC_BUNDLE_PATH" -C "$extract_dir" --strip-components=1
+  extract_dir="$(as_bay mktemp -d "${TARGET_RELEASE}.static-bundle.XXXXXX")"
+  trap 'as_bay rm -rf "$extract_dir"' RETURN
+  extract_as_bay "$STATIC_BUNDLE_PATH" "$extract_dir" --strip-components=1
 
-  run rm -rf \
+  run as_bay rm -rf \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
     "${TARGET_RELEASE}/runtime/control-plane/cdn" \
     "${TARGET_RELEASE}/runtime/control-plane/webapp" \
     "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
     "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
-  run rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
+  run as_bay rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
   preserve_previous_static_assets
   preserve_previous_cdn_assets "$current_release"
-  make_target_release_accessible
-  run chown -R "${BAY_USER}:${BAY_GROUP}" \
-    "${TARGET_RELEASE}/runtime/control-plane/static" \
-    "${TARGET_RELEASE}/runtime/control-plane/public" \
-    "${TARGET_RELEASE}/runtime/control-plane/cdn" \
-    "${TARGET_RELEASE}/runtime/control-plane/webapp" \
-    "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
-    "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
-    "${TARGET_RELEASE}/bay-static-manifest.json"
-  rm -rf "$extract_dir"
+  as_bay rm -rf "$extract_dir"
   trap - RETURN
 }
 
@@ -456,16 +490,14 @@ stage_hub_bundle_release() {
     exit 1
   fi
 
-  run rm -rf "$TARGET_RELEASE"
-  run mkdir -p "$TARGET_RELEASE"
-  make_target_release_accessible
-  run cp -al "${current_release}/." "$TARGET_RELEASE/"
-  make_target_release_accessible
+  run as_bay rm -rf "$TARGET_RELEASE"
+  run as_bay mkdir -p "$TARGET_RELEASE"
+  run as_bay cp -al "${current_release}/." "$TARGET_RELEASE/"
 
   local extract_dir
-  extract_dir="$(mktemp -d "${TARGET_RELEASE}.hub-bundle.XXXXXX")"
-  trap 'rm -rf "$extract_dir"' RETURN
-  run tar --no-same-owner -xf "$HUB_BUNDLE_PATH" -C "$extract_dir" --strip-components=1
+  extract_dir="$(as_bay mktemp -d "${TARGET_RELEASE}.hub-bundle.XXXXXX")"
+  trap 'as_bay rm -rf "$extract_dir"' RETURN
+  extract_as_bay "$HUB_BUNDLE_PATH" "$extract_dir" --strip-components=1
 
   for required_file in \
     "${extract_dir}/bay-hub-manifest.json" \
@@ -482,22 +514,15 @@ stage_hub_bundle_release() {
     fi
   done
 
-  run rm -rf \
+  run as_bay rm -rf \
     "${TARGET_RELEASE}/runtime/control-plane/bundle" \
     "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes" \
     "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
     "${TARGET_RELEASE}/runtime/migrate-schema" \
     "${TARGET_RELEASE}/scripts/bay-systemd" \
     "${TARGET_RELEASE}/bay-hub-manifest.json"
-  run rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
-  make_target_release_accessible
-  run chown -R "${BAY_USER}:${BAY_GROUP}" \
-    "${TARGET_RELEASE}/runtime/control-plane/bundle" \
-    "${TARGET_RELEASE}/runtime/control-plane/api-v2-routes" \
-    "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
-    "${TARGET_RELEASE}/runtime/migrate-schema" \
-    "${TARGET_RELEASE}/bay-hub-manifest.json"
-  rm -rf "$extract_dir"
+  run as_bay rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
+  as_bay rm -rf "$extract_dir"
   trap - RETURN
 }
 
@@ -522,7 +547,7 @@ preserve_previous_static_assets() {
   # release flips /static to new HTML and entrypoints, keep old chunk filenames
   # available until the retained release ages out instead of stranding clients
   # that navigate after the deploy.
-  run rsync -a --ignore-existing --exclude='._*' \
+  run as_bay rsync -a --ignore-existing --exclude='._*' \
     "${previous_static}/" "${target_static}/"
 }
 
@@ -545,7 +570,7 @@ prepare_frontend_asset_history() {
 
   local node_bin
   node_bin="$(find_node)"
-  "$node_bin" - "$target_static" "$previous_static" <<'NODE'
+  as_bay "$node_bin" - "$target_static" "$previous_static" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -664,17 +689,10 @@ preserve_previous_cdn_assets() {
     return
   fi
 
-  # Both releases belong to the bay account, so this runs as that account:
-  # root must not execute their code (require runs index.js) or follow
-  # symbolic links in them (cp -L), which could expose root-only files.
-  local as_bay=()
-  if [[ "$(id -u)" == 0 ]]; then
-    as_bay=(runuser -u "$BAY_USER" --)
-    run chown "${BAY_USER}:${BAY_GROUP}" "$target_cdn"
-  fi
+  # As the bay account: require() runs index.js and cp -L follows links.
   local node_bin package_names
   node_bin="$(find_node)"
-  package_names="$("${as_bay[@]}" "$node_bin" - "${previous_cdn}/index.js" "${target_cdn}/index.js" <<'NODE'
+  package_names="$(as_bay "$node_bin" - "${previous_cdn}/index.js" "${target_cdn}/index.js" <<'NODE'
 const [previous, target] = process.argv.slice(2);
 const names = new Set([
   ...Object.keys(require(previous).versions ?? {}),
@@ -697,7 +715,7 @@ NODE
       fi
       # The CDN build uses versioned symlinks. Dereference old aliases so they
       # remain pinned to their old contents after the unversioned tree changes.
-      run "${as_bay[@]}" cp -aL "$previous_path" "${target_cdn}/${versioned_name}"
+      run as_bay cp -aL "$previous_path" "${target_cdn}/${versioned_name}"
     done
   done <<<"$package_names"
 }
@@ -770,7 +788,7 @@ current_release_id() {
     return 0
   fi
   if [[ -r "${BAY_ROOT}/state/current-version" ]]; then
-    cat "${BAY_ROOT}/state/current-version"
+    as_bay cat "${BAY_ROOT}/state/current-version"
     return 0
   fi
   return 1
@@ -779,12 +797,12 @@ current_release_id() {
 set_current_release() {
   local previous=""
   previous="$(current_release_id || true)"
-  run mkdir -p "${BAY_ROOT}/state"
+  run as_bay mkdir -p "${BAY_ROOT}/state"
   if [[ -n "$previous" && "$previous" != "$RELEASE_ID" ]]; then
-    printf '%s\n' "$previous" > "${BAY_ROOT}/state/previous-version"
+    printf '%s\n' "$previous" | as_bay tee "${BAY_ROOT}/state/previous-version" >/dev/null
   fi
-  run ln -sfn "$TARGET_RELEASE" "$CURRENT_LINK"
-  printf '%s\n' "$RELEASE_ID" > "${BAY_ROOT}/state/current-version"
+  run as_bay ln -sfn "$TARGET_RELEASE" "$CURRENT_LINK"
+  printf '%s\n' "$RELEASE_ID" | as_bay tee "${BAY_ROOT}/state/current-version" >/dev/null
 }
 
 prune_old_releases() {
@@ -804,7 +822,7 @@ prune_old_releases() {
   current="$(current_release_id || true)"
   previous=""
   if [[ -r "${BAY_ROOT}/state/previous-version" ]]; then
-    previous="$(cat "${BAY_ROOT}/state/previous-version")"
+    previous="$(as_bay cat "${BAY_ROOT}/state/previous-version")"
   fi
   [[ -n "$current" ]] && keep["$current"]=1
   [[ -n "$previous" ]] && keep["$previous"]=1
@@ -839,7 +857,7 @@ prune_old_releases() {
 
   while IFS= read -r release; do
     [[ -n "${keep[$release]:-}" ]] && continue
-    run rm -rf "${RELEASES_DIR}/${release}"
+    run as_bay rm -rf "${RELEASES_DIR}/${release}"
   done < <(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
 }
 
@@ -1019,6 +1037,7 @@ main() {
     exit 1
   fi
 
+  ensure_install_dirs
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     stage_static_bundle_release
   elif [[ -n "$HUB_BUNDLE_PATH" ]]; then
@@ -1068,6 +1087,8 @@ EOF
       "${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh"
       "--overlay"
       "$OVERLAY_MODE"
+      "--bin-user"
+      "$BAY_USER"
     )
     if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
       INSTALL_CMD+=("--daemon-reload")
@@ -1090,21 +1111,20 @@ EOF
   fi
 
   stage_trusted_scaffold
-  INSTALL_CMD=("${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" "--overlay" "$OVERLAY_MODE")
+  INSTALL_CMD=("${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" "--overlay" "$OVERLAY_MODE" "--bin-user" "$BAY_USER")
   if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
     INSTALL_CMD+=("--daemon-reload")
   fi
   run "${INSTALL_CMD[@]}"
   # The trusted copy stays until the overlay environment is written below.
 
-  run mkdir -p "${BAY_ROOT}/secrets" "${BAY_ROOT}/projects"
-  run mkdir -p "${BAY_ROOT}/bin"
+  # Normalise ownership of older installs (physical walk, never following
+  # links), then create anything missing as the bay account.
   run chown -R "${BAY_USER}:${BAY_GROUP}" "$BAY_ROOT" "${INSTALL_BASE}"
+  run as_bay mkdir -p "${BAY_ROOT}/secrets" "${BAY_ROOT}/projects" "${BAY_ROOT}/bin"
 
-  if [[ ! -f "${BAY_ROOT}/secrets/conat-password" ]]; then
-    random_secret > "${BAY_ROOT}/secrets/conat-password"
-    chmod 0600 "${BAY_ROOT}/secrets/conat-password"
-    chown "${BAY_USER}:${BAY_GROUP}" "${BAY_ROOT}/secrets/conat-password"
+  if ! as_bay test -e "${BAY_ROOT}/secrets/conat-password"; then
+    (umask 077; random_secret | as_bay tee "${BAY_ROOT}/secrets/conat-password" >/dev/null)
   fi
 
   ensure_bay_database \

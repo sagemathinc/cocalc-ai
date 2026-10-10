@@ -334,14 +334,60 @@ if grep -nE '(cat|<) "\$\{TARGET_RELEASE\}' "${SCRIPT_DIR}/bay-bootstrap-release
   echo "root reads configuration from the release directory" >&2
   exit 1
 fi
-grep -q 'run "\${as_bay\[@\]}" cp -aL' "${SCRIPT_DIR}/bay-bootstrap-release.sh" ||
-  { echo "CDN copies are not made as the bay user" >&2; exit 1; }
-grep -q '"\${as_bay\[@\]}" "\$node_bin" -' "${SCRIPT_DIR}/bay-bootstrap-release.sh" ||
-  { echo "the previous release's CDN index is not loaded as the bay user" >&2; exit 1; }
+# Root never mutates, follows or executes inside the bay-owned release and
+# state trees: every such command there runs as the bay account.
+if grep -nE '^\s*(run )?(rm|mkdir|cp|rsync|ln|tar|install|mv|touch|cat|printf .*>|"\$node_bin") .*\$\{?(TARGET_RELEASE|RELEASES_DIR|CURRENT_LINK|BAY_ROOT|extract_dir|target_|previous_|postgres_)' \
+  "${SCRIPT_DIR}/bay-bootstrap-release.sh" | grep -v 'as_bay'; then
+  echo "root works directly inside a bay-owned tree (use as_bay)" >&2
+  exit 1
+fi
+if grep -nE '> *"?\$\{?(BAY_ROOT|TARGET_RELEASE|CURRENT_LINK|RELEASES_DIR)' "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
+  echo "root redirects output into a bay-owned tree" >&2
+  exit 1
+fi
 if grep -n 'INSTALL_CMD.*TARGET_RELEASE\|"\${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh"$' \
   "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
   echo "an installer still runs from the release directory" >&2
   exit 1
 fi
+
+# upgrade-bay-release.sh: root runs release commands only through the root
+# runner (as the bay account), migrations only with runuser, and writes the
+# release only as the bay account.
+UPGRADE="${SCRIPT_DIR}/upgrade-bay-release.sh"
+if grep -n '/opt/cocalc/bay/current/bin/' "$UPGRADE" | grep -v '/opt/cocalc/bay/current/bin/bay-migrate$'; then
+  echo "upgrade-bay-release.sh runs release code as root" >&2
+  exit 1
+fi
+if [[ "$(grep -c '^  /opt/cocalc/bay/current/bin/bay-migrate$' "$UPGRADE")" != \
+  "$(grep -c '^runuser -u "\$BAY_USER" -- env \\$' "$UPGRADE")" ]]; then
+  echo "a migration is not run with runuser" >&2
+  exit 1
+fi
+if grep -nE '^(rm|mkdir|rsync|cp|chown|tar) .*\\\$current' "$UPGRADE"; then
+  echo "upgrade-bay-release.sh writes the release as root" >&2
+  exit 1
+fi
+
+# cocalc-bay-run: a validated bay command, as the bay user, with the bay
+# environment.
+cat > "${TMP_ROOT}/fake-systemd-run" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "${FAKE_SYSTEMD_RUN_LOG}"
+EOF
+chmod 0755 "${TMP_ROOT}/fake-systemd-run"
+export FAKE_SYSTEMD_RUN_LOG="${TMP_ROOT}/systemd-run.log"
+SYSTEMD_RUN="${TMP_ROOT}/fake-systemd-run" bash "${SCRIPT_DIR}/sbin/cocalc-bay-run" bay-health --verbose
+grep -qx 'User=cocalc-bay' "$FAKE_SYSTEMD_RUN_LOG" || { echo "cocalc-bay-run not as the bay user" >&2; exit 1; }
+grep -qx 'EnvironmentFile=-/etc/cocalc/bay-secrets.env' "$FAKE_SYSTEMD_RUN_LOG" ||
+  { echo "cocalc-bay-run without the bay environment" >&2; exit 1; }
+grep -qx '/opt/cocalc/bay/current/bin/bay-health' "$FAKE_SYSTEMD_RUN_LOG" ||
+  { echo "cocalc-bay-run ran the wrong program" >&2; exit 1; }
+for bad in ../bay-health /bin/sh 'bay-health;id' sh; do
+  if SYSTEMD_RUN="${TMP_ROOT}/fake-systemd-run" bash "${SCRIPT_DIR}/sbin/cocalc-bay-run" "$bad" 2>/dev/null; then
+    echo "cocalc-bay-run accepted $bad" >&2
+    exit 1
+  fi
+done
 
 echo "bay release pruning and CDN retention tests passed"

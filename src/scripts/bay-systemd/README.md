@@ -608,16 +608,29 @@ digest manifest as a one-shot enrollment file. On the first installation use
 - Rollout helpers assume versioned bundles live under
   `/opt/cocalc/bay/releases/<version>` and the active bundle is the symlink
   `/opt/cocalc/bay/current`.
-- The release tree under `/opt/cocalc/bay` belongs to the bay account, so
-  root never executes code from it:
-  - `bay-bootstrap-release.sh` runs `install-scaffold.sh`, which installs the
-    systemd units, sudoers rules and root helpers. It runs it from a
-    root-owned copy of `scripts/bay-systemd` taken straight from the bundle
-    or source tree, staged under `/run`.
-  - The hub watchdog runs as `cocalc-bay`. It restarts a hub worker, and
-    reads that worker's journal for a diagnostic capture, only through the
-    root-owned `/usr/local/sbin/cocalc-bay-hub-ctl`, which sudoers allows for
-    exactly those two commands.
+- The release tree under `/opt/cocalc/bay` and the state tree under the bay
+  root belong to the bay account, which can replace anything in them. So root
+  never reads, writes, follows or executes anything there:
+  - **Release and state work runs as the bay account.** Unpacking a bundle
+    (root only reads the operator's tarball and pipes it in), hard-link
+    copies, asset preservation, the `current` link, the version files,
+    pruning, and the postgres and secrets directories all run as
+    `cocalc-bay`. The one exception is root's ownership normalisation, a
+    `chown -R` that walks physically and never follows links.
+  - **The installer runs from a trusted copy.** `install-scaffold.sh` and
+    everything it installs as root (units, sudoers, sbin helpers, the
+    `needrestart` policy, the overlay environment) come from a root-owned
+    copy of `scripts/bay-systemd`, taken straight from the bundle or source
+    tree and staged under `/run`. It writes the release's `bin/` as the bay
+    account.
+  - **Deploy scripts run release commands through `cocalc-bay-run`.** This is
+    `/usr/local/sbin/cocalc-bay-run <bay-command>`, root-owned, which runs the
+    command as `cocalc-bay` with the services' environment. Migrations use
+    `runuser`.
+  - **The hub and cloudflared watchdogs run as `cocalc-bay`.** Their only
+    privileged actions go through the root-owned `cocalc-bay-hub-ctl` and
+    `cocalc-bay-cloudflared-ctl`, which sudoers allows for exactly those
+    commands.
 
 ## Implementation Scope And Validation
 
