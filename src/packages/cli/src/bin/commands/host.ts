@@ -3471,7 +3471,14 @@ Examples:
     .option("--at <time>", "start time, e.g. 2026-10-09T07:00:00Z")
     .option("--minutes <n>", "expected duration in minutes")
     .option("--message <text>", "extra text for the banner")
-    .option("--clear", "remove the announcement")
+    .option(
+      "--clear",
+      "remove the announcement, or lift a relocation's fence once its operation has ended (requires a fresh second factor)",
+    )
+    .option(
+      "--browser-id <id>",
+      "browser id for the second-factor check when clearing a fence (default: COCALC_BROWSER_ID)",
+    )
     .action(
       async (
         hostIdentifier: string,
@@ -3480,6 +3487,7 @@ Examples:
           minutes?: string;
           message?: string;
           clear?: boolean;
+          browserId?: string;
         },
         command: Command,
       ) => {
@@ -3488,8 +3496,11 @@ Examples:
             throw new Error("give --at and --minutes, or --clear");
           }
           const hostRow = await resolveHost(ctx, hostIdentifier);
+          const browserId =
+            `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
           const notice = await ctx.hub.hosts.setHostMaintenanceNotice({
             id: hostRow.id,
+            ...(browserId ? { browser_id: browserId } : undefined),
             ...(opts.clear
               ? { clear: true }
               : {
