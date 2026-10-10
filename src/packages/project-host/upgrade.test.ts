@@ -26,6 +26,7 @@ function createArchive(base: string): string {
 function createContainerRuntimeArchive(
   base: string,
   failStateProbe = false,
+  pasta?: { version: string; reports: string },
 ): string {
   const sourceRoot = path.join(base, "runtime-archive-root");
   const payloadDir = path.join(sourceRoot, "container-runtime");
@@ -61,6 +62,13 @@ exit ${failStateProbe ? 1 : 0}
   ]) {
     fs.chmodSync(path.join(binDir, binary), 0o755);
   }
+  if (pasta) {
+    // Laid out like the real bundle: pasta is a link to passt.
+    const passtPath = path.join(binDir, "passt");
+    fs.writeFileSync(passtPath, `#!/bin/sh\necho "pasta ${pasta.reports}"\n`);
+    fs.chmodSync(passtPath, 0o755);
+    fs.symlinkSync("passt", path.join(binDir, "pasta"));
+  }
   const versionOutput = execFileSync(podmanPath, ["--version"], {
     encoding: "utf8",
   }).trim();
@@ -68,7 +76,10 @@ exit ${failStateProbe ? 1 : 0}
     path.join(metadataDir, "runtime-manifest.json"),
     JSON.stringify({
       schema: "cocalc-container-runtime-v1",
-      components: { podman: { version: versionOutput } },
+      components: {
+        podman: { version: versionOutput },
+        ...(pasta ? { passt: { version: pasta.version } } : {}),
+      },
       host_contract: {
         database_backend: "sqlite",
         network_backend: "netavark",
@@ -448,6 +459,87 @@ describe("project host upgrade installer", () => {
           currentLink,
         } as any),
       ).rejects.toThrow("was rolled back");
+      expect(fs.realpathSync(currentLink)).toBe(previousTarget);
+    } finally {
+      await served.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("activates a container runtime whose bundled pasta matches its manifest", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-runtime-test-"));
+    const archivePath = createContainerRuntimeArchive(base, false, {
+      version: "2026_10_02.cba3570",
+      reports: "2026_10_02.cba3570",
+    });
+    const served = await serveFile(archivePath);
+    try {
+      const runtimeRoot = path.join(base, "container-runtime");
+      const currentLink = path.join(runtimeRoot, "current");
+      const runtimeDir = path.join(base, "run");
+      fs.mkdirSync(runtimeRoot, { recursive: true });
+      fs.mkdirSync(runtimeDir);
+      installFakeExistingPodman(currentLink);
+      process.env.COCALC_DATA = path.join(base, "data");
+      process.env.COCALC_CONTAINER_RUNTIME_ROOT = runtimeRoot;
+      process.env.COCALC_CONTAINER_RUNTIME_CURRENT = currentLink;
+      process.env.COCALC_PODMAN_RUNTIME_DIR = runtimeDir;
+      const versionDir = path.join(runtimeRoot, "with-pasta");
+
+      const result = await __test__.downloadAndInstall({
+        artifact: "container-runtime",
+        canonicalArtifact: "container-runtime",
+        version: "with-pasta",
+        url: served.url,
+        stripComponents: 1,
+        root: runtimeRoot,
+        versionDir,
+        currentLink,
+      } as any);
+
+      expect(result.status).toBe("updated");
+      expect(fs.realpathSync(currentLink)).toBe(versionDir);
+      expect(fs.readlinkSync(path.join(versionDir, "bin", "pasta"))).toBe(
+        "passt",
+      );
+    } finally {
+      await served.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("refuses a container runtime whose bundled pasta reports another version", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-runtime-test-"));
+    const archivePath = createContainerRuntimeArchive(base, false, {
+      version: "2026_10_02.cba3570",
+      reports: "0.0~git20240220.1e6f92b",
+    });
+    const served = await serveFile(archivePath);
+    try {
+      const runtimeRoot = path.join(base, "container-runtime");
+      const currentLink = path.join(runtimeRoot, "current");
+      const runtimeDir = path.join(base, "run");
+      fs.mkdirSync(runtimeRoot, { recursive: true });
+      fs.mkdirSync(runtimeDir);
+      installFakeExistingPodman(currentLink);
+      const previousTarget = fs.realpathSync(currentLink);
+      process.env.COCALC_DATA = path.join(base, "data");
+      process.env.COCALC_CONTAINER_RUNTIME_ROOT = runtimeRoot;
+      process.env.COCALC_CONTAINER_RUNTIME_CURRENT = currentLink;
+      process.env.COCALC_PODMAN_RUNTIME_DIR = runtimeDir;
+
+      await expect(
+        __test__.downloadAndInstall({
+          artifact: "container-runtime",
+          canonicalArtifact: "container-runtime",
+          version: "wrong-pasta",
+          url: served.url,
+          stripComponents: 1,
+          root: runtimeRoot,
+          versionDir: path.join(runtimeRoot, "wrong-pasta"),
+          currentLink,
+        } as any),
+      ).rejects.toThrow("pasta version mismatch");
       expect(fs.realpathSync(currentLink)).toBe(previousTarget);
     } finally {
       await served.close();
