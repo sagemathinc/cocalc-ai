@@ -96,7 +96,7 @@ test("reservation is idempotent and fences admission and retry but not other thr
   ).toThrow("conversation is closed");
 });
 
-test("fresh configuration preserves appearance and settings but not session, goals, or automation", () => {
+test("fresh configuration preserves appearance and settings but not session or goals", () => {
   const old = buildThreadConfigRecord({
     thread_id: "old",
     updated_by: "human",
@@ -110,7 +110,6 @@ test("fresh configuration preserves appearance and settings but not session, goa
       workingDirectory: "/work",
       paymentSource: "project-api-key",
     },
-    automation_config: { enabled: false },
   });
   const next = freshThreadConfig(old, "new", "human");
   expect(next.thread_id).toBe("new");
@@ -121,7 +120,6 @@ test("fresh configuration preserves appearance and settings but not session, goa
     workingDirectory: "/work",
     paymentSource: "project-api-key",
   });
-  expect(next.automation_config).toBeUndefined();
   expect(next.acp_goal).toBeUndefined();
   expect(old.acp_config?.sessionId).toBe("provider-session");
 });

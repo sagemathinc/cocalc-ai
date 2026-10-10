@@ -2865,7 +2865,7 @@ export class CodexAppServerAgent implements AcpAgent {
       turnEnv[key] = typeof value === "string" ? value : "";
     }
     // Goal lifecycle belongs to Codex and explicit user actions. Starting a
-    // chat or automation turn must not clear this or other threads' goals.
+    // chat or agent-authored turn must not clear this or other threads' goals.
     const errors: string[] = [];
     let lastErrorNotification: any | undefined;
     let lastFailedTurnCompletion: any | undefined;

@@ -11,8 +11,8 @@ export async function resolveHumanTurnMentions(
   request: AcpRequest,
   api: Pick<AgentApi, "getMentionIdentity">,
 ) {
-  // Never bind history, scheduled/model-authored content, or an old turn's map.
-  if (request.chat?.agent_message || request.chat?.automation_id) return [];
+  // Never bind history, model-authored content, or an old turn's map.
+  if (request.chat?.agent_message) return [];
   const text = request.chat?.user_message_content ?? "";
   const references = Object.values(
     agentMentionReferenceMap(extractAgentMentions(text)),
@@ -42,7 +42,7 @@ export async function resolveHumanTurnArtifactMentions(
   request: AcpRequest,
   api: Pick<ArtifactCatalogApi, "getEntry">,
 ) {
-  if (request.chat?.agent_message || request.chat?.automation_id) return [];
+  if (request.chat?.agent_message) return [];
   const projectId = request.chat?.project_id ?? request.project_id;
   if (!projectId) return [];
   const references = extractArtifactMentions(

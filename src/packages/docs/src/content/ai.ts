@@ -675,8 +675,7 @@ the project loses internet access. The dialog shows the reason.
 ## Scheduled thread automations
 
 Sensors replace the earlier scheduled thread automations, which no longer run.
-A thread that still has one shows a notice where you can delete it. Schedule a
-prompt for the same job instead.
+Schedule a prompt for the same job instead.
 
 ## Related guides
 

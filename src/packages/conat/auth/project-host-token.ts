@@ -57,8 +57,8 @@ export interface ProjectHostAuthClaims {
   jti: string;
   v: string;
   act?: ProjectHostAuthActor;
-  // Signed credential provenance. Absent on pre-cutover tokens, which must
-  // not authorize human-only automation settings changes.
+  // Signed credential provenance: a person's or an agent's. Absent on
+  // pre-cutover tokens.
   auth_actor?: "account" | "agent";
   // Required for agent credentials; the host audience alone is not a project boundary.
   project_id?: string;

@@ -1159,32 +1159,6 @@ describe("queue-stalled ACP workers", () => {
     ).toBe(false);
   });
 
-  it("does not terminate a worker that is running a queued command job without a turn lease", () => {
-    mockListRunningAcpJobsByWorker.mockReturnValue([
-      {
-        op_id: "command-job",
-        worker_id: "worker-stalled",
-        updated_at: 10_000,
-        created_at: 10_000,
-        request_json: JSON.stringify({ request_kind: "command" }),
-      } as any,
-    ]);
-
-    expect(
-      __test__.shouldTerminateQueueStalledWorker({
-        worker: worker as any,
-        status: {
-          worker_id: "worker-stalled",
-          started_at: 1_000,
-          last_queue_progress_at: 10_000,
-          running_turn_leases: 0,
-        } as any,
-        now: 200_000,
-        stallMs: 60_000,
-      }),
-    ).toBe(false);
-  });
-
   it("cancels termination when execution settles during confirmation", async () => {
     jest.spyOn(Date, "now").mockReturnValue(200_000);
     mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);

@@ -56,40 +56,6 @@ export function threadStateRecordKey(threadId: string) {
   };
 }
 
-export interface ChatThreadAutomationConfig {
-  enabled?: boolean;
-  automation_id?: string;
-  title?: string;
-  run_kind?: "codex" | "command";
-  prompt?: string;
-  command?: string;
-  command_cwd?: string;
-  command_timeout_ms?: number;
-  command_max_output_bytes?: number;
-  schedule_type?: "daily" | "interval";
-  days_of_week?: number[];
-  local_time?: string;
-  interval_minutes?: number;
-  window_start_local_time?: string;
-  window_end_local_time?: string;
-  timezone?: string;
-  pause_after_unacknowledged_runs?: number;
-}
-
-export interface ChatThreadAutomationState {
-  automation_id?: string;
-  status?: "active" | "running" | "paused" | "error";
-  next_run_at_ms?: number;
-  last_run_started_at_ms?: number;
-  last_run_finished_at_ms?: number;
-  last_acknowledged_at_ms?: number;
-  unacknowledged_runs?: number;
-  paused_reason?: string;
-  last_error?: string;
-  last_job_op_id?: string;
-  last_message_id?: string;
-}
-
 export interface MessageHistory {
   author_id: string;
   content: string;
@@ -126,6 +92,8 @@ export interface ChatMessage {
   acp_live_log_stream?: string | null;
   acp_live_preview_stream?: string | null;
   acp_thread_id?: string | null;
+  // Legacy: set on replies of the retired scheduled thread automations, which
+  // ran in their own sessions. Read only, so those sessions are never resumed.
   acp_automation_id?: string | null;
   acp_started_at_ms?: number;
   // Project-visible working directory of this turn, not the current thread preference.
@@ -180,7 +148,6 @@ export interface BuildChatMessageOptions {
   acp_live_log_stream?: string | null;
   acp_live_preview_stream?: string | null;
   acp_thread_id?: string | null;
-  acp_automation_id?: string | null;
   acp_started_at_ms?: number;
   acp_working_directory?: string;
   acp_usage?: any;
@@ -220,7 +187,6 @@ export function buildChatMessage(
     acp_live_log_stream: options.acp_live_log_stream,
     acp_live_preview_stream: options.acp_live_preview_stream,
     acp_thread_id: options.acp_thread_id,
-    acp_automation_id: options.acp_automation_id,
     acp_started_at_ms: options.acp_started_at_ms,
     acp_working_directory: options.acp_working_directory,
     acp_usage: options.acp_usage,
@@ -339,8 +305,6 @@ export interface ChatThreadConfigRecord {
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
   codex_completion_notification?: CodexCompletionNotificationOverride;
-  automation_config?: ChatThreadAutomationConfig;
-  automation_state?: ChatThreadAutomationState;
   notification_followers?: string[];
   notification_muted?: string[];
   updated_at: string;
@@ -375,8 +339,6 @@ export interface BuildThreadConfigRecordOptions {
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
   codex_completion_notification?: CodexCompletionNotificationOverride;
-  automation_config?: ChatThreadAutomationConfig;
-  automation_state?: ChatThreadAutomationState;
   notification_followers?: string[];
   notification_muted?: string[];
   schema_version?: number;
@@ -414,8 +376,6 @@ export function buildThreadConfigRecord(
     acp_goal_request: options.acp_goal_request,
     acp_goal_ack: options.acp_goal_ack,
     codex_completion_notification: options.codex_completion_notification,
-    automation_config: options.automation_config,
-    automation_state: options.automation_state,
     notification_followers: options.notification_followers,
     notification_muted: options.notification_muted,
     updated_at: updatedAt,

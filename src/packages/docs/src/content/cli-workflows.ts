@@ -459,12 +459,6 @@ cocalc sensor delete <id>
 ~~~
 
 \`show\` includes recent runs with their outcome, summary, output and errors.
-
-## Retired automations
-
-\`project chat automation\` remains only to inspect, pause or delete
-automations created before sensors replaced them. Retired automations do not
-run.
 `;
 
 export const CLI_WORKSPACES_BODY = `

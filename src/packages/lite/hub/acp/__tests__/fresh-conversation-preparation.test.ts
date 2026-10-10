@@ -129,13 +129,3 @@ test("an explicit retry after save failure saves the same successor without losi
     { event: "chat", thread_id: "old", content: "Keep this old conversation" },
   ]);
 });
-
-test("enabled scheduled work is rejected before creating any successor", async () => {
-  rows[0].automation_config = { enabled: true };
-  await expect(prepareFreshConversation(key, client)).rejects.toThrow(
-    "Disable scheduled work",
-  );
-  expect(db.set).not.toHaveBeenCalled();
-  expect(db.save).not.toHaveBeenCalled();
-  expect(release).toHaveBeenCalledTimes(1);
-});

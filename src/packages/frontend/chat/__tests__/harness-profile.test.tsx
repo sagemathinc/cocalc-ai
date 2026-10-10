@@ -342,7 +342,6 @@ test("existing harness settings explain limitations before capability discovery"
       /Text and image prompts\. Live guidance works when the harness advertises it/,
     ),
   ).toBeTruthy();
-  expect(screen.getByText(/Automations are not supported yet/)).toBeTruthy();
   expect(
     screen.getByText(/CoCalc does not pause for per-tool approval/),
   ).toBeTruthy();

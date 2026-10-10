@@ -24,7 +24,6 @@ function makeThread(
     readCount: 1,
     unreadCount: 0,
     isAI: true,
-    isAutomation: false,
     isPinned: false,
     isArchived: false,
     ...patch,
@@ -32,27 +31,24 @@ function makeThread(
 }
 
 describe("groupThreadsByRecency", () => {
-  it("places automation threads in their own section below Today", () => {
+  it("places pinned threads first, then the rest by recency", () => {
     const now = Date.UTC(2026, 2, 12, 12, 0, 0);
     const sections = groupThreadsByRecency(
       [
         makeThread("today-thread", now - 60_000),
-        makeThread("automation-thread", now - 2 * 60_000, {
-          isAutomation: true,
-          isPinned: true,
-        }),
+        makeThread("pinned-thread", now - 2 * 60_000, { isPinned: true }),
         makeThread("yesterday-thread", now - 26 * 60 * 60_000),
       ],
       { now },
     );
 
     expect(sections.map((section) => section.key)).toEqual([
+      "pinned",
       "today",
-      "automations",
       "yesterday",
     ]);
-    expect(sections[1].threads.map((thread) => thread.key)).toEqual([
-      "automation-thread",
+    expect(sections[0].threads.map((thread) => thread.key)).toEqual([
+      "pinned-thread",
     ]);
   });
 });

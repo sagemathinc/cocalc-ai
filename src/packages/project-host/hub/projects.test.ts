@@ -6,7 +6,6 @@ const executeCode = jest.fn(async () => ({
   stderr: "",
   exit_code: 0,
 }));
-const rehydrateAcpAutomationsForProject = jest.fn();
 const applyPendingCopies = jest.fn();
 const upsertProject = jest.fn();
 const getProject = jest.fn();
@@ -187,10 +186,6 @@ jest.mock("../pending-copies", () => ({
 jest.mock("../rootfs-cache", () => ({
   pullRootfsCacheEntry: (...args: any[]) => pullRootfsCacheEntry(...args),
 }));
-jest.mock("@cocalc/lite/hub/acp", () => ({
-  rehydrateAcpAutomationsForProject: (...args: any[]) =>
-    rehydrateAcpAutomationsForProject(...args),
-}));
 jest.mock("../storage-reservations", () => ({
   prepareOciPullReservationEstimate: (...args: any[]) =>
     prepareOciPullReservationEstimate(...args),
@@ -303,7 +298,7 @@ jest.mock("@cocalc/conat/files/file-server", () => ({
   })),
 }));
 
-describe("project host start ACP rehydrate ordering", () => {
+describe("project host start ordering", () => {
   const project_id = "3f5d0b28-cf69-4c78-9b0a-ea747bc7acb3";
   const customImage = "ghcr.io/example/custom-rootfs:2026-03-21";
   const flushMicrotasks = async () => {
@@ -492,7 +487,7 @@ describe("project host start ACP rehydrate ordering", () => {
     ]);
   });
 
-  it("does not rehydrate ACP automations before runner start on start()", async () => {
+  it("applies pending copies before runner start on start()", async () => {
     const order: string[] = [];
     const runnerApi = {
       start: jest.fn(async () => {
@@ -504,18 +499,13 @@ describe("project host start ACP rehydrate ordering", () => {
     applyPendingCopies.mockImplementation(async () => {
       order.push("applyPendingCopies");
     });
-    rehydrateAcpAutomationsForProject.mockImplementation(async () => {
-      order.push("rehydrate");
-    });
-
     const { wireProjectsApi } = await import("./projects");
     wireProjectsApi(runnerApi);
 
     await hubApi.projects.start({ project_id });
     await flushMicrotasks();
 
-    expect(order).toEqual(["applyPendingCopies", "runner:start", "rehydrate"]);
-    expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["applyPendingCopies", "runner:start"]);
     expect(upsertProjectStopState).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id,
@@ -1276,7 +1266,7 @@ describe("project host start ACP rehydrate ordering", () => {
     });
   });
 
-  it("does not rehydrate ACP automations for createProject when start is false", async () => {
+  it("does not start the runner for createProject when start is false", async () => {
     const runnerApi = {
       start: jest.fn(),
       stop: jest.fn(),
@@ -1287,7 +1277,6 @@ describe("project host start ACP rehydrate ordering", () => {
 
     await hubApi.projects.createProject({ project_id, start: false });
 
-    expect(rehydrateAcpAutomationsForProject).not.toHaveBeenCalled();
     expect(runnerApi.start).not.toHaveBeenCalled();
   });
 
@@ -1604,7 +1593,7 @@ describe("project host start ACP rehydrate ordering", () => {
     });
   });
 
-  it("rehydrates ACP automations only after runner start on createProject when start is true", async () => {
+  it("starts the runner and records the start on createProject when start is true", async () => {
     const order: string[] = [];
     const runnerApi = {
       start: jest.fn(async () => {
@@ -1613,18 +1602,13 @@ describe("project host start ACP rehydrate ordering", () => {
       }),
       stop: jest.fn(),
     } as any;
-    rehydrateAcpAutomationsForProject.mockImplementation(async () => {
-      order.push("rehydrate");
-    });
-
     const { wireProjectsApi } = await import("./projects");
     wireProjectsApi(runnerApi);
 
     await hubApi.projects.createProject({ project_id, start: true });
     await flushMicrotasks();
 
-    expect(order).toEqual(["runner:start", "rehydrate"]);
-    expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["runner:start"]);
     expect(upsertProjectStopState).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id,
@@ -1696,33 +1680,6 @@ describe("project host start ACP rehydrate ordering", () => {
       project_id: expect.any(String),
     });
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not wait for ACP rehydrate before returning from start()", async () => {
-    let resolveRehydrate: (() => void) | undefined;
-    const runnerApi = {
-      start: jest.fn(async () => ({
-        state: "running",
-        http_port: 1234,
-        ssh_port: 2222,
-      })),
-      stop: jest.fn(),
-    } as any;
-    rehydrateAcpAutomationsForProject.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveRehydrate = resolve;
-        }),
-    );
-
-    const { wireProjectsApi } = await import("./projects");
-    wireProjectsApi(runnerApi);
-
-    const startPromise = hubApi.projects.start({ project_id });
-    await expect(startPromise).resolves.toMatchObject({ scope_id: project_id });
-    expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
-    resolveRehydrate?.();
-    await flushMicrotasks();
   });
 
   it("preserves explicit rootfs image names on createProject", async () => {

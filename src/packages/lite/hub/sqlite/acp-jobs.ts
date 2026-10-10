@@ -154,6 +154,24 @@ function init(): void {
   );
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
+  removeRetiredAutomationJobs(db);
+}
+
+/**
+ * Scheduled thread automations were retired for agent sensors. Their jobs
+ * (agent turns and shell commands) wrote their results to the chats
+ * already; nothing may run, recover or retry them, and their settings table
+ * is no longer read.
+ */
+export function removeRetiredAutomationJobs(
+  db: ReturnType<typeof getAcpDatabase>,
+): void {
+  db.exec(
+    `DELETE FROM ${TABLE}
+     WHERE json_extract(request_json, '$.request_kind') = 'command'
+        OR json_extract(request_json, '$.chat.automation_id') IS NOT NULL`,
+  );
+  db.exec("DROP TABLE IF EXISTS acp_automations");
 }
 
 let initialized = false;
@@ -171,9 +189,6 @@ function mirrorAcpJobSession(row: AcpJobRow | undefined): void {
 }
 
 function normalizeRequest(request: AcpJobRequest): AcpJobRequest {
-  if (request.request_kind === "command") {
-    return request;
-  }
   return {
     ...request,
     request_kind: request.request_kind ?? "codex",
@@ -307,19 +322,11 @@ export function enqueueAcpJob(
   const priority = send_mode === "immediate" ? 1 : 0;
   const request_json = JSON.stringify(normalizeRequest(request));
   const recovery_parent_op_id =
-    request.request_kind === "command"
-      ? null
-      : `${(request as any).recovery_parent_op_id ?? ""}`.trim() || null;
-  const recovery_reason =
-    request.request_kind === "command"
-      ? null
-      : `${(request as any).recovery_reason ?? ""}`.trim() || null;
-  const recovery_count =
-    request.request_kind === "command"
-      ? null
-      : Number.isFinite(Number((request as any).recovery_count))
-        ? Math.max(1, Math.floor(Number((request as any).recovery_count)))
-        : null;
+    `${request.recovery_parent_op_id ?? ""}`.trim() || null;
+  const recovery_reason = `${request.recovery_reason ?? ""}`.trim() || null;
+  const recovery_count = Number.isFinite(Number(request.recovery_count))
+    ? Math.max(1, Math.floor(Number(request.recovery_count)))
+    : null;
   const insert = () =>
     db
       .prepare(
@@ -342,9 +349,7 @@ export function enqueueAcpJob(
         user_message_id,
         assistant_message_id,
         assistant_message_date,
-        request.request_kind === "command"
-          ? null
-          : (request.session_id ?? null),
+        request.session_id ?? null,
         available_at,
         send_mode,
         priority,
@@ -1339,7 +1344,6 @@ export function resendCanceledAcpJob({
       return undefined;
     const request = decodeAcpJobRequest(current);
     if (
-      request.request_kind === "command" ||
       request.config?.model !== modelRecovery.expected_model ||
       ![undefined, "auto", "subscription"].includes(
         request.config?.paymentSource,
@@ -1363,7 +1367,6 @@ export function resendCanceledAcpJob({
     )
       return undefined;
     const original = decodeAcpJobRequest(current);
-    if (original.request_kind === "command") return undefined;
     expectedRequest = current.request_json;
     replacement = JSON.stringify({
       ...original,
@@ -1462,7 +1465,6 @@ export function fenceAcpJobsForProject({
       `UPDATE ${TABLE}
        SET state = CASE
              WHEN json_extract(request_json, '$.runtime.kind') = 'acp'
-              AND json_extract(request_json, '$.request_kind') IS NOT 'command'
              THEN 'error'
              ELSE 'interrupted'
            END,
@@ -1484,9 +1486,6 @@ export function fenceAcpJobsForProject({
 
 export function decodeAcpJobRequest(row: AcpJobRow): AcpJobRequest {
   const parsed = JSON.parse(row.request_json ?? "{}") as AcpJobRequest;
-  if (parsed.request_kind === "command") {
-    return parsed;
-  }
   return {
     ...parsed,
     request_kind: parsed.request_kind ?? "codex",

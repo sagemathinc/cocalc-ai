@@ -57,10 +57,9 @@ test("a failed report is retried on a later turn", async () => {
   expect(report).toHaveBeenCalledTimes(2);
 });
 
-test("commands and non-chat requests are not reported", async () => {
+test("non-chat requests are not reported", async () => {
   const report = jest.fn(async () => {});
   setAgentRuntimeReporterForTests(report);
-  reportAgentRuntimeOnce({ ...request(), request_kind: "command" });
   reportAgentRuntimeOnce({
     ...request(),
     chat: { path: "x.ipynb", thread_id: "t" },

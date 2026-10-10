@@ -1044,7 +1044,7 @@ describe("CodexAppServerAgent", () => {
     },
   );
 
-  it.each(["chat", "automation"] as const)(
+  it.each(["chat", "agent-authored"] as const)(
     "preserves all persisted Codex goals across successive %s turns",
     async (kind) => {
       const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-root-"));
@@ -1111,9 +1111,7 @@ describe("CodexAppServerAgent", () => {
               thread_id: "thread-goal-1",
               message_id: "assistant-goal-1",
               parent_message_id: "user-goal-1",
-              ...(kind === "automation"
-                ? { automation_id: "automation-goal-1" }
-                : {}),
+              ...(kind === "agent-authored" ? { agent_message: true } : {}),
             },
           });
           expect(readCodexGoals(goalsDbPath)).toEqual(before);

@@ -1,5 +1,4 @@
 import {
-  automationAcp,
   controlAcp,
   forkAcpSession,
   interruptAcp,
@@ -20,11 +19,9 @@ describe("acp client explicit routing", () => {
       expected_session_id: "native-source",
     };
     const client = {
-      request: jest
-        .fn()
-        .mockResolvedValue({
-          data: { ok: true, forked_session_id: "native-copy" },
-        }),
+      request: jest.fn().mockResolvedValue({
+        data: { ok: true, forked_session_id: "native-copy" },
+      }),
     };
     expect(await controlAcp(request, client as any)).toEqual({
       ok: true,
@@ -65,18 +62,6 @@ describe("acp client explicit routing", () => {
     await expect(iterator.next()).rejects.toThrow(
       "must provide an explicit Conat client",
     );
-  });
-
-  it("requires an explicit client for automationAcp", async () => {
-    await expect(
-      automationAcp({
-        project_id: "00000000-0000-4000-8000-000000000000",
-        account_id: "00000000-0000-4000-8000-000000000001",
-        path: "a.chat",
-        thread_id: "thread-1",
-        action: "status",
-      } as any),
-    ).rejects.toThrow("must provide an explicit Conat client");
   });
 
   it("requires an explicit client for steerAcp", async () => {

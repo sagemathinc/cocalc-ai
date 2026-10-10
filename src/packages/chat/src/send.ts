@@ -73,6 +73,7 @@ export function prepareChatSend({
   const config = runtime ? {} : (thread.acp_config ?? {});
   // Match the browser's recovery of a session whose config has not synced yet.
   const sinceCleared = messagesSinceContextCleared(messages);
+  // Legacy replies of retired thread automations had their own sessions.
   const inferredSession = [...sinceCleared.messages]
     .reverse()
     .find(

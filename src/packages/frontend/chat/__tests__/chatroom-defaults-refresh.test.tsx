@@ -130,9 +130,6 @@ jest.mock("../chatroom-thread-panel", () => ({
         sessionMode: defaults.sessionMode,
         workingDirectory: "/",
       },
-      automationConfig: {
-        enabled: false,
-      },
     };
   },
 }));

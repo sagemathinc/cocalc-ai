@@ -1658,7 +1658,6 @@ export async function getProjectOwnerEffectiveLimitsLocal({
       acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
-      acp_max_active_automations_per_project: 0,
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
@@ -1715,7 +1714,6 @@ export async function getAccountEffectiveLimitsLocal({
       acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
-      acp_max_active_automations_per_project: 0,
     };
   }
   const resolution = await resolveMembershipForAccount(accountId);
