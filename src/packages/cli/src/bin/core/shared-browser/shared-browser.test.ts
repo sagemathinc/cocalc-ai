@@ -11,6 +11,7 @@ import {
   resolveProjectFile,
 } from "./server";
 import { FrameWindow } from "./viewer-socket";
+import { isLocalAddress } from "../../commands/project/shared-browser";
 import {
   BUNDLED_CHROMIUM,
   connectCommandFor,
@@ -316,4 +317,21 @@ test("the CLI's API and agents' CDP refuse what comes through CoCalc's proxy or 
       true,
       JSON.stringify(headers),
     );
+});
+
+test("the project's own servers are local addresses (a browser on its own network cannot reach them)", () => {
+  for (const url of [
+    "localhost:5173",
+    "http://localhost:3000/x",
+    "127.0.0.1:8080",
+    "http://[::1]:9000/",
+  ])
+    assert.equal(isLocalAddress(url), true, url);
+  for (const url of [
+    "example.com",
+    "https://cocalc.ai",
+    "search words",
+    "file:///etc/passwd",
+  ])
+    assert.equal(isLocalAddress(url), false, url);
 });

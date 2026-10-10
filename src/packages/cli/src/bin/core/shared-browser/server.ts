@@ -1304,6 +1304,23 @@ export class SharedBrowserServer {
         .catch((err) => json(res, 400, { error: `${err?.message ?? err}` }));
       return;
     }
+    // A browser in its own container: its network (it restarts on the other).
+    if (req.method === "POST" && path.endsWith("/api/network")) {
+      readJson(req)
+        .then(async (body) => {
+          if (!this.state.network)
+            return json(res, 409, {
+              error:
+                "this browser has no network of its own: it runs in the project or on a computer",
+            });
+          if (body?.network !== "own" && body?.network !== "project")
+            return json(res, 400, { error: "network: own or project" });
+          await this.options.onNetwork?.(body.network);
+          json(res, 200, this.getState());
+        })
+        .catch((err) => json(res, 400, { error: `${err?.message ?? err}` }));
+      return;
+    }
     json(res, 404, { error: "not found" });
   }
 

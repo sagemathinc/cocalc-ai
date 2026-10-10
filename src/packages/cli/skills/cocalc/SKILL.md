@@ -706,7 +706,11 @@ the browser or its last page.
 - Browsers keep sign-ins (encrypted with the `COCALC_BROWSER_KEY` project
   secret) once the human has opened a browser in the project. Never change or
   delete that secret: it signs every browser out.
-- Pages on the project's own servers are reachable as `http://localhost:<port>`.
+- Pages on the project's own servers are reachable as `http://localhost:<port>`
+  once the browser is on the project's network: a browser in its own
+  container starts on its own (`goto` says so). Run
+  `cocalc project browser network project` first; it restarts the browser
+  there, keeping its pages.
 - User documentation: `cocalc docs show projects/web-browser`.
 - A `.browser` file is a browser of its own (`--browser <file>` on every
   command; it has its own sign-ins). It can run on the user's computer instead

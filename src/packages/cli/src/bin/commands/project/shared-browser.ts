@@ -20,7 +20,10 @@ import {
   findSharedBrowserChrome,
   sharedBrowserTarget,
 } from "../../core/shared-browser/service";
-import type { SharedBrowserState } from "../../core/shared-browser/server";
+import {
+  normalizeUrl,
+  type SharedBrowserState,
+} from "../../core/shared-browser/server";
 import type { ProjectCommandDeps } from "../project";
 
 const CARD_TEXT =
@@ -57,6 +60,18 @@ async function post(port: number, path: string, body: object) {
   });
   if (!res.ok) throw Error(`${path}: ${res.status} ${await res.text()}`);
   return (await res.json()) as SharedBrowserState;
+}
+
+// localhost, 127.x, [::1]: the project's own servers.
+export function isLocalAddress(text: string): boolean {
+  const url = normalizeUrl(text);
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname;
+    return host === "localhost" || /^127\./.test(host) || host === "[::1]";
+  } catch {
+    return false;
+  }
 }
 
 const BROWSER_FLAG = "-b, --browser <file>";
@@ -232,7 +247,7 @@ export function registerSharedBrowserCommands(
     ctx: any,
     project: string | undefined,
     browser: string | undefined,
-    fn: (page: SharedBrowserPage) => Promise<T>,
+    fn: (page: SharedBrowserPage, state: SharedBrowserState) => Promise<T>,
   ): Promise<T> => {
     const { status } = await running(ctx, project, browser);
     const state =
@@ -251,7 +266,7 @@ export function registerSharedBrowserCommands(
       );
     const page = await SharedBrowserPage.open(state.cdp, state.active);
     try {
-      return await fn(page);
+      return await fn(page, state);
     } finally {
       page.close();
     }
@@ -268,9 +283,60 @@ export function registerSharedBrowserCommands(
     "open a URL (or host, or search words) in the shared browser's current tab and wait for it to load",
   ).action(async (url: string, opts: any, command: Command) => {
     await withContext(command, "project browser goto", (ctx: any) =>
-      onPage(ctx, opts.project, opts.browser, (page) => page.goto(url)),
+      onPage(ctx, opts.project, opts.browser, (page, state) => {
+        if (state.network === "own" && isLocalAddress(url))
+          throw Error(
+            "this browser has a network of its own, so it cannot reach the project's servers. Run `cocalc project browser network project` first: the browser restarts on the project's network with its pages open",
+          );
+        return page.goto(url);
+      }),
     );
   });
+
+  browser
+    .command("network [network]")
+    .description(
+      "show or set the network of a browser in its own container: own (the internet) or project (also the project's servers on localhost); switching restarts it, keeping its pages",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option(BROWSER_FLAG, BROWSER_HELP)
+    .action(
+      async (network: string | undefined, opts: any, command: Command) => {
+        await withContext(
+          command,
+          "project browser network",
+          async (ctx: any) => {
+            const { status } = await running(ctx, opts.project, opts.browser);
+            let state =
+              status.state === "running"
+                ? await serviceState(status.port)
+                : null;
+            if (!state)
+              throw Error(
+                "the shared browser is not running here; run `cocalc project browser start` in the project first",
+              );
+            if (network == null) return { network: state.network };
+            if (network !== "own" && network !== "project")
+              throw Error("network: own or project");
+            state = await post(status.port!, "/api/network", { network });
+            const deadline = Date.now() + 90_000;
+            while (
+              (state?.network !== network ||
+                state?.connection !== "connected") &&
+              Date.now() < deadline
+            ) {
+              await new Promise((r) => setTimeout(r, 500));
+              state = await serviceState(status.port);
+            }
+            if (state?.network !== network)
+              throw Error(
+                `the browser did not switch to the ${network} network`,
+              );
+            return { network: state.network };
+          },
+        );
+      },
+    );
 
   pageCommand("text", "print the current tab's URL, title and visible text")
     .option(
