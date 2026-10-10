@@ -3661,6 +3661,80 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 ),
             )
 
+    def test_io_policy_reconcile_locks_each_project_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                container_runtime_bundle=bootstrap.BundleSpec(
+                    "", None, "", "", "", ""
+                ),
+            )
+            captured: dict[str, str] = {}
+            with mock.patch.object(
+                bootstrap,
+                "text_write_atomic",
+                side_effect=lambda path, data, **_kwargs: captured.__setitem__(
+                    str(path), data
+                ),
+            ), mock.patch.object(bootstrap.os, "chmod"), mock.patch.object(
+                bootstrap.os, "chown"
+            ):
+                bootstrap.install_privileged_wrappers(cfg)
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            self.assertIn('PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS="60"', script)
+            body = (
+                "reconcile_project_io_policy() {"
+                + script.split("reconcile_project_io_policy() {", 1)[1].split(
+                    "\n}\n", 1
+                )[0]
+                + "\n}\n"
+            )
+            pool = Path(tmpdir) / "pool"
+            ids = [f"00000000-0000-4000-8000-00000000000{i}" for i in (1, 2)]
+            for project_id in ids:
+                (pool / f"project-{project_id}").mkdir(parents=True)
+            (pool / "project-not-a-uuid").mkdir()
+            log = Path(tmpdir) / "log"
+            harness = f"""
+set -euo pipefail
+PROJECT_POOL_CGROUP_DEFAULT={json.dumps(str(pool))}
+PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS=60
+LOG={json.dumps(str(log))}
+is_project_uuid() {{ [[ "$1" =~ ^[0-9a-f-]{{36}}$ ]]; }}
+acquire_project_cgroup_lock() {{ echo "lock ${{1:-default}}" >> "$LOG"; }}
+release_project_lock() {{ echo unlock >> "$LOG"; }}
+normalize_project_io_class_state() {{ echo normalize >> "$LOG"; }}
+configure_project_pool_hierarchy() {{ echo hierarchy >> "$LOG"; }}
+configure_maintenance_cgroup() {{ echo maintenance >> "$LOG"; }}
+apply_existing_project_io_policy() {{
+  echo "apply $2" >> "$LOG"
+  # Another project stops while the sweep has released the lock.
+  rmdir "${{1%/*}}/project-{ids[1]}"
+}}
+{body}
+reconcile_project_io_policy
+"""
+            subprocess.run(
+                ["bash", "-c", harness], check=True, capture_output=True, text=True
+            )
+            # Shared setup under one hold, then one short hold per project;
+            # the stopped project is skipped under its own hold.
+            self.assertEqual(
+                log.read_text().splitlines(),
+                [
+                    "lock default",
+                    "normalize",
+                    "hierarchy",
+                    "maintenance",
+                    "unlock",
+                    "lock 60",
+                    f"apply {ids[0]}",
+                    "unlock",
+                    "lock 60",
+                    "unlock",
+                ],
+            )
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:

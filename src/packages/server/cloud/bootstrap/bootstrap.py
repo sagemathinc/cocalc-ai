@@ -4595,20 +4595,40 @@ JOB = re.compile(r"job-(\d+)-(\d+)-(\d+)-(\d+)-(\d+)-(" + UUID + r")$")
 PROJECT_OOM_SCORE_ADJ = "500"
 LEGACY_JOB = re.compile(r"job-\d+-\d+-\d+-\d+-" + UUID + r"$")
 
+class LifecycleBusy(RuntimeError):
+    pass
+
+class AdmissionBlocked(RuntimeError):
+    pass
+
+class AdmissionCancelled(RuntimeError):
+    pass
+
+def stdin_closed():
+    # The runtime cancels by ending stdin, then SIGKILLs 20s later, while
+    # admission may wait much longer for the lifecycle lock. Detect the hangup
+    # without reading: the job configuration may still be queued unread.
+    hangup = select.POLLHUP | select.POLLERR | getattr(select, "POLLRDHUP", 0)
+    poller = select.poll()
+    poller.register(0, select.POLLIN | getattr(select, "POLLRDHUP", 0))
+    return any(events & hangup for _, events in poller.poll(0))
+
 @contextmanager
-def lifecycle_lock():
+def lifecycle_lock(wait=15, cancelled=None):
     fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         if os.fstat(fd).st_uid != 0:
             raise RuntimeError("untrusted lifecycle lock")
-        until = time.monotonic() + 15
+        until = time.monotonic() + wait
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                if cancelled is not None and cancelled():
+                    raise AdmissionCancelled("cancelled while waiting for the lifecycle lock")
                 if time.monotonic() >= until:
-                    raise RuntimeError("project lifecycle busy")
+                    raise LifecycleBusy("project lifecycle busy")
                 time.sleep(0.05)
         yield fd
     finally:
@@ -4659,7 +4679,7 @@ def active_state(project):
     if (not value or value["status"] != "active" or
         value["inode"] != parent.stat().st_ino or
         not alive(value["init"], value["start"]) or not member(value["init"], parent)):
-        raise RuntimeError("project job admission is blocked")
+        raise AdmissionBlocked("project job admission is blocked")
     return value
 
 def activate(project, init):
@@ -5058,23 +5078,60 @@ def launcher_config(config):
     # Enforced here, not trusted from the caller.
     return args, dict(env, DBUS_SESSION_BUS_ADDRESS=NO_USER_BUS)
 
+class ProjectRestarted(RuntimeError):
+    pass
+
+# Host maintenance (e.g. the I/O policy reconcile) can hold the lifecycle lock
+# for a minute or more. Admission waits it out instead of failing the command.
+ADMISSION_LOCK_WAIT_SECONDS = 120
+
+def admission_wait(deadline):
+    return max(0, min(ADMISSION_LOCK_WAIT_SECONDS, deadline - time.monotonic()))
+
+def rejection_reason(error):
+    # Fixed codes only: privileged diagnostics never reach the runtime.
+    if isinstance(error, LifecycleBusy):
+        return "host-busy"
+    if isinstance(error, AdmissionBlocked):
+        return "project-not-running"
+    if isinstance(error, ProjectRestarted):
+        return "project-restarted"
+    if isinstance(error, AdmissionCancelled):
+        return "cancelled"
+    if isinstance(error, ValueError):
+        return "invalid-request"
+    return "admission-failed"
+
+def reject(error):
+    # Only before the scope exists, so no process was launched. Without this
+    # frame the runtime could not tell a refusal from an unconfirmed cleanup.
+    frame = json.dumps({"type": "rejected", "reason": rejection_reason(error)}).encode() + b"\n"
+    try:
+        os.write(1, frame)
+    except OSError:
+        pass
+
 def supervise(project, job, owner, timeout_ms):
     admitted = time.monotonic()
-    if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
-        raise ValueError("invalid job identity")
-    if not 0 < timeout_ms <= 86400000:
-        raise ValueError("invalid deadline")
-    account = pwd.getpwnam(RUNTIME_USER)
-    if account.pw_uid == 0 or account.pw_gid == 0:
-        raise ValueError("managed jobs require an unprivileged runtime account")
-    if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
-        raise ValueError("job owner is not the runtime user")
-    owner_start = identity(owner)
-    with lifecycle_lock():
-        generation = active_state(project)["generation"]
-    args, env = launcher_config(config_from_stdin())
+    try:
+        if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
+            raise ValueError("invalid job identity")
+        if not 0 < timeout_ms <= 86400000:
+            raise ValueError("invalid deadline")
+        deadline = admitted + timeout_ms / 1000
+        account = pwd.getpwnam(RUNTIME_USER)
+        if account.pw_uid == 0 or account.pw_gid == 0:
+            raise ValueError("managed jobs require an unprivileged runtime account")
+        if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
+            raise ValueError("job owner is not the runtime user")
+        owner_start = identity(owner)
+        with lifecycle_lock(admission_wait(deadline), cancelled=stdin_closed):
+            generation = active_state(project)["generation"]
+        args, env = launcher_config(config_from_stdin())
+    except Exception as error:
+        reject(error)
+        raise
     parent = POOL / ("project-" + project)
-    deadline = admitted + timeout_ms / 1000
     # Kernel-owned directory name is durable reaper metadata, including the
     # monotonic hard deadline. A SIGSTOP'ed but live guard cannot renew it.
     scope = parent / f"job-{owner}-{owner_start}-{os.getpid()}-{identity(os.getpid())}-{int(deadline * 1000)}-{job}"
@@ -5088,6 +5145,9 @@ def supervise(project, job, owner, timeout_ms):
     stopped = False
     result = 1
     final_until = None
+    # Set just before the scope is created; until then nothing can need cleanup.
+    attempted = False
+    rejection = None
     def stop(*_):
         nonlocal stopped
         stopped = True
@@ -5099,14 +5159,16 @@ def supervise(project, job, owner, timeout_ms):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        with lifecycle_lock():
+        with lifecycle_lock(admission_wait(deadline),
+                            cancelled=lambda: stopped or stdin_closed()):
             reap_project_locked(project)
             if active_state(project)["generation"] != generation:
-                raise RuntimeError("project generation changed before admission")
+                raise ProjectRestarted("project generation changed before admission")
             # Observe cancellation after the sweep/lock wait, not before it.
             if stopped or time.monotonic() >= deadline or not alive(owner, owner_start) or not lease_connected():
                 result = 130
                 return
+            attempted = True
             scope.mkdir(mode=0o755)
             if not (scope / "cgroup.kill").exists():
                 raise RuntimeError("atomic job cancellation unavailable")
@@ -5171,14 +5233,22 @@ def supervise(project, job, owner, timeout_ms):
                 break
         if stopped:
             result = 130
+    except Exception as error:
+        if not attempted:
+            rejection = error
+        raise
     finally:
         # Even success kills detached leftovers. Do not report success until
         # populated=0 AND rmdir confirm that there is no remaining authority.
         final_until = time.monotonic() + OUTPUT_FINAL_DRAIN_SECONDS
         try:
-            with lifecycle_lock():
-                leftovers = live_scope_processes(scope) if completed and not stopped else 0
-                kill_scope(scope)
+            leftovers = 0
+            # Before the scope was attempted there is nothing to kill, so do not
+            # wait for the lock again (it may be why admission failed).
+            if attempted:
+                with lifecycle_lock():
+                    leftovers = live_scope_processes(scope) if completed and not stopped else 0
+                    kill_scope(scope)
             if child is not None:
                 os.waitpid(child, 0)
             for fd in ([pipes[0][0]] + [pair[1] for pair in pipes]) if pipes else []:
@@ -5201,7 +5271,10 @@ def supervise(project, job, owner, timeout_ms):
                         "use cocalc project terminal spawn for persistent services.\n")
                 emit({"type": "output", "stream": "stderr",
                       "data": base64.b64encode(note.encode()).decode("ascii")})
-            emit({"type": "exit", "code": result, "cleanup": True})
+            if rejection is not None:
+                emit({"type": "rejected", "reason": rejection_reason(rejection)})
+            else:
+                emit({"type": "exit", "code": result, "cleanup": True})
         except Exception:
             # Leave the cgroup for the independent orphan sweep; no clean exit frame.
             raise RuntimeError("job containment cleanup not confirmed") from None
@@ -6568,6 +6641,9 @@ PROJECT_NETWORK_NFT="/usr/sbin/nft"
 PROJECT_NETWORK_TABLE="cocalc_project_network"
 PROJECT_NETWORK_CHAIN="output"
 PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"
+# Background maintenance takes the lock once per project, so it waits longer
+# rather than failing the whole sweep on one busy moment.
+PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS="60"
 # A recovered host can legitimately hold the global cgroup lock while its
 # project I/O policy is reconciled. Foreground starts should wait for that
 # bounded maintenance pass instead of failing after the short mutation timeout.
@@ -6720,9 +6796,10 @@ prepare_privileged_rustic_cache() {
 }
 
 acquire_project_cgroup_lock() {
+  local wait="${1:-$PROJECT_CGROUP_LOCK_WAIT_SECONDS}"
   exec 9>/run/lock/cocalc-project-cgroups.lock
-  if ! flock -x -w "$PROJECT_CGROUP_LOCK_WAIT_SECONDS" 9; then
-    deny "project-cgroup-lock-timeout" "$PROJECT_CGROUP_LOCK_WAIT_SECONDS"
+  if ! flock -x -w "$wait" 9; then
+    deny "project-cgroup-lock-timeout" "$wait"
   fi
 }
 
@@ -7435,13 +7512,20 @@ reconcile_project_io_policy() {
   normalize_project_io_class_state
   configure_project_pool_hierarchy
   configure_maintenance_cgroup
+  release_project_lock
+  # Lock each project separately: the whole sweep can take minutes on a busy
+  # host, and holding the host-wide lock that long fails job admission,
+  # snapshots and project starts, whose waits are seconds. Starts apply their
+  # own policy under the lock, and a project that stopped meanwhile is skipped.
   for pool in "${PROJECT_POOL_CGROUP_DEFAULT}"/project-*; do
-    [ -d "$pool" ] || continue
     project_id="${pool##*/project-}"
     is_project_uuid "$project_id" || continue
-    apply_existing_project_io_policy "$pool" "$project_id"
+    acquire_project_cgroup_lock "$PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS"
+    if [ -d "$pool" ]; then
+      apply_existing_project_io_policy "$pool" "$project_id"
+    fi
+    release_project_lock
   done
-  release_project_lock
 }
 
 enable_cgroup_controllers() {
