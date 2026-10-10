@@ -32,6 +32,8 @@ export async function authorizeAgentDeliveryExecution(
         thread_id: `${chat.thread_id ?? ""}`,
       },
     });
+    // Consumed: nothing downstream (writers, leases, logs) needs the secret.
+    chat.sensor_wake = { ...chat.sensor_wake, permit: REDACTED };
     return;
   }
   if (chat?.agent_rpc_execution) {
@@ -47,4 +49,12 @@ export async function authorizeAgentDeliveryExecution(
   throw new Error(
     "Legacy agent delivery is retired; this queued request was not executed",
   );
+}
+
+const REDACTED = "[redacted]";
+
+/** A chat context safe to log: a sensor wake's permit is a secret. */
+export function redactChatForLog<T extends AcpRequest["chat"]>(chat: T): T {
+  if (!chat?.sensor_wake) return chat;
+  return { ...chat, sensor_wake: { ...chat.sensor_wake, permit: REDACTED } };
 }

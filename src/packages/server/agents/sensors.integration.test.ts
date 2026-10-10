@@ -37,8 +37,11 @@ import {
   agentSensorRequest,
   authorizeSensorExecutionLocal,
   sensorControlLocal,
+  setSensorConsumeHookForTests,
 } from "./sensors";
 import { claimDueSensors, runClaimedSensor } from "./sensor-scheduler";
+
+const HOST = "44444444-4444-4444-8444-444444444444";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -85,8 +88,8 @@ describeDb("agent sensors", () => {
     owner = randomUUID();
     const pool = getPool();
     await pool.query(
-      "INSERT INTO projects (project_id, run_quota) VALUES ($1, $2)",
-      [project_id, { network: true }],
+      "INSERT INTO projects (project_id, run_quota, users, host_id) VALUES ($1, $2, $3, $4)",
+      [project_id, { network: true }, { [owner]: { group: "owner" } }, HOST],
     );
     await pool.query(
       `INSERT INTO agent_identities (agent_id, project_id, path, thread_id, name, created_by)
@@ -295,7 +298,7 @@ describeDb("agent sensors", () => {
       authorizeSensorExecutionLocal(
         who,
         project_id,
-        randomUUID(),
+        HOST,
         {
           ...authorization,
           ...overrides,
@@ -334,7 +337,7 @@ describeDb("agent sensors", () => {
       authorizeSensorExecutionLocal(
         owner,
         project_id,
-        randomUUID(),
+        HOST,
         second.authorization,
         {
           prompt_sha256: sha(second.prompt),
@@ -343,6 +346,113 @@ describeDb("agent sensors", () => {
         },
       ),
     ).rejects.toThrow(/no longer active/);
+  });
+
+  test.each([
+    [
+      "the sensor is paused",
+      (sensor_id: string) =>
+        getPool().query(
+          "UPDATE agent_sensors SET status='paused' WHERE sensor_id=$1",
+          [sensor_id],
+        ),
+    ],
+    [
+      "the sensor is approved again",
+      (sensor_id: string) =>
+        getPool().query(
+          "UPDATE agent_sensors SET approved_at=now()+interval '1 second' WHERE sensor_id=$1",
+          [sensor_id],
+        ),
+    ],
+    [
+      "the approver loses access",
+      () =>
+        getPool().query("UPDATE projects SET users='{}' WHERE project_id=$1", [
+          project_id,
+        ]),
+    ],
+    [
+      "the agent starts a fresh conversation",
+      () =>
+        getPool().query(
+          "UPDATE agent_identities SET thread_id='t2' WHERE agent_id=$1",
+          [agent_id],
+        ),
+    ],
+    [
+      "the project moves to another host",
+      () =>
+        getPool().query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+          project_id,
+          randomUUID(),
+        ]),
+    ],
+  ])(
+    "nothing is consumed if %s right before the permit is used",
+    async (_label, revoke) => {
+      const active = (await approve((await propose()).sensor)).sensor;
+      await makeDue(active.sensor_id);
+      await runDue();
+      const { authorization, prompt, path, thread_id } =
+        host.deliverAgentSensorWake.mock.calls[0][0];
+      setSensorConsumeHookForTests(async () => {
+        await revoke(active.sensor_id);
+      });
+      try {
+        await expect(
+          authorizeSensorExecutionLocal(
+            owner,
+            project_id,
+            HOST,
+            authorization,
+            {
+              prompt_sha256: sha(prompt),
+              path,
+              thread_id,
+            },
+          ),
+        ).rejects.toThrow(/not authorized/);
+      } finally {
+        setSensorConsumeHookForTests(undefined);
+      }
+      const { rows } = await getPool().query(
+        "SELECT wake_state FROM agent_sensor_runs WHERE run_id=$1",
+        [authorization.run_id],
+      );
+      expect(rows[0].wake_state).toBe("issued");
+    },
+  );
+
+  test("control: with nothing revoked at that point, the permit is consumed", async () => {
+    const active = (await approve((await propose()).sensor)).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const { authorization, prompt, path, thread_id } =
+      host.deliverAgentSensorWake.mock.calls[0][0];
+    const hook = jest.fn(async () => {});
+    setSensorConsumeHookForTests(hook);
+    try {
+      await authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        authorization,
+        {
+          prompt_sha256: sha(prompt),
+          path,
+          thread_id,
+        },
+      );
+    } finally {
+      setSensorConsumeHookForTests(undefined);
+    }
+    expect(hook).toHaveBeenCalledTimes(1);
+    const { rows } = await getPool().query(
+      "SELECT wake_state FROM agent_sensor_runs WHERE run_id=$1",
+      [authorization.run_id],
+    );
+    expect(rows[0].wake_state).toBe("consumed");
   });
 
   test("agents see run outcomes but never run output", async () => {

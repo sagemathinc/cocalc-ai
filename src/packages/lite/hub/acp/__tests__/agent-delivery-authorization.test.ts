@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
-import { authorizeAgentDeliveryExecution } from "../agent-delivery-authorization";
+import {
+  authorizeAgentDeliveryExecution,
+  redactChatForLog,
+} from "../agent-delivery-authorization";
 
 const request = (): AcpRequest => ({
   account_id: "recipient",
@@ -147,4 +150,29 @@ test("sensor wakes are reauthorized with their exact prompt at execution", async
   await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
     "not authorized",
   );
+});
+
+test("logs never see a wake permit, and it is dropped once consumed", async () => {
+  const value = request();
+  delete value.chat!.agent_delivery_id;
+  value.prompt = "wake";
+  value.chat!.user_message_content = "wake";
+  value.chat!.sensor_wake = {
+    version: 1,
+    sensor_id: "s",
+    project_id: "project",
+    agent_id: "a",
+    script_hash: "h",
+    run_id: "r",
+    permit: "secret-permit-value-secret-permit-value-123",
+  };
+  expect(JSON.stringify(redactChatForLog(value.chat))).not.toContain(
+    "secret-permit",
+  );
+  expect(value.chat!.sensor_wake!.permit).toContain("secret-permit");
+  await authorizeAgentDeliveryExecution(value, {
+    authorizeRpcExecution: jest.fn(async () => {}),
+    authorizeSensorExecution: jest.fn(async () => {}),
+  });
+  expect(JSON.stringify(value)).not.toContain("secret-permit");
 });

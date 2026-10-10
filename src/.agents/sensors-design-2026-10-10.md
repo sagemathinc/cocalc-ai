@@ -123,14 +123,21 @@ Data:
   a queued wake's prompt (`applyQueuedUserMessageEditToRequest`), and the host
   reports the hash of the queued prompt, so an edited prompt would fail the
   permit anyway.
-- **Nothing the project controls runs before the body.** The ephemeral
-  container runs an explicit argv: `env -i` (no BASH_ENV, LD_PRELOAD,
-  NODE_OPTIONS, PYTHON* or project variables), a PATH of CoCalc tools and
-  image directories only (no `~/bin`), `/usr/bin/timeout`, bash with
-  `--noprofile --norc`, `python3 -I`. The image itself is the project's, so a
-  project owner with sudo still controls system programs; the hub's limits
-  bound what a hijacked run could do (it can only wake within the daily limit,
-  with framed, untrusted data).
+- **Nothing the project controls runs before the body.** The container's
+  root filesystem is a throwaway overlay of the pristine base image (named by
+  the hub's `projects.rootfs_image`, not a file in the project), without the
+  project's own RootFS changes, mounted read-only with no-new-privileges (no
+  sudo or setuid). It runs an explicit argv: `env -i` (no BASH_ENV,
+  LD_PRELOAD, NODE_OPTIONS, PYTHON* or project variables), a PATH of CoCalc
+  tools and image directories only (no `~/bin`), `/usr/bin/timeout`, bash
+  with `--noprofile --norc`, `python3 -I`. Files and modules the script
+  itself reads from the project home are the script's explicit inputs.
+- **Execution reauthorization is one statement.** The permit is consumed by
+  a single UPDATE that re-checks the sensor (active, hash, approver, approval
+  time after the run started), the identity's thread, project membership and
+  host, so a revocation committed before it leaves nothing to consume.
+- **Permits stay out of logs**, and the in-memory request drops the permit
+  once consumed.
 - **Agents never see run output**, which may contain secrets; people see it
   in the run log.
 - **Quota checks are serialized** per project with an advisory transaction

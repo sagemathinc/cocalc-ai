@@ -2,9 +2,15 @@ import { execFile } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import { localPath } from "./filesystem";
-import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
+import {
+  getImageNamePath,
+  mount as mountRootFs,
+  mountSensorRootfs,
+  unmount,
+} from "./rootfs";
 import { readFile } from "fs/promises";
 import {
+  getImage,
   networkArgument,
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
@@ -56,6 +62,13 @@ export interface SandboxExecOptions {
    * shell startup file in the project runs first. Ephemeral runs only.
    */
   argv?: string[];
+  /**
+   * Run on a throwaway overlay of this pristine base image instead of the
+   * project's RootFS, read-only and without privilege escalation (sudo,
+   * setuid). The image must come from a trusted source, not the project.
+   * Requires argv.
+   */
+  baseImage?: { image: string; run_id: string };
 }
 
 export interface SandboxExecResult {
@@ -101,9 +114,11 @@ export async function sandboxExec({
   onOutput,
   onCleanupConfirmed,
   argv,
+  baseImage,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
   if (argv && (!useEphemeral || signal || argv.length === 0))
     throw Error("argv requires a plain ephemeral run");
+  if (baseImage && !argv) throw Error("baseImage requires argv");
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
   if (onOutput && useEphemeral)
@@ -201,12 +216,15 @@ export async function sandboxExec({
   };
 
   let rootfs: string | undefined;
+  let disposeBase: (() => Promise<void>) | undefined;
   try {
     if (useEphemeral) {
       const { home, scratch } = await localPath({
         project_id,
       });
-      const image = await getContainerImage(home);
+      const image = baseImage
+        ? getImage({ image: baseImage.image })
+        : await getContainerImage(home);
       const env = await getEnvironment({
         project_id,
         HOME,
@@ -259,8 +277,22 @@ export async function sandboxExec({
       // Name the container for easier debugging; allow reuse without conflicts.
       args.push("--name", `sandbox-${project_id}-${Date.now()}`);
 
-      rootfs = await mountRootFs({ project_id, home, config: { image } });
-      args.push("--rootfs", rootfs);
+      if (baseImage) {
+        const base = await mountSensorRootfs({
+          image,
+          run_id: baseImage.run_id,
+        });
+        disposeBase = base.dispose;
+        args.push(
+          "--read-only",
+          "--security-opt=no-new-privileges",
+          "--rootfs",
+          base.rootfs,
+        );
+      } else {
+        rootfs = await mountRootFs({ project_id, home, config: { image } });
+        args.push("--rootfs", rootfs);
+      }
       args.push(
         ...(argv
           ? argv
@@ -315,6 +347,7 @@ export async function sandboxExec({
     // cgroup. Admit both run and exec launchers so no project command escapes.
     return await runPodman(args, projectPoolPodmanLauncher(project_id));
   } finally {
+    await disposeBase?.();
     if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when
       // no other users (e.g., the main project container) are using it.

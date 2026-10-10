@@ -535,12 +535,28 @@ export async function authorizeSensorExecutionLocal(
   await assertAgent(agent);
   if (agent.path !== delivery.path || agent.thread_id !== delivery.thread_id)
     throw denied();
-  const { rowCount } = await agentStore().query(
-    `UPDATE agent_sensor_runs SET wake_state='consumed'
-     WHERE run_id=$1 AND sensor_id=$2 AND wake_state='issued'
-       AND wake_permit_hash=$3 AND wake_prompt_sha256=$4
-       AND wake_account_id=$5 AND wake_path=$6 AND wake_thread_id=$7
-       AND started_at > now() - interval '1 day'`,
+  await beforeConsumeHook?.();
+  // The checks above give clear errors; this one statement is what counts.
+  // It re-checks everything it authorizes (sensor still active with this
+  // hash, approver and approval, identity thread, project membership and
+  // host) and consumes the permit, so a pause, re-approval, disable, thread
+  // change or loss of access committed before it leaves nothing to consume.
+  const { rows: consumed } = await agentStore().query(
+    `UPDATE agent_sensor_runs r SET wake_state='consumed'
+     FROM agent_sensors s, agent_identities i, projects p
+     WHERE r.run_id=$1 AND r.sensor_id=$2 AND r.wake_state='issued'
+       AND r.wake_permit_hash=$3 AND r.wake_prompt_sha256=$4
+       AND r.wake_account_id=$5 AND r.wake_path=$6 AND r.wake_thread_id=$7
+       AND r.started_at > now() - interval '1 day'
+       AND s.sensor_id=r.sensor_id AND s.project_id=$8 AND s.status='active'
+       AND s.agent_id=$9 AND s.script_hash=$10 AND r.script_hash=s.script_hash
+       AND s.approved_by=$5 AND r.started_at >= s.approved_at
+       AND i.agent_id=s.agent_id AND i.disabled_at IS NULL
+       AND i.path=$6 AND i.thread_id=$7
+       AND p.project_id=s.project_id AND p.deleted IS NOT TRUE
+       AND p.host_id=$11
+       AND p.users #>> ARRAY[$5::text, 'group'] IN ('owner', 'collaborator')
+     RETURNING r.run_id`,
     [
       authorization.run_id,
       authorization.sensor_id,
@@ -549,7 +565,19 @@ export async function authorizeSensorExecutionLocal(
       account_id,
       delivery.path,
       delivery.thread_id,
+      project_id,
+      authorization.agent_id,
+      authorization.script_hash,
+      host_id,
     ],
   );
-  if (rowCount !== 1) throw denied();
+  if (consumed.length !== 1) throw denied();
+}
+
+let beforeConsumeHook: (() => Promise<void>) | undefined;
+/** Tests only: run something between the checks and the consuming update. */
+export function setSensorConsumeHookForTests(
+  hook: (() => Promise<void>) | undefined,
+) {
+  beforeConsumeHook = hook;
 }

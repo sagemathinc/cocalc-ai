@@ -6,7 +6,10 @@ import { installLiteCodexSpawner } from "../codex-runtime";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import { authorizeAgentDeliveryExecution } from "./agent-delivery-authorization";
+import {
+  authorizeAgentDeliveryExecution,
+  redactChatForLog,
+} from "./agent-delivery-authorization";
 import { promises as fs, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -4004,7 +4007,7 @@ export class ChatStreamWriter {
       contentLength: content.length,
       contentPreview: content.slice(0, 160),
       events: this.events.length,
-      metadata: this.metadata,
+      metadata: redactChatForLog(this.metadata),
     });
     this.commitNow(generating, "throttled");
   }, COMMIT_INTERVAL);
@@ -8028,7 +8031,7 @@ async function executeAcpRequest({
   logger.debug("evaluate: start", {
     reqId,
     session_id: request.session_id,
-    chat: request.chat,
+    chat: redactChatForLog(request.chat),
     projectId,
     config,
     sessionMode,
@@ -10261,7 +10264,7 @@ async function writeQueuedJobFailureToChat({
     await writer.handle(null);
   } catch (writerErr) {
     logger.warn("failed to write queued acp job failure to chat", {
-      chat: request.chat,
+      chat: redactChatForLog(request.chat),
       error,
       writerErr,
     });

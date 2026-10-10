@@ -139,16 +139,10 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   let pause: string | undefined;
   try {
     await db.query(
+      // Database time, comparable with approved_at when the wake executes.
       `INSERT INTO agent_sensor_runs (run_id, sensor_id, project_id,
-         script_hash, started_at, manual) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [
-        run_id,
-        row.sensor_id,
-        row.project_id,
-        row.script_hash,
-        started,
-        !!row.manual_by,
-      ],
+         script_hash, started_at, manual) VALUES ($1,$2,$3,$4,now(),$5)`,
+      [run_id, row.sensor_id, row.project_id, row.script_hash, !!row.manual_by],
     );
     pause = await pauseReason(row);
     if (pause) {
@@ -158,6 +152,10 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       return;
     }
     const agent = await db.get(row.agent_id);
+    const { rows: projects } = await db.query<{ image: string | null }>(
+      "SELECT rootfs_image AS image FROM projects WHERE project_id=$1",
+      [row.project_id],
+    );
     const host = await hostFor({
       project_id: row.project_id,
       agent_id: row.agent_id,
@@ -170,6 +168,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       script: row.spec.script,
       timeout_seconds: row.spec.timeout_seconds,
       path: agent.path,
+      image: projects[0]?.image ?? "",
     });
     exit_code = result.exit_code;
     output = logOutput(result.stdout, result.stderr);
