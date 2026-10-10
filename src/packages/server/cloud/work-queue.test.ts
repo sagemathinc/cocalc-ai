@@ -241,7 +241,10 @@ describe("cloud vm work queue", () => {
 
   it("dedups follow-up work atomically under concurrent enqueues", async () => {
     // The handler's own item is in_progress and must not count as a duplicate.
-    const running = await enqueueCloudVmWork({ vm_id: "vm-1", action: "start" });
+    const running = await enqueueCloudVmWork({
+      vm_id: "vm-1",
+      action: "start",
+    });
     await claimCloudVmWork({ worker_id: "worker-a", limit: 1 });
 
     const at = (s: number) => new Date(Date.now() + s * 1000);
@@ -314,5 +317,76 @@ describe("cloud vm work queue", () => {
     ).resolves.toBeUndefined();
     ({ rows } = await getPool().query("SELECT state FROM cloud_vm_work"));
     expect(rows).toEqual([{ state: "in_progress" }]);
+  });
+});
+
+describe("per-VM serialization of lifecycle work", () => {
+  it("runs one lifecycle item per VM at a time, in order, beside other work", async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+    const start = await enqueueCloudVmWork({ vm_id: "vm-s", action: "start" });
+    await tick();
+    const verify = await enqueueCloudVmWork({
+      vm_id: "vm-s",
+      action: "verify_host_ready",
+    });
+    const prepull = await enqueueCloudVmWork({
+      vm_id: "vm-s",
+      action: "prepull_rootfs",
+    });
+    const other = await enqueueCloudVmWork({ vm_id: "vm-t", action: "stop" });
+
+    // One batch never takes two lifecycle items for one VM.
+    const first = await claimCloudVmWork({ worker_id: "worker-a", limit: 10 });
+    expect(first.map((row) => row.id).sort()).toEqual(
+      [start, prepull, other].sort(),
+    );
+
+    // While the start runs, the VM's next lifecycle item waits, whichever
+    // worker asks.
+    expect(
+      await claimCloudVmWork({ worker_id: "worker-b", limit: 10 }),
+    ).toEqual([]);
+
+    await markCloudVmWorkDone(start);
+    const next = await claimCloudVmWork({ worker_id: "worker-b", limit: 10 });
+    expect(next.map((row) => row.id)).toEqual([verify]);
+  });
+
+  it("drops starts queued before a stop or delete", async () => {
+    await enqueueCloudVmWork({ vm_id: "vm-u", action: "start" });
+    await enqueueCloudVmWorkOnce({ vm_id: "vm-u", action: "restart" });
+    await enqueueCloudVmWork({ vm_id: "vm-u", action: "probe_spot" });
+    // A delayed Spot retry for another VM, dropped by its own delete.
+    await enqueueCloudVmFollowUpWork({
+      vm_id: "vm-v",
+      action: "start",
+      not_before: new Date(Date.now() + 600_000),
+    });
+    await enqueueCloudVmWork({ vm_id: "vm-u", action: "stop" });
+    await enqueueCloudVmWork({ vm_id: "vm-v", action: "delete" });
+    const states = async () =>
+      (
+        await getPool().query(
+          `SELECT vm_id || ':' || action AS item, state, COALESCE(error, '') AS error
+             FROM cloud_vm_work ORDER BY created_at`,
+        )
+      ).rows
+        .map((row) => `${row.item} ${row.state} ${row.error}`.trim())
+        .sort();
+    expect(await states()).toEqual([
+      "vm-u:probe_spot queued",
+      "vm-u:restart failed superseded by a later stop",
+      "vm-u:start failed superseded by a later stop",
+      "vm-u:stop queued",
+      "vm-v:delete queued",
+      "vm-v:start failed superseded by a later delete",
+    ]);
+
+    // A start requested after the stop stays; a repeated (deduplicated)
+    // stop request still drops it.
+    await enqueueCloudVmWork({ vm_id: "vm-u", action: "start" });
+    expect(await states()).toContain("vm-u:start queued");
+    await enqueueCloudVmWorkOnce({ vm_id: "vm-u", action: "stop" });
+    expect(await states()).not.toContain("vm-u:start queued");
   });
 });

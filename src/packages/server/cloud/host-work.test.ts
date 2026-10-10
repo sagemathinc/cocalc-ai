@@ -1187,6 +1187,106 @@ describe("cloud host start failures", () => {
     }
   });
 
+  it("keeps a stop that lands while a start is running, and runs it after the start", async () => {
+    const hostId = randomUUID();
+    await upsertProjectHost({
+      id: hostId,
+      name: "Stopped while starting",
+      region: "us-west4",
+      status: "starting",
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        desired_state: "running",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west4-c",
+          machine_type: "t2d-standard-2",
+          disk_gb: 50,
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west4-c",
+          instance_id: `cocalc-host-${hostId}`,
+        },
+      },
+    });
+    // The start is claimed and running.
+    const startWork = randomUUID();
+    await getPool().query(
+      `INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, created_at, updated_at)
+       VALUES ($1, $2, 'start', '{}'::jsonb, 'in_progress', NOW(), NOW())`,
+      [startWork, hostId],
+    );
+    let stopped = false;
+    const { enqueueCloudVmWork, claimCloudVmWork, markCloudVmWorkDone } =
+      await import("./db");
+    // The admin stop commits after the handler loaded the row, during its
+    // first provider call.
+    const stopOnce = async () => {
+      if (stopped) return;
+      stopped = true;
+      await getPool().query(
+        `UPDATE project_hosts
+            SET metadata = jsonb_set(metadata, '{desired_state}', '"stopped"')
+          WHERE id=$1`,
+        [hostId],
+      );
+      await enqueueCloudVmWork({
+        vm_id: hostId,
+        action: "stop",
+        payload: { provider: "gcp" },
+      });
+    };
+    const stopHost = jest.fn(async () => undefined);
+    const provider = new Proxy(
+      { stopHost },
+      {
+        get: (target: any, name: string) =>
+          name in target
+            ? target[name]
+            : async () => {
+                await stopOnce();
+                return name === "getStatus" ? "running" : undefined;
+              },
+      },
+    );
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider, capabilities: { supportsStop: true } },
+      creds: {},
+    });
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers
+      .start({
+        id: startWork,
+        vm_id: hostId,
+        action: "start",
+        payload: { provider: "gcp" },
+      } as any)
+      .catch(() => undefined);
+    expect(stopped).toBe(true);
+
+    // The start's own writes did not undo the stop.
+    const host = await getPool().query(
+      "SELECT metadata->>'desired_state' AS desired FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(host.rows[0].desired).toBe("stopped");
+
+    // The stop waits for the start, then runs.
+    const claimable = async () =>
+      (await claimCloudVmWork({ worker_id: "w", limit: 10 })).filter(
+        (row) => row.vm_id === hostId,
+      );
+    expect(await claimable()).toEqual([]);
+    await markCloudVmWorkDone(startWork);
+    const [stopWork] = await claimable();
+    expect(stopWork?.action).toBe("stop");
+    await cloudHostHandlers.stop(stopWork as any);
+    expect(stopHost).toHaveBeenCalled();
+  });
+
   it("queues RootFS pre-pull and reclaims a stale route migration", async () => {
     const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
     const startedAt = new Date(Date.now() - 60_000).toISOString();
