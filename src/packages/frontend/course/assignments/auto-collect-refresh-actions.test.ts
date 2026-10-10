@@ -4,8 +4,9 @@
  */
 
 let lroGet: jest.Mock;
-let lroCancel: jest.Mock;
+let addStudents: jest.Mock;
 let collectAssignment: jest.Mock;
+let lroCancel: jest.Mock;
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -18,6 +19,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       },
     },
     project_client: {
+      addScheduledCollectionStudents: (...args: any[]) => addStudents(...args),
       collectAssignment: (...args: any[]) => collectAssignment(...args),
     },
   },
@@ -31,12 +33,10 @@ const RUN_AT = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
+  const promise = new Promise<T>((res) => {
     resolve = res;
-    reject = rej;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve };
 }
 
 // A course with students s1..s4. `assignedInStore` are the students the
@@ -55,10 +55,9 @@ function setup(assignedInStore: string[]) {
     target_path: "hw",
     collect_path: "hw-collect",
   });
-  const students = ["s1", "s2", "s3", "s4"];
   const store = {
     get: (key: string) => (key === "course_project_id" ? "course" : undefined),
-    get_student_ids: () => students,
+    get_student_ids: () => ["s1", "s2", "s3", "s4"],
     last_copied: (step: string, _a: string, student_id: string) =>
       step === "assignment" && assignedInStore.includes(student_id)
         ? "done"
@@ -90,122 +89,107 @@ function setup(assignedInStore: string[]) {
   return { actions: actions as any, record, errors };
 }
 
-// lro.get answers from the ops created so far.
-function trackOps(initialStudents: string[]) {
-  const ops = new Map<string, any>([
-    [
-      "op-old",
-      {
-        status: "queued",
-        input: {
-          items: initialStudents.map((student_id) => ({ student_id })),
-        },
-      },
-    ],
-  ]);
-  let n = 0;
-  lroGet = jest.fn(async ({ op_id }) => ops.get(op_id));
-  lroCancel = jest.fn(async ({ op_id }) => {
-    const op = ops.get(op_id);
-    if (op) op.status = "canceled";
+// The server side: a queued op whose items the server merges into, as
+// addStudentsToScheduledCollection does.
+function server(initialStudents: string[], status = "queued") {
+  const op = {
+    status,
+    input: { items: initialStudents.map((student_id) => ({ student_id })) },
+  };
+  lroGet = jest.fn(async () => op);
+  addStudents = jest.fn(async ({ items }) => {
+    if (op.status !== "queued") return { updated: false };
+    for (const item of items) {
+      if (!op.input.items.some((x) => x.student_id === item.student_id)) {
+        op.input.items.push(item);
+      }
+    }
+    return { updated: true, item_count: op.input.items.length };
   });
-  collectAssignment = jest.fn(async ({ items }) => {
-    const op_id = `op-new-${++n}`;
-    ops.set(op_id, { status: "queued", input: { items } });
-    return { op_id };
-  });
-  return ops;
+  collectAssignment = jest.fn();
+  lroCancel = jest.fn();
+  return op;
 }
 
-function scheduledStudents(call: any[]): string[] {
-  return call[0].items.map((item: any) => item.student_id).sort();
-}
+const added = (call: any[]) =>
+  call[0].items.map((item: any) => item.student_id).sort();
 
-describe("refreshing a scheduled collection after assigning", () => {
-  it("merges overlapping completions into one replacement with every student", async () => {
+describe("adding later-assigned students to a scheduled collection", () => {
+  it("merges overlapping completions into one update with every new student", async () => {
     const { actions, record } = setup(["s1"]);
-    const ops = trackOps(["s1"]);
+    const op = server(["s1"]);
     const firstGet = deferred<any>();
-    lroGet = jest.fn(async ({ op_id }) =>
-      op_id === "op-old" ? firstGet.promise : ops.get(op_id),
-    );
+    lroGet = jest
+      .fn()
+      .mockImplementationOnce(() => firstGet.promise)
+      .mockImplementation(async () => op);
     const a = actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
     const b = actions.refresh_auto_collect(ASSIGNMENT, ["s3"]);
-    firstGet.resolve(ops.get("op-old"));
+    firstGet.resolve(op);
     await Promise.all([a, b]);
 
-    expect(collectAssignment).toHaveBeenCalledTimes(1);
-    expect(scheduledStudents(collectAssignment.mock.calls[0])).toEqual([
+    expect(addStudents).toHaveBeenCalledTimes(1);
+    expect(addStudents.mock.calls[0][0]).toMatchObject({
+      course_project_id: "course",
+      assignment_id: ASSIGNMENT,
+      op_id: "op-old",
+    });
+    expect(added(addStudents.mock.calls[0])).toEqual(["s2", "s3"]);
+    expect(op.input.items.map((x) => x.student_id).sort()).toEqual([
       "s1",
       "s2",
       "s3",
     ]);
-    expect(lroCancel.mock.calls.map(([x]) => x.op_id)).toEqual(["op-old"]);
-    expect(record.auto_collect_op_id).toBe("op-new-1");
-    expect(record.auto_collect_run_at).toBe(RUN_AT);
+    // the schedule is updated in place: no new operation, nothing canceled
+    expect(collectAssignment).not.toHaveBeenCalled();
+    expect(lroCancel).not.toHaveBeenCalled();
+    expect(record.auto_collect_op_id).toBe("op-old");
   });
 
   it("does nothing when the schedule already includes everyone", async () => {
-    const { actions, record } = setup(["s1", "s2"]);
-    trackOps(["s1", "s2"]);
+    const { actions } = setup(["s1", "s2"]);
+    server(["s1", "s2"]);
     await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
-    expect(collectAssignment).not.toHaveBeenCalled();
-    expect(record.auto_collect_op_id).toBe("op-old");
+    expect(addStudents).not.toHaveBeenCalled();
   });
 
-  it("backs off when the instructor disables automatic collection meanwhile", async () => {
+  it("does nothing when automatic collection is off", async () => {
     const { actions, record } = setup(["s1"]);
-    const ops = trackOps(["s1"]);
-    lroGet = jest.fn(async ({ op_id }) => {
-      record.auto_collect = false; // instructor turned it off during the read
-      return ops.get(op_id);
-    });
+    server(["s1"]);
+    record.auto_collect = false;
     await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
-    expect(collectAssignment).not.toHaveBeenCalled();
-    expect(lroCancel).not.toHaveBeenCalled();
-    expect(record.auto_collect).toBe(false);
+    expect(lroGet).not.toHaveBeenCalled();
+    expect(addStudents).not.toHaveBeenCalled();
   });
 
-  it("discards its replacement when the instructor reschedules meanwhile", async () => {
-    const { actions, record } = setup(["s1"]);
-    trackOps(["s1"]);
-    const create = collectAssignment;
-    collectAssignment = jest.fn(async (opts) => {
-      const op = await create(opts);
-      // the instructor changed the due date while the replacement was created
-      record.auto_collect_op_id = "op-instructor";
-      record.auto_collect_run_at = "2026-12-01T00:00:00.000Z";
-      return op;
-    });
+  it("leaves a collection that already started alone", async () => {
+    const { actions } = setup(["s1"]);
+    server(["s1"], "running");
     await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
-    expect(lroCancel.mock.calls.map(([x]) => x.op_id)).toEqual(["op-new-1"]);
-    expect(record.auto_collect_op_id).toBe("op-instructor");
-    expect(record.auto_collect_run_at).toBe("2026-12-01T00:00:00.000Z");
+    expect(addStudents).not.toHaveBeenCalled();
   });
 
-  it("keeps the existing schedule when the old one cannot be canceled", async () => {
+  it("is harmless when the collection stops being queued before the update", async () => {
+    const { actions, errors } = setup(["s1"]);
+    const op = server(["s1"]);
+    lroGet = jest.fn(async () => {
+      const snapshot = JSON.parse(JSON.stringify(op));
+      op.status = "canceled"; // e.g. the instructor changed the due date
+      return snapshot;
+    });
+    await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
+    expect(addStudents).toHaveBeenCalledTimes(1);
+    expect(op.input.items.map((x) => x.student_id)).toEqual(["s1"]);
+    expect(errors).toEqual([]);
+  });
+
+  it("reports a failed update without changing the schedule", async () => {
     const { actions, record, errors } = setup(["s1"]);
-    trackOps(["s1"]);
-    lroCancel = jest.fn(async ({ op_id }) => {
-      if (op_id === "op-old") throw Error("hub unavailable");
-    });
-    await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
-    expect(lroCancel.mock.calls.map(([x]) => x.op_id)).toEqual([
-      "op-old",
-      "op-new-1",
-    ]);
-    expect(record.auto_collect_op_id).toBe("op-old");
-    expect(errors.join()).toContain("hub unavailable");
-  });
-
-  it("keeps the existing schedule when scheduling the replacement fails", async () => {
-    const { actions, record, errors } = setup(["s1"]);
-    trackOps(["s1"]);
-    collectAssignment = jest.fn(async () => {
+    server(["s1"]);
+    addStudents = jest.fn(async () => {
       throw Error("timeout");
     });
     await actions.refresh_auto_collect(ASSIGNMENT, ["s2"]);
-    expect(lroCancel).not.toHaveBeenCalled();
     expect(record.auto_collect_op_id).toBe("op-old");
     expect(errors.join()).toContain("timeout");
   });

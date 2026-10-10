@@ -510,9 +510,9 @@ export class AssignmentsActions {
   } = {};
 
   // A scheduled collection lists the student projects to collect when it is
-  // scheduled. After the assignment reaches more students, replace it with
-  // one at the same time that includes them (support #20954). Refreshes of
-  // one assignment run one at a time and merge their students.
+  // scheduled. After the assignment reaches more students, add them to it
+  // (support #20954). Refreshes of one assignment run one at a time and
+  // merge their students.
   private refresh_auto_collect = (
     assignment_id: string,
     assigned: string[] = [],
@@ -544,8 +544,8 @@ export class AssignmentsActions {
     return state.done;
   };
 
-  // The assignment's current schedule, read from the sync document so that a
-  // concurrent change by the instructor is seen immediately.
+  // The assignment's current schedule, read from the sync document (the
+  // store applies changes on a throttle).
   private current_auto_collect = (
     assignment_id: string,
   ): { op_id: string; run_at: string } | undefined => {
@@ -570,61 +570,37 @@ export class AssignmentsActions {
     assignment_id: string,
     assigned: Set<string>,
   ): Promise<void> => {
-    const before = this.current_auto_collect(assignment_id);
-    if (before == null) return;
-    // Back off if the instructor disabled or rescheduled meanwhile.
-    const unchanged = () => {
-      const now = this.current_auto_collect(assignment_id);
-      return now?.op_id === before.op_id && now?.run_at === before.run_at;
-    };
+    const schedule = this.current_auto_collect(assignment_id);
+    if (schedule == null) return;
     const summary = await webapp_client.conat_client.hub.lro.get({
-      op_id: before.op_id,
+      op_id: schedule.op_id,
     });
-    if (!unchanged()) return;
     const { items, store } = this.build_collect_assignment_items({
       assignment_id,
       new_only: true,
       mark_started: false,
       assigned,
     });
-    const missing = autoCollectMissingStudents({
-      summary,
-      runAt: before.run_at,
-      eligibleStudentIds: items.map((item) => item.student_id),
-    });
-    if (missing.length === 0 || store == null) return;
+    const missing = new Set(
+      autoCollectMissingStudents({
+        summary,
+        runAt: schedule.run_at,
+        eligibleStudentIds: items.map((item) => item.student_id),
+      }),
+    );
+    if (missing.size === 0 || store == null) return;
+    const added = items.filter((item) => missing.has(item.student_id));
     await this.course_actions.student_projects.ensure_course_manager_access({
-      project_ids: items.map((item) => item.student_project_id),
+      project_ids: added.map((item) => item.student_project_id),
     });
-    if (!unchanged()) return;
-    // Schedule the replacement before canceling the old collection, so a
-    // failure never leaves the assignment without one.
-    const op = await webapp_client.project_client.collectAssignment({
+    // The server adds them only while this collection is still queued and
+    // keeps the students it already lists, so this cannot undo a change by
+    // the instructor or race other browsers.
+    await webapp_client.project_client.addScheduledCollectionStudents({
       course_project_id: store.get("course_project_id"),
       assignment_id,
-      items,
-      options: { recursive: true },
-      run_at: before.run_at,
-    });
-    const discard = () =>
-      this.cancel_auto_collect_op(op.op_id).catch(() => undefined);
-    if (!unchanged()) {
-      await discard();
-      return;
-    }
-    try {
-      await this.cancel_auto_collect_op(before.op_id);
-    } catch (err) {
-      await discard();
-      throw err;
-    }
-    if (!unchanged()) {
-      await discard();
-      return;
-    }
-    this.set_assignment_fields(assignment_id, {
-      auto_collect_op_id: op.op_id,
-      auto_collect_error: null,
+      op_id: schedule.op_id,
+      items: added,
     });
   };
 
