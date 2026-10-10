@@ -419,8 +419,21 @@ function buildMembershipTierDetailGroups({
   add({
     group: "ai-automation",
     key: "acp_max_active_automations_per_project",
-    label: "Active automations per project",
+    label: "Active sensors per project",
     value: formatLimitCount(usageLimits.acp_max_active_automations_per_project),
+  });
+  if (usageLimits.sensor_min_interval_minutes != null)
+    add({
+      group: "ai-automation",
+      key: "sensor_min_interval_minutes",
+      label: "Sensor minimum interval",
+      value: `${usageLimits.sensor_min_interval_minutes} min`,
+    });
+  add({
+    group: "ai-automation",
+    key: "sensor_max_wakes_per_day",
+    label: "Sensor wakes per day",
+    value: formatLimitCount(usageLimits.sensor_max_wakes_per_day),
   });
 
   add({

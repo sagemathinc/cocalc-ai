@@ -257,12 +257,25 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
         "Maximum concurrently running durable Codex/ACP turns in one project.",
     },
     acp_max_active_automations_per_project: {
-      label: "ACP active automations per project",
-      unit: "automations",
+      label: "Active sensors per project",
+      unit: "sensors",
       adminDescription:
-        "Maximum enabled scheduled Codex/ACP automations allowed for one project.",
-      userDescription:
-        "Maximum enabled scheduled Codex/ACP automations in one project.",
+        "Maximum approved, running agent sensors (scheduled scripts that can wake an agent) in one project. 0 disables sensors.",
+      userDescription: "Maximum active agent sensors in one project.",
+    },
+    sensor_min_interval_minutes: {
+      label: "Sensor minimum interval",
+      unit: "minutes",
+      adminDescription:
+        "Shortest time between runs of one agent sensor. Unset: 15 minutes.",
+      userDescription: "Shortest time between runs of one agent sensor.",
+    },
+    sensor_max_wakes_per_day: {
+      label: "Sensor wakes per day",
+      unit: "wakes",
+      adminDescription:
+        "Most times one sensor may wake its agent per day (UTC); each wake starts a paid agent turn. Unset: 24.",
+      userDescription: "Most times one sensor may wake its agent per day.",
     },
     blob_account_total_bytes: {
       label: "Blob storage per account",

@@ -520,6 +520,19 @@ export function buildEntitlementOverrideSchemaDoc() {
             .adminDescription,
       }),
       fieldDoc({
+        path: "usage_limits.sensor_min_interval_minutes",
+        ...descriptions.usage_limits.sensor_min_interval_minutes,
+        description:
+          descriptions.usage_limits.sensor_min_interval_minutes
+            .adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.sensor_max_wakes_per_day",
+        ...descriptions.usage_limits.sensor_max_wakes_per_day,
+        description:
+          descriptions.usage_limits.sensor_max_wakes_per_day.adminDescription,
+      }),
+      fieldDoc({
         path: "usage_limits.blob_account_total_bytes",
         ...descriptions.usage_limits.blob_account_total_bytes,
         unit: "bytes",
