@@ -249,6 +249,31 @@ export class ProjectClient {
     );
   };
 
+  // Collections live on the course project's owning bay (#1001). Ones made
+  // before that live on the bay of whoever made them: fall back to this
+  // account's bay, which is where the old code looked.
+  getCourseCollectionOperation = async (opts: {
+    course_project_id: string;
+    op_id: string;
+    timeout?: number;
+  }): Promise<import("@cocalc/conat/hub/api/lro").LroSummary | undefined> => {
+    const hub = this.client.conat_client.hub;
+    const op = await hub.projects.getCourseCollectionOperation(opts);
+    if (op) return op;
+    return await hub.lro.get({ op_id: opts.op_id, timeout: opts.timeout });
+  };
+
+  cancelCourseCollectionOperation = async (opts: {
+    course_project_id: string;
+    op_id: string;
+  }): Promise<void> => {
+    const hub = this.client.conat_client.hub;
+    const { found } = await hub.projects.cancelCourseCollectionOperation(opts);
+    if (!found) {
+      await hub.lro.cancel({ op_id: opts.op_id });
+    }
+  };
+
   reconfigureCourseProjects = async (
     opts: import("@cocalc/conat/hub/api/projects").CourseReconfigureRequest,
   ): Promise<

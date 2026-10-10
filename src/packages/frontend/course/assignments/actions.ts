@@ -403,7 +403,10 @@ export class AssignmentsActions {
 
   private cancel_auto_collect_op = async (op_id?: string | null) => {
     if (!op_id) return;
-    await webapp_client.conat_client.hub.lro.cancel({ op_id });
+    await webapp_client.project_client.cancelCourseCollectionOperation({
+      course_project_id: this.get_store().get("course_project_id"),
+      op_id,
+    });
   };
 
   set_auto_collect = async (
@@ -572,9 +575,11 @@ export class AssignmentsActions {
   ): Promise<void> => {
     const schedule = this.current_auto_collect(assignment_id);
     if (schedule == null) return;
-    const summary = await webapp_client.conat_client.hub.lro.get({
-      op_id: schedule.op_id,
-    });
+    const summary =
+      await webapp_client.project_client.getCourseCollectionOperation({
+        course_project_id: this.get_store().get("course_project_id"),
+        op_id: schedule.op_id,
+      });
     const { items, store } = this.build_collect_assignment_items({
       assignment_id,
       new_only: true,
@@ -648,9 +653,11 @@ export class AssignmentsActions {
       const op_id = assignment.get("auto_collect_op_id");
       if (!op_id) continue;
       try {
-        const summary = await webapp_client.conat_client.hub.lro.get({
-          op_id,
-        });
+        const summary =
+          await webapp_client.project_client.getCourseCollectionOperation({
+            course_project_id: this.get_store().get("course_project_id"),
+            op_id,
+          });
         if (!summary) {
           this.set_assignment_fields(assignment.get("assignment_id"), {
             auto_collect: false,
@@ -1933,6 +1940,12 @@ ${details}
         scope_type: op.scope_type,
         scope_id: op.scope_id,
         timeout_ms: 2 * 60 * 60 * 1000,
+        // The collection runs on the course project's owning bay (#1001).
+        getSummary: async () =>
+          await webapp_client.project_client.getCourseCollectionOperation({
+            course_project_id: store.get("course_project_id"),
+            op_id: op.op_id,
+          }),
         onSummary: (summary) => {
           const progress = summary.progress_summary;
           if (progress?.total) {
