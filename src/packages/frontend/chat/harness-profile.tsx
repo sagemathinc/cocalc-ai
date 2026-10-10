@@ -48,7 +48,7 @@ import {
 } from "@cocalc/frontend/agents/claude-credential-options";
 
 const HARNESS_LIMITATIONS =
-  "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
+  "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue.";
 
 function harnessErrorMessage(error: unknown): string {
   // RPC layers can wrap an already stringified Error more than once.

@@ -38,7 +38,6 @@ export function setAgentRuntimeReporterForTests(next?: Reporter) {
 }
 
 export function reportAgentRuntimeOnce(request: AcpJobRequest): void {
-  if (request.request_kind === "command") return;
   const path = request.chat?.path;
   const thread_id = request.chat?.thread_id;
   if (!path || !thread_id || !path.endsWith(".chat")) return;

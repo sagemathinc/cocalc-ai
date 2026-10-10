@@ -27,7 +27,6 @@ import {
 import {
   ACP_PROJECT_RESTART_FENCE_REASON,
   countRunningAcpJobsForWorker,
-  decodeAcpJobRequest,
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
   oldestClaimableQueuedAcpJobTimestamp,
@@ -445,21 +444,6 @@ function countRunningJobsForWorker(worker_id: string): number {
   return countRunningAcpJobsForWorker(worker_id);
 }
 
-function workerHasRunningCommandJob(worker_id: string): boolean {
-  for (const job of listRunningAcpJobsByWorker(worker_id)) {
-    try {
-      if (decodeAcpJobRequest(job).request_kind === "command") return true;
-    } catch (err) {
-      logger.warn("failed decoding running ACP job request", {
-        worker_id,
-        op_id: job.op_id,
-        err,
-      });
-    }
-  }
-  return false;
-}
-
 function numberOrUndefined(value: unknown): number | undefined {
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
@@ -494,7 +478,6 @@ export function shouldTerminateQueueStalledWorker({
       : 0,
   );
   if (backgroundTerminalProcesses > 0) return false;
-  if (workerHasRunningCommandJob(worker_id)) return false;
   const workerState = status?.state ?? row?.state ?? "active";
   if (workerState === "stopped") return false;
   const backlogSince = acpBacklogStaleSince(worker_id, workerState, now);

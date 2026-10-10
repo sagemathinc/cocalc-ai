@@ -2,7 +2,6 @@ import {
   ACP_CLIENT_REFRESH_REQUIRED_CODE,
   ACP_OPERATIONS,
   ACP_SUBJECT_ROOT,
-  acpAutomationSubject,
   acpControlSubject,
   acpForkSubject,
   acpInterruptSubject,
@@ -27,7 +26,6 @@ describe("account-and-project-bound ACP subjects", () => {
     ["fork", acpForkSubject],
     ["truncate", acpTruncateSubject],
     ["control", acpControlSubject],
-    ["automation", acpAutomationSubject],
   ] as const)("builds and parses the %s subject", (operation, build) => {
     const subject = build(identity);
     expect(subject).toBe(

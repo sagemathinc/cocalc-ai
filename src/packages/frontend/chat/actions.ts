@@ -65,8 +65,6 @@ import {
   type ChatThreadResolvedMeta,
   type CodexThreadConfig,
   type CodexCompletionNotificationOverride,
-  type ChatThreadAutomationConfig,
-  type ChatThreadAutomationState,
 } from "@cocalc/chat";
 import { normalizeCodexCompletionNotificationOverride } from "@cocalc/util/notification-preferences";
 import {
@@ -251,8 +249,6 @@ export interface ThreadMetadataSnapshot {
   agent_mode?: ThreadAgentMode;
   acp_config?: CodexThreadConfig | null;
   codex_completion_notification?: CodexCompletionNotificationOverride;
-  automation_config?: ChatThreadAutomationConfig;
-  automation_state?: ChatThreadAutomationState;
   notification_followers?: string[];
   notification_muted?: string[];
 }
@@ -2296,14 +2292,6 @@ export class ChatActions extends Actions<ChatState> {
     let agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
     let agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
-    const automation_config = field<ChatThreadAutomationConfig>(
-      cfg,
-      "automation_config",
-    );
-    const automation_state = field<ChatThreadAutomationState>(
-      cfg,
-      "automation_state",
-    );
     const agent_model_raw =
       field<string>(cfg, "agent_model") ??
       (typeof acp_config?.model === "string" ? acp_config.model : undefined);
@@ -2353,8 +2341,6 @@ export class ChatActions extends Actions<ChatState> {
           field<any>(cfg, "codex_completion_notification"),
           acp_config,
         ),
-      automation_config,
-      automation_state,
       notification_followers: parseAccountIdList(
         field<any>(cfg, "notification_followers"),
       ),
@@ -2387,38 +2373,6 @@ export class ChatActions extends Actions<ChatState> {
       !this.setThreadConfigRecord(threadKey, {
         notification_followers: Array.from(followers).sort(),
         notification_muted: Array.from(mutedAccounts).sort(),
-      })
-    ) {
-      return false;
-    }
-    this.syncdb.commit();
-    return true;
-  };
-
-  setThreadAutomationConfig = (
-    threadKey: string,
-    automationConfig?: ChatThreadAutomationConfig | null,
-  ): boolean => {
-    if (this.syncdb == null) return false;
-    if (
-      !this.setThreadConfigRecord(threadKey, {
-        automation_config: automationConfig ?? null,
-      })
-    ) {
-      return false;
-    }
-    this.syncdb.commit();
-    return true;
-  };
-
-  setThreadAutomationState = (
-    threadKey: string,
-    automationState?: ChatThreadAutomationState | null,
-  ): boolean => {
-    if (this.syncdb == null) return false;
-    if (
-      !this.setThreadConfigRecord(threadKey, {
-        automation_state: automationState ?? null,
       })
     ) {
       return false;

@@ -12,7 +12,6 @@ export const ACP_OPERATIONS = [
   "fork",
   "truncate",
   "control",
-  "automation",
   "attention",
 ] as const;
 
@@ -141,10 +140,6 @@ export function acpTruncateSubject(identity: AcpSubjectIdentity): string {
 
 export function acpControlSubject(identity: AcpSubjectIdentity): string {
   return buildAcpSubject(identity, "control");
-}
-
-export function acpAutomationSubject(identity: AcpSubjectIdentity): string {
-  return buildAcpSubject(identity, "automation");
 }
 
 export function acpAttentionSubject(identity: AcpSubjectIdentity): string {

@@ -57,7 +57,7 @@ test("artifact context resolves an exact producing row, never the newest row", (
   );
 });
 
-test("mergeThreadConfigRecord preserves unrelated thread metadata while updating automation settings", () => {
+test("mergeThreadConfigRecord preserves unrelated thread metadata while updating settings", () => {
   const merged = mergeThreadConfigRecord({
     existing: {
       event: "chat-thread-config",
@@ -67,15 +67,7 @@ test("mergeThreadConfigRecord preserves unrelated thread metadata while updating
       name: "Agent thread",
       agent_kind: "acp",
       agent_mode: "interactive",
-      automation_config: {
-        enabled: true,
-        prompt: "run daily",
-        local_time: "09:00",
-        timezone: "UTC",
-      },
-      automation_state: {
-        status: "active",
-      },
+      acp_config: { model: "gpt-5.4", reasoning: "high" } as any,
       updated_at: "2026-03-16T00:00:00.000Z",
       updated_by: "old-account",
       schema_version: 2,
@@ -83,21 +75,14 @@ test("mergeThreadConfigRecord preserves unrelated thread metadata while updating
     threadId: "thread-1",
     accountId: "new-account",
     patch: {
-      automation_state: {
-        status: "paused",
-      },
+      agent_mode: "single_turn",
     },
   });
 
   assert.equal(merged.thread_id, "thread-1");
   assert.equal(merged.name, "Agent thread");
   assert.equal(merged.agent_kind, "acp");
-  assert.deepEqual(merged.automation_config, {
-    enabled: true,
-    prompt: "run daily",
-    local_time: "09:00",
-    timezone: "UTC",
-  });
-  assert.deepEqual(merged.automation_state, { status: "paused" });
+  assert.equal(merged.agent_mode, "single_turn");
+  assert.deepEqual(merged.acp_config, { model: "gpt-5.4", reasoning: "high" });
   assert.equal(merged.updated_by, "new-account");
 });

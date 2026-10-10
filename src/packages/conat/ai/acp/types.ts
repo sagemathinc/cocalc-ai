@@ -12,77 +12,6 @@ import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
 import type { AgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 
-export interface AcpAutomationConfig {
-  enabled?: boolean;
-  automation_id?: string;
-  title?: string;
-  run_kind?: "codex" | "command";
-  prompt?: string;
-  command?: string;
-  command_cwd?: string;
-  command_timeout_ms?: number;
-  command_max_output_bytes?: number;
-  schedule_type?: "daily" | "interval";
-  days_of_week?: number[];
-  local_time?: string;
-  interval_minutes?: number;
-  window_start_local_time?: string;
-  window_end_local_time?: string;
-  timezone?: string;
-  pause_after_unacknowledged_runs?: number;
-}
-
-export interface AcpAutomationState {
-  automation_id?: string;
-  status?: "active" | "running" | "paused" | "error";
-  next_run_at_ms?: number;
-  last_run_started_at_ms?: number;
-  last_run_finished_at_ms?: number;
-  last_acknowledged_at_ms?: number;
-  unacknowledged_runs?: number;
-  paused_reason?: string;
-  last_error?: string;
-  last_job_op_id?: string;
-  last_message_id?: string;
-}
-
-export interface AcpAutomationRecord {
-  settings_revision?: string;
-  automation_id: string;
-  project_id: string;
-  path: string;
-  thread_id: string;
-  account_id?: string;
-  title?: string;
-  run_kind?: "codex" | "command";
-  prompt?: string;
-  command?: string;
-  command_cwd?: string;
-  command_timeout_ms?: number;
-  command_max_output_bytes?: number;
-  schedule_type?: "daily" | "interval";
-  days_of_week?: number[];
-  local_time?: string;
-  interval_minutes?: number;
-  window_start_local_time?: string;
-  window_end_local_time?: string;
-  timezone?: string;
-  pause_after_unacknowledged_runs?: number;
-  status?: "active" | "running" | "paused" | "error";
-  enabled?: boolean;
-  next_run_at_ms?: number;
-  last_run_started_at_ms?: number;
-  last_run_finished_at_ms?: number;
-  last_acknowledged_at_ms?: number;
-  unacknowledged_runs?: number;
-  paused_reason?: string;
-  last_error?: string;
-  last_job_op_id?: string;
-  last_message_id?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
 export interface AcpChatContext {
   // Trusted receiving service marks model-authored messages; never bind their refs.
   agent_message?: boolean;
@@ -131,12 +60,6 @@ export interface AcpChatContext {
   // Marks that this user message was sent via "Send Immediately" while an ACP
   // turn was active, so the backend can preserve continue semantics.
   send_mode?: "immediate";
-  // Optional scheduled automation identity when this turn is due to an
-  // automation attached to the thread.
-  automation_id?: string;
-  automation_title?: string;
-  // Server-stamped settings snapshot; never refresh a queued job to a new owner.
-  automation_revision?: string;
   // Optional restart-recovery metadata for turns automatically resumed after
   // backend or host interruption.
   recovery_parent_op_id?: string;
@@ -168,21 +91,8 @@ export type AcpRequest = {
   chat?: AcpChatContext;
 };
 
-export type AcpCommandRequest = {
-  request_kind: "command";
-  project_id: string;
-  account_id: string;
-  command: string;
-  recovery_parent_op_id?: string;
-  recovery_reason?: string;
-  recovery_count?: number;
-  cwd?: string;
-  timeout_ms?: number;
-  max_output_bytes?: number;
-  chat?: AcpChatContext;
-};
-
-export type AcpJobRequest = AcpRequest | AcpCommandRequest;
+/** A queued turn. (Retired thread automations also queued shell commands.) */
+export type AcpJobRequest = AcpRequest;
 
 export type AcpInterruptRequest = {
   project_id: string;
@@ -291,35 +201,6 @@ export type AcpControlResponse = {
     | "canceled"
     | "interrupted"
     | "missing";
-};
-
-export type AcpAutomationRequest = {
-  project_id: string;
-  account_id: string;
-  path: string;
-  thread_id: string;
-  action:
-    | "upsert"
-    | "pause"
-    | "resume"
-    | "run_now"
-    | "skip_next"
-    | "acknowledge"
-    | "delete";
-  config?: AcpAutomationConfig | null;
-};
-
-export type AcpAutomationResponse = {
-  ok: boolean;
-  config?: AcpAutomationConfig | null;
-  state?: AcpAutomationState | null;
-  record?: AcpAutomationRecord | null;
-  error?: string;
-  code?: "active_automation_limit" | string;
-  limit?: string;
-  current?: number;
-  maximum?: number;
-  project_id?: string;
 };
 
 export type AcpAttentionSourceKind =

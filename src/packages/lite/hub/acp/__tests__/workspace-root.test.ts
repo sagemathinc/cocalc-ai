@@ -40,7 +40,7 @@ describe("resolveWorkspaceRoot", () => {
       expect(root).toBe("/home/user/sub");
     });
 
-    it("resolves a root-level automation directory to the project root", () => {
+    it("resolves a root-level working directory to the project root", () => {
       const root = resolveWorkspaceRoot({
         workingDirectory: ".",
       } as any);

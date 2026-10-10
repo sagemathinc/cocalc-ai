@@ -433,7 +433,6 @@ test("unsupported runtime versions, funding and recovery fail closed", () => {
     { runtime_env: { KEY: "secret" } },
     { recovery_parent_op_id: "old" },
     { chat: { ...source.chat, project_id: "other" } },
-    { chat: { ...source.chat, automation_id: "automation" } },
   ])
     expect(() =>
       prepareHarnessRequest({ ...source, ...changes } as any),

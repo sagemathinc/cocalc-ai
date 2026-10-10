@@ -537,39 +537,20 @@ invoke a model and are not part of CI:
 5. Disconnect during submission. Check that a missing acknowledgement is not
    reported as success; inspect the thread before retrying.
 
-## Create A Daily Chat Automation
+## Schedule Agent Work With Sensors
 
-The `project chat` commands operate on a project `.chat` document. Create the
-thread first; creation alone does not run its agent:
-
-```bash
-cocalc --json project chat thread create --project "$COCALC_PROJECT_ID" \
-  --path checks.chat --name "Daily check" --session-mode read-only
-```
-
-Copy `data.thread.thread_id` from that JSON result into `check_thread_id`. Configure the automation in
-a paused state so its prompt, local time and IANA time zone can be reviewed:
+Scheduled thread automations were replaced by agent sensors. A person
+schedules a prompt (for example a daily check) in the agent's **Sensors**
+dialog, from its chat's Connectors menu. An agent sets one-shot watchers and
+proposes scripts with `cocalc sensor`, using its own runtime identity:
 
 ```bash
-cocalc project chat automation upsert --project "$COCALC_PROJECT_ID" \
-  --path checks.chat --thread-id "$check_thread_id" \
-  --prompt "Read run.log and summarize new failures without editing files." \
-  --local-time 09:00 --timezone Europe/Madrid --disabled
-cocalc project chat automation status --project "$COCALC_PROJECT_ID" \
-  --path checks.chat --thread-id "$check_thread_id"
+cocalc sensor watch ci --repo owner/name --pr 123
+cocalc sensor propose --file sensor.json
+cocalc sensor list
 ```
 
-This CLI form configures a daily local-time schedule. It does not expose every
-schedule or Bash option available elsewhere in the product. Use
-`project chat automation --help` for the installed command surface.
-
-After review, use `resume` with the same project/path/thread flags to enable
-scheduled runs. `pause` disables scheduling; `run-now` requests an immediate run.
-`acknowledge` clears the unacknowledged-run count. The optional
-`--pause-after-unacknowledged-runs` on `upsert` limits unattended repetition.
-Use `thread status` to inspect thread configuration, and `chat activity` with
-the path and thread ID to read the latest persisted Codex activity log once a
-turn has produced one.
+See `cocalc sensor --help` and the docs page "Watch for events with sensors".
 
 ## Auth Commands
 

@@ -34,7 +34,6 @@ import type {
   HostPressureZone,
 } from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
-import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { account_id, data } from "@cocalc/backend/data";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { setMasterStatusClient } from "./master-status";
@@ -1771,7 +1770,6 @@ export async function startMasterRegistration({
     async deleteProjectData({ project_id }) {
       await awaitReadyForControl("deleteProjectData", waitUntilReady);
       await deleteVolume(project_id);
-      clearLocalAcpAutomationsForProject(project_id);
       deleteProjectLocal(project_id);
     },
     async deleteProjectDataAfterBackup({
@@ -1787,7 +1785,6 @@ export async function startMasterRegistration({
         expected_archive_backup_id: expected_backup_id,
         expected_archive_generation: expected_generation,
       });
-      clearLocalAcpAutomationsForProject(project_id);
       deleteProjectLocal(project_id);
     },
     async releaseProjectDataArchiveFreeze({ project_id, expected_generation }) {

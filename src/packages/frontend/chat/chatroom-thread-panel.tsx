@@ -48,10 +48,7 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { deriveAcpLogRefs, type CodexThreadConfig } from "@cocalc/chat";
-import type {
-  AcpAttentionRecord,
-  AcpAutomationConfig,
-} from "@cocalc/conat/ai/acp/types";
+import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
 import { SearchHitTime } from "./search-hit-time";
 import { ArtifactBrowserButton } from "./artifact-discovery";
@@ -108,12 +105,6 @@ import {
   subscribeToCodexModelCatalogInvalidation,
   writeCachedCodexModelCatalog,
 } from "@cocalc/frontend/account/codex-usage";
-import {
-  automationConfigMissingReason,
-  AutomationConfigFields,
-  buildAutomationDraft,
-  getDefaultAutomationConfig,
-} from "./automation-form";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -280,7 +271,6 @@ export interface NewThreadSetup {
   agentMode: NewThreadAgentMode;
   model: string;
   codexConfig: Partial<CodexThreadConfig>;
-  automationConfig?: AcpAutomationConfig;
 }
 
 export function getDefaultNewThreadSetup(): NewThreadSetup {
@@ -299,7 +289,6 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
       serviceTier: defaults.serviceTier,
       paymentSource: "auto",
     },
-    automationConfig: getDefaultAutomationConfig({ enabled: false }),
   };
 }
 
@@ -1559,18 +1548,6 @@ export function ChatRoomThreadPanel({
       defaultNewChatCodexDefaults,
     );
     const shouldHideChatType = hideChatTypeSelector;
-    const automationDraft = buildAutomationDraft({
-      config: newThreadSetup.automationConfig,
-      enabled: newThreadSetup.automationConfig?.enabled === true,
-      allowCodexRunKind: newThreadSetup.agentMode === "codex",
-    });
-    const automationEnabled = automationDraft.enabled === true;
-    const automationMissingReason = automationEnabled
-      ? automationConfigMissingReason({
-          draft: automationDraft,
-          allowCodexRunKind: newThreadSetup.agentMode === "codex",
-        })
-      : undefined;
     const selectAgentMode = (mode: NewThreadAgentMode) => {
       if (mode === "codex") {
         const model =
@@ -1581,11 +1558,6 @@ export function ChatRoomThreadPanel({
             : DEFAULT_CODEX_MODEL;
         update({
           agentMode: mode,
-          automationConfig: buildAutomationDraft({
-            config: newThreadSetup.automationConfig,
-            enabled: newThreadSetup.automationConfig?.enabled === true,
-            allowCodexRunKind: true,
-          }),
           model,
           codexConfig: {
             ...newThreadSetup.codexConfig,
@@ -1607,14 +1579,7 @@ export function ChatRoomThreadPanel({
         });
         return;
       }
-      update({
-        agentMode: mode,
-        automationConfig: buildAutomationDraft({
-          config: newThreadSetup.automationConfig,
-          enabled: newThreadSetup.automationConfig?.enabled === true,
-          allowCodexRunKind: false,
-        }),
-      });
+      update({ agentMode: mode });
     };
     const renderAgentModeChoice = ({
       mode,
@@ -2072,59 +2037,12 @@ export function ChatRoomThreadPanel({
               <Button size="small" onClick={onNewChat}>
                 Reset
               </Button>
-              <Button
-                type="primary"
-                disabled={!!automationMissingReason}
-                onClick={() => void onCreateThread()}
-              >
-                {automationEnabled ? "Create automation chat" : "Create chat"}
+              <Button type="primary" onClick={() => void onCreateThread()}>
+                Create chat
               </Button>
             </Space>
           </div>
-          {automationMissingReason ? (
-            <div
-              style={{
-                color: COLORS.ANTD_RED,
-                fontSize: 12,
-                marginTop: 8,
-                textAlign: "right",
-              }}
-            >
-              {automationMissingReason}
-            </div>
-          ) : null}
         </div>
-        {automationEnabled ? (
-          <div
-            style={{
-              ...SETUP_CARD_STYLE,
-              marginTop: 32,
-            }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>
-              New automation setup
-            </div>
-            <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
-              Configure the next new chat as a scheduled automation. Codex
-              threads can run prompts or commands; non-Codex threads can run
-              commands. Once created, it will live in the Automations section
-              and can still be edited from thread settings later.
-            </div>
-            <AutomationConfigFields
-              draft={automationDraft}
-              allowCodexRunKind={newThreadSetup.agentMode === "codex"}
-              showEnableToggle={false}
-              onChange={(patch) =>
-                update({
-                  automationConfig: {
-                    ...automationDraft,
-                    ...patch,
-                  },
-                })
-              }
-            />
-          </div>
-        ) : null}
       </div>
     );
   }

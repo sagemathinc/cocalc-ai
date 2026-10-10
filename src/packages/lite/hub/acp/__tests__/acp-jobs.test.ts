@@ -7,7 +7,6 @@ import {
 } from "../../sqlite/acp-database";
 import {
   acpAdmissionLimitsFromEffectiveLimits,
-  admitActiveAcpAutomationForProject,
   admitAcpJobExecution,
   admitAcpJobCreation,
   mergeAcpAdmissionLimits,
@@ -15,11 +14,6 @@ import {
   throwIfAcpAdmissionDenied,
   type AcpAdmissionDenialEvent,
 } from "../admission";
-import {
-  listAcpAutomationsForProject,
-  upsertAcpAutomation,
-} from "../../sqlite/acp-automations";
-import { automationHasActiveBackendRun } from "../active-automation-run";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
@@ -51,6 +45,7 @@ import {
   resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
+  removeRetiredAutomationJobs,
 } from "../../sqlite/acp-jobs";
 
 async function delay(ms = 2): Promise<void> {
@@ -90,17 +85,58 @@ beforeAll(() => {
   closeAcpDatabase();
   initAcpDatabase({ filename: ":memory:" });
   listQueuedAcpJobs();
-  listAcpAutomationsForProject("project-init");
 });
 
 beforeEach(() => {
   setAcpAdmissionDenialRecorder(undefined);
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
-  getAcpDatabase().prepare("DELETE FROM acp_automations").run();
 });
 
 afterAll(() => {
   closeAcpDatabase();
+});
+
+describe("retired thread automations", () => {
+  it("drops their jobs and settings so nothing runs, recovers or retries them", () => {
+    const keep = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "human-1",
+        assistantMessageId: "assistant-1",
+        assistantDate: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    const db = getAcpDatabase();
+    const legacy = (op_id: string, request: object) =>
+      db
+        .prepare(
+          `INSERT INTO acp_jobs (op_id, project_id, account_id, path, thread_id,
+             user_message_id, assistant_message_id, assistant_message_date,
+             state, request_json, created_at, updated_at)
+           VALUES (?, 'p', 'a', 'x.chat', 't', ?, ?, '2026-01-01', 'queued', ?, 0, 0)`,
+        )
+        .run(op_id, `u-${op_id}`, op_id, JSON.stringify(request));
+    legacy("command-1", { request_kind: "command", command: "date" });
+    legacy("scheduled-1", {
+      request_kind: "codex",
+      prompt: "daily summary",
+      chat: { automation_id: "automation-1" },
+    });
+    db.exec("CREATE TABLE IF NOT EXISTS acp_automations (automation_id TEXT)");
+    removeRetiredAutomationJobs(db);
+    expect(
+      db
+        .prepare("SELECT op_id FROM acp_jobs ORDER BY op_id")
+        .all()
+        .map((row: any) => row.op_id),
+    ).toEqual([keep.op_id]);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='acp_automations'",
+        )
+        .all(),
+    ).toEqual([]);
+  });
 });
 
 describe("acp job queue ordering", () => {
@@ -802,53 +838,6 @@ describe("acp job queue ordering", () => {
     expect(oldestQueuedAcpJobTimestamp()).toBe(second.updated_at);
   });
 
-  it("round-trips command automation jobs without a codex session id", () => {
-    const job = enqueueAcpJob({
-      request_kind: "command",
-      project_id: "00000000-1000-4000-8000-000000000000",
-      account_id: "00000000-1000-4000-8000-000000000001",
-      command: "git status --short",
-      cwd: "/work/repo",
-      timeout_ms: 90_000,
-      max_output_bytes: 250_000,
-      chat: {
-        project_id: "00000000-1000-4000-8000-000000000000",
-        path: "/tmp/acp-jobs-order.chat",
-        thread_id: "thread-1",
-        parent_message_id: "user-command-1",
-        message_id: "assistant-command-1",
-        message_date: "2026-03-08T00:00:03.000Z",
-        sender_id: "openai-codex-agent",
-      },
-    });
-    expect(job.session_id).toBeNull();
-    const stored = getAcpJob({
-      project_id: job.project_id,
-      path: job.path,
-      user_message_id: job.user_message_id,
-    });
-    expect(stored?.session_id).toBeNull();
-    expect(stored?.account_id).toBe("00000000-1000-4000-8000-000000000001");
-    expect(stored ? decodeAcpJobRequest(stored) : undefined).toEqual({
-      request_kind: "command",
-      project_id: "00000000-1000-4000-8000-000000000000",
-      account_id: "00000000-1000-4000-8000-000000000001",
-      command: "git status --short",
-      cwd: "/work/repo",
-      timeout_ms: 90_000,
-      max_output_bytes: 250_000,
-      chat: {
-        project_id: "00000000-1000-4000-8000-000000000000",
-        path: "/tmp/acp-jobs-order.chat",
-        thread_id: "thread-1",
-        parent_message_id: "user-command-1",
-        message_id: "assistant-command-1",
-        message_date: "2026-03-08T00:00:03.000Z",
-        sender_id: "openai-codex-agent",
-      },
-    });
-  });
-
   it("stores account identity and counts queued/running/created jobs cheaply", async () => {
     const first = enqueueAcpJob(
       makeRequest({
@@ -994,7 +983,6 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 100,
       runningPerAccount: 100,
       runningPerProject: 100,
-      activeAutomationsPerProject: 100,
     });
     expect(decision).toMatchObject({
       ok: false,
@@ -1029,7 +1017,6 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 100,
         runningPerAccount: 100,
         runningPerProject: 100,
-        activeAutomationsPerProject: 100,
       }),
     ).toMatchObject({
       ok: false,
@@ -1048,7 +1035,6 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 100,
         runningPerAccount: 100,
         runningPerProject: 100,
-        activeAutomationsPerProject: 100,
       }),
     ).toMatchObject({
       ok: false,
@@ -1065,7 +1051,6 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 1,
         runningPerAccount: 100,
         runningPerProject: 100,
-        activeAutomationsPerProject: 100,
       }),
     ).toMatchObject({
       ok: false,
@@ -1112,7 +1097,6 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 100,
         runningPerAccount: 100,
         runningPerProject: 1,
-        activeAutomationsPerProject: 100,
       }),
     ).toMatchObject({
       ok: false,
@@ -1129,7 +1113,6 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 100,
         runningPerAccount: 1,
         runningPerProject: 100,
-        activeAutomationsPerProject: 100,
       }),
     ).toMatchObject({
       ok: false,
@@ -1195,7 +1178,6 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 0,
         runningPerAccount: 0,
         runningPerProject: 0,
-        activeAutomationsPerProject: 0,
       }),
     ).toEqual({ ok: true });
   });
@@ -1226,7 +1208,6 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 100,
       runningPerAccount: 100,
       runningPerProject: 100,
-      activeAutomationsPerProject: 100,
     };
 
     expect(admitAcpJobCreation(humanRequest, limits)).toMatchObject({
@@ -1248,7 +1229,6 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 2000,
       runningPerAccount: 50,
       runningPerProject: 50,
-      activeAutomationsPerProject: 20,
     };
 
     expect(
@@ -1271,107 +1251,7 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 70,
       runningPerAccount: 4,
       runningPerProject: 2,
-      activeAutomationsPerProject: 3,
     });
-  });
-
-  it("denies active automations when a project reaches its cap", () => {
-    upsertAcpAutomation({
-      automation_id: "automation-1",
-      project_id: "project-1",
-      path: "/root/a.chat",
-      thread_id: "thread-1",
-      account_id: "account-1",
-      enabled: true,
-      status: "active",
-      next_run_at: 101,
-      unacknowledged_runs: 0,
-      created_at: 10,
-      updated_at: 20,
-    });
-
-    expect(
-      admitActiveAcpAutomationForProject(
-        { project_id: "project-1", automation_id: "automation-2" },
-        {
-          queuedPerAccount: 1000,
-          queuedPerThread: 100,
-          created5hPerAccount: 500,
-          created7dPerAccount: 2000,
-          runningPerAccount: 50,
-          runningPerProject: 50,
-          activeAutomationsPerProject: 1,
-        },
-      ),
-    ).toEqual({
-      ok: false,
-      limit: "active_automations_per_project",
-      current: 1,
-      maximum: 1,
-      account_id: "",
-      project_id: "project-1",
-      path: "",
-      thread_id: "",
-    });
-
-    expect(
-      admitActiveAcpAutomationForProject(
-        { project_id: "project-1", automation_id: "automation-1" },
-        {
-          queuedPerAccount: 1000,
-          queuedPerThread: 100,
-          created5hPerAccount: 500,
-          created7dPerAccount: 2000,
-          runningPerAccount: 50,
-          runningPerProject: 50,
-          activeAutomationsPerProject: 1,
-        },
-      ),
-    ).toEqual({ ok: true });
-  });
-
-  it("detects active backend work for scheduled automations even if the automation row is stale", () => {
-    const baseRequest = makeRequest({
-      userMessageId: "user-automation-1",
-      assistantMessageId: "assistant-automation-1",
-      assistantDate: "2026-03-08T00:00:04.000Z",
-    });
-    const request = {
-      ...baseRequest,
-      chat: {
-        ...baseRequest.chat,
-        automation_id: "automation-running-1",
-      },
-    };
-    const job = enqueueAcpJob(request);
-    const automation = upsertAcpAutomation({
-      automation_id: "automation-running-1",
-      project_id: job.project_id,
-      path: job.path,
-      thread_id: job.thread_id,
-      account_id: job.account_id ?? "account-1",
-      enabled: true,
-      status: "active",
-      next_run_at: Date.now() - 1000,
-      unacknowledged_runs: 0,
-      last_job_op_id: job.op_id,
-      last_message_id: job.assistant_message_id,
-      created_at: 10,
-      updated_at: 20,
-    });
-
-    expect(automationHasActiveBackendRun(automation)).toBe(true);
-
-    const claimed = claimNextQueuedAcpJobForThread({
-      project_id: job.project_id,
-      path: job.path,
-      thread_id: job.thread_id,
-    });
-    expect(claimed?.op_id).toBe(job.op_id);
-    expect(automationHasActiveBackendRun(automation)).toBe(true);
-
-    setAcpJobState({ op_id: job.op_id, state: "completed" });
-    expect(automationHasActiveBackendRun(automation)).toBe(false);
   });
 
   it("stores recovery metadata for resumed codex turns", () => {

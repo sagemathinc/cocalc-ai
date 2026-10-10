@@ -52,8 +52,6 @@ export async function prepareFreshConversation(
     ) as ChatThreadConfigRecord | undefined;
     if (!source || source.agent_kind !== "acp" || source.archived)
       throw new Error("An active agent conversation is required");
-    if (source.automation_config?.enabled)
-      throw new Error("Disable scheduled work before starting fresh.");
     const thread_id = reserveThreadSuccessor(key);
     const token = claimThreadPreparation(key);
     if (token) {

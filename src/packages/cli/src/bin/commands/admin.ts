@@ -3929,7 +3929,10 @@ Merge comments are private unless their corresponding --*-comment-public flag is
       "--denial-limit <name>",
       "filter by denial limit, e.g. queued_per_account",
     )
-    .option("--source <source>", "filter by source: chat, automation, claim")
+    .option(
+      "--source <source>",
+      "filter by source: chat, claim, recovery or resend",
+    )
     .option(
       "--prometheus",
       "emit Prometheus text exposition for command-based scraping",

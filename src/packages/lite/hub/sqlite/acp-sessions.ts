@@ -397,24 +397,15 @@ function metadataJson(
 }
 
 function promptSnippet(request: AcpJobRequest): string | null {
-  const source =
-    request.request_kind === "command" ? request.command : request.prompt;
-  const text = `${source ?? ""}`.replace(/\s+/g, " ").trim();
+  const text = `${request.prompt ?? ""}`.replace(/\s+/g, " ").trim();
   return text ? text.slice(0, 240) : null;
 }
 
 function modelFromRequest(request: AcpJobRequest): string | null {
-  if (request.request_kind === "command") return null;
   return clean((request.config as any)?.model);
 }
 
-function runKindFromRequest(request: AcpJobRequest): string {
-  if (request.request_kind === "command") return "command";
-  return request.chat?.automation_id ? "automation" : "interactive";
-}
-
 function agentKindFromRequest(request: AcpJobRequest): string {
-  if (request.request_kind === "command") return "command";
   return request.runtime?.kind === "acp" ? "acp" : "codex";
 }
 
@@ -427,9 +418,6 @@ function sessionStateFromJobState(
 
 function decodeJobRequest(row: AcpSessionJobMirrorRow): AcpJobRequest {
   const parsed = JSON.parse(row.request_json ?? "{}") as AcpJobRequest;
-  if (parsed.request_kind === "command") {
-    return parsed;
-  }
   return {
     ...parsed,
     request_kind: parsed.request_kind ?? "codex",
@@ -555,9 +543,7 @@ export function upsertAcpSessionFromRequest({
 }): AcpSessionRow {
   const chat: AcpChatContext | undefined = request.chat;
   return upsertAcpSession({
-    session_id:
-      session_id ??
-      (request.request_kind === "command" ? null : request.session_id),
+    session_id: session_id ?? request.session_id,
     op_id,
     project_id: chat?.project_id ?? request.project_id,
     account_id: request.account_id,
@@ -570,8 +556,8 @@ export function upsertAcpSessionFromRequest({
     payment_source_kind: "unknown",
     model: modelFromRequest(request),
     agent_kind: agentKindFromRequest(request),
-    run_kind: runKindFromRequest(request),
-    title: chat?.thread_title || chat?.automation_title,
+    run_kind: "interactive",
+    title: chat?.thread_title,
     prompt_snippet: promptSnippet(request),
     queued_at: state === "queued" ? Date.now() : undefined,
     started_at,
@@ -580,7 +566,6 @@ export function upsertAcpSessionFromRequest({
     error,
     metadata: {
       request_kind: request.request_kind ?? "codex",
-      automation_id: chat?.automation_id,
     },
   });
 }
@@ -592,9 +577,7 @@ export function upsertAcpSessionFromJob(
   const state = sessionStateFromJobState(row.state);
   const chat = request.chat;
   return upsertAcpSession({
-    session_id:
-      row.session_id ??
-      (request.request_kind === "command" ? null : request.session_id),
+    session_id: row.session_id ?? request.session_id,
     op_id: row.op_id,
     project_id: row.project_id,
     account_id: row.account_id ?? request.account_id,
@@ -607,8 +590,8 @@ export function upsertAcpSessionFromJob(
     payment_source_kind: "unknown",
     model: modelFromRequest(request),
     agent_kind: agentKindFromRequest(request),
-    run_kind: runKindFromRequest(request),
-    title: chat?.thread_title || chat?.automation_title,
+    run_kind: "interactive",
+    title: chat?.thread_title,
     prompt_snippet: promptSnippet(request),
     queued_at: row.created_at,
     started_at: row.started_at ?? (state === "running" ? row.updated_at : null),
@@ -618,7 +601,6 @@ export function upsertAcpSessionFromJob(
     error: row.error,
     metadata: {
       request_kind: request.request_kind ?? "codex",
-      automation_id: chat?.automation_id,
       send_mode: chat?.send_mode,
       worker_started_at: row.started_at ?? undefined,
     },

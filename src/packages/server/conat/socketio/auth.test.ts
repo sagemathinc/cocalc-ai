@@ -1230,7 +1230,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 
   it("authorizes matching account-bound ACP subjects", async () => {
-    const automationProjectId = "00000000-0000-4000-8000-000000000003";
+    const acpProjectId = "00000000-0000-4000-8000-000000000003";
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,
     );
@@ -1238,13 +1238,21 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
     expect(
       await isAllowed({
         user: { account_id },
-        subject: `acp.project-${automationProjectId}.account-${account_id}.automation`,
+        subject: `acp.project-${acpProjectId}.account-${account_id}.api`,
         type: "pub",
       }),
     ).toBe(true);
+    // The retired automation operation is not an ACP operation any more.
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `acp.project-${acpProjectId}.account-${account_id}.automation`,
+        type: "pub",
+      }),
+    ).toBe(false);
   });
 
-  it("rejects automation settings ingress from a project agent while preserving normal ACP", async () => {
+  it("refuses the retired automation operation to a project agent while preserving normal ACP", async () => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,
     );

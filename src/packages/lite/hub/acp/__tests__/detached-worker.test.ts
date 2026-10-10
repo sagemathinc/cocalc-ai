@@ -415,27 +415,6 @@ it.each(["created-by-preceding-turn", ""])(
   },
 );
 
-function makeCommandRequest() {
-  return {
-    request_kind: "command" as const,
-    project_id: "00000000-1000-4000-8000-000000000000",
-    account_id: "00000000-1000-4000-8000-000000000001",
-    command: "python long_running.py",
-    cwd: "/tmp",
-    timeout_ms: 60_000,
-    max_output_bytes: 100_000,
-    chat: {
-      project_id: "00000000-1000-4000-8000-000000000000",
-      path: "/tmp/detached-worker.chat",
-      thread_id: "thread-1",
-      parent_message_id: "user-1",
-      message_id: "assistant-1",
-      message_date: "2026-03-16T00:00:01.000Z",
-      sender_id: "openai-codex-agent",
-    },
-  };
-}
-
 beforeAll(() => {
   closeAcpDatabase();
   initAcpDatabase({ filename: ":memory:" });
@@ -814,27 +793,6 @@ it("rejects another human before durable steering while permitting an ordinary q
   expect(queued.state).toBe("queued");
 });
 
-it("cancels stale automation jobs at execution without invoking Codex or commands", async () => {
-  const request = makeRequest();
-  const queued = enqueueAcpJob({
-    ...request,
-    chat: {
-      ...request.chat,
-      automation_id: "deleted-automation",
-      automation_revision: "obsolete",
-    },
-  });
-  await acpTestInternals.runQueuedAcpJob(queued);
-  expect(
-    getAcpJob({
-      project_id: queued.project_id,
-      path: queued.path,
-      user_message_id: queued.user_message_id,
-    })?.state,
-  ).toBe("canceled");
-  expect(chatServer.acquireChatSyncDB).not.toHaveBeenCalled();
-});
-
 function makeSyncdb(rows: any[] = []) {
   return {
     isReady: () => true,
@@ -1077,9 +1035,6 @@ describe("terminal failure recovery", () => {
     expect(resumed?.available_at).toBeGreaterThanOrEqual(before + 15 * 60_000);
     expect(resumed?.available_at).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
     const recoveryRequest = decodeAcpJobRequest(resumed!);
-    if (recoveryRequest.request_kind === "command") {
-      throw new Error("expected Codex recovery request");
-    }
     expect(recoveryRequest.prompt).toContain("selected model was at capacity");
     const recoveryRow = rows.find(
       (row) => row.message_id === recoveryRequest.chat?.parent_message_id,
@@ -1229,9 +1184,6 @@ describe("terminal failure recovery", () => {
     expect(resumed?.recovery_count).toBe(1);
     expect(resumed?.available_at).toBeNull();
     const recoveryRequest = decodeAcpJobRequest(resumed!);
-    if (recoveryRequest.request_kind === "command") {
-      throw new Error("expected Codex recovery request");
-    }
     expect(recoveryRequest.prompt).toContain(denial);
     expect(recoveryRequest.prompt).toContain(
       "Do not repeat the rejected command or an equivalent destructive shell form",
@@ -1282,9 +1234,6 @@ describe("terminal failure recovery", () => {
     expect(resumed?.available_at).toBeGreaterThanOrEqual(before + 5 * 60_000);
     expect(resumed?.available_at).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
     const recoveryRequest = decodeAcpJobRequest(resumed!);
-    if (recoveryRequest.request_kind === "command") {
-      throw new Error("expected Codex recovery request");
-    }
     expect(recoveryRequest.prompt).toContain(detail);
     expect(recoveryRequest.prompt).toContain(
       "inspect current workspace and memory state",
@@ -1331,9 +1280,6 @@ describe("recoverDetachedWorkerStartupState", () => {
     });
     expect(recoveries).toHaveLength(1);
     const recoveryRequest = decodeAcpJobRequest(recoveries[0]);
-    if (recoveryRequest.request_kind === "command") {
-      throw new Error("expected Codex recovery request");
-    }
     expect(recoveryRequest.prompt).toContain(
       "Codex app-server exited unexpectedly",
     );
@@ -1882,9 +1828,6 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(recoveryChildren[0].recovery_count).toBe(1);
     const resumedRequest = decodeAcpJobRequest(recoveryChildren[0] as any);
     expect(resumedRequest.request_kind).toBe("codex");
-    if (resumedRequest.request_kind === "command") {
-      throw new Error("expected codex recovery request");
-    }
     expect(resumedRequest.session_id).toBe("session-1");
     expect(resumedRequest.prompt).toContain(
       "Resume the work from the current workspace state.",
@@ -2039,7 +1982,6 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(children).toHaveLength(1);
     expect(children[0].state).toBe("queued");
     const resumed = decodeAcpJobRequest(children[0] as any);
-    if (resumed.request_kind === "command") throw Error("expected agent turn");
     expect(resumed.runtime).toEqual(request.runtime);
     expect(resumed.session_id).toBe("session-1");
     expect(resumed.prompt).toContain(
@@ -2137,100 +2079,6 @@ describe("recoverDetachedWorkerStartupState", () => {
         project_id: goodJob.project_id,
         path: goodJob.path,
         user_message_id: goodJob.user_message_id,
-      })?.state,
-    ).toBe("interrupted");
-  });
-
-  it("does not auto-resume command jobs during startup recovery", async () => {
-    const request = makeCommandRequest();
-    const queued = enqueueAcpJob(request as any);
-    claimNextQueuedAcpJobForThread({
-      project_id: queued.project_id,
-      path: queued.path,
-      thread_id: queued.thread_id,
-      worker_id: "worker-a",
-      worker_bundle_version: "bundle-a",
-    });
-
-    const rows: any[] = [
-      {
-        event: "chat",
-        date: request.chat.message_date,
-        sender_id: request.chat.sender_id,
-        message_id: request.chat.message_id,
-        thread_id: request.chat.thread_id,
-        generating: true,
-        history: [
-          {
-            author_id: "openai-codex-agent",
-            content: "partial command result",
-            date: request.chat.message_date,
-          },
-        ],
-      },
-    ];
-    const syncdb: any = {
-      isReady: () => true,
-      get: (where: any) =>
-        rows.filter((row) =>
-          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
-        ),
-      get_one: (where: any) =>
-        rows.find((row) =>
-          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
-        ),
-      set: (val: any) => {
-        const idx = rows.findIndex((row) =>
-          row.message_id && val.message_id
-            ? row.message_id === val.message_id
-            : row.event === val.event &&
-              row.date === val.date &&
-              row.sender_id === val.sender_id,
-        );
-        if (idx >= 0) {
-          rows[idx] = { ...rows[idx], ...val };
-        } else {
-          rows.push({ ...val });
-        }
-      },
-      commit: jest.fn(),
-      save: jest.fn(async () => {}),
-      close: async () => {},
-    };
-    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
-    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
-      {
-        project_id: request.project_id,
-        path: request.chat.path,
-        message_date: request.chat.message_date,
-        sender_id: request.chat.sender_id,
-        message_id: request.chat.message_id,
-        thread_id: request.chat.thread_id,
-        owner_instance_id: "worker-old",
-      },
-    ]);
-
-    await recoverDetachedWorkerStartupState({} as ConatClient, {
-      workerContext: {
-        worker_id: "worker-new",
-        host_id: "host-1",
-        bundle_version: "bundle-1",
-        bundle_path: "/bundle",
-        state: "active",
-      },
-      restartReason: "backend server restarted",
-    });
-
-    expect(
-      listAcpJobsByRecoveryParent({
-        recovery_parent_op_id: queued.op_id,
-      }),
-    ).toHaveLength(0);
-    expect(
-      getAcpJob({
-        project_id: queued.project_id,
-        path: queued.path,
-        user_message_id: queued.user_message_id,
       })?.state,
     ).toBe("interrupted");
   });
