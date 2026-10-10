@@ -3,9 +3,16 @@ import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 
 export async function authorizeAgentDeliveryExecution(
   request: AcpRequest,
-  api: Pick<AgentApi, "authorizeRpcExecution">,
+  api: Pick<AgentApi, "authorizeRpcExecution" | "authorizeSensorExecution">,
 ): Promise<void> {
   const chat = request.chat;
+  if (chat?.sensor_wake) {
+    await api.authorizeSensorExecution({
+      account_id: request.account_id,
+      authorization: chat.sensor_wake,
+    });
+    return;
+  }
   if (chat?.agent_rpc_execution) {
     await api.authorizeRpcExecution({
       account_id: chat.agent_rpc_execution.principal_account_id,

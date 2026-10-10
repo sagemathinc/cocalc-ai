@@ -405,6 +405,14 @@ export const TABLE_OWNERSHIP = {
       "Per-account payment choice for agents (credential references only), authoritative on the account home bay. Like account credentials it does not move on account rehome; a missing row means the account default.",
   }),
 
+  ...entries(["agent_sensors", "agent_sensor_runs"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    notes:
+      "Sensors belong to a project-owned agent identity on the project's bay and move only with it.",
+  }),
+
   ...entries(["agent_identity_watchers"], {
     ownership: "project-owning",
     authority: "project_id",

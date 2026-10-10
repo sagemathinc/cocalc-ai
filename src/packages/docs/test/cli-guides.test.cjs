@@ -11,7 +11,7 @@ const recipes = [
   ["api.text", "cli.collaborative-text"],
   ["notebook detach", "cli.notebook-workflows"],
   ["browser target-resolve", "cli.browser-workflows"],
-  ["automation upsert", "cli.scheduled-agents"],
+  ["sensor propose", "cli.scheduled-agents"],
   ["workspace notices", "cli.workspaces-and-notices"],
   ["build-timeout", "cli.builds-and-versions"],
 ];
@@ -34,7 +34,6 @@ test("remote recipes use absolute project paths and registered log commands", ()
   for (const [id, variable] of [
     ["cli.collaborative-text", "TEXT_PATH"],
     ["cli.notebook-workflows", "NOTEBOOK_PATH"],
-    ["cli.scheduled-agents", "CHAT_PATH"],
     ["cli.builds-and-versions", "DOCUMENT_PATH"],
   ]) {
     assert.match(

@@ -47,6 +47,8 @@ export function wireHostsApi(): void {
     forwardHost("agent.authorizeRpcAdmission", [opts]);
   hubApi.agent.authorizeRpcExecution = (opts) =>
     forwardHost("agent.authorizeRpcExecution", [opts]);
+  hubApi.agent.authorizeSensorExecution = (opts) =>
+    forwardHost("agent.authorizeSensorExecution", [opts]);
   hubApi.agent.beginCocalcConnectorTurn = (opts) =>
     forwardHost("agent.beginCocalcConnectorTurn", [opts]);
   hubApi.agent.renewCocalcConnectorTurn = (opts) =>

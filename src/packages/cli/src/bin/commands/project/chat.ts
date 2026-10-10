@@ -13,18 +13,6 @@ import { githubPrArtifactPayload } from "../../core/github-pr-artifact";
 
 import type { ProjectCommandDeps } from "../project";
 
-function parsePositiveIntegerOrThrow(
-  value: string | undefined,
-  label: string,
-): number | undefined {
-  if (value == null || `${value}`.trim() === "") return undefined;
-  const n = Number(value);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`${label} must be a positive integer`);
-  }
-  return n;
-}
-
 function normalizePath(value?: string): string {
   const path = `${value ?? ""}`.trim();
   if (!path) throw new Error("--path is required");
@@ -607,81 +595,13 @@ Two kinds of send share this command:
 
   const automation = chat
     .command("automation")
-    .description("project chat scheduled automation");
-
-  automation
-    .command("upsert")
-    .description("create or update a scheduled automation for a thread")
-    .requiredOption("--path <path>", "chat document path inside the project")
-    .requiredOption("--thread-id <id>", "thread id")
-    .requiredOption("--prompt <prompt>", "automation prompt")
-    .requiredOption("--local-time <HH:MM>", "daily local time")
-    .requiredOption("--timezone <iana>", "IANA timezone")
-    .option("-w, --project <project>", "project id or name")
-    .option("--title <title>", "automation title")
-    .option(
-      "--pause-after-unacknowledged-runs <n>",
-      "pause after this many unacknowledged runs",
-    )
-    .option("--disabled", "create/update the automation in a paused state")
-    .action(
-      async (
-        opts: {
-          path: string;
-          threadId: string;
-          prompt: string;
-          localTime: string;
-          timezone: string;
-          project?: string;
-          title?: string;
-          pauseAfterUnacknowledgedRuns?: string;
-          disabled?: boolean;
-        },
-        command: Command,
-      ) => {
-        await withContext(
-          command,
-          "project chat automation upsert",
-          async (ctx) => {
-            return await projectChatAutomationData({
-              ctx,
-              projectIdentifier: opts.project,
-              path: normalizePath(opts.path),
-              threadId: normalizeThreadId(opts.threadId),
-              action: "upsert",
-              config: {
-                enabled: opts.disabled ? false : true,
-                prompt: opts.prompt,
-                local_time: opts.localTime,
-                timezone: opts.timezone,
-                ...(opts.title?.trim()
-                  ? { title: opts.title.trim() }
-                  : undefined),
-                ...(parsePositiveIntegerOrThrow(
-                  opts.pauseAfterUnacknowledgedRuns,
-                  "--pause-after-unacknowledged-runs",
-                ) != null
-                  ? {
-                      pause_after_unacknowledged_runs:
-                        parsePositiveIntegerOrThrow(
-                          opts.pauseAfterUnacknowledgedRuns,
-                          "--pause-after-unacknowledged-runs",
-                        ),
-                    }
-                  : undefined),
-              },
-            });
-          },
-        );
-      },
+    .description(
+      "retired scheduled automations: inspect, pause or delete old ones (agents now use `cocalc sensor`)",
     );
 
   for (const action of [
-    ["pause", "pause a scheduled automation"],
-    ["resume", "resume a scheduled automation"],
-    ["run-now", "enqueue an automation run immediately"],
-    ["acknowledge", "acknowledge the latest automation run"],
-    ["delete", "delete a scheduled automation"],
+    ["pause", "pause a retired automation"],
+    ["delete", "delete a retired automation"],
     ["status", "show automation config/state for a thread"],
   ] as const) {
     const [name, description] = action;
@@ -705,15 +625,7 @@ Two kinds of send share this command:
                 projectIdentifier: opts.project,
                 path: normalizePath(opts.path),
                 threadId: normalizeThreadId(opts.threadId),
-                action:
-                  name === "run-now"
-                    ? "run_now"
-                    : (name as
-                        | "pause"
-                        | "resume"
-                        | "acknowledge"
-                        | "delete"
-                        | "status"),
+                action: name,
               });
             },
           );

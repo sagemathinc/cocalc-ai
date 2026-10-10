@@ -440,6 +440,23 @@ function rpcSourceAttribution(message: ChatMessageTyped):
       attempt_id?: string;
     }
   | undefined {
+  // A sensor wake is stored as the approver's message for execution, but it
+  // was written by CoCalc for the sensor: never show it as that person's.
+  const rawSensor = field<any>(message, "sensor_wake");
+  const sensor =
+    typeof rawSensor?.toJS === "function" ? rawSensor.toJS() : rawSensor;
+  if (sensor?.sensor_id) {
+    const title =
+      typeof sensor.title === "string" && sensor.title.trim()
+        ? sensor.title.trim().slice(0, 100)
+        : "sensor";
+    return {
+      direction: "incoming",
+      label: "Sensor wake",
+      source_label: `Sensor: ${title}`,
+      source_agent_id: "",
+    };
+  }
   const raw = field<any>(message, "agent_rpc");
   const rpc = typeof raw?.toJS === "function" ? raw.toJS() : raw;
   const source = rpc?.source;

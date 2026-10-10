@@ -117,10 +117,6 @@ import {
 import {
   acknowledgeThreadAutomation,
   deleteThreadAutomation,
-  pauseThreadAutomation,
-  resumeThreadAutomation,
-  runThreadAutomationNow,
-  skipNextThreadAutomationRun,
   upsertThreadAutomation,
 } from "./acp-api";
 import { showActiveAutomationLimitModal } from "./automation-limit";
@@ -1530,72 +1526,6 @@ function ChatPanelContent({
     [actions],
   );
 
-  const handleAutomationPause = useCallback(async () => {
-    if (!selectedThreadId) return;
-    setAutomationActionBusy("pause");
-    try {
-      await pauseThreadAutomation({ actions, threadId: selectedThreadId });
-    } catch (err) {
-      antdMessage.error(`Unable to pause automation: ${err}`);
-    } finally {
-      setAutomationActionBusy((current) =>
-        current === "pause" ? "" : current,
-      );
-    }
-  }, [actions, selectedThreadId]);
-
-  const handleAutomationResume = useCallback(async () => {
-    if (!selectedThreadId) return;
-    setAutomationActionBusy("resume");
-    try {
-      const response = await resumeThreadAutomation({
-        actions,
-        threadId: selectedThreadId,
-      });
-      showActiveAutomationLimitModal({
-        project_id: actions.store?.get("project_id") ?? "",
-        response,
-      });
-    } catch (err) {
-      antdMessage.error(`Unable to resume automation: ${err}`);
-    } finally {
-      setAutomationActionBusy((current) =>
-        current === "resume" ? "" : current,
-      );
-    }
-  }, [actions, selectedThreadId]);
-
-  const handleAutomationRunNow = useCallback(async () => {
-    if (!selectedThreadId) return;
-    setAutomationActionBusy("run_now");
-    try {
-      await runThreadAutomationNow({ actions, threadId: selectedThreadId });
-    } catch (err) {
-      antdMessage.error(`Unable to run automation: ${err}`);
-    } finally {
-      setAutomationActionBusy((current) =>
-        current === "run_now" ? "" : current,
-      );
-    }
-  }, [actions, selectedThreadId]);
-
-  const handleAutomationSkipNext = useCallback(async () => {
-    if (!selectedThreadId) return;
-    setAutomationActionBusy("skip_next");
-    try {
-      await skipNextThreadAutomationRun({
-        actions,
-        threadId: selectedThreadId,
-      });
-    } catch (err) {
-      antdMessage.error(`Unable to skip automation run: ${err}`);
-    } finally {
-      setAutomationActionBusy((current) =>
-        current === "skip_next" ? "" : current,
-      );
-    }
-  }, [actions, selectedThreadId]);
-
   const handleAutomationAcknowledge = useCallback(async () => {
     if (!selectedThreadId) return;
     setAutomationActionBusy("acknowledge");
@@ -2994,7 +2924,6 @@ function ChatPanelContent({
       status: selectedThreadAutomationState?.status,
       next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
     });
-  const automationIsRunning = automationStatus === "running";
   const automationBannerAppearance =
     getAutomationBannerAppearance(automationStatus);
   const automationActionInFlight = automationActionBusy !== "";
@@ -3049,48 +2978,21 @@ function ChatPanelContent({
       ) : null}
     </>
   );
+  // Thread automations were replaced by agent sensors and no longer run.
   const automationActions = (
     <>
-      <Tooltip title="Start a manual run now. This does not move the next scheduled run. If a run is already active, no extra run is queued.">
-        <Button
-          size="small"
-          disabled={automationIsRunning || automationActionInFlight}
-          loading={automationActionBusy === "run_now"}
-          onClick={() => void handleAutomationRunNow()}
-        >
-          Run now
-        </Button>
-      </Tooltip>
-      <Tooltip title="Skip only the next scheduled run and move this automation to the following scheduled time.">
-        <Button
-          size="small"
-          disabled={!automationHasNextRun || automationActionInFlight}
-          loading={automationActionBusy === "skip_next"}
-          onClick={() => void handleAutomationSkipNext()}
-        >
-          Skip next
-        </Button>
-      </Tooltip>
-      {automationStatus === "paused" ||
-      selectedThreadAutomationConfig?.enabled === false ? (
-        <Button
-          size="small"
-          disabled={automationActionInFlight}
-          loading={automationActionBusy === "resume"}
-          onClick={() => void handleAutomationResume()}
-        >
-          Resume
-        </Button>
-      ) : (
-        <Button
-          size="small"
-          disabled={automationActionInFlight}
-          loading={automationActionBusy === "pause"}
-          onClick={() => void handleAutomationPause()}
-        >
-          Pause
-        </Button>
-      )}
+      <span style={{ color: UI_COLORS.secondary }}>
+        Retired: automations no longer run. Ask the agent to propose a sensor
+        instead.
+      </span>
+      <Button
+        size="small"
+        disabled={automationActionInFlight}
+        loading={automationActionBusy === "delete"}
+        onClick={() => void handleAutomationDelete()}
+      >
+        Delete
+      </Button>
     </>
   );
   const automationBanner = selectedThreadAutomationConfig ? (

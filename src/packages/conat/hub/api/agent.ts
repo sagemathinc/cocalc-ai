@@ -67,6 +67,11 @@ export const agent = {
   setPersonalMessagingState: authFirstRequireAccountWithBoundSession,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
+  listSensors: authFirstRequireAccount,
+  // Approving or resuming decides what code runs and wakes an agent: a
+  // person's bound session only, never an agent credential.
+  manageSensor: authFirstRequireAccountWithBoundSession,
+  authorizeSensorExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccount,
   startFreshConversation: authFirstRequireAccount,
@@ -481,6 +486,34 @@ export interface AgentApi {
       authorization: NonNullable<
         import("@cocalc/conat/ai/acp/types").AcpChatContext["agent_rpc_execution"]
       >;
+    },
+  ): Promise<void>;
+  /** A project's sensors (optionally one agent's), or one sensor with its runs. */
+  listSensors(opts: {
+    account_id?: string;
+    project_id: string;
+    agent_id?: string;
+    sensor_id?: string;
+  }): Promise<{
+    sensors: import("@cocalc/conat/agents/sensors").AgentSensor[];
+    runs?: import("@cocalc/conat/agents/sensors").AgentSensorRun[];
+  }>;
+  /** Approve, reject, pause, resume, run now or delete a sensor. */
+  manageSensor(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      sensor_id: string;
+      op: import("@cocalc/conat/agents/sensors").SensorManageOp;
+      /** Required to approve: the revision the person reviewed. */
+      revision?: number;
+    },
+  ): Promise<{
+    sensor?: import("@cocalc/conat/agents/sensors").AgentSensor;
+    deleted?: string;
+  }>;
+  authorizeSensorExecution(
+    opts: AgentHostAuth & {
+      authorization: import("@cocalc/conat/agents/sensors").SensorExecutionAuthorization;
     },
   ): Promise<void>;
   /** This account's payment selections for some agents, plus its defaults. */

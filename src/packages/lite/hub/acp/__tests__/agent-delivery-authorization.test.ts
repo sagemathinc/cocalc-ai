@@ -24,6 +24,7 @@ test.each([true, false])(
     if (!generation) delete value.chat!.agent_delivery_generation;
     const api = {
       authorizeRpcExecution: jest.fn(async () => {}),
+      authorizeSensorExecution: jest.fn(async () => {}),
     };
     await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
       "Legacy agent delivery is retired",
@@ -36,6 +37,7 @@ test("ordinary human and RPC requests do not acquire legacy semantics", async ()
   delete value.chat!.agent_delivery_id;
   const api = {
     authorizeRpcExecution: jest.fn(async () => {}),
+    authorizeSensorExecution: jest.fn(async () => {}),
   };
   await authorizeAgentDeliveryExecution(value, api);
   expect(api.authorizeRpcExecution).not.toHaveBeenCalled();
@@ -84,6 +86,7 @@ test.each([false, true])(
     };
     const api = {
       authorizeRpcExecution: jest.fn(async () => {}),
+      authorizeSensorExecution: jest.fn(async () => {}),
     };
     await authorizeAgentDeliveryExecution(value, api);
     expect(api.authorizeRpcExecution).toHaveBeenCalledWith({
@@ -98,3 +101,34 @@ test.each([false, true])(
     );
   },
 );
+
+test("sensor wakes are reauthorized as the turn's account at execution", async () => {
+  const value = request();
+  delete value.chat!.agent_delivery_id;
+  const authorization = {
+    version: 1 as const,
+    sensor_id: "sensor",
+    project_id: "project",
+    agent_id: "agent",
+    script_hash: "hash",
+    run_id: "run",
+  };
+  value.chat!.agent_message = true;
+  value.chat!.sensor_wake = authorization;
+  const api = {
+    authorizeRpcExecution: jest.fn(async () => {}),
+    authorizeSensorExecution: jest.fn(async () => {}),
+  };
+  await authorizeAgentDeliveryExecution(value, api);
+  expect(api.authorizeSensorExecution).toHaveBeenCalledWith({
+    account_id: "recipient",
+    authorization,
+  });
+  expect(api.authorizeRpcExecution).not.toHaveBeenCalled();
+  api.authorizeSensorExecution.mockRejectedValueOnce(
+    new Error("sensor is no longer active as approved"),
+  );
+  await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
+    "no longer active",
+  );
+});

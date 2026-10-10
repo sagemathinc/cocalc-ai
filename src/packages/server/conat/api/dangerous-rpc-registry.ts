@@ -68,6 +68,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.authorizeSensorExecution": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.manageSensor": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "a project collaborator's bound human session approves, pauses or deletes an agent's sensor in that project; the code runs only in that project, which the collaborator can already run code in, and wakes are capped per day",
+  },
   "agent.registerIdentity": {
     decision: "fresh-auth-not-required",
     reason:

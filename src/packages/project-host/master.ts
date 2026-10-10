@@ -1436,6 +1436,27 @@ export async function startMasterRegistration({
         opts.account_id,
       );
     },
+    async runAgentSensor(opts) {
+      await awaitReadyForControl("runAgentSensor", waitUntilReady);
+      const { runSensor } = await import("./sensors");
+      return await runSensor(opts);
+    },
+    async deliverAgentSensorWake(opts) {
+      await awaitReadyForControl("deliverAgentSensorWake", waitUntilReady);
+      if (!controlClient)
+        throw new Error("host messaging transport unavailable");
+      const { deliverSensorWake } =
+        await import("@cocalc/lite/hub/acp/sensor-wake");
+      const { ensureProjectContainerRunning } =
+        await import("./codex/codex-project");
+      return await deliverSensorWake(controlClient, opts, () =>
+        ensureProjectContainerRunning({
+          projectId: opts.authorization.project_id,
+          accountId: opts.account_id,
+          timeout: 120_000,
+        }),
+      );
+    },
     async applyExamRun(opts) {
       await awaitReadyForControl("applyExamRun", waitUntilReady);
       return await applyExamRunLocal(opts);

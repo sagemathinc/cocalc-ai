@@ -392,136 +392,63 @@ before sharing it. Clear or stop capture deliberately when finished.
 `;
 
 export const CLI_SCHEDULED_AGENTS_BODY = `
-## Give a scheduled task its own thread
+## Sensors from the agent's side
 
-You need project access, working Codex authentication in that project, and a CLI
-version with \`project chat automation\`. Scheduled agent runs perform real work
-and use the configured model. This recipe creates a disabled draft first.
+Agents create sensors with \`cocalc sensor\`, using their runtime identity.
+A person approves each sensor in the agent's **Sensors** dialog; there is no
+CLI command for approving, resuming or running a sensor. See
+[Watch for events with sensors](/docs/ai/codex-automation) for that side.
 
-In Bash, set the profile, full project ID, chat path, a supported model, and an
-existing working directory inside the project:
+## Step 1: Write a spec
 
-~~~bash
-export CLI_PROFILE=cocalc-ai
-export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
-export CHAT_PATH='/home/user/daily-check.chat'
-export AGENT_MODEL='REPLACE_WITH_SUPPORTED_MODEL'
-export PROJECT_WORKDIR='/home/user'
-
-cocalc --profile "$CLI_PROFILE" project get --project "$PROJECT_ID"
+~~~json
+{
+  "title": "GitHub: new urgent issues",
+  "purpose": "Wake me when an issue labeled urgent is opened in our repository.",
+  "language": "python",
+  "script": "import json, os, subprocess\\n...",
+  "schedule": {"kind": "interval", "minutes": 30},
+  "max_wakes_per_day": 12
+}
 ~~~
 
-## Step 1: Create a dedicated thread
+The script runs in the chat's directory with \`COCALC_SENSOR_ID\` and
+\`COCALC_SENSOR_STATE\`, a JSON file for remembering what it already
+reported. To wake the agent it prints one line such as
+\`{"wake": true, "summary": "2 new issues", "data": {"issues": [...]}}\`.
+A run that prints no wake line is quiet. Daily schedules use
+\`{"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"}\`.
+\`cocalc sensor --help\` prints the full contract.
+
+## Step 2: Test, then propose
 
 ~~~bash
-cocalc --profile "$CLI_PROFILE" --json project chat thread create \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" \\
-  --name "Daily project check" --agent-kind acp \\
-  --model "$AGENT_MODEL" --reasoning medium \\
-  --session-mode read-only --workdir "$PROJECT_WORKDIR"
+cocalc sensor test --file spec.json
+cocalc sensor propose --file spec.json
 ~~~
 
-Check \`data.created:true\`, retain \`data.thread.thread_id\` as \`THREAD_ID\`, and
-inspect \`data.thread.acp_config\`. Scheduled runs use the thread's model,
-reasoning, working directory, and access mode, but get their own Codex session
-instead of resuming its interactive session. Write a self-contained task prompt.
+\`test\` runs the script once in the project and reports whether it would
+wake the agent. \`propose\` records the exact spec for review; nothing runs
+until a person approves it. To change an approved sensor, propose again with
+\`--sensor <id>\`. The approved version keeps running until the change is
+approved.
 
-## Step 2: Save and inspect a disabled draft
+## Step 3: Inspect
 
 ~~~bash
-export THREAD_ID='REPLACE_WITH_RETURNED_THREAD_ID'
-
-cocalc --profile "$CLI_PROFILE" --json project chat automation upsert \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID" \\
-  --title "Daily project check" \\
-  --prompt "Inspect this project without changing files. Summarize unfinished work and report any failures." \\
-  --local-time 09:00 --timezone Europe/Madrid \\
-  --pause-after-unacknowledged-runs 7 --disabled
-
-cocalc --profile "$CLI_PROFILE" --json project chat automation status \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
+cocalc sensor list
+cocalc sensor show <id>
+cocalc sensor pause <id>
+cocalc sensor delete <id>
 ~~~
 
-Always provide a nonempty \`--title\`; the backend requires it even though the CLI
-option is not marked required. Replace the example time and timezone with your
-intended schedule.
+\`show\` includes recent runs with their outcome, summary and errors.
 
-Check both outer \`ok:true\` and \`data.ok:true\`, then confirm
-\`data.config.enabled:false\`, the title, prompt, daily local time, timezone, and
-\`data.state.status:"paused"\`. A successful status request with \`data.config:null\`
-means the thread has no saved automation.
+## Retired automations
 
-## Step 3: Activate when ready
-
-Before enabling the schedule, check the project's
-[browser-idle policy and host lifecycle](/docs/hosts/lifecycle) and the
-[authentication needed by commands in its prompt](/docs/cli/authentication-and-targets).
-An enabled schedule does not reserve compute or renew fresh authentication.
-Project or host availability, model authentication, and admission limits can
-prevent a run from completing. Confirm a result after activation before relying
-on unattended execution; the schedule configuration alone is not that result.
-
-To enable the reviewed daily task:
-
-~~~bash
-cocalc --profile "$CLI_PROFILE" --json project chat automation resume \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
-~~~
-
-Inspect \`data.ok\`, \`data.config.enabled\`, \`data.state.status\`, and
-\`data.state.next_run_at_ms\`. To deliberately request an immediate run:
-
-~~~bash
-cocalc --profile "$CLI_PROFILE" --json project chat automation run-now \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
-~~~
-
-\`run-now\` can execute even while the schedule is paused. Its response confirms
-submission or an already active run, not completion. Read automation status and
-the chat result afterward. Retain \`data.state.last_job_op_id\`, check the last-run
-timestamps and \`last_error\`, and review the actual result before counting it as
-successful. Admission can fail inside an otherwise successful CLI response, so
-check \`data.ok\` as well as the outer envelope.
-
-## Update, pause, or remove a schedule
-
-Read the current configuration before using \`upsert\` again. Supply the complete
-intended title, prompt, local time, timezone, and unacknowledged-run limit.
-**Upsert replaces configuration and enables the task unless \`--disabled\` is
-supplied.** Omitted optional settings return to defaults, including an
-unacknowledged-run limit of seven.
-
-This CLI form creates a daily Codex schedule for every day of the week. It can
-overwrite an existing command-based, interval, or restricted-weekday configuration; use
-the appropriate schedule UI for those forms rather than this daily recipe.
-
-Pause future scheduled runs:
-
-~~~bash
-cocalc --profile "$CLI_PROFILE" --json project chat automation pause \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
-~~~
-
-After reviewing results, reset the unacknowledged-run counter:
-
-~~~bash
-cocalc --profile "$CLI_PROFILE" --json project chat automation acknowledge \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
-~~~
-
-Acknowledgment does not resume a paused task. If the unacknowledged-run limit
-paused it, acknowledge and then resume when appropriate.
-
-To remove the schedule, while retaining the chat thread:
-
-~~~bash
-cocalc --profile "$CLI_PROFILE" --json project chat automation delete \\
-  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
-~~~
-
-Check \`data.ok:true\` and \`data.config:null\`. Pausing or deleting the schedule
-does not cancel an already running job. For general operation recovery, see
-[scripting and results](/docs/cli/scripting-and-results).
+\`project chat automation\` remains only to inspect, pause or delete
+automations created before sensors replaced them. Retired automations do not
+run.
 `;
 
 export const CLI_WORKSPACES_BODY = `

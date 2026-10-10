@@ -81,10 +81,7 @@ import {
   resolveAutomationChatSenderId,
 } from "./automation-chat-sender";
 import { buildAutomationAcpConfig } from "./automation-request-config";
-import {
-  automationHasActiveBackendRun,
-  finishedAutomationRunFromJob,
-} from "./active-automation-run";
+import { automationHasActiveBackendRun } from "./active-automation-run";
 import {
   computeNextAutomationRunAt,
   computeSkippedAutomationRunAt,
@@ -241,7 +238,6 @@ import {
   getAcpAutomationById,
   getAcpAutomationByThread,
   listAllAcpAutomations,
-  listDueAcpAutomations,
   toAutomationConfig,
   toAutomationState,
   toAutomationRecord,
@@ -337,7 +333,6 @@ import {
   startAcpWorkerSupervisor,
 } from "./worker-manager";
 import { buildCodexRuntimeEnv } from "./runtime-env";
-import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
 import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
 import {
@@ -383,7 +378,6 @@ const CHAT_OFFLOAD_AUTOROTATE_KEEP_MESSAGES = 500;
 const CHAT_OFFLOAD_AUTOROTATE_MAX_BYTES = 2 * 1024 * 1024;
 const CHAT_OFFLOAD_AUTOROTATE_MAX_MESSAGES = 500;
 const ACP_AUTOMATION_STORE = "cocalc-thread-automations-v1";
-const ACP_AUTOMATION_POLL_MS = 30_000;
 const AUTOMATION_DEFAULT_UNACK_LIMIT = 7;
 const ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS = envNumber(
   "COCALC_ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS",
@@ -517,8 +511,6 @@ let acpInterruptPollerStarted = false;
 let acpInterruptPollInFlight = false;
 let acpSteerPollerStarted = false;
 let acpSteerPollInFlight = false;
-let acpAutomationPollerStarted = false;
-let acpAutomationPollInFlight = false;
 const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
@@ -8893,43 +8885,6 @@ async function finalizeAutomationRun(opts: {
   await publishAutomationRecordToProjectIndex(updated);
 }
 
-async function reconcileFinishedAutomationRuns(): Promise<void> {
-  for (const row of listAllAcpAutomations()) {
-    if (row.status !== "running") {
-      continue;
-    }
-    try {
-      if (automationHasActiveBackendRun(row)) {
-        continue;
-      }
-      const jobOpId = `${row.last_job_op_id ?? ""}`.trim();
-      const job = jobOpId ? getAcpJobByOpId(jobOpId) : undefined;
-      const finished = finishedAutomationRunFromJob(job);
-      if (!finished) {
-        continue;
-      }
-      logger.warn("reconciling automation left running after job completion", {
-        automation_id: row.automation_id,
-        job_op_id: jobOpId,
-        job_state: job?.state,
-      });
-      await finalizeAutomationRun({
-        automation_id: row.automation_id,
-        terminalState: finished.terminalState,
-        last_job_op_id: jobOpId,
-        last_message_id: row.last_message_id ?? undefined,
-        error: finished.error,
-      });
-    } catch (err) {
-      logger.warn("failed to reconcile completed automation run", {
-        automation_id: row.automation_id,
-        job_op_id: row.last_job_op_id,
-        err,
-      });
-    }
-  }
-}
-
 async function acknowledgeAutomationFromHumanTurn(
   request: Pick<AcpRequest, "project_id" | "account_id" | "chat">,
 ): Promise<void> {
@@ -8959,88 +8914,6 @@ async function acknowledgeAutomationFromHumanTurn(
     automation_state: toAutomationState(updated) as ChatThreadAutomationState,
   });
   await publishAutomationRecordToProjectIndex(updated);
-}
-
-async function pollDueAcpAutomations(): Promise<void> {
-  if (acpAutomationPollInFlight) return;
-  if (!conatClient) return;
-  acpAutomationPollInFlight = true;
-  try {
-    await reconcileFinishedAutomationRuns();
-    const due = listDueAcpAutomations(Date.now());
-    for (const row of due) {
-      try {
-        await enqueueAutomationRun(row, {
-          manual: false,
-          syncdbReadyTimeoutMs: ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS,
-        });
-      } catch (err) {
-        logger.warn("failed to enqueue due automation", {
-          automation_id: row.automation_id,
-          err,
-        });
-        await recordScheduledAutomationEnqueueFailure(row, err);
-      }
-    }
-  } finally {
-    acpAutomationPollInFlight = false;
-  }
-}
-
-async function recordScheduledAutomationEnqueueFailure(
-  dueRow: AcpAutomationRow,
-  error: unknown,
-): Promise<void> {
-  const current = getAcpAutomationById(dueRow.automation_id);
-  if (
-    !current ||
-    !current.enabled ||
-    current.status === "paused" ||
-    current.status === "running" ||
-    automationHasActiveBackendRun(current) ||
-    current.next_run_at !== dueRow.next_run_at
-  ) {
-    return;
-  }
-  const updated = upsertAcpAutomation(
-    automationAfterScheduledEnqueueFailure({
-      row: current,
-      error,
-      nowMs: Date.now(),
-      defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-    }),
-  );
-  await publishAutomationRecordToProjectIndex(updated);
-  try {
-    await patchThreadAutomationProjection({
-      project_id: updated.project_id,
-      path: updated.path,
-      thread_id: updated.thread_id,
-      updated_by: updated.account_id,
-      automation_config: toAutomationConfig(
-        updated,
-      ) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(updated) as ChatThreadAutomationState,
-      syncdbReadyTimeoutMs: ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS,
-    });
-  } catch (projectionError) {
-    logger.warn("failed to publish automation enqueue failure to chat", {
-      automation_id: updated.automation_id,
-      err: projectionError,
-    });
-  }
-}
-
-function startAcpAutomationPoller(): void {
-  if (acpAutomationPollerStarted) return;
-  acpAutomationPollerStarted = true;
-  void pollDueAcpAutomations();
-  const handle = setInterval(() => {
-    void pollDueAcpAutomations();
-  }, ACP_AUTOMATION_POLL_MS);
-  if (typeof handle?.unref === "function") {
-    handle.unref();
-  }
 }
 
 async function republishAcpAutomationProjectIndexes(): Promise<void> {
@@ -9092,6 +8965,12 @@ async function handleAcpAutomationRequest(
   const thread_id = `${request.thread_id ?? ""}`.trim();
   if (!project_id || !path || !thread_id) {
     throw new Error("ACP automation request is missing required fields");
+  }
+  const stillAllowed: string[] = ["delete", "pause", "acknowledge"];
+  if (!stillAllowed.includes(request.action)) {
+    throw new Error(
+      "Scheduled automations were replaced by agent sensors: ask the agent to propose a sensor (cocalc sensor --help).",
+    );
   }
   let existing = getAcpAutomationByThread({ project_id, path, thread_id });
   if (request.action === "delete") {
@@ -9910,7 +9789,9 @@ async function prepareQueuedUserMessageForExecution({
       if (
         request &&
         request.request_kind !== "command" &&
-        (request.runtime || request.chat?.agent_rpc_execution)
+        (request.runtime ||
+          request.chat?.agent_rpc_execution ||
+          request.chat?.sensor_wake)
       ) {
         const queued = queuedConversationSession(syncdb, request);
         currentAgentConfig = queued.config;
@@ -10642,6 +10523,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     if (
       request.chat?.agent_rpc_execution ||
+      request.chat?.sensor_wake ||
       (request.request_kind !== "command" && request.runtime)
     ) {
       if (request.request_kind !== "command" && request.runtime)
@@ -10665,7 +10547,11 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     request,
     latestContent: latestQueuedMessageContent,
   });
-  if (request.runtime || request.chat?.agent_rpc_execution) {
+  if (
+    request.runtime ||
+    request.chat?.agent_rpc_execution ||
+    request.chat?.sensor_wake
+  ) {
     refreshedRequest.config = currentAgentConfig;
     refreshedRequest.session_id = currentAgentSessionId;
   }
@@ -12985,7 +12871,8 @@ export async function init(
   // Detached workers exit while idle, so terminal chat writes that failed
   // under temporary storage pressure need a project-host-owned retry path.
   startAcpTerminalRecoveryPoller(client);
-  startAcpAutomationPoller();
+  // Scheduled thread automations are retired in favor of agent sensors;
+  // stored automations no longer run.
   startCodexActionReconcilePoller(client);
   void republishAcpAutomationProjectIndexes().catch((err) => {
     logger.warn("failed to republish ACP automation project indexes", err);

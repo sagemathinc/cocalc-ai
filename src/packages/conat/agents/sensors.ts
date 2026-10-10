@@ -119,6 +119,65 @@ export type AgentSensorRequest =
   | { action: "sensor"; op: "pause"; sensor_id: string }
   | { action: "sensor"; op: "delete"; sensor_id: string };
 
+/** People's operations, from the hub API (bound human session). */
+export type SensorManageOp =
+  | "approve"
+  | "reject"
+  | "pause"
+  | "resume"
+  | "delete"
+  | "run";
+
+/** Proof a queued sensor wake carries; the hub rechecks it at execution. */
+export interface SensorExecutionAuthorization {
+  version: 1;
+  sensor_id: string;
+  project_id: string;
+  agent_id: string;
+  script_hash: string;
+  run_id: string;
+}
+
+/** Hub to host: run an approved script once. */
+export interface RunSensorRequest {
+  project_id: string;
+  sensor_id: string;
+  run_id: string;
+  language: SensorLanguage;
+  script: string;
+  timeout_seconds: number;
+  /** Absolute chat path of the agent; the script runs in its directory. */
+  path: string;
+}
+
+export interface RunSensorResult {
+  exit_code: number | null;
+  timed_out: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+/** Hub to host: start a turn in the agent's thread. */
+export interface SensorWakeDelivery {
+  /** The approving account: the turn runs and is paid as this account. */
+  account_id: string;
+  path: string;
+  thread_id: string;
+  prompt: string;
+  title: string;
+  authorization: SensorExecutionAuthorization;
+}
+
+/** Requests routed to the project's bay. */
+export type SensorControlRequest =
+  | { op: "list"; agent_id?: string; sensor_id?: string }
+  | { op: SensorManageOp; sensor_id: string; revision?: number }
+  | {
+      op: "authorize-execution";
+      host_id: string;
+      authorization: SensorExecutionAuthorization;
+    };
+
 const LINE_CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 // Scripts may contain tabs and newlines; reject other controls and bidi
