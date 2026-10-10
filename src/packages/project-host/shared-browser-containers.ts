@@ -222,9 +222,13 @@ export async function startSharedBrowserContainer(
     `cocalc.browser.network=${network}`,
     "--label",
     `cocalc.browser.key=${keyFingerprint ?? ""}`,
-    // Chromium's own sandbox needs to chroot in its namespaces; nothing else.
+    // Chromium's own sandbox needs to chroot in its namespaces.  And CoCalc's
+    // node may carry cap_net_bind_service (the host's, to serve port 443):
+    // exec fails without it in the bounding set.  Both only within this
+    // container's rootless user namespace and network.
     "--cap-drop=all",
     "--cap-add=SYS_CHROOT",
+    "--cap-add=NET_BIND_SERVICE",
     "--security-opt=no-new-privileges",
     "--read-only",
     "--tmpfs",
