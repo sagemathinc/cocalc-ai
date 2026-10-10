@@ -293,7 +293,6 @@ import {
   listPendingAcpAttentionResponseDispatches,
   listPendingAcpActions,
   markAllPendingAcpSyncAttentionStale,
-  markAcpAsyncAttentionSuperseded,
   resolveAcpAttention,
   submitAcpAttentionResponse,
   updateAcpAttentionDelivery,
@@ -11557,20 +11556,9 @@ async function enqueueChatAcpTurn({
     `${request.chat.project_id ?? request.project_id ?? ""}`.trim();
   const chatPath = `${request.chat.path ?? ""}`.trim();
   const threadId = `${request.chat.thread_id ?? ""}`.trim();
-  if (projectId && chatPath && threadId) {
-    const superseded = markAcpAsyncAttentionSuperseded({
-      project_id: projectId,
-      path: chatPath,
-      thread_id: threadId,
-      reason: "A newer user message superseded this question",
-    });
-    for (const record of superseded) {
-      void publishStoredAttentionNoticeBestEffort({
-        client: conatClient,
-        record,
-      });
-    }
-  }
+  // Unanswered questions stay answerable when another turn starts (an
+  // answer to a sibling question, a new message, a wake): people answer
+  // them, or dismiss them, in their own time.
   const { job: row, canceled } = enqueueAcpJobCancelingQueuedRecoveries(
     request,
     {

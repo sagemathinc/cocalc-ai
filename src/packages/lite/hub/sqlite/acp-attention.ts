@@ -688,39 +688,6 @@ export function markAllPendingAcpSyncAttentionStale(
     .filter((record): record is AcpAttentionStoredRecord => record != null);
 }
 
-export function markAcpAsyncAttentionSuperseded(opts: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-  reason: string;
-}): AcpAttentionStoredRecord[] {
-  ensureInit();
-  const now = Date.now();
-  const db = getAcpDatabase();
-  const pending = db
-    .prepare(
-      `SELECT attention_id FROM ${TABLE}
-       WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND source_kind = 'codex_async_question' AND state = 'pending'
-         AND response_id IS NULL`,
-    )
-    .all(opts.project_id, opts.path, opts.thread_id) as Array<{
-    attention_id: string;
-  }>;
-  if (pending.length === 0) return [];
-  const ids = pending.map(({ attention_id }) => attention_id);
-  const placeholders = ids.map(() => "?").join(", ");
-  db.prepare(
-    `UPDATE ${TABLE}
-     SET state = 'superseded', resolution_reason = ?, resolved_at = ?, updated_at = ?
-     WHERE attention_id IN (${placeholders}) AND state = 'pending'
-       AND response_id IS NULL`,
-  ).run(opts.reason, now, now, ...ids);
-  return ids
-    .map((attention_id) => getAcpAttention(attention_id))
-    .filter((record): record is AcpAttentionStoredRecord => record != null);
-}
-
 export function updateAcpAttentionDelivery(opts: {
   attention_id: string;
   account_id: string;

@@ -13,7 +13,6 @@ import {
   listPendingAcpActions,
   listPendingAcpAttentionResponseDispatches,
   markAllPendingAcpSyncAttentionStale,
-  markAcpAsyncAttentionSuperseded,
   markAcpSyncAttentionStale,
   submitAcpAttentionResponse,
   resolveAcpAttention,
@@ -464,39 +463,6 @@ describe("ACP attention storage", () => {
       }),
     ]);
     expect(getAcpAttention(live.attention_id)?.state).toBe("pending");
-  });
-
-  it("supersedes unanswered async questions but preserves submitted ones", () => {
-    const unanswered = createAttention({
-      source_kind: "codex_async_question",
-      source_id: "async-1",
-    });
-    const answered = createAttention({
-      source_kind: "codex_async_question",
-      source_id: "async-2",
-    });
-    submitAcpAttentionResponse({
-      attention_id: answered.attention_id,
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      response_id: "response-1",
-      answers: { choice: ["Yes"] },
-    });
-
-    expect(
-      markAcpAsyncAttentionSuperseded({
-        project_id: PROJECT_ID,
-        path: "agent.chat",
-        thread_id: "thread-1",
-        reason: "newer user message",
-      }),
-    ).toEqual([
-      expect.objectContaining({
-        attention_id: unanswered.attention_id,
-        state: "superseded",
-      }),
-    ]);
-    expect(getAcpAttention(answered.attention_id)?.state).toBe("pending");
   });
 
   it("allows one deliberate retry of a stale asynchronous answer", () => {
