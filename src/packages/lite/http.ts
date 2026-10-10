@@ -44,6 +44,7 @@ import {
   authorizeLiteSiteSettings,
   configureLiteSiteSettingsFreshAuth,
 } from "./site-settings-fresh-auth";
+import { trimSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("lite:static");
 
@@ -310,7 +311,7 @@ function toPrefixRelative(rawUrl: string, target: string): string {
   const parsed = new URL(
     `http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`,
   );
-  const trimmed = parsed.pathname.replace(/^\/+|\/+$/g, "");
+  const trimmed = trimSlashes(parsed.pathname);
   if (!trimmed) {
     return target;
   }

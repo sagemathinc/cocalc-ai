@@ -9,6 +9,7 @@ import {
 } from "./supervision-events";
 import { readProjectHostActivitySnapshot } from "./health-progress";
 import { getProjectHostProcessTitle } from "./process-role";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
@@ -1225,7 +1226,7 @@ function healthCheckUrl(
   if (explicit) {
     return explicit.endsWith("/healthz")
       ? explicit
-      : `${explicit.replace(/\/+$/, "")}/healthz`;
+      : `${trimTrailingSlashes(explicit)}/healthz`;
   }
   // The daemon watchdog runs on the host itself, so it must not depend on the
   // externally routed project-host URL. Fresh hosts can legitimately serve

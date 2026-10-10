@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { trimTrailingSlashes } from "./linear-text";
+
 export const PUBLIC_DIRECTORY_SHARE_LABEL_PREFIX = "system/public-share/";
 export const DEFAULT_MAX_PUBLIC_DIRECTORY_SHARES_PER_ACCOUNT = 1000;
 export const MAX_PUBLIC_DIRECTORY_SHARE_PROJECT_PATH_LENGTH = 200;
@@ -42,7 +44,7 @@ function normalizeProjectPath(path: string | null | undefined): string {
   }
   value = value.replace(/^\/home\/user\/?/, "");
   value = value.replace(/^\/root\/?/, "");
-  value = value.replace(/^\/+/, "").replace(/\/+$/, "");
+  value = trimTrailingSlashes(value.replace(/^\/+/, ""));
   return value === "" ? "." : value;
 }
 
