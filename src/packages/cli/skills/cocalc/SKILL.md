@@ -693,8 +693,10 @@ then its existing context and page, Puppeteer `connect({ browserURL: cdp })`,
 `chrome-devtools-mcp --browser-url <cdp>`). Disconnect when done; do not close
 the browser or its last page.
 
-- While the human drives, your page actions wait until they hand back. Do not
-  treat the wait as a hang.
+- While the human drives, your commands wait until they hand back (all but
+  protocol housekeeping, e.g. attaching to a tab). Do not treat the wait as a
+  hang, and never work around it, e.g. through another connection to the
+  browser: take-over is a cooperation rule, not a barrier.
 - For logins, CAPTCHAs, payments or anything needing the human's judgment or
   credentials, ask them to take over:
   `cocalc project browser ask-human --message "Please log in" --wait`.

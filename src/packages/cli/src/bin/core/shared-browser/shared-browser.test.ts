@@ -3,7 +3,12 @@ import { test } from "node:test";
 
 import { networkHint } from "./agent-page";
 import { pickSelectExpression, selectScript } from "./page-script";
-import { clampZoom, HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
+import {
+  clampZoom,
+  heldWhileHumanDrives,
+  normalizeUrl,
+  resolveProjectFile,
+} from "./server";
 import {
   BUNDLED_CHROMIUM,
   connectCommandFor,
@@ -14,7 +19,7 @@ import {
   sharedBrowserTarget,
 } from "./service";
 
-test("while the human drives, page actions are held but housekeeping passes", () => {
+test("while the human drives, everything waits but housekeeping that acts on no page (fail closed)", () => {
   for (const method of [
     "Input.dispatchMouseEvent",
     "Input.insertText",
@@ -27,20 +32,39 @@ test("while the human drives, page actions are held but housekeeping passes", ()
     "Target.closeTarget",
     "Target.activateTarget",
     "DOM.setFileInputFiles",
+    // Bypasses of the old denylist (#939 review):
+    "Target.sendMessageToTarget",
+    "Network.setCookie",
+    "Network.setCookies",
+    "Storage.setCookies",
+    "Storage.getCookies",
+    "DOM.setAttributeValue",
+    "DOM.setOuterHTML",
+    "Page.addScriptToEvaluateOnNewDocument",
+    "Page.captureScreenshot",
+    "Debugger.enable",
+    "Fetch.enable",
+    "Emulation.setDeviceMetricsOverride",
+    "Browser.setDownloadBehavior",
+    "Target.exposeDevToolsProtocol",
+    // Unknown and malformed methods wait too.
+    "Some.futureMethod",
+    "",
+    undefined,
+    42,
   ])
-    assert.ok(HELD_WHILE_HUMAN_DRIVES.test(method), method);
+    assert.ok(heldWhileHumanDrives(method), String(method));
   for (const method of [
     "Runtime.runIfWaitingForDebugger",
     "Runtime.enable",
     "Page.enable",
     "Page.getFrameTree",
-    "Page.addScriptToEvaluateOnNewDocument",
     "Target.setAutoAttach",
     "Target.attachToTarget",
-    "Network.enable",
-    "Page.navigatedWithinDocument",
+    "Target.getTargets",
+    "Browser.getVersion",
   ])
-    assert.ok(!HELD_WHILE_HUMAN_DRIVES.test(method), method);
+    assert.ok(!heldWhileHumanDrives(method), method);
 });
 
 test("the address bar accepts URLs, hosts and searches but not other schemes", () => {
@@ -206,4 +230,33 @@ test("page zoom stays between 25% and 500%, in hundredths", () => {
   assert.equal(clampZoom(9), 5);
   assert.equal(clampZoom("x"), 1);
   assert.equal(clampZoom(undefined), 1);
+});
+
+test("files offered to a page's file chooser stay inside the home directory", () => {
+  const { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } =
+    require("node:fs");
+  const { tmpdir } = require("node:os");
+  const { join } = require("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "upload-test-"));
+  const home = join(dir, "home");
+  const outside = join(dir, "secret.txt");
+  try {
+    mkdirSync(join(home, "docs"), { recursive: true });
+    writeFileSync(join(home, "docs", "report.pdf"), "ok");
+    writeFileSync(outside, "secret");
+    symlinkSync(outside, join(home, "link-out"));
+    symlinkSync(join(home, "docs", "report.pdf"), join(home, "link-in"));
+    const real = require("node:fs").realpathSync(join(home, "docs", "report.pdf"));
+    assert.equal(resolveProjectFile("docs/report.pdf", home), real);
+    assert.equal(resolveProjectFile(join(home, "docs/report.pdf"), home), real);
+    assert.equal(resolveProjectFile("link-in", home), real);
+    assert.equal(resolveProjectFile("link-out", home), null);
+    assert.equal(resolveProjectFile("../secret.txt", home), null);
+    assert.equal(resolveProjectFile(outside, home), null);
+    assert.equal(resolveProjectFile("/run/secrets/cocalc/COCALC_BROWSER_KEY", home), null);
+    assert.equal(resolveProjectFile("docs", home), null);
+    assert.equal(resolveProjectFile("missing.txt", home), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -167,7 +167,7 @@ export function AppArtifact({
         Modal.confirm({
           title: "Forget all sign-ins?",
           content:
-            "Every web browser in this project is signed out of all websites, and the sign-ins in copies of them (snapshots, backups) can no longer be read. Open pages stay open. Agents and you sign in again as needed.",
+            "Every web browser in this project starts over with an empty profile, signed out of all websites; open pages stay open. Cookies in old copies (snapshots, backups) can no longer be read, but sites' local storage in those copies can, and some sites keep sign-in tokens there. To end a session everywhere, sign out on the site itself.",
           okText: "Forget sign-ins",
           okButtonProps: { danger: true },
           onOk: () =>

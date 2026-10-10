@@ -14,9 +14,9 @@
  * the screencast; those are reported to the viewer, which draws them.
  */
 import http from "node:http";
-import { existsSync, statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { CdpClient, type CdpEvent } from "./cdp-client";
@@ -145,12 +145,35 @@ export interface SharedBrowserServerOptions {
 
 const MAX_VIEWPORT = 3840;
 
-// Agent commands that act on the page.  While the human drives, these wait
-// for hand-back; everything else (protocol housekeeping such as enabling
-// domains or letting a new popup start) passes, so the agent's client keeps
-// working and pages opened by the human do not stall.
-export const HELD_WHILE_HUMAN_DRIVES =
-  /^(Input\.|Page\.(navigate|reload|navigateToHistoryEntry|stopLoading|handleJavaScriptDialog|bringToFront|close)$|Target\.(createTarget|closeTarget|activateTarget)$|Runtime\.(evaluate|callFunctionOn)$|DOM\.setFileInputFiles$)/;
+// While the human drives, an agent's commands wait for hand-back, all but
+// this housekeeping, which acts on no page: a client keeps its sessions (and
+// a popup the human opens starts, which waits for runIfWaitingForDebugger).
+// Fail closed: anything else waits, including commands tunneled to a target
+// (Target.sendMessageToTarget), cookies, DOM changes, scripts, screenshots.
+// This pauses agents that use the browser through here; it is no barrier
+// against code in the project, which can reach Chromium directly.
+export const PASSES_WHILE_HUMAN_DRIVES: ReadonlySet<string> = new Set([
+  "Browser.getVersion",
+  "Target.getTargets",
+  "Target.getTargetInfo",
+  "Target.getBrowserContexts",
+  "Target.setDiscoverTargets",
+  "Target.setAutoAttach",
+  "Target.attachToTarget",
+  "Target.attachToBrowserTarget",
+  "Target.detachFromTarget",
+  "Runtime.runIfWaitingForDebugger",
+  "Runtime.enable",
+  "Runtime.disable",
+  "Page.enable",
+  "Page.disable",
+  "Page.getFrameTree",
+  "Page.setLifecycleEventsEnabled",
+]);
+
+export function heldWhileHumanDrives(method: unknown): boolean {
+  return typeof method !== "string" || !PASSES_WHILE_HUMAN_DRIVES.has(method);
+}
 
 export class SharedBrowserServer {
   // The attached browser (none while waiting for the user's computer).
@@ -1267,6 +1290,16 @@ export class SharedBrowserServer {
         error:
           "the browser is not connected: it runs on the user's computer, which is not connected now",
       });
+    // These act on the browser (open, close or bring tabs to the front): not
+    // while the human drives.  Listing passes.
+    if (
+      this.state.driver === "human" &&
+      /^\/json\/(new|close|activate)\b/.test(url.pathname)
+    )
+      return json(res, 409, {
+        error:
+          "the human is driving this browser; try again after they hand it back",
+      });
     try {
       const upstream = await fetch(
         `${this.chromeHttp}${url.pathname}${url.search}`,
@@ -1385,11 +1418,7 @@ export class SharedBrowserServer {
     client: WebSocket,
   ): void {
     const method = parseMessage(data.toString())?.method;
-    if (
-      this.state.driver === "human" &&
-      typeof method === "string" &&
-      HELD_WHILE_HUMAN_DRIVES.test(method)
-    ) {
+    if (this.state.driver === "human" && heldWhileHumanDrives(method)) {
       this.held.push({ client, deliver: () => deliver(data) });
       if (!this.state.agentWaiting) {
         this.state.agentWaiting = true;
@@ -1525,11 +1554,18 @@ export function normalizeUrl(input: string): string | null {
 
 // Files offered to a page's file chooser come from the project, relative to
 // the home directory.
-export function resolveProjectFile(path: string): string | null {
-  const home = homedir();
-  const full = isAbsolute(path) ? path : resolve(home, path);
+// Only regular files inside the home directory, after resolving symlinks:
+// never e.g. /run/secrets, or a link that points out of home.
+export function resolveProjectFile(
+  path: string,
+  home: string = homedir(),
+): string | null {
   try {
-    return existsSync(full) && statSync(full).isFile() ? full : null;
+    const root = realpathSync(home);
+    const real = realpathSync(isAbsolute(path) ? path : resolve(home, path));
+    const inside = relative(root, real);
+    if (!inside || inside.startsWith("..") || isAbsolute(inside)) return null;
+    return statSync(real).isFile() ? real : null;
   } catch {
     return null;
   }

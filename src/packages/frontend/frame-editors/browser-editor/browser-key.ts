@@ -41,8 +41,10 @@ export function ensureSharedBrowserKey(project_id: string): Promise<void> {
   return done;
 }
 
-// A new key: every browser in the project restarts signed out, and the
-// sign-ins in copies of their profiles (snapshots, backups) are unreadable.
+// A new key: every browser in the project restarts with an empty profile,
+// and the cookies in copies of the old profiles (snapshots, backups) can no
+// longer be read.  Not their local storage or IndexedDB, which Chromium does
+// not encrypt and where some sites keep sign-in tokens.
 export async function forgetSharedBrowserSignIns(
   project_id: string,
 ): Promise<void> {

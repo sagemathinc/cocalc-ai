@@ -11,6 +11,7 @@ import {
   launchBrowser,
 } from "../local-browser";
 import { SharedBrowserPage } from "./agent-page";
+import { CdpClient } from "./cdp-client";
 import { profileSecret, startBrowserKeyring } from "./keyring";
 import { SharedBrowserServer } from "./server";
 import { sharedBrowserChromeArgs } from "./service";
@@ -481,6 +482,230 @@ test(
       await server.close();
       await browser.stop();
       await profile.cleanup();
+    }
+  },
+);
+
+test(
+  "take-over is fail closed: tunneled, cookie, DOM and script commands and tab HTTP endpoints wait while the human drives",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const WebSocket = require("ws");
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { cdpPort } = await server.start();
+    // Chromium itself, to see what really happened.
+    const direct = await CdpClient.connect(version.webSocketDebuggerUrl);
+    const proxied = await (
+      await fetch(`http://127.0.0.1:${cdpPort}/json/version`)
+    ).json();
+    const ws = new WebSocket(proxied.webSocketDebuggerUrl);
+    await new Promise((r, j) => {
+      ws.once("open", r);
+      ws.once("error", j);
+    });
+    const replies = new Map<number, any>();
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString());
+      if (typeof msg.id === "number") replies.set(msg.id, msg);
+    });
+    let nextId = 1;
+    const send = (method: string, params: any = {}, sessionId?: string) => {
+      const id = nextId++;
+      ws.send(JSON.stringify({ id, method, params, sessionId }));
+      return id;
+    };
+    const reply = async (id: number, ms = 5000) => {
+      const deadline = Date.now() + ms;
+      while (!replies.has(id) && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 25));
+      return replies.get(id);
+    };
+    const title = async () => {
+      const { targetInfos } = await direct.send("Target.getTargets");
+      return targetInfos.find((t: any) => t.type === "page")?.title;
+    };
+    try {
+      const page = (
+        await reply(send("Target.getTargets"))
+      ).result.targetInfos.find((t: any) => t.type === "page");
+      const flat = (
+        await reply(
+          send("Target.attachToTarget", { targetId: page.targetId, flatten: true }),
+        )
+      ).result.sessionId;
+      await reply(
+        send("Runtime.evaluate", { expression: "document.title = 'before'" }, flat),
+      );
+      server.setDriver("human");
+
+      // Housekeeping still passes: a client keeps working.
+      assert.ok(await reply(send("Target.getTargets")), "getTargets passes");
+      const tunnel = (
+        await reply(
+          send("Target.attachToTarget", { targetId: page.targetId, flatten: false }),
+        )
+      )?.result?.sessionId;
+      assert.ok(tunnel, "attaching passes");
+
+      // Everything that acts waits: no reply, and no effect.
+      const held = [
+        send("Target.sendMessageToTarget", {
+          sessionId: tunnel,
+          message: JSON.stringify({
+            id: 1,
+            method: "Runtime.evaluate",
+            params: { expression: "document.title = 'tunneled'" },
+          }),
+        }),
+        send("Storage.setCookies", {
+          cookies: [{ name: "planted", value: "1", domain: "example.com", path: "/" }],
+        }),
+        send("DOM.setAttributeValue", { nodeId: 1, name: "x", value: "y" }, flat),
+        send(
+          "Page.addScriptToEvaluateOnNewDocument",
+          { source: "document.title = 'injected'" },
+          flat,
+        ),
+        send("Runtime.evaluate", { expression: "document.title = 'direct'" }, flat),
+      ];
+      await new Promise((r) => setTimeout(r, 1000));
+      for (const id of held) assert.equal(replies.has(id), false, `held ${id}`);
+      assert.equal(await title(), "before");
+      const { cookies } = await direct.send("Storage.getCookies");
+      assert.equal(cookies.some((c: any) => c.name === "planted"), false);
+      assert.equal(server.getState().agentWaiting, true);
+
+      // The tab endpoints of the HTTP side are refused meanwhile.
+      const opened = await fetch(
+        `http://127.0.0.1:${cdpPort}/json/new?about:blank`,
+        { method: "PUT" },
+      );
+      assert.equal(opened.status, 409);
+      assert.equal(
+        (await fetch(`http://127.0.0.1:${cdpPort}/json/list`)).status,
+        200,
+      );
+
+      // Hand back: what waited is delivered, in order.
+      server.setDriver("agent");
+      for (const id of held) assert.ok(await reply(id), `delivered ${id}`);
+      const deadline = Date.now() + 5000;
+      while ((await title()) !== "direct" && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 100));
+      assert.equal(await title(), "direct");
+    } finally {
+      ws.close();
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    }
+  },
+);
+
+test(
+  "a popup the human opens loads while they drive, with a Playwright agent connected",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { chromium } = require("playwright-core");
+    const { createServer } = require("node:http");
+    const site = createServer((req: any, res: any) => {
+      res.setHeader("content-type", "text/html");
+      res.end(
+        req.url === "/popup"
+          ? "<title>the popup</title>hi"
+          : `<title>opener</title><a href="/popup" target=_blank style="font-size:60px">open</a>`,
+      );
+    });
+    await new Promise<void>((resolve) =>
+      site.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    const server = new SharedBrowserServer({
+      chromeWebSocketUrl: version.webSocketDebuggerUrl,
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+    });
+    const { port, cdpPort } = await server.start();
+    const direct = await CdpClient.connect(version.webSocketDebuggerUrl);
+    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    const human = await chromium.launch({
+      executablePath: executable,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });
+    try {
+      const page = agent.contexts()[0].pages()[0];
+      await page.goto(`http://127.0.0.1:${site.address().port}/`);
+      const viewer = await human.newPage({
+        viewport: { width: 900, height: 600 },
+      });
+      await viewer.goto(`http://127.0.0.1:${port}/`);
+      await viewer.waitForFunction(
+        () => document.getElementById("status")?.textContent === "live",
+      );
+      await viewer.click("#driver button"); // take over
+      await viewer.waitForFunction(() =>
+        document
+          .querySelector("#driver button")
+          ?.textContent?.startsWith("Hand back"),
+      );
+      const canvas = (await viewer.locator("#screen").boundingBox())!;
+      await viewer.mouse.click(canvas.x + 40, canvas.y + 30);
+      // The popup starts and loads now, not after hand-back.
+      const deadline = Date.now() + 10_000;
+      let titles: string[] = [];
+      while (Date.now() < deadline) {
+        const { targetInfos } = await direct.send("Target.getTargets");
+        titles = targetInfos
+          .filter((t: any) => t.type === "page")
+          .map((t: any) => t.title);
+        if (titles.includes("the popup")) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(titles.includes("the popup"), JSON.stringify(titles));
+      assert.equal(server.getState().driver, "human");
+      // The agent gets the popup too, once it has the browser back.
+      const popup = agent.contexts()[0].waitForEvent("page", { timeout: 10_000 }).catch(() => null);
+      await viewer.click("#driver button"); // hand back
+      const pages = agent.contexts()[0].pages().map((p: any) => p.url());
+      assert.ok(
+        (await popup) || pages.some((u: string) => u.includes("the popup")),
+      );
+    } finally {
+      await agent.close().catch(() => {});
+      await human.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+      site.close();
     }
   },
 );

@@ -75,6 +75,10 @@ If you close the browser while you are driving, it is handed back to the
 agent after a short delay, so an agent never waits on a browser nobody is
 looking at.
 
+Taking over pauses agents that use the browser the normal way, through
+CoCalc. It is not a security barrier: a program in the project that is
+determined to control the browser can still reach it.
+
 ## Copy and paste
 
 - **Paste** with Ctrl+V (Cmd+V on a Mac or iPad) while you drive.
@@ -165,14 +169,17 @@ cookies in those copies are useless on their own. A browser that an agent
 starts before anyone has opened one keeps no sign-ins until you open it.
 
 To sign every browser in the project out of every website, click **Forget
-sign-ins** in the address bar. This replaces the key: the browsers restart
-signed out with the same pages open, and the sign-ins in snapshots and
-backups can no longer be read. Deleting the secret also signs them out, and
-they keep nothing until someone opens a browser again.
+sign-ins** in the address bar. This replaces the key and starts the browsers
+over with empty profiles and the same pages open. Cookies saved in copies of
+the old profiles (snapshots, backups) can then no longer be read. Deleting
+the secret also signs them out, and they keep nothing until someone opens a
+browser again.
 
-Sites also keep some data in a browser's local storage, which is not
-encrypted. Signing out of a site is still the surest way to end a session,
-because the site then ends it on its servers too.
+Only cookies are encrypted. Sites also keep data in a browser's local
+storage and IndexedDB, sometimes including sign-in tokens, and old copies of
+that stay readable. To end a session everywhere, sign out on the site (or
+revoke the session in the site's account settings): the site then ends it on
+its servers too.
 
 ## Projects without internet access
 
