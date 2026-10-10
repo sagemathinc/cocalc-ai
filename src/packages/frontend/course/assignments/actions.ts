@@ -659,8 +659,10 @@ export class AssignmentsActions {
             op_id,
           });
         if (!summary) {
+          // Not on the course project's bay or this account's: it may have
+          // been scheduled, before #1001, from a collaborator's bay, so don't
+          // turn the schedule off.
           this.set_assignment_fields(assignment.get("assignment_id"), {
-            auto_collect: false,
             auto_collect_error: "scheduled collection operation not found",
           });
           continue;
