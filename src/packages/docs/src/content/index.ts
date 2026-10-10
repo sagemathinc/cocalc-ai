@@ -22,6 +22,7 @@ export * from "./research";
 export * from "./self-hosting";
 export * from "./teaching";
 export * from "./terminal";
+export * from "./web-browser";
 export * from "./troubleshooting";
 export * from "./research-workflows";
 export * from "./research-remote";

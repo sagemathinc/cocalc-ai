@@ -19,6 +19,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #nav { display:flex; gap:4px; align-items:center; padding:4px 6px; background:var(--bg); border-bottom:1px solid var(--line); }
   #nav button { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 8px; cursor:pointer; }
   #nav button.off { opacity:.45; }
+  #nav #shutdown { color:#cf1322; border-color:#ffa39e; }
   #runson, #quality { border:1px solid var(--line); background:var(--bar); color:var(--fg); border-radius:4px; padding:2px 4px; }
   #url { flex:1; min-width:0; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--fg); }
   #driver { display:flex; align-items:center; gap:8px; padding:4px 8px; border-bottom:1px solid var(--line); }
@@ -67,6 +68,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <select id="quality" title="Picture quality: Sharp sends crisp text once the page is still; Fast uses less bandwidth">
       <option value="sharp">Sharp</option><option value="balanced">Balanced</option><option value="fast">Fast</option>
     </select>
+    <button id="shutdown" title="Shut down this browser (agents cannot use it until it is started again)" style="display:none">Shut down</button>
   </div>
   <div id="driver"><span class="msg"></span><button></button></div>
   <div id="stage">
@@ -259,6 +261,11 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     } else { dlg.style.display = "none"; delete dlg.querySelector("input").dataset.init; }
     renderSelect();
     $("filechooser").style.display = state.fileChooser && human() ? "block" : "none";
+  }
+  // In CoCalc, the page asks for confirmation and stops the app.
+  if (window.parent !== window) {
+    $("shutdown").style.display = "";
+    $("shutdown").onclick = () => window.parent.postMessage({ type: "cocalc-app-shutdown" }, "*");
   }
   $("runson").addEventListener("change", () => send({ type: "runsOn", value: $("runson").value }));
   // The page's panel may switch it back to the project.

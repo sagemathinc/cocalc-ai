@@ -7,7 +7,7 @@
 // agent and a human use together), through the project's authenticated app
 // proxy.  Opening the card starts the app if it is not running.
 
-import { Alert, Button, Flex, Spin } from "antd";
+import { Alert, Button, Flex, Modal, Spin } from "antd";
 import {
   type MutableRefObject,
   type ReactNode,
@@ -72,21 +72,63 @@ export function AppArtifact({
     }),
     [view, client, JSON.stringify(params ?? {})],
   );
-  useEffect(() => {
-    if (!onMessage) return;
-    const listener = (event: MessageEvent) => {
-      if (event.source && event.source === iframe.current?.contentWindow)
-        onMessage(event.data);
-    };
-    window.addEventListener("message", listener);
-    return () => window.removeEventListener("message", listener);
-  }, [onMessage, iframe]);
   const [src, setSrc] = useState<string>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
+  // Shut down by the user (the app's own "shut down" button).
+  const [stopped, setStopped] = useState(false);
+
+  // Waking must be off while it is shut down: otherwise any open viewer
+  // that reconnects starts it again.
+  const setWake = async (enabled: boolean) => {
+    const api = webapp_client.conat_client.projectApi({
+      project_id: projectId,
+    });
+    const spec = (await api.apps.getAppSpec(app.id)) as AppSpec;
+    if (spec.wake && spec.wake.enabled !== enabled)
+      await api.apps.upsertAppSpec({
+        ...spec,
+        wake: { ...spec.wake, enabled },
+      });
+    return api;
+  };
+  const shutdown = async () => {
+    const api = await setWake(false);
+    await api.apps.stopApp(app.id);
+    setSrc(undefined);
+    setStopped(true);
+  };
+  const start = async () => {
+    await setWake(true);
+    setStopped(false);
+    setAttempt((n) => n + 1);
+  };
+
+  useEffect(() => {
+    const listener = (event: MessageEvent) => {
+      if (!event.source || event.source !== iframe.current?.contentWindow)
+        return;
+      if (event.data?.type === "cocalc-app-shutdown") {
+        Modal.confirm({
+          title: `Shut down ${title}?`,
+          content:
+            "It stops until someone starts it again; agents cannot use it meanwhile. A .browser file keeps its logins; the chat's browser starts fresh.",
+          okText: "Shut down",
+          okButtonProps: { danger: true },
+          onOk: () =>
+            shutdown().catch((err) => setError(`${err?.message ?? err}`)),
+        });
+        return;
+      }
+      onMessage?.(event.data);
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, [onMessage, iframe, title, projectId, app.id]);
 
   const cacheKey = `${projectId}/${app.id}`;
   useEffect(() => {
+    if (stopped) return;
     let canceled = false;
     // Showing the app again (another tab or frame was in front) should be
     // instant: use the URL it had and check that it still runs meanwhile.
@@ -113,6 +155,14 @@ export function AppArtifact({
           )
         ).spec as AppSpec;
       }
+      // Opening it after someone shut it down starts it again.
+      if (spec.wake && spec.wake.enabled === false)
+        spec = (
+          await api.apps.upsertAppSpec({
+            ...spec,
+            wake: { ...spec.wake, enabled: true },
+          })
+        ).spec as AppSpec;
       let status;
       try {
         status = await api.apps.ensureRunning(app.id, {
@@ -139,8 +189,33 @@ export function AppArtifact({
     return () => {
       canceled = true;
     };
-  }, [projectId, app.id, attempt, query, cacheKey]);
+  }, [projectId, app.id, attempt, query, cacheKey, stopped]);
 
+  if (stopped)
+    return (
+      <Flex
+        align="center"
+        justify="center"
+        style={{ height: "100%", padding: 24 }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          title={`${title} is shut down`}
+          action={
+            <Button
+              type="primary"
+              style={{ marginLeft: 16 }}
+              onClick={() =>
+                start().catch((err) => setError(`${err?.message ?? err}`))
+              }
+            >
+              Start
+            </Button>
+          }
+        />
+      </Flex>
+    );
   if (error)
     return (
       <Flex
