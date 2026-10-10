@@ -194,9 +194,16 @@ export function normalizeProjectViewerPolicyPath(
 // Rule globs: "**" matches any run of characters, "*" any run within one
 // path segment, and everything else itself. Match them with an explicit
 // automaton: as a backtracking regular expression each "*" multiplied the
-// cost, so a rule with a few dozen stars stalled the host. Unlike that
-// expression, "**" also matches line terminators, which are legal in paths.
-function globTokens(pattern: string): WildcardToken[] {
+// cost, so a rule with a few dozen stars stalled the host.
+//
+// That expression compiled "**" to ".*", which stops at line terminators
+// (legal in paths). An include keeps exactly that, so no rule grants more
+// than it did. An exclude's "**" also crosses them, which only denies more:
+// "**/.env" now excludes "a\nb/.env" too.
+function globTokens(
+  pattern: string,
+  action: "include" | "exclude",
+): WildcardToken[] {
   const tokens: WildcardToken[] = [];
   for (let i = 0; i < pattern.length; i += 1) {
     const char = pattern[i];
@@ -205,7 +212,11 @@ function globTokens(pattern: string): WildcardToken[] {
       if (crossSlash) {
         i += 1;
       }
-      tokens.push({ kind: "run", crossSlash });
+      tokens.push(
+        crossSlash && action === "include"
+          ? { kind: "run", crossSlash, lineTerminators: false }
+          : { kind: "run", crossSlash },
+      );
     } else {
       tokens.push({ kind: "literal", char });
     }
@@ -225,9 +236,11 @@ function oversizedRulePath(rule: ProjectViewerReadRule): boolean {
 function viewerReadRuleMatches({
   rulePath,
   path,
+  action,
 }: {
   rulePath: string;
   path: string;
+  action: "include" | "exclude";
 }): boolean {
   const normalizedRulePath = normalizeProjectViewerPolicyPath(rulePath);
   if (normalizedRulePath == null) {
@@ -243,7 +256,7 @@ function viewerReadRuleMatches({
     const directory = normalizedRulePath.slice(0, -3);
     return path === directory || path.startsWith(`${directory}/`);
   }
-  return matchWildcard(globTokens(normalizedRulePath), path);
+  return matchWildcard(globTokens(normalizedRulePath, action), path);
 }
 
 export function viewerReadPolicyAllowsPath({
@@ -272,7 +285,13 @@ export function viewerReadPolicyAllowsPath({
       }
       continue;
     }
-    if (!viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
+    if (
+      !viewerReadRuleMatches({
+        rulePath: rule.path,
+        path: normalizedPath,
+        action: rule.action,
+      })
+    ) {
       continue;
     }
     if (rule.action === "exclude") {
@@ -345,7 +364,13 @@ export function viewerReadPolicyMayAllowDescendant({
     if (oversizedRulePath(rule)) {
       return false;
     }
-    if (viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
+    if (
+      viewerReadRuleMatches({
+        rulePath: rule.path,
+        path: normalizedPath,
+        action: "exclude",
+      })
+    ) {
       return false;
     }
   }

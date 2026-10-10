@@ -129,7 +129,9 @@ describe("matchWildcard", () => {
   function toRegExp(tokens: WildcardToken[], flags: string): RegExp {
     let source = "^";
     for (const token of tokens) {
-      if (token.kind === "run") {
+      if (token.kind === "run" && token.lineTerminators === false) {
+        source += token.crossSlash ? ".*" : "[^/\\n\\r\\u2028\\u2029]*";
+      } else if (token.kind === "run") {
         source += token.crossSlash ? "[^]*" : "[^/]*";
       } else if (token.kind === "any") {
         source += "[^]";
@@ -172,6 +174,30 @@ describe("matchWildcard", () => {
     }
   });
 
+  it("runs that stop at line terminators match like '.' without the s flag", () => {
+    const patterns = randomStrings(["*", "**", "?", "a", "/"], 600, 7);
+    const texts = randomStrings(
+      ["a", "/", "\n", "\r", "\u2028", "\u2029", "a\n"],
+      60,
+      8,
+    );
+    for (const pattern of patterns) {
+      const tokens = parse(pattern).map((token) =>
+        token.kind === "run"
+          ? { ...token, lineTerminators: false as const }
+          : token,
+      );
+      const re = toRegExp(tokens, "");
+      for (const text of texts) {
+        expect([pattern, text, matchWildcard(tokens, text)]).toEqual([
+          pattern,
+          text,
+          re.test(text),
+        ]);
+      }
+    }
+  });
+
   it("folds case exactly like a non-Unicode /i regular expression", () => {
     // Including characters whose case mappings cross into ASCII or change
     // length: long s, Kelvin sign, dotted capital I, sharp s.
@@ -199,6 +225,12 @@ describe("matchWildcard", () => {
         expect(matchWildcard(like, text)).toBe(false);
         expect(matchWildcard(glob, text)).toBe(false);
         expect(matchWildcard(parse(`${"a**".repeat(128)}a`), text)).toBe(true);
+        const stopping = parse(`${"a**".repeat(128)}b`).map((token) =>
+          token.kind === "run"
+            ? { ...token, lineTerminators: false as const }
+            : token,
+        );
+        expect(matchWildcard(stopping, text)).toBe(false);
       }),
     ).toBeLessThan(1000);
   });

@@ -137,11 +137,19 @@ export function firstCodeFenceBody(text: string, tag = ""): string | undefined {
 
 // A wildcard pattern for matchWildcard: literal code units, a single
 // arbitrary code unit, or a run of zero or more code units, optionally
-// excluding "/" (a glob "*" within one path segment).
+// excluding "/" (a glob "*" within one path segment) or line terminators
+// (like "." in a regular expression without the s flag).
 export type WildcardToken =
   | { kind: "literal"; char: string }
   | { kind: "any" }
-  | { kind: "run"; crossSlash: boolean };
+  | { kind: "run"; crossSlash: boolean; lineTerminators?: false };
+
+// What "." does not match without the s flag.
+function isLineTerminator(char: string): boolean {
+  return (
+    char === "\n" || char === "\r" || char === "\u2028" || char === "\u2029"
+  );
+}
 
 // Canonicalize a code unit the way a non-Unicode /i regular expression does
 // (ECMAScript Canonicalize): upper-case it, unless that would change its
@@ -199,9 +207,13 @@ export function matchWildcard(
       if (position === size) continue;
       const token = tokens[position];
       if (token.kind === "run") {
-        if (token.crossSlash || char !== "/") {
+        const stops = token.lineTerminators === false;
+        if (
+          (token.crossSlash || char !== "/") &&
+          !(stops && isLineTerminator(char))
+        ) {
           add(next, position, j + 1);
-          if (token.crossSlash) {
+          if (token.crossSlash && !stops) {
             crossingRun = Math.max(crossingRun, position);
           }
         }
