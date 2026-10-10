@@ -430,6 +430,22 @@ describe("course secrets across bays", () => {
   });
 });
 
+describe("project control across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, reads its state there. (Stopping needs a project host, which
+  // this cluster does not have.)
+  it("reads the project's state and active operation on its bay", async () => {
+    const state = await alice.client.call("projects.getProjectState", {
+      project_id: bob.project,
+    });
+    assert.ok(state && typeof state === "object", JSON.stringify(state));
+    const op = await alice.client.call("projects.getProjectActiveOperation", {
+      project_id: bob.project,
+    });
+    assert.ok(op === null || op?.project_id === bob.project);
+  });
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course

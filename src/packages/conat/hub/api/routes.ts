@@ -56,6 +56,11 @@ const collabInviteFromOpts: HubApiRoute = {
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  // Project control reads and stop run on the owning bay's handlers.
+  "projects.stop": projectFromOpts,
+  "projects.getProjectState": projectFromOpts,
+  "projects.getProjectAddress": projectFromOpts,
+  "projects.getProjectActiveOperation": projectFromOpts,
   "projects.setProjectMetadata": projectFromOpts,
   "projects.setProjectDeletionProtection": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
