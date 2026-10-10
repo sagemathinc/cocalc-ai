@@ -66,6 +66,8 @@ export interface DisposableRestoreWorkerResult {
   finished_at: string;
   duration_ms: number;
   error?: string;
+  /** Seconds spent in each worker stage, from older workers absent. */
+  stage_seconds?: Record<string, number>;
   postgres?: {
     repository_type?: "legacy-rustic" | "pgbackrest";
     backup_label?: string | null;
@@ -99,6 +101,20 @@ export interface DisposableGcpRestoreResult {
   machine_type: string;
   boot_disk_gb: number;
   cleanup: "deleted" | "already-deleted";
+}
+
+/** Bounded, numeric stage timings from an untrusted worker result. */
+export function workerStageSeconds(
+  worker: Pick<DisposableRestoreWorkerResult, "stage_seconds"> | undefined,
+): Record<string, number> | null {
+  const raw = worker?.stage_seconds;
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const seconds: Record<string, number> = {};
+  for (const [stage, value] of Object.entries(raw).slice(0, 32)) {
+    if (/^[a-z][a-z0-9-]{0,63}$/.test(stage) && Number.isFinite(value))
+      seconds[stage] = Math.max(0, Math.round(Number(value) * 10) / 10);
+  }
+  return seconds;
 }
 
 export function isRetryableDisposablePitrWalFailure(
@@ -239,22 +255,46 @@ import os
 import pathlib
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 CONFIG_PATH = "/root/cocalc-restore-drill.json"
 ROOT = pathlib.Path("/var/lib/cocalc-restore-drill")
 SNAPSHOT = ROOT / "snapshot"
 STARTED = time.time()
 STAGE = "bootstrap"
+# Seconds spent in each stage, reported with the result so a slow drill shows
+# where its time went.
+STAGE_SECONDS = {}
+_STAGE_ENTERED = time.time()
+
+def enter_stage(name):
+    global _STAGE_ENTERED
+    now = time.time()
+    STAGE_SECONDS[STAGE] = round(STAGE_SECONDS.get(STAGE, 0) + now - _STAGE_ENTERED, 1)
+    print(f"restore-drill: stage {STAGE} took {int(now - _STAGE_ENTERED)}s", flush=True)
+    _STAGE_ENTERED = now
+    return name
+
+def stage_seconds():
+    seconds = dict(STAGE_SECONDS)
+    seconds[STAGE] = round(seconds.get(STAGE, 0) + time.time() - _STAGE_ENTERED, 1)
+    return seconds
 
 with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
     CONFIG = json.load(handle)
 REPOSITORY_TYPE = CONFIG.get("repository_type", "legacy-rustic")
 ARCHIVE_GET_TIMEOUT_SECONDS = max(30, int(CONFIG.get("archive_get_timeout_seconds", 120)))
 ARCHIVE_GET_ATTEMPTS = max(1, min(5, int(CONFIG.get("archive_get_attempts", 3))))
+PGBACKREST_PROCESS_MAX = max(2, min(16, 2 * (os.cpu_count() or 1)))
+# A quarter of the worker's memory, the usual PostgreSQL guidance.
+POSTGRES_SHARED_BUFFERS_MB = max(128, min(16384, (
+    os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (4 * 1024 * 1024)
+)))
 WAL_REPLAY_STALL_TIMEOUT_SECONDS = max(
     ARCHIVE_GET_TIMEOUT_SECONDS * ARCHIVE_GET_ATTEMPTS + 30,
     int(CONFIG.get("wal_replay_stall_timeout_seconds", 600)),
@@ -273,6 +313,7 @@ def report(status, *, error=None, postgres=None, conat=None, disk=None):
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(STARTED)),
         "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "duration_ms": int((time.time() - STARTED) * 1000),
+        "stage_seconds": stage_seconds(),
     }
     if error:
         result["error"] = bounded(error)
@@ -301,6 +342,31 @@ def run(args, *, timeout=1800, env=None, capture=False, input_text=None, log=Tru
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.PIPE if capture else None,
     )
+
+QUICK_CHECK_WORKERS = max(2, min(16, 2 * (os.cpu_count() or 1)))
+
+def sqlite_quick_check(path, timeout=120):
+    """PRAGMA quick_check on a read-only connection, like sqlite3 -readonly."""
+    deadline = time.monotonic() + timeout
+    try:
+        connection = sqlite3.connect(
+            pathlib.Path(path).as_uri() + "?mode=ro", uri=True, timeout=5,
+            check_same_thread=False,
+        )
+    except sqlite3.Error as err:
+        return "open failed: " + bounded(err, 300)
+    try:
+        # Interrupt a check that runs past its deadline, like the old per-file
+        # process timeout.
+        connection.set_progress_handler(
+            lambda: 1 if time.monotonic() > deadline else 0, 100000,
+        )
+        rows = connection.execute("PRAGMA quick_check;").fetchall()
+        return "\n".join(str(row[0]) for row in rows)
+    except sqlite3.Error as err:
+        return "check failed: " + bounded(err, 300)
+    finally:
+        connection.close()
 
 def toml_string(value):
     return json.dumps(str(value))
@@ -372,7 +438,7 @@ disk_result = None
 container = "cocalc-bay-restore-drill"
 
 try:
-    STAGE = "install-tools"
+    STAGE = enter_stage("install-tools")
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(["apt-get", "update"], timeout=900)
     packages = [
@@ -394,7 +460,7 @@ try:
     os.chmod("/usr/local/bin/rustic", 0o755)
 
     if REPOSITORY_TYPE == "pgbackrest":
-        STAGE = "build-pgbackrest"
+        STAGE = enter_stage("build-pgbackrest")
         ROOT.mkdir(parents=True, exist_ok=True)
         version = CONFIG["pgbackrest_version"]
         source_sha256 = CONFIG["pgbackrest_source_sha256"]
@@ -413,7 +479,7 @@ try:
         os.chmod("/usr/local/bin/pgbackrest", 0o755)
         run(["/usr/local/bin/pgbackrest", "version"], timeout=60)
 
-    STAGE = "disk-preflight"
+    STAGE = enter_stage("disk-preflight")
     ROOT.mkdir(parents=True, exist_ok=True)
     usage_before = shutil.disk_usage(ROOT)
     if usage_before.free < int(CONFIG["minimum_free_bytes"]):
@@ -421,7 +487,7 @@ try:
             f"insufficient worker disk: free={usage_before.free} required={CONFIG['minimum_free_bytes']}"
         )
 
-    STAGE = "restore-rustic"
+    STAGE = enter_stage("restore-rustic")
     profile = pathlib.Path("/root/cocalc-restore-repo.toml")
     profile.write_text("\n".join([
         "[repository]",
@@ -445,7 +511,7 @@ try:
         CONFIG["snapshot_id"], str(SNAPSHOT),
     ], timeout=3600)
 
-    STAGE = "validate-conat"
+    STAGE = enter_stage("validate-conat")
     if REPOSITORY_TYPE == "pgbackrest":
         sync_dir = SNAPSHOT
     else:
@@ -454,21 +520,19 @@ try:
     db_files = sorted(sync_dir.rglob("*.db")) if sync_dir else []
     database_bytes = sum(path.stat().st_size for path in db_files)
     quick_passed = 0
-    for path in db_files:
-        checked = run(
-            ["sqlite3", "-readonly", str(path), "PRAGMA quick_check;"],
-            timeout=120,
-            capture=True,
-            log=False,
-        ).stdout.strip()
-        if checked != "ok":
-            raise RuntimeError(f"Conat SQLite quick_check failed for {path.name}: {bounded(checked, 500)}")
-        quick_passed += 1
-        if quick_passed % 1000 == 0 or quick_passed == len(db_files):
-            print(
-                f"restore-drill: SQLite quick_check progress {quick_passed}/{len(db_files)}",
-                flush=True,
-            )
+    # Hundreds of thousands of small databases: starting a sqlite3 process for
+    # each one dominated this stage. Check them in-process, several at a time
+    # (sqlite releases the GIL while it reads).
+    with ThreadPoolExecutor(max_workers=QUICK_CHECK_WORKERS) as pool:
+        for path, checked in zip(db_files, pool.map(sqlite_quick_check, db_files)):
+            if checked != "ok":
+                raise RuntimeError(f"Conat SQLite quick_check failed for {path.name}: {bounded(checked, 500)}")
+            quick_passed += 1
+            if quick_passed % 1000 == 0 or quick_passed == len(db_files):
+                print(
+                    f"restore-drill: SQLite quick_check progress {quick_passed}/{len(db_files)}",
+                    flush=True,
+                )
     catalogs = sorted(sync_dir.rglob("catalog.sqlite")) if sync_dir else []
     catalog_status = None
     if catalogs:
@@ -492,7 +556,7 @@ try:
     if CONFIG["require_conat"] and (sync_dir is None or not db_files):
         raise RuntimeError("backup requires Conat validation but no restored .db files were found")
 
-    STAGE = "prepare-postgres"
+    STAGE = enter_stage("prepare-postgres")
     pgbackrest_config = None
     if REPOSITORY_TYPE == "pgbackrest":
         required = (
@@ -525,7 +589,16 @@ try:
             "repo1-s3-region=auto",
             "repo1-s3-uri-style=path",
             "repo1-cipher-type=aes-256-cbc",
-            "process-max=2",
+            # Parallel transfers for the base restore and for WAL prefetch.
+            "process-max=" + str(PGBACKREST_PROCESS_MAX),
+            # Fetching each WAL segment only when PostgreSQL asks for it made
+            # replay wait about a second on R2 per 16 MB segment. Asynchronous
+            # archive-get prefetches the following segments in parallel into
+            # the spool; the per-segment wrapper and watchdog are unchanged.
+            "archive-async=y",
+            "archive-get-queue-max=1GiB",
+            "spool-path=/var/spool/pgbackrest",
+            "log-level-file=off",
             "io-timeout=" + str(io_timeout),
             "db-timeout=" + str(db_timeout),
             "protocol-timeout=" + str(protocol_timeout),
@@ -536,7 +609,7 @@ try:
             "",
         ]), encoding="utf-8")
         os.chmod(pgbackrest_config, 0o644)
-        STAGE = "restore-pgbackrest"
+        STAGE = enter_stage("restore-pgbackrest")
         run([
             "/usr/local/bin/pgbackrest",
             "--config=" + str(pgbackrest_config),
@@ -675,6 +748,8 @@ exit "$last_exit"
             "COPY pgbackrest.conf /etc/pgbackrest/pgbackrest.conf",
             "COPY cocalc-pgbackrest-archive-get /usr/local/bin/cocalc-pgbackrest-archive-get",
             "RUN chmod 755 /usr/local/bin/pgbackrest /usr/local/bin/cocalc-pgbackrest-archive-get && chmod 644 /etc/pgbackrest/pgbackrest.conf",
+            # The asynchronous archive-get spool, written by the postgres user.
+            "RUN mkdir -p /var/spool/pgbackrest && chown 999:999 /var/spool/pgbackrest",
         ])
     else:
         containerfile.extend([
@@ -687,7 +762,7 @@ exit "$last_exit"
     run(["chown", "-R", "999:999", str(pgdata)], timeout=600)
 
     if CONFIG["restore_mode"] == "snapshot":
-        STAGE = "postgres-snapshot-recovery"
+        STAGE = enter_stage("postgres-snapshot-recovery")
         # Single-user PostgreSQL performs the end-of-recovery checkpoint in the
         # startup process itself. This avoids Podman denying a signal to a
         # separate checkpointer while still exercising redo and checkpointing.
@@ -704,7 +779,7 @@ exit "$last_exit"
             CONFIG["postgres_database"],
         ], timeout=600, capture=True, input_text="SELECT 1;\n")
 
-    STAGE = "postgres-" + CONFIG["restore_mode"]
+    STAGE = enter_stage("postgres-" + CONFIG["restore_mode"])
     postgres_args = [
         "podman", "run", "--detach", "--name", container,
         "--security-opt=no-new-privileges",
@@ -732,6 +807,17 @@ exit "$last_exit"
             "--env", "COCALC_ARCHIVE_GET_ATTEMPTS=" + str(ARCHIVE_GET_ATTEMPTS),
         ]
         postgres_args.extend(["-c", "archive_mode=off", "-c", "archive_command=/bin/false"])
+    if CONFIG["restore_mode"] == "pitr":
+        # Replay throughput only: the VM is destroyed after validation, and the
+        # proof is the pre/post sentinel transactions, not on-disk durability.
+        # The image default of 128 MB shared_buffers makes redo of a large
+        # database re-read the same pages; restartpoint fsyncs add nothing.
+        postgres_args.extend([
+            "-c", "shared_buffers=" + str(POSTGRES_SHARED_BUFFERS_MB) + "MB",
+            "-c", "fsync=off",
+            "-c", "synchronous_commit=off",
+            "-c", "max_wal_size=16GB",
+        ])
     if CONFIG["restore_mode"] == "snapshot":
         # This VM is destroyed after validation. Avoid making the restore drill's
         # result depend on an end-of-recovery fsync of the entire restored tree;
@@ -856,7 +942,8 @@ exit "$last_exit"
         "repository_type": REPOSITORY_TYPE,
         "backup_label": CONFIG["backup_set_id"] if REPOSITORY_TYPE == "pgbackrest" else None,
         "restore_mode": CONFIG["restore_mode"],
-        "durability": "fsync-disabled-disposable-validation" if CONFIG["restore_mode"] == "snapshot" else "normal",
+        # Both modes run PostgreSQL with fsync=off on this throwaway VM.
+        "durability": "fsync-disabled-disposable-validation" if CONFIG["restore_mode"] in ("snapshot", "pitr") else "normal",
         "pitr_verified": CONFIG["restore_mode"] == "pitr",
         "pre_count": counts[0] if counts is not None else None,
         "post_count": counts[1] if counts is not None else None,
@@ -864,7 +951,7 @@ exit "$last_exit"
         "tables_verified": tables,
     }
 
-    STAGE = "complete"
+    STAGE = enter_stage("complete")
     usage_after = shutil.disk_usage(ROOT)
     disk_result = {
         "total_bytes": usage_after.total,

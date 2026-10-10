@@ -667,6 +667,7 @@ describe("bay-backup runner", () => {
             status: "passed",
             stage: "complete",
             duration_ms: 3_450_386,
+            stage_seconds: { "restore-pgbackrest": 812.44, "Bad Stage": 1 },
             conat: {
               database_count: 78_077,
               database_bytes: 3_841_990_656,
@@ -683,6 +684,10 @@ describe("bay-backup runner", () => {
     expect(status.restore_readiness.latest_backup_set_id).toBe(
       "20260806-061818F",
     );
+    // Stage timings survive into status, sanitized like the RPC result.
+    expect(
+      status.restore_readiness.last_restore_test_evidence?.worker_stage_seconds,
+    ).toEqual({ "restore-pgbackrest": 812.4 });
     expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
       "passed",
     );
