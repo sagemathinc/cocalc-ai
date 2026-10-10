@@ -183,7 +183,7 @@ Table({
     },
     wake_state: {
       type: "string",
-      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void); deferred while an earlier wake of the sensor was queued, then combined into a later wake.",
+      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void); deferred while an earlier wake of the sensor was queued, combining while a later wake that carries it is sent, then combined; superseded when the sensor is approved or resumed again (the permit is then void).",
     },
     wake_data: json(
       "A deferred wake (summary and data), until a later wake includes it.",

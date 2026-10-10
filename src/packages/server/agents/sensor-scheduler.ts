@@ -257,7 +257,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     let prompt: string | undefined;
     if (spec.kind === "prompt") {
       // The previous scheduled turn is still waiting: one is enough.
-      if (await hasQueuedWake(row.sensor_id, run_id)) {
+      if (await hasQueuedWake(row, run_id)) {
         outcome = "wake-coalesced";
         failed = false;
         summary = "Skipped: the previous scheduled turn has not started yet.";
@@ -378,12 +378,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       if (!watch) {
         // While an earlier wake still waits for the agent, hold this one;
         // the next wake (even from a quiet run) includes what was held.
-        const next = await coalesceScriptWake({
-          sensor_id: row.sensor_id,
-          run_id,
-          started,
-          wake,
-        });
+        const next = await coalesceScriptWake({ row, run_id, started, wake });
         if (next.kind === "deferred") {
           outcome = "wake-coalesced";
           summary = wake?.summary ?? null;
@@ -434,20 +429,33 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     // this prompt, in this thread, as the approver. Only its hash is kept.
     const permit = randomBytes(32).toString("base64url");
     try {
-      await db.query(
-        `UPDATE agent_sensor_runs SET wake_permit_hash=$2,
-           wake_prompt_sha256=$3, wake_account_id=$4, wake_path=$5,
-           wake_thread_id=$6, wake_state='issued'
-         WHERE run_id=$1`,
-        [
-          run_id,
-          sensorPermitHash(permit),
-          createHash("sha256").update(prompt).digest("hex"),
-          row.approved_by,
-          agent.path,
-          agent.thread_id,
-        ],
-      );
+      await db.transaction(async (client) => {
+        await client.query(
+          `UPDATE agent_sensor_runs SET wake_permit_hash=$2,
+             wake_prompt_sha256=$3, wake_account_id=$4, wake_path=$5,
+             wake_thread_id=$6, wake_state='issued'
+           WHERE run_id=$1`,
+          [
+            run_id,
+            sensorPermitHash(permit),
+            createHash("sha256").update(prompt).digest("hex"),
+            row.approved_by,
+            agent.path,
+            agent.thread_id,
+          ],
+        );
+        // The held wakes this one carries, durably before it is sent, so a
+        // later run can never choose them again.
+        if (combinedRuns.length > 0) {
+          const { rowCount } = await client.query(
+            `UPDATE agent_sensor_runs SET wake_state='combining', combined_into=$2
+             WHERE run_id = ANY($1::uuid[]) AND wake_state='deferred'`,
+            [combinedRuns, run_id],
+          );
+          if (rowCount !== combinedRuns.length)
+            throw new Error("the held wakes changed before they were sent");
+        }
+      });
     } catch (err) {
       // Nothing was sent, so the wake is unused.
       await sensorBudget.releaseWake(budget).catch(() => undefined);
@@ -480,7 +488,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       finished = spec.kind === "watch";
       error = `The wake may not have started a turn: ${errorText(err)}${finished ? " This watcher will not try again." : ""}`;
       // Held wakes are in that turn's prompt; never repeat them.
-      await markCombined(combinedRuns, run_id);
+      await settleCombined(run_id, true);
       return;
     }
     if ("not_sent" in delivered) {
@@ -493,6 +501,8 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
       );
       if (voided.length > 0) {
         await sensorBudget.releaseWake(budget).catch(() => undefined);
+        // Held for the next wake again.
+        await settleCombined(run_id, false);
         outcome = "wake-failed";
         failed = true;
         finished = false;
@@ -502,7 +512,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     }
     outcome = "wake";
     woke = 1;
-    await markCombined(combinedRuns, run_id);
+    await settleCombined(run_id, true);
   } catch (err) {
     error = errorText(err);
   } finally {
@@ -523,16 +533,29 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   }
 }
 
+/**
+ * Runs of this sensor under its current approval (spec and approval time):
+ * wakes from an earlier approval never block, join or ride along.
+ */
+const CURRENT_APPROVAL =
+  "sensor_id=$1 AND script_hash=$2 AND started_at >= $3::timestamptz";
+
 /** An earlier wake of this sensor is queued and its turn has not started. */
 async function hasQueuedWake(
-  sensor_id: string,
+  row: ClaimedSensor,
   run_id: string,
 ): Promise<boolean> {
   const { rows } = await agentStore().query(
-    `SELECT 1 FROM agent_sensor_runs WHERE sensor_id=$1 AND run_id<>$2
-       AND wake_state='issued'
-       AND started_at > now() - make_interval(hours => $3) LIMIT 1`,
-    [sensor_id, run_id, SENSOR_LIMITS.coalesceWindowHours],
+    `SELECT 1 FROM agent_sensor_runs WHERE ${CURRENT_APPROVAL}
+       AND run_id<>$4 AND wake_state='issued'
+       AND started_at > now() - make_interval(hours => $5) LIMIT 1`,
+    [
+      row.sensor_id,
+      row.script_hash,
+      row.approved_at_text,
+      run_id,
+      SENSOR_LIMITS.coalesceWindowHours,
+    ],
   );
   return rows.length > 0;
 }
@@ -542,12 +565,12 @@ async function hasQueuedWake(
  * deliver it together with what was held before (even after a quiet run).
  */
 async function coalesceScriptWake({
-  sensor_id,
+  row,
   run_id,
   started,
   wake,
 }: {
-  sensor_id: string;
+  row: ClaimedSensor;
   run_id: string;
   started: Date;
   wake: SensorWake | undefined;
@@ -557,7 +580,8 @@ async function coalesceScriptWake({
   | { kind: "deliver"; wake: SensorWake; runs: string[] }
 > {
   const db = agentStore();
-  if (await hasQueuedWake(sensor_id, run_id)) {
+  const approval = [row.sensor_id, row.script_hash, row.approved_at_text];
+  if (await hasQueuedWake(row, run_id)) {
     if (!wake) return { kind: "quiet" };
     await db.query(
       "UPDATE agent_sensor_runs SET wake_state='deferred', wake_data=$2 WHERE run_id=$1",
@@ -566,11 +590,11 @@ async function coalesceScriptWake({
     // Only the newest held wakes keep their data; older ones their summary.
     await db.query(
       `UPDATE agent_sensor_runs SET wake_data=jsonb_build_object('summary', wake_data->'summary')
-       WHERE sensor_id=$1 AND wake_state='deferred' AND wake_data ? 'data'
+       WHERE ${CURRENT_APPROVAL} AND wake_state='deferred' AND wake_data ? 'data'
          AND run_id NOT IN (SELECT run_id FROM agent_sensor_runs
-           WHERE sensor_id=$1 AND wake_state='deferred'
-           ORDER BY started_at DESC LIMIT $2)`,
-      [sensor_id, SENSOR_LIMITS.maxCoalescedWakes],
+           WHERE ${CURRENT_APPROVAL} AND wake_state='deferred'
+           ORDER BY started_at DESC LIMIT $4)`,
+      [...approval, SENSOR_LIMITS.maxCoalescedWakes],
     );
     return { kind: "deferred" };
   }
@@ -580,8 +604,8 @@ async function coalesceScriptWake({
     wake_data: SensorWake;
   }>(
     `SELECT run_id, started_at, wake_data FROM agent_sensor_runs
-     WHERE sensor_id=$1 AND wake_state='deferred' ORDER BY started_at`,
-    [sensor_id],
+     WHERE ${CURRENT_APPROVAL} AND wake_state='deferred' ORDER BY started_at`,
+    approval,
   );
   if (rows.length === 0)
     return wake ? { kind: "deliver", wake, runs: [] } : { kind: "quiet" };
@@ -595,17 +619,23 @@ async function coalesceScriptWake({
   };
 }
 
-async function markCombined(runs: string[], run_id: string): Promise<void> {
-  if (runs.length === 0) return;
+/**
+ * After a delivery: held wakes it carried are done (combined). If the host
+ * certainly sent nothing, they are held again for the next wake. Either way
+ * a failure here never repeats them: only held rows are ever chosen.
+ */
+async function settleCombined(run_id: string, sent: boolean): Promise<void> {
   await agentStore()
     .query(
-      `UPDATE agent_sensor_runs SET wake_state='combined', combined_into=$2,
-         wake_data=NULL
-       WHERE run_id = ANY($1::uuid[]) AND wake_state='deferred'`,
-      [runs, run_id],
+      sent
+        ? `UPDATE agent_sensor_runs SET wake_state='combined', wake_data=NULL
+           WHERE combined_into=$1 AND wake_state='combining'`
+        : `UPDATE agent_sensor_runs SET wake_state='deferred', combined_into=NULL
+           WHERE combined_into=$1 AND wake_state='combining'`,
+      [run_id],
     )
     .catch((err) =>
-      logger.warn("could not mark held sensor wakes delivered", {
+      logger.warn("could not settle held sensor wakes", {
         run_id,
         err: errorText(err),
       }),

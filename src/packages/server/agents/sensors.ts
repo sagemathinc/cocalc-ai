@@ -517,6 +517,8 @@ export async function sensorControlLocal(
     sql: string,
     values: unknown[],
     activateWithin?: number,
+    /** Approve or resume: wakes from the earlier approval never run. */
+    newApproval = false,
   ) => {
     const { rows } = await db.transaction(async (client) => {
       if (activateWithin !== undefined) {
@@ -529,11 +531,20 @@ export async function sensorControlLocal(
             `This project already has ${activateWithin} active sensors, the most your membership allows. Pause or delete one first.`,
           );
       }
-      return await client.query(
+      const updated = await client.query(
         `UPDATE agent_sensors SET ${sql}, revision=revision+1, updated=now()
          WHERE sensor_id=$1 AND revision=$2 RETURNING *`,
         [row.sensor_id, row.revision, ...values],
       );
+      if (newApproval && updated.rows[0])
+        await client.query(
+          `UPDATE agent_sensor_runs SET wake_state='superseded',
+             wake_permit_hash=NULL, wake_data=NULL
+           WHERE sensor_id=$1
+             AND wake_state IN ('issued', 'deferred', 'combining')`,
+          [row.sensor_id],
+        );
+      return updated;
     });
     if (!rows[0])
       throw new Error(
@@ -563,6 +574,7 @@ export async function sensorControlLocal(
           await projectImage(project_id),
         ],
         maxActive,
+        true,
       );
     }
     case "reject":
@@ -601,6 +613,7 @@ export async function sensorControlLocal(
           await projectImage(project_id),
         ],
         maxActive,
+        true,
       );
     }
     case "run": {
