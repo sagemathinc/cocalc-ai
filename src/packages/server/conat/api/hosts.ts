@@ -9174,8 +9174,15 @@ export async function relocateHost({
   return op;
 }
 
+// A relocation lease that has no operation yet is still being admitted:
+// relocateHost takes it, queues the operation and attaches its id within
+// seconds. Only an older one can be a leftover from an interrupted admission.
+const PREPARING_LEASE_ADMISSION_MS = 10 * 60_000;
+
 export async function setHostMaintenanceNotice({
   account_id,
+  browser_id,
+  session_hash,
   id,
   scheduled_for,
   expected_minutes,
@@ -9183,6 +9190,8 @@ export async function setHostMaintenanceNotice({
   clear,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
   scheduled_for?: string;
   expected_minutes?: number;
@@ -9203,6 +9212,27 @@ export async function setHostMaintenanceNotice({
           : "a relocation holds this host; only --clear can lift it",
       );
     }
+    const leaseAge = Date.now() - Date.parse(`${current.updated_at ?? ""}`);
+    if (
+      current.state === "preparing" &&
+      !current.op_id &&
+      !(leaseAge >= PREPARING_LEASE_ADMISSION_MS)
+    ) {
+      throw Object.assign(
+        new Error(
+          "a relocation is being admitted on this host; try again in a few minutes",
+        ),
+        { code: "host_maintenance_in_progress" },
+      );
+    }
+    // Lifting the fence lets project starts and provider reconciliation act
+    // on a host whose relocation did not finish, so it needs the same
+    // second-factor check as relocating. Notices themselves do not.
+    await requireDangerousHostMutationAuth({
+      account_id,
+      browser_id,
+      session_hash,
+    });
   }
   const changedMeanwhile = () =>
     Object.assign(
