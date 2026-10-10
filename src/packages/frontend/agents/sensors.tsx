@@ -371,6 +371,7 @@ function SensorCard({
         {sensor.status === "active" && !done && button("pause", "Pause")}
         {sensor.status === "paused" &&
           sensor.spec &&
+          kind !== "watch" &&
           button("resume", "Resume")}
         <Popconfirm
           title="Delete this sensor and its run log?"

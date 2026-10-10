@@ -523,8 +523,8 @@ async function finishRun(
     : (nextSensorRunAt(row.spec.schedule, Date.now()) ??
       Date.now() + 24 * 60 * 60_000);
   const day = utcDay(r.started);
-  await db
-    .query(
+  const { rows: recorded } = await db
+    .query<{ next_run_at: Date | null }>(
       `UPDATE agent_sensors SET lease_id=NULL, lease_until=NULL,
          last_run_at=$3, last_outcome=$4, consecutive_failures=$5,
          wakes_today=(CASE WHEN wakes_day=$6 THEN wakes_today ELSE 0 END)+$7,
@@ -538,7 +538,8 @@ async function finishRun(
          revision=CASE WHEN $10::text IS NOT NULL AND status='active'
            THEN revision+1 ELSE revision END,
          updated=now()
-       WHERE sensor_id=$1 AND lease_id=$2`,
+       WHERE sensor_id=$1 AND lease_id=$2
+       RETURNING next_run_at`,
       [
         row.sensor_id,
         r.run_id,
@@ -552,12 +553,13 @@ async function finishRun(
         pause ?? null,
       ],
     )
-    .catch((err) =>
+    .catch((err) => {
       logger.warn("could not record sensor run", {
         sensor_id: row.sensor_id,
         err: errorText(err),
-      }),
-    );
+      });
+      return { rows: [] as { next_run_at: Date | null }[] };
+    });
   await db
     .query(
       `DELETE FROM agent_sensor_runs WHERE sensor_id=$1 AND run_id NOT IN
@@ -566,8 +568,16 @@ async function finishRun(
       [row.sensor_id, SENSOR_LIMITS.keepRuns],
     )
     .catch(() => undefined);
-  // A watcher that fired or gave up no longer counts as active.
-  if (r.finished && row.spec.kind === "watch")
+  // A watcher that fired or gave up no longer counts as active, but only
+  // once this bay has recorded it as done (under this run's lease): if that
+  // failed, it could run again, so it stays counted until it expires. A
+  // delete that won the race releases it itself.
+  if (
+    r.finished &&
+    row.spec.kind === "watch" &&
+    recorded.length > 0 &&
+    recorded[0].next_run_at == null
+  )
     await releaseWatcher(row.approved_by, row.sensor_id);
   if (pause) logger.info("sensor paused", { sensor_id: row.sensor_id, pause });
 }

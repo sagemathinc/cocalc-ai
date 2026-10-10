@@ -902,6 +902,55 @@ describeDb("agent sensors", () => {
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
   });
 
+  test("a watcher is released only once its own bay recorded it as done", async () => {
+    const watch = () =>
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "file", path: "out.txt" },
+      }) as any;
+    const released = async (sensor_id: string) =>
+      (
+        await getPool().query(
+          "SELECT released_at FROM agent_sensor_events WHERE event_id=$1",
+          [sensor_id],
+        )
+      ).rows[0].released_at != null;
+    const lost = (await watch()).sensor;
+    // The project bay cannot record the result under this run's lease.
+    host.deliverAgentSensorWake.mockImplementationOnce(async () => {
+      await getPool().query(
+        "UPDATE agent_sensors SET lease_id=gen_random_uuid() WHERE sensor_id=$1",
+        [lost.sensor_id],
+      );
+      return { message_id: "m" };
+    });
+    await makeDue(lost.sensor_id);
+    await runDue();
+    expect(await released(lost.sensor_id)).toBe(false);
+    const done = (await watch()).sensor;
+    await makeDue(done.sensor_id);
+    await runDue();
+    expect(await released(done.sensor_id)).toBe(true);
+    // Done is final: people can neither run nor resume a watcher.
+    await expect(
+      sensorControlLocal(owner, project_id, {
+        op: "run",
+        sensor_id: done.sensor_id,
+      }),
+    ).rejects.toThrow(/watcher is done/);
+    await sensorControlLocal(owner, project_id, {
+      op: "pause",
+      sensor_id: done.sensor_id,
+    });
+    await expect(
+      sensorControlLocal(owner, project_id, {
+        op: "resume",
+        sensor_id: done.sensor_id,
+      }),
+    ).rejects.toThrow(/cannot be resumed/);
+  });
+
   test("a wake the host certainly did not send is voided and given back", async () => {
     limits.sensor_max_wakes_per_day = 1;
     const set = (await agentSensorRequest(run, agent, {

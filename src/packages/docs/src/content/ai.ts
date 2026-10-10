@@ -662,7 +662,8 @@ run, and how many times it woke the agent today (UTC).
 - **Run now** runs it once, outside its schedule.
 - **Pause** stops scheduled runs; **Resume** starts them again. Whoever
   resumes a sensor takes over its approval, so its runs and wakes are then
-  theirs.
+  theirs. Watchers run once and can't be resumed; ask the agent to set a new
+  one.
 - **Run log** lists recent runs with their output and errors. The agent can
   read its own sensors' logs too.
 - **Delete** removes the sensor and its log.

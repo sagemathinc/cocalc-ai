@@ -581,6 +581,12 @@ export async function sensorControlLocal(
     case "resume": {
       if (row.status !== "paused" || !row.spec)
         throw new Error("only a paused, approved sensor can be resumed");
+      // A watcher's place in its account's budget is held only until it is
+      // done or expires, so it never comes back: the agent sets a new one.
+      if (row.spec.kind === "watch")
+        throw new Error(
+          "a watcher cannot be resumed; ask the agent to set a new one",
+        );
       const maxActive = await assertCanActivate(account_id, row, row.spec);
       const next = nextSensorRunAt(row.spec.schedule, Date.now());
       // Whoever resumes takes over the approval: runs and wakes are theirs,
@@ -598,6 +604,8 @@ export async function sensorControlLocal(
     }
     case "run": {
       if (row.status !== "active") throw new Error("sensor is not active");
+      if (row.spec?.kind === "watch" && row.next_run_at == null)
+        throw new Error("this watcher is done");
       if (
         row.last_run_at &&
         Date.now() - new Date(row.last_run_at).valueOf() < MANUAL_RUN_MIN_GAP_MS
