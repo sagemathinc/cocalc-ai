@@ -56,7 +56,11 @@ async function readSpec(opts: { file?: string; stdin?: boolean }) {
   }
 }
 
-/** Run a spec's script here, the way CoCalc would, and report the result. */
+/**
+ * Run a spec's script here with a sensor's clean environment and report the
+ * result. Scheduled runs use CoCalc's standard image instead of this project's
+ * RootFS, so software only this project has will be missing there.
+ */
 async function testSpec(spec: any) {
   const checked = validateSensorSpec(spec, {
     minIntervalMinutes: 1,
@@ -64,7 +68,8 @@ async function testSpec(spec: any) {
   });
   const dir = join(homedir(), ".local/share/cocalc/sensors/test");
   await mkdir(dir, { recursive: true });
-  // The same clean environment and interpreter flags as a scheduled run.
+  // The same clean environment and interpreter flags as a scheduled run, but
+  // in this project's own RootFS: scheduled runs use CoCalc's standard image.
   const argv = sensorInterpreterArgv(checked.language, checked.script);
   const started = Date.now();
   const result = await new Promise<{
@@ -165,7 +170,7 @@ export function registerSensorCommand(
   sensor
     .command("test")
     .description(
-      "run a spec's script here once, as CoCalc would, and show whether it would wake the agent",
+      "run a spec's script here once with a sensor's clean environment and show whether it would wake the agent (scheduled runs use CoCalc's standard image, which may lack software this project has)",
     )
     .option("--file <path>", "spec JSON file")
     .option("--stdin", "read the spec JSON from standard input")
