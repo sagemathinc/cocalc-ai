@@ -15,6 +15,7 @@ import {
 } from "./api";
 import { agentStore } from "./store";
 import { watchIdentityLocal } from "./identity-watchers";
+import { sensorControlLocal } from "./sensors";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
   requireUuid(opts.account_id, "account_id");
@@ -32,6 +33,14 @@ async function assertOwner(opts: AgentIdentityReadRequest) {
 
 // Only exposed on the trusted inter-bay fabric, not the public hub agent API.
 export const agentIdentityControl: InterBayAgentIdentityApi = {
+  sensors: async (opts) => {
+    await assertOwner(opts);
+    return await sensorControlLocal(
+      opts.account_id,
+      opts.project_id,
+      opts.request,
+    );
+  },
   startFreshConversation: async (opts) => {
     await assertOwner(opts);
     return startFreshConversationLocal(opts);

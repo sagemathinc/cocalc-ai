@@ -80,6 +80,7 @@ import "./instances"; // probably deprecated
 import "./listings";
 import "./ai-log";
 import "./agent-messaging";
+import "./agent-sensors";
 import "./agent-personal";
 import "./agent-external";
 import "./lti";

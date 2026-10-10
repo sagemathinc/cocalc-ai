@@ -67,6 +67,12 @@ export const agent = {
   setPersonalMessagingState: authFirstRequireAccountWithBoundSession,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
+  listSensors: authFirstRequireAccount,
+  // Approving or resuming decides what code runs and wakes an agent: a
+  // person's bound session only, never an agent credential.
+  manageSensor: authFirstRequireAccountWithBoundSession,
+  createScheduledPrompt: authFirstRequireAccountWithBoundSession,
+  authorizeSensorExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccount,
   startFreshConversation: authFirstRequireAccount,
@@ -254,6 +260,12 @@ export interface CocalcConnectorTurnRef {
   message_date: string;
   message_id: string;
   thread_id: string;
+  /**
+   * Set only by the hub's sensor scheduler (never accepted from a host): the
+   * credentials are for this live sensor run instead of a chat turn, and
+   * message_id is the run id.
+   */
+  sensor_run_id?: string;
 }
 
 export interface CocalcConnectorTurnRequest extends AgentHostAuth {
@@ -380,7 +392,10 @@ export interface AgentApi {
   ): Promise<CliConnectorGrant>;
   /** Tokens for one verified agent turn (project host only). */
   beginCliConnectorTurn(
-    opts: CocalcConnectorTurnRequest,
+    opts: CocalcConnectorTurnRequest & {
+      /** Only these connectors (a sensor's `uses`); default all granted. */
+      connectors?: CliConnector[];
+    },
   ): Promise<CliConnectorTurnToken[]>;
   beginCocalcConnectorTurn(
     opts: CocalcConnectorTurnRequest & { idempotency_key: string },
@@ -481,6 +496,44 @@ export interface AgentApi {
       authorization: NonNullable<
         import("@cocalc/conat/ai/acp/types").AcpChatContext["agent_rpc_execution"]
       >;
+    },
+  ): Promise<void>;
+  /** A project's sensors (optionally one agent's), or one sensor with its runs. */
+  listSensors(opts: {
+    account_id?: string;
+    project_id: string;
+    agent_id?: string;
+    sensor_id?: string;
+  }): Promise<{
+    sensors: import("@cocalc/conat/agents/sensors").AgentSensor[];
+    runs?: import("@cocalc/conat/agents/sensors").AgentSensorRun[];
+  }>;
+  /** Approve, reject, pause, resume, run now or delete a sensor. */
+  manageSensor(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      sensor_id: string;
+      op: import("@cocalc/conat/agents/sensors").SensorManageOp;
+      /** Required to approve: the revision the person reviewed. */
+      revision?: number;
+    },
+  ): Promise<{
+    sensor?: import("@cocalc/conat/agents/sensors").AgentSensor;
+    deleted?: string;
+  }>;
+  /** A person schedules a prompt for an agent: a normal turn on a schedule. */
+  createScheduledPrompt(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      agent_id: string;
+      /** {kind: "prompt", title, prompt, schedule, max_wakes_per_day?} */
+      spec: unknown;
+    },
+  ): Promise<{ sensor: import("@cocalc/conat/agents/sensors").AgentSensor }>;
+  authorizeSensorExecution(
+    opts: AgentHostAuth & {
+      authorization: import("@cocalc/conat/agents/sensors").SensorExecutionAuthorization;
+      delivery: import("@cocalc/conat/agents/sensors").SensorDeliveryBinding;
     },
   ): Promise<void>;
   /** This account's payment selections for some agents, plus its defaults. */

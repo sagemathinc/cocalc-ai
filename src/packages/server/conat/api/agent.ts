@@ -7,6 +7,7 @@ import {
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
 import * as payments from "@cocalc/server/agents/payment-selections";
+import * as sensors from "@cocalc/server/agents/sensor-routing";
 export {
   getCocalcConnectorConfig,
   listCocalcConnectorConfigs,
@@ -62,6 +63,10 @@ export async function manageAgentMemory(opts: {
   return await agentMemory().owner(account_id, request);
 }
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
+export const listSensors = sensors.listSensors;
+export const manageSensor = sensors.manageSensor;
+export const createScheduledPrompt = sensors.createScheduledPrompt;
+export const authorizeSensorExecution = sensors.authorizeSensorExecution;
 export const registerIdentity = identities.registerIdentity;
 export const startFreshConversation = identities.startFreshConversation;
 export const listIdentities = identities.listIdentities;

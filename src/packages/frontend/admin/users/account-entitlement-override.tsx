@@ -428,6 +428,32 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
         .acp_max_active_automations_per_project.adminDescription,
   },
   {
+    id: "sensor_min_interval_minutes",
+    section: "usage_limits",
+    key: "sensor_min_interval_minutes",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_min_interval_minutes.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .sensor_min_interval_minutes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_min_interval_minutes.adminDescription,
+  },
+  {
+    id: "sensor_max_wakes_per_day",
+    section: "usage_limits",
+    key: "sensor_max_wakes_per_day",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_max_wakes_per_day.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .sensor_max_wakes_per_day.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_max_wakes_per_day.adminDescription,
+  },
+  {
     id: "rootfs_count",
     section: "usage_limits",
     key: "rootfs_count",

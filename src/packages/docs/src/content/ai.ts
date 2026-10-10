@@ -37,7 +37,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 - [Configure models, access, and defaults](/docs/ai/codex-settings).
 - [Steer, queue, and fork conversations](/docs/ai/codex-conversations).
 - [Manage goals and answer questions](/docs/ai/codex-goals).
-- [Schedule recurring work](/docs/ai/codex-automation).
+- [Watch for events with sensors](/docs/ai/codex-automation).
 - [Set notifications and inspect sessions](/docs/ai/codex-notifications).
 - [Use Agent from an editor](/docs/ai/editor-agent).
 
@@ -675,81 +675,84 @@ inbox and email delivery are unavailable.
 `;
 
 export const CODEX_AUTOMATION_BODY = String.raw`
-Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
+Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used an agent before.
 
-## Schedule Codex work in a thread
+## What a sensor is
 
-Open a Codex chat's thread menu and choose **Automation settings…**. The
-**Thread automation** dialog lets you configure recurring work in that
-thread. Availability and active-automation limits depend on the project and
-membership tier; an admission limit can prevent enabling another schedule.
+A **sensor** is an agent on a schedule, without the model. It does a cheap
+check, or nothing at all, until something is worth a turn, then **wakes** the
+agent with a normal turn. It runs with the access you gave the agent in its
+**Connectors** menu (CoCalc access, GitHub, Cloudflare), and no more. If you
+know what your agent can do, you know what its sensors can do.
 
-1. Enable **Enable scheduled automation for this thread**, give it a
-   **Title**, and choose **Codex prompt** as the **Run type**.
-2. Enter what Codex should do on each scheduled run.
-3. Under **Schedule**, choose **Daily** or **Every N minutes** and select
-   the weekdays under **Repeat on**.
-4. For Daily, enter **Run at (24h)**. For an interval, enter **Repeat every
-   (minutes)** and either enable **Run all day** or set **From (24h)** and
-   **Until (24h)**. Until must be later than From on the same day; this form
-   does not accept a window crossing midnight.
-5. Check **Timezone**, choose the **Pause after unacknowledged runs** limit,
-   and click **Save**.
+There are three kinds:
 
-Use a named timezone such as Europe/Madrid. The form initially uses your
-browser's timezone, so verify it before saving a schedule intended for
-another location. After saving, inspect the thread's schedule summary and
-**Next** run display to confirm the intended timing.
+- **Scheduled prompts**: a prompt sent to the agent on a schedule, such as a
+  weekday 07:00 briefing. You set these up yourself.
+- **Watchers**: CoCalc's own one-shot checks that an agent sets for itself
+  (for example "wake me when the CI checks on this pull request finish").
+  They need no approval; they wake the agent once, or give up after a day.
+- **Scripts**: a small program the agent writes to watch something over time,
+  such as new GitHub issues. You approve the exact script first.
 
-## Run a Bash command on a schedule
+Sensors work with Codex, Claude Code and other agents registered in a project.
+They need a project with internet access, which comes with a paid membership.
+Your membership also sets how many sensors a project may run, how often they
+may run, and how many agent turns all of your sensors and watchers may start in
+any 24 hours (each sensor can also set a lower limit of its own). Each wake is
+a turn paid by the person who set up or approved the sensor.
 
-For a repeatable script that does not need a new agent decision each time,
-use a command automation. Availability and active-automation limits depend
-on the project and membership tier. Commands run unattended and can modify
-project data; begin with a read-only or idempotent command you have reviewed.
+## Schedule a prompt
 
-1. Open a Codex chat's **Automation settings…**, enable the schedule, enter a
-   **Title**, and select **Bash command** under **Run type**.
-2. Enter the **Command**, for example \`pwd\` for a harmless first run.
-3. Set **Working directory** explicitly for commands using relative paths.
-   Otherwise it is derived from the chat file path, which may be a generated
-   chat directory; if no parent is available, it falls back to \`/\` in the
-   project runtime.
-4. Set **Timeout (seconds)** and **Max output to capture (KB)** to fit the
-   command, then configure the schedule and click **Save**.
+Open the chat's **Connectors** menu (the plug button next to the message box),
+choose **Sensors**, then **Schedule a prompt**. Give it a title and the prompt,
+choose **Daily at** (times in your time zone) or **Every** some minutes, and
+optionally **Weekdays only**. Each scheduled turn starts with
+"[Scheduled prompt]", so the agent knows why it is running.
 
-The run report records the command and working directory, an exit code or
-signal when available, and captured stdout and stderr. A truncation notice
-means output exceeded the capture limit; it does not mean the command's
-entire output was retained in chat. A command with no captured output is
-reported as such.
+## Approve a script
 
-Use **Run now** to try the configured command before relying on scheduled
-runs, and inspect its result. That manual run leaves the next scheduled
-occurrence in place, so account for both when the command changes data.
+Ask the agent for what you want watched, for example "tell me when someone
+opens a GitHub issue labeled urgent, checking every 30 minutes". The agent
+writes the script, tests it, and proposes it. In the **Sensors** dialog the
+proposal shows its purpose, schedule, limits, the access it uses and the
+complete script.
 
-## Control and acknowledge scheduled runs
+- A script runs like one of the agent's commands: in this project's software,
+  as you, with only the connectors it lists, if you turned them on for the
+  agent. Read it before you click **Approve and run**.
+- **Reject** discards the proposal.
+- Any change the agent proposes later needs approval again. The approved
+  version keeps running until you approve the change.
+- If the project's software (its RootFS image) changes, script sensors pause
+  until you review and resume them.
 
-Open the automation details in its chat thread to see the schedule, latest
-result, and available controls.
+A script's data comes from outside sources, so its wakes say that they are
+not from a person and that the data is information, not instructions.
 
-- **Run now** starts a manual run without moving the next scheduled run.
-  If a run is already active, it does not queue another one.
-- **Skip next** skips only the next scheduled occurrence.
-- **Pause** and **Resume** control whether scheduled work continues. Pausing
-  the schedule does not cancel a run already in progress.
-- **Edit** opens the configuration. Deleting the automation removes the
-  schedule from the chat thread.
+## Watch and control sensors
 
-Overlapping runs are not queued. Check **Last run**, the status, and any
-displayed error when investigating a missing or unsuccessful result.
+The same dialog shows each sensor's status, last run and outcome, the next
+run, and how many times it woke the agent today (UTC).
 
-Finished automated runs increase the **unacknowledged** count, including
-successful, failed, or interrupted runs and **Run now** executions. At **Pause after unacknowledged runs**, the automation
-pauses until you review it. Click the unacknowledged-count button to clear
-the count; sending a new request to Codex in that thread also clears it.
-Acknowledging does not itself mean resuming: use **Resume** when you want
-a paused schedule to continue, and confirm the next-run display afterward.
+- **Run now** runs it once, outside its schedule.
+- **Pause** stops scheduled runs; **Resume** starts them again. Whoever
+  resumes a sensor takes over its approval, so its runs and wakes are then
+  theirs. Watchers run once and can't be resumed; ask the agent to set a new
+  one.
+- **Run log** lists recent runs with their output and errors. The agent can
+  read its own sensors' logs too.
+- **Delete** removes the sensor and its log.
+
+A sensor pauses itself after five failed runs in a row, when its approver
+loses access to the project, when a connector it uses is turned off, or when
+the project loses internet access. The dialog shows the reason.
+
+## Scheduled thread automations
+
+Sensors replace the earlier scheduled thread automations, which no longer run.
+A thread that still has one shows a notice where you can delete it. Schedule a
+prompt for the same job instead.
 
 ## Related guides
 

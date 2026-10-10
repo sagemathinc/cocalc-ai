@@ -1112,12 +1112,10 @@ describe("agent grants", () => {
 
   it("a grant saved while a disconnect started turns itself off", async () => {
     const { saveCliConnectorGrant } = await import("./cli-connectors");
-    getByIdMock
-      .mockResolvedValueOnce(connection)
-      .mockResolvedValueOnce({
-        ...connection,
-        metadata: { disconnecting: true },
-      });
+    getByIdMock.mockResolvedValueOnce(connection).mockResolvedValueOnce({
+      ...connection,
+      metadata: { disconnecting: true },
+    });
     await expect(
       saveCliConnectorGrant({
         ...base,
@@ -1174,6 +1172,27 @@ describe("turn tokens", () => {
         description: "@octo",
       },
     ]);
+  });
+
+  it("an allowlist (a sensor's uses) never mints another connector's token", async () => {
+    const { issueCliConnectorTurnTokens } = await import("./cli-connectors");
+    // The agent's only grant is GitHub; the run asks for Cloudflare only.
+    await expect(
+      issueCliConnectorTurnTokens({ ...request, connectors: ["cloudflare"] }),
+    ).resolves.toEqual([]);
+    expect(lockedMock).not.toHaveBeenCalled();
+    // Even if the locked read returns it, it is skipped.
+    queryMock.mockImplementation(async () => ({ rows: [grant] }));
+    await expect(
+      issueCliConnectorTurnTokens({
+        ...request,
+        connectors: ["cloudflare"],
+      }),
+    ).resolves.toEqual([]);
+    expect(lockedMock).not.toHaveBeenCalled();
+    await expect(
+      issueCliConnectorTurnTokens({ ...request, connectors: ["github"] }),
+    ).resolves.toHaveLength(1);
   });
 
   it("a failed turn check hands out nothing", async () => {

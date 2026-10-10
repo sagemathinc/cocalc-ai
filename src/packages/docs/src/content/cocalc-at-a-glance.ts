@@ -62,8 +62,9 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
   you choose, with **Read-only files** or **Full runtime** access, without
   creating an API key. See
   [Give an agent CoCalc access](/docs/ai/cocalc-access).
-- Codex can run a prompt or a Bash command on a schedule. See
-  [Schedule agent work](/docs/ai/codex-automation).
+- Agents can watch for events with sensors: approved scripts that run on a
+  schedule and wake the agent. See
+  [Watch for events with sensors](/docs/ai/codex-automation).
 - The **Agents** page lists your named agents and, under **Shared with me**,
   agents that other people registered in projects you own or collaborate on.
   You can group either list by project. See

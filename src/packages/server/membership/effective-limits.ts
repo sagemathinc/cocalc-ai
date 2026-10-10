@@ -180,6 +180,12 @@ export function normalizeMembershipEffectiveLimits(
     acp_max_active_automations_per_project: normalizeNonNegativeInteger(
       usageLimits?.acp_max_active_automations_per_project,
     ),
+    sensor_min_interval_minutes: normalizeNonNegativeInteger(
+      usageLimits?.sensor_min_interval_minutes,
+    ),
+    sensor_max_wakes_per_day: normalizeNonNegativeInteger(
+      usageLimits?.sensor_max_wakes_per_day,
+    ),
     blob_account_total_bytes: normalizeNonNegativeInteger(
       usageLimits?.blob_account_total_bytes,
     ),

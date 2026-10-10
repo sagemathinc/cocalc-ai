@@ -225,6 +225,7 @@ describe("hub API argument transforms", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "agent.authorizeRpcAdmission",
       "agent.authorizeRpcExecution",
+      "agent.authorizeSensorExecution",
       "agent.beginCliConnectorTurn",
       "agent.beginCocalcConnectorTurn",
       "agent.endCocalcConnectorTurn",

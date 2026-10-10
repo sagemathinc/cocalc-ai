@@ -17,6 +17,25 @@ type RequiredHost<T> = Omit<RequiredAccount<T>, "host_id"> & {
   host_id: string;
 };
 
+/** A wake a sensor run wants to start, counted on the account's home bay. */
+export interface SensorWakeBudgetRequest {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+  sensor_id: string;
+  run_id: string;
+}
+
+/** A new watcher, counted on the account's home bay until released. */
+export interface SensorWatcherBudgetRequest {
+  account_id: string;
+  project_id: string;
+  agent_id: string;
+  sensor_id: string;
+  /** When the watcher gives up (ISO). */
+  expires_at: string;
+}
+
 export interface InterBayAgentConnectorApi {
   getConfig(
     opts: RequiredAccount<Parameters<AgentApi["getCocalcConnectorConfig"]>[0]>,
@@ -78,6 +97,19 @@ export interface InterBayAgentConnectorApi {
   end(
     opts: RequiredHost<Parameters<AgentApi["endCocalcConnectorTurn"]>[0]>,
   ): ReturnType<AgentApi["endCocalcConnectorTurn"]>;
+  // Sensor budgets, authoritative on the account's home bay (bay-internal).
+  reserveSensorWake(
+    opts: SensorWakeBudgetRequest,
+  ): Promise<{ reserved: boolean }>;
+  releaseSensorWake(opts: {
+    account_id: string;
+    run_id: string;
+  }): Promise<void>;
+  reserveSensorWatcher(opts: SensorWatcherBudgetRequest): Promise<void>;
+  releaseSensorWatcher(opts: {
+    account_id: string;
+    sensor_id: string;
+  }): Promise<void>;
 }
 
 function subject(bay_id: string): string {

@@ -90,6 +90,9 @@ export interface AcpChatContext {
   agent_delivery_id?: string;
   agent_delivery_generation?: string;
   // Immutable provenance for reauthorizing an RPC message at queue execution.
+  // A turn an approved sensor started; the hub rechecks the approval at
+  // execution. Like agent_rpc_execution, the turn is agent-authored.
+  sensor_wake?: import("@cocalc/conat/agents/sensors").SensorExecutionAuthorization;
   agent_rpc_execution?: {
     version: 3;
     source: AgentRpcSource;

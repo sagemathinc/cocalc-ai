@@ -117,7 +117,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
     }
     if (
       claudeCode &&
-      request.chat?.agent_rpc_execution &&
+      (request.chat?.agent_rpc_execution || request.chat?.sensor_wake) &&
       !harness_credential
     ) {
       // Nothing stored yet: fall back to this account's last human turn.
@@ -193,7 +193,9 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       preference === "subscription-credential" ? "subscription" : preference,
     credential_id: requestedCredentialId || undefined,
   });
-  const agentMessage = !!request.chat?.agent_rpc_execution;
+  const agentMessage = !!(
+    request.chat?.agent_rpc_execution || request.chat?.sensor_wake
+  );
   if (resolved.source !== "subscription") {
     if (preference !== "auto") {
       const reason =
@@ -212,7 +214,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   }
   const credentialId = `${resolved.credentialId ?? ""}`.trim();
   if (!credentialId) {
-    if (resolved.credentialPinRequired && request.chat?.agent_rpc_execution) {
+    if (resolved.credentialPinRequired && agentMessage) {
       throw agentRecipientSetupError(
         "codex-connection",
         "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected ChatGPT subscription before using Agent Networks.",

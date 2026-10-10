@@ -59,6 +59,12 @@ export interface InterBayAgentIdentityApi {
       fresh_auth_at: number;
     },
   ): Promise<AgentIdentity>;
+  /** Sensor records live with the project's agent identities. */
+  sensors(
+    opts: AgentIdentityReadRequest & {
+      request: import("@cocalc/conat/agents/sensors").SensorControlRequest;
+    },
+  ): Promise<unknown>;
 }
 
 export function agentIdentityControlSubject(bay_id: string): string {

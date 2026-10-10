@@ -1852,6 +1852,32 @@ export async function resolveHostContainersInternalAddress(
   return undefined;
 }
 
+/**
+ * Make host-local conat (CONAT_SERVER at host.containers.internal) reachable
+ * from a container on this network, as the project container does: point
+ * CONAT_SERVER at a routable address and keep the alias resolving. Mutates
+ * env; returns extra podman arguments.
+ */
+export async function containerConatHostArgs(
+  selectedNetwork: string,
+  env: Record<string, string>,
+): Promise<string[]> {
+  const original = env.CONAT_SERVER;
+  if (!original || getUrlHostname(original) !== "host.containers.internal")
+    return [];
+  if (selectedNetwork.startsWith("--network=pasta")) {
+    const address =
+      pastaConatHost() ??
+      (await resolveHostContainersInternalAddress(selectedNetwork));
+    if (!address) return [];
+    env.CONAT_SERVER = replaceUrlHostname(original, address);
+    return ["--add-host", `host.containers.internal:${address}`];
+  }
+  if (selectedNetwork.startsWith("--network=slirp4netns"))
+    env.CONAT_SERVER = replaceUrlHostname(original, slirpConatHost());
+  return [];
+}
+
 function replaceUrlHostname(value: string, hostname: string): string {
   try {
     const url = new URL(value);

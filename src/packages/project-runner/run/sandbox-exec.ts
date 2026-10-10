@@ -5,6 +5,8 @@ import { localPath } from "./filesystem";
 import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
 import { readFile } from "fs/promises";
 import {
+  containerConatHostArgs,
+  getImage,
   networkArgument,
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
@@ -51,6 +53,27 @@ export interface SandboxExecOptions {
 
   /** Optionally disable network for ephemeral runs */
   noNetwork?: boolean;
+  /**
+   * Run this program and arguments instead of `/bin/bash -lc script`, so no
+   * shell startup file in the project runs first. Ephemeral runs only.
+   */
+  argv?: string[];
+  /**
+   * Ephemeral runs only: use this image (from a trusted record) instead of
+   * the image name stored in the project's home.
+   */
+  image?: string;
+  /** Ephemeral runs only: more bind mounts, e.g. a run's credentials. */
+  extraMounts?: { source: string; target: string; readOnly?: boolean }[];
+  /**
+   * Ephemeral runs only: empty in-memory directories over these paths; "/tmp"
+   * replaces the project's scratch mount.
+   */
+  tmpfs?: string[];
+  /** Ephemeral runs only: no sudo or setuid, like agent commands. */
+  noNewPrivileges?: boolean;
+  /** Ephemeral runs only: directories put first on the environment's PATH. */
+  pathPrefix?: string[];
 }
 
 export interface SandboxExecResult {
@@ -95,7 +118,24 @@ export async function sandboxExec({
   signal,
   onOutput,
   onCleanupConfirmed,
+  argv,
+  image: imageOverride,
+  extraMounts,
+  tmpfs,
+  noNewPrivileges,
+  pathPrefix,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
+  if (argv && (!useEphemeral || signal || argv.length === 0))
+    throw Error("argv requires a plain ephemeral run");
+  if (
+    !useEphemeral &&
+    (imageOverride != null ||
+      extraMounts?.length ||
+      tmpfs?.length ||
+      noNewPrivileges ||
+      pathPrefix?.length)
+  )
+    throw Error("these options require an ephemeral run");
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
   if (onOutput && useEphemeral)
@@ -198,7 +238,12 @@ export async function sandboxExec({
       const { home, scratch } = await localPath({
         project_id,
       });
-      const image = await getContainerImage(home);
+      // Never the project's choice for platform runs: neither the image file
+      // in its home nor its configured (possibly arbitrary) RootFS image.
+      const image =
+        imageOverride != null
+          ? getImage({ image: imageOverride })
+          : await getContainerImage(home);
       const env = await getEnvironment({
         project_id,
         HOME,
@@ -224,10 +269,16 @@ export async function sandboxExec({
       );
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
-        args.push(networkArgument());
+        const network = networkArgument();
+        args.push(network);
+        // Like the project container: the project's own API relay and conat
+        // are on the host, under the host.containers.internal alias.
+        args.push(...(await containerConatHostArgs(network, env)));
       }
       args.push("--workdir", getWorkdir());
 
+      if (pathPrefix?.length)
+        env.PATH = [...pathPrefix, env.PATH].filter(Boolean).join(":");
       for (const key in env) {
         args.push("-e", `${key}=${env[key]}`);
       }
@@ -238,9 +289,24 @@ export async function sandboxExec({
       }
 
       args.push(mountArg({ source: home, target: HOME }));
-      if (scratch) {
+      if (scratch && !tmpfs?.includes("/tmp")) {
         args.push(mountArg({ source: scratch, target: "/tmp" }));
       }
+      for (const path of tmpfs ?? []) {
+        if (!path.startsWith("/") || /[,:\s]/.test(path))
+          throw Error("Invalid sandbox tmpfs path");
+        args.push("--tmpfs", path);
+      }
+      for (const mount of extraMounts ?? []) {
+        args.push(
+          mountArg({
+            source: mount.source,
+            target: mount.target,
+            readOnly: mount.readOnly,
+          }),
+        );
+      }
+      if (noNewPrivileges) args.push("--security-opt=no-new-privileges");
       const mounts = getCoCalcMounts();
       for (const path in mounts) {
         args.push(
@@ -254,15 +320,17 @@ export async function sandboxExec({
       rootfs = await mountRootFs({ project_id, home, config: { image } });
       args.push("--rootfs", rootfs);
       args.push(
-        ...(signal
-          ? [
-              "/opt/cocalc/bin/node",
-              "-e",
-              SANDBOX_COMMAND_SUPERVISOR,
-              "--",
-              script,
-            ]
-          : ["/bin/bash", "-lc", script]),
+        ...(argv
+          ? argv
+          : signal
+            ? [
+                "/opt/cocalc/bin/node",
+                "-e",
+                SANDBOX_COMMAND_SUPERVISOR,
+                "--",
+                script,
+              ]
+            : ["/bin/bash", "-lc", script]),
       );
     } else {
       args.push(

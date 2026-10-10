@@ -467,7 +467,7 @@ before treating the difference as an authentication failure.
 - [Edit collaborative text with the CLI](/docs/cli/collaborative-text)
 - [Run and save notebooks with the CLI](/docs/cli/notebook-workflows)
 - [Test browser workflows with the CLI](/docs/cli/browser-workflows)
-- [Schedule agent tasks with the CLI](/docs/cli/scheduled-agents)
+- [Propose sensors with the CLI](/docs/cli/scheduled-agents)
 - [Manage workspaces and notices with the CLI](/docs/cli/workspaces-and-notices)
 - [Build documents and track CLI versions](/docs/cli/builds-and-versions)
 
