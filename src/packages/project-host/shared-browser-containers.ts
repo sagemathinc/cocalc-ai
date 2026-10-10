@@ -28,12 +28,13 @@ The container:
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { extractProjectSubject } from "@cocalc/conat/auth/subject-policy";
 import type { Client } from "@cocalc/conat/core/client";
 import getLogger from "@cocalc/backend/logger";
+import { isValidUUID } from "@cocalc/util/misc";
 import { data } from "@cocalc/backend/data";
 import { mountArg, podman } from "@cocalc/backend/podman";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
@@ -327,10 +328,36 @@ export async function stopSharedBrowserContainer(
   );
 }
 
+/**
+ * Profiles of projects this host no longer has (moved or deleted).  Only
+ * those: a stopped project keeps its browsers' sign-ins.
+ */
+export async function cleanupStaleSharedBrowserProfiles(
+  known: (project_id: string) => boolean = (id) => getProject(id) != null,
+): Promise<void> {
+  const root = join(data, "shared-browser-profiles");
+  let entries: string[] = [];
+  try {
+    entries = await readdir(root);
+  } catch {
+    return;
+  }
+  for (const project_id of entries) {
+    if (!isValidUUID(project_id) || known(project_id)) continue;
+    logger.debug("removing browser profiles of a project not on this host", {
+      project_id,
+    });
+    await rm(join(root, project_id), { recursive: true, force: true });
+  }
+}
+
 export async function initSharedBrowserService(client: Client) {
   logger.debug("starting shared browser service", {
     subject: SHARED_BROWSER_SUBJECT,
   });
+  void cleanupStaleSharedBrowserProfiles().catch((err) =>
+    logger.warn("browser profile cleanup failed", { err: `${err}` }),
+  );
   return await client.service(SHARED_BROWSER_SUBJECT, {
     async start(
       this: { subject?: string },
