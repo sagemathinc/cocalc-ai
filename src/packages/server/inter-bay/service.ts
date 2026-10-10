@@ -481,6 +481,8 @@ import {
   reconcileHostRuntimeDeployments,
   reconcileHostSoftware,
   setHostPublicRouteMode,
+  relocateHost,
+  setHostMaintenanceNotice,
   refreshHostCloudState,
   removeSelfHostConnector,
   restartHost,
@@ -2907,6 +2909,9 @@ async function startHostConnectionService(): Promise<void> {
       }),
     setHostPublicRouteMode: async ({ account_id, id, mode }) =>
       await setHostPublicRouteMode({ account_id, id, mode }),
+    relocateHost: async (opts) => await relocateHost(opts),
+    setHostMaintenanceNotice: async (opts) =>
+      await setHostMaintenanceNotice(opts),
     reconcileHostRuntimeDeployments: async ({
       account_id,
       id,
