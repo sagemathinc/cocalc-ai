@@ -3,9 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-jest.mock("@cocalc/database/settings/secret-settings", () => ({
-  getSecretSettingsKey: async () => Buffer.alloc(32, 7),
-}));
+jest.mock("@cocalc/database/settings/secret-settings", () =>
+  require("@cocalc/database/settings/secret-settings-test-mock").secretSettingsMock(
+    Buffer.alloc(32, 7),
+  ),
+);
 
 describe("email authentication secrets", () => {
   it("separates digest purposes and challenge identifiers", async () => {

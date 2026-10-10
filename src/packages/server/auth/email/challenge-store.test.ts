@@ -79,9 +79,11 @@ jest.mock("@cocalc/server/auth/tokens/redeem", () => ({
     restoreRedeemedRegistrationTokenDirectMock(...args),
 }));
 
-jest.mock("@cocalc/database/settings/secret-settings", () => ({
-  getSecretSettingsKey: async () => Buffer.alloc(32, 7),
-}));
+jest.mock("@cocalc/database/settings/secret-settings", () =>
+  require("@cocalc/database/settings/secret-settings-test-mock").secretSettingsMock(
+    Buffer.alloc(32, 7),
+  ),
+);
 
 describe("seed-global email authentication challenges", () => {
   beforeAll(async () => {

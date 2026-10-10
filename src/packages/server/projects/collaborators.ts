@@ -100,11 +100,13 @@ import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { claimCourseMembershipPackageSeatsForAcceptedInvite } from "@cocalc/server/membership/packages";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
-import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
 import {
-  decryptSecretSettingValue,
-  encryptSecretSettingValue,
-} from "@cocalc/util/secret-settings-crypto";
+  decryptSecretStorageValueWithKey,
+  encryptSecretStorageValue,
+  getSecretSettingsKey,
+  secretSettingsHmacCandidates,
+} from "@cocalc/database/settings/secret-settings";
+import { isEncryptedSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 import { upsertProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
 import { appendProjectLogRowBestEffort } from "@cocalc/server/projects/project-log";
 
@@ -429,17 +431,18 @@ async function ensureProjectAccessRequestSchemaUncached(): Promise<void> {
   );
 }
 
-async function inviteSecretKey(): Promise<Buffer> {
-  return await getSecretSettingsKey();
-}
-
-async function hmacInviteValue(aad: string, value: string): Promise<string> {
-  const digest = createHmac("sha256", await inviteSecretKey())
+function hmacInviteValueWith(key: Buffer, aad: string, value: string): string {
+  const digest = createHmac("sha256", key)
     .update(aad)
     .update("\0")
     .update(value)
     .digest("base64url");
   return `${aad}:${digest}`;
+}
+
+/** The keyed hash to store, under the active site key. */
+async function hmacInviteValue(aad: string, value: string): Promise<string> {
+  return hmacInviteValueWith(await getSecretSettingsKey(), aad, value);
 }
 
 export async function hashProjectCollabInviteToken(
@@ -502,12 +505,21 @@ async function hashInviteEmail(email: string): Promise<string> {
   return await hmacInviteValue(EMAIL_INVITE_EMAIL_AAD, email);
 }
 
+// For lookups: the hash under every site key in the keyring, so invites made
+// before a key rotation are found until their hashes are recomputed.
+async function inviteEmailHashCandidates(email: string): Promise<string[]> {
+  return await secretSettingsHmacCandidates((key) =>
+    hmacInviteValueWith(key, EMAIL_INVITE_EMAIL_AAD, email),
+  );
+}
+
 async function encryptInviteValue(aad: string, value: string): Promise<string> {
-  return encryptSecretSettingValue(aad, value, await inviteSecretKey());
+  return await encryptSecretStorageValue(aad, value);
 }
 
 async function decryptInviteValue(aad: string, value: string): Promise<string> {
-  return decryptSecretSettingValue(aad, value, await inviteSecretKey());
+  if (!isEncryptedSecretSettingValue(value)) return value;
+  return (await decryptSecretStorageValueWithKey(aad, value)).value;
 }
 
 function timingSafeStringEqual(a: string, b: string): boolean {
@@ -3583,6 +3595,7 @@ async function createEmailProjectInvite({
     message,
   });
   const email_hash = await hashInviteEmail(normalizedEmail);
+  const email_hashes = await inviteEmailHashCandidates(normalizedEmail);
   const pool = getPool();
   const role = normalizeInviteRole(invite_role);
   if (scope !== EMAIL_INVITE_SCOPE && role !== "collaborator") {
@@ -3598,20 +3611,27 @@ async function createEmailProjectInvite({
     scope === COURSE_EMAIL_INVITE_SCOPE
       ? [
           project_id,
-          email_hash,
+          email_hashes,
           EMAIL_INVITE_SOURCE,
           scope,
           role,
           `${normalizedContext.student_id ?? ""}`,
           `${normalizedContext.student_project_id ?? project_id}`,
         ]
-      : [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE, scope, role];
+      : [
+          project_id,
+          account_id,
+          email_hashes,
+          EMAIL_INVITE_SOURCE,
+          scope,
+          role,
+        ];
   const existingInviteQuery =
     scope === COURSE_EMAIL_INVITE_SCOPE
       ? `SELECT invite_id, token_hash, token_ciphertext
            FROM project_collab_invites
           WHERE project_id=$1
-            AND email_hash=$2
+            AND email_hash = ANY($2::TEXT[])
             AND status='pending'
             AND invite_source=$3
             AND scope=$4
@@ -3626,7 +3646,7 @@ async function createEmailProjectInvite({
            FROM project_collab_invites
           WHERE project_id=$1
             AND inviter_account_id=$2
-            AND email_hash=$3
+            AND email_hash = ANY($3::TEXT[])
             AND status='pending'
             AND invite_source=$4
             AND scope=$5

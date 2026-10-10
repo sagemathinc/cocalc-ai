@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# Rotate the CoCalc site master key on a bay, and check or re-encrypt what it
+# protects. Run as root. See "Site Master Key Rotation" in the bay-systemd
+# README for the procedure.
+#
+#   cocalc-bay-master-key status
+#   cocalc-bay-master-key prepare --export FILE    stage a new key (not yet used)
+#   cocalc-bay-master-key prepare --import FILE    stage another bay's new key
+#   cocalc-bay-master-key restart                  restart the services that read the key
+#   cocalc-bay-master-key activate KEY_ID --backed-up
+#   cocalc-bay-master-key doctor                   database check (as the bay user)
+#   cocalc-bay-master-key reencrypt [--execute]    move everything to the active key
+#   cocalc-bay-master-key retire KEY_ID [--force]  remove a retired key once unused
+#   cocalc-bay-master-key add-retired --import FILE  put an old key back (restores)
+#
+# The key files are /etc/cocalc/site-master-key (the active key) and
+# /etc/cocalc/site-master-key.keyring (a staged next key and retired keys;
+# services load both as systemd credentials). The keyring format, key ids and
+# lock file match @cocalc/util/master-key-lifecycle. This script is installed
+# root-owned in /usr/local/sbin and changes the key files itself; database
+# work runs as the bay user, with the key files passed as credentials, in the
+# release's runtime.
+set -euo pipefail
+
+: "${COCALC_BAY_CONFIG_DIR:=/etc/cocalc}"
+KEY="${COCALC_SITE_MASTER_KEY_PATH:-${COCALC_BAY_CONFIG_DIR}/site-master-key}"
+KEYRING="${COCALC_SITE_MASTER_KEYRING_PATH:-${KEY}.keyring}"
+: "${COCALC_BAY_USER:=cocalc-bay}"
+: "${SYSTEMCTL:=systemctl}"
+: "${SYSTEMD_RUN:=systemd-run}"
+# A retired key stays online this long: email sign-in challenges and other
+# short-lived keyed hashes cannot be re-encrypted.
+: "${COCALC_SITE_MASTER_KEY_RETIRE_MIN_AGE_HOURS:=24}"
+
+die() {
+  echo "cocalc-bay-master-key: $*" >&2
+  exit 1
+}
+
+usage() {
+  sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+bay_env_value() {
+  # One value from the bay env files (later files win), without sourcing them.
+  local name="$1" file line value=""
+  for file in bay.env bay-overlay.env bay-local.env; do
+    [[ -r "${COCALC_BAY_CONFIG_DIR}/${file}" ]] || continue
+    line="$(grep -E "^${name}=" "${COCALC_BAY_CONFIG_DIR}/${file}" | tail -1)" || true
+    [[ -n "$line" ]] && value="${line#*=}"
+  done
+  value="${value#[\"\']}"
+  value="${value%[\"\']}"
+  printf '%s' "$value"
+}
+
+# Root runs node only from a path the bay account cannot change (the same
+# rule as the config escrow job). The path is resolved once to its canonical
+# form, every directory on it is checked (not owned by that account, not
+# writable by group or others unless sticky), and only the canonical path is
+# run, so a symbolic link cannot be swapped between the check and the use.
+check_chain() {
+  local path="$1" bay_uid="$2" uid mode
+  while :; do
+    [[ -n "${COCALC_BAY_MASTER_KEY_ASSUME_TRUSTED_DIR:-}" &&
+      "$path" == "$COCALC_BAY_MASTER_KEY_ASSUME_TRUSTED_DIR" ]] && return 0
+    uid="$(stat -c %u -- "$path")" || return 1
+    mode="$(stat -c %a -- "$path")" || return 1
+    (( 8#$mode & 8#1000 )) && mode=0
+    if [[ -L "$path" || "$uid" == "$bay_uid" ]] || (( 8#$mode & 8#022 )); then
+      echo "$path"
+      return 1
+    fi
+    [[ "$path" == / ]] && return 0
+    path="$(dirname -- "$path")"
+  done
+}
+
+trusted_node() {
+  local node="${COCALC_BAY_NODE_BIN:-$(bay_env_value COCALC_BAY_NODE_BIN)}" bay_uid bad canonical
+  [[ "$node" == /* && -x "$node" ]] || die "node not found (COCALC_BAY_NODE_BIN must be an absolute path)"
+  bay_uid="$(id -u "$COCALC_BAY_USER" 2>/dev/null || echo -1)"
+  canonical="$(readlink -e -- "$node")" || die "cannot resolve $node"
+  bad="$(check_chain "$canonical" "$bay_uid")" ||
+    die "refusing to run $node as root: $bad is a symbolic link, is owned by ${COCALC_BAY_USER} or is group/world-writable"
+  printf '%s' "$canonical"
+}
+
+# Key-file operations, in node so the key id derivation, the keyring format
+# and the lock are those of @cocalc/util/master-key-lifecycle. Every change
+# holds <keyring>.lock, and every rename is followed by a sync of the
+# directory, so the steps of a rotation reach the disk in order.
+keyfiles() {
+  local node
+  node="$(trusted_node)"
+  KEY="$KEY" KEYRING="$KEYRING" MIN_AGE_HOURS="$COCALC_SITE_MASTER_KEY_RETIRE_MIN_AGE_HOURS" \
+    "$node" --input-type=module -e '
+import { createHmac, randomBytes } from "node:crypto";
+import { chmodSync, closeSync, fsyncSync, linkSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+
+const [command, ...args] = process.argv.slice(1);
+const KEY = process.env.KEY;
+const KEYRING = process.env.KEYRING;
+const LOCK = `${KEYRING}.lock`;
+const KEY_ID_RE = /^smk_[A-Za-z0-9_-]{16}$/;
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const keyId = (key) =>
+  "smk_" + createHmac("sha256", key).update("cocalc-site-master-key-id:v1").digest("base64url").slice(0, 16);
+const canonicalKey = (value, where) => {
+  const key = Buffer.from(value, "base64");
+  if (key.length !== 32 || key.toString("base64") !== value) throw new Error(`${where}: not a canonical base64 32-byte key`);
+  return key;
+};
+const readKeyring = () => {
+  let text = "";
+  try { text = readFileSync(KEYRING, "utf8"); } catch (err) { if (err.code !== "ENOENT") throw err; }
+  const entries = [];
+  text.split("\n").forEach((raw, index) => {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) return;
+    const where = `${KEYRING}:${index + 1}`;
+    const fields = line.split(/\s+/);
+    if (fields.length !== 4) throw new Error(`${where}: expected "<base64 key> <next|retired> <key id> <added at>"`);
+    const [value, role, recorded, added_at] = fields;
+    if (role !== "next" && role !== "retired") throw new Error(`${where}: role must be "next" or "retired"`);
+    const key = canonicalKey(value, where);
+    const id = keyId(key);
+    if (!KEY_ID_RE.test(recorded) || recorded !== id) throw new Error(`${where}: key id ${recorded} does not match its key (${id})`);
+    if (!TIMESTAMP_RE.test(added_at) || !Number.isFinite(Date.parse(added_at))) throw new Error(`${where}: invalid timestamp ${added_at}`);
+    if (entries.some((e) => e.id === id)) throw new Error(`${where}: duplicate key ${id}`);
+    if (role === "next" && entries.some((e) => e.role === "next")) throw new Error(`${where}: more than one next key`);
+    entries.push({ id, key, role, added_at });
+  });
+  return entries;
+};
+const syncDir = (path) => { const fd = openSync(path, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } };
+const writeAtomic = (path, contents) => {
+  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}`);
+  const fd = openSync(tmp, "wx", 0o600);
+  try { writeSync(fd, contents); fsyncSync(fd); } finally { closeSync(fd); }
+  try { chmodSync(tmp, 0o600); renameSync(tmp, path); } catch (err) { try { unlinkSync(tmp); } catch {} throw err; }
+  syncDir(dirname(path));
+};
+const writeNew = (path, contents) => {
+  const fd = openSync(path, "wx", 0o600);
+  try { writeSync(fd, contents); fsyncSync(fd); } finally { closeSync(fd); }
+  syncDir(dirname(resolve(path)));
+};
+const writeKeyring = (entries) =>
+  writeAtomic(KEYRING, [
+    "# CoCalc site master keyring: keys other than the active one.",
+    "# <base64 key> <next|retired> <key id> <added at>. Keep this file 0600.",
+    ...entries.map((e) => [e.key.toString("base64"), e.role, keyId(e.key), e.added_at].join(" ")),
+  ].join("\n") + "\n");
+// The active key file is read as leniently as util reads it.
+const active = () => {
+  const key = Buffer.from(readFileSync(KEY, "utf8").trim(), "base64");
+  if (key.length !== 32) throw new Error(`invalid master key length at ${KEY}`);
+  return key;
+};
+const readKeyFile = (path) => canonicalKey(readFileSync(path, "utf8").trim(), path);
+const state = () => {
+  const activeId = keyId(active());
+  return {
+    active_id: activeId,
+    keyring: readKeyring().filter((e) => e.id !== activeId).map(({ id, role, added_at }) => ({ id, role, added_at })),
+  };
+};
+// A lock records its holder process, boot and process start time: a process
+// id alone can be reused after a crash or reboot (same format as util).
+const identity = (pid) => {
+  let boot_id, start;
+  try { boot_id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || undefined; } catch {}
+  try { const stat = readFileSync(`/proc/${pid}/stat`, "utf8"); start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]; } catch {}
+  return { boot_id, start };
+};
+const holderAlive = (text) => {
+  // A JSON record, or (from an older version) a bare process id, which
+  // JSON.parse would accept as a number, so it is recognised first.
+  let holder;
+  const trimmed = text.trim();
+  if (trimmed !== "" && Number.isSafeInteger(Number(trimmed))) holder = { pid: Number(trimmed) };
+  else { try { holder = JSON.parse(trimmed); } catch {} }
+  if (!holder || typeof holder !== "object") return false;
+  const pid = Number(holder.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const current = identity(pid);
+  if (holder.boot_id && current.boot_id && holder.boot_id !== current.boot_id) return false;
+  try { process.kill(pid, 0); } catch (e) { if (e.code !== "EPERM") return false; }
+  return !(holder.start && current.start && holder.start !== current.start);
+};
+let lockRecord;
+// The complete record is published with link(2), which fails if the lock
+// exists, so the lock is never seen empty (and judged stale) while written.
+const lock = () => {
+  const nonce = randomBytes(8).toString("hex");
+  lockRecord = JSON.stringify({ pid: process.pid, ...identity(process.pid), nonce });
+  const record = `${LOCK}.${nonce}`;
+  writeFileSync(record, `${lockRecord}\n`, { mode: 0o600, flag: "wx" });
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        linkSync(record, LOCK);
+        return;
+      } catch (err) {
+        if (err.code !== "EEXIST") throw err;
+        let holder = "";
+        try { holder = readFileSync(LOCK, "utf8").trim(); } catch {}
+        if (!holderAlive(holder)) {
+          let now = "";
+          try { now = readFileSync(LOCK, "utf8").trim(); } catch {}
+          if (now === holder) { try { unlinkSync(LOCK); } catch {} }
+          continue;
+        }
+        if (attempt >= 30) throw new Error(`another key rotation step holds ${LOCK} (${holder}); remove it if that process is not a rotation step`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+      }
+    }
+  } finally {
+    try { unlinkSync(record); } catch {}
+  }
+};
+// Release only our own lock, in case it was wrongly judged stale.
+const unlock = () => {
+  let now = "";
+  try { now = readFileSync(LOCK, "utf8").trim(); } catch {}
+  if (now === lockRecord) { try { unlinkSync(LOCK); } catch {} }
+};
+const now = () => new Date().toISOString();
+
+if (command === "status") {
+  console.log(JSON.stringify(state(), null, 2));
+  process.exit(0);
+}
+lock();
+try {
+  if (command === "prepare") {
+    const [mode, file] = args;
+    const current = active();
+    const entries = readKeyring();
+    let key;
+    if (mode === "--import") {
+      key = readKeyFile(file);
+    } else {
+      key = randomBytes(32);
+    }
+    if (key.equals(current)) throw new Error("the new key equals the active key");
+    const id = keyId(key);
+    const staged = entries.find((e) => e.role === "next");
+    if (staged && staged.id !== id) throw new Error(`a next key (${staged.id}) is already staged; activate it, or remove its line from ${KEYRING}`);
+    if (!staged && entries.some((e) => e.id === id)) throw new Error(`${id} is already in the keyring as a retired key`);
+    // The backup copy first, durably: a staged key always has one.
+    if (mode === "--export") writeNew(file, key.toString("base64") + "\n");
+    if (!staged) writeKeyring([...entries, { key, role: "next", added_at: now() }]);
+    console.log(JSON.stringify({ staged: id, ...(mode === "--export" ? { exported_to: file } : {}), ...state() }, null, 2));
+  } else if (command === "add-retired") {
+    const [, file] = args;
+    const key = readKeyFile(file);
+    const id = keyId(key);
+    if (keyId(active()) === id) throw new Error(`${id} is the active key`);
+    const entries = readKeyring();
+    if (!entries.some((e) => e.id === id)) writeKeyring([...entries, { key, role: "retired", added_at: now() }]);
+    console.log(JSON.stringify({ added_retired: id, ...state() }, null, 2));
+  } else if (command === "activate") {
+    const [id] = args;
+    const current = active();
+    const currentId = keyId(current);
+    let entries = readKeyring();
+    const target = entries.find((e) => e.id === id);
+    if (!target && currentId !== id) throw new Error(`key ${id} is not in ${KEYRING}`);
+    if (target && currentId !== id) {
+      if (!entries.some((e) => e.id === currentId)) {
+        entries = [...entries, { key: current, role: "retired", added_at: now() }];
+        writeKeyring(entries);
+      }
+      writeAtomic(KEY, target.key.toString("base64"));
+    }
+    writeKeyring(entries.filter((e) => e.id !== id));
+    console.log(JSON.stringify({ activated: id, previous_id: currentId === id ? undefined : currentId, ...state() }, null, 2));
+  } else if (command === "retire") {
+    const [id, force] = args;
+    if (keyId(active()) === id) throw new Error(`${id} is the active key`);
+    const entries = readKeyring();
+    const target = entries.find((e) => e.id === id);
+    if (!target) throw new Error(`key ${id} is not in ${KEYRING}`);
+    if (target.role !== "retired") throw new Error(`key ${id} is ${target.role}, not retired`);
+    const minAgeMs = Number(process.env.MIN_AGE_HOURS) * 3600 * 1000;
+    const since = Date.parse(target.added_at);
+    if (force !== "--force" && !(Date.now() - since >= minAgeMs)) {
+      throw new Error(`${id} was retired at ${target.added_at}; wait until ${new Date(since + minAgeMs).toISOString()} (in-flight sign-in challenges may still need it), or use --force`);
+    }
+    writeKeyring(entries.filter((e) => e.id !== id));
+    console.log(JSON.stringify({ retired: id, ...state() }, null, 2));
+  } else {
+    throw new Error(`unknown key-file command ${command}`);
+  }
+} finally {
+  unlock();
+}
+' "$@" || die "$1 failed"
+}
+
+ensure_keyring() {
+  # Services load the keyring as a credential, which must exist.
+  [[ -e "$KEYRING" ]] || install -m 0600 /dev/null "$KEYRING"
+}
+
+# Database work runs as the bay user in a transient unit with the same
+# environment and credentials as the bay services.
+as_bay() {
+  local file properties=()
+  for file in bay.env bay-workers.env bay-overlay.env bay-topology.env bay-secrets.env bay-local.env; do
+    properties+=(-p "EnvironmentFile=-${COCALC_BAY_CONFIG_DIR}/${file}")
+  done
+  "$SYSTEMD_RUN" --quiet --wait --pipe --collect \
+    -p "User=${COCALC_BAY_USER}" -p "Group=${COCALC_BAY_USER}" \
+    -p "WorkingDirectory=/opt/cocalc/bay/current" \
+    "${properties[@]}" \
+    -p "Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1" \
+    -p "LoadCredential=site-master-key:${KEY}" \
+    -p "LoadCredential=site-master-key.keyring:${KEYRING}" \
+    /bin/bash -c 'exec "$COCALC_BAY_NODE_BIN" "${COCALC_BAY_MIGRATE_MAIN:-$COCALC_BAY_CURRENT_LINK/runtime/migrate-schema/index.js}" master-key "$@"' \
+    bay-master-key "$@"
+}
+
+retire_blockers() {
+  # Why KEY_ID is still needed, from a reencrypt dry run on stdin: rows under
+  # it, or hash-only registration tokens (which cannot be attributed to a key
+  # or re-encrypted). Prints nothing if it can be retired.
+  local node
+  node="$(trusted_node)"
+  ID="$1" "$node" -e '
+    let text = ""; process.stdin.on("data", (d) => (text += d)).on("end", () => {
+      const report = JSON.parse(text);
+      const migration = report.migration ?? report;
+      if (!Array.isArray(migration.tables)) { console.error("no database report"); process.exit(2); }
+      for (const table of migration.tables) {
+        const n = table.by_key?.[process.env.ID] ?? 0;
+        if (n > 0) console.log(`${n} rows in ${table.table}.${table.encrypted_column} are still encrypted under ${process.env.ID}`);
+      }
+      const tokens = migration.unattributable?.registration_tokens_hash_only ?? 0;
+      if (tokens > 0) console.log(`${tokens} hash-only registration tokens may have been made with ${process.env.ID} and would stop working`);
+    });'
+}
+
+restart_services() {
+  # Everything that loads the key as a credential, except the one-shot
+  # migrations unit. Hub workers one at a time, each back up before the next.
+  local unit
+  for unit in $("$SYSTEMCTL" list-units --type=service --state=active --no-legend --plain \
+    'cocalc-bay-hub@*.service' | awk '{print $1}'); do
+    echo "restarting ${unit}"
+    "$SYSTEMCTL" restart "$unit"
+    sleep "${COCALC_BAY_MASTER_KEY_RESTART_PAUSE:-15}"
+  done
+  for unit in cocalc-bay-conat-router.service cocalc-bay-conat-persist.service \
+    cocalc-bay-frontdoor.service cocalc-bay-billing.service cocalc-bay-cloudflared.service; do
+    if "$SYSTEMCTL" is-active --quiet "$unit"; then
+      echo "restarting ${unit}"
+      "$SYSTEMCTL" restart "$unit"
+    fi
+  done
+}
+
+[[ "$(id -u)" == 0 || -n "${COCALC_BAY_MASTER_KEY_TEST:-}" ]] || die "run as root"
+command="${1:-}"
+shift || true
+case "$command" in
+  status)
+    keyfiles status
+    ;;
+  prepare)
+    [[ ("${1:-}" == --export || "${1:-}" == --import) && -n "${2:-}" ]] ||
+      die "usage: prepare --export FILE (a new key: store FILE in 1Password, then delete it) | prepare --import FILE (the same key on another bay)"
+    ensure_keyring
+    keyfiles prepare "$1" "$2"
+    if [[ "$1" == --export ]]; then
+      echo "Next: store ${2} in 1Password; on every other bay sharing the site key run 'prepare --import' with it; then delete it and run: cocalc-bay-master-key restart" >&2
+    else
+      echo "Next: cocalc-bay-master-key restart (and compare 'status' on every bay before activating)" >&2
+    fi
+    ;;
+  add-retired)
+    [[ "${1:-}" == --import && -n "${2:-}" ]] || die "usage: add-retired --import FILE"
+    ensure_keyring
+    keyfiles add-retired "$1" "$2"
+    echo "Next: cocalc-bay-master-key restart; cocalc-bay-master-key reencrypt --execute" >&2
+    ;;
+  restart)
+    restart_services
+    ;;
+  activate)
+    id="${1:-}"
+    [[ -n "$id" && "${2:-}" == --backed-up ]] ||
+      die "usage: activate KEY_ID --backed-up (only once KEY_ID is stored in 1Password and every service has restarted since prepare)"
+    keyfiles activate "$id"
+    echo "Next: cocalc-bay-master-key restart; systemctl start cocalc-bay-config-escrow.service (if installed); cocalc-bay-master-key reencrypt --execute" >&2
+    ;;
+  doctor)
+    as_bay doctor
+    ;;
+  reencrypt)
+    as_bay reencrypt "$@"
+    ;;
+  retire)
+    id="${1:-}"
+    [[ -n "$id" ]] || die "usage: retire KEY_ID [--force]"
+    if [[ "${2:-}" != --force ]]; then
+      blockers="$(as_bay reencrypt | retire_blockers "$id")" ||
+        die "could not check the database for what still needs ${id}"
+      [[ -z "$blockers" ]] || die "${id} is still needed: ${blockers//$'\n'/; }. Run reencrypt --execute first, or use --force"
+    fi
+    keyfiles retire "$id" "${2:-}"
+    echo "Next: cocalc-bay-master-key restart. Keep an offline copy of ${id} (1Password) while backups made before the rotation exist." >&2
+    ;;
+  -h|--help|"")
+    usage
+    ;;
+  *)
+    die "unknown command: $command"
+    ;;
+esac

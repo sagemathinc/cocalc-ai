@@ -230,10 +230,19 @@ Install the same 32-byte base64 site master key on every bay before starting:
 EOF
     exit 1
   fi
-  local mode
+  local mode keyring="${SITE_MASTER_KEY_PATH}.keyring"
   mode="$(stat -c '%a' "$SITE_MASTER_KEY_PATH")"
   if (( (8#$mode & 0077) != 0 )); then
     echo "site master key must not be readable or writable by group/other users: ${SITE_MASTER_KEY_PATH} mode ${mode}" >&2
+    exit 1
+  fi
+  # The services load the rotation keyring as a credential; it must exist.
+  if [[ ! -e "$keyring" ]]; then
+    run install -o root -g root -m 0600 /dev/null "$keyring"
+  fi
+  mode="$(stat -c '%a' "$keyring")"
+  if (( (8#$mode & 0077) != 0 )); then
+    echo "site master keyring must not be readable or writable by group/other users: ${keyring} mode ${mode}" >&2
     exit 1
   fi
 }

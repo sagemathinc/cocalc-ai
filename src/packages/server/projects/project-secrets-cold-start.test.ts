@@ -24,8 +24,13 @@ jest.mock("@cocalc/backend/data", () => ({
 
 jest.mock("@cocalc/util/master-key-lifecycle", () => ({
   __esModule: true,
+  ...jest.requireActual("@cocalc/util/master-key-lifecycle"),
   deriveSiteMasterKey: (key: Buffer) => key,
+  deriveSiteMasterKeyring: (keyring: any[]) => keyring,
   getOrCreateSiteMasterKey: async () => Buffer.alloc(32, 7),
+  getSiteMasterKeyring: async () => [
+    { id: "smk_test", role: "active", key: Buffer.alloc(32, 7) },
+  ],
 }));
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";

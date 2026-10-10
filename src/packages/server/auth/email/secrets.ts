@@ -10,7 +10,14 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
-import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
+import {
+  getSecretSettingsKeys,
+  secretSettingKeyId,
+} from "@cocalc/database/settings/secret-settings";
+import {
+  decryptWithAnyKey,
+  type DerivedSiteKey,
+} from "@cocalc/util/master-key-lifecycle";
 import {
   decryptSecretSettingValue,
   encryptSecretSettingValue,
@@ -21,28 +28,33 @@ type EmailAuthSecretKind = "browser" | "code" | "email" | "ip" | "link";
 const REGISTRATION_TOKEN_SECRET_NAME =
   "email_auth_challenges.registration_token";
 
-let cachedKey: Buffer | undefined;
+let cachedKeys: DerivedSiteKey[] | undefined;
 
-async function emailAuthKey(): Promise<Buffer> {
-  if (cachedKey) {
-    return cachedKey;
+// One email-auth subkey per site master key in the keyring, the active one
+// first. Digests are created with the active key; matching and lookups accept
+// any key, so a challenge started just before a key rotation still works.
+async function emailAuthKeys(): Promise<DerivedSiteKey[]> {
+  if (cachedKeys) {
+    return cachedKeys;
   }
-  cachedKey = createHmac("sha256", await getSecretSettingsKey())
-    .update("cocalc-email-auth:v1", "utf8")
-    .digest();
-  return cachedKey;
+  cachedKeys = (await getSecretSettingsKeys()).map(({ id, role, key }) => ({
+    id,
+    role,
+    key: createHmac("sha256", key)
+      .update("cocalc-email-auth:v1", "utf8")
+      .digest(),
+  }));
+  return cachedKeys;
 }
 
-export async function emailAuthDigest({
-  challenge_id,
-  kind,
-  value,
-}: {
+type DigestInput = {
   challenge_id?: string;
   kind: EmailAuthSecretKind;
   value: string;
-}): Promise<string> {
-  return createHmac("sha256", await emailAuthKey())
+};
+
+function digestWith(key: Buffer, { challenge_id, kind, value }: DigestInput) {
+  return createHmac("sha256", key)
     .update(kind, "utf8")
     .update("\0", "utf8")
     .update(`${challenge_id ?? ""}`, "utf8")
@@ -51,22 +63,38 @@ export async function emailAuthDigest({
     .digest("hex");
 }
 
+/** The digest to store, under the active key. */
+export async function emailAuthDigest(input: DigestInput): Promise<string> {
+  return digestWith((await emailAuthKeys())[0].key, input);
+}
+
+/** The digest under every key, the active key's first: for lookups. */
+export async function emailAuthDigestCandidates(
+  input: DigestInput,
+): Promise<string[]> {
+  return [
+    ...new Set(
+      (await emailAuthKeys()).map(({ key }) => digestWith(key, input)),
+    ),
+  ];
+}
+
 export async function emailAuthSecretMatches(opts: {
   challenge_id?: string;
   digest: string;
   kind: EmailAuthSecretKind;
   value: string;
 }): Promise<boolean> {
-  const actual = Buffer.from(
-    await emailAuthDigest({
-      challenge_id: opts.challenge_id,
-      kind: opts.kind,
-      value: opts.value,
-    }),
-    "hex",
-  );
   const expected = Buffer.from(opts.digest, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  let matches = false;
+  for (const candidate of await emailAuthDigestCandidates(opts)) {
+    const actual = Buffer.from(candidate, "hex");
+    matches =
+      (actual.length === expected.length &&
+        timingSafeEqual(actual, expected)) ||
+      matches;
+  }
+  return matches;
 }
 
 export function createEmailAuthCode(): string {
@@ -84,21 +112,24 @@ export function createEmailAuthBrowserBinding(): string {
 export async function encryptEmailAuthRegistrationToken(
   token: string,
 ): Promise<string> {
+  const [active] = await emailAuthKeys();
   return encryptSecretSettingValue(
     REGISTRATION_TOKEN_SECRET_NAME,
     token,
-    await emailAuthKey(),
+    active.key,
+    active.id,
   );
 }
 
 export async function decryptEmailAuthRegistrationToken(
   encrypted: string,
 ): Promise<string> {
-  return decryptSecretSettingValue(
-    REGISTRATION_TOKEN_SECRET_NAME,
-    encrypted,
-    await emailAuthKey(),
-  );
+  return decryptWithAnyKey(
+    await emailAuthKeys(),
+    (key) =>
+      decryptSecretSettingValue(REGISTRATION_TOKEN_SECRET_NAME, encrypted, key),
+    secretSettingKeyId(encrypted),
+  ).value;
 }
 
 export function maskEmailAddress(email_address: string): string {
@@ -112,5 +143,5 @@ export function maskEmailAddress(email_address: string): string {
 }
 
 export function resetEmailAuthKeyForTesting(): void {
-  cachedKey = undefined;
+  cachedKeys = undefined;
 }
