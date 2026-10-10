@@ -11,6 +11,7 @@ import {
   launchBrowser,
 } from "../local-browser";
 import { SharedBrowserPage } from "./agent-page";
+import { profileSecret, startBrowserKeyring } from "./keyring";
 import { SharedBrowserServer } from "./server";
 import { sharedBrowserChromeArgs } from "./service";
 
@@ -192,6 +193,97 @@ test(
         }
       }
     } finally {
+      rmSync(profileDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "sign-ins are kept encrypted with the project's browser key, and lost with another key",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 120_000,
+  },
+  async () => {
+    const { mkdtempSync, rmSync } = require("node:fs");
+    const { createServer } = require("node:http");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const { DatabaseSync } = require("node:sqlite");
+    const { chromium } = require("playwright-core");
+    const site = createServer((_req, res) => {
+      res.setHeader(
+        "Set-Cookie",
+        "session=signed-in-token; Max-Age=86400; Path=/",
+      );
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) =>
+      site.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    const profileDir = mkdtempSync(join(tmpdir(), "cocalc-browser-keyring-"));
+    // Visit the site (signing in), or just look at the cookies kept.
+    const run = async (secret: Buffer, visit: boolean) => {
+      const keyring = await startBrowserKeyring({ secret });
+      const browser = await launchBrowser({
+        executable: executable!,
+        profileDir,
+        args: sharedBrowserChromeArgs(profileDir),
+        env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: keyring.address },
+      });
+      try {
+        const cdp = await chromium.connectOverCDP(
+          `http://127.0.0.1:${browser.port}`,
+        );
+        const context = cdp.contexts()[0];
+        if (visit) await context.pages()[0].goto(url);
+        const values = (await context.cookies())
+          .filter((c: any) => c.name === "session")
+          .map((c: any) => c.value);
+        await cdp.close().catch(() => {});
+        return values;
+      } finally {
+        await browser.stop();
+        await keyring.close();
+      }
+    };
+    const a = profileSecret(Buffer.from("project key A, long enough"), "x");
+    const b = profileSecret(Buffer.from("project key B, long enough"), "x");
+    try {
+      assert.deepEqual(await run(a, true), ["signed-in-token"]);
+      // On disk, encrypted with our key ("v11"), not Chromium's built-in
+      // one ("v10"), and not in the clear.
+      // (A wrapper script's Chromium may hold the database a moment longer.)
+      let rows: any[] = [];
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const db = new DatabaseSync(join(profileDir, "Default", "Cookies"), {
+            readOnly: true,
+          });
+          try {
+            rows = db
+              .prepare(
+                "SELECT value, hex(substr(encrypted_value, 1, 3)) AS prefix FROM cookies WHERE name = 'session'",
+              )
+              .all();
+          } finally {
+            db.close();
+          }
+          break;
+        } catch (err) {
+          if (attempt >= 40 || !/locked|busy/.test(`${err}`)) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      }
+      assert.deepEqual(
+        rows.map((r: any) => [r.value, r.prefix]),
+        [["", "763131"]],
+      );
+      assert.deepEqual(await run(a, false), ["signed-in-token"]);
+      assert.deepEqual(await run(b, false), []);
+    } finally {
+      site.close();
       rmSync(profileDir, { recursive: true, force: true });
     }
   },
@@ -1033,6 +1125,168 @@ test(
       await server.close();
       await browser.stop();
       await profile.cleanup();
+    }
+  },
+);
+
+test(
+  "serve keeps the chat browser's sign-ins with the project's browser key, and forgets them when the key changes",
+  {
+    skip: executable ? false : "no Chrome/Chromium installed",
+    timeout: 180_000,
+  },
+  async () => {
+    const { spawn } = require("node:child_process");
+    const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } =
+      require("node:fs");
+    const { createServer } = require("node:http");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const net = require("node:net");
+    const { chromium } = require("playwright-core");
+    const {
+      SHARED_BROWSER_KEY_SECRET,
+    } = require("@cocalc/util/shared-browser");
+    const home = mkdtempSync(join(tmpdir(), "cocalc-serve-key-"));
+    const secrets = join(home, "secrets");
+    mkdirSync(secrets);
+    const keyFile = join(secrets, SHARED_BROWSER_KEY_SECRET);
+    const profileDir = join(
+      home,
+      ".local/share/cocalc/browser-profiles/cocalc-browser",
+    );
+    // Signing in sets the cookie; other pages only show it.
+    const site = createServer((req, res) => {
+      if (req.url === "/sign-in")
+        res.setHeader("Set-Cookie", "session=signed-in; Max-Age=86400; Path=/");
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) =>
+      site.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const origin = `http://127.0.0.1:${site.address().port}`;
+    const url = `${origin}/home`;
+    const appPort: number = await new Promise((r) => {
+      const s = net.createServer().listen(0, "127.0.0.1", () => {
+        const p = s.address().port;
+        s.close(() => r(p));
+      });
+    });
+    const cli = join(process.cwd(), "dist/bin/cocalc.js");
+    let log = "";
+    let serve: any = null;
+    const start = () => {
+      serve = spawn(
+        process.execPath,
+        [
+          cli,
+          "project",
+          "browser",
+          "serve",
+          "--port",
+          `${appPort}`,
+          "--cdp-port",
+          "0",
+        ],
+        {
+          env: {
+            ...process.env,
+            HOME: home,
+            COCALC_SECRETS: secrets,
+            COCALC_CHROME: executable,
+          },
+          stdio: ["ignore", "ignore", "pipe"],
+        },
+      );
+      serve.stderr.on("data", (d: Buffer) => (log += d.toString()));
+    };
+    const stopServe = async () => {
+      if (!serve) return;
+      const exited = new Promise((r) => serve.once("exit", r));
+      serve.kill("SIGTERM");
+      await exited;
+      serve = null;
+    };
+    const state = async () => {
+      try {
+        return await (
+          await fetch(`http://127.0.0.1:${appPort}/api/state`)
+        ).json();
+      } catch {
+        return null;
+      }
+    };
+    const until = async (ok: () => Promise<boolean> | boolean, what: string) => {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        if (await ok()) return;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      assert.fail(`${what}: ${JSON.stringify(await state())}\n${log}`);
+    };
+    const connected = async () => (await state())?.connection === "connected";
+    // What the agent sees: the session cookie, and the pages open.
+    const look = async (visit = false) => {
+      const cdp = await chromium.connectOverCDP((await state()).cdp);
+      try {
+        const context = cdp.contexts()[0];
+        if (visit) {
+          await context.pages()[0].goto(`${origin}/sign-in`);
+          await context.pages()[0].goto(url);
+        }
+        return {
+          cookies: (await context.cookies())
+            .filter((c: any) => c.name === "session")
+            .map((c: any) => c.value),
+          pages: context.pages().map((p: any) => p.url()),
+        };
+      } finally {
+        await cdp.close().catch(() => {});
+      }
+    };
+    try {
+      writeFileSync(keyFile, "project browser key A, long enough\n");
+      start();
+      await until(
+        () => /sign-ins encrypted with the project's browser key/.test(log),
+        "started with the key",
+      );
+      await until(connected, "started");
+      assert.deepEqual((await look(true)).cookies, ["signed-in"]);
+
+      // Kept across restarts (e.g. the project restarted).
+      await stopServe();
+      start();
+      await until(connected, "restarted");
+      assert.deepEqual((await look()).cookies, ["signed-in"]);
+      await look(true);
+
+      // A new key (the "forget sign-ins" button): signed out, same pages.
+      writeFileSync(keyFile, "project browser key B, long enough\n");
+      await until(
+        () => /key changed: restarting/.test(log),
+        "noticed the new key",
+      );
+      await until(connected, "restarted with the new key");
+      let seen = await look();
+      assert.deepEqual(seen.cookies, []);
+      assert.ok(seen.pages.includes(url), JSON.stringify(seen.pages));
+
+      // No key (the secret was deleted): nothing kept at all.
+      await look(true);
+      rmSync(keyFile);
+      await until(
+        () => /sign-ins are not kept/.test(log),
+        "noticed the key is gone",
+      );
+      await until(connected, "restarted without a key");
+      assert.equal(existsSync(profileDir), false);
+      seen = await look();
+      assert.deepEqual(seen.cookies, []);
+    } finally {
+      await stopServe().catch(() => {});
+      site.close();
+      rmSync(home, { recursive: true, force: true });
     }
   },
 );

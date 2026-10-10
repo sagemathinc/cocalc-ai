@@ -12,9 +12,9 @@ it back. It shows up in two places:
 
 - **In an agent chat**, when an agent starts a browser for a task, as a live
   card next to the conversation.
-- **As a file ending in \`.browser\`**, a browser of your own that keeps its
-  logins and cookies. Open it like any document, split it into frames, and
-  point agents at it.
+- **As a file ending in \`.browser\`**, a browser of your own with its own
+  sign-ins. Open it like any document, split it into frames, and point agents
+  at it.
 
 Most of what people do on a computer happens in a web browser, so an agent
 that can browse alongside you can help with far more than an agent limited to
@@ -129,8 +129,27 @@ remembered on each device.
 ## Shut it down
 
 Click **Shut down** in the address bar to stop a browser. Agents cannot use it
-until someone starts it again. A \`.browser\` file keeps its logins; the chat
-browser starts fresh next time.
+until someone starts it again. It keeps its sign-ins.
+
+## Sign-ins
+
+Every browser in a project keeps its sign-ins, so you sign in to a site once,
+not every time the browser or the project restarts. The first time someone
+opens a browser, CoCalc adds a project secret named \`COCALC_BROWSER_KEY\`
+(see **Settings**, **Secrets**), and the browsers encrypt the cookies they
+save with it. Project secrets are never in snapshots or backups, so the
+cookies in those copies are useless on their own. A browser that an agent
+starts before anyone has opened one keeps no sign-ins until you open it.
+
+To sign every browser in the project out of every website, click **Forget
+sign-ins** in the address bar. This replaces the key: the browsers restart
+signed out with the same pages open, and the sign-ins in snapshots and
+backups can no longer be read. Deleting the secret also signs them out, and
+they keep nothing until someone opens a browser again.
+
+Sites also keep some data in a browser's local storage, which is not
+encrypted. Signing out of a site is still the surest way to end a session,
+because the site then ends it on its servers too.
 
 ## Projects without internet access
 
@@ -148,6 +167,8 @@ also run on your computer, which uses your network.
   \`connect\` command runs, and only with that file's own profile.
 - Each \`.browser\` file has its own profile. Use separate files for separate
   accounts.
+- For your most sensitive accounts, run the browser on your computer: its
+  sign-ins then never leave your computer.
 
 ## Troubleshooting
 

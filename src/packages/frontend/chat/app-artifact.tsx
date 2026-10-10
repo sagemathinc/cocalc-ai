@@ -21,6 +21,10 @@ import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
+  ensureSharedBrowserKey,
+  forgetSharedBrowserSignIns,
+} from "@cocalc/frontend/frame-editors/browser-editor/browser-key";
+import {
   NoNetworkNotice,
   useProjectNetworkDisabled,
 } from "@cocalc/frontend/frame-editors/browser-editor/no-network-notice";
@@ -112,11 +116,25 @@ export function AppArtifact({
         Modal.confirm({
           title: `Shut down ${title}?`,
           content:
-            "It stops until someone starts it again; agents cannot use it meanwhile. A .browser file keeps its logins; the chat's browser starts fresh.",
+            "It stops until someone starts it again; agents cannot use it meanwhile. It keeps its sign-ins.",
           okText: "Shut down",
           okButtonProps: { danger: true },
           onOk: () =>
             shutdown().catch((err) => setError(`${err?.message ?? err}`)),
+        });
+        return;
+      }
+      if (event.data?.type === "cocalc-browser-forget") {
+        Modal.confirm({
+          title: "Forget all sign-ins?",
+          content:
+            "Every web browser in this project is signed out of all websites, and the sign-ins in copies of them (snapshots, backups) can no longer be read. Open pages stay open. Agents and you sign in again as needed.",
+          okText: "Forget sign-ins",
+          okButtonProps: { danger: true },
+          onOk: () =>
+            forgetSharedBrowserSignIns(projectId).catch((err) =>
+              setError(`${err?.message ?? err}`),
+            ),
         });
         return;
       }
@@ -127,6 +145,7 @@ export function AppArtifact({
   }, [onMessage, iframe, title, projectId, app.id]);
 
   const cacheKey = `${projectId}/${app.id}`;
+  const isSharedBrowser = app.id.startsWith(SHARED_BROWSER_APP_ID);
   useEffect(() => {
     if (stopped) return;
     let canceled = false;
@@ -163,6 +182,11 @@ export function AppArtifact({
             wake: { ...spec.wake, enabled: true },
           })
         ).spec as AppSpec;
+      // Before it starts: a browser keeps sign-ins only with the key.
+      if (isSharedBrowser)
+        await ensureSharedBrowserKey(projectId).catch((err) =>
+          console.warn(`browser key: ${err?.message ?? err}`),
+        );
       let status;
       try {
         status = await api.apps.ensureRunning(app.id, {
@@ -257,7 +281,7 @@ export function AppArtifact({
       }}
     >
       {notice ??
-        (networkDisabled && app.id.startsWith(SHARED_BROWSER_APP_ID) ? (
+        (networkDisabled && isSharedBrowser ? (
           <NoNetworkNotice />
         ) : null)}
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>

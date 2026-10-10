@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, posix, win32 } from "node:path";
+import WebSocket from "ws";
 
 export type ProfileStorage = "memory" | "disk";
 
@@ -312,11 +313,13 @@ export async function launchBrowser({
   profileDir,
   timeoutMs = 30_000,
   captureStderr = false,
+  env,
 }: {
   executable: string;
   args: string[];
   profileDir: string;
   timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
   // Keep Chromium's last stderr lines to explain a crash.  Only for a browser
   // that must not outlive this process: its stderr is a pipe to us.
   captureStderr?: boolean;
@@ -326,6 +329,7 @@ export async function launchBrowser({
   rmSync(posix.join(profileDir, "DevToolsActivePort"), { force: true });
   // Own process group: Ctrl-C reaches us, and we decide the teardown order.
   const child = spawn(executable, args, {
+    ...(env ? { env } : {}),
     stdio: captureStderr ? ["ignore", "ignore", "pipe"] : "ignore",
     detached: process.platform !== "win32",
   });
@@ -352,8 +356,17 @@ export async function launchBrowser({
       resolve();
     });
   });
+  let devToolsPort: number | null = null;
   const stop = async () => {
     if (hasExited) return;
+    if (devToolsPort != null) {
+      await closeOverDevTools(devToolsPort).catch(() => {});
+      await Promise.race([
+        exited,
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+      if (hasExited) return;
+    }
     child.kill("SIGTERM");
     const timer = setTimeout(() => {
       if (!hasExited) child.kill("SIGKILL");
@@ -369,11 +382,46 @@ export async function launchBrowser({
       );
     }
     const port = readDevToolsPort(profileDir);
-    if (port != null) return { child, port, exited, stop, stderrTail };
+    if (port != null) {
+      devToolsPort = port;
+      return { child, port, exited, stop, stderrTail };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await stop();
   throw new Error(`${executable} did not start DevTools within ${timeoutMs}ms`);
+}
+
+// Ask Chromium to quit as if its last window closed, so it first writes out
+// what it holds in memory: it saves cookies only every 30 seconds or so, and
+// Chromium (unlike the headless shell) loses them on SIGTERM.
+async function closeOverDevTools(port: number): Promise<void> {
+  const version = await (
+    await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: AbortSignal.timeout(2000),
+    })
+  ).json();
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(version.webSocketDebuggerUrl);
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("Browser.close timed out"));
+    }, 2000);
+    const done = () => {
+      clearTimeout(timer);
+      ws.terminate();
+      resolve();
+    };
+    ws.once("open", () =>
+      ws.send(JSON.stringify({ id: 1, method: "Browser.close" })),
+    );
+    ws.once("message", done);
+    ws.once("close", done);
+    ws.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 // The id in webSocketDebuggerUrl is unique per browser process, so matching it

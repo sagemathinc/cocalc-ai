@@ -68,6 +68,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <select id="quality" title="Picture quality: Sharp sends crisp text once the page is still; Fast uses less bandwidth">
       <option value="sharp">Sharp</option><option value="balanced">Balanced</option><option value="fast">Fast</option>
     </select>
+    <button id="forget" title="Sign every web browser in this project out of all websites" style="display:none">Forget sign-ins</button>
     <button id="shutdown" title="Shut down this browser (agents cannot use it until it is started again)" style="display:none">Shut down</button>
   </div>
   <div id="driver"><span class="msg"></span><button></button></div>
@@ -238,6 +239,8 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     // Where a .browser file's browser runs, and waiting for the computer.
     const runson = $("runson");
     runson.style.display = state.runsOn ? "" : "none";
+    // On the user's computer, sign-ins are that Chrome's own business.
+    $("forget").style.display = window.parent !== window && !preview() ? "" : "none";
     if (state.runsOn && document.activeElement !== runson) runson.value = state.runsOn;
     const waiting = $("waiting");
     const waitingForComputer = state.connection === "waiting" && state.runsOn === "computer";
@@ -266,6 +269,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   if (window.parent !== window) {
     $("shutdown").style.display = "";
     $("shutdown").onclick = () => window.parent.postMessage({ type: "cocalc-app-shutdown" }, "*");
+    $("forget").onclick = () => window.parent.postMessage({ type: "cocalc-browser-forget" }, "*");
   }
   $("runson").addEventListener("change", () => send({ type: "runsOn", value: $("runson").value }));
   // The page's panel may switch it back to the project.

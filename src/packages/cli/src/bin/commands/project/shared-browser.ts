@@ -212,7 +212,7 @@ export function registerSharedBrowserCommands(
   browser
     .command("stop")
     .description(
-      "stop the shared browser (the project's browser deletes its profile; a .browser file's browser keeps it)",
+      "stop the shared browser (it keeps its sign-ins if the project has a browser key)",
     )
     .option("-w, --project <project>", "project id or name")
     .option(BROWSER_FLAG, BROWSER_HELP)

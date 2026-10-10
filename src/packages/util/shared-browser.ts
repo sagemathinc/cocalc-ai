@@ -13,6 +13,12 @@ they always agree on which app a file means.
 
 export const SHARED_BROWSER_APP_ID = "cocalc-browser";
 
+// The project secret that keys every shared browser's saved sign-ins (see
+// cli/src/bin/core/shared-browser/keyring.ts).  A human creates it the first
+// time they open a browser; replacing or deleting it signs every browser in
+// the project out, including copies in snapshots and backups.
+export const SHARED_BROWSER_KEY_SECRET = "COCALC_BROWSER_KEY";
+
 export const SHARED_BROWSER_FILE_APP_ID_RE = /^cocalc-browser-[0-9a-f]{16}$/;
 
 // 64 bits of hash: FNV-1a over the UTF-8 bytes, twice with different seeds.

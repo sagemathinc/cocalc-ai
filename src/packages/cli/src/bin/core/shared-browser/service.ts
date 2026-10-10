@@ -17,6 +17,7 @@ import {
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -24,6 +25,13 @@ import {
 import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import {
+  keyFingerprint,
+  profileSecret,
+  readBrowserKey,
+  startBrowserKeyring,
+  type BrowserKeyring,
+} from "./keyring";
 import { SharedBrowserServer } from "./server";
 
 import {
@@ -31,6 +39,7 @@ import {
   parseSharedBrowserFile,
   SHARED_BROWSER_APP_ID,
   SHARED_BROWSER_FILE_APP_ID_RE,
+  SHARED_BROWSER_KEY_SECRET,
   sharedBrowserFileAppId,
   sharedBrowserTunnelPort,
   type SharedBrowserRunsOn,
@@ -40,9 +49,8 @@ export { SHARED_BROWSER_APP_ID };
 
 /**
  * Which shared browser a command means: the project's (chat) browser, or the
- * browser of a `.browser` file.  A file's browser is its own app, keeps its
- * profile (logins, cookies) across restarts, and is named by the file's
- * absolute path.
+ * browser of a `.browser` file.  A file's browser is its own app with its own
+ * profile, and is named by the file's absolute path.
  */
 export interface SharedBrowserTarget {
   appId: string;
@@ -70,9 +78,35 @@ export function sharedBrowserTarget(
   return { appId: sharedBrowserFileAppId(file), file };
 }
 
-// Where a .browser file's browser keeps its profile.
+// Where a browser keeps its profile (sign-ins, history) across restarts.
 export function sharedBrowserProfileDir(appId: string, home = homedir()) {
   return join(home, ".local", "share", "cocalc", "browser-profiles", appId);
+}
+
+const KEY_MARKER = ".cocalc-browser-key";
+
+/**
+ * Make the profile at path one for this key.  A profile from another key (the
+ * project's browser key was replaced or deleted since) has sign-ins nobody
+ * can read, and one from before keys has sign-ins anybody can read: start
+ * over.  Returns whether it removed an old profile.
+ */
+export function profileForKey(path: string, secret: Buffer): boolean {
+  const want = keyFingerprint(secret)!;
+  let have: string | null = null;
+  try {
+    have = readFileSync(join(path, KEY_MARKER), "utf8").trim();
+  } catch {}
+  if (have === want) return false;
+  const existed = existsSync(path) && readdirSync(path).length > 0;
+  removeProfile(path);
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  writeFileSync(join(path, KEY_MARKER), `${want}\n`);
+  return existed;
+}
+
+function removeProfile(path: string) {
+  rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 export const INSTALL_CHROMIUM_HINT =
@@ -127,7 +161,10 @@ const NO_THROTTLING = [
   "--disable-renderer-backgrounding",
 ];
 
-export function sharedBrowserChromeArgs(profileDir: string): string[] {
+export function sharedBrowserChromeArgs(
+  profileDir: string,
+  urls: string[] = ["about:blank"],
+): string[] {
   return [
     `--user-data-dir=${profileDir}`,
     "--remote-debugging-port=0",
@@ -145,7 +182,7 @@ export function sharedBrowserChromeArgs(profileDir: string): string[] {
     "--disk-cache-size=67108864",
     "--window-size=1280,800",
     ...NO_THROTTLING,
-    "about:blank",
+    ...urls,
   ];
 }
 
@@ -154,8 +191,9 @@ export async function runSharedBrowserService({
   host = "127.0.0.1",
   cdpPort = 9222,
   chrome,
-  // In a project, /tmp is wiped when the project stops and is neither backed
-  // up nor shared; /dev/shm is too small for a browser profile.
+  // Without the project's browser key, the profile is temporary.  In a
+  // project, /tmp is wiped when the project stops and is neither backed up
+  // nor shared; /dev/shm is too small for a browser profile.
   profileStorage = "disk",
   // A .browser file's browser: the file (absolute path) and its app id.
   file,
@@ -178,6 +216,7 @@ export async function runSharedBrowserService({
       : "project";
   let runsOn: SharedBrowserRunsOn = file ? readRunsOn() : "project";
   const tunnelPort = file && appId ? sharedBrowserTunnelPort(appId) : null;
+  const profileId = appId ?? SHARED_BROWSER_APP_ID;
 
   const server = new SharedBrowserServer({
     host,
@@ -201,27 +240,51 @@ export async function runSharedBrowserService({
     browser: Awaited<ReturnType<typeof launchBrowser>>;
     profile: Pick<ProfileDir, "path" | "backing" | "cleanup" | "release">;
     watchdog: ReturnType<typeof startCleanupWatchdog>;
+    keyring: BrowserKeyring | null;
+    // The project key it runs with (null: a temporary profile).
+    keyId: string | null;
   } | null = null;
   let stopping = false;
 
-  const startLocal = async () => {
+  const startLocal = async (urls?: string[]) => {
     const executable = findSharedBrowserChrome(chrome, sys);
-    const profile =
-      file && appId
-        ? persistentProfile(sharedBrowserProfileDir(appId))
-        : await createProfileDir(profileStorage, sys);
-    const browser = await launchBrowser({
-      executable,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-      captureStderr: true,
-    });
+    // Sign-ins are kept only with the project's browser key: Chromium
+    // encrypts cookies with it (see ./keyring.ts), and drops the ones it
+    // cannot decrypt, so a kept profile never runs without the keyring.
+    const key = readBrowserKey();
+    let keyring: BrowserKeyring | null = null;
+    let profile: Pick<ProfileDir, "path" | "backing" | "cleanup" | "release">;
+    if (key) {
+      const secret = profileSecret(key, profileId);
+      const path = sharedBrowserProfileDir(profileId);
+      if (profileForKey(path, secret))
+        log("the browser key changed: removed the old profile");
+      profile = persistentProfile(path);
+      keyring = await startBrowserKeyring({ secret, log });
+    } else {
+      profile = await createProfileDir(profileStorage, sys);
+    }
+    let browser: Awaited<ReturnType<typeof launchBrowser>>;
+    try {
+      browser = await launchBrowser({
+        executable,
+        profileDir: profile.path,
+        args: sharedBrowserChromeArgs(profile.path, urls),
+        captureStderr: true,
+        env: keyring
+          ? { ...process.env, DBUS_SESSION_BUS_ADDRESS: keyring.address }
+          : undefined,
+      });
+    } catch (err) {
+      await keyring?.close();
+      throw err;
+    }
     const watchdog = startCleanupWatchdog({
       browser: browser.child.pid!,
       browserMarker: `--user-data-dir=${profile.path}`,
       release: profile.release,
     });
-    local = { browser, profile, watchdog };
+    local = { browser, profile, watchdog, keyring, keyId: keyFingerprint(key) };
     const current = local;
     // The app manager restarts the service on the next use.
     void browser.exited.then(() => {
@@ -234,7 +297,13 @@ export async function runSharedBrowserService({
       await fetch(`http://127.0.0.1:${browser.port}/json/version`)
     ).json();
     await server.attachChrome(version.webSocketDebuggerUrl);
-    log(`${version.Browser}; profile in ${profile.backing}`);
+    log(
+      `${version.Browser}; profile in ${profile.backing}; ${
+        keyring
+          ? "sign-ins encrypted with the project's browser key"
+          : `no ${SHARED_BROWSER_KEY_SECRET} project secret, so sign-ins are not kept`
+      }`,
+    );
   };
 
   const stopLocal = async () => {
@@ -247,6 +316,19 @@ export async function runSharedBrowserService({
       current.watchdog,
       (err) => log(`cleanup: ${(err as Error)?.message ?? err}`),
     );
+    await current.keyring?.close().catch(() => {});
+  };
+
+  // The project's browser key was created, replaced or deleted: start over
+  // in the right profile, with the same pages open.
+  const restartLocal = async () => {
+    const current = local;
+    if (!current) return;
+    const urls = await openPageUrls(current.browser.port);
+    await stopLocal();
+    // Deleted: forget everything this browser kept.
+    if (!readBrowserKey()) removeProfile(sharedBrowserProfileDir(profileId));
+    await startLocal(urls.length > 0 ? urls : undefined);
   };
 
   // The user's computer, through the reverse tunnel of
@@ -300,12 +382,19 @@ export async function runSharedBrowserService({
   if (runsOn === "project") await startLocal();
   else await attachRemote();
 
-  // Follow the file (the viewer, an edit, or `connect` may change it), and
-  // the tunnel: a computer that connects takes over the file's browser.
+  // Follow the project's browser key; and the file (the viewer, an edit, or
+  // `connect` may change it) and the tunnel: a computer that connects takes
+  // over the file's browser.
   const poll = setInterval(() => {
     switching = switching
       .then(async () => {
-        if (stopping || !file) return;
+        if (stopping) return;
+        if (local && keyFingerprint(readBrowserKey()) !== local.keyId) {
+          log("the project's browser key changed: restarting the browser");
+          await restartLocal();
+          return;
+        }
+        if (!file) return;
         const fromFile = readRunsOn();
         if (fromFile !== runsOn) {
           void switchTo(fromFile, false);
@@ -330,6 +419,24 @@ export async function runSharedBrowserService({
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
     process.on(signal, () => void stop(signal));
   await new Promise(() => {});
+}
+
+// The pages open in a browser, to reopen them in a restarted one.
+async function openPageUrls(port: number): Promise<string[]> {
+  try {
+    const targets = await (
+      await fetch(`http://127.0.0.1:${port}/json/list`, {
+        signal: AbortSignal.timeout(2000),
+      })
+    ).json();
+    return targets
+      .filter(
+        (t: any) => t.type === "page" && /^https?:/.test(`${t.url ?? ""}`),
+      )
+      .map((t: any) => `${t.url}`);
+  } catch {
+    return [];
+  }
 }
 
 // Inside a project: its id (apps may not get COCALC_PROJECT_ID; the
