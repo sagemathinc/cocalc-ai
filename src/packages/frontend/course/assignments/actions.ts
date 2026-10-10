@@ -88,6 +88,7 @@ import {
   waitForCourseCopyLro,
 } from "../copy-lro";
 import { projectRelativeCoursePath } from "./paths";
+import { autoCollectMissingStudents } from "./auto-collect-refresh";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 const TERMINAL_LRO_STATUSES = new Set([
@@ -409,6 +410,7 @@ export class AssignmentsActions {
     assignment_id: string,
     enabled: boolean,
     run_at?: string,
+    opts: { force?: boolean; assigned?: Set<string> } = {},
   ): Promise<void> => {
     const { store, assignment } = this.course_actions.resolve({
       assignment_id,
@@ -447,7 +449,7 @@ export class AssignmentsActions {
       return;
     }
 
-    if (previousOpId && previousRunAt === runAt) {
+    if (previousOpId && previousRunAt === runAt && !opts.force) {
       this.set_assignment_fields(assignment_id, {
         auto_collect: true,
         auto_collect_error: null,
@@ -459,6 +461,7 @@ export class AssignmentsActions {
       assignment_id,
       new_only: true,
       mark_started: false,
+      assigned: opts.assigned,
     });
     if (!items.length) {
       const err =
@@ -494,6 +497,43 @@ export class AssignmentsActions {
         auto_collect_error: `${err}`,
       });
       this.course_actions.set_error(`schedule assignment collection: ${err}`);
+    }
+  };
+
+  // A scheduled collection lists the student projects to collect when it is
+  // scheduled. After the assignment reaches more students, reschedule it at
+  // the same time so it includes them (support #20954). `assigned` lists
+  // students just copied to, which the course store may not show yet.
+  private refresh_auto_collect = async (
+    assignment_id: string,
+    assigned: string[] = [],
+  ): Promise<void> => {
+    try {
+      const { assignment } = this.course_actions.resolve({ assignment_id });
+      if (!assignment?.get("auto_collect")) return;
+      const op_id = assignment.get("auto_collect_op_id");
+      const runAt = assignment.get("auto_collect_run_at");
+      if (!op_id || !runAt) return;
+      const assignedSet = new Set(assigned);
+      const { items } = this.build_collect_assignment_items({
+        assignment_id,
+        new_only: true,
+        mark_started: false,
+        assigned: assignedSet,
+      });
+      const summary = await webapp_client.conat_client.hub.lro.get({ op_id });
+      const missing = autoCollectMissingStudents({
+        summary,
+        runAt,
+        eligibleStudentIds: items.map((item) => item.student_id),
+      });
+      if (missing.length === 0) return;
+      await this.set_auto_collect(assignment_id, true, runAt, {
+        force: true,
+        assigned: assignedSet,
+      });
+    } catch (err) {
+      this.course_actions.set_error(`update scheduled collection: ${err}`);
     }
   };
 
@@ -1156,7 +1196,9 @@ ${details}
     } catch (err) {
       // error somewhere along the way
       finish(err);
+      return;
     }
+    await this.refresh_auto_collect(assignment_id, [student_id]);
   };
 
   private assignment_src_path = (assignment): string => {
@@ -1391,6 +1433,10 @@ ${details}
           );
         }
         this.set_assignment_field(assignment_id, "last_assignment_op_id", null);
+        await this.refresh_auto_collect(
+          assignment_id,
+          startedStudentIds.filter((student_id) => !result[student_id]),
+        );
       } catch (err) {
         if (op) {
           const reconciled = await this.reconcile_assignment_distribution({
@@ -1456,6 +1502,12 @@ ${details}
       );
     }
     this.set_assignment_field(assignment_id, "last_assignment_op_id", null);
+    await this.refresh_auto_collect(
+      assignment_id,
+      dests
+        .map(({ student_id }) => student_id)
+        .filter((student_id) => !result[student_id]),
+    );
     return true;
   };
 
@@ -1687,10 +1739,13 @@ ${details}
     assignment_id,
     new_only,
     mark_started,
+    assigned,
   }: {
     assignment_id: string;
     new_only: boolean;
     mark_started: boolean;
+    // students just assigned, which the store may not show yet
+    assigned?: Set<string>;
   }): {
     items: CourseCollectAssignmentItem[];
     startedStudentIds: string[];
@@ -1708,7 +1763,10 @@ ${details}
     const prev_step = previous_step("collect", peer);
     for (const student_id of store.get_student_ids({ deleted: false })) {
       if (this.course_actions.is_closed()) break;
-      if (!store.last_copied(prev_step, assignment_id, student_id, true)) {
+      if (
+        !store.last_copied(prev_step, assignment_id, student_id, true) &&
+        !(prev_step === "assignment" && assigned?.has(student_id))
+      ) {
         continue;
       }
       if (
