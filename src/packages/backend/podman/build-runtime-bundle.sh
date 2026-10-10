@@ -195,19 +195,18 @@ cargo build --locked --release --manifest-path "$SRC/aardvark-dns-$AARDVARK_VERS
 install -m 0755 "$SRC/aardvark-dns-$AARDVARK_VERSION/target/release/aardvark-dns" "$STAGE/bin/aardvark-dns"
 
 # Podman finds pasta through helper_binaries_dir below, ahead of the distro
-# copy. The pasta names are links to passt, which picks its mode from argv[0];
-# on x86_64 passt re-executes its own path plus .avx2 when the CPU supports it.
-PASST_BINARIES=(passt pasta)
+# copy. pasta is the passt binary, which picks its mode from argv[0]; on x86_64
+# it re-executes its own path plus .avx2 when the CPU supports it. Copies, not
+# links: the runtime archive holds only directories and regular files.
+PASST_BINARIES=(passt)
 if [[ "$ARCH" == amd64 ]]; then
-  PASST_BINARIES+=(passt.avx2 pasta.avx2)
+  PASST_BINARIES+=(passt.avx2)
 fi
 make -C "$SRC/passt-$PASST_COMMIT" -j"$(nproc)" VERSION="$PASST_VERSION" \
   "${PASST_BINARIES[@]}"
-install -m 0755 "$SRC/passt-$PASST_COMMIT/passt" "$STAGE/bin/passt"
-ln -s passt "$STAGE/bin/pasta"
+install -m 0755 "$SRC/passt-$PASST_COMMIT/passt" "$STAGE/bin/pasta"
 if [[ "$ARCH" == amd64 ]]; then
-  install -m 0755 "$SRC/passt-$PASST_COMMIT/passt.avx2" "$STAGE/bin/passt.avx2"
-  ln -s passt.avx2 "$STAGE/bin/pasta.avx2"
+  install -m 0755 "$SRC/passt-$PASST_COMMIT/passt.avx2" "$STAGE/bin/pasta.avx2"
 fi
 
 cat > "$STAGE/etc/containers/containers.conf" <<'EOF'
@@ -220,7 +219,7 @@ runtime = "/opt/cocalc/container-runtime/current/bin/crun"
 network_backend = "netavark"
 EOF
 
-for binary in podman conmon crun netavark aardvark-dns passt; do
+for binary in podman conmon crun netavark aardvark-dns pasta; do
   ldd "$STAGE/bin/$binary" > "$STAGE/share/cocalc/ldd-$binary.txt" || true
 done
 

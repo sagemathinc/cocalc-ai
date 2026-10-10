@@ -63,11 +63,9 @@ exit ${failStateProbe ? 1 : 0}
     fs.chmodSync(path.join(binDir, binary), 0o755);
   }
   if (pasta) {
-    // Laid out like the real bundle: pasta is a link to passt.
-    const passtPath = path.join(binDir, "passt");
-    fs.writeFileSync(passtPath, `#!/bin/sh\necho "pasta ${pasta.reports}"\n`);
-    fs.chmodSync(passtPath, 0o755);
-    fs.symlinkSync("passt", path.join(binDir, "pasta"));
+    const pastaPath = path.join(binDir, "pasta");
+    fs.writeFileSync(pastaPath, `#!/bin/sh\necho "pasta ${pasta.reports}"\n`);
+    fs.chmodSync(pastaPath, 0o755);
   }
   const versionOutput = execFileSync(podmanPath, ["--version"], {
     encoding: "utf8",
@@ -499,8 +497,8 @@ describe("project host upgrade installer", () => {
 
       expect(result.status).toBe("updated");
       expect(fs.realpathSync(currentLink)).toBe(versionDir);
-      expect(fs.readlinkSync(path.join(versionDir, "bin", "pasta"))).toBe(
-        "passt",
+      expect(fs.statSync(path.join(versionDir, "bin", "pasta")).isFile()).toBe(
+        true,
       );
     } finally {
       await served.close();
