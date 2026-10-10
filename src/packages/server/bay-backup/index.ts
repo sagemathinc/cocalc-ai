@@ -4398,6 +4398,7 @@ function mapPgBackRestRestoreReadiness({
         worker_machine_type: workerRun.machine_type,
         worker_boot_disk_gb: workerRun.boot_disk_gb,
         worker_cleanup: workerRun.cleanup,
+        worker_stage_seconds: workerStageSeconds(worker ?? undefined),
         conat_database_count: worker?.conat?.database_count ?? null,
         conat_database_bytes: worker?.conat?.database_bytes ?? null,
         conat_quick_check_passed: worker?.conat?.quick_check_passed ?? null,

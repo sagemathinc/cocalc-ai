@@ -182,6 +182,10 @@ test("startup script supports checkpoint-only snapshot recovery", () => {
   );
   expect(workerSource).toContain('"recovery.signal", "standby.signal"');
   expect(workerSource).toContain('"-c", "fsync=off"');
+  // The result must say so for PITR runs as well as snapshot runs.
+  expect(workerSource).toContain(
+    '"durability": "fsync-disabled-disposable-validation" if CONFIG["restore_mode"] in ("snapshot", "pitr") else "normal"',
+  );
   expect(workerSource).toContain(
     'STAGE = enter_stage("postgres-snapshot-recovery")',
   );

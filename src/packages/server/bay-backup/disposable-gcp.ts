@@ -942,7 +942,8 @@ exit "$last_exit"
         "repository_type": REPOSITORY_TYPE,
         "backup_label": CONFIG["backup_set_id"] if REPOSITORY_TYPE == "pgbackrest" else None,
         "restore_mode": CONFIG["restore_mode"],
-        "durability": "fsync-disabled-disposable-validation" if CONFIG["restore_mode"] == "snapshot" else "normal",
+        # Both modes run PostgreSQL with fsync=off on this throwaway VM.
+        "durability": "fsync-disabled-disposable-validation" if CONFIG["restore_mode"] in ("snapshot", "pitr") else "normal",
         "pitr_verified": CONFIG["restore_mode"] == "pitr",
         "pre_count": counts[0] if counts is not None else None,
         "post_count": counts[1] if counts is not None else None,
