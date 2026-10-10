@@ -93,7 +93,13 @@ export function HostRecoveryBanner({
                   ) : startedAt ? (
                     <>
                       Started{" "}
-                      <TimeAgo click_to_toggle={false} date={startedAt} live />
+                      <TimeAgo click_to_toggle={false} date={startedAt} live />{" "}
+                      (
+                      {startedAt.toLocaleTimeString([], {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                      )
                     </>
                   ) : (
                     "Recovery is in progress"

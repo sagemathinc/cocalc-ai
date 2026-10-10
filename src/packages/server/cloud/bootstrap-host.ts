@@ -1758,11 +1758,19 @@ else
 fi
 
 if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
-  BOOTSTRAP_RECONCILE_SCOPE="$(printenv COCALC_BOOTSTRAP_RECONCILE_SCOPE 2>/dev/null || printf full)"
+  # The control plane always names a scope. Without one this is the cloud
+  # provider's startup script at boot, after systemd already started the
+  # project-host stack: only restart it if the reconcile changed its software.
+  if BOOTSTRAP_RECONCILE_SCOPE="$(printenv COCALC_BOOTSTRAP_RECONCILE_SCOPE 2>/dev/null)"; then
+    BOOTSTRAP_RECONCILE_RESTART_ARG=""
+  else
+    BOOTSTRAP_RECONCILE_SCOPE="full"
+    BOOTSTRAP_RECONCILE_RESTART_ARG="--restart-if-changed"
+  fi
   case "$BOOTSTRAP_RECONCILE_SCOPE" in
     full)
       echo "bootstrap: already complete; reconciling host software"
-      python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR"
+      python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR" $BOOTSTRAP_RECONCILE_RESTART_ARG
       ;;
     helpers)
       echo "bootstrap: already complete; reconciling privileged host helpers only"

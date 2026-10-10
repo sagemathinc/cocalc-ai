@@ -4,6 +4,8 @@ import {
   GlobalOperationsClient,
   ImagesClient,
   InstancesClient,
+  MachineTypesClient,
+  RegionsClient,
   ZoneOperationsClient,
 } from "@google-cloud/compute";
 import { randomUUID } from "crypto";
@@ -1450,6 +1452,76 @@ export class GcpProvider implements CloudProvider {
       zone: runtime.zone,
       credentials,
     });
+  }
+
+  async regionalQuotaHeadroom(
+    region: string,
+    creds: any,
+  ): Promise<Record<string, number>> {
+    const credentials = parseCredentials(creds ?? {});
+    const client = new RegionsClient(credentials);
+    const [result] = await client.get({
+      project: credentials.projectId,
+      region,
+    });
+    const headroom: Record<string, number> = {};
+    for (const quota of result?.quotas ?? []) {
+      const metric = `${quota?.metric ?? ""}`;
+      const limit = Number(quota?.limit);
+      const usage = Number(quota?.usage);
+      if (metric && Number.isFinite(limit) && Number.isFinite(usage)) {
+        headroom[metric] = limit - usage;
+      }
+    }
+    return headroom;
+  }
+
+  async listZoneMachineTypes(
+    zone: string,
+    creds: any,
+  ): Promise<
+    Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }>
+  > {
+    const credentials = parseCredentials(creds ?? {});
+    const client = new MachineTypesClient(credentials);
+    const result: Array<{
+      name: string;
+      guestCpus?: number;
+      memoryMb?: number;
+      isSharedCpu?: boolean;
+    }> = [];
+    for await (const type of client.listAsync({
+      project: credentials.projectId,
+      zone,
+    })) {
+      if (!type?.name || type.deprecated?.state) continue;
+      result.push({
+        name: type.name,
+        guestCpus: Number(type.guestCpus ?? 0) || undefined,
+        memoryMb: Number(type.memoryMb ?? 0) || undefined,
+        isSharedCpu: !!type.isSharedCpu,
+      });
+    }
+    return result;
+  }
+
+  async instanceUsesGvnic(runtime: HostRuntime, creds: any): Promise<boolean> {
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) return false;
+    const client = new InstancesClient(credentials);
+    const [instance] = await client.get({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      instance: runtime.instance_id,
+    });
+    return (instance?.networkInterfaces ?? []).some(
+      (nic) => `${nic?.nicType ?? ""}`.toUpperCase() === "GVNIC",
+    );
   }
 
   async probeSpotAvailability(

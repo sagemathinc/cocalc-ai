@@ -13,6 +13,7 @@ import tarfile
 import time
 import unittest
 from collections import namedtuple
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -6717,6 +6718,132 @@ class BootstrapModesTest(unittest.TestCase):
                     "success:reconcile",
                 ],
             )
+
+    def test_boot_reconcile_restarts_project_host_only_when_software_changed(
+        self,
+    ) -> None:
+        # The provider startup script reconciles on every boot, after systemd
+        # already started the stack; restarting it again interrupted users.
+        steps = (
+            "ensure_runtime_user ensure_bootstrap_paths "
+            "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_kernel_module_hardening configure_kernel_key_limits "
+            "configure_inotify_limits configure_journald_limits "
+            "configure_rsyslog_limits install_btrfs_helper "
+            "install_privileged_wrappers reconcile_storage_and_containment "
+            "ensure_subuids ensure_runtime_user_manager configure_podman "
+            "verify_runtime_user_contract write_env configure_runtime_shell_env "
+            "setup_master_conat_token install_privileged_tool_binaries "
+            "install_node configure_node_bind_service_capability write_wrapper "
+            "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
+            "configure_cloudflared_with_options "
+            "configure_critical_service_oom_protection configure_autostart "
+            "record_operation_start record_operation_success "
+            "record_operation_failure report_bootstrap_status log_line"
+        ).split()
+        cases = [
+            # restart_if_changed, fingerprints (before, after), running, restarted
+            (True, [{"env": "a"}, {"env": "a"}], True, False),
+            (True, [{"env": "a"}, {"env": "b"}], True, True),
+            (True, [{"env": "a"}, {"env": "a"}], False, True),
+            (False, [], True, True),
+        ]
+        for restart_if_changed, fingerprints, running, expected in cases:
+            with self.subTest(
+                restart_if_changed=restart_if_changed,
+                fingerprints=fingerprints,
+                running=running,
+            ), tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+                cfg = make_cfg(tmpdir)
+                for name in steps:
+                    stack.enter_context(
+                        mock.patch.object(bootstrap, name, lambda *a, **k: None)
+                    )
+                stack.enter_context(
+                    mock.patch.object(bootstrap, "compute_image_size", return_value=10)
+                )
+                stack.enter_context(
+                    mock.patch.object(bootstrap, "extract_bundle", return_value=None)
+                )
+                fingerprint = stack.enter_context(
+                    mock.patch.object(
+                        bootstrap,
+                        "project_host_restart_fingerprint",
+                        side_effect=list(fingerprints),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        bootstrap, "project_host_running", return_value=running
+                    )
+                )
+                start = stack.enter_context(
+                    mock.patch.object(bootstrap, "start_project_host")
+                )
+                self.assertEqual(
+                    bootstrap.run_reconcile(
+                        cfg, restart_if_changed=restart_if_changed
+                    ),
+                    0,
+                )
+                self.assertEqual(start.called, expected)
+                self.assertEqual(fingerprint.call_count, len(fingerprints))
+
+    def test_restart_fingerprint_tracks_what_the_running_stack_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            bin_dir = bootstrap.project_host_runtime_root(cfg) / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "ctl").write_text("v1")
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text("A=1\n")
+            with mock.patch.object(bootstrap, "runtime_home", return_value=tmpdir):
+                first = bootstrap.project_host_restart_fingerprint(cfg)
+                self.assertEqual(first, bootstrap.project_host_restart_fingerprint(cfg))
+                (bin_dir / "ctl").write_text("v2")
+                second = bootstrap.project_host_restart_fingerprint(cfg)
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(first, second), ["bin:ctl"]
+                )
+                env_path.write_text(
+                    "A=1\nPROJECT_HOST_CLOUD_PROVIDER=gcp\n"
+                    "PROJECT_HOST_SSH_SERVER=203.0.113.7:2222\n"
+                )
+                gcp = bootstrap.project_host_restart_fingerprint(cfg)
+                # A new ephemeral GCP IP alone is not a reason to restart.
+                env_path.write_text(
+                    "A=1\nPROJECT_HOST_CLOUD_PROVIDER=gcp\n"
+                    "PROJECT_HOST_SSH_SERVER=198.51.100.9:2222\n"
+                )
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        gcp, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    [],
+                )
+                second = bootstrap.project_host_restart_fingerprint(cfg)
+                env_path.write_text(
+                    "A=2\nPROJECT_HOST_CLOUD_PROVIDER=gcp\n"
+                    "PROJECT_HOST_SSH_SERVER=198.51.100.9:2222\n"
+                )
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        second, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    ["env:A"],
+                )
+
+    def test_podman_boot_preparation_restores_project_io_policy(self) -> None:
+        # io.max does not survive a reboot; without restoring it first, the
+        # first project-host start failed its conformance check every boot.
+        body = bootstrap.PROJECT_HOST_ROOTCTL_SCRIPT if hasattr(
+            bootstrap, "PROJECT_HOST_ROOTCTL_SCRIPT"
+        ) else Path(bootstrap.__file__).read_text()
+        prepare = body.split("prepare_podman_boot() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("reconcile-project-io-policy", prepare)
+        self.assertIn('podman_ps_once "${runtime_dir}" "${cgroup_manager}" || return', prepare)
+        self.assertIn("unable to restore project I/O policy", prepare)
 
     def test_environment_reconcile_only_writes_managed_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 
 const pool = () => getPool();
 
@@ -178,6 +178,70 @@ export async function enqueueCloudVmWork(row: {
   return id;
 }
 
+// Deduplicating enqueues for one (vm, action) run one at a time across all
+// hubs: a transaction-scoped advisory lock serializes them, and the existing
+// queued row is locked FOR UPDATE, which claimCloudVmWork (SKIP LOCKED) will
+// not take while it is being updated.
+async function withQueuedWorkLock<T>(
+  vm_id: string,
+  action: string,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `cloud_vm_work:${vm_id}:${action}`,
+    ]);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function lockQueuedWork(
+  client: PoolClient,
+  vm_id: string,
+  action: string,
+  states: string[],
+): Promise<{ id: string; state: string } | undefined> {
+  const { rows } = await client.query(
+    `
+      SELECT id, state
+      FROM cloud_vm_work
+      WHERE vm_id=$1
+        AND action=$2
+        AND state = ANY($3)
+      ORDER BY (state='queued') DESC, created_at
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [vm_id, action, states],
+  );
+  return rows[0];
+}
+
+async function insertQueuedWork(
+  client: PoolClient,
+  id: string,
+  row: { vm_id: string; action: string; payload?: Record<string, any> },
+  notBefore: Date | null,
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO cloud_vm_work
+        (id, vm_id, action, payload, state, not_before, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,'queued',$5,NOW(),NOW())
+    `,
+    [id, row.vm_id, row.action, row.payload ?? {}, notBefore],
+  );
+}
+
 export async function enqueueCloudVmWorkOnce(row: {
   vm_id: string;
   action: string;
@@ -186,35 +250,62 @@ export async function enqueueCloudVmWorkOnce(row: {
 }): Promise<string | undefined> {
   const id = randomUUID();
   const notBefore = normalizeNotBefore(row.not_before);
-  const { rowCount } = await pool().query(
-    `
-      INSERT INTO cloud_vm_work
-        (id, vm_id, action, payload, state, not_before, created_at, updated_at)
-      SELECT $1,$2,$3,$4,'queued',$5,NOW(),NOW()
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM cloud_vm_work
-        WHERE vm_id=$2
-          AND action=$3
-          AND state IN ('queued','in_progress')
-      )
-    `,
-    [id, row.vm_id, row.action, row.payload ?? {}, notBefore],
-  );
-  if (!rowCount && notBefore) {
-    await pool().query(
+  return await withQueuedWorkLock(row.vm_id, row.action, async (client) => {
+    const existing = await lockQueuedWork(client, row.vm_id, row.action, [
+      "queued",
+      "in_progress",
+    ]);
+    if (!existing) {
+      await insertQueuedWork(client, id, row, notBefore);
+      return id;
+    }
+    if (existing.state === "queued" && notBefore) {
+      await client.query(
+        `
+          UPDATE cloud_vm_work
+          SET not_before = LEAST(COALESCE(not_before, $2), $2),
+              updated_at = NOW()
+          WHERE id=$1
+        `,
+        [existing.id, notBefore],
+      );
+    }
+    return undefined;
+  });
+}
+
+// Like enqueueCloudVmWorkOnce, for a handler scheduling its own follow-up:
+// the item running that handler is in_progress, so it must not count as a
+// duplicate (otherwise the follow-up is silently dropped). An already queued
+// item of the same action is moved to this time instead.
+export async function enqueueCloudVmFollowUpWork(row: {
+  vm_id: string;
+  action: string;
+  payload?: Record<string, any>;
+  not_before: Date | string;
+}): Promise<string | undefined> {
+  const id = randomUUID();
+  const notBefore = normalizeNotBefore(row.not_before);
+  return await withQueuedWorkLock(row.vm_id, row.action, async (client) => {
+    const existing = await lockQueuedWork(client, row.vm_id, row.action, [
+      "queued",
+    ]);
+    if (!existing) {
+      await insertQueuedWork(client, id, row, notBefore);
+      return id;
+    }
+    await client.query(
       `
         UPDATE cloud_vm_work
-        SET not_before = LEAST(COALESCE(not_before, $3), $3),
+        SET not_before = $2,
+            payload = $3,
             updated_at = NOW()
-        WHERE vm_id=$1
-          AND action=$2
-          AND state='queued'
+        WHERE id=$1
       `,
-      [row.vm_id, row.action, notBefore],
+      [existing.id, notBefore, row.payload ?? {}],
     );
-  }
-  return rowCount ? id : undefined;
+    return undefined;
+  });
 }
 
 export async function requeueStaleCloudVmWork(

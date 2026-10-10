@@ -12674,7 +12674,16 @@ EOF
     echo "Podman runroot validation failed: expected=${desired_runroot} reported=${reported_runroot}" >&2
     return 1
   fi
-  podman_ps_once "${runtime_dir}" "${cgroup_manager}"
+  podman_ps_once "${runtime_dir}" "${cgroup_manager}" || return "$?"
+  # Cgroup io.max does not survive a reboot. Restore the project I/O policy
+  # before project-host starts: its startup conformance check fails closed
+  # on a missing limit, which cost an extra project-host restart per boot.
+  # Best effort; the regular reconcile and that check still enforce it.
+  if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
+    timeout --kill-after=5s 90s /usr/local/sbin/cocalc-runtime-storage \
+      reconcile-project-io-policy >&2 ||
+      echo "warning: unable to restore project I/O policy before project-host start" >&2
+  fi
 }
 
 preflight_podman_runtime() {
@@ -14064,6 +14073,97 @@ exit 0
     os.chmod("/etc/cron.d/cocalc-nvidia-cdi", 0o644)
 
 
+def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
+    """Digests of what a running project-host stack loaded at startup.
+
+    The boot-time reconcile rewrites everything; it must only restart the
+    stack (which systemd already started at boot) when one of these changed.
+    Keys name the component so a restart can say why; values are digests.
+    """
+    parts: dict[str, str] = {}
+
+    def digest_bytes(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    def add_file(key: str, path: Path | str) -> None:
+        try:
+            parts[key] = digest_bytes(Path(path).read_bytes())
+        except FileNotFoundError:
+            parts[key] = "missing"
+        except OSError as exc:
+            # Unknown is a change: never skip a restart on a read failure.
+            parts[key] = f"unreadable:{os.urandom(8).hex()}:{exc.errno}"
+
+    for name, bundle in (
+        ("project_host_bundle", cfg.project_host_bundle),
+        ("project_bundle", cfg.project_bundle),
+        ("tools_bundle", cfg.tools_bundle),
+        ("container_runtime_bundle", cfg.container_runtime_bundle),
+    ):
+        if bundle is not None:
+            parts[f"bundle:{name}"] = (
+                os.path.realpath(bundle.current) if bundle.current else ""
+            )
+    parts["node"] = f"{cfg.node_version}"
+    bin_dir = project_host_runtime_root(cfg) / "bin"
+    try:
+        for entry in sorted(bin_dir.iterdir()):
+            if entry.is_file():
+                add_file(f"bin:{entry.name}", entry)
+    except FileNotFoundError:
+        parts["bin"] = "missing"
+    env_path = Path(cfg.env_file)
+    local_env_path = env_path.with_name(
+        env_path.name[:-4] + ".local.env"
+        if env_path.name.endswith(".env")
+        else "project-host.local.env"
+    )
+    # Per key, so a restart names the setting that changed (never its value).
+    for label, path in (("env", env_path), ("local_env", local_env_path)):
+        try:
+            env = read_env_assignments(path)
+            for key, value in env.items():
+                # A GCP Spot VM gets a new ephemeral IP on every start, so this
+                # changes on every boot. The control plane takes the endpoint
+                # from the provider for GCP, so it is not worth a restart.
+                if (
+                    key == "PROJECT_HOST_SSH_SERVER"
+                    and env.get("PROJECT_HOST_CLOUD_PROVIDER") == "gcp"
+                ):
+                    continue
+                parts[f"{label}:{key}"] = digest_bytes(value.encode())
+        except Exception as exc:
+            parts[label] = f"unreadable:{os.urandom(8).hex()}:{type(exc).__name__}"
+    add_file("master_conat_token", "/mnt/cocalc/data/secrets/master-conat-token")
+    containers = Path(runtime_home(cfg)) / ".config" / "containers"
+    add_file("podman:storage.conf", containers / "storage.conf")
+    add_file("podman:containers.conf", containers / "containers.conf")
+    return parts
+
+
+def changed_fingerprint_parts(
+    before: dict[str, str], after: dict[str, str]
+) -> list[str]:
+    return sorted(
+        key for key in set(before) | set(after) if before.get(key) != after.get(key)
+    )
+
+
+def project_host_running(cfg: BootstrapConfig) -> bool:
+    ctl_path = project_host_runtime_root(cfg) / "bin" / "ctl"
+    if not ctl_path.exists():
+        return False
+    status = run_cmd(
+        cfg,
+        [str(ctl_path), "status"],
+        "project-host status",
+        check=False,
+        as_user=cfg.ssh_user,
+        cwd=runtime_home(cfg),
+    )
+    return status.returncode == 0
+
+
 def start_project_host(cfg: BootstrapConfig) -> None:
     ctl_path = str(project_host_runtime_root(cfg) / "bin" / "ctl")
     ctl_cwd = runtime_home(cfg)
@@ -14189,10 +14289,15 @@ def run_provision(cfg: BootstrapConfig) -> int:
         raise
 
 
-def run_reconcile(cfg: BootstrapConfig) -> int:
+def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int:
     log_line(cfg, "bootstrap: starting reconcile")
     report_bootstrap_status(cfg, "running", "Reconciling host software")
     record_operation_start(cfg, "reconcile")
+    # At boot, systemd has already started the stack; restarting it again
+    # minutes later interrupted users and freshly resumed agent turns.
+    fingerprint_before = (
+        project_host_restart_fingerprint(cfg) if restart_if_changed else None
+    )
     try:
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
@@ -14235,8 +14340,32 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         configure_cloudflared_with_options(cfg, install_package=False)
         configure_critical_service_oom_protection(cfg)
         configure_autostart(cfg)
-        report_bootstrap_status(cfg, "running", "Restarting project-host services")
-        start_project_host(cfg)
+        keep_running = False
+        if fingerprint_before is not None:
+            changed = changed_fingerprint_parts(
+                fingerprint_before, project_host_restart_fingerprint(cfg)
+            )
+            if changed:
+                log_line(
+                    cfg,
+                    "bootstrap: project-host software changed ("
+                    + ", ".join(changed)
+                    + "); restarting the stack",
+                )
+            elif not project_host_running(cfg):
+                log_line(cfg, "bootstrap: project-host not running; starting it")
+            else:
+                keep_running = True
+                log_line(
+                    cfg,
+                    "bootstrap: project-host software unchanged and running; "
+                    "leaving the running stack alone",
+                )
+        if not keep_running:
+            report_bootstrap_status(
+                cfg, "running", "Restarting project-host services"
+            )
+            start_project_host(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")
@@ -14328,6 +14457,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--bootstrap-dir")
     parser.add_argument("--config", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--restart-if-changed",
+        action="store_true",
+        help="reconcile: keep a running project-host unless its software changed",
+    )
+    parser.add_argument(
         "--only",
         help="Comma-separated subset (container_runtime_bundle, project_bundle, project_host_bundle, tools_bundle, cloudflared)",
     )
@@ -14383,6 +14517,8 @@ def main(argv: list[str]) -> int:
         if args.mode == "reconcile":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
+                if args.restart_if_changed:
+                    return run_reconcile(cfg, restart_if_changed=True)
                 return run_reconcile(cfg)
         if args.mode == "helpers":
             with bootstrap_operation_lock(cfg):
