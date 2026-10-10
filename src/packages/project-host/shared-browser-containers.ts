@@ -22,8 +22,9 @@ The container:
 - Chromium's own sandbox: all capabilities dropped except SYS_CHROOT
   (inside the rootless user namespace), no new privileges;
 - its own network namespace, in the project's cgroup pool, so the project's
-  network policy applies to it; or, when asked (and always for a project
-  without internet), the project's network.
+  network policy applies to it, with no way to the host (see
+  ownNetworkArgument); or, when asked (and always for a project without
+  internet), the project's network.
 */
 
 import { execFile } from "node:child_process";
@@ -180,6 +181,49 @@ function podmanAppArmorPrefix(): Promise<string[]> {
   return appArmorPrefix;
 }
 
+// A browser on a network of its own reaches the internet (as the project's
+// network policy allows) and nothing on the host.  A project's network maps
+// the host's loopback to its gateway (--map-gw: how it reaches the host's
+// conat server), and podman maps host.containers.internal to the host's
+// address (--map-guest-addr, in pasta since 2024-08).  A browser talks to its
+// project only through the sockets in its run directory, so it gets neither.
+export function ownNetworkArgument(
+  projectNetwork: string,
+  pastaMapsGuestAddr: boolean,
+): string {
+  if (projectNetwork === "--network=none") return projectNetwork;
+  if (projectNetwork.startsWith("--network=slirp4netns"))
+    return "--network=slirp4netns:allow_host_loopback=false";
+  return pastaMapsGuestAddr
+    ? "--network=pasta:--no-map-gw,--map-guest-addr,none"
+    : "--network=pasta:--no-map-gw";
+}
+
+// Whether the pasta podman runs knows --map-guest-addr (Ubuntu 24.04's does
+// not, and refuses the option).
+let mapsGuestAddr: Promise<boolean> | null = null;
+function pastaMapsGuestAddr(): Promise<boolean> {
+  mapsGuestAddr ??= (async () => {
+    try {
+      const { stdout } = await podman(
+        ["info", "--format", "{{.Host.Pasta.Executable}}"],
+        { timeout: 30 },
+      );
+      const pasta = `${stdout ?? ""}`.trim();
+      if (!pasta) return false;
+      return await new Promise<boolean>((resolve) =>
+        execFile(pasta, ["--help"], { timeout: 10_000 }, (_err, out) =>
+          resolve(`${out ?? ""}`.includes("--map-guest-addr")),
+        ),
+      );
+    } catch (err) {
+      logger.warn("could not tell which pasta podman runs", { err: `${err}` });
+      return false;
+    }
+  })();
+  return mapsGuestAddr;
+}
+
 async function browserLauncher(project_id: string) {
   const launcher = projectPoolPodmanLauncher(project_id);
   const prefix = await podmanAppArmorPrefix();
@@ -245,7 +289,7 @@ export async function startSharedBrowserContainer(
     `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
     network === "project"
       ? `--network=container:project-${project_id}`
-      : networkArgument(),
+      : ownNetworkArgument(networkArgument(), await pastaMapsGuestAddr()),
     "--name",
     name,
     "--label",

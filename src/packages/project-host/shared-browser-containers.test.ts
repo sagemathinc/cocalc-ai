@@ -3,7 +3,29 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { validateStartRequest } from "./shared-browser-containers";
+import {
+  ownNetworkArgument,
+  validateStartRequest,
+} from "./shared-browser-containers";
+
+describe("a browser's own network", () => {
+  it("never maps the host into it, whatever the project's network does", () => {
+    expect(ownNetworkArgument("--network=pasta:--map-gw", true)).toBe(
+      "--network=pasta:--no-map-gw,--map-guest-addr,none",
+    );
+    // A pasta without --map-guest-addr maps nothing to the host's address.
+    expect(ownNetworkArgument("--network=pasta:--map-gw", false)).toBe(
+      "--network=pasta:--no-map-gw",
+    );
+    expect(
+      ownNetworkArgument(
+        "--network=slirp4netns:allow_host_loopback=true",
+        true,
+      ),
+    ).toBe("--network=slirp4netns:allow_host_loopback=false");
+    expect(ownNetworkArgument("--network=none", true)).toBe("--network=none");
+  });
+});
 
 describe("a shared browser container request", () => {
   it("takes only known browser ids, a fingerprint, and web URLs", () => {
