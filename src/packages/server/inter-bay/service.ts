@@ -597,12 +597,7 @@ import {
   setSiteSettingsOnSeed,
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
-import {
-  cancelCourseReconfigureOperationLocal,
-  getCourseReconfigureOperationLocal,
-  reconfigureCourseProjectsLocal,
-  setLocalProjectsHidden,
-} from "@cocalc/server/conat/api/projects";
+import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
@@ -2706,12 +2701,6 @@ async function startProjectCollabInviteService(): Promise<void> {
       await reconcileCourseManagedProjectLocal(opts),
     getCourseManagedProjectStates: async (opts) =>
       await getCourseManagedProjectStatesLocal(opts),
-    reconfigureCourseProjects: async (opts) =>
-      await reconfigureCourseProjectsLocal(opts),
-    getCourseReconfigureOperation: async (opts) =>
-      await getCourseReconfigureOperationLocal(opts),
-    cancelCourseReconfigureOperation: async (opts) =>
-      await cancelCourseReconfigureOperationLocal(opts),
     leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
       await leaveOrDeleteProjectsForAccount({
         account_id,

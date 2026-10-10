@@ -430,6 +430,54 @@ describe("course secrets across bays", () => {
   });
 });
 
+describe("course reconfiguration across bays", () => {
+  // bob's project, on the attached bay, is the course; alice, a collaborator
+  // homed on the seed, reconfigures it. The operation lives on the course
+  // project's owning bay, where bob reads and cancels it.
+  let op_id;
+
+  it("runs a reconfiguration on the course project's bay", async () => {
+    const op = await alice.client.call("projects.reconfigureCourseProjects", {
+      course_project_id: bob.project,
+      course_path: "multibay.course",
+      settings: {
+        title: "Multibay course",
+        description: "",
+        allow_collabs: false,
+        datastore: true,
+        invite: {
+          subject: "Course invitation",
+          message: "Please join",
+          email_html: "<p>Please join</p>",
+        },
+      },
+      students: [],
+    });
+    op_id = op.op_id;
+    assert.ok(op_id, "a reconfiguration operation");
+    const seen = await bob.client.call(
+      "projects.getCourseReconfigureOperation",
+      { course_project_id: bob.project, op_id },
+    );
+    assert.equal(seen?.scope_id, bob.project);
+  });
+
+  it("lets a collaborator on the other bay read and cancel it", async () => {
+    await bob.client.call("projects.cancelCourseReconfigureOperation", {
+      course_project_id: bob.project,
+      op_id,
+    });
+    const seen = await alice.client.call(
+      "projects.getCourseReconfigureOperation",
+      { course_project_id: bob.project, op_id },
+    );
+    assert.ok(
+      ["canceled", "succeeded"].includes(seen?.status),
+      `status ${seen?.status}`,
+    );
+  });
+});
+
 describe("course collections across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, schedules a collection of a student project. The
