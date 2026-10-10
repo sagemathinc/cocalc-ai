@@ -1,8 +1,18 @@
 // End to end: a real Chromium behind the shared browser server, an agent
-// over CDP (Playwright) and a "human" using the viewer page in a second
-// browser.  Skipped when no Chrome/Chromium is installed.
+// over CDP (Playwright) and a "human" using the viewer protocol, as CoCalc's
+// frontend viewer does (the viewer's own input handling is tested in the
+// frontend).  Skipped when no Chrome/Chromium is installed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+
+import type {
+  ServiceMessage,
+  SharedBrowserState,
+  StartPageData,
+  ViewerMessage,
+  ViewerRequest,
+} from "@cocalc/util/shared-browser-protocol";
+import { keyMessage } from "@cocalc/util/shared-browser-input";
 
 import {
   createProfileDir,
@@ -13,7 +23,11 @@ import {
 import { SharedBrowserPage } from "./agent-page";
 import { CdpClient } from "./cdp-client";
 import { profileSecret, startBrowserKeyring } from "./keyring";
-import { SharedBrowserServer } from "./server";
+import {
+  SharedBrowserServer,
+  type ViewerChannel,
+  type ViewerHello,
+} from "./server";
 import { sharedBrowserChromeArgs } from "./service";
 
 const sys = defaultLocalBrowserSystem();
@@ -24,94 +38,246 @@ try {
   executable = undefined;
 }
 
+const needsChrome = {
+  skip: executable ? false : "no Chrome/Chromium installed",
+  timeout: 120_000,
+};
+
+async function until<T>(
+  get: () => T | Promise<T>,
+  ok: (value: T) => boolean,
+  what: string,
+  ms = 10_000,
+): Promise<T> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = await get();
+    if (ok(value)) return value;
+    if (Date.now() > deadline)
+      assert.fail(`${what}: ${JSON.stringify(value)?.slice(0, 2000)}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * A viewer, as CoCalc's frontend is one: says hello, sizes the page, and
+ * sends the human's input; collects what the browser sends it.
+ */
+class TestViewer implements ViewerChannel {
+  state: SharedBrowserState | null = null;
+  selection = "";
+  copied: string[] = [];
+  errors: string[] = [];
+  frames: Buffer[] = [];
+
+  constructor(
+    private readonly server: SharedBrowserServer,
+    hello: ViewerHello = {},
+  ) {
+    server.addViewer(this, hello);
+  }
+
+  send(message: ServiceMessage): void {
+    if (message.type === "state") this.state = message.state;
+    else if (message.type === "selection") this.selection = message.text;
+    else if (message.type === "copied") this.copied.push(message.text);
+    else if (message.type === "error") this.errors.push(message.message);
+  }
+
+  sendFrame(frame: Buffer): void {
+    this.frames.push(frame);
+  }
+
+  say(message: ViewerMessage): Promise<void> {
+    return this.server.viewerMessage(this, message);
+  }
+
+  ask(request: ViewerRequest): Promise<any> {
+    return this.server.viewerRequest(this, request);
+  }
+
+  close(): void {
+    this.server.removeViewer(this);
+  }
+
+  async resize(width: number, height: number, quality = "balanced") {
+    await this.say({ type: "resize", width, height, quality } as any);
+    await until(
+      () => this.state?.viewport,
+      (v) => v?.width === width && v?.height === height,
+      "the page took the viewer's size",
+    );
+  }
+
+  async takeOver() {
+    await this.say({ type: "takeover" });
+    await until(
+      () => this.state?.driver,
+      (d) => d === "human",
+      "driving",
+    );
+  }
+
+  async handBack() {
+    await this.say({ type: "handback" });
+    await until(
+      () => this.state?.driver,
+      (d) => d === "agent",
+      "handed back",
+    );
+  }
+
+  // A click where the human sees it (the viewer's pixels).
+  async click(x: number, y: number, clickCount = 1) {
+    for (const event of ["mousePressed", "mouseReleased"] as const)
+      await this.say({
+        type: "mouse",
+        event,
+        x,
+        y,
+        button: "left",
+        buttons: event === "mousePressed" ? 1 : 0,
+        clickCount,
+      });
+  }
+
+  // Typing, key by key, as the frontend turns keys into messages.  Key
+  // codes as the worst browser reports them (0 for punctuation).
+  async type(text: string, { apple = false, meta = false } = {}) {
+    for (const char of text) {
+      const e = {
+        key: char,
+        code: "",
+        keyCode: 0,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: meta,
+        shiftKey: /[A-Z(){}%&"_+!@#$^*<>?:|~]/.test(char),
+      };
+      await this.say(keyMessage("keyDown", e, apple));
+      await this.say(keyMessage("keyUp", e, apple));
+    }
+  }
+}
+
+// An image's size, from its PNG or JPEG header.
+function imageSize(image: Buffer): {
+  type: "png" | "jpeg";
+  width: number;
+  height: number;
+} {
+  if (image[0] === 0x89)
+    return {
+      type: "png",
+      width: image.readUInt32BE(16),
+      height: image.readUInt32BE(20),
+    };
+  for (let i = 2; i + 9 < image.length; ) {
+    if (image[i] !== 0xff) break;
+    const marker = image[i + 1];
+    const length = image.readUInt16BE(i + 2);
+    if (marker >= 0xc0 && marker <= 0xc3)
+      return {
+        type: "jpeg",
+        height: image.readUInt16BE(i + 5),
+        width: image.readUInt16BE(i + 7),
+      };
+    i += 2 + length;
+  }
+  return { type: "jpeg", width: 0, height: 0 };
+}
+
+// A browser and the server around it, for one test.
+async function sharedBrowser(
+  options: Partial<ConstructorParameters<typeof SharedBrowserServer>[0]> = {},
+) {
+  const profile = await createProfileDir("disk", sys);
+  const browser = await launchBrowser({
+    executable: executable!,
+    profileDir: profile.path,
+    args: sharedBrowserChromeArgs(profile.path),
+  });
+  const version = await (
+    await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+  ).json();
+  const server = new SharedBrowserServer({
+    chromeWebSocketUrl: version.webSocketDebuggerUrl,
+    host: "127.0.0.1",
+    port: 0,
+    cdpPort: 0,
+    ...options,
+  });
+  const { port, cdpPort } = await server.start();
+  return {
+    server,
+    port,
+    cdpPort,
+    version,
+    close: async () => {
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+    },
+  };
+}
+
+// The environment of a `serve` the tests start: never with this project's
+// CoCalc credentials (it would serve viewers of the real browser).
+function withoutCoCalcCredentials(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of [
+    "COCALC_SECRET_TOKEN",
+    "COCALC_PROJECT_ID",
+    "COCALC_API_URL",
+    "COCALC_BEARER_TOKEN",
+    "COCALC_API_KEY",
+  ])
+    delete env[name];
+  return env;
+}
+
 const PAGE =
   "data:text/html,<title>t</title><input id=t autofocus style='width:600px'>";
 
 test(
   "the human types any character and pastes once; the agent sees it after hand-back",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
     const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
+    const agent = await chromium.connectOverCDP(
+      `http://127.0.0.1:${shared.cdpPort}`,
+    );
     try {
       const page = agent.contexts()[0].pages()[0];
       await page.goto(PAGE);
-
-      const viewer = await human.newPage({
-        viewport: { width: 900, height: 600 },
-      });
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      await viewer.click("#driver button"); // take over
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver button")
-          ?.textContent?.startsWith("Hand back"),
-      );
-
-      // Click into the input (top-left of the page) and type characters whose
-      // char codes collide with navigation key codes, e.g. "(" = ArrowDown.
-      const canvas = await viewer.locator("#screen").boundingBox();
-      await viewer.mouse.click(canvas!.x + 40, canvas!.y + 18);
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(900, 560);
+      await viewer.takeOver();
+      // Into the input (top-left of the page): characters whose char codes
+      // collide with navigation key codes, e.g. "(" = ArrowDown.
+      await viewer.click(40, 18);
       const typed = `f(x) = 'a' . 100% & "b"`;
-      await viewer.keyboard.type(typed);
-      // One paste, delivered the way a real paste arrives (on the field that
-      // takes the keyboard).
-      await viewer.evaluate(() => {
-        const data = new DataTransfer();
-        data.setData("text", "[pasted]");
-        document
-          .getElementById("keys")!
-          .dispatchEvent(
-            new ClipboardEvent("paste", { clipboardData: data, bubbles: true }),
-          );
-      });
-      await new Promise((r) => setTimeout(r, 500));
-      await viewer.click("#driver button"); // hand back
-
-      const value = await page.$eval("#t", (el: HTMLInputElement) => el.value);
-      assert.equal(value, `${typed}[pasted]`);
+      await viewer.type(typed);
+      await viewer.say({ type: "text", text: "[pasted]" });
+      await sleep(300);
+      await viewer.handBack();
+      assert.equal(
+        await page.$eval("#t", (el: HTMLInputElement) => el.value),
+        `${typed}[pasted]`,
+      );
     } finally {
       await agent.close().catch(() => {});
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
 
 test(
-  "the human's clipboard: copy a selection (keys and button), a page's own copy button, and paste",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  "the human's clipboard: the page's selection and its own copy button reach the viewer; Cmd works as Ctrl",
+  needsChrome,
   async () => {
     const { chromium } = require("playwright-core");
     const { createServer } = require("node:http");
@@ -120,50 +286,22 @@ test(
       res.setHeader("content-type", "text/html");
       res.end(
         `<title>clip</title><p id=p style="font:30px sans-serif;margin:0;padding:4px">Hello copy world</p>` +
-          `<input id=t style="font-size:20px;width:400px"><button id=b style="font-size:20px" onclick="navigator.clipboard.writeText('from the page button')">copy</button>`,
+          `<input id=t style="font-size:20px;width:400px" value="in the field"><button id=b style="font-size:20px" onclick="navigator.clipboard.writeText('from the page button')">copy</button>`,
       );
     });
     await new Promise<void>((resolve) =>
       site.listen(0, "127.0.0.1", () => resolve()),
     );
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
+    const agent = await chromium.connectOverCDP(
+      `http://127.0.0.1:${shared.cdpPort}`,
+    );
     try {
       const page = agent.contexts()[0].pages()[0];
       await page.goto(`http://127.0.0.1:${site.address().port}/`);
-      const context = await human.newContext({
-        viewport: { width: 900, height: 600 },
-      });
-      await context.grantPermissions(["clipboard-read", "clipboard-write"], {
-        origin: `http://127.0.0.1:${port}`,
-      });
-      const viewer = await context.newPage();
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      // Where things are, at the viewer's size (asked while the agent drives).
-      await page.waitForFunction(() => innerWidth > 0 && innerWidth <= 900);
-      await new Promise((r) => setTimeout(r, 500));
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(900, 560);
+      await sleep(300);
       const at = await page.evaluate(() =>
         Object.fromEntries(
           ["p", "t", "b"].map((id) => {
@@ -172,106 +310,52 @@ test(
           }),
         ),
       );
-      await viewer.click("#driver button"); // take over
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver button")
-          ?.textContent?.startsWith("Hand back"),
-      );
-      const canvas = (await viewer.locator("#screen").boundingBox())!;
-      const click = (p: { x: number; y: number }, clickCount = 1) =>
-        viewer.mouse.click(canvas.x + p.x, canvas.y + p.y, { clickCount });
-      const clipboard = () =>
-        viewer.evaluate(() => navigator.clipboard.readText());
-      const until = async (ok: () => Promise<boolean>, what: string) => {
-        const deadline = Date.now() + 10_000;
-        while (Date.now() < deadline) {
-          if (await ok()) return;
-          await new Promise((r) => setTimeout(r, 100));
-        }
-        assert.fail(
-          `${what}: clipboard has ${JSON.stringify(await clipboard())}`,
-        );
-      };
-
-      // Select the paragraph in the page, and copy it with the keyboard.
-      await click(at.p, 3);
-      await viewer.waitForFunction(
-        () =>
-          getComputedStyle(document.getElementById("copy")!).display !== "none",
-      );
-      await viewer.keyboard.press("Control+C");
+      await viewer.takeOver();
+      // Selecting the paragraph: the viewer holds it, for a copy.
+      await viewer.click(at.p.x, at.p.y, 1);
+      await viewer.click(at.p.x, at.p.y, 2);
+      await viewer.click(at.p.x, at.p.y, 3);
       await until(
-        async () => (await clipboard()).trim() === "Hello copy world",
-        "copied with the keyboard",
+        () => viewer.selection.trim(),
+        (s) => s === "Hello copy world",
+        "the selection",
       );
-
-      // The Copy button.
-      await viewer.evaluate(() => navigator.clipboard.writeText("other"));
-      await viewer.click("#copy");
+      // The page's own copy button.
+      await viewer.click(at.b.x, at.b.y);
       await until(
-        async () => (await clipboard()).trim() === "Hello copy world",
-        "copied with the button",
-      );
-
-      // The page's own copy button reaches the human's clipboard.
-      await click(at.b);
-      await until(
-        async () => (await clipboard()) === "from the page button",
+        () => viewer.copied,
+        (c) => c.includes("from the page button"),
         "the page's copy",
       );
-
-      // Paste from the clipboard into the page.
-      await viewer.evaluate(() =>
-        navigator.clipboard.writeText("pasted from the clipboard"),
+      // On a Mac or iPad, Cmd does what Ctrl does in the page: Cmd+A
+      // selects the field's text.
+      await viewer.click(at.t.x, at.t.y);
+      await viewer.type("a", { apple: true, meta: true });
+      await until(
+        () => viewer.selection,
+        (s) => s === "in the field",
+        "Cmd+A selected the field",
       );
-      await click(at.t);
-      await viewer.keyboard.press("Control+V");
-      await new Promise((r) => setTimeout(r, 500));
-
-      // On a Mac or iPad, Cmd does what Ctrl does in the page: Cmd+A selects
-      // the field's text, which the viewer then holds for a copy.
-      const mac = await context.newPage();
-      await mac.addInitScript(() =>
-        Object.defineProperty(navigator, "platform", { get: () => "MacIntel" }),
-      );
-      await mac.goto(`http://127.0.0.1:${port}/`);
-      await mac.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      const macCanvas = (await mac.locator("#screen").boundingBox())!;
-      await mac.mouse.click(macCanvas.x + at.t.x, macCanvas.y + at.t.y);
-      await mac.keyboard.press("Meta+A");
-      await mac.waitForFunction(
-        () =>
-          (document.getElementById("keys") as HTMLTextAreaElement).value ===
-          "pasted from the clipboard",
-      );
-      await mac.close();
-      await viewer.click("#driver button"); // hand back
+      // Paste into the field.
+      await viewer.say({ type: "text", text: " pasted" });
+      await viewer.handBack();
+      // (Cmd+A selected all of it, so the paste replaced it.)
       assert.equal(
         await page.$eval("#t", (el: HTMLInputElement) => el.value),
-        "pasted from the clipboard",
+        " pasted",
       );
     } finally {
       await agent.close().catch(() => {});
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
       site.close();
     }
   },
 );
 
 test(
-  "a new tab's start page offers the project's servers; tabs show site icons; the page around the viewer gets ready, pictures and agent requests",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  "a new tab's start page offers the project's servers and recent sites; tabs know their site icons",
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
     const { createServer } = require("node:http");
     const PNG = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -292,81 +376,46 @@ test(
       site.listen(0, "127.0.0.1", () => resolve()),
     );
     const sitePort = site.address().port;
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
+    const shared = await sharedBrowser({
       humanFirst: true,
       title: "work.browser",
       startPagePorts: [sitePort],
     });
-    const { port } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
     try {
-      const parent = await human.newPage({
-        viewport: { width: 1000, height: 720 },
+      const viewer = new TestViewer(shared.server, {
+        view: "frame:s",
+        client: "me",
       });
-      // Embedded the way CoCalc does, with the agent box.
-      await parent.setContent(
-        `<script>window.got = []; addEventListener("message", (e) => got.push(e.data));</script>` +
-          `<iframe src="http://127.0.0.1:${port}/?agent=1" style="width:960px;height:680px;border:0"></iframe>`,
+      await viewer.resize(960, 600);
+      assert.equal(viewer.state?.title, "work.browser");
+      const start: StartPageData = await viewer.ask({ type: "start" });
+      const server = start.servers.find((s) => s.port === sitePort);
+      assert.ok(server, JSON.stringify(start));
+      assert.equal(server.url, `http://localhost:${sitePort}/`);
+      assert.match(server.label, /My dev app/);
+      await viewer.say({ type: "navigate", url: server.url });
+      // The tab knows the site's icon...
+      const tab = await until(
+        () => viewer.state?.tabs.find((t) => t.id === viewer.state?.active),
+        (t) => !!t?.icon,
+        "the tab's icon",
       );
-      const got = (type: string, test = "true") =>
-        parent.waitForFunction(
-          `window.got.some((m) => m && m.type === ${JSON.stringify(type)} && (${test}))`,
-          null,
-          { timeout: 20_000 },
-        );
-      await got("cocalc-browser-ready");
-      const viewer = parent
-        .frames()
-        .find((f: any) => f.url().includes(`:${port}/`))!;
-      await viewer.waitForSelector("#start", { state: "visible" });
-      assert.equal(await viewer.textContent("#sp-name"), "work.browser");
-
-      // The project's server, one click away.
-      const tile = `#sp-servers .sp-tile[title="http://localhost:${sitePort}/"]`;
-      await viewer.waitForSelector(tile);
-      assert.match(await viewer.textContent(tile), /My dev app/);
-      await viewer.click(tile);
-      await viewer.waitForSelector("#start", { state: "hidden" });
-      // Its tab shows the site's icon.
-      await viewer.waitForFunction(() => {
-        const img = document.querySelector(
-          ".tab.active img",
-        ) as HTMLImageElement;
-        return !!img && img.complete && img.naturalWidth > 0;
-      });
-      // The page around gets a picture to start from next time.
-      await got(
-        "cocalc-browser-picture",
-        `m.picture.startsWith("data:image/jpeg")`,
+      assert.equal(tab?.icon, `http://localhost:${sitePort}/icon.png`);
+      // ...but the browser service fetches icons from public sites only,
+      // never the project's own servers.
+      assert.equal(
+        await viewer.ask({ type: "favicon", url: tab!.icon! }),
+        null,
       );
-
-      // A new tab: the start page again; asking an agent goes to the page.
-      await viewer.click("#newtab");
-      await viewer.waitForSelector("#start", { state: "visible" });
-      await viewer.fill("#sp-agent input", "check the dev app");
-      await viewer.click("#sp-agent button");
-      await got("cocalc-browser-agent", `m.text === "check the dev app"`);
+      // The visit is now a recent site?  Local addresses are listed as
+      // servers instead.
+      const again: StartPageData = await viewer.ask({ type: "start" });
+      assert.equal(
+        again.recent.some((r) => r.url.includes("localhost")),
+        false,
+      );
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
       site.close();
     }
   },
@@ -374,10 +423,7 @@ test(
 
 test(
   "page zoom: the page lays out as a zoomed browser's would, and clicks still land (also after screenshots)",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
     const { chromium } = require("playwright-core");
     const ZOOM_PAGE =
@@ -386,102 +432,62 @@ test(
         `<title>z</title><style>body{margin:0}@media (max-width:600px){#mq{color:rgb(255,0,0)}}</style><div id=mq>mq</div>` +
           `<button id=b style="position:absolute;left:300px;top:200px;width:100px;height:40px" onclick="document.title='clicked '+(++window.n)">B</button><script>window.n=0</script>`,
       );
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
+    const agent = await chromium.connectOverCDP(
+      `http://127.0.0.1:${shared.cdpPort}`,
+    );
     try {
       const page = agent.contexts()[0].pages()[0];
       await page.goto(ZOOM_PAGE);
-      const viewer = await human.newPage({
-        viewport: { width: 1000, height: 700 },
-      });
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      const stage = (await viewer.locator("#screen").boundingBox())!;
-      await page.waitForFunction(
-        (w: number) => innerWidth === w,
-        Math.round(stage.width),
-      );
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(1000, 640);
+      await page.waitForFunction(() => innerWidth === 1000);
 
-      // Zoom in to 200% from the keyboard, just watching (the agent drives).
-      await viewer.click("#zoomlevel");
-      for (let i = 0; i < 5; i++) await viewer.keyboard.press("Control+=");
-      await viewer.waitForFunction(
-        () => document.getElementById("zoomlevel")?.textContent === "200%",
-      );
+      // Zoom to 200%, just watching (the agent drives).
+      await viewer.say({ type: "zoom", zoom: 2 });
       await page.waitForFunction(() => devicePixelRatio === 2);
-      const seen = await page.evaluate(() => [
-        innerWidth,
-        getComputedStyle(document.getElementById("mq")!).color,
-      ]);
       // Half as wide, so the narrow layout applies, as in a zoomed browser.
-      assert.deepEqual(seen, [Math.round(stage.width / 2), "rgb(255, 0, 0)"]);
-      assert.equal(server.getState().zoom, 2);
+      assert.deepEqual(
+        await page.evaluate(() => [
+          innerWidth,
+          getComputedStyle(document.getElementById("mq")!).color,
+        ]),
+        [500, "rgb(255, 0, 0)"],
+      );
+      assert.equal(shared.server.getState().zoom, 2);
+      assert.equal(viewer.state?.zoom, 2);
 
       // The human clicks the (twice as large) button where they see it.
       const clickButton = async () => {
-        await viewer.click("#driver button"); // take over
-        await viewer.waitForFunction(() =>
-          document
-            .querySelector("#driver button")
-            ?.textContent?.startsWith("Hand back"),
-        );
-        await viewer.mouse.click(stage.x + 2 * 350, stage.y + 2 * 220);
-        await new Promise((r) => setTimeout(r, 300));
-        await viewer.click("#driver button"); // hand back
+        await viewer.takeOver();
+        await viewer.click(2 * 350, 2 * 220);
+        await sleep(300);
+        await viewer.handBack();
       };
       await clickButton();
       assert.equal(await page.title(), "clicked 1");
-      // A screenshot (the agent's) does not shift where clicks land.
-      const shot = await page.screenshot();
-      assert.ok(shot.length > 0);
+      // A screenshot (the agent's) does not shift where clicks land...
+      assert.ok((await page.screenshot()).length > 0);
       // ...and the page stays zoomed (Chromium resets it after a clipped
       // screenshot such as Playwright's; the server zooms it again).
       await page.waitForFunction(() => devicePixelRatio === 2);
-      assert.equal(
-        await page.evaluate(() => innerWidth),
-        Math.round(stage.width / 2),
-      );
+      assert.equal(await page.evaluate(() => innerWidth), 500);
       await clickButton();
       assert.equal(await page.title(), "clicked 2");
 
-      // Ctrl+0: back to 100%.
-      await viewer.click("#zoomlevel"); // the keyboard goes to the page again
-      await viewer.keyboard.press("Control+0");
+      // Back to 100%; out of range zooms are clamped.
+      await viewer.say({ type: "zoom", zoom: 1 });
       await page.waitForFunction(() => devicePixelRatio === 1);
-      assert.equal(
-        await page.evaluate(() => innerWidth),
-        Math.round(stage.width),
-      );
-      await viewer.waitForFunction(
-        () => document.getElementById("zoomlevel")?.textContent === "100%",
+      assert.equal(await page.evaluate(() => innerWidth), 1000);
+      await viewer.say({ type: "zoom", zoom: 50 });
+      await until(
+        () => viewer.state?.zoom,
+        (z) => z === 5,
+        "clamped",
       );
     } finally {
       await agent.close().catch(() => {});
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
@@ -547,11 +553,18 @@ test(
       ).result.targetInfos.find((t: any) => t.type === "page");
       const flat = (
         await reply(
-          send("Target.attachToTarget", { targetId: page.targetId, flatten: true }),
+          send("Target.attachToTarget", {
+            targetId: page.targetId,
+            flatten: true,
+          }),
         )
       ).result.sessionId;
       await reply(
-        send("Runtime.evaluate", { expression: "document.title = 'before'" }, flat),
+        send(
+          "Runtime.evaluate",
+          { expression: "document.title = 'before'" },
+          flat,
+        ),
       );
       server.setDriver("human");
 
@@ -559,7 +572,10 @@ test(
       assert.ok(await reply(send("Target.getTargets")), "getTargets passes");
       const tunnel = (
         await reply(
-          send("Target.attachToTarget", { targetId: page.targetId, flatten: false }),
+          send("Target.attachToTarget", {
+            targetId: page.targetId,
+            flatten: false,
+          }),
         )
       )?.result?.sessionId;
       assert.ok(tunnel, "attaching passes");
@@ -575,21 +591,34 @@ test(
           }),
         }),
         send("Storage.setCookies", {
-          cookies: [{ name: "planted", value: "1", domain: "example.com", path: "/" }],
+          cookies: [
+            { name: "planted", value: "1", domain: "example.com", path: "/" },
+          ],
         }),
-        send("DOM.setAttributeValue", { nodeId: 1, name: "x", value: "y" }, flat),
+        send(
+          "DOM.setAttributeValue",
+          { nodeId: 1, name: "x", value: "y" },
+          flat,
+        ),
         send(
           "Page.addScriptToEvaluateOnNewDocument",
           { source: "document.title = 'injected'" },
           flat,
         ),
-        send("Runtime.evaluate", { expression: "document.title = 'direct'" }, flat),
+        send(
+          "Runtime.evaluate",
+          { expression: "document.title = 'direct'" },
+          flat,
+        ),
       ];
       await new Promise((r) => setTimeout(r, 1000));
       for (const id of held) assert.equal(replies.has(id), false, `held ${id}`);
       assert.equal(await title(), "before");
       const { cookies } = await direct.send("Storage.getCookies");
-      assert.equal(cookies.some((c: any) => c.name === "planted"), false);
+      assert.equal(
+        cookies.some((c: any) => c.name === "planted"),
+        false,
+      );
       assert.equal(server.getState().agentWaiting, true);
 
       // The tab endpoints of the HTTP side are refused meanwhile.
@@ -621,10 +650,7 @@ test(
 
 test(
   "a popup the human opens loads while they drive, with a Playwright agent connected",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
     const { chromium } = require("playwright-core");
     const { createServer } = require("node:http");
@@ -639,72 +665,53 @@ test(
     await new Promise<void>((resolve) =>
       site.listen(0, "127.0.0.1", () => resolve()),
     );
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const direct = await CdpClient.connect(version.webSocketDebuggerUrl);
-    const agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
+    const direct = await CdpClient.connect(shared.version.webSocketDebuggerUrl);
+    const agent = await chromium.connectOverCDP(
+      `http://127.0.0.1:${shared.cdpPort}`,
+    );
     try {
       const page = agent.contexts()[0].pages()[0];
       await page.goto(`http://127.0.0.1:${site.address().port}/`);
-      const viewer = await human.newPage({
-        viewport: { width: 900, height: 600 },
-      });
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      await viewer.click("#driver button"); // take over
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver button")
-          ?.textContent?.startsWith("Hand back"),
-      );
-      const canvas = (await viewer.locator("#screen").boundingBox())!;
-      await viewer.mouse.click(canvas.x + 40, canvas.y + 30);
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(900, 560);
+      await viewer.takeOver();
+      await viewer.click(40, 30);
       // The popup starts and loads now, not after hand-back.
-      const deadline = Date.now() + 10_000;
-      let titles: string[] = [];
-      while (Date.now() < deadline) {
-        const { targetInfos } = await direct.send("Target.getTargets");
-        titles = targetInfos
-          .filter((t: any) => t.type === "page")
-          .map((t: any) => t.title);
-        if (titles.includes("the popup")) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      assert.ok(titles.includes("the popup"), JSON.stringify(titles));
-      assert.equal(server.getState().driver, "human");
+      const titles = await until(
+        async () =>
+          (await direct.send("Target.getTargets")).targetInfos
+            .filter((t: any) => t.type === "page")
+            .map((t: any) => t.title),
+        (t: string[]) => t.includes("the popup"),
+        "the popup loaded",
+      );
+      assert.ok(titles.includes("the popup"));
+      assert.equal(shared.server.getState().driver, "human");
+      // The viewer that opened it shows it, as a browser would.
+      await until(
+        () =>
+          viewer.state?.tabs.find((t) => t.id === viewer.state?.active)?.title,
+        (t) => t === "the popup",
+        "the viewer shows the popup",
+      );
       // The agent gets the popup too, once it has the browser back.
-      const popup = agent.contexts()[0].waitForEvent("page", { timeout: 10_000 }).catch(() => null);
-      await viewer.click("#driver button"); // hand back
-      const pages = agent.contexts()[0].pages().map((p: any) => p.url());
+      const popup = agent
+        .contexts()[0]
+        .waitForEvent("page", { timeout: 10_000 })
+        .catch(() => null);
+      await viewer.handBack();
+      const pages = agent
+        .contexts()[0]
+        .pages()
+        .map((p: any) => p.url());
       assert.ok(
-        (await popup) || pages.some((u: string) => u.includes("the popup")),
+        (await popup) || pages.some((u: string) => u.includes("popup")),
       );
     } finally {
+      direct.close();
       await agent.close().catch(() => {});
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
       site.close();
     }
   },
@@ -896,473 +903,267 @@ test(
 );
 
 test(
-  "a file's browser is the human's first; waiting agents and ignored input are shown",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  "a file's browser is the human's first; waiting agents are shown; the last viewer leaving hands back",
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
+    const shared = await sharedBrowser({
       humanFirst: true,
       handBackAfterMs: 300,
     });
-    const { port, cdpPort } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
     try {
-      const viewer = await human.newPage();
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver .msg")
-          ?.textContent?.startsWith("You are driving"),
-      );
-      assert.equal(server.getState().driver, "human");
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(800, 500);
+      assert.equal(viewer.state?.driver, "human");
 
       // An agent action waits, and the human is told.
-      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
-      const held = page.evaluate("1 + 1");
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver .msg")
-          ?.textContent?.includes("waiting"),
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
       );
-      await viewer.click("#driver button"); // hand back
+      const held = page.evaluate("1 + 1");
+      await until(
+        () => viewer.state?.agentWaiting,
+        (w) => w === true,
+        "the agent waits",
+      );
+      await viewer.handBack();
       assert.equal(await held, 2);
+      assert.equal(viewer.state?.agentWaiting, false);
 
-      // Clicking on a page while the agent drives explains why nothing
-      // happens.  (A blank tab shows the start page instead.)
-      await page.goto("data:text/html,<title>t</title><p>a page</p>");
-      await viewer.waitForSelector("#start", { state: "hidden" });
-      await viewer.click("#screen");
-      await viewer.waitForSelector("#notdriving", { state: "visible" });
-      await viewer.click("#notdriving button");
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver .msg")
-          ?.textContent?.startsWith("You are driving"),
+      // Input while the agent drives does nothing to the page.
+      await page.goto("data:text/html,<title>t</title><input id=i autofocus>");
+      await viewer.type("ignored");
+      assert.equal(
+        await page.evaluate("document.getElementById('i').value"),
+        "",
       );
 
       // Closing the last viewer hands back, so agents never wait on nobody.
-      await viewer.close();
-      const deadline = Date.now() + 5000;
-      while (server.getState().driver !== "agent" && Date.now() < deadline)
-        await new Promise((r) => setTimeout(r, 100));
-      assert.equal(server.getState().driver, "agent");
+      await viewer.takeOver();
+      viewer.close();
+      await until(
+        () => shared.server.getState().driver,
+        (d) => d === "agent",
+        "handed back",
+        5000,
+      );
       page.close();
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
 
 test(
   "two viewers (split frames) show their own tabs of one browser",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-      humanFirst: true,
-    });
-    const { port, cdpPort } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
-    const urlOf = (viewer: any) =>
-      viewer.evaluate(() => (document.getElementById("url") as any).value);
-    const frames = (viewer: any) =>
-      viewer.evaluate(() => (window as any).__frames ?? 0);
+    const shared = await sharedBrowser({ humanFirst: true });
+    const active = (viewer: TestViewer) =>
+      viewer.state?.tabs.find((t) => t.id === viewer.state?.active);
+    const title = (viewer: TestViewer, title: string) =>
+      until(
+        () => active(viewer)?.title,
+        (t) => t === title,
+        `shows ${title}`,
+      );
     try {
       const open = async (view: string, client = "me") => {
-        const viewer = await human.newPage({
-          viewport: { width: 700, height: 500 },
-        });
-        // Count frames drawn into this viewer's canvas.
-        await viewer.addInitScript(() => {
-          const draw = CanvasRenderingContext2D.prototype.drawImage;
-          CanvasRenderingContext2D.prototype.drawImage = function (
-            ...args: any[]
-          ) {
-            (window as any).__frames = ((window as any).__frames ?? 0) + 1;
-            return (draw as any).apply(this, args);
-          };
-        });
-        await viewer.goto(
-          `http://127.0.0.1:${port}/?view=${view}&client=${client}`,
-        );
-        await viewer.waitForFunction(
-          () => document.getElementById("status")?.textContent === "live",
-        );
+        const viewer = new TestViewer(shared.server, { view, client });
+        await viewer.resize(700, 460);
         return viewer;
       };
-      const tabCount = (n: number) => (viewer: any) =>
-        viewer.waitForFunction(
-          (n: number) => document.querySelectorAll(".tab").length === n,
-          n,
-        );
-      const activeTitle = (viewer: any, title: string) =>
-        viewer.waitForFunction(
-          (title: string) =>
-            document.querySelector(".tab.active")?.textContent?.includes(title),
-          title,
-        );
-
       const a = await open("frame:a");
-      await a.fill("#url", "data:text/html,<title>one</title>A");
-      await a.press("#url", "Enter");
-      await activeTitle(a, "one");
+      await a.say({
+        type: "navigate",
+        url: "data:text/html,<title>one</title>A",
+      });
+      await title(a, "one");
 
       // A collaborator's view shares the tab: no new tab.
       const c = await open("frame:c", "someone-else");
-      await activeTitle(c, "one");
-      assert.equal(server.getState().tabs.length, 1);
+      await title(c, "one");
+      assert.equal(shared.server.getState().tabs.length, 1);
 
       // My split gets its own tab with the same page, right away.
       let b = await open("frame:b");
-      await tabCount(2)(b);
-      await activeTitle(b, "one");
-      await b.fill("#url", "data:text/html,<title>two</title>B");
-      await b.press("#url", "Enter");
-      await activeTitle(b, "two");
+      await until(
+        () => b.state?.tabs.length,
+        (n) => n === 2,
+        "a second tab",
+      );
+      await title(b, "one");
+      await b.say({
+        type: "navigate",
+        url: "data:text/html,<title>two</title>B",
+      });
+      await title(b, "two");
       // A (and the collaborator) still show their tab, and all stream.
-      assert.match(await urlOf(a), /title>one/);
-      assert.match(await urlOf(c), /title>one/);
-      assert.ok((await frames(a)) > 0, "A was streamed its tab");
-      assert.ok((await frames(b)) > 0, "B was streamed its tab");
+      assert.equal(active(a)?.title, "one");
+      assert.equal(active(c)?.title, "one");
+      await until(
+        () => a.frames.length,
+        (n) => n > 0,
+        "A was streamed",
+      );
+      await until(
+        () => b.frames.length,
+        (n) => n > 0,
+        "B was streamed",
+      );
 
       // A frame that reloads comes back to its own tab, without a new one.
-      await b.close();
+      b.close();
       b = await open("frame:b");
-      await activeTitle(b, "two");
-      assert.equal(server.getState().tabs.length, 2);
-      assert.match(await urlOf(a), /title>one/);
+      await title(b, "two");
+      assert.equal(shared.server.getState().tabs.length, 2);
+      assert.equal(active(a)?.title, "one");
 
       // Agents act where the human last worked: B's tab.
-      await b.click("#driver button"); // hand back
+      await b.handBack();
       const page = await SharedBrowserPage.open(
-        `http://127.0.0.1:${cdpPort}`,
-        server.getState().active,
+        `http://127.0.0.1:${shared.cdpPort}`,
+        shared.server.getState().active,
       );
       assert.equal((await page.location()).title, "two");
       page.close();
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
 
 test(
-  "a hidden viewer keeps the page's size and its last frame",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  "a hidden viewer keeps the page's size and gets no frames; shown again, it streams at once",
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
     try {
-      const viewer = await human.newPage({
-        viewport: { width: 900, height: 600 },
+      const viewer = new TestViewer(shared.server, {
+        view: "frame:x",
+        client: "me",
       });
-      await viewer.goto(`http://127.0.0.1:${port}/?view=frame:x&client=me`);
-      await viewer.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      const stageWidth = await viewer.evaluate(() =>
-        Math.round(
-          document.getElementById("stage")!.getBoundingClientRect().width,
-        ),
-      );
-      const deadline = Date.now() + 5000;
-      while (
-        server.getState().viewport.width !== stageWidth &&
-        Date.now() < deadline
-      )
-        await new Promise((r) => setTimeout(r, 100));
-      const size = server.getState().viewport;
-      assert.equal(size.width, stageWidth, "viewport follows the viewer");
-
-      // Another tab or frame in front: the viewer's iframe collapses.
-      await viewer.setViewportSize({ width: 1, height: 1 });
-      await new Promise((r) => setTimeout(r, 800));
-      assert.deepEqual(server.getState().viewport, size, "page not shrunk");
-
-      // Shown again: the same size, streaming again.
-      await viewer.setViewportSize({ width: 900, height: 600 });
-      await new Promise((r) => setTimeout(r, 800));
-      assert.deepEqual(server.getState().viewport, size);
-
-      // Resizing the viewer after frames have arrived resizes the page.
-      await viewer.setViewportSize({ width: 700, height: 500 });
-      const narrower = Date.now() + 5000;
-      while (server.getState().viewport.width >= 900 && Date.now() < narrower)
-        await new Promise((r) => setTimeout(r, 100));
-      assert.ok(
-        server.getState().viewport.width < 900,
-        "page follows the viewer's size",
+      await viewer.resize(900, 560);
+      const size = shared.server.getState().viewport;
+      await until(
+        () => viewer.frames.length,
+        (n) => n > 0,
+        "frames",
       );
 
-      // The last frame is kept for a viewer that is reloaded.
-      await new Promise((r) => setTimeout(r, 2500));
-      const saved = await viewer.evaluate(() =>
-        Object.keys(sessionStorage).some((k) =>
-          k.startsWith("cocalc-browser-frame:"),
-        ),
+      // Another tab or frame in front.
+      await viewer.say({ type: "visible", visible: false });
+      await sleep(300);
+      const hidden = viewer.frames.length;
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
       );
-      assert.ok(saved, "last frame saved");
+      await page.goto("data:text/html,<title>changed</title><h1>changed</h1>");
+      await sleep(800);
+      assert.equal(viewer.frames.length, hidden, "no frames while hidden");
+      assert.deepEqual(shared.server.getState().viewport, size, "not shrunk");
+
+      // Shown again: the current picture right away.
+      await viewer.say({ type: "visible", visible: true });
+      await until(
+        () => viewer.frames.length,
+        (n) => n > hidden,
+        "frames again",
+      );
+      assert.deepEqual(shared.server.getState().viewport, size);
+
+      // Resizing the viewer resizes the page.
+      await viewer.resize(700, 500);
+      assert.equal(
+        await page.evaluate("innerWidth"),
+        700,
+        "the page follows the viewer's size",
+      );
+      page.close();
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
 
 test(
   "a still page gets one lossless frame at the stream's size, then nothing",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
     try {
-      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
+      );
       await page.goto("data:text/html,<title>t</title><h1>Sharp text</h1>");
       page.close();
-      const viewer = await human.newPage({
-        viewport: { width: 800, height: 500 },
-        deviceScaleFactor: 2,
-      });
-      // Record each frame's type and width as the viewer decodes it.
-      await viewer.addInitScript(() => {
-        const decode = window.createImageBitmap.bind(window);
-        (window as any).__frames = [];
-        (window as any).createImageBitmap = async (
-          src: any,
-          ...rest: any[]
-        ) => {
-          const bmp = await decode(src, ...rest);
-          if (src instanceof Blob) {
-            const head = new Uint8Array(await src.slice(0, 1).arrayBuffer())[0];
-            (window as any).__frames.push({
-              type: head === 0x89 ? "png" : "jpeg",
-              width: bmp.width,
-            });
-          }
-          return bmp;
-        };
-      });
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.selectOption("#quality", "sharp");
-      const frames = () => viewer.evaluate(() => (window as any).__frames);
-      const until = async (ok: (f: any[]) => boolean) => {
-        const deadline = Date.now() + 10_000;
-        while (Date.now() < deadline) {
-          if (ok(await frames())) return;
-          await new Promise((r) => setTimeout(r, 100));
-        }
-        assert.fail(`frames: ${JSON.stringify(await frames())}`);
-      };
-      const stage = await viewer.evaluate(() =>
-        Math.round(
-          document.getElementById("stage")!.getBoundingClientRect().width,
-        ),
-      );
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(800, 500, "sharp");
+      const sizes = () => viewer.frames.map(imageSize);
       // At rest: a lossless frame, at the stream's (the page's) size...
-      await until((f) => f.some((x) => x.type === "png" && x.width === stage));
+      await until(
+        sizes,
+        (f) => f.some((x) => x.type === "png" && x.width === 800),
+        "a lossless frame",
+      );
       // ...and then nothing more while nothing changes (no capture loop).
-      await new Promise((r) => setTimeout(r, 1000));
-      const settled = (await frames()).length;
-      await new Promise((r) => setTimeout(r, 2000));
-      assert.equal(
-        (await frames()).length,
-        settled,
-        `no frames at rest: ${JSON.stringify((await frames()).slice(settled - 2))}`,
-      );
-      assert.equal(
-        (await frames()).at(-1).type,
-        "png",
-        "the lossless frame stays",
-      );
+      await sleep(1000);
+      const settled = viewer.frames.length;
+      await sleep(2000);
+      assert.equal(viewer.frames.length, settled, "no frames at rest");
+      assert.equal(sizes().at(-1)?.type, "png", "the lossless frame stays");
 
       // Fast: stream frames only.
-      await viewer.selectOption("#quality", "fast");
-      await new Promise((r) => setTimeout(r, 500));
-      await viewer.evaluate(() => ((window as any).__frames = []));
-      const p2 = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      await viewer.resize(800, 500, "fast");
+      await sleep(500);
+      viewer.frames = [];
+      const p2 = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
+      );
       await p2.evaluate("document.body.style.background = 'yellow'");
       p2.close();
-      await until((f) => f.length > 0);
-      await new Promise((r) => setTimeout(r, 1500));
-      assert.ok(!(await frames()).some((x: any) => x.type === "png"));
+      await until(
+        () => viewer.frames.length,
+        (n) => n > 0,
+        "stream frames",
+      );
+      await sleep(1500);
+      assert.ok(!sizes().some((x) => x.type === "png"));
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
 
 test(
-  "clicks land where the human clicks, at any pixel ratio",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  "clicks land where the human clicks, also on a page wider than the headless window",
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
     try {
-      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
+      );
       await page.goto(
         "data:text/html,<body style='margin:0'><script>addEventListener('mousedown',e=>document.title=e.clientX+','+e.clientY+','+innerWidth)</script></body>",
       );
       page.close();
-      const results: any[] = [];
-      for (const dpr of [1, 1.5, 2, 2.5, 3]) {
-        const viewer = await human.newPage({
-          // Wider than the headless window (1280): clicks far right matter.
-          viewport: { width: 1500, height: 700 },
-          deviceScaleFactor: dpr,
-        });
-        await viewer.goto(
-          `http://127.0.0.1:${port}/?view=frame:d${String(dpr).replace(".", "_")}`,
-        );
-        await viewer.waitForFunction(
-          () => document.getElementById("status")?.textContent === "live",
-        );
-        await viewer.click("#driver button"); // take over
-        // Let the viewport, pixel ratio and the sharp frame settle.
-        await new Promise((r) => setTimeout(r, 1500));
-        const box = await viewer.locator("#screen").boundingBox();
-        await viewer.mouse.click(box!.x + 1000, box!.y + 100);
-        await new Promise((r) => setTimeout(r, 500));
-        await viewer.click("#driver button"); // hand back
-        const p = await SharedBrowserPage.open(
-          `http://127.0.0.1:${cdpPort}`,
-          server.getState().active,
-        );
-        const [x, y, width] = (await p.location()).title.split(",").map(Number);
-        p.close();
-        results.push({ dpr, x, y, width, canvas: Math.round(box!.width) });
-        await viewer.close();
-      }
-      for (const r of results) {
-        assert.equal(
-          r.width,
-          r.canvas,
-          `page width = canvas width ${JSON.stringify(r)}`,
-        );
-        assert.ok(
-          Math.abs(r.x - 1000) <= 1 && Math.abs(r.y - 100) <= 1,
-          JSON.stringify(r),
-        );
-      }
+      // Wider than the headless window (1280): clicks far right matter.
+      const viewer = new TestViewer(shared.server, { view: "frame:wide" });
+      await viewer.resize(1500, 700);
+      await viewer.takeOver();
+      await sleep(500);
+      await viewer.click(1000, 100);
+      await sleep(500);
+      await viewer.handBack();
+      const p = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
+        shared.server.getState().active,
+      );
+      const [x, y, width] = (await p.location()).title.split(",").map(Number);
+      p.close();
+      assert.deepEqual([x, y, width], [1000, 100, 1500]);
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
@@ -1395,12 +1196,8 @@ async function tcpForward(targetPort: number, listenPort = 0) {
 
 test(
   "a browser on the user's computer: waiting, attach through a tunnel, drop, switch",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
     const switched: string[] = [];
     const server = new SharedBrowserServer({
       host: "127.0.0.1",
@@ -1414,7 +1211,7 @@ test(
         switched.push(value);
       },
     });
-    const { port, cdpPort } = await server.start();
+    const { cdpPort } = await server.start();
     // The "computer": its own Chrome.
     const profile = await createProfileDir("disk", sys);
     const laptop = await launchBrowser({
@@ -1422,25 +1219,19 @@ test(
       profileDir: profile.path,
       args: sharedBrowserChromeArgs(profile.path),
     });
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
     let tunnel: Awaited<ReturnType<typeof tcpForward>> | null = null;
     try {
-      // Waiting: the viewer shows how to connect; agents get a clear error.
-      const viewer = await human.newPage({
-        viewport: { width: 800, height: 500 },
+      // Waiting: the viewer is told how to connect; agents get a clear error.
+      // The viewer says which site the user is on.
+      const viewer = new TestViewer(server, {
+        view: "frame:w",
+        client: "me",
+        site: "https://example.cocalc.ai",
       });
-      // The CoCalc page passes the site it is on (the viewer itself is
-      // served from the project host's domain).
-      await viewer.goto(
-        `http://127.0.0.1:${port}/?view=frame:w&client=me&site=${encodeURIComponent("https://example.cocalc.ai")}`,
-      );
-      await viewer.waitForSelector("#waiting", { state: "visible" });
+      assert.equal(viewer.state?.connection, "waiting");
       assert.match(
-        await viewer.textContent("#waiting pre"),
-        /connect -w p --browser \/home\/user\/t\.browser/,
+        viewer.state?.connectCommand ?? "",
+        /connect -w p --browser \/home\/user\/t\.browser --api https:\/\/example\.cocalc\.ai$/,
       );
       await assert.rejects(
         SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`),
@@ -1458,30 +1249,24 @@ test(
           `ws://127.0.0.1:${tunnel.port}`,
         ),
       );
-      await viewer.waitForSelector("#waiting", { state: "hidden" });
-      // The connect command names this site.
-      assert.match(
-        server.getState().connectCommand!,
-        /--api https:\/\/example\.cocalc\.ai$/,
+      await until(
+        () => viewer.state?.connection,
+        (c) => c === "connected",
+        "attached",
       );
-      // A preview streams; the human is told to use the window.
-      await viewer.waitForFunction(() =>
-        document
-          .querySelector("#driver .msg")
-          ?.textContent?.includes("Chrome on your computer"),
-      );
-      await viewer.click("#screen");
-      await viewer.waitForSelector("#notdriving", { state: "visible" });
-      assert.match(
-        await viewer.textContent("#notdriving p"),
-        /use that window/,
+      // A preview streams.
+      await viewer.say({ type: "visible", visible: true });
+      await until(
+        () => viewer.frames.length,
+        (n) => n > 0,
+        "a preview",
       );
       // Agents reach it through our endpoint (addresses rewritten).
       const page = await SharedBrowserPage.open(
         `http://127.0.0.1:${cdpPort}`,
         server.getState().active,
       );
-      await viewer.click("#driver button"); // the human hands back
+      await viewer.handBack();
       assert.equal(
         (await page.goto("data:text/html,<title>on the laptop</title>")).title,
         "on the laptop",
@@ -1493,23 +1278,37 @@ test(
         ),
         [1280, "undefined", "undefined"],
       );
+      // And no page input from the viewer: the human uses that window.
+      await viewer.takeOver();
+      await viewer.say({
+        type: "navigate",
+        url: "data:text/html,<title>no</title>",
+      });
+      await sleep(300);
+      // (The agent's own commands wait while the human drives.)
+      await viewer.handBack();
+      assert.equal((await page.location()).title, "on the laptop");
       page.close();
 
       // The tunnel drops: back to waiting, nothing hangs.
       await tunnel.close();
       tunnel = null;
-      await viewer.waitForSelector("#waiting", { state: "visible" });
-      assert.equal(server.getState().connection, "waiting");
+      await until(
+        () => viewer.state?.connection,
+        (c) => c === "waiting",
+        "waiting again",
+      );
 
       // The viewer's switch asks to run it in the project instead.
-      await viewer.click('#waiting button[data-a="project"]');
-      const deadline = Date.now() + 5000;
-      while (!switched.length && Date.now() < deadline)
-        await new Promise((r) => setTimeout(r, 100));
+      await viewer.say({ type: "runsOn", value: "project" });
+      await until(
+        () => switched,
+        (s) => s.length > 0,
+        "switched",
+      );
       assert.deepEqual(switched, ["project"]);
     } finally {
       await tunnel?.close();
-      await human.close().catch(() => {});
       await server.close();
       await laptop.stop();
       await profile.cleanup();
@@ -1559,7 +1358,11 @@ test(
         "0",
       ],
       {
-        env: { ...process.env, HOME: home, COCALC_CHROME: executable },
+        env: {
+          ...withoutCoCalcCredentials(),
+          HOME: home,
+          COCALC_CHROME: executable,
+        },
         stdio: ["ignore", "ignore", "pipe"],
       },
     );
@@ -1643,97 +1446,49 @@ test(
 
 test(
   "after scrolling, a still page gets one sharp frame, not a flicker",
-  {
-    skip: executable ? false : "no Chrome/Chromium installed",
-    timeout: 120_000,
-  },
+  needsChrome,
   async () => {
-    const { chromium } = require("playwright-core");
-    const profile = await createProfileDir("disk", sys);
-    const browser = await launchBrowser({
-      executable: executable!,
-      profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
-    });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
-    const server = new SharedBrowserServer({
-      chromeWebSocketUrl: version.webSocketDebuggerUrl,
-      host: "127.0.0.1",
-      port: 0,
-      cdpPort: 0,
-    });
-    const { port, cdpPort } = await server.start();
-    const human = await chromium.launch({
-      executablePath: executable,
-      args: ["--no-sandbox", "--disable-gpu"],
-    });
+    const shared = await sharedBrowser();
     try {
-      const page = await SharedBrowserPage.open(`http://127.0.0.1:${cdpPort}`);
+      const page = await SharedBrowserPage.open(
+        `http://127.0.0.1:${shared.cdpPort}`,
+      );
       await page.goto(
         "data:text/html,<body style='margin:0'>" +
           "<p>line</p>".repeat(300) +
           "</body>",
       );
       page.close();
-      const viewer = await human.newPage({
-        viewport: { width: 900, height: 600 },
-        deviceScaleFactor: 2,
-      });
-      await viewer.addInitScript(() => {
-        const decode = window.createImageBitmap.bind(window);
-        (window as any).__frames = [];
-        (window as any).createImageBitmap = async (
-          src: any,
-          ...rest: any[]
-        ) => {
-          const bmp = await decode(src, ...rest);
-          if (src instanceof Blob)
-            (window as any).__frames.push({
-              width: bmp.width,
-              height: bmp.height,
-            });
-          return bmp;
-        };
-      });
-      await viewer.goto(`http://127.0.0.1:${port}/`);
-      await viewer.waitForFunction(
-        () => document.getElementById("status")?.textContent === "live",
-      );
-      await viewer.click("#driver button"); // take over
-      const box = await viewer.locator("#screen").boundingBox();
-      await viewer.mouse.move(box!.x + 200, box!.y + 200);
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(900, 560, "sharp");
+      await viewer.takeOver();
       for (let i = 0; i < 5; i++) {
-        await viewer.mouse.wheel(0, 300);
-        await new Promise((r) => setTimeout(r, 100));
+        await viewer.say({
+          type: "mouse",
+          event: "mouseWheel",
+          x: 200,
+          y: 200,
+          deltaX: 0,
+          deltaY: 300,
+        });
+        await sleep(100);
       }
       // Let it settle, then nothing more should arrive.
-      await new Promise((r) => setTimeout(r, 2500));
-      const settled = await viewer.evaluate(
-        () => (window as any).__frames.length,
-      );
-      await new Promise((r) => setTimeout(r, 3000));
-      const frames = await viewer.evaluate(() => (window as any).__frames);
-      assert.equal(
-        frames.length,
-        settled,
-        `frames at rest: ${JSON.stringify(frames.slice(settled))}`,
-      );
+      await sleep(2500);
+      const settled = viewer.frames.length;
+      await sleep(3000);
+      const sizes = viewer.frames.map(imageSize);
+      assert.equal(sizes.length, settled, "no frames at rest");
       // The still frame has the stream's proportions (no grey strip).
-      const last = frames.at(-1);
-      const stream =
-        frames.find((f: any) => f.width * 2 === last.width) ?? last;
+      const last = sizes.at(-1)!;
+      const stream = sizes.find((f) => f.type === "jpeg") ?? last;
       assert.ok(
         Math.abs(last.width / last.height - stream.width / stream.height) <
           0.01,
         `still ${JSON.stringify(last)} vs stream ${JSON.stringify(stream)}`,
       );
     } finally {
-      await human.close().catch(() => {});
-      await server.close();
-      await browser.stop();
-      await profile.cleanup();
+      await shared.close();
     }
   },
 );
@@ -1804,7 +1559,7 @@ test(
         ],
         {
           env: {
-            ...process.env,
+            ...withoutCoCalcCredentials(),
             HOME: home,
             COCALC_SECRETS: secrets,
             COCALC_CHROME: executable,
@@ -1907,3 +1662,165 @@ test(
     }
   },
 );
+
+test("nothing outside the project reaches the CLI's API or agents' CDP: proxied requests and web pages are refused", async () => {
+  const WebSocket = require("ws");
+  const server = new SharedBrowserServer({
+    host: "127.0.0.1",
+    port: 0,
+    cdpPort: 0,
+  });
+  const { port, cdpPort } = await server.start();
+  try {
+    const api = `http://127.0.0.1:${port}`;
+    const cdp = `http://127.0.0.1:${cdpPort}`;
+    // The CLI in the project.
+    assert.equal((await fetch(`${api}/api/state`)).status, 200);
+    // Through CoCalc's proxy (it adds X-Forwarded-For), or from a web page.
+    for (const headers of <Record<string, string>[]>[
+      { "x-forwarded-for": "203.0.113.5" },
+      { origin: "https://evil.example" },
+    ]) {
+      assert.equal((await fetch(`${api}/api/state`, { headers })).status, 403);
+      assert.equal(
+        (
+          await fetch(`${api}/api/driver`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ driver: "human" }),
+          })
+        ).status,
+        403,
+      );
+      assert.equal(
+        (await fetch(`${cdp}/json/version`, { headers })).status,
+        403,
+      );
+    }
+    assert.equal(server.getState().driver, "agent");
+    // No viewer page, and no viewer socket, over HTTP any more.
+    assert.equal((await fetch(`${api}/`)).status, 404);
+    assert.equal((await fetch(`${api}/api/start`)).status, 404);
+    assert.equal((await fetch(`${api}/favicon?url=x`)).status, 404);
+    const refused = (url: string, options: any = {}) =>
+      new Promise<boolean>((resolve) => {
+        const ws = new WebSocket(url, options);
+        ws.once("open", () => {
+          ws.close();
+          resolve(false);
+        });
+        ws.once("error", () => resolve(true));
+      });
+    assert.equal(await refused(`ws://127.0.0.1:${port}/viewer`), true);
+    // CDP over a WebSocket from a web page (it sends its Origin).
+    assert.equal(
+      await refused(`ws://127.0.0.1:${cdpPort}/devtools/browser/x`, {
+        origin: "https://evil.example",
+      }),
+      true,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("viewers over conat: hello, state, frames with acknowledgements, requests, goodbye", async () => {
+  const { init: createConatServer } = require("@cocalc/conat/core/server");
+  const getPort = require("@cocalc/backend/get-port").default;
+  const { once } = require("node:events");
+  const { serveViewers } = require("./viewer-socket");
+  const {
+    FRAME_HEADER,
+    FRAMES_IN_FLIGHT,
+    sharedBrowserSubject,
+  } = require("@cocalc/util/shared-browser-protocol");
+  const conat = createConatServer({ port: await getPort(), path: "/conat" });
+  if (conat.state !== "ready") await once(conat, "ready");
+  const projectClient = conat.client({ noCache: true, path: "/" });
+  const userClient = conat.client({ noCache: true, path: "/" });
+  // The browser service, as far as viewers see it.
+  const events: string[] = [];
+  let channel: ViewerChannel | null = null;
+  const fake: any = {
+    addViewer: (c: ViewerChannel, hello: any) => {
+      channel = c;
+      events.push(`hello ${hello.view}`);
+      c.send({ type: "state", state: { driver: "agent" } as any });
+    },
+    viewerMessage: async (_c: ViewerChannel, msg: any) => {
+      events.push(msg.type);
+    },
+    viewerRequest: async (_c: ViewerChannel, request: any) => {
+      if (request.type === "start") return { servers: [], recent: [] };
+      throw Error("unknown request");
+    },
+    removeViewer: () => events.push("bye"),
+  };
+  const project_id = "00000000-1000-4000-8000-000000000000";
+  const viewers = serveViewers({
+    client: projectClient,
+    server: fake,
+    projectId: project_id,
+    appId: "cocalc-browser",
+  });
+  const socket = userClient.socket.connect(
+    sharedBrowserSubject(project_id, "cocalc-browser"),
+  );
+  try {
+    const received: { data: any; seq?: number }[] = [];
+    socket.on("data", (data: any, headers: any) =>
+      received.push({ data, seq: headers?.[FRAME_HEADER] }),
+    );
+    await socket.waitUntilReady(10_000);
+    // Nothing counts before hello.
+    socket.write({ type: "takeover" });
+    socket.write({ type: "hello", view: "card:1" });
+    socket.write({ type: "takeover" });
+    await until(
+      () => events,
+      (e) => e.includes("takeover"),
+      "the message",
+    );
+    assert.deepEqual(events, ["hello card:1", "takeover"]);
+    await until(
+      () => received,
+      (r) => r.some((m) => m.data?.type === "state"),
+      "the state",
+    );
+
+    // Frames: a few in flight, then the newest waits for an acknowledgement.
+    for (let i = 1; i <= 10; i++) channel!.sendFrame(Buffer.from([i]));
+    const frames = () => received.filter((m) => m.seq != null);
+    await until(frames, (f) => f.length === FRAMES_IN_FLIGHT, "frames");
+    await sleep(300);
+    assert.equal(frames().length, FRAMES_IN_FLIGHT);
+    assert.deepEqual(
+      frames().map((f) => [...new Uint8Array(f.data)][0]),
+      [1, 2, 3],
+    );
+    socket.write({ type: "ack", seq: frames()[0].seq });
+    await until(frames, (f) => f.length === FRAMES_IN_FLIGHT + 1, "the newest");
+    assert.equal([...new Uint8Array(frames().at(-1)!.data)][0], 10);
+    assert.equal(events.includes("ack"), false, "acks stay in the transport");
+
+    // Requests.
+    assert.deepEqual((await socket.request({ type: "start" })).data, {
+      servers: [],
+      recent: [],
+    });
+    await assert.rejects(socket.request({ type: "nope" }), /unknown request/);
+
+    socket.close();
+    await until(
+      () => events,
+      (e) => e.includes("bye"),
+      "goodbye",
+    );
+  } finally {
+    socket.close();
+    viewers.close();
+    projectClient.close();
+    userClient.close();
+    await conat.close();
+  }
+});

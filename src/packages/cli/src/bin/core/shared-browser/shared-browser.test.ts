@@ -5,10 +5,12 @@ import { networkHint } from "./agent-page";
 import { pickSelectExpression, selectScript } from "./page-script";
 import {
   clampZoom,
+  fromOutsideProject,
   heldWhileHumanDrives,
   normalizeUrl,
   resolveProjectFile,
 } from "./server";
+import { FrameWindow } from "./viewer-socket";
 import {
   BUNDLED_CHROMIUM,
   connectCommandFor,
@@ -233,8 +235,13 @@ test("page zoom stays between 25% and 500%, in hundredths", () => {
 });
 
 test("files offered to a page's file chooser stay inside the home directory", () => {
-  const { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } =
-    require("node:fs");
+  const {
+    mkdirSync,
+    mkdtempSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+  } = require("node:fs");
   const { tmpdir } = require("node:os");
   const { join } = require("node:path");
   const dir = mkdtempSync(join(tmpdir(), "upload-test-"));
@@ -246,17 +253,67 @@ test("files offered to a page's file chooser stay inside the home directory", ()
     writeFileSync(outside, "secret");
     symlinkSync(outside, join(home, "link-out"));
     symlinkSync(join(home, "docs", "report.pdf"), join(home, "link-in"));
-    const real = require("node:fs").realpathSync(join(home, "docs", "report.pdf"));
+    const real = require("node:fs").realpathSync(
+      join(home, "docs", "report.pdf"),
+    );
     assert.equal(resolveProjectFile("docs/report.pdf", home), real);
     assert.equal(resolveProjectFile(join(home, "docs/report.pdf"), home), real);
     assert.equal(resolveProjectFile("link-in", home), real);
     assert.equal(resolveProjectFile("link-out", home), null);
     assert.equal(resolveProjectFile("../secret.txt", home), null);
     assert.equal(resolveProjectFile(outside, home), null);
-    assert.equal(resolveProjectFile("/run/secrets/cocalc/COCALC_BROWSER_KEY", home), null);
+    assert.equal(
+      resolveProjectFile("/run/secrets/cocalc/COCALC_BROWSER_KEY", home),
+      null,
+    );
     assert.equal(resolveProjectFile("docs", home), null);
     assert.equal(resolveProjectFile("missing.txt", home), null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a viewer has at most a few frames in flight; newer frames replace waiting ones", () => {
+  const written: number[] = [];
+  let now = 0;
+  const window = new FrameWindow(
+    (frame) => written.push(frame[0]),
+    2,
+    () => now,
+  );
+  for (let i = 1; i <= 5; i++) window.send(Buffer.from([i]));
+  // Two sent; 3 and 4 were replaced by 5, which waits.
+  assert.deepEqual(written, [1, 2]);
+  window.ack(1);
+  assert.deepEqual(written, [1, 2, 5]);
+  // Unknown and repeated acks change nothing.
+  window.ack(1);
+  window.ack(99);
+  window.send(Buffer.from([6]));
+  assert.deepEqual(written, [1, 2, 5]);
+  window.ack(2);
+  assert.deepEqual(written, [1, 2, 5, 6]);
+  // Frames never acknowledged (a lost viewer) are written off in time.
+  now += 11_000;
+  window.send(Buffer.from([7]));
+  assert.deepEqual(written, [1, 2, 5, 6, 7]);
+  // A reconnect starts over.
+  window.reset();
+  assert.equal(window.inFlight, 0);
+});
+
+test("the CLI's API and agents' CDP refuse what comes through CoCalc's proxy or from a web page", () => {
+  const req = (headers: Record<string, string>) => ({ headers }) as any;
+  assert.equal(fromOutsideProject(req({ host: "127.0.0.1:9222" })), false);
+  for (const headers of <Record<string, string>[]>[
+    { "x-forwarded-for": "1.2.3.4" },
+    { "x-forwarded-host": "example.com" },
+    { forwarded: "for=1.2.3.4" },
+    { origin: "https://evil.example" },
+  ])
+    assert.equal(
+      fromOutsideProject(req(headers)),
+      true,
+      JSON.stringify(headers),
+    );
 });

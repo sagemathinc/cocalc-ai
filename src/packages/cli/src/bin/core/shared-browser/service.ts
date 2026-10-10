@@ -1,6 +1,7 @@
 /**
  * `cocalc project browser serve`: run the shared browser as a project app.
- * The app manager supplies PORT (the viewer/API port behind the app proxy).
+ * The app manager supplies PORT (the CLI's API port, on loopback); viewers
+ * connect over conat with the project's credentials.
  */
 import {
   cleanupThenDisarm,
@@ -33,6 +34,8 @@ import {
   type BrowserKeyring,
 } from "./keyring";
 import { SharedBrowserServer } from "./server";
+import { serveViewers } from "./viewer-socket";
+import { openCurrentProjectConnection } from "../../../api/current-project";
 
 import {
   formatSharedBrowserFile,
@@ -106,7 +109,12 @@ export function profileForKey(path: string, secret: Buffer): boolean {
 }
 
 function removeProfile(path: string) {
-  rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  rmSync(path, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 200,
+  });
 }
 
 export const INSTALL_CHROMIUM_HINT =
@@ -237,6 +245,23 @@ export async function runSharedBrowserService({
     log,
   });
   await server.start();
+
+  // Viewers (CoCalc's frontend) connect over conat, as to a terminal.
+  let viewers: { close: () => void } | null = null;
+  try {
+    const projectId = currentProjectId();
+    const { client } = await openCurrentProjectConnection({ projectId });
+    viewers = serveViewers({
+      client,
+      server,
+      projectId: projectId!,
+      appId: profileId,
+      log,
+    });
+  } catch (err: any) {
+    // Agents can still use it; nobody can watch.
+    log(`no viewers: cannot connect to CoCalc: ${err?.message ?? err}`);
+  }
 
   // The browser in the project, while the file says it runs here.
   let local: {
@@ -415,6 +440,7 @@ export async function runSharedBrowserService({
     stopping = true;
     clearInterval(poll);
     log(`stopping: ${reason}`);
+    viewers?.close();
     await stopLocal().catch(() => {});
     await server.close().catch(() => {});
     process.exit(0);

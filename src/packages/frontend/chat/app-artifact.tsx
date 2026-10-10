@@ -3,9 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// An artifact that shows a project app live (e.g. the shared browser an
-// agent and a human use together), through the project's authenticated app
-// proxy.  Opening the card starts the app if it is not running.
+// An artifact that shows a project app live.  A shared browser (the one an
+// agent and a human use together) is shown by CoCalc's own viewer, which
+// connects to it over conat like a terminal; other apps through the
+// project's authenticated app proxy.  Opening the card starts the app if it
+// is not running, and the project too.
 
 import { Alert, Button, Flex, Modal, Spin } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
@@ -13,8 +15,6 @@ import {
   type MutableRefObject,
   type ReactNode,
   useEffect,
-  useMemo,
-  useRef,
   useState,
 } from "react";
 import type { ArtifactApp } from "@cocalc/chat";
@@ -35,77 +35,73 @@ import {
   loadBrowserPicture,
   saveBrowserPicture,
 } from "@cocalc/frontend/frame-editors/browser-editor/start-screen";
+import {
+  type SharedBrowserControl,
+  type SharedBrowserRemote,
+  SharedBrowserViewer,
+} from "@cocalc/frontend/frame-editors/browser-editor/viewer/viewer";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import {
   SHARED_BROWSER_APP_ID,
   sharedBrowserAppSpec,
 } from "@cocalc/util/shared-browser";
 
-// The last open URL of each app, by project and app id.
-const OPEN_URLS = new Map<string, string>();
-
-export function AppArtifact({
-  projectId,
-  app,
-  title,
-  view,
-  params,
-  onMessage,
-  frameRef,
-  children,
-  notice,
-}: {
+export interface AppArtifactProps {
   projectId: string;
   app: ArtifactApp;
   title: string;
   // Identifies this place (an editor frame, a card) to the app, e.g. so the
   // shared browser shows each frame its own tab.
   view?: string;
-  // More query parameters for the app.
-  params?: Record<string, string>;
-  // Messages the app posts to this page (from its own iframe only).
-  onMessage?: (data: any) => void;
-  frameRef?: MutableRefObject<HTMLIFrameElement | null>;
   // Shown over the app, e.g. a panel the page draws for it.
   children?: ReactNode;
   // Shown above the app.
   notice?: ReactNode;
-}) {
-  const isSharedBrowser = app.id.startsWith(SHARED_BROWSER_APP_ID);
-  // A browser's start screen, until the viewer shows the page.
-  const [step, setStep] = useState<BrowserStartStep>("browser");
-  const [ready, setReady] = useState(false);
-  const [picture, setPicture] = useState<string>();
-  const stateSeen = useRef(false);
-  const pictureKey = `${projectId}/${app.id}/${view ?? ""}`;
-  useEffect(() => {
-    if (!isSharedBrowser) return;
-    let canceled = false;
-    void loadBrowserPicture(pictureKey).then((p) => {
-      if (!canceled && p) setPicture(p);
-    });
-    return () => {
-      canceled = true;
-    };
-  }, [pictureKey, isSharedBrowser]);
-  const client = webapp_client.browser_id;
-  const networkDisabled = useProjectNetworkDisabled(projectId);
-  const ownFrame = useRef<HTMLIFrameElement | null>(null);
-  const iframe = frameRef ?? ownFrame;
-  const query = useMemo(
-    () => ({
-      ...(view ? { view, client } : {}),
-      // The site the user is on: e.g. for commands to run against it.
-      site: window.location.origin,
-      ...(params ?? {}),
-    }),
-    [view, client, JSON.stringify(params ?? {})],
+  // A shared browser: the page around it draws the "waiting for your
+  // computer" panel; where it runs; asking an agent from its start page;
+  // switching where it runs.
+  hostPanel?: boolean;
+  onRemote?: (remote: SharedBrowserRemote) => void;
+  onAskAgent?: (text: string) => void;
+  controlRef?: MutableRefObject<SharedBrowserControl | null>;
+}
+
+export function AppArtifact(props: AppArtifactProps) {
+  return props.app.id.startsWith(SHARED_BROWSER_APP_ID) ? (
+    <SharedBrowserArtifact {...props} />
+  ) : (
+    <ProjectAppFrame {...props} />
   );
-  const [src, setSrc] = useState<string>();
+}
+
+// The apps known to run, by project and app id: showing one again (another
+// tab or frame was in front) is instant, while it is checked meanwhile.
+const RUNNING = new Map<string, { url?: string }>();
+
+/**
+ * Start the project and the app (unless the user shut it down), and say
+ * what it is doing.
+ */
+function useRunningApp({
+  projectId,
+  app,
+  title,
+  isSharedBrowser,
+  wantUrl,
+}: {
+  projectId: string;
+  app: ArtifactApp;
+  title: string;
+  isSharedBrowser: boolean;
+  wantUrl: boolean;
+}) {
+  const [running, setRunning] = useState<{ url?: string }>();
+  const [step, setStep] = useState<BrowserStartStep>("browser");
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
-  // Shut down by the user (the app's own "shut down" button).
+  // Shut down by the user.
   const [stopped, setStopped] = useState(false);
+  const cacheKey = `${projectId}/${app.id}`;
 
   // Waking must be off while it is shut down: otherwise any open viewer
   // that reconnects starts it again.
@@ -124,7 +120,8 @@ export function AppArtifact({
   const shutdown = async () => {
     const api = await setWake(false);
     await api.apps.stopApp(app.id);
-    setSrc(undefined);
+    RUNNING.delete(cacheKey);
+    setRunning(undefined);
     setStopped(true);
   };
   const start = async () => {
@@ -134,68 +131,12 @@ export function AppArtifact({
   };
 
   useEffect(() => {
-    const listener = (event: MessageEvent) => {
-      if (!event.source || event.source !== iframe.current?.contentWindow)
-        return;
-      if (event.data?.type === "cocalc-app-shutdown") {
-        Modal.confirm({
-          title: `Shut down ${title}?`,
-          content:
-            "It stops until someone starts it again; agents cannot use it meanwhile. It keeps its sign-ins.",
-          okText: "Shut down",
-          okButtonProps: { danger: true },
-          onOk: () =>
-            shutdown().catch((err) => setError(`${err?.message ?? err}`)),
-        });
-        return;
-      }
-      if (event.data?.type === "cocalc-browser-ready") {
-        setReady(true);
-        return;
-      }
-      if (event.data?.type === "cocalc-browser-picture") {
-        if (typeof event.data.picture === "string")
-          void saveBrowserPicture(pictureKey, event.data.picture);
-        return;
-      }
-      if (event.data?.type === "cocalc-browser-state" && !stateSeen.current) {
-        // A viewer from before "ready" (its project has older tools).
-        stateSeen.current = true;
-        setTimeout(() => setReady(true), 4000);
-      }
-      if (event.data?.type === "cocalc-browser-forget") {
-        Modal.confirm({
-          title: "Forget all sign-ins?",
-          content:
-            "Every web browser in this project starts over with an empty profile, signed out of all websites; open pages stay open. Cookies in old copies (snapshots, backups) can no longer be read, but sites' local storage in those copies can, and some sites keep sign-in tokens there. To end a session everywhere, sign out on the site itself.",
-          okText: "Forget sign-ins",
-          okButtonProps: { danger: true },
-          onOk: () =>
-            forgetSharedBrowserSignIns(projectId).catch((err) =>
-              setError(`${err?.message ?? err}`),
-            ),
-        });
-        return;
-      }
-      onMessage?.(event.data);
-    };
-    window.addEventListener("message", listener);
-    return () => window.removeEventListener("message", listener);
-  }, [onMessage, iframe, title, projectId, app.id, pictureKey]);
-
-  const cacheKey = `${projectId}/${app.id}`;
-  useEffect(() => {
     if (stopped) return;
     let canceled = false;
     const projectRunning =
       redux.getStore("projects")?.get_state?.(projectId) === "running";
-    // Showing the app again (another tab or frame was in front) should be
-    // instant: use the URL it had and check that it still runs meanwhile.
-    const known = projectRunning ? OPEN_URLS.get(cacheKey) : undefined;
-    setSrc(known ? withQuery(known, query) : known);
+    setRunning(projectRunning ? RUNNING.get(cacheKey) : undefined);
     setError(undefined);
-    setReady(false);
-    stateSeen.current = false;
     setStep(projectRunning ? "browser" : "project");
     void (async () => {
       // Like a terminal: opening it starts the project.
@@ -245,17 +186,21 @@ export function AppArtifact({
         const detail = await appFailureDetail(api, app.id);
         throw Error(detail ? `${err}\n\n${detail}` : `${err}`);
       }
-      const url = await getProjectAppOpenUrl({
-        getSpec: async () => spec,
-        project_id: projectId,
-        spec,
-        status,
-      });
-      if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
-      OPEN_URLS.set(cacheKey, url);
+      let url: string | undefined;
+      if (wantUrl) {
+        url =
+          (await getProjectAppOpenUrl({
+            getSpec: async () => spec,
+            project_id: projectId,
+            spec,
+            status,
+          })) ?? undefined;
+        if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
+      }
+      RUNNING.set(cacheKey, { url });
       if (!canceled) {
         setStep("connecting");
-        setSrc(withQuery(url, query));
+        setRunning({ url });
       }
     })().catch((err) => {
       if (!canceled) setError(`${err?.message ?? err}`);
@@ -263,67 +208,201 @@ export function AppArtifact({
     return () => {
       canceled = true;
     };
-  }, [projectId, app.id, attempt, query, cacheKey, stopped]);
+  }, [projectId, app.id, attempt, cacheKey, stopped]);
 
-  if (stopped)
-    return (
-      <Flex
-        align="center"
-        justify="center"
-        style={{ height: "100%", padding: 24 }}
-      >
-        <Alert
-          type="info"
-          showIcon
-          title={`${title} is shut down`}
-          action={
-            <Button
-              type="primary"
-              style={{ marginLeft: 16 }}
-              onClick={() =>
-                start().catch((err) => setError(`${err?.message ?? err}`))
-              }
-            >
-              Start
-            </Button>
-          }
-        />
-      </Flex>
-    );
-  if (error)
-    return (
-      <Flex
-        align="center"
-        justify="center"
-        style={{ height: "100%", padding: 24 }}
-      >
-        <Alert
-          type="warning"
-          showIcon
-          title={`Could not open ${title}`}
-          description={<div style={{ whiteSpace: "pre-wrap" }}>{error}</div>}
-          action={
-            <Button
-              style={{ marginLeft: 16 }}
-              onClick={() => setAttempt((n) => n + 1)}
-            >
-              Retry
-            </Button>
-          }
-        />
-      </Flex>
-    );
+  return {
+    running,
+    step,
+    error,
+    stopped,
+    retry: () => setAttempt((n) => n + 1),
+    shutdown,
+    start: () => start().catch((err) => setError(`${err?.message ?? err}`)),
+    setError,
+  };
+}
+
+function Stopped({ title, onStart }: { title: string; onStart: () => void }) {
+  return (
+    <Flex
+      align="center"
+      justify="center"
+      style={{ height: "100%", padding: 24 }}
+    >
+      <Alert
+        type="info"
+        showIcon
+        title={`${title} is shut down`}
+        action={
+          <Button type="primary" style={{ marginLeft: 16 }} onClick={onStart}>
+            Start
+          </Button>
+        }
+      />
+    </Flex>
+  );
+}
+
+function Failed({
+  title,
+  error,
+  onRetry,
+}: {
+  title: string;
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Flex
+      align="center"
+      justify="center"
+      style={{ height: "100%", padding: 24 }}
+    >
+      <Alert
+        type="warning"
+        showIcon
+        title={`Could not open ${title}`}
+        description={<div style={{ whiteSpace: "pre-wrap" }}>{error}</div>}
+        action={
+          <Button style={{ marginLeft: 16 }} onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      />
+    </Flex>
+  );
+}
+
+function SharedBrowserArtifact({
+  projectId,
+  app,
+  title,
+  view,
+  children,
+  notice,
+  hostPanel,
+  onRemote,
+  onAskAgent,
+  controlRef,
+}: AppArtifactProps) {
+  const run = useRunningApp({
+    projectId,
+    app,
+    title,
+    isSharedBrowser: true,
+    wantUrl: false,
+  });
+  // The start screen, until the viewer shows the page.
+  const [ready, setReady] = useState(false);
+  const [picture, setPicture] = useState<string>();
+  const pictureKey = `${projectId}/${app.id}/${view ?? ""}`;
+  const networkDisabled = useProjectNetworkDisabled(projectId);
+  useEffect(() => {
+    let canceled = false;
+    void loadBrowserPicture(pictureKey).then((p) => {
+      if (!canceled && p) setPicture(p);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [pictureKey]);
+  useEffect(() => {
+    if (!run.running) setReady(false);
+  }, [run.running]);
+
   const name =
     app.id === SHARED_BROWSER_APP_ID
       ? "Web browser"
       : title.replace(/^Browser:\s*/, "");
-  if (!src && isSharedBrowser)
+
+  if (run.stopped) return <Stopped title={title} onStart={run.start} />;
+  if (run.error)
+    return <Failed title={title} error={run.error} onRetry={run.retry} />;
+  if (!run.running)
     return (
       <div style={{ position: "relative", width: "100%", height: "100%" }}>
-        <BrowserStartScreen name={name} step={step} picture={picture} />
+        <BrowserStartScreen name={name} step={run.step} picture={picture} />
       </div>
     );
-  if (!src)
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {notice ?? (networkDisabled ? <NoNetworkNotice /> : null)}
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <SharedBrowserViewer
+          project_id={projectId}
+          appId={app.id}
+          view={view}
+          hostPanel={hostPanel}
+          controlRef={controlRef}
+          onReady={() => setReady(true)}
+          onPicture={(p) => void saveBrowserPicture(pictureKey, p)}
+          onRemote={onRemote}
+          onAskAgent={onAskAgent}
+          onShutdown={() =>
+            Modal.confirm({
+              title: `Shut down ${title}?`,
+              content:
+                "It stops until someone starts it again; agents cannot use it meanwhile. It keeps its sign-ins.",
+              okText: "Shut down",
+              okButtonProps: { danger: true },
+              onOk: () =>
+                run
+                  .shutdown()
+                  .catch((err) => run.setError(`${err?.message ?? err}`)),
+            })
+          }
+          onForget={() =>
+            Modal.confirm({
+              title: "Forget all sign-ins?",
+              content:
+                "Every web browser in this project starts over with an empty profile, signed out of all websites; open pages stay open. Cookies in old copies (snapshots, backups) can no longer be read, but sites' local storage in those copies can, and some sites keep sign-in tokens there. To end a session everywhere, sign out on the site itself.",
+              okText: "Forget sign-ins",
+              okButtonProps: { danger: true },
+              onOk: () =>
+                forgetSharedBrowserSignIns(projectId).catch((err) =>
+                  run.setError(`${err?.message ?? err}`),
+                ),
+            })
+          }
+        />
+        <StartScreenUntilReady
+          name={name}
+          picture={picture}
+          ready={ready}
+          onTimeout={() => setReady(true)}
+        />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Any other project app, through the project's authenticated app proxy.
+function ProjectAppFrame({
+  projectId,
+  app,
+  title,
+  children,
+  notice,
+}: AppArtifactProps) {
+  const run = useRunningApp({
+    projectId,
+    app,
+    title,
+    isSharedBrowser: false,
+    wantUrl: true,
+  });
+  if (run.stopped) return <Stopped title={title} onStart={run.start} />;
+  if (run.error)
+    return <Failed title={title} error={run.error} onRetry={run.retry} />;
+  if (!run.running?.url)
     return (
       <Flex align="center" justify="center" style={{ height: "100%" }}>
         <Spin tip={`Starting ${title}...`}>
@@ -340,27 +419,13 @@ export function AppArtifact({
         flexDirection: "column",
       }}
     >
-      {notice ??
-        (networkDisabled && isSharedBrowser ? (
-          <NoNetworkNotice />
-        ) : null)}
+      {notice}
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         <iframe
-          ref={iframe}
-          src={src}
+          src={run.running.url}
           title={title}
-          // The app is the project's own code behind CoCalc's app proxy.
-          allow="clipboard-read; clipboard-write"
           style={{ border: 0, width: "100%", height: "100%", display: "block" }}
         />
-        {isSharedBrowser ? (
-          <StartScreenUntilReady
-            name={name}
-            picture={picture}
-            ready={ready}
-            onTimeout={() => setReady(true)}
-          />
-        ) : null}
         {children}
       </div>
     </div>
@@ -410,14 +475,4 @@ async function appFailureDetail(api, id: string): Promise<string> {
   } catch {
     return "";
   }
-}
-
-function withQuery(url: string, query: Record<string, string>): string {
-  const [base, hash] = url.split("#", 2);
-  const text = Object.entries(query)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-  if (!text) return url;
-  const sep = base.includes("?") ? "&" : "?";
-  return `${base}${sep}${text}${hash ? `#${hash}` : ""}`;
 }

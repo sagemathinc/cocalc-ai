@@ -193,6 +193,9 @@ also run on your computer, which uses your network.
 - Everything in the project can control its browsers: your agents, and
   collaborators and their agents. Sign in only to accounts you are willing to
   share with the project.
+- People watch and use a browser only in CoCalc, over their own connection to
+  the project, as with a terminal. Other websites, and the pages open in the
+  browser, cannot reach its controls.
 - A browser on your computer is reachable from the project only while the
   \`connect\` command runs, and only with that file's own profile.
 - Each \`.browser\` file has its own profile. Use separate files for separate

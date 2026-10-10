@@ -1,14 +1,18 @@
 /**
  * Shared browser: one headless Chromium in the project that an agent drives
  * over the Chrome DevTools Protocol (CDP) and a human watches and uses
- * through a viewer page (embedded in a chat card via the project app proxy).
+ * through the viewer in CoCalc's frontend (a chat card, a .browser file).
  *
- * Two listeners:
- * - the app port (behind CoCalc's authenticated app proxy): the viewer page,
- *   its WebSocket (screencast frames, state, human input), and a small JSON
- *   API used by the CLI;
- * - a loopback CDP port for agents, proxied to Chromium.  While the human has
- *   taken over, agent commands are held and delivered on hand-back.
+ * Viewers connect over the user's own conat connection (see
+ * viewer-socket.ts and @cocalc/util/shared-browser-protocol): screencast
+ * frames, state, the human's input.  Two loopback listeners serve the
+ * project itself:
+ * - the app port: a small JSON API used by the CLI (and the app manager's
+ *   health check);
+ * - a CDP port for agents, proxied to Chromium.  While the human has taken
+ *   over, agent commands are held and delivered on hand-back.
+ * Neither is for anyone outside the project: both refuse requests that come
+ * through CoCalc's proxy, which can reach any port in the project.
  *
  * Headless Chromium draws neither native <select> popups nor dialogs into
  * the screencast; those are reported to the viewer, which draws them.
@@ -28,56 +32,43 @@ import {
   selectScript,
 } from "./page-script";
 import type { SharedBrowserRunsOn } from "@cocalc/util/shared-browser";
-import { VIEWER_HTML } from "./viewer-html";
+import type {
+  Driver,
+  FaviconData,
+  ServiceMessage,
+  SharedBrowserState,
+  StartPageData,
+  ViewerMessage,
+  ViewerRequest,
+  ViewQuality,
+} from "@cocalc/util/shared-browser-protocol";
 import { Favicons, projectServers, recentSites } from "./start-page";
 
-export type Driver = "agent" | "human";
+export type {
+  Driver,
+  SharedBrowserState,
+  SharedBrowserTab,
+  ViewQuality,
+} from "@cocalc/util/shared-browser-protocol";
 
-export interface SharedBrowserTab {
-  id: string;
-  url: string;
-  title: string;
-  // The page's icon (its URL; the viewer gets it through /favicon).
-  icon?: string;
+/** One viewer's connection (see viewer-socket.ts). */
+export interface ViewerChannel {
+  send(message: ServiceMessage): void;
+  // A frame of the screen.  The channel keeps only a few unacknowledged and
+  // replaces the rest by the newest, so a slow viewer gets fewer frames.
+  sendFrame(frame: Buffer): void;
 }
 
-export interface SharedBrowserState {
-  driver: Driver;
-  // The agent asked the human to take over (e.g. to log in).
-  ask: { message: string; at: string } | null;
-  tabs: SharedBrowserTab[];
-  active: string | null;
-  viewport: { width: number; height: number };
-  dialog: { type: string; message: string; defaultPrompt?: string } | null;
-  select: {
-    options: { label: string; disabled?: boolean; group?: string }[];
-    selected: number;
-  } | null;
-  fileChooser: { mode: string } | null;
-  agents: number;
-  // Agent commands are waiting for the human to hand back.
-  agentWaiting: boolean;
-  cdp: string;
-  viewers: number;
-  // Whether a browser is attached; "waiting" while a .browser file's
-  // browser on the user's computer is not connected.
-  connection: "connected" | "waiting";
-  // Where a .browser file's browser runs (null: the project's own browser,
-  // which always runs in the project), and how to connect a computer.
-  runsOn: SharedBrowserRunsOn | null;
-  connectCommand: string | null;
-  // What the start page calls this browser (e.g. the file's name).
-  title: string;
-  // The tab's page zoom (1 = 100%), like a browser's zoom: the page lays out
-  // for a narrower window at a higher pixel ratio.  New tabs get the last one.
-  zoom: number;
+export interface ViewerHello {
+  view?: string;
+  client?: string;
+  site?: string;
 }
 
 // The screencast streams changes as JPEG; once the page is still, one frame
 // replaces it: lossless PNG (sharp) or high-quality JPEG (balanced).  Fast
 // skips that (slow links).  All at the page's CSS pixels: rendering at the
 // viewer's pixel ratio broke input and screenshots (see applyViewport).
-export type ViewQuality = "sharp" | "balanced" | "fast";
 const QUALITY: Record<
   ViewQuality,
   {
@@ -188,7 +179,7 @@ export class SharedBrowserServer {
   // key: the place showing it ("frame:<id>" for an editor frame, "card:<id>"),
   // client: the page load (one person's browser tab) it is in.
   private views = new Map<
-    WebSocket,
+    ViewerChannel,
     { tab: string | null; key: string; client: string; hidden?: boolean }
   >();
   // The tab each view key (e.g. an editor frame) last showed, so a frame
@@ -202,8 +193,9 @@ export class SharedBrowserServer {
   // current tab: screencast, input, overlays.
   private pages = new Map<string, TabPage>();
   // The viewer whose "+" is creating a tab, so only it switches to it.
-  private newTabFor: WebSocket | null = null;
+  private newTabFor: ViewerChannel | null = null;
   private switching: Promise<void> = Promise.resolve();
+  private titleTimer: NodeJS.Timeout | null = null;
   private log: (message: string) => void;
 
   constructor(private readonly options: SharedBrowserServerOptions) {
@@ -241,7 +233,7 @@ export class SharedBrowserServer {
     return this.state.runsOn === "computer";
   }
 
-  // The site the user is on (for `connect --api`), from the CoCalc page.
+  // The site the user is on (for `connect --api`), from the viewer.
   private siteOrigin = "";
   private noteOrigin(origin: string | undefined): void {
     if (!origin || !/^https?:\/\/[^/]+$/.test(origin)) return;
@@ -329,27 +321,7 @@ export class SharedBrowserServer {
     this.appServer = http.createServer((req, res) =>
       this.onAppRequest(req, res),
     );
-    const viewerWss = new WebSocketServer({
-      noServer: true,
-      perMessageDeflate: false,
-    });
-    this.appServer.on("upgrade", (req, socket, head) => {
-      if (!new URL(req.url ?? "/", "http://x").pathname.endsWith("/viewer")) {
-        socket.destroy();
-        return;
-      }
-      const query = new URL(req.url ?? "/", "http://x").searchParams;
-      // Not the Origin header: the viewer is served from the project host's
-      // domain, while the CLI needs the site the user is on.
-      this.noteOrigin(query.get("site") ?? undefined);
-      viewerWss.handleUpgrade(req, socket, head, (ws) =>
-        this.addViewer(
-          ws,
-          `${query.get("view") ?? ""}`.slice(0, 200),
-          `${query.get("client") ?? ""}`.slice(0, 200),
-        ),
-      );
-    });
+    this.appServer.on("upgrade", (_req, socket) => socket.destroy());
     const port = await listen(
       this.appServer,
       this.options.host,
@@ -364,7 +336,7 @@ export class SharedBrowserServer {
     });
     this.cdpServer.on("upgrade", (req, socket, head) => {
       const path = new URL(req.url ?? "/", "http://x").pathname;
-      if (!path.startsWith("/devtools/")) {
+      if (!path.startsWith("/devtools/") || fromOutsideProject(req)) {
         socket.destroy();
         return;
       }
@@ -379,16 +351,19 @@ export class SharedBrowserServer {
     );
     this.state.cdp = `http://127.0.0.1:${cdpPort}`;
     this.ownPorts.add(port).add(cdpPort);
+    this.titleTimer = setInterval(() => void this.refreshTitles(), 2000);
+    this.titleTimer.unref?.();
     this.log(
-      `viewer on ${this.options.host}:${port}, agent CDP on ${this.state.cdp}`,
+      `API on ${this.options.host}:${port}, agent CDP on ${this.state.cdp}`,
     );
     return { port, cdpPort };
   }
 
   async close(): Promise<void> {
     if (this.handBackTimer) clearTimeout(this.handBackTimer);
-    for (const ws of [...this.views.keys(), ...this.agentSockets])
-      ws.terminate();
+    if (this.titleTimer) clearInterval(this.titleTimer);
+    this.views.clear();
+    for (const ws of this.agentSockets) ws.terminate();
     await Promise.all([
       closeServer(this.appServer),
       closeServer(this.cdpServer),
@@ -546,18 +521,18 @@ export class SharedBrowserServer {
         .catch(() => {});
   }
 
-  private viewersOf(targetId: string): WebSocket[] {
+  private viewersOf(targetId: string): ViewerChannel[] {
     return [...this.views]
       .filter(([, view]) => view.tab === targetId)
-      .map(([ws]) => ws);
+      .map(([channel]) => channel);
   }
 
   // Viewers that can see their tab right now (hidden ones keep their last
   // frame and get no stream).
-  private watchersOf(targetId: string): WebSocket[] {
+  private watchersOf(targetId: string): ViewerChannel[] {
     return [...this.views]
       .filter(([, view]) => view.tab === targetId && !view.hidden)
-      .map(([ws]) => ws);
+      .map(([channel]) => channel);
   }
 
   /**
@@ -592,8 +567,8 @@ export class SharedBrowserServer {
   }
 
   // One viewer switches tabs; the others keep showing theirs.
-  private async show(ws: WebSocket, targetId: string): Promise<void> {
-    const view = this.views.get(ws);
+  private async show(channel: ViewerChannel, targetId: string): Promise<void> {
+    const view = this.views.get(channel);
     if (!view || !this.hasTab(targetId)) return;
     const previous = view.tab;
     view.tab = targetId;
@@ -605,7 +580,7 @@ export class SharedBrowserServer {
       await this.updateCasting(previous);
       await this.release(previous);
     }
-    this.sendSelection(ws);
+    this.sendSelection(channel);
     this.broadcastState();
   }
 
@@ -693,10 +668,8 @@ export class SharedBrowserServer {
   }
 
   private sendFrame(page: TabPage, frame: Buffer): void {
-    for (const ws of this.watchersOf(page.targetId)) {
-      // Drop frames for slow viewers instead of queueing them.
-      if (ws.bufferedAmount < 2 * 1024 * 1024) ws.send(frame, { binary: true });
-    }
+    for (const channel of this.watchersOf(page.targetId))
+      channel.sendFrame(frame);
   }
 
   // Once the page is still, send it once at full quality.
@@ -840,6 +813,7 @@ export class SharedBrowserServer {
     }
     if (method === "Page.loadEventFired") {
       void this.updateIcon(page);
+      void this.refreshTitles();
       return;
     }
     if (method === "Runtime.bindingCalled" && params.name === SELECT_BINDING) {
@@ -849,8 +823,8 @@ export class SharedBrowserServer {
           const text = `${payload.text ?? ""}`.slice(0, MAX_CLIPBOARD_TEXT);
           if (payload.type === "selection") this.setSelection(page, text);
           else
-            for (const ws of this.viewersOf(page.targetId))
-              ws.send(JSON.stringify({ type: "copied", text }));
+            for (const channel of this.viewersOf(page.targetId))
+              channel.send({ type: "copied", text });
           return;
         }
         page.selectContext = params.executionContextId;
@@ -863,6 +837,35 @@ export class SharedBrowserServer {
         // ignore malformed payloads from the page
       }
     }
+  }
+
+  /**
+   * Chromium reports a tab's title only when the tab navigates, before the
+   * page sets one (so it is the URL): keep titles current while someone
+   * watches, also those a page sets later.
+   */
+  private async refreshTitles(): Promise<void> {
+    if (!this.attached || this.views.size === 0) return;
+    let infos: any[] = [];
+    try {
+      infos = (await this.cdp.send("Target.getTargets")).targetInfos ?? [];
+    } catch {
+      return;
+    }
+    let changed = false;
+    for (const info of infos) {
+      const tab = this.state.tabs.find((t) => t.id === info.targetId);
+      if (!tab) continue;
+      if (typeof info.title === "string" && info.title !== tab.title) {
+        tab.title = info.title;
+        changed = true;
+      }
+      if (typeof info.url === "string" && info.url !== tab.url) {
+        tab.url = info.url;
+        changed = true;
+      }
+    }
+    if (changed) this.broadcastState();
   }
 
   // The page's icon, for its tab.
@@ -885,19 +888,35 @@ export class SharedBrowserServer {
 
   private setSelection(page: TabPage, text: string): void {
     page.selection = text;
-    for (const ws of this.viewersOf(page.targetId)) this.sendSelection(ws);
+    for (const channel of this.viewersOf(page.targetId))
+      this.sendSelection(channel);
   }
 
   // What is selected in the tab a viewer shows.
-  private sendSelection(ws: WebSocket): void {
-    const tab = this.views.get(ws)?.tab;
+  private sendSelection(channel: ViewerChannel): void {
+    const tab = this.views.get(channel)?.tab;
     const text = (tab && this.pages.get(tab)?.selection) || "";
-    ws.send(JSON.stringify({ type: "selection", text }));
+    channel.send({ type: "selection", text });
   }
 
   // --- viewers -------------------------------------------------------------
 
-  private addViewer(ws: WebSocket, key = "", client = ""): void {
+  /**
+   * A viewer said hello: on connecting, or again after a reconnect (then it
+   * keeps its tab).
+   */
+  addViewer(channel: ViewerChannel, hello: ViewerHello = {}): void {
+    this.noteOrigin(hello.site);
+    const known = this.views.get(channel);
+    if (known) {
+      known.hidden = false;
+      channel.send({ type: "state", state: this.stateFor(known.tab) });
+      this.sendSelection(channel);
+      if (known.tab) void this.restartCasting(known.tab);
+      return;
+    }
+    const key = `${hello.view ?? ""}`.slice(0, 200);
+    const client = `${hello.client ?? ""}`.slice(0, 200);
     const remembered = key ? (this.viewTabs.get(key) ?? null) : null;
     const tab = this.hasTab(remembered) ? remembered : this.state.active;
     // A new frame next to another frame of the same person on this tab is a
@@ -915,60 +934,104 @@ export class SharedBrowserServer {
           view.key.startsWith("frame:") &&
           view.tab === tab,
       );
-    this.views.set(ws, { tab, key, client });
+    this.views.set(channel, { tab, key, client });
     this.state.viewers = this.views.size;
     if (this.handBackTimer) clearTimeout(this.handBackTimer);
     this.handBackTimer = null;
     if (this.options.humanFirst && this.agentSockets.size === 0)
       this.setDriver("human");
-    ws.send(JSON.stringify({ type: "state", state: this.stateFor(tab) }));
-    this.sendSelection(ws);
+    channel.send({ type: "state", state: this.stateFor(tab) });
+    this.sendSelection(channel);
     if (tab)
       void this.attach(this.pageFor(tab))
         .then(() => this.updateCasting(tab))
         .catch(() => {});
-    if (split && tab) {
+    if (split && tab && this.attached) {
       const url =
         this.state.tabs.find((t) => t.id === tab)?.url || "about:blank";
-      this.newTabFor = ws;
+      this.newTabFor = channel;
       void this.cdp
         .send("Target.createTarget", { url })
         .catch((err) => this.log(`split: ${err?.message ?? err}`));
     }
     this.broadcastState();
-    ws.on("message", (data, isBinary) => {
-      if (isBinary) return;
-      let msg: any;
-      try {
-        msg = JSON.parse(data.toString());
-      } catch {
-        return;
-      }
-      this.onViewerMessage(ws, msg).catch((err) =>
-        ws.send(
-          JSON.stringify({ type: "error", message: `${err?.message ?? err}` }),
-        ),
-      );
-    });
-    ws.on("close", () => {
-      const tab = this.views.get(ws)?.tab ?? null;
-      this.views.delete(ws);
-      if (this.newTabFor === ws) this.newTabFor = null;
-      this.state.viewers = this.views.size;
-      if (tab)
-        void this.updateCasting(tab)
-          .then(() => this.release(tab))
-          .catch(() => {});
-      this.broadcastState();
-      if (this.views.size === 0 && this.state.driver === "human") {
-        if (this.handBackTimer) clearTimeout(this.handBackTimer);
-        // A grace period, e.g. for a reload of the page.
-        this.handBackTimer = setTimeout(() => {
-          this.handBackTimer = null;
-          if (this.views.size === 0) this.setDriver("agent");
-        }, this.options.handBackAfterMs ?? 15_000);
-      }
-    });
+  }
+
+  /** The viewer went away (closed, or gone for good). */
+  removeViewer(channel: ViewerChannel): void {
+    if (!this.views.has(channel)) return;
+    const tab = this.views.get(channel)?.tab ?? null;
+    this.views.delete(channel);
+    if (this.newTabFor === channel) this.newTabFor = null;
+    this.state.viewers = this.views.size;
+    if (tab)
+      void this.updateCasting(tab)
+        .then(() => this.release(tab))
+        .catch(() => {});
+    this.broadcastState();
+    if (this.views.size === 0 && this.state.driver === "human") {
+      if (this.handBackTimer) clearTimeout(this.handBackTimer);
+      // A grace period, e.g. for a reload of the page.
+      this.handBackTimer = setTimeout(() => {
+        this.handBackTimer = null;
+        if (this.views.size === 0) this.setDriver("agent");
+      }, this.options.handBackAfterMs ?? 15_000);
+    }
+  }
+
+  /** What a viewer says; errors go back to it. */
+  async viewerMessage(
+    channel: ViewerChannel,
+    msg: ViewerMessage,
+  ): Promise<void> {
+    try {
+      await this.onViewerMessage(channel, msg);
+    } catch (err: any) {
+      channel.send({ type: "error", message: `${err?.message ?? err}` });
+    }
+  }
+
+  /** What a viewer asks: a new tab's start page, a site's icon. */
+  async viewerRequest(
+    channel: ViewerChannel,
+    request: ViewerRequest,
+  ): Promise<StartPageData | FaviconData> {
+    if (!this.views.has(channel)) throw Error("say hello first");
+    if (request?.type === "start") return await this.startPage();
+    if (request?.type === "favicon") {
+      const icon = await this.favicons.get(`${request.url ?? ""}`);
+      return icon ? { type: icon.type, body: icon.body } : null;
+    }
+    throw Error("unknown request");
+  }
+
+  // The servers running in the project and the sites visited recently.
+  private async startPage(): Promise<StartPageData> {
+    if (this.lightTouch) return { servers: [], recent: [] };
+    const only = this.options.startPagePorts;
+    const servers = await projectServers(
+      this.ownPorts,
+      undefined,
+      only ? new Set(only) : undefined,
+    ).catch(() => []);
+    let recent: StartPageData["recent"] = [];
+    try {
+      recent = recentSites(this.options.historyFile?.() ?? null);
+    } catch {}
+    return { servers, recent };
+  }
+
+  // A screencast only sends frames when the page changes: restart it so a
+  // returning viewer gets the current picture at once.
+  private async restartCasting(targetId: string): Promise<void> {
+    const page = this.pages.get(targetId);
+    if (page?.casting && page.session) {
+      await this.cdp
+        .send("Page.stopScreencast", {}, page.session)
+        .catch(() => {});
+      page.casting = false;
+    }
+    await this.updateCasting(targetId).catch(() => {});
   }
 
   private rememberViews(): void {
@@ -983,14 +1046,15 @@ export class SharedBrowserServer {
 
   private broadcastState(): void {
     this.rememberViews();
-    for (const [ws, view] of this.views)
-      ws.send(
-        JSON.stringify({ type: "state", state: this.stateFor(view.tab) }),
-      );
+    for (const [channel, view] of this.views)
+      channel.send({ type: "state", state: this.stateFor(view.tab) });
   }
 
-  private async onViewerMessage(ws: WebSocket, msg: any): Promise<void> {
-    const view = this.views.get(ws);
+  private async onViewerMessage(
+    channel: ViewerChannel,
+    msg: any,
+  ): Promise<void> {
+    const view = this.views.get(channel);
     if (!view) return;
     switch (msg.type) {
       case "takeover":
@@ -1028,7 +1092,7 @@ export class SharedBrowserServer {
         return;
       }
       case "tab":
-        if (typeof msg.id === "string") await this.show(ws, msg.id);
+        if (typeof msg.id === "string") await this.show(channel, msg.id);
         return;
       // A viewing preference, so whoever watches may zoom, driving or not.
       case "zoom": {
@@ -1045,20 +1109,8 @@ export class SharedBrowserServer {
       case "visible": {
         view.hidden = !msg.visible;
         if (!view.tab) return;
-        const page = this.pages.get(view.tab);
-        if (view.hidden || !page?.session) {
-          await this.updateCasting(view.tab);
-          return;
-        }
-        // A screencast only sends frames when the page changes: restart it
-        // so the returning viewer gets the current picture at once.
-        if (page.casting) {
-          await this.cdp
-            .send("Page.stopScreencast", {}, page.session)
-            .catch(() => {});
-          page.casting = false;
-        }
-        await this.updateCasting(view.tab);
+        if (view.hidden) await this.updateCasting(view.tab);
+        else await this.restartCasting(view.tab);
         return;
       }
     }
@@ -1067,7 +1119,7 @@ export class SharedBrowserServer {
     if (this.state.driver !== "human" || !this.attached || this.lightTouch)
       return;
     if (msg.type === "newTab") {
-      this.newTabFor = ws;
+      this.newTabFor = channel;
       await this.cdp.send("Target.createTarget", { url: "about:blank" });
       return;
     }
@@ -1199,63 +1251,21 @@ export class SharedBrowserServer {
     }
   }
 
-  // --- app HTTP: viewer page and API ----------------------------------------
+  // --- app HTTP: the CLI's API ------------------------------------------------
 
   private onAppRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): void {
     const path = new URL(req.url ?? "/", "http://x").pathname;
+    if (path === "/healthz" || path.endsWith("/healthz"))
+      return json(res, 200, { ok: true });
+    // For the CLI in the project only.  Viewers use conat.
+    if (fromOutsideProject(req))
+      return json(res, 403, { error: "only from inside the project" });
     // Paths are matched by suffix: proxies may or may not strip their prefix.
-    if (
-      req.method === "GET" &&
-      (path.endsWith("/") || path.endsWith("/index.html"))
-    ) {
-      res.writeHead(200, {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      });
-      res.end(VIEWER_HTML);
-      return;
-    }
     if (path.endsWith("/api/state") && req.method === "GET") {
       return json(res, 200, this.getState());
-    }
-    // A new tab's start page: servers running in the project, recent sites.
-    if (path.endsWith("/api/start") && req.method === "GET") {
-      const lightTouch = this.lightTouch;
-      void (async () => {
-        const only = this.options.startPagePorts;
-        const servers = lightTouch
-          ? []
-          : await projectServers(
-              this.ownPorts,
-              undefined,
-              only ? new Set(only) : undefined,
-            );
-        const recent = lightTouch
-          ? []
-          : recentSites(this.options.historyFile?.() ?? null);
-        json(res, 200, { servers, recent });
-      })().catch(() => json(res, 200, { servers: [], recent: [] }));
-      return;
-    }
-    if (path.endsWith("/favicon") && req.method === "GET") {
-      const url = new URL(req.url ?? "/", "http://x").searchParams.get("url");
-      void this.favicons.get(`${url ?? ""}`).then((icon) => {
-        if (!icon) {
-          res.writeHead(404, { "cache-control": "max-age=300" });
-          res.end();
-          return;
-        }
-        res.writeHead(200, {
-          "content-type": icon.type,
-          "cache-control": "max-age=86400",
-          "x-content-type-options": "nosniff",
-        });
-        res.end(icon.body);
-      });
-      return;
     }
     if (
       req.method === "POST" &&
@@ -1271,8 +1281,6 @@ export class SharedBrowserServer {
         .catch((err) => json(res, 400, { error: `${err?.message ?? err}` }));
       return;
     }
-    if (path === "/healthz" || path.endsWith("/healthz"))
-      return json(res, 200, { ok: true });
     json(res, 404, { error: "not found" });
   }
 
@@ -1283,6 +1291,8 @@ export class SharedBrowserServer {
     res: http.ServerResponse,
   ): Promise<void> {
     const url = new URL(req.url ?? "/", "http://x");
+    if (fromOutsideProject(req))
+      return json(res, 403, { error: "only from inside the project" });
     if (!url.pathname.startsWith("/json"))
       return json(res, 404, { error: "not found" });
     if (!this.attached)
@@ -1435,6 +1445,21 @@ export class SharedBrowserServer {
     )
       void this.activate(msg.params.targetId);
   }
+}
+
+/**
+ * Whether a request did not come straight from a program in the project:
+ * CoCalc's proxies (which reach any port in the project, for collaborators)
+ * add X-Forwarded-For, and a web page's request carries its Origin.
+ */
+export function fromOutsideProject(req: http.IncomingMessage): boolean {
+  const headers = req.headers;
+  return (
+    headers["x-forwarded-for"] != null ||
+    headers["x-forwarded-host"] != null ||
+    headers["forwarded"] != null ||
+    headers["origin"] != null
+  );
 }
 
 function parseMessage(text: string): any {

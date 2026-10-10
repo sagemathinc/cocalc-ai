@@ -8,7 +8,7 @@
 // profile.  Agents reach it with `cocalc project browser ... --browser <file>`.
 
 import { Alert, Button, Flex, Typography } from "antd";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { resolveAssistantCodexModel } from "@cocalc/frontend/frame-editors/ai/create-chat";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
@@ -24,6 +24,10 @@ import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import type {
+  SharedBrowserControl,
+  SharedBrowserRemote,
+} from "./viewer/viewer";
 import {
   sharedBrowserAppSpec,
   sharedBrowserFileAppId,
@@ -48,17 +52,11 @@ export function BrowserFrame({
 }: Props) {
   const [app, setApp] = useState<{ id: string; title: string; file: string }>();
   // What the viewer reports: where the browser runs and whether it is there.
-  const [remote, setRemote] = useState<{
-    runsOn?: string;
-    connection?: string;
-  }>();
-  const frame = useRef<HTMLIFrameElement | null>(null);
+  const [remote, setRemote] = useState<SharedBrowserRemote>();
+  const control = useRef<SharedBrowserControl | null>(null);
   const networkDisabled = useProjectNetworkDisabled(project_id);
   const tellViewer = (value: "project" | "computer") =>
-    frame.current?.contentWindow?.postMessage(
-      { type: "cocalc-browser-runs-on", value },
-      "*",
-    );
+    control.current?.setRunsOn(value);
   // The start page's "ask an agent": like the Agent button, in a new thread.
   const agentEnabled = !!redux
     .getStore("projects")
@@ -82,15 +80,6 @@ export function BrowserFrame({
       )
       .catch((err) => setError(`${err?.message ?? err}`));
   };
-  const onMessage = useCallback(
-    (data: any) => {
-      if (data?.type === "cocalc-browser-state")
-        setRemote({ runsOn: data.runsOn, connection: data.connection });
-      else if (data?.type === "cocalc-browser-agent")
-        askAgent(`${data.text ?? ""}`);
-    },
-    [actions, frameId],
-  );
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   const [step, setStep] = useState<BrowserStartStep>("browser");
@@ -104,7 +93,9 @@ export function BrowserFrame({
       if (redux.getStore("projects")?.get_state?.(project_id) !== "running") {
         setStep("project");
         if (!(await ensure_project_running(project_id, "use this browser")))
-          throw Error("The project is not running. Start it to use this browser.");
+          throw Error(
+            "The project is not running. Start it to use this browser.",
+          );
       }
       if (!canceled) setStep("browser");
       const file = normalizeAbsolutePath(
@@ -157,10 +148,7 @@ export function BrowserFrame({
   if (!app)
     return (
       <div style={{ position: "relative", width: "100%", height: "100%" }}>
-        <BrowserStartScreen
-          name={path.split("/").pop() || path}
-          step={step}
-        />
+        <BrowserStartScreen name={path.split("/").pop() || path} step={step} />
       </div>
     );
   return (
@@ -172,10 +160,10 @@ export function BrowserFrame({
         title={app.title}
         view={`frame:${frameId}`}
         // We draw the "waiting for your computer" panel (below).
-        // ...and offer agents on the start page.
-        params={agentEnabled ? { panel: "host", agent: "1" } : { panel: "host" }}
-        onMessage={onMessage}
-        frameRef={frame}
+        hostPanel
+        onRemote={setRemote}
+        controlRef={control}
+        onAskAgent={agentEnabled ? askAgent : undefined}
         notice={
           // On the user's computer it uses their network.
           networkDisabled && remote?.runsOn !== "computer" ? (

@@ -1,8 +1,8 @@
 /**
  * What a new tab's start page shows: the web servers running in the project
  * (one click to open your dev server) and the sites this browser visited
- * recently.  Plus site icons for it and for the tabs, fetched from where the
- * browser runs (the project's network, its localhost).
+ * recently.  Plus site icons for it and for the tabs, fetched from the
+ * project's network (public sites only).
  */
 import {
   copyFileSync,
@@ -12,6 +12,10 @@ import {
   readlinkSync,
   rmSync,
 } from "node:fs";
+import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { BlockList, isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -232,47 +236,202 @@ export function recentSites(
   }
 }
 
-/** Site icons, fetched from the project's network and kept a while. */
+/**
+ * Site icons for the viewer (tabs, the start page), fetched from the
+ * project's network and kept a while.  Only from public addresses: a
+ * collaborator watching the browser must not be able to make the project
+ * fetch the host's or the cloud's internal services (the metadata server, a
+ * private network, the project's own servers) by asking for an "icon".
+ */
 export class Favicons {
-  private cache = new Map<
-    string,
-    | { type: string; body: Buffer }
-    | null
-    | Promise<{ type: string; body: Buffer } | null>
-  >();
+  private cache = new Map<string, Icon | null | Promise<Icon | null>>();
 
-  async get(url: string): Promise<{ type: string; body: Buffer } | null> {
+  constructor(
+    private readonly options: {
+      // Tests: where a host name points, and which addresses are allowed.
+      lookup?: (host: string) => Promise<string[]>;
+      allowAddress?: (address: string) => boolean;
+    } = {},
+  ) {}
+
+  async get(url: string): Promise<Icon | null> {
     if (!/^https?:\/\//i.test(url) || url.length > 2000) return null;
     const known = this.cache.get(url);
     if (known !== undefined) return await known;
-    const loading = this.fetch(url);
+    const loading = this.fetch(url).catch(() => null);
     this.remember(url, loading);
     const icon = await loading;
     this.remember(url, icon);
     return icon;
   }
 
-  private remember(url: string, value: any) {
+  private remember(url: string, value: Icon | null | Promise<Icon | null>) {
     this.cache.delete(url);
     this.cache.set(url, value);
     while (this.cache.size > 300)
       this.cache.delete(this.cache.keys().next().value!);
   }
 
-  private async fetch(
-    url: string,
-  ): Promise<{ type: string; body: Buffer } | null> {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-      const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
-      const body = Buffer.from(await res.arrayBuffer());
-      if (!res.ok || body.length === 0 || body.length > 256 * 1024) return null;
-      if (/^image\//i.test(type)) return { type, body };
-      // Plenty of servers send .ico files as octet-stream.
-      if (/\.ico(\?|$)/i.test(url)) return { type: "image/x-icon", body };
-      return null;
-    } catch {
-      return null;
+  private async fetch(first: string): Promise<Icon | null> {
+    const deadline = Date.now() + ICON_TIMEOUT_MS;
+    let url = new URL(first);
+    for (let hops = 0; hops <= ICON_MAX_REDIRECTS; hops++) {
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password)
+        return null;
+      const address = await this.vet(url.hostname);
+      if (!address) return null;
+      const res = await getPinned(url, address, deadline);
+      if (res.redirect) {
+        url = new URL(res.redirect, url);
+        continue;
+      }
+      if (res.status !== 200 || !res.body) return null;
+      const type = sniffImage(res.body);
+      return type ? { type, body: res.body } : null;
     }
+    return null;
   }
+
+  // The address to connect to, if every address of the host is public (so
+  // the check is the connection: no second lookup to rebind).
+  private async vet(hostname: string): Promise<string | null> {
+    const host = hostname.replace(/^\[|\]$/g, "");
+    const allowed = this.options.allowAddress ?? isPublicAddress;
+    let addresses: string[];
+    if (isIP(host)) addresses = [host];
+    else if (this.options.lookup) addresses = await this.options.lookup(host);
+    else
+      addresses = (await lookup(host, { all: true, verbatim: true })).map(
+        (entry) => entry.address,
+      );
+    if (addresses.length === 0 || !addresses.every(allowed)) return null;
+    return addresses[0];
+  }
+}
+
+export interface Icon {
+  type: string;
+  body: Buffer;
+}
+
+const ICON_TIMEOUT_MS = 5000;
+const ICON_MAX_REDIRECTS = 3;
+const ICON_MAX_BYTES = 100 * 1024;
+
+// One GET to that address (with the URL's host name for TLS and the Host
+// header), without following redirects, reading at most ICON_MAX_BYTES.
+function getPinned(
+  url: URL,
+  address: string,
+  deadline: number,
+): Promise<{ status: number; redirect?: string; body?: Buffer }> {
+  const family = isIP(address);
+  const request = url.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const req = request(
+      url,
+      {
+        method: "GET",
+        headers: { accept: "image/*", "user-agent": "Mozilla/5.0" },
+        lookup: (_host: string, options: any, done: any) =>
+          options?.all
+            ? done(null, [{ address, family }])
+            : done(null, address, family),
+        timeout: Math.max(1, deadline - Date.now()),
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          resolve({ status, redirect: `${res.headers.location}` });
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > ICON_MAX_BYTES) {
+            req.destroy();
+            resolve({ status: 0 });
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => resolve({ status, body: Buffer.concat(chunks) }));
+        res.on("error", reject);
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+/** The image type of these bytes, judged by its content, or null. */
+export function sniffImage(body: Buffer): string | null {
+  if (body.length < 4) return null;
+  const head = body.subarray(0, 16);
+  if (head[0] === 0x89 && head.subarray(1, 4).toString() === "PNG")
+    return "image/png";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff)
+    return "image/jpeg";
+  if (head.subarray(0, 4).toString() === "GIF8") return "image/gif";
+  if (head[0] === 0 && head[1] === 0 && head[2] === 1 && head[3] === 0)
+    return "image/x-icon";
+  if (
+    head.subarray(0, 4).toString() === "RIFF" &&
+    head.subarray(8, 12).toString() === "WEBP"
+  )
+    return "image/webp";
+  if (head[0] === 0x42 && head[1] === 0x4d) return "image/bmp";
+  // SVG is text; shown as an image (an <img>), its scripts never run.
+  const text = body.subarray(0, 512).toString("utf8").trimStart();
+  if (/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(text))
+    return "image/svg+xml";
+  return null;
+}
+
+// Addresses that are not the public internet.
+const NOT_PUBLIC = new BlockList();
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+] as const)
+  NOT_PUBLIC.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [
+  ["::1", 128],
+  // IPv4 in IPv6: refused (IPv4-compatible, NAT64, 6to4, Teredo), except
+  // IPv4-mapped addresses, which BlockList checks against the IPv4 rules.
+  ["::", 96],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["2002::", 16],
+  ["2001::", 23],
+  ["2001:db8::", 32],
+  ["100::", 64],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+] as const)
+  NOT_PUBLIC.addSubnet(network, prefix, "ipv6");
+
+export function isPublicAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return !NOT_PUBLIC.check(address, "ipv4");
+  if (family === 6) return !NOT_PUBLIC.check(address, "ipv6");
+  return false;
 }
