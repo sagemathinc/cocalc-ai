@@ -194,6 +194,9 @@ export class SharedBrowserServer {
   private viewTabs = new Map<string, string>();
   private agentSockets = new Set<WebSocket>();
   private held: Array<{ client: WebSocket; deliver: () => void }> = [];
+  // A clipped screenshot (Playwright's) leaves a zoomed page with its input
+  // scaled twice until reapplyZoom is done: clicks wait for it, in order.
+  private zoomFix: Promise<void> = Promise.resolve();
   private handBackTimer: NodeJS.Timeout | null = null;
   private state: SharedBrowserState;
   // Our own flat session on each tab someone looks at, and on the agents'
@@ -629,9 +632,12 @@ export class SharedBrowserServer {
     }
   }
 
-  private async reapplyZoom(): Promise<void> {
+  // Whether it zoomed any page again.
+  private async reapplyZoom(): Promise<boolean> {
+    let zoomed = false;
     for (const page of this.pages.values()) {
       if (!page.session || page.zoom === 1 || this.lightTouch) continue;
+      zoomed = true;
       // The same override again is ignored (Chromium 149): clear it first.
       await this.cdp
         .send("Emulation.clearDeviceMetricsOverride", {}, page.session)
@@ -649,6 +655,7 @@ export class SharedBrowserServer {
         )
         .catch(() => {});
     }
+    return zoomed;
   }
 
   // Only stream a tab while someone is watching it.
@@ -1158,24 +1165,26 @@ export class SharedBrowserServer {
       case "mouse":
         // Not awaited: a click that opens alert() is only acknowledged once
         // the dialog is answered.
-        void this.cdp
-          .send(
-            "Input.dispatchMouseEvent",
-            {
-              type: msg.event,
-              // The viewer's pixels; the page's are larger when zoomed.
-              x: num(msg.x) / page.zoom,
-              y: num(msg.y) / page.zoom,
-              button: msg.button ?? "none",
-              buttons: msg.buttons,
-              clickCount: msg.clickCount ?? 0,
-              deltaX: num(msg.deltaX) / page.zoom,
-              deltaY: num(msg.deltaY) / page.zoom,
-              modifiers: msg.modifiers ?? 0,
-            },
-            s,
-          )
-          .catch(() => {});
+        void this.zoomFix.then(() =>
+          this.cdp
+            .send(
+              "Input.dispatchMouseEvent",
+              {
+                type: msg.event,
+                // The viewer's pixels; the page's are larger when zoomed.
+                x: num(msg.x) / page.zoom,
+                y: num(msg.y) / page.zoom,
+                button: msg.button ?? "none",
+                buttons: msg.buttons,
+                clickCount: msg.clickCount ?? 0,
+                deltaX: num(msg.deltaX) / page.zoom,
+                deltaY: num(msg.deltaY) / page.zoom,
+                modifiers: msg.modifiers ?? 0,
+              },
+              s,
+            )
+            .catch(() => {}),
+        );
         return;
       case "key":
         void this.cdp
@@ -1338,7 +1347,9 @@ export class SharedBrowserServer {
     if (!this.attached)
       return json(res, 503, {
         error:
-          "the browser is not connected: it runs on the user's computer, which is not connected now",
+          this.state.runsOn === "computer"
+            ? "the browser is not connected: it runs on the user's computer, which is not connected now"
+            : "the browser is starting; try again in a moment",
       });
     // These act on the browser (open, close or bring tabs to the front): not
     // while the human drives.  Listing passes.
@@ -1416,7 +1427,9 @@ export class SharedBrowserServer {
       this.followAgent(msg);
       if (msg?.method === "Page.captureScreenshot" && msg.params?.clip)
         clipShots.add(msg.id);
-      upstream.send(text);
+      void this.zoomFix.then(() => {
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
+      });
     };
     upstream.on("open", () => {
       open = true;
@@ -1425,13 +1438,30 @@ export class SharedBrowserServer {
     });
     upstream.on("message", (data) => {
       const text = data.toString();
-      if (client.readyState === WebSocket.OPEN) client.send(text);
       // A clipped screenshot (Playwright's) leaves a zoomed page at pixel
-      // ratio 1: zoom it again.  Replies start with their id.
+      // ratio 1, its input scaled twice: zoom it again before the agent's
+      // next command (or a viewer's click) reaches it.  Replies start with
+      // their id.  DevTools input scales by the page scale the renderer last
+      // reported, which follows the zoom a few frames later: two frames
+      // (25 ms) were not enough in tests, 100 ms always was.  Not for long,
+      // whatever happens (a page's alert() may hold Chromium's answer, and
+      // the agent's command to close it would wait).
       if (clipShots.size > 0) {
         const id = Number(text.match(/^\{"id":(\d+)/)?.[1]);
-        if (clipShots.delete(id)) void this.reapplyZoom();
+        if (clipShots.delete(id))
+          this.zoomFix = this.zoomFix
+            .then(() =>
+              Promise.race([
+                this.reapplyZoom().then(
+                  (zoomed) => zoomed && new Promise((r) => setTimeout(r, 250)),
+                ),
+                new Promise((r) => setTimeout(r, 2000)),
+              ]),
+            )
+            .then(() => {})
+            .catch(() => {});
       }
+      if (client.readyState === WebSocket.OPEN) client.send(text);
     });
     client.on("message", (data) => {
       if (!open) pending.push(data);
