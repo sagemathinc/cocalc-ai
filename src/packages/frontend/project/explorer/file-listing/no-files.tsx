@@ -227,6 +227,14 @@ function EmptyDirectoryWelcome({
           },
         ]
       : []),
+    {
+      title: "Browser",
+      description: "Web",
+      tooltip:
+        "A web browser in this project that you and agents share: agents can browse, and you can watch and take over.",
+      icon: NEW_FILETYPE_ICONS.browser,
+      onClick: () => createFile("browser"),
+    },
     ...(uploadAllowed
       ? [
           {
@@ -407,6 +415,7 @@ const PRIMARY_EMPTY_ACTIONS = new Set([
   "ipynb",
   "md",
   "term",
+  "browser",
   "tex",
 ]);
 const PREFERRED_MORE_FILE_TYPES = [

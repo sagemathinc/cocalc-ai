@@ -21,6 +21,10 @@ import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
+  NoNetworkNotice,
+  useProjectNetworkDisabled,
+} from "@cocalc/frontend/frame-editors/browser-editor/no-network-notice";
+import {
   SHARED_BROWSER_APP_ID,
   sharedBrowserAppSpec,
 } from "@cocalc/util/shared-browser";
@@ -37,6 +41,7 @@ export function AppArtifact({
   onMessage,
   frameRef,
   children,
+  notice,
 }: {
   projectId: string;
   app: ArtifactApp;
@@ -51,8 +56,11 @@ export function AppArtifact({
   frameRef?: MutableRefObject<HTMLIFrameElement | null>;
   // Shown over the app, e.g. a panel the page draws for it.
   children?: ReactNode;
+  // Shown above the app.
+  notice?: ReactNode;
 }) {
   const client = webapp_client.browser_id;
+  const networkDisabled = useProjectNetworkDisabled(projectId);
   const ownFrame = useRef<HTMLIFrameElement | null>(null);
   const iframe = frameRef ?? ownFrame;
   const query = useMemo(
@@ -165,16 +173,29 @@ export function AppArtifact({
       </Flex>
     );
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <iframe
-        ref={iframe}
-        src={src}
-        title={title}
-        // The app is the project's own code behind CoCalc's app proxy.
-        allow="clipboard-read; clipboard-write"
-        style={{ border: 0, width: "100%", height: "100%", display: "block" }}
-      />
-      {children}
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {notice ??
+        (networkDisabled && app.id.startsWith(SHARED_BROWSER_APP_ID) ? (
+          <NoNetworkNotice />
+        ) : null)}
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <iframe
+          ref={iframe}
+          src={src}
+          title={title}
+          // The app is the project's own code behind CoCalc's app proxy.
+          allow="clipboard-read; clipboard-write"
+          style={{ border: 0, width: "100%", height: "100%", display: "block" }}
+        />
+        {children}
+      </div>
     </div>
   );
 }

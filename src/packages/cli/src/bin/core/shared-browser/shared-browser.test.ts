@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { networkHint } from "./agent-page";
 import { pickSelectExpression, selectScript } from "./page-script";
 import { HELD_WHILE_HUMAN_DRIVES, normalizeUrl } from "./server";
 import {
@@ -184,4 +185,16 @@ test("the project id comes from the environment or the project's hostname", () =
   assert.equal(currentProjectId({ COCALC_PROJECT_ID: id }, "x"), id);
   assert.equal(currentProjectId({}, `project-${id}`), id);
   assert.equal(currentProjectId({}, "laptop"), undefined);
+});
+
+test("a network failure outside the project explains the free-project limit", () => {
+  assert.match(
+    networkHint("https://x.com/", "net::ERR_NAME_NOT_RESOLVED"),
+    /no internet access.*upgrade their membership/,
+  );
+  assert.equal(
+    networkHint("http://localhost:8000/", "net::ERR_CONNECTION_REFUSED"),
+    "",
+  );
+  assert.equal(networkHint("https://x.com/", "net::ERR_ABORTED"), "");
 });

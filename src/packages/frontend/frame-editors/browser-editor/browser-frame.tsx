@@ -12,6 +12,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppArtifact } from "@cocalc/frontend/chat/app-artifact";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { InstallCocalcCli } from "@cocalc/frontend/components/install-cocalc-cli";
+import {
+  NoNetworkNotice,
+  useProjectNetworkDisabled,
+} from "./no-network-notice";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -38,6 +42,12 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
     connection?: string;
   }>();
   const frame = useRef<HTMLIFrameElement | null>(null);
+  const networkDisabled = useProjectNetworkDisabled(project_id);
+  const tellViewer = (value: "project" | "computer") =>
+    frame.current?.contentWindow?.postMessage(
+      { type: "cocalc-browser-runs-on", value },
+      "*",
+    );
   const onMessage = useCallback((data: any) => {
     if (data?.type === "cocalc-browser-state")
       setRemote({ runsOn: data.runsOn, connection: data.connection });
@@ -115,16 +125,19 @@ export function BrowserFrame({ id: frameId, project_id, path, reload }: Props) {
         params={{ panel: "host" }}
         onMessage={onMessage}
         frameRef={frame}
+        notice={
+          // On the user's computer it uses their network.
+          networkDisabled && remote?.runsOn !== "computer" ? (
+            <NoNetworkNotice onRunOnComputer={() => tellViewer("computer")} />
+          ) : (
+            false
+          )
+        }
       >
         {remote?.runsOn === "computer" && remote.connection === "waiting" && (
           <WaitingForComputer
             command={connectCommand(project_id, app.file)}
-            onRunInProject={() =>
-              frame.current?.contentWindow?.postMessage(
-                { type: "cocalc-browser-runs-on", value: "project" },
-                "*",
-              )
-            }
+            onRunInProject={() => tellViewer("project")}
           />
         )}
       </AppArtifact>

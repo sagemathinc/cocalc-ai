@@ -431,7 +431,7 @@ export class SharedBrowserServer {
     if (!page) {
       page = {
         targetId,
-        quality: "sharp",
+        quality: "balanced",
         settleTimer: null,
         lastFrame: null,
         settledAt: 0,
@@ -875,9 +875,9 @@ export class SharedBrowserServer {
         const width = clampInt(msg.width, 200, MAX_VIEWPORT);
         const height = clampInt(msg.height, 150, MAX_VIEWPORT);
         const quality: ViewQuality =
-          msg.quality === "balanced" || msg.quality === "fast"
+          msg.quality === "sharp" || msg.quality === "fast"
             ? msg.quality
-            : "sharp";
+            : "balanced";
         // New tabs start at the size the human last used.
         this.state.viewport = { width, height };
         if (

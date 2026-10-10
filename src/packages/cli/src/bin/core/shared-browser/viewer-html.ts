@@ -167,7 +167,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
 
   // Picture quality: a display preference of this device.
   const QUALITY_KEY = "cocalc-browser-quality";
-  function quality() { try { return localStorage.getItem(QUALITY_KEY) || "sharp"; } catch { return "sharp"; } }
+  function quality() { try { return localStorage.getItem(QUALITY_KEY) || "balanced"; } catch { return "balanced"; } }
   $("quality").value = quality();
   $("quality").addEventListener("change", () => { try { localStorage.setItem(QUALITY_KEY, $("quality").value); } catch {} sendSize(true); canvas.focus(); });
   // Moving the window to a screen with another pixel ratio.

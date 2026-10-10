@@ -532,6 +532,7 @@ test(
         };
       });
       await viewer.goto(`http://127.0.0.1:${port}/`);
+      await viewer.selectOption("#quality", "sharp");
       const frames = () => viewer.evaluate(() => (window as any).__frames);
       const until = async (ok: (f: any[]) => boolean) => {
         const deadline = Date.now() + 10_000;

@@ -20,7 +20,8 @@ export const browser: EditorDescription = {
   name: "Web browser",
   icon: "global",
   component: BrowserFrame,
-  commands: set(["reload", "help"]),
+  // "codex": the Agent button, so users find how to have an agent use it.
+  commands: set(["reload", "help", "codex"]),
 } as const;
 
 // A terminal frame beside the browser (the frame title bar's terminal button).

@@ -118,7 +118,10 @@ export class SharedBrowserPage {
     const url = normalizeUrl(input);
     if (!url) throw Error(`not a web address: ${input}`);
     const { errorText } = await this.send("Page.navigate", { url });
-    if (errorText) throw Error(`could not open ${url}: ${errorText}`);
+    if (errorText)
+      throw Error(
+        `could not open ${url}: ${errorText}${networkHint(url, errorText)}`,
+      );
     await this.waitForLoad(timeoutMs);
     return await this.location();
   }
@@ -225,4 +228,24 @@ export class SharedBrowserPage {
     });
     return Buffer.from(data, "base64");
   }
+}
+
+// A network failure for a page outside the project: free projects have no
+// internet access.  Tell the agent what the user can do.
+export function networkHint(url: string, errorText: string): string {
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return "";
+  }
+  const local = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(host);
+  if (
+    local ||
+    !/ERR_(NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|CONNECTION_(REFUSED|TIMED_OUT|RESET|FAILED)|ADDRESS_UNREACHABLE|NETWORK_ACCESS_DENIED|TIMED_OUT)/.test(
+      errorText,
+    )
+  )
+    return "";
+  return ". If this project has no internet access (free projects do not), only pages served by the project itself (localhost) open: the user can upgrade their membership (Settings, Membership) or run this .browser file on their own computer.";
 }
