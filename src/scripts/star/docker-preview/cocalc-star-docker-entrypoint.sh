@@ -27,6 +27,11 @@ runtime_dir=/opt/cocalc/container-runtime
 persisted_runtime_dir="${COCALC_STAR_DOCKER_STATE_DIR:-/var/lib/cocalc/star-docker}/container-runtime"
 if ! mountpoint -q "$runtime_dir"; then
   install -d -m 0755 -o root -g root "$persisted_runtime_dir" "$runtime_dir"
+  # A runtime installed into the container while the mount was unavailable
+  # must not be hidden by an empty volume directory.
+  if [ -z "$(ls -A "$persisted_runtime_dir")" ] && [ -n "$(ls -A "$runtime_dir")" ]; then
+    cp -a "${runtime_dir}/." "${persisted_runtime_dir}/"
+  fi
   if ! mount --bind "$persisted_runtime_dir" "$runtime_dir"; then
     echo "warning: could not keep the container runtime in the volume; it is reinstalled with each new container" >&2
   fi
