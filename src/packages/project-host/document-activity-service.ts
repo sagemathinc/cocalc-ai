@@ -366,6 +366,12 @@ export async function handleListRecentRequest(
   const search = compileSearchPattern(opts?.search);
   const rows: RecentProjectDocumentActivityEntry[] = [];
   for (const [path, row] of Object.entries(store.getAll())) {
+    // markFile refuses such paths, but rows written before it did (or by any
+    // other writer of the store) may hold one; it would only cost matching.
+    if (path.length > MAX_PATH_LENGTH) {
+      store.delete(path);
+      continue;
+    }
     const lastAccessedMs = Date.parse(row?.last_accessed ?? "");
     if (!Number.isFinite(lastAccessedMs)) {
       store.delete(path);

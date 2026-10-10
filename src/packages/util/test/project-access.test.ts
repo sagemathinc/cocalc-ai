@@ -162,4 +162,45 @@ describe("viewer read policy path matching", () => {
       false,
     );
   });
+
+  it("fails closed on oversized paths and rules", () => {
+    const long = `secret/${"x".repeat(4096)}`;
+    // An oversized include grants nothing, not even ancestor listings.
+    const include = { rules: [{ action: "include" as const, path: long }] };
+    for (const path of ["", "secret", long]) {
+      expect(viewerReadPolicyAllowsPath({ policy: include, path })).toBe(false);
+      expect(
+        viewerReadPolicyMayAllowDescendant({ policy: include, path }),
+      ).toBe(false);
+    }
+    // An oversized exclude denies everything.
+    const exclude = {
+      rules: [
+        { action: "include" as const, path: "." },
+        { action: "exclude" as const, path: long },
+      ],
+    };
+    expect(viewerReadPolicyAllowsPath({ policy: exclude, path: "a.txt" })).toBe(
+      false,
+    );
+    expect(
+      viewerReadPolicyMayAllowDescendant({ policy: exclude, path: "" }),
+    ).toBe(false);
+    // An oversized path is never readable.
+    const all = { rules: [{ action: "include" as const, path: "." }] };
+    expect(
+      viewerReadPolicyAllowsPath({ policy: all, path: "a".repeat(4097) }),
+    ).toBe(false);
+  });
+
+  it("matches many-star globs quickly", () => {
+    const policy = {
+      rules: [{ action: "include" as const, path: `${"*a".repeat(60)}b` }],
+    };
+    const started = Date.now();
+    expect(viewerReadPolicyAllowsPath({ policy, path: "a".repeat(4000) })).toBe(
+      false,
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });

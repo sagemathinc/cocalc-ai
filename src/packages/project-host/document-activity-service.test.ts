@@ -249,6 +249,30 @@ describe("project document activity service", () => {
       expect(Date.now() - started).toBeLessThan(2000);
     });
 
+    it("drops stored paths longer than any real file", async () => {
+      // Rows written before markFile limited path length.
+      const recent = new Date(Date.now() - 60_000).toISOString();
+      const long = `/home/user/${"a".repeat(1_000_000)}`;
+      const store = makeStore({
+        [long]: { path: long, last_accessed: recent },
+        "notes/a.txt": { path: "notes/a.txt", last_accessed: recent },
+      });
+      dkvMock.mockResolvedValue(store);
+      dstreamMock.mockResolvedValue(makeStream());
+      const { handleListRecentRequest } =
+        await import("./document-activity-service");
+      const started = Date.now();
+      const rows = await handleListRecentRequest.call(
+        { subject },
+        { limit: 500, search: `${"a".repeat(255)}b` },
+        {} as any,
+      );
+      expect(Date.now() - started).toBeLessThan(500);
+      expect(rows).toEqual([]);
+      expect(store.delete).toHaveBeenCalledWith(long);
+      expect(Object.keys(store.getAll())).toEqual(["notes/a.txt"]);
+    });
+
     it("bounds search and path lengths", async () => {
       await expect(search([], "x".repeat(257))).rejects.toThrow(
         "at most 256 characters",

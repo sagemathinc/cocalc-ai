@@ -352,6 +352,7 @@ export function viewerReadPolicyMayAllowDescendant({
   return policy.rules.some(
     (rule) =>
       rule?.action === "include" &&
+      !oversizedRulePath(rule) &&
       viewerIncludeRuleMayMatchDescendant({
         rulePath: rule.path,
         path: normalizedPath,
