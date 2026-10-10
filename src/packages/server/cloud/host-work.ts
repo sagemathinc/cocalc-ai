@@ -1,5 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { clearProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { deleteHostDns, ensureHostDns, hasDns } from "./dns";
 import {
@@ -27,6 +27,7 @@ import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
+import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
 import {
   computeSpotRetryDelayMs,
   desiredPricingModel,
@@ -658,6 +659,73 @@ async function updateHostRow(id: string, updates: Record<string, any>) {
   );
 }
 
+// Like updateHostRow, but only while the host is not wanted stopped, checked
+// in the same statement: recovery must never overwrite a stop that landed
+// after its row was read. Returns whether the row was written.
+async function updateHostRowUnlessStopped(
+  id: string,
+  updates: Record<string, any>,
+): Promise<boolean> {
+  const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
+  const sets = keys.map((key, idx) => `${key}=$${idx + 2}`);
+  const { rowCount } = await pool().query(
+    `UPDATE project_hosts SET ${[...sets, "updated=NOW()"].join(", ")}
+      WHERE id=$1 AND deleted IS NULL
+        AND COALESCE(metadata->>'desired_state', '') <> 'stopped'`,
+    [id, ...keys.map((key) => updates[key])],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+// Record a recovery transition and queue its start in one transaction,
+// holding the host row: a stop either commits first (and the transition is
+// refused) or waits and commits after the start is queued, in which case the
+// start handler skips the start if it sees the stop when it begins. Returns
+// whether the start was queued.
+async function transitionAndQueueRecoveryStart({
+  host_id,
+  updates,
+  enqueue,
+}: {
+  host_id: string;
+  updates: Record<string, any>;
+  enqueue: (client: PoolClient) => Promise<unknown>;
+}): Promise<boolean> {
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT metadata->>'desired_state' AS desired_state
+         FROM project_hosts WHERE id=$1 AND deleted IS NULL
+        FOR UPDATE`,
+      [host_id],
+    );
+    if (!rows[0] || `${rows[0].desired_state ?? ""}` === "stopped") {
+      await client.query("ROLLBACK");
+      return false;
+    }
+    const keys = Object.keys(updates).filter(
+      (key) => updates[key] !== undefined,
+    );
+    if (keys.length > 0) {
+      await client.query(
+        `UPDATE project_hosts
+            SET ${[...keys.map((key, idx) => `${key}=$${idx + 2}`), "updated=NOW()"].join(", ")}
+          WHERE id=$1`,
+        [host_id, ...keys.map((key) => updates[key])],
+      );
+    }
+    await enqueue(client);
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 function runtimeSshServer(row: any, runtime: any): string | null | undefined {
   const providerId = normalizeProviderId(row?.metadata?.machine?.cloud);
   const publicIp = `${runtime?.public_ip ?? ""}`.trim();
@@ -971,21 +1039,33 @@ async function scheduleSpotRetry(opts: {
     spot_recovery_state: clearVerificationFields(nextState),
   });
   nextMetadata.desired_state = "running";
-  await updateHostRow(opts.row.id, {
-    status: "starting",
-    metadata: nextMetadata,
-    last_seen: null,
-  });
-  await enqueueCloudVmFollowUpWork({
-    vm_id: opts.row.id,
-    action: "start",
-    not_before: nextRetryAt,
-    payload: {
-      provider: opts.provider,
-      source: "spot_recovery_retry",
-      reason: opts.reason,
-    },
-  });
+  // A stop that landed after the row was read wins: no retry.
+  if (
+    !(await transitionAndQueueRecoveryStart({
+      host_id: opts.row.id,
+      updates: {
+        status: "starting",
+        metadata: nextMetadata,
+        last_seen: null,
+      },
+      enqueue: async (client) =>
+        await enqueueCloudVmFollowUpWork(
+          {
+            vm_id: opts.row.id,
+            action: "start",
+            not_before: nextRetryAt,
+            payload: {
+              provider: opts.provider,
+              source: "spot_recovery_retry",
+              reason: opts.reason,
+            },
+          },
+          { inTransaction: client },
+        ),
+    }))
+  ) {
+    return false;
+  }
   await logCloudVmEvent({
     vm_id: opts.row.id,
     action: "spot_restore_retry_scheduled",
@@ -997,6 +1077,7 @@ async function scheduleSpotRetry(opts: {
       reason: opts.reason,
     },
   });
+  return true;
 }
 
 function managesCloudflareTunnel(row: any): boolean {
@@ -3481,6 +3562,39 @@ async function handleVerifyHostReady(row: any) {
         providerId,
       }));
     const stoppedStatus = stoppedProviderStatus(observation);
+    // Stopped on purpose (a user or admin stop, or a relocation) while the
+    // start was still being verified: not an interruption to recover from.
+    // The stop ends the recovery it was verifying; the next start must not
+    // count this attempt or skip the machine types it tried.
+    const endForIntentionalStop = async () => {
+      logger.info("verify host ready: host was stopped on purpose", {
+        host_id: host.id,
+        provider: providerId,
+        provider_status: observation?.provider_status,
+      });
+      await pool().query(
+        `UPDATE project_hosts
+            SET metadata = jsonb_set(metadata, '{spot_recovery_state}', $2::jsonb),
+                updated=NOW()
+          WHERE id=$1 AND deleted IS NULL
+            AND metadata->>'desired_state' = 'stopped'`,
+        [
+          host.id,
+          JSON.stringify(
+            compactIdleSpotRecoveryState(
+              host.metadata?.spot_recovery_state,
+            ) ?? { phase: "idle" },
+          ),
+        ],
+      );
+    };
+    if (
+      stoppedStatus &&
+      `${host.metadata?.desired_state ?? ""}`.trim() === "stopped"
+    ) {
+      await endForIntentionalStop();
+      return;
+    }
     if (stoppedStatus) {
       const providerStatusText =
         observation?.provider_status ??
@@ -3502,14 +3616,21 @@ async function handleVerifyHostReady(row: any) {
         observation,
         message,
       });
-      await updateHostRow(host.id, {
-        status: stoppedStatus,
-        metadata: nextMetadata,
-        last_seen: null,
-        ...(observation?.instance_missing || !observation?.public_ip
-          ? { public_url: null, internal_url: null }
-          : {}),
-      });
+      // The row was read before the provider call; a stop may have landed
+      // since. Decide and write in one statement.
+      if (
+        !(await updateHostRowUnlessStopped(host.id, {
+          status: stoppedStatus,
+          metadata: nextMetadata,
+          last_seen: null,
+          ...(observation?.instance_missing || !observation?.public_ip
+            ? { public_url: null, internal_url: null }
+            : {}),
+        }))
+      ) {
+        await endForIntentionalStop();
+        return;
+      }
       await logCloudVmEvent({
         vm_id: host.id,
         action: "verify_host_ready",
@@ -3539,33 +3660,50 @@ async function handleVerifyHostReady(row: any) {
           })
         ) {
           nextMetadata.desired_state = "running";
-          await updateHostRow(host.id, {
-            status: "starting",
-            metadata: nextMetadata,
-            last_seen: null,
-          });
-          await enqueueCloudVmWorkOnce({
-            vm_id: host.id,
-            action: "start",
-            payload: {
+          if (
+            !(await transitionAndQueueRecoveryStart({
+              host_id: host.id,
+              updates: {
+                status: "starting",
+                metadata: nextMetadata,
+                last_seen: null,
+              },
+              enqueue: async (client) =>
+                await enqueueCloudVmWorkOnce(
+                  {
+                    vm_id: host.id,
+                    action: "start",
+                    payload: {
+                      provider: providerId,
+                      source: "verify_host_ready",
+                      reason: providerStatusText
+                        ? `provider-status:${providerStatusText}`
+                        : "provider-stopped-before-ready",
+                    },
+                  },
+                  { inTransaction: client },
+                ),
+            }))
+          ) {
+            await endForIntentionalStop();
+            return;
+          }
+          await bumpReconcile(providerId, 1000);
+        } else {
+          if (
+            !(await scheduleSpotRetry({
+              row: nextHost,
               provider: providerId,
-              source: "verify_host_ready",
+              policy,
+              state,
               reason: providerStatusText
                 ? `provider-status:${providerStatusText}`
                 : "provider-stopped-before-ready",
-            },
-          });
-          await bumpReconcile(providerId, 1000);
-        } else {
-          await scheduleSpotRetry({
-            row: nextHost,
-            provider: providerId,
-            policy,
-            state,
-            reason: providerStatusText
-              ? `provider-status:${providerStatusText}`
-              : "provider-stopped-before-ready",
-          });
+            }))
+          ) {
+            await endForIntentionalStop();
+            return;
+          }
           await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
         }
       }
@@ -3703,6 +3841,9 @@ async function handleProbeSpot(row: any) {
   const host = await loadHostRow(row.vm_id);
   if (!host) return;
   if (!isSpotRecoveryManagedHost(host)) return;
+  // A relocation owns the host (preparing, in its window, or failed and
+  // awaiting an admin) and resets Spot recovery after.
+  if (hostLifecycleFenced(host.maintenance)) return;
   const policy = spotRecoveryPolicy(host);
   const state = spotRecoveryState(host);
   const currentEffectivePricing = effectivePricingModel(host);
@@ -3935,6 +4076,19 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
   start: async (row) => {
     const host = await loadHostRow(row.vm_id);
     if (!host) return;
+    // Every start request marks the host wanted running before queueing, so
+    // a stop recorded before this start begins (including one recorded after
+    // a recovery retry was queued) skips it, before handleStart's side
+    // effects. A stop that lands after this check is not fenced here: start
+    // and stop work for one host are not yet serialized (follow-up).
+    if (`${host.metadata?.desired_state ?? ""}`.trim() === "stopped") {
+      logger.info("skipping start: the host is wanted stopped", {
+        host_id: host.id,
+        source: row.payload?.source,
+        reason: row.payload?.reason,
+      });
+      return;
+    }
     try {
       await handleStart({ ...host, payload: row.payload });
     } catch (err) {

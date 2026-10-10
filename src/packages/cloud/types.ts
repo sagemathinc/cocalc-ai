@@ -119,6 +119,15 @@ export type PublicIngressResult = {
   };
 };
 
+export interface DataDiskSnapshot {
+  name: string;
+  disk_name: string;
+  disk_type?: string;
+  disk_size_gb?: number;
+  // Bytes stored by this snapshot (incremental on earlier snapshots).
+  storage_bytes?: number;
+}
+
 export interface CloudProvider {
   createHost(spec: HostSpec, creds: any): Promise<HostRuntime>;
   startHost(runtime: HostRuntime, creds: any): Promise<void>;
@@ -179,6 +188,30 @@ export interface CloudProvider {
     newSizeGb: number,
     creds: any,
   ): Promise<number | void>;
+  // Host relocation: snapshot the data disk (resolves when READY), restore
+  // it as a new disk in another zone, and clean up.
+  snapshotDataDisk?(
+    runtime: HostRuntime,
+    snapshotName: string,
+    creds: any,
+  ): Promise<DataDiskSnapshot>;
+  createDataDiskFromSnapshot?(
+    opts: {
+      zone: string;
+      disk_name: string;
+      snapshot_name: string;
+      disk_type?: string;
+      size_gb?: number;
+      // Keep a disk that already exists under this name instead of failing.
+      reuse_existing?: boolean;
+    },
+    creds: any,
+  ): Promise<"created" | "exists">;
+  deleteDataDisk?(
+    opts: { zone: string; disk_name: string },
+    creds: any,
+  ): Promise<void>;
+  deleteSnapshot?(snapshotName: string, creds: any): Promise<void>;
   ensureSharedScratchDisk?(
     runtime: HostRuntime,
     spec: HostSpec,

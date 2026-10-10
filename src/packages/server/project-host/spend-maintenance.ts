@@ -43,6 +43,7 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import type { DedicatedHostBillingState } from "@cocalc/util/project-host-pricing";
+import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:project-host:spend-maintenance");
 const CHECK_INTERVAL_MS = Math.max(
@@ -72,7 +73,77 @@ type CandidateHostRow = {
   region: string | null;
   status: string | null;
   metadata: any;
+  maintenance?: any;
 };
+
+// This pass decides from a row it read earlier. It writes only the top-level
+// metadata keys it changed relative to that row (billing, last action,
+// desired state when it stops a host), so a stale pass cannot put back
+// placement, runtime or intent that changed meanwhile, e.g. by a relocation
+// or its rollback. While a relocation holds the host it does not write at all.
+const HOST_NOT_HELD = `
+        AND COALESCE(maintenance->>'state', '') NOT IN ('preparing','in_progress','failed')`;
+
+export function metadataPatch(
+  previous: Record<string, any> | null | undefined,
+  next: Record<string, any> | null | undefined,
+): { set: Record<string, any>; remove: string[] } {
+  const before = previous ?? {};
+  const after = next ?? {};
+  const set: Record<string, any> = {};
+  const remove: string[] = [];
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (after[key] === undefined) {
+      if (before[key] !== undefined) remove.push(key);
+    } else if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      set[key] = after[key];
+    }
+  }
+  return { set, remove };
+}
+
+// Apply this pass's metadata changes (and optionally a status) unless a
+// relocation holds the host. Returns whether the row was written.
+async function writeHostBillingChanges({
+  row,
+  metadata,
+  status,
+}: {
+  row: CandidateHostRow;
+  metadata: Record<string, any>;
+  status?: { status: string; clear_last_seen?: boolean };
+}): Promise<boolean> {
+  const { set, remove } = metadataPatch(row.metadata, metadata);
+  if (!status && Object.keys(set).length === 0 && remove.length === 0) {
+    // Nothing changed relative to what this pass read.
+    return true;
+  }
+  const params: any[] = [row.id];
+  const sets: string[] = [];
+  if (status) {
+    params.push(status.status);
+    sets.push(`status=$${params.length}`);
+    if (status.clear_last_seen) {
+      params.push(null);
+      sets.push(`last_seen=$${params.length}`);
+    }
+  }
+  params.push(set, remove);
+  sets.push(
+    `metadata=(COALESCE(metadata, '{}'::jsonb) - $${params.length}::text[]) || $${params.length - 1}::jsonb`,
+  );
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts SET ${sets.join(", ")}, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL${HOST_NOT_HELD}`,
+    params,
+  );
+  if (!rowCount) {
+    logger.info("deferred billing change: host is being relocated", {
+      host_id: row.id,
+    });
+  }
+  return (rowCount ?? 0) > 0;
+}
 
 export function billingStateForHost(
   row: CandidateHostRow,
@@ -123,7 +194,7 @@ async function withMaintenanceLock<T>(
 async function listCandidateHosts(): Promise<CandidateHostRow[]> {
   const { rows } = await getPool().query<CandidateHostRow>(
     `
-      SELECT id, name, region, status, metadata
+      SELECT id, name, region, status, metadata, maintenance
       FROM project_hosts
       WHERE deleted IS NULL
         AND metadata IS NOT NULL
@@ -359,16 +430,13 @@ function nextDrainingEnforcement({
 }
 
 async function updateHostBillingMetadata({
-  host_id,
+  row,
   metadata,
 }: {
-  host_id: string;
+  row: CandidateHostRow;
   metadata: any;
-}): Promise<void> {
-  await getPool().query(
-    `UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [host_id, metadata],
-  );
+}): Promise<boolean> {
+  return await writeHostBillingChanges({ row, metadata });
 }
 
 async function requestHostStopForExceededLane({
@@ -422,14 +490,15 @@ async function requestHostStopForExceededLane({
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
   metadata.last_action_at = now.toISOString();
-  await getPool().query(
-    `
-      UPDATE project_hosts
-      SET status=$2, last_seen=$3, metadata=$4, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL
-    `,
-    [row.id, "stopping", null, metadata],
-  );
+  if (
+    !(await writeHostBillingChanges({
+      row,
+      metadata,
+      status: { status: "stopping", clear_last_seen: true },
+    }))
+  ) {
+    return;
+  }
   await enqueueCloudVmWork({
     vm_id: row.id,
     action: "stop",
@@ -480,14 +549,15 @@ async function requestHostStopForOwnerSpendLimit({
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
   metadata.last_action_at = nowIso;
-  await getPool().query(
-    `
-      UPDATE project_hosts
-      SET status=$2, last_seen=$3, metadata=$4, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL
-    `,
-    [row.id, "stopping", null, metadata],
-  );
+  if (
+    !(await writeHostBillingChanges({
+      row,
+      metadata,
+      status: { status: "stopping", clear_last_seen: true },
+    }))
+  ) {
+    return;
+  }
   await enqueueCloudVmWork({
     vm_id: row.id,
     action: "stop",
@@ -586,15 +656,17 @@ async function reconcileStoppedHost({
       started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
       ...retainedOwnerSpendPolicy(metadata),
     };
+    let written = true;
     if (
       JSON.stringify(nextBilling) !== JSON.stringify(metadata?.billing ?? {})
     ) {
-      await updateHostBillingMetadata({
-        host_id: row.id,
+      written = await updateHostBillingMetadata({
+        row,
         metadata: { ...metadata, billing: nextBilling },
       });
     }
-    if (previousEnforcement && previousEnforcement.state !== "ok") {
+    // Tell the owner only about a transition that was stored.
+    if (written && previousEnforcement && previousEnforcement.state !== "ok") {
       await notifyBillingEnforcementTransition({
         row,
         owner,
@@ -722,16 +794,19 @@ async function reconcileStoppedHost({
     JSON.stringify(nextMetadata.billing) !==
     JSON.stringify(metadata?.billing ?? {})
   ) {
-    await updateHostBillingMetadata({
-      host_id: row.id,
-      metadata: nextMetadata,
-    });
-    await notifyBillingEnforcementTransition({
-      row,
-      owner,
-      previous: previousEnforcement,
-      next: nextEnforcement,
-    });
+    if (
+      await updateHostBillingMetadata({
+        row,
+        metadata: nextMetadata,
+      })
+    ) {
+      await notifyBillingEnforcementTransition({
+        row,
+        owner,
+        previous: previousEnforcement,
+        next: nextEnforcement,
+      });
+    }
   }
   await maybeProgressInactiveEnforcement({
     row: { ...row, metadata: nextMetadata },
@@ -746,15 +821,8 @@ async function updateHostStatusAndBillingMetadata({
   row: CandidateHostRow;
   status: string;
   metadata: any;
-}): Promise<void> {
-  await getPool().query(
-    `
-      UPDATE project_hosts
-      SET status=$2, metadata=$3, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL
-    `,
-    [row.id, status, metadata],
-  );
+}): Promise<boolean> {
+  return await writeHostBillingChanges({ row, metadata, status: { status } });
 }
 
 async function requestHostDrainForBilling({
@@ -781,11 +849,16 @@ async function requestHostDrainForBilling({
     last_action_error: null,
     last_action_at: new Date().toISOString(),
   };
-  await updateHostStatusAndBillingMetadata({
-    row,
-    status: "draining",
-    metadata: nextMetadata,
-  });
+  // Queue nothing on a host a relocation took after this pass read it.
+  if (
+    !(await updateHostStatusAndBillingMetadata({
+      row,
+      status: "draining",
+      metadata: nextMetadata,
+    }))
+  ) {
+    return;
+  }
   await createLro({
     kind: HOST_DRAIN_LRO_KIND,
     scope_type: "host",
@@ -848,10 +921,14 @@ async function requestHostDeprovisionForBilling({
     last_action_error: null,
     last_action_at: nowIso,
   };
-  await updateHostBillingMetadata({
-    host_id: row.id,
-    metadata: nextMetadata,
-  });
+  if (
+    !(await updateHostBillingMetadata({
+      row,
+      metadata: nextMetadata,
+    }))
+  ) {
+    return;
+  }
   await createLro({
     kind: HOST_DEPROVISION_LRO_KIND,
     scope_type: "host",
@@ -904,27 +981,47 @@ async function maybeSendDeprovisionReminder({
   }
   const owner = `${metadata?.owner ?? ""}`.trim();
   if (!owner) return false;
-  const sent = await notifyDedicatedHostDeprovisionReminderBestEffort({
-    owner_account_id: owner,
-    host_id: row.id,
-    host_name: row.name,
-    deprovision_after: enforcement.deprovision_after,
-  });
-  if (!sent) return false;
-  await updateHostBillingMetadata({
-    host_id: row.id,
-    metadata: {
-      ...metadata,
-      billing: {
-        ...(metadata.billing ?? {}),
-        enforcement: {
-          ...enforcement,
-          deprovision_reminder_sent_at: new Date().toISOString(),
-        },
-      },
-    },
-  });
-  return true;
+  // Reserve the reminder before sending it, so it is sent at most once: only
+  // the pass that records it sends, and nothing is sent for a host a
+  // relocation holds.
+  const reservation = new Date().toISOString();
+  const { rowCount } = await getPool().query(
+    `UPDATE project_hosts
+        SET metadata = jsonb_set(
+              metadata,
+              '{billing,enforcement,deprovision_reminder_sent_at}',
+              to_jsonb($2::text)
+            ),
+            updated=NOW()
+      WHERE id=$1 AND deleted IS NULL${HOST_NOT_HELD}
+        AND metadata->'billing'->'enforcement'->>'state' = 'stopped_billing_blocked'
+        AND metadata->'billing'->'enforcement'->>'deprovision_reminder_sent_at' IS NULL`,
+    [row.id, reservation],
+  );
+  if (!rowCount) return false;
+  let sent = false;
+  try {
+    sent = await notifyDedicatedHostDeprovisionReminderBestEffort({
+      owner_account_id: owner,
+      host_id: row.id,
+      host_name: row.name,
+      deprovision_after: enforcement.deprovision_after,
+    });
+  } finally {
+    if (!sent) {
+      // Release only this pass's reservation, so a later pass can retry
+      // without erasing a newer reminder or state change.
+      await getPool().query(
+        `UPDATE project_hosts
+            SET metadata = metadata #- '{billing,enforcement,deprovision_reminder_sent_at}',
+                updated=NOW()
+          WHERE id=$1
+            AND metadata->'billing'->'enforcement'->>'deprovision_reminder_sent_at' = $2`,
+        [row.id, reservation],
+      );
+    }
+  }
+  return sent;
 }
 
 async function maybeProgressInactiveEnforcement({
@@ -945,22 +1042,25 @@ async function maybeProgressInactiveEnforcement({
       deprovisioned_at:
         enforcement.deprovisioned_at ?? new Date().toISOString(),
     };
-    await updateHostBillingMetadata({
-      host_id: row.id,
-      metadata: {
-        ...metadata,
-        billing: {
-          ...(metadata.billing ?? {}),
-          enforcement: nextEnforcement,
+    if (
+      await updateHostBillingMetadata({
+        row,
+        metadata: {
+          ...metadata,
+          billing: {
+            ...(metadata.billing ?? {}),
+            enforcement: nextEnforcement,
+          },
         },
-      },
-    });
-    await notifyBillingEnforcementTransition({
-      row,
-      owner,
-      previous: enforcement,
-      next: nextEnforcement,
-    });
+      })
+    ) {
+      await notifyBillingEnforcementTransition({
+        row,
+        owner,
+        previous: enforcement,
+        next: nextEnforcement,
+      });
+    }
     return true;
   }
   if (
@@ -1004,23 +1104,26 @@ async function maybeClearRecoveredInactiveEnforcement({
   );
   if (effectiveSnapshot.funding_mode === "site-funded") {
     const nextEnforcement = { state: "ok" as const };
-    await updateHostBillingMetadata({
-      host_id: row.id,
-      metadata: {
-        ...metadata,
-        billing: {
-          ...(metadata.billing ?? {}),
-          funding_mode: "site-funded",
-          enforcement: nextEnforcement,
+    if (
+      await updateHostBillingMetadata({
+        row,
+        metadata: {
+          ...metadata,
+          billing: {
+            ...(metadata.billing ?? {}),
+            funding_mode: "site-funded",
+            enforcement: nextEnforcement,
+          },
         },
-      },
-    });
-    await notifyBillingEnforcementTransition({
-      row,
-      owner: `${metadata?.owner ?? ""}`.trim(),
-      previous: enforcement,
-      next: nextEnforcement,
-    });
+      })
+    ) {
+      await notifyBillingEnforcementTransition({
+        row,
+        owner: `${metadata?.owner ?? ""}`.trim(),
+        previous: enforcement,
+        next: nextEnforcement,
+      });
+    }
     return true;
   }
 
@@ -1056,26 +1159,29 @@ async function maybeClearRecoveredInactiveEnforcement({
   if (!rate) return false;
 
   const nextEnforcement = { state: "ok" as const };
-  await updateHostBillingMetadata({
-    host_id: row.id,
-    metadata: {
-      ...metadata,
-      billing: {
-        ...(metadata.billing ?? {}),
-        funding_mode: effectiveSnapshot.funding_mode,
-        funding_lane,
-        hourly_cost_usd: rate.hourly_cost_usd,
-        pricing_snapshot: rate.pricing_snapshot,
-        enforcement: nextEnforcement,
+  if (
+    await updateHostBillingMetadata({
+      row,
+      metadata: {
+        ...metadata,
+        billing: {
+          ...(metadata.billing ?? {}),
+          funding_mode: effectiveSnapshot.funding_mode,
+          funding_lane,
+          hourly_cost_usd: rate.hourly_cost_usd,
+          pricing_snapshot: rate.pricing_snapshot,
+          enforcement: nextEnforcement,
+        },
       },
-    },
-  });
-  await notifyBillingEnforcementTransition({
-    row,
-    owner: `${metadata?.owner ?? ""}`.trim(),
-    previous: enforcement,
-    next: nextEnforcement,
-  });
+    })
+  ) {
+    await notifyBillingEnforcementTransition({
+      row,
+      owner: `${metadata?.owner ?? ""}`.trim(),
+      previous: enforcement,
+      next: nextEnforcement,
+    });
+  }
   logger.info("cleared recovered dedicated host billing enforcement", {
     host_id: row.id,
     funding_lane,
@@ -1093,9 +1199,7 @@ async function runPass(): Promise<void> {
   const getSnapshot = async (
     account_id: string,
     funding_mode_override?:
-      | "account-prepaid"
-      | "account-postpaid"
-      | "site-funded",
+      "account-prepaid" | "account-postpaid" | "site-funded",
   ) => {
     const cacheKey = `${account_id}:${funding_mode_override ?? ""}`;
     const cached = snapshotCache.get(cacheKey);
@@ -1116,6 +1220,12 @@ async function runPass(): Promise<void> {
   };
 
   for (const row of rows) {
+    // A relocation owns the host; enforcement resumes on the first pass after
+    // it releases the host.
+    if (hostLifecycleFenced(row.maintenance)) {
+      logger.debug("skipping host being relocated", { host_id: row.id });
+      continue;
+    }
     const metadata = row.metadata ?? {};
     const owner = `${metadata?.owner ?? ""}`.trim();
     const machine = metadata?.machine ?? {};
@@ -1152,7 +1262,7 @@ async function runPass(): Promise<void> {
           billing: retainedBillingPolicy(metadata),
         };
         await updateHostBillingMetadata({
-          host_id: row.id,
+          row,
           metadata: nextMetadata,
         });
       }
@@ -1208,7 +1318,7 @@ async function runPass(): Promise<void> {
         JSON.stringify(nextBilling) !== JSON.stringify(metadata?.billing ?? {})
       ) {
         await updateHostBillingMetadata({
-          host_id: row.id,
+          row,
           metadata: { ...metadata, billing: nextBilling },
         });
       }
@@ -1281,7 +1391,7 @@ async function runPass(): Promise<void> {
     deleteSnapshotCacheForAccount(owner);
     if (status === "stopping") {
       await updateHostBillingMetadata({
-        host_id: row.id,
+        row,
         metadata: {
           ...metadata,
           billing: {
@@ -1380,11 +1490,11 @@ async function runPass(): Promise<void> {
       JSON.stringify(nextMetadata.billing) !==
       JSON.stringify(metadata?.billing ?? {})
     ) {
-      await updateHostBillingMetadata({
-        host_id: row.id,
+      const written = await updateHostBillingMetadata({
+        row,
         metadata: nextMetadata,
       });
-      if (enforcementDecision.action !== "request_drain") {
+      if (written && enforcementDecision.action !== "request_drain") {
         await notifyBillingEnforcementTransition({
           row,
           owner,

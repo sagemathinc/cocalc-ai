@@ -255,6 +255,9 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
 
@@ -311,6 +314,9 @@ describe("startProjectOnHost placement", () => {
           ],
         };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
 
@@ -359,6 +365,9 @@ describe("startProjectOnHost placement", () => {
             },
           ],
         };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -428,6 +437,9 @@ describe("startProjectOnHost placement", () => {
         expect(sql).not.toContain("COALESCE(bay_id");
         expect(sql).toContain("tier IS NOT NULL");
         return { rows: [] };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -501,6 +513,9 @@ describe("startProjectOnHost placement", () => {
             },
           ],
         };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -626,6 +641,9 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("FROM project_copies")) {
         return { rows: [{ exists: false }] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -734,6 +752,9 @@ describe("startProjectOnHost placement", () => {
         expect(params).toEqual(["host-1"]);
         return { rows: [{ metadata: { machine: {} } }] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
 
@@ -761,6 +782,9 @@ describe("startProjectOnHost placement", () => {
             },
           ],
         };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -848,6 +872,9 @@ describe("startProjectOnHost placement", () => {
         "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -963,6 +990,9 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -982,6 +1012,119 @@ describe("startProjectOnHost placement", () => {
       }),
     );
     expect(getProjectStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to start a project while its host is in a maintenance window", async () => {
+    const createProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    const startProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
+    const getProjectStatusMock = jest.fn();
+    createHostControlClientMock = jest.fn(() => ({
+      createProject: createProjectMock,
+      startProject: jest.fn(),
+      startProjectIdempotent: startProjectMock,
+      getProjectStatus: getProjectStatusMock,
+    }));
+
+    let loadProjectCalls = 0;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (sql.includes("FROM long_running_operations")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
+      ) {
+        loadProjectCalls += 1;
+        return {
+          rows: [
+            {
+              title: "OCI test",
+              users: { owner: { group: "owner" } },
+              image: "sagemathinc/sagemath-x86_64:10.7",
+              host_id: loadProjectCalls === 1 ? null : "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        expect(params).toEqual(["bay-0"]);
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects AS projects")) {
+        expect(params).toEqual(["host-1", "proj-1", "bay-0"]);
+        return {
+          rows: [{ owning_bay_id: "bay-0" }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: "in_progress" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await expect(
+      startProjectOnHost("proj-1", {
+        managed_egress_override: "admin-host-drain",
+      }),
+    ).rejects.toMatchObject({ code: "host_maintenance_in_progress" });
+    expect(startProjectMock).not.toHaveBeenCalled();
   });
 
   it("retries start once after a successful guarded auto-grow", async () => {
@@ -1085,6 +1228,9 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -1119,6 +1265,9 @@ describe("startProjectOnHost placement", () => {
         return {
           rows: [{ owning_bay_id: "bay-0" }],
         };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1232,6 +1381,9 @@ describe("startProjectOnHost placement", () => {
         expect(params[1]).toMatchObject({ state: "running" });
         return { rowCount: 1, rows: [] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -1340,6 +1492,9 @@ describe("startProjectOnHost placement", () => {
         "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1451,6 +1606,9 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -1558,6 +1716,9 @@ describe("startProjectOnHost placement", () => {
       ) {
         return { rows: [{ backup_repo_id: "repo-1", provisioned: false }] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -1657,6 +1818,9 @@ describe("startProjectOnHost placement", () => {
       }
       if (sql.includes("UPDATE projects SET last_started")) {
         return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1772,6 +1936,9 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("UPDATE projects SET last_started")) {
         return { rowCount: 1, rows: [] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -1883,6 +2050,9 @@ describe("startProjectOnHost placement", () => {
       if (sql.includes("UPDATE projects SET last_started")) {
         return { rowCount: 1, rows: [] };
       }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -1936,6 +2106,9 @@ describe("startProjectOnHost placement", () => {
       }
       if (sql.includes("SET state=$2::jsonb")) {
         return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("maintenance->>'state'")) {
+        return { rows: [{ state: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });

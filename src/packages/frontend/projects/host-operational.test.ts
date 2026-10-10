@@ -5,6 +5,7 @@
 
 import {
   expectsProjectHostConnection,
+  getHostMaintenanceDisplay,
   getHostRecoveryDisplay,
   getProjectLifecycleView,
   hostUnavailableBannerDelay,
@@ -329,3 +330,75 @@ describe("projects host operational display state", () => {
     });
   });
 });
+
+describe("host maintenance display", () => {
+  const now = Date.parse("2026-10-09T07:05:00Z");
+  const inProgress = {
+    status: "deprovisioned",
+    desired_state: "stopped",
+    maintenance: {
+      kind: "relocation",
+      state: "in_progress",
+      started_at: "2026-10-09T07:00:00Z",
+      expected_duration_ms: 12 * 60_000,
+      expected_end_at: "2026-10-09T07:12:00Z",
+    },
+  };
+
+  it("announces a scheduled window with its start and length", () => {
+    expect(
+      getHostMaintenanceDisplay(
+        {
+          status: "running",
+          maintenance: {
+            kind: "maintenance",
+            state: "scheduled",
+            scheduled_for: "2026-10-09T09:00:00Z",
+            expected_duration_ms: 10 * 60_000,
+            message: "Moving to a faster server.",
+          },
+        },
+        now,
+      ),
+    ).toEqual({
+      state: "scheduled",
+      kind: "maintenance",
+      startsAt: "2026-10-09T09:00:00.000Z",
+      expectedEndAt: "2026-10-09T09:10:00.000Z",
+      expectedMinutes: 10,
+      overdue: false,
+      message: "Moving to a faster server.",
+    });
+    expect(getHostMaintenanceDisplay({ status: "running" }, now)).toBe(
+      undefined,
+    );
+  });
+
+  it("explains an in-progress window instead of a generic outage", () => {
+    const display = getHostRecoveryDisplay(inProgress, now);
+    expect(display).toMatchObject({
+      active: true,
+      headline: "Down for scheduled maintenance",
+      summary: expect.stringMatching(/^Expected back around /),
+      startedAt: "2026-10-09T07:00:00.000Z",
+      etaMinutes: 7,
+    });
+    expect(display.description).toMatch(/moving the server/);
+    // A deprovisioned, stopped host is normally not reconnectable; during
+    // maintenance it is coming back.
+    expect(isHostRecoveryTransient(inProgress)).toBe(true);
+    expect(
+      isHostRecoveryTransient({ status: "deprovisioned", desired_state: "stopped" }),
+    ).toBe(false);
+  });
+
+  it("says when a window runs late", () => {
+    const late = getHostRecoveryDisplay(
+      inProgress,
+      Date.parse("2026-10-09T07:20:00Z"),
+    );
+    expect(late.summary).toBe("Taking longer than expected");
+    expect(late.timingDescription).toMatch(/staff have been notified/);
+  });
+});
+

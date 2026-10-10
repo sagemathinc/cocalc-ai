@@ -3359,6 +3359,155 @@ Examples:
     );
 
   host
+    .command("relocate <host>")
+    .description(
+      "admin: move a GCP host to another zone and/or machine type, keeping its data disk (projects see a maintenance banner)",
+    )
+    .option("--zone <zone>", "target zone, e.g. us-west2-a")
+    .option("--machine-type <type>", "target machine type, e.g. n2-standard-32")
+    .option(
+      "--expected-minutes <n>",
+      "maintenance window shown to users (default: estimated from the data size)",
+    )
+    .option("--message <text>", "extra text for the maintenance banner")
+    .option(
+      "--skip-backups",
+      "do not back up projects before the window starts",
+    )
+    .option(
+      "--keep-snapshot",
+      "keep the final disk snapshot after a successful move",
+    )
+    .option("--wait", "wait for the relocation to finish")
+    .option(
+      "--browser-id <id>",
+      "browser id for the second-factor check (default: COCALC_BROWSER_ID)",
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          browserId?: string;
+          zone?: string;
+          machineType?: string;
+          expectedMinutes?: string;
+          message?: string;
+          skipBackups?: boolean;
+          keepSnapshot?: boolean;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host relocate", async (ctx) => {
+          if (!opts.zone && !opts.machineType) {
+            throw new Error("give --zone and/or --machine-type");
+          }
+          const expected_minutes =
+            opts.expectedMinutes != null
+              ? Number(opts.expectedMinutes)
+              : undefined;
+          if (
+            expected_minutes != null &&
+            !(Number.isFinite(expected_minutes) && expected_minutes > 0)
+          ) {
+            throw new Error("--expected-minutes must be a positive number");
+          }
+          const hostRow = await resolveHost(ctx, hostIdentifier);
+          const browserId =
+            `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const op = await ctx.hub.hosts.relocateHost({
+            id: hostRow.id,
+            ...(browserId ? { browser_id: browserId } : undefined),
+            zone: opts.zone,
+            machine_type: opts.machineType,
+            expected_minutes,
+            message: opts.message,
+            skip_backups: !!opts.skipBackups,
+            keep_snapshot: !!opts.keepSnapshot,
+          });
+          if (!opts.wait) {
+            return {
+              host_id: hostRow.id,
+              name: hostRow.name,
+              op_id: op.op_id,
+              status: "queued",
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            // Backups and a large warm snapshot can take a while before the
+            // window even starts; the operation continues if this gives up.
+            timeoutMs: Math.max(ctx.timeoutMs, 2 * 60 * 60 * 1000),
+            pollMs: ctx.pollMs,
+            scope: { type: "host", id: hostRow.id },
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: hostRow.id,
+              name: hostRow.name,
+              op_id: op.op_id,
+            }),
+          });
+          if (summary.timedOut || summary.status !== "succeeded") {
+            throw new Error(
+              summary.timedOut
+                ? `${hostRow.name ?? hostRow.id}: relocation timed out (op=${op.op_id}, last_status=${summary.status})`
+                : `${hostRow.name ?? hostRow.id}: relocation failed: ${summary.error ?? "unknown error"}`,
+            );
+          }
+          return {
+            host_id: hostRow.id,
+            name: hostRow.name,
+            op_id: op.op_id,
+            status: summary.status,
+            result: summary.result,
+          };
+        });
+      },
+    );
+
+  host
+    .command("maintenance <host>")
+    .description(
+      "admin: announce a scheduled maintenance window to users of a host's projects (or --clear it)",
+    )
+    .option("--at <time>", "start time, e.g. 2026-10-09T07:00:00Z")
+    .option("--minutes <n>", "expected duration in minutes")
+    .option("--message <text>", "extra text for the banner")
+    .option("--clear", "remove the announcement")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          at?: string;
+          minutes?: string;
+          message?: string;
+          clear?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host maintenance", async (ctx) => {
+          if (!opts.clear && (!opts.at || !opts.minutes)) {
+            throw new Error("give --at and --minutes, or --clear");
+          }
+          const hostRow = await resolveHost(ctx, hostIdentifier);
+          const notice = await ctx.hub.hosts.setHostMaintenanceNotice({
+            id: hostRow.id,
+            ...(opts.clear
+              ? { clear: true }
+              : {
+                  scheduled_for: opts.at,
+                  expected_minutes: Number(opts.minutes),
+                  message: opts.message,
+                }),
+          });
+          return {
+            host_id: hostRow.id,
+            name: hostRow.name,
+            maintenance: notice,
+          };
+        });
+      },
+    );
+
+  host
     .command("public-route <host> <mode>")
     .description(
       "migrate a managed host between Cloudflare Tunnel and proxied public-IP routing",

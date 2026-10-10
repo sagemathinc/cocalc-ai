@@ -61,6 +61,10 @@ Table({
       type: "map",
       desc: "Additional metadata/config for this host.",
     },
+    maintenance: {
+      type: "map",
+      desc: "Announced or active maintenance window (relocation lease, user-facing notice). Kept out of metadata so that handlers writing back a whole metadata object cannot resurrect or drop it.",
+    },
     starred_by: {
       type: "array",
       pg_type: "UUID[]",
