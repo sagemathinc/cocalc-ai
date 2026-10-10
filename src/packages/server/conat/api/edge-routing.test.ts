@@ -35,6 +35,9 @@ jest.mock("@cocalc/server/projects/collab-invite-directory", () => ({
 }));
 jest.mock("@cocalc/server/inter-bay/forwarded-calls", () => ({
   OUTCOME_UNKNOWN: "OUTCOME_UNKNOWN",
+  forwardedCallHash: jest.requireActual(
+    "@cocalc/server/inter-bay/forwarded-calls",
+  ).forwardedCallHash,
   runForwardedCallOnce,
 }));
 jest.mock("@cocalc/server/projects/collaborators", () => ({
@@ -128,14 +131,23 @@ describe("executeHubApiCall at the edge", () => {
     expect(forward).toHaveBeenCalledTimes(2);
   });
 
-  it("reports a call no hub of the owning bay received as a plain failure", async () => {
+  it("does not treat a final 503 as proof the call never ran", async () => {
+    // The transport retries an unacknowledged fast request over its fallback
+    // path, which may then report 503 although the first one was delivered.
     resolveProjectBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
-    forward.mockRejectedValue(
-      Object.assign(new Error("no subscribers"), { code: 503 }),
-    );
+    forward
+      .mockRejectedValueOnce(
+        Object.assign(new Error("socket has been disconnected"), {
+          code: "CONNECTION_LOST",
+        }),
+      )
+      .mockRejectedValue(
+        Object.assign(new Error("no subscribers"), { code: 503 }),
+      );
     await expect(executeHubApiCall(routed())).rejects.toMatchObject({
-      code: 503,
+      code: "OUTCOME_UNKNOWN",
     });
+    expect(forward).toHaveBeenCalledTimes(2);
   });
 
   it("raises the owning bay's error as if the call had run here", async () => {
@@ -177,6 +189,10 @@ describe("handleForwardedHubApiCall on the owning bay", () => {
     expect(local).toHaveBeenCalledTimes(1);
     // The call id is transport, not an argument of the method.
     expect(local).toHaveBeenCalledWith(routed());
+    // A repeat must be the same call: its hash covers everything but the id.
+    const { call_hash } = runForwardedCallOnce.mock.calls[0][0];
+    expect(call_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(runForwardedCallOnce.mock.calls[1][0].call_hash).toBe(call_hash);
   });
 
   it("refuses methods that are not routable", async () => {

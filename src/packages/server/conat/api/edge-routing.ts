@@ -30,6 +30,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
+  forwardedCallHash,
   OUTCOME_UNKNOWN,
   runForwardedCallOnce,
 } from "@cocalc/server/inter-bay/forwarded-calls";
@@ -142,7 +143,6 @@ export async function forwardHubApiCall(
     call_id: randomUUID(),
   };
   let lastError: unknown;
-  let delivered = false;
   for (let attempt = 1; attempt <= FORWARD_ATTEMPTS; attempt++) {
     let response: ForwardedResult;
     try {
@@ -152,9 +152,11 @@ export async function forwardHubApiCall(
         timeout: FORWARD_ATTEMPT_TIMEOUT_MS,
       }).call(forwarded);
     } catch (err) {
+      // No answer. Even "no responders" (503) does not prove the call was not
+      // delivered: the transport retries an unacknowledged fast request over
+      // its fallback path, which then reports 503. The call id makes the next
+      // attempt safe either way.
       lastError = err;
-      // 503: no hub of that bay is listening, so the call was not delivered.
-      if ((err as any)?.code !== 503) delivered = true;
       logger.debug("forwarded hub API call got no answer", {
         name: call.name,
         bay_id,
@@ -167,7 +169,6 @@ export async function forwardHubApiCall(
     // The same error the owning bay raised, as if the call had run here.
     throw Object.assign(new Error(response.error), response.attrs);
   }
-  if (!delivered) throw lastError;
   throw Object.assign(
     new Error(
       `outcome unknown: ${bay_id} did not answer '${call.name}' (${lastError}); it may or may not have been applied`,
@@ -188,6 +189,7 @@ export async function handleForwardedHubApiCall(
       name: call.name,
       account_id: call.account_id,
       source_bay_id: call.source_bay_id,
+      call_hash: forwardedCallHash(call),
       wait_ms: REPEAT_WAIT_MS,
       run: async () => await runForwardedHubApiCall(call),
     });

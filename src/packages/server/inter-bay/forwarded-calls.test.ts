@@ -4,7 +4,12 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { runForwardedCallOnce, type ForwardedOutcome } from "./forwarded-calls";
+import {
+  deleteOldForwardedCallRecords,
+  forwardedCallHash,
+  runForwardedCallOnce,
+  type ForwardedOutcome,
+} from "./forwarded-calls";
 
 const ACCOUNT = "11111111-1111-4111-8111-111111111111";
 let n = 0;
@@ -13,13 +18,22 @@ const callId = () => `22222222-2222-4222-8222-${`${++n}`.padStart(12, "0")}`;
 function once(
   call_id: string,
   run: () => Promise<ForwardedOutcome>,
-  overrides: { name?: string; wait_ms?: number } = {},
+  overrides: { name?: string; wait_ms?: number; args?: any[] } = {},
 ) {
-  return runForwardedCallOnce({
+  const name = overrides.name ?? "projects.setProjectMetadata";
+  const call = {
     call_id,
-    name: overrides.name ?? "projects.setProjectMetadata",
+    name,
+    args: overrides.args ?? [{ project_id: "p", patch: { title: "t" } }],
     account_id: ACCOUNT,
     source_bay_id: "bay-0",
+  };
+  return runForwardedCallOnce({
+    call_id,
+    name,
+    account_id: ACCOUNT,
+    source_bay_id: "bay-0",
+    call_hash: forwardedCallHash(call),
     wait_ms: overrides.wait_ms ?? 2_000,
     run,
   });
@@ -108,11 +122,58 @@ describe("runForwardedCallOnce", () => {
   it("refuses a call id reused for a different call", async () => {
     const call_id = callId();
     await once(call_id, async () => ({ ok: true, result: 1 }));
+    // Another method, or the same method with other arguments.
     await expect(
       once(call_id, async () => ({ ok: true, result: 2 }), {
         name: "projects.removeCollaborator",
       }),
     ).resolves.toMatchObject({ ok: false, attrs: { code: 400 } });
+    await expect(
+      once(call_id, async () => ({ ok: true, result: 2 }), {
+        args: [{ project_id: "other", patch: { title: "t" } }],
+      }),
+    ).resolves.toMatchObject({ ok: false, attrs: { code: 400 } });
+  });
+
+  it("keeps the record of a call that never finished, however old", async () => {
+    const call_id = callId();
+    let finish!: () => void;
+    const first = once(
+      call_id,
+      () =>
+        new Promise<ForwardedOutcome>((resolve) => {
+          finish = () => resolve({ ok: true, result: "late" });
+        }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // A stalled call, claimed two hours ago.
+    await getPool().query(
+      "UPDATE hub_api_forwarded_calls SET created = now() - INTERVAL '2 hours' WHERE call_id = $1",
+      [call_id],
+    );
+    await deleteOldForwardedCallRecords();
+    const again = jest.fn(async () => ({ ok: true as const, result: "twice" }));
+    await expect(once(call_id, again, { wait_ms: 200 })).resolves.toMatchObject(
+      { ok: false, attrs: { code: "OUTCOME_UNKNOWN" } },
+    );
+    expect(again).not.toHaveBeenCalled();
+    finish();
+    await first;
+  });
+
+  it("forgets old finished calls", async () => {
+    const call_id = callId();
+    await once(call_id, async () => ({ ok: true, result: 1 }));
+    await getPool().query(
+      "UPDATE hub_api_forwarded_calls SET created = now() - INTERVAL '2 hours' WHERE call_id = $1",
+      [call_id],
+    );
+    await deleteOldForwardedCallRecords();
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM hub_api_forwarded_calls WHERE call_id = $1",
+      [call_id],
+    );
+    expect(rows).toHaveLength(0);
   });
 
   it("does not keep a very large outcome, and says so to a repeat", async () => {

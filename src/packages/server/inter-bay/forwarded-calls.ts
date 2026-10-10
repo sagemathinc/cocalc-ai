@@ -12,6 +12,7 @@
 // the repeat waits for it. The record is in the database because the repeat
 // may reach another hub process of this bay.
 
+import { createHash } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { DataEncoding, decode, encode } from "@cocalc/conat/core/codec";
 import getPool from "@cocalc/database/pool";
@@ -49,8 +50,12 @@ export async function ensureForwardedCallSchema(): Promise<void> {
           created TIMESTAMPTZ NOT NULL DEFAULT now(),
           finished TIMESTAMPTZ,
           outcome BYTEA,
-          outcome_recorded BOOLEAN NOT NULL DEFAULT FALSE
+          outcome_recorded BOOLEAN NOT NULL DEFAULT FALSE,
+          call_hash TEXT
         )`);
+      await client.query(`
+        ALTER TABLE hub_api_forwarded_calls
+          ADD COLUMN IF NOT EXISTS call_hash TEXT`);
       await client.query(`
         CREATE INDEX IF NOT EXISTS hub_api_forwarded_calls_created_idx
           ON hub_api_forwarded_calls (created)`);
@@ -71,20 +76,27 @@ export async function ensureForwardedCallSchema(): Promise<void> {
 
 let lastCleanup = 0;
 
+// Only finished calls: an unfinished record may belong to a call that is
+// still running (or whose hub stalled), and deleting it would let a repeat
+// run the call again. Records of calls whose hub died mid-call stay, and a
+// repeat of one gets OUTCOME_UNKNOWN.
+export async function deleteOldForwardedCallRecords(): Promise<void> {
+  await getPool().query(
+    `DELETE FROM hub_api_forwarded_calls
+      WHERE finished IS NOT NULL
+        AND created < now() - ($1::BIGINT * INTERVAL '1 millisecond')`,
+    [RETAIN_MS],
+  );
+}
+
 function cleanupOldRecords(): void {
   if (Date.now() - lastCleanup < 60_000) return;
   lastCleanup = Date.now();
-  getPool()
-    .query(
-      `DELETE FROM hub_api_forwarded_calls
-        WHERE created < now() - ($1::BIGINT * INTERVAL '1 millisecond')`,
-      [RETAIN_MS],
-    )
-    .catch((err) =>
-      logger.warn("deleting old forwarded call records failed", {
-        err: `${err}`,
-      }),
-    );
+  deleteOldForwardedCallRecords().catch((err) =>
+    logger.warn("deleting old forwarded call records failed", {
+      err: `${err}`,
+    }),
+  );
 }
 
 async function recordOutcome(
@@ -104,6 +116,34 @@ async function recordOutcome(
   );
 }
 
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  return `{${Object.keys(value)
+    .filter((key) => (value as any)[key] !== undefined)
+    .sort()
+    .map(
+      (key) => `${JSON.stringify(key)}:${stableStringify((value as any)[key])}`,
+    )
+    .join(",")}}`;
+}
+
+/**
+ * A hash of everything about a forwarded call except its id: the method, its
+ * arguments, the caller's authenticated context and the sending bay. A repeat
+ * of the call has the same hash.
+ */
+export function forwardedCallHash(call: object): string {
+  const { call_id: _call_id, ...rest } = call as Record<string, unknown>;
+  return createHash("sha256").update(stableStringify(rest)).digest("hex");
+}
+
 function unknown(error: string): ForwardedOutcome {
   return { ok: false, error, attrs: { code: OUTCOME_UNKNOWN } };
 }
@@ -118,6 +158,7 @@ export async function runForwardedCallOnce({
   name,
   account_id,
   source_bay_id,
+  call_hash,
   wait_ms,
   run,
 }: {
@@ -125,17 +166,19 @@ export async function runForwardedCallOnce({
   name: string;
   account_id?: string;
   source_bay_id: string;
+  /** forwardedCallHash of the call: a repeat must be the very same call. */
+  call_hash: string;
   wait_ms: number;
   run: () => Promise<ForwardedOutcome>;
 }): Promise<ForwardedOutcome> {
   await ensureForwardedCallSchema();
   const { rows: claimed } = await getPool().query(
     `INSERT INTO hub_api_forwarded_calls
-       (call_id, name, account_id, source_bay_id)
-     VALUES ($1, $2, $3, $4)
+       (call_id, name, account_id, source_bay_id, call_hash)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (call_id) DO NOTHING
      RETURNING call_id`,
-    [call_id, name, account_id ?? null, source_bay_id],
+    [call_id, name, account_id ?? null, source_bay_id, call_hash],
   );
   if (claimed.length > 0) {
     cleanupOldRecords();
@@ -157,13 +200,12 @@ export async function runForwardedCallOnce({
   const deadline = Date.now() + wait_ms;
   for (;;) {
     const { rows } = await getPool().query<{
-      name: string;
-      account_id: string | null;
+      call_hash: string | null;
       finished: Date | null;
       outcome: Buffer | null;
       outcome_recorded: boolean;
     }>(
-      `SELECT name, account_id, finished, outcome, outcome_recorded
+      `SELECT call_hash, finished, outcome, outcome_recorded
          FROM hub_api_forwarded_calls
         WHERE call_id = $1`,
       [call_id],
@@ -172,7 +214,7 @@ export async function runForwardedCallOnce({
     if (row == null) {
       return unknown(`outcome unknown: no record of call ${call_id}`);
     }
-    if (row.name !== name || (row.account_id ?? undefined) !== account_id) {
+    if (row.call_hash !== call_hash) {
       return {
         ok: false,
         error: `call ${call_id} was already used for a different call`,
