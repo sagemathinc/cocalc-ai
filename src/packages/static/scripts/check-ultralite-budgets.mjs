@@ -321,8 +321,9 @@ const surfaces = [
     // Connector, Claude, and exam guides expand the non-admin documentation;
     // the released baseline is 320.6 KiB Brotli before the exam UI updates,
     // and 325.5 KiB with the #872 release. The agents workspace guide's
-    // update brings it to 326.9 KiB; keep a narrow margin for other guides.
-    max: 328 * KiB,
+    // update brings it to 326.9 KiB, and the web browser guide (#939) to
+    // 328.5 KiB; keep a narrow margin for other guides.
+    max: 330 * KiB,
   },
   {
     label: "minimal project settings",
