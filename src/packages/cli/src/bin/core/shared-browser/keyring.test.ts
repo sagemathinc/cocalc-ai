@@ -158,13 +158,13 @@ test("each browser gets its own key from the project key", () => {
   const a = profileSecret(key, "cocalc-browser");
   const b = profileSecret(key, "cocalc-browser-0123456789abcdef");
   assert.notEqual(a.toString(), b.toString());
-  assert.equal(
-    a.toString(),
-    profileSecret(key, "cocalc-browser").toString(),
-  );
+  assert.equal(a.toString(), profileSecret(key, "cocalc-browser").toString());
   assert.notEqual(
     a.toString(),
-    profileSecret(Buffer.from("another key of enough length"), "cocalc-browser").toString(),
+    profileSecret(
+      Buffer.from("another key of enough length"),
+      "cocalc-browser",
+    ).toString(),
   );
   assert.ok(!a.toString().includes(key.toString()));
   assert.equal(keyFingerprint(null), null);

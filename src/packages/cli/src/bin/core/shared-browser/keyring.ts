@@ -19,7 +19,7 @@
  * profile must only run with this keyring.
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -422,9 +422,7 @@ export function decodeMessage(buf: Buffer): DbusMessage {
     if (field) (message as any)[field[0]] = variant.value;
   }
   r.pad(8);
-  message.body = splitSignature(message.signature ?? "").map((t) =>
-    r.read(t),
-  );
+  message.body = splitSignature(message.signature ?? "").map((t) => r.read(t));
   return message;
 }
 
@@ -511,10 +509,7 @@ function matches(attributes: [string, string][]): string[] {
   return application && APPLICATIONS.has(application) ? [ITEM] : [];
 }
 
-export function secretServiceCall(
-  message: DbusMessage,
-  secret: Buffer,
-): Reply {
+export function secretServiceCall(message: DbusMessage, secret: Buffer): Reply {
   const { path = "", member = "" } = message;
   const iface = message.interface ?? "";
   const body = message.body ?? [];
@@ -613,14 +608,19 @@ export interface BrowserKeyring {
 export async function startBrowserKeyring({
   secret,
   log,
+  socketPath: at,
 }: {
   secret: Buffer;
   log?: (message: string) => void;
+  // Where to listen, e.g. a directory a browser in its own container shares
+  // (default: a new private directory).
+  socketPath?: string;
 }): Promise<BrowserKeyring> {
   // Only this user can reach the socket; the same user can read the project
   // secret anyway.
-  const dir = mkdtempSync(join(tmpdir(), "cocalc-keyring-"));
-  const socketPath = join(dir, "bus");
+  const dir = at ? null : mkdtempSync(join(tmpdir(), "cocalc-keyring-"));
+  const socketPath = at ?? join(dir!, "bus");
+  if (at) rmSync(at, { force: true });
   const guid = randomBytes(16).toString("hex");
   let nextClient = 1;
   const sockets = new Set<Socket>();
@@ -735,12 +735,14 @@ export async function startBrowserKeyring({
     server.once("error", reject);
     server.listen(socketPath, () => resolve());
   });
+  chmodSync(socketPath, 0o600);
   return {
     address: `unix:path=${socketPath}`,
     close: async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      rmSync(dir, { recursive: true, force: true });
+      if (dir) rmSync(dir, { recursive: true, force: true });
+      else rmSync(socketPath, { force: true });
     },
   };
 }

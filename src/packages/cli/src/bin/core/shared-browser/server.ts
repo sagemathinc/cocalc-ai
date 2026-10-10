@@ -42,7 +42,7 @@ import type {
   ViewerRequest,
   ViewQuality,
 } from "@cocalc/util/shared-browser-protocol";
-import { Favicons, projectServers, recentSites } from "./start-page";
+import { Favicons, projectServers } from "./start-page";
 
 export type {
   Driver,
@@ -126,9 +126,12 @@ export interface SharedBrowserServerOptions {
   runsOn?: SharedBrowserRunsOn;
   connectCommand?: string;
   onRunsOn?: (runsOn: SharedBrowserRunsOn) => void | Promise<void>;
-  // For the start page: this browser's name, and its profile's history.
+  // For the start page: this browser's name, and the sites it visited.
   title?: string;
-  historyFile?: () => string | null;
+  recent?: () => StartPageData["recent"];
+  // What a page's file chooser gets for these project files (a browser in
+  // its own container gets copies it can see).
+  offerFiles?: (paths: string[]) => string[];
   // Only these ports for the start page's servers (tests).
   startPagePorts?: number[];
   log?: (message: string) => void;
@@ -169,7 +172,8 @@ export function heldWhileHumanDrives(method: unknown): boolean {
 export class SharedBrowserServer {
   // The attached browser (none while waiting for the user's computer).
   private cdp!: CdpClient;
-  private chromeHttp = "";
+  // Where the attached browser's DevTools are.
+  private devtools: DevToolsEndpoint | null = null;
   private appServer!: http.Server;
   private favicons = new Favicons();
   // Ours, not the user's servers.
@@ -222,7 +226,7 @@ export class SharedBrowserServer {
   }
 
   get attached(): boolean {
-    return !!this.chromeHttp;
+    return this.devtools != null;
   }
 
   // A browser on the user's computer is theirs: we only stream a small
@@ -253,8 +257,8 @@ export class SharedBrowserServer {
     if (this.attached) this.detachChrome();
     const cdp = await CdpClient.connect(webSocketUrl);
     this.cdp = cdp;
-    this.chromeHttp = `http://${new URL(webSocketUrl).host}`;
-    this.ownPorts.add(Number(new URL(webSocketUrl).port));
+    this.devtools = devToolsEndpoint(webSocketUrl);
+    if (this.devtools.port) this.ownPorts.add(this.devtools.port);
     cdp.on((event) => {
       if (this.cdp === cdp) this.onCdpEvent(event);
     });
@@ -280,7 +284,7 @@ export class SharedBrowserServer {
   detachChrome(): void {
     if (!this.attached) return;
     const cdp = this.cdp;
-    this.chromeHttp = "";
+    this.devtools = null;
     this.state.connection = "waiting";
     this.state.tabs = [];
     this.state.active = null;
@@ -1016,7 +1020,7 @@ export class SharedBrowserServer {
     ).catch(() => []);
     let recent: StartPageData["recent"] = [];
     try {
-      recent = recentSites(this.options.historyFile?.() ?? null);
+      recent = this.options.recent?.() ?? [];
     } catch {}
     return { servers, recent };
   }
@@ -1237,9 +1241,11 @@ export class SharedBrowserServer {
         page.fileChooser = null;
         page.fileChooserNode = null;
         this.broadcastState();
-        const files = (Array.isArray(msg.paths) ? msg.paths : [])
+        let files = (Array.isArray(msg.paths) ? msg.paths : [])
           .map((p: unknown) => resolveProjectFile(`${p}`))
           .filter((p: string | null): p is string => !!p);
+        if (files.length && this.options.offerFiles)
+          files = this.options.offerFiles(files);
         if (node != null && files.length)
           await this.cdp.send(
             "DOM.setFileInputFiles",
@@ -1311,29 +1317,25 @@ export class SharedBrowserServer {
           "the human is driving this browser; try again after they hand it back",
       });
     try {
-      const upstream = await fetch(
-        `${this.chromeHttp}${url.pathname}${url.search}`,
-        {
-          method: req.method === "PUT" ? "PUT" : "GET",
-        },
+      const upstream = await devToolsRequest(
+        this.devtools!,
+        `${url.pathname}${url.search}`,
+        req.method === "PUT" ? "PUT" : "GET",
       );
-      const text = await upstream.text();
-      const chromeHost = new URL(this.chromeHttp).host;
       const ours = `127.0.0.1:${(this.cdpServer.address() as any).port}`;
       res.writeHead(upstream.status, {
-        "content-type":
-          upstream.headers.get("content-type") ?? "application/json",
+        "content-type": upstream.contentType ?? "application/json",
       });
-      // A browser behind a tunnel reports its own (other) port: rewrite
-      // every DevTools address to ours.
+      // A browser behind a tunnel or in its own container reports its own
+      // (other) address: rewrite every DevTools address to ours.
+      let text = upstream.text;
+      if (this.devtools?.host) text = text.split(this.devtools.host).join(ours);
       res.end(
-        text
-          .split(chromeHost)
-          .join(ours)
-          .replace(
-            /(ws:\/\/|ws=)(?:127\.0\.0\.1|localhost|\[::1\]):\d+/g,
-            `$1${ours}`,
-          ),
+        // (Through a socket, Chromium names no port at all.)
+        text.replace(
+          /(ws:\/\/|ws=)(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?/g,
+          `$1${ours}`,
+        ),
       );
     } catch (err: any) {
       json(res, 502, { error: `${err?.message ?? err}` });
@@ -1345,13 +1347,10 @@ export class SharedBrowserServer {
       client.close(1013, "the browser is not connected");
       return;
     }
-    const upstream = new WebSocket(
-      `ws://${new URL(this.chromeHttp).host}${path}`,
-      {
-        perMessageDeflate: false,
-        maxPayload: 0,
-      },
-    );
+    const upstream = new WebSocket(devToolsWebSocketUrl(this.devtools!, path), {
+      perMessageDeflate: false,
+      maxPayload: 0,
+    });
     const pending: Array<WebSocket.RawData> = [];
     let open = false;
     // Screenshots of part of the page, by message id (see below).
@@ -1445,6 +1444,78 @@ export class SharedBrowserServer {
     )
       void this.activate(msg.params.targetId);
   }
+}
+
+/**
+ * Chromium's DevTools: on a TCP port (a browser in the project, or on the
+ * user's computer through a tunnel), or behind a unix socket (a browser in
+ * its own container).  The URL is its browser WebSocket's:
+ * ws://127.0.0.1:N/devtools/browser/ID or
+ * ws+unix:///path/cdp.sock:/devtools/browser/ID.
+ */
+export interface DevToolsEndpoint {
+  host?: string; // "127.0.0.1:N"
+  port?: number;
+  socketPath?: string;
+}
+
+export function devToolsEndpoint(webSocketUrl: string): DevToolsEndpoint {
+  const unix = webSocketUrl.match(/^ws\+unix:\/\/(\/[^:]+):\//);
+  if (unix) return { socketPath: unix[1] };
+  const url = new URL(webSocketUrl);
+  return { host: url.host, port: Number(url.port) || undefined };
+}
+
+export function devToolsWebSocketUrl(
+  endpoint: DevToolsEndpoint,
+  path: string,
+): string {
+  return endpoint.socketPath
+    ? `ws+unix://${endpoint.socketPath}:${path}`
+    : `ws://${endpoint.host}${path}`;
+}
+
+/** One request to Chromium's DevTools HTTP endpoints (/json/...). */
+export function devToolsRequest(
+  endpoint: DevToolsEndpoint,
+  path: string,
+  method = "GET",
+): Promise<{ status: number; contentType?: string; text: string }> {
+  return new Promise((resolve, reject) => {
+    const [hostname, port] = (endpoint.host ?? "").split(":");
+    const req = http.request(
+      {
+        ...(endpoint.socketPath
+          ? { socketPath: endpoint.socketPath }
+          : { hostname, port: Number(port) }),
+        path,
+        method,
+        // Chromium serves these only to a local Host (over TCP, the default
+        // one is: it names the port, which Chromium puts in the URLs).
+        ...(endpoint.socketPath ? { headers: { host: "127.0.0.1" } } : {}),
+        timeout: 10_000,
+      },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          text += chunk;
+          if (text.length > 4 * 1024 * 1024) req.destroy(Error("too large"));
+        });
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 502,
+            contentType: res.headers["content-type"],
+            text,
+          }),
+        );
+        res.on("error", reject);
+      },
+    );
+    req.on("timeout", () => req.destroy(Error("timeout")));
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 /**

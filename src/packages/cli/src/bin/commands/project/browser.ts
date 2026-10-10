@@ -43,6 +43,7 @@ import {
   sharedBrowserTunnelPort,
 } from "@cocalc/util/shared-browser";
 import { registerSharedBrowserCommands } from "./shared-browser";
+import { runBrowserContainerEntry } from "../../core/shared-browser/container-entry";
 import type { ProjectCommandDeps } from "../project";
 import {
   ensureManagedProjectSshConfigEntry,
@@ -516,6 +517,37 @@ export function registerProjectBrowserCommands(
     });
 
   registerSharedBrowserCommands(browser, deps);
+
+  browser
+    .command("container-entry", { hidden: true })
+    .description(
+      "run a shared browser in its own container (the project host starts this)",
+    )
+    .requiredOption("--run-dir <dir>", "the directory shared with the project")
+    .option(
+      "--profile-dir <dir>",
+      "persistent profile (with --key-fingerprint)",
+    )
+    .option("--key-fingerprint <fp>", "the project's browser key fingerprint")
+    .option("--url <url...>", "pages to open")
+    .option("--chrome <path>", "browser executable")
+    .action(
+      async (opts: {
+        runDir: string;
+        profileDir?: string;
+        keyFingerprint?: string;
+        url?: string[];
+        chrome?: string;
+      }) => {
+        await runBrowserContainerEntry({
+          runDir: opts.runDir,
+          profileDir: opts.profileDir,
+          keyFingerprint: opts.keyFingerprint,
+          urls: opts.url,
+          chrome: opts.chrome,
+        });
+      },
+    );
 
   browser
     .command("serve")

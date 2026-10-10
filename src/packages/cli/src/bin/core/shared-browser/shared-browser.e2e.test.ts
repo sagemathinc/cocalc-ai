@@ -223,18 +223,13 @@ async function sharedBrowser(
   };
 }
 
-// The environment of a `serve` the tests start: never with this project's
-// CoCalc credentials (it would serve viewers of the real browser).
+// The environment of a `serve` the tests start: nothing of this project's
+// CoCalc (no credentials of any kind: it would serve the real browser's
+// viewers, or ask the real host for containers).
 function withoutCoCalcCredentials(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  for (const name of [
-    "COCALC_SECRET_TOKEN",
-    "COCALC_PROJECT_ID",
-    "COCALC_API_URL",
-    "COCALC_BEARER_TOKEN",
-    "COCALC_API_KEY",
-  ])
-    delete env[name];
+  for (const name of Object.keys(env))
+    if (name.startsWith("COCALC_") || name === "BASE_URL") delete env[name];
   return env;
 }
 
@@ -465,7 +460,7 @@ test(
         await viewer.handBack();
       };
       await clickButton();
-      assert.equal(await page.title(), "clicked 1");
+      await page.waitForFunction(() => document.title === "clicked 1");
       // A screenshot (the agent's) does not shift where clicks land...
       assert.ok((await page.screenshot()).length > 0);
       // ...and the page stays zoomed (Chromium resets it after a clipped
@@ -473,7 +468,7 @@ test(
       await page.waitForFunction(() => devicePixelRatio === 2);
       assert.equal(await page.evaluate(() => innerWidth), 500);
       await clickButton();
-      assert.equal(await page.title(), "clicked 2");
+      await page.waitForFunction(() => document.title === "clicked 2");
 
       // Back to 100%; out of range zooms are clamped.
       await viewer.say({ type: "zoom", zoom: 1 });
@@ -1824,3 +1819,150 @@ test("viewers over conat: hello, state, frames with acknowledgements, requests, 
     await conat.close();
   }
 });
+
+test(
+  "a browser in its own container: reached only through its socket, with the project's keyring; another key starts over",
+  { ...needsChrome, timeout: 180_000 },
+  async () => {
+    const { spawn } = require("node:child_process");
+    const { createServer } = require("node:http");
+    const {
+      existsSync,
+      mkdtempSync,
+      readFileSync,
+      rmSync,
+    } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const { chromium } = require("playwright-core");
+    const { devToolsRequest } = require("./server");
+    const site = createServer((req: any, res: any) => {
+      if (req.url === "/sign-in")
+        res.setHeader("Set-Cookie", "session=signed-in; Max-Age=86400; Path=/");
+      res.setHeader("content-type", "text/html");
+      res.end("<title>site</title>ok");
+    });
+    await new Promise<void>((resolve) =>
+      site.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const origin = `http://127.0.0.1:${site.address().port}`;
+    const dir = mkdtempSync(join(tmpdir(), "cocalc-browser-container-"));
+    const runDir = join(dir, "run");
+    const profileDir = join(dir, "profile");
+    const socket = join(runDir, "cdp.sock");
+    const cli = join(process.cwd(), "dist/bin/cocalc.js");
+    let entry: any = null;
+    let ring: any = null;
+    let log = "";
+    const start = async (fingerprint: string) => {
+      entry = spawn(
+        process.execPath,
+        [
+          cli,
+          "project",
+          "browser",
+          "container-entry",
+          "--run-dir",
+          runDir,
+          "--profile-dir",
+          profileDir,
+          "--key-fingerprint",
+          fingerprint,
+        ],
+        {
+          env: { ...withoutCoCalcCredentials(), COCALC_CHROME: executable },
+          stdio: ["ignore", "ignore", "pipe"],
+        },
+      );
+      entry.stderr.on("data", (d: Buffer) => (log += d.toString()));
+      await until(
+        () => existsSync(socket),
+        (ok) => ok,
+        `the socket\n${log}`,
+        30_000,
+      );
+    };
+    const stop = async () => {
+      if (!entry || entry.exitCode != null) return;
+      const exited = new Promise((r) => entry.once("exit", r));
+      entry.kill("SIGTERM");
+      await exited;
+    };
+    // The project side: its keyring (on the shared bus socket) and serve.
+    const keyring = async (key: string) =>
+      startBrowserKeyring({
+        secret: profileSecret(Buffer.from(key), "x"),
+        socketPath: join(runDir, "bus.sock"),
+      });
+    const session = async () => {
+      const version = JSON.parse(
+        (await devToolsRequest({ socketPath: socket }, "/json/version")).text,
+      );
+      const path = new URL(version.webSocketDebuggerUrl).pathname;
+      const server = new SharedBrowserServer({
+        chromeWebSocketUrl: `ws+unix://${socket}:${path}`,
+        host: "127.0.0.1",
+        port: 0,
+        cdpPort: 0,
+      });
+      const { cdpPort } = await server.start();
+      const agent = await chromium.connectOverCDP(
+        `http://127.0.0.1:${cdpPort}`,
+      );
+      return { server, agent };
+    };
+    const cookies = async (agent: any) =>
+      (await agent.contexts()[0].cookies())
+        .filter((c: any) => c.name === "session")
+        .map((c: any) => c.value);
+    try {
+      require("node:fs").mkdirSync(runDir, { recursive: true });
+      ring = await keyring("project browser key A, long enough");
+      await start("fingerprint-a");
+      let { server, agent } = await session();
+      // A viewer is served frames, an agent drives, through the socket.
+      const viewer = new TestViewer(server);
+      await viewer.resize(800, 500);
+      await agent.contexts()[0].pages()[0].goto(`${origin}/sign-in`);
+      await until(
+        () => viewer.frames.length,
+        (n) => n > 0,
+        "frames",
+      );
+      assert.deepEqual(await cookies(agent), ["signed-in"]);
+      assert.ok(
+        Array.isArray(
+          JSON.parse(readFileSync(join(runDir, "recent.json"), "utf8")),
+        ),
+      );
+      await agent.close().catch(() => {});
+      await server.close();
+      await stop();
+
+      // Restarted with the same key: still signed in.
+      await start("fingerprint-a");
+      ({ server, agent } = await session());
+      assert.deepEqual(await cookies(agent), ["signed-in"]);
+      await agent.close().catch(() => {});
+      await server.close();
+      await stop();
+      await ring.close();
+
+      // Another key (Forget sign-ins): an empty profile.
+      ring = await keyring("project browser key B, long enough");
+      await start("fingerprint-b");
+      ({ server, agent } = await session());
+      assert.deepEqual(await cookies(agent), []);
+      assert.match(log, /another key: started over/);
+      await agent.close().catch(() => {});
+      await server.close();
+      await stop();
+      await ring.close();
+    } finally {
+      await stop();
+      await ring?.close().catch(() => {});
+      site.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

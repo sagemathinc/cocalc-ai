@@ -21,6 +21,27 @@ export const SHARED_BROWSER_KEY_SECRET = "COCALC_BROWSER_KEY";
 
 export const SHARED_BROWSER_FILE_APP_ID_RE = /^cocalc-browser-[0-9a-f]{16}$/;
 
+export function isSharedBrowserAppId(id: string): boolean {
+  return id === SHARED_BROWSER_APP_ID || SHARED_BROWSER_FILE_APP_ID_RE.test(id);
+}
+
+// Where a project and its browsers' own containers share a directory: each
+// browser's DevTools socket, the project's keyring socket for it, and files
+// for its pages (see cli/src/bin/core/shared-browser/container-entry.ts).
+export const SHARED_BROWSER_RUN_DIR = "/run/cocalc-browser";
+
+/** The name of a project's browser container. */
+export function sharedBrowserContainerName(
+  project_id: string,
+  appId: string,
+): string {
+  const suffix =
+    appId === SHARED_BROWSER_APP_ID
+      ? ""
+      : `-${appId.slice(SHARED_BROWSER_APP_ID.length + 1)}`;
+  return `${SHARED_BROWSER_APP_ID}-${project_id}${suffix}`;
+}
+
 // 64 bits of hash: FNV-1a over the UTF-8 bytes, twice with different seeds.
 function fnv1a32(bytes: Uint8Array, seed: number): string {
   let hash = seed >>> 0;

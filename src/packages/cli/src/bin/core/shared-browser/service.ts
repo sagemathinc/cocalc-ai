@@ -16,11 +16,15 @@ import {
   type ProfileStorage,
 } from "../local-browser";
 import {
+  constants as fsConstants,
+  copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, hostname } from "node:os";
@@ -33,7 +37,13 @@ import {
   startBrowserKeyring,
   type BrowserKeyring,
 } from "./keyring";
-import { SharedBrowserServer } from "./server";
+import {
+  devToolsRequest,
+  type DevToolsEndpoint,
+  SharedBrowserServer,
+} from "./server";
+import { recentSites } from "./start-page";
+import type { StartPageSite } from "@cocalc/util/shared-browser-protocol";
 import { serveViewers } from "./viewer-socket";
 import { openCurrentProjectConnection } from "../../../api/current-project";
 
@@ -43,6 +53,7 @@ import {
   SHARED_BROWSER_APP_ID,
   SHARED_BROWSER_FILE_APP_ID_RE,
   SHARED_BROWSER_KEY_SECRET,
+  SHARED_BROWSER_RUN_DIR,
   sharedBrowserFileAppId,
   sharedBrowserTunnelPort,
   type SharedBrowserRunsOn,
@@ -172,6 +183,7 @@ const NO_THROTTLING = [
 export function sharedBrowserChromeArgs(
   profileDir: string,
   urls: string[] = ["about:blank"],
+  { sandbox = false }: { sandbox?: boolean } = {},
 ): string[] {
   return [
     `--user-data-dir=${profileDir}`,
@@ -179,9 +191,9 @@ export function sharedBrowserChromeArgs(
     "--remote-debugging-address=127.0.0.1",
     ...HIDE_AUTOMATION,
     "--headless=new",
-    // Project containers cannot create the namespaces Chromium's sandbox
-    // needs.  The project is the security boundary (see the README).
-    "--no-sandbox",
+    // Chromium's own sandbox needs namespaces that project containers
+    // cannot create; a browser's own container can (see container-entry.ts).
+    ...(sandbox ? [] : ["--no-sandbox"]),
     "--disable-gpu",
     // Containers give /dev/shm only a few MB; use /tmp for shared memory.
     "--disable-dev-shm-usage",
@@ -226,6 +238,20 @@ export async function runSharedBrowserService({
   const tunnelPort = file && appId ? sharedBrowserTunnelPort(appId) : null;
   const profileId = appId ?? SHARED_BROWSER_APP_ID;
 
+  // Connect to CoCalc first: for viewers, and for the host, which runs the
+  // browser in a container of its own.
+  const projectId = currentProjectId();
+  let client: any = null;
+  try {
+    ({ client } = await openCurrentProjectConnection({ projectId }));
+  } catch (err: any) {
+    // Agents can still use it; nobody can watch.
+    log(`no viewers: cannot connect to CoCalc: ${err?.message ?? err}`);
+  }
+  // Projects started before their host could do that run it here.
+  let isolate = !!client && !!projectId && existsSync(SHARED_BROWSER_RUN_DIR);
+  const runDir = join(SHARED_BROWSER_RUN_DIR, profileId);
+
   const server = new SharedBrowserServer({
     host,
     port,
@@ -233,8 +259,8 @@ export async function runSharedBrowserService({
     // A .browser file's browser is the human's first.
     humanFirst: !!file,
     title: file ? basename(file) : "Web browser",
-    historyFile: () =>
-      local ? join(local.profile.path, "Default", "History") : null,
+    recent: () => local?.recent() ?? [],
+    offerFiles: (paths) => local?.offerFiles(paths) ?? paths,
     ...(file
       ? {
           runsOn,
@@ -247,39 +273,43 @@ export async function runSharedBrowserService({
   await server.start();
 
   // Viewers (CoCalc's frontend) connect over conat, as to a terminal.
-  let viewers: { close: () => void } | null = null;
-  try {
-    const projectId = currentProjectId();
-    const { client } = await openCurrentProjectConnection({ projectId });
-    viewers = serveViewers({
-      client,
-      server,
-      projectId: projectId!,
-      appId: profileId,
-      log,
-    });
-  } catch (err: any) {
-    // Agents can still use it; nobody can watch.
-    log(`no viewers: cannot connect to CoCalc: ${err?.message ?? err}`);
-  }
+  const viewers = client
+    ? serveViewers({
+        client,
+        server,
+        projectId: projectId!,
+        appId: profileId,
+        log,
+      })
+    : null;
 
-  // The browser in the project, while the file says it runs here.
-  let local: {
-    browser: Awaited<ReturnType<typeof launchBrowser>>;
-    profile: Pick<ProfileDir, "path" | "backing" | "cleanup" | "release">;
-    watchdog: ReturnType<typeof startCleanupWatchdog>;
-    keyring: BrowserKeyring | null;
+  // The browser, while it runs in the project or in its own container (not
+  // on the user's computer).
+  interface Local {
     // The project key it runs with (null: a temporary profile).
     keyId: string | null;
-  } | null = null;
+    pages(): Promise<string[]>;
+    stop(): Promise<void>;
+    recent(): StartPageSite[];
+    // What a page's file chooser gets for these project files.
+    offerFiles(paths: string[]): string[];
+  }
+  let local: Local | null = null;
   let stopping = false;
 
-  const startLocal = async (urls?: string[]) => {
+  // Sign-ins are kept only with the project's browser key: Chromium encrypts
+  // cookies with it (see ./keyring.ts), and drops the ones it cannot
+  // decrypt, so a kept profile never runs without the keyring.
+  const describeKey = (keyring: BrowserKeyring | null) =>
+    keyring
+      ? "sign-ins encrypted with the project's browser key"
+      : `no ${SHARED_BROWSER_KEY_SECRET} project secret, so sign-ins are not kept`;
+
+  const startInProject = async (
+    key: Buffer | null,
+    urls?: string[],
+  ): Promise<Local> => {
     const executable = findSharedBrowserChrome(chrome, sys);
-    // Sign-ins are kept only with the project's browser key: Chromium
-    // encrypts cookies with it (see ./keyring.ts), and drops the ones it
-    // cannot decrypt, so a kept profile never runs without the keyring.
-    const key = readBrowserKey();
     let keyring: BrowserKeyring | null = null;
     let profile: Pick<ProfileDir, "path" | "backing" | "cleanup" | "release">;
     if (key) {
@@ -312,39 +342,129 @@ export async function runSharedBrowserService({
       browserMarker: `--user-data-dir=${profile.path}`,
       release: profile.release,
     });
-    local = { browser, profile, watchdog, keyring, keyId: keyFingerprint(key) };
-    const current = local;
+    const endpoint = { host: `127.0.0.1:${browser.port}`, port: browser.port };
+    const running: Local = {
+      keyId: keyFingerprint(key),
+      pages: () => openPageUrls(endpoint),
+      recent: () => recentSites(join(profile.path, "Default", "History")),
+      offerFiles: (paths) => paths,
+      stop: async () => {
+        server.detachChrome();
+        await cleanupThenDisarm(
+          [() => browser.stop(), () => profile.cleanup()],
+          watchdog,
+          (err) => log(`cleanup: ${(err as Error)?.message ?? err}`),
+        );
+        await keyring?.close().catch(() => {});
+      },
+    };
     // The app manager restarts the service on the next use.
     void browser.exited.then(() => {
-      if (local === current && !stopping)
+      if (local === running && !stopping)
         void stop(
           `the browser exited (code ${browser.child.exitCode ?? browser.child.signalCode})\n${browser.stderrTail()}`,
         );
     });
-    const version = await (
-      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
-    ).json();
+    const version = JSON.parse(
+      (await devToolsRequest(endpoint, "/json/version")).text,
+    );
     await server.attachChrome(version.webSocketDebuggerUrl);
     log(
-      `${version.Browser}; profile in ${profile.backing}; ${
-        keyring
-          ? "sign-ins encrypted with the project's browser key"
-          : `no ${SHARED_BROWSER_KEY_SECRET} project secret, so sign-ins are not kept`
-      }`,
+      `${version.Browser} in the project, without Chromium's sandbox; profile in ${profile.backing}; ${describeKey(keyring)}`,
     );
+    return running;
+  };
+
+  const startInContainer = async (
+    key: Buffer | null,
+    urls?: string[],
+  ): Promise<Local> => {
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    const keyring = key
+      ? await startBrowserKeyring({
+          secret: profileSecret(key, profileId),
+          socketPath: join(runDir, "bus.sock"),
+          log,
+        })
+      : null;
+    const hostApi = client.call(`project.${projectId}.shared-browser.-`, {
+      timeout: 150_000,
+    });
+    let info: { name: string; network: string; socket: string };
+    try {
+      info = await hostApi.start({
+        appId: profileId,
+        network: "own",
+        keyFingerprint: keyFingerprint(key),
+        urls,
+      });
+    } catch (err) {
+      await keyring?.close().catch(() => {});
+      throw err;
+    }
+    const endpoint = { socketPath: info.socket };
+    let version: any = null;
+    const deadline = Date.now() + 60_000;
+    while (!version) {
+      try {
+        version = JSON.parse(
+          (await devToolsRequest(endpoint, "/json/version")).text,
+        );
+      } catch (err) {
+        if (Date.now() > deadline) {
+          await hostApi.stop(profileId).catch(() => {});
+          await keyring?.close().catch(() => {});
+          throw Error(`the browser's container did not start: ${err}`);
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+    const path = new URL(version.webSocketDebuggerUrl).pathname;
+    await server.attachChrome(`ws+unix://${info.socket}:${path}`);
+    log(
+      `${version.Browser} in its own container (${info.network} network) with Chromium's sandbox; ${describeKey(keyring)}`,
+    );
+    return {
+      keyId: keyFingerprint(key),
+      pages: () => openPageUrls(endpoint),
+      recent: () => readRecent(join(runDir, "recent.json")),
+      offerFiles: (paths) => offerToContainer(paths, join(runDir, "exchange")),
+      stop: async () => {
+        server.detachChrome();
+        await hostApi
+          .stop(profileId)
+          .catch((err: any) => log(`stop: ${err?.message ?? err}`));
+        await keyring?.close().catch(() => {});
+      },
+    };
+  };
+
+  const startLocal = async (urls?: string[]) => {
+    const key = readBrowserKey();
+    if (isolate) {
+      try {
+        local = await startInContainer(key, urls);
+        return;
+      } catch (err: any) {
+        // A host without the service (an older version) answers nobody.
+        if (
+          !/no responders|503/i.test(
+            `${err?.code ?? ""} ${err?.message ?? err}`,
+          )
+        )
+          throw err;
+        log("this project's host cannot give the browser its own container");
+        isolate = false;
+      }
+    }
+    local = await startInProject(key, urls);
   };
 
   const stopLocal = async () => {
     const current = local;
     if (!current) return;
     local = null;
-    server.detachChrome();
-    await cleanupThenDisarm(
-      [() => current.browser.stop(), () => current.profile.cleanup()],
-      current.watchdog,
-      (err) => log(`cleanup: ${(err as Error)?.message ?? err}`),
-    );
-    await current.keyring?.close().catch(() => {});
+    await current.stop();
   };
 
   // The project's browser key was created, replaced or deleted: start over
@@ -352,7 +472,7 @@ export async function runSharedBrowserService({
   const restartLocal = async () => {
     const current = local;
     if (!current) return;
-    const urls = await openPageUrls(current.browser.port);
+    const urls = await current.pages();
     await stopLocal();
     // Deleted: forget everything this browser kept.
     if (!readBrowserKey()) removeProfile(sharedBrowserProfileDir(profileId));
@@ -450,14 +570,63 @@ export async function runSharedBrowserService({
   await new Promise(() => {});
 }
 
-// The pages open in a browser, to reopen them in a restarted one.
-async function openPageUrls(port: number): Promise<string[]> {
+// The start page's recent sites, which a browser in its own container
+// writes for us (its profile is not in the project).
+export function readRecent(path: string): StartPageSite[] {
   try {
-    const targets = await (
-      await fetch(`http://127.0.0.1:${port}/json/list`, {
-        signal: AbortSignal.timeout(2000),
-      })
-    ).json();
+    if (statSync(path).size > 256 * 1024) return [];
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter(
+        (site: any) =>
+          typeof site?.url === "string" &&
+          /^https?:\/\//.test(site.url) &&
+          typeof site?.title === "string",
+      )
+      .slice(0, 8)
+      .map((site: any) => ({
+        url: site.url.slice(0, 2000),
+        title: site.title.slice(0, 60),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+const MAX_OFFERED_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * Project files for a page's file chooser, when the browser runs in its own
+ * container, which sees none of the project's files: copies in the
+ * directory it shares, under a new random name (never through anything the
+ * browser may have put there), removed after a while.
+ */
+export function offerToContainer(paths: string[], exchange: string): string[] {
+  let total = 0;
+  for (const path of paths) total += statSync(path).size;
+  if (total > MAX_OFFERED_BYTES)
+    throw Error("these files are too large to upload");
+  mkdirSync(exchange, { recursive: true, mode: 0o700 });
+  const dir = mkdtempSync(join(exchange, "files-"));
+  const offered = paths.map((path) => {
+    const copy = join(dir, basename(path));
+    copyFileSync(path, copy, fsConstants.COPYFILE_EXCL);
+    return copy;
+  });
+  setTimeout(
+    () => rmSync(dir, { recursive: true, force: true }),
+    10 * 60_000,
+  ).unref();
+  return offered;
+}
+
+// The pages open in a browser, to reopen them in a restarted one.
+async function openPageUrls(endpoint: DevToolsEndpoint): Promise<string[]> {
+  try {
+    const targets = JSON.parse(
+      (await devToolsRequest(endpoint, "/json/list")).text,
+    );
     return targets
       .filter(
         (t: any) => t.type === "page" && /^https?:/.test(`${t.url ?? ""}`),
