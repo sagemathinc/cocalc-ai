@@ -28,9 +28,20 @@ persisted_runtime_dir="${COCALC_STAR_DOCKER_STATE_DIR:-/var/lib/cocalc/star-dock
 if ! mountpoint -q "$runtime_dir"; then
   install -d -m 0755 -o root -g root "$persisted_runtime_dir" "$runtime_dir"
   # A runtime installed into the container while the mount was unavailable
-  # must not be hidden by an empty volume directory.
+  # must not be hidden by an empty volume directory. Copy it next to the
+  # target first, so an interrupted copy leaves the target empty and is
+  # retried on the next boot.
   if [ -z "$(ls -A "$persisted_runtime_dir")" ] && [ -n "$(ls -A "$runtime_dir")" ]; then
-    cp -a "${runtime_dir}/." "${persisted_runtime_dir}/"
+    seed="${persisted_runtime_dir}.seed"
+    rm -rf "$seed"
+    if cp -a "$runtime_dir" "$seed" && rmdir "$persisted_runtime_dir" &&
+      mv "$seed" "$persisted_runtime_dir"; then
+      :
+    else
+      rm -rf "$seed"
+      install -d -m 0755 -o root -g root "$persisted_runtime_dir"
+      echo "warning: could not copy the container runtime into the volume" >&2
+    fi
   fi
   if ! mount --bind "$persisted_runtime_dir" "$runtime_dir"; then
     echo "warning: could not keep the container runtime in the volume; it is reinstalled with each new container" >&2
