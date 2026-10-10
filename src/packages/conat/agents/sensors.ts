@@ -573,6 +573,8 @@ print(json.dumps({"wake": True, "summary": summary, "data": {"repo": P["repo"], 
       params +
       `import stat
 path = os.path.expanduser(P["path"])
+if not os.path.isabs(path):
+    path = os.path.join(os.path.expanduser("~"), path)
 try:
     info = os.stat(path)
 except OSError:

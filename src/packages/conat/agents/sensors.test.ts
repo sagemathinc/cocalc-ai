@@ -326,7 +326,12 @@ describe("watchers", () => {
       match: "DONE (",
     })!;
     const run = (cwd = dir) =>
-      execFileSync("python3", ["-c", script], { cwd, encoding: "utf8" });
+      execFileSync("python3", ["-c", script], {
+        cwd,
+        encoding: "utf8",
+        // Relative paths are relative to the home directory.
+        env: { ...process.env, HOME: dir },
+      });
     expect(run()).toBe("");
     writeFileSync(join(dir, "out.log"), "working\n");
     expect(run()).toBe("");
@@ -350,7 +355,12 @@ describe("watchers", () => {
             ...(match ? { match } : {}),
           })!,
         ],
-        { cwd: dir, encoding: "utf8", timeout: 10_000 },
+        {
+          cwd: dir,
+          encoding: "utf8",
+          timeout: 10_000,
+          env: { ...process.env, HOME: dir },
+        },
       );
     // Devices and directories never count, so /dev/zero is never read.
     expect(run("/dev/zero", "x")).toBe("");

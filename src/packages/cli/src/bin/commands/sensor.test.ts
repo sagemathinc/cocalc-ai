@@ -9,7 +9,7 @@ import {
   parseSensorWake,
   sensorWatchScript,
 } from "@cocalc/conat/agents/sensors";
-import { exitWatcherArgs } from "./sensor";
+import { exitWatcherArgs, watchedPath } from "./sensor";
 
 test("an exit watcher's command reports its output and exit code, and the watcher wakes on it", () => {
   const home = mkdtempSync(join(tmpdir(), "sensor-exit-"));
@@ -41,4 +41,17 @@ test("an exit watcher's command reports its output and exit code, and the watche
   assert.equal(wake.summary, '"make" exited with code 3');
   assert.equal((wake.data as any).exit_code, 3);
   assert.match((wake.data as any).output_tail, /it's done: 2/);
+});
+
+test("a file watcher's relative path means where the agent ran the command", () => {
+  assert.equal(
+    watchedPath("build.log", "/home/user/proj"),
+    "/home/user/proj/build.log",
+  );
+  assert.equal(watchedPath("../out/x", "/home/user/proj"), "/home/user/out/x");
+  assert.equal(
+    watchedPath("~/sensor-test.txt", "/home/user/proj"),
+    "~/sensor-test.txt",
+  );
+  assert.equal(watchedPath("/tmp/x", "/home/user/proj"), "/tmp/x");
 });

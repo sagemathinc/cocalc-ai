@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Command } from "commander";
 import {
   parseSensorWake,
@@ -136,6 +136,14 @@ async function testSpec(spec: any) {
   };
 }
 
+/** Where the agent runs the command is what a relative path means. */
+export function watchedPath(path: string, cwd = process.cwd()): string {
+  const trimmed = `${path ?? ""}`.trim();
+  if (!trimmed || trimmed.startsWith("~") || isAbsolute(trimmed))
+    return trimmed;
+  return resolve(cwd, trimmed);
+}
+
 /**
  * The command an exit watcher waits for, as a terminal runs it: its output
  * goes to the log (and the terminal), then its exit code to the status file.
@@ -251,9 +259,12 @@ export function registerSensorCommand(
   watch
     .command("file")
     .description(
-      "when a regular file exists (relative to this chat's directory), optionally once its last 1 MB contains some text",
+      "when a regular file exists, optionally once its last 1 MB contains some text",
     )
-    .requiredOption("--path <path>", "file to watch")
+    .requiredOption(
+      "--path <path>",
+      "file to watch (a relative path is relative to the current directory)",
+    )
     .option(
       "--match <text>",
       "wait until it contains this text (plain text, not a regular expression)",
@@ -267,7 +278,7 @@ export function registerSensorCommand(
           op: "watch",
           watch: {
             type: "file",
-            path: opts.path,
+            path: watchedPath(opts.path),
             ...(opts.match ? { match: opts.match } : {}),
           },
           ...hours(opts.hours),

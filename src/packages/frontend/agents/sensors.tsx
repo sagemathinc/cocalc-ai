@@ -9,7 +9,7 @@
 // - Scheduled prompts are turns you schedule (or approve).
 // - Watchers are CoCalc's own one-shot checks the agent sets itself.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -37,6 +37,7 @@ import {
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components";
+import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi } from "./api";
 
@@ -85,7 +86,36 @@ export function sensorAccessText(spec: SensorSpec): string {
     : "This project's files and software only";
 }
 
-function CodeBlock({ label, children }: { label: string; children: string }) {
+const CODEMIRROR_MODE: Record<string, string> = {
+  sh: "shell",
+  python: "python",
+  node: "javascript",
+};
+
+function CodeBlock({
+  label,
+  children,
+  language,
+}: {
+  label: string;
+  children: string;
+  language?: string;
+}) {
+  const mode = language ? CODEMIRROR_MODE[language] : undefined;
+  if (mode)
+    return (
+      <div
+        aria-label={label}
+        tabIndex={0}
+        style={{ maxHeight: 320, overflow: "auto", fontSize: 12 }}
+      >
+        <CodeMirrorStatic
+          value={children}
+          options={{ mode, lineNumbers: false, lineWrapping: true }}
+          font_size={12}
+        />
+      </div>
+    );
   return (
     <pre
       aria-label={label}
@@ -178,7 +208,10 @@ function SpecDetails({ spec }: { spec: SensorSpec }) {
           },
         ]}
       />
-      <CodeBlock label={`${LANGUAGE[script.language]} script`}>
+      <CodeBlock
+        label={`${LANGUAGE[script.language]} script`}
+        language={script.language}
+      >
         {script.script}
       </CodeBlock>
     </>
@@ -191,6 +224,7 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
   const [open, setOpen] = useState(false);
   const load = async () => {
     setOpen(true);
+    setError("");
     try {
       const result = await personalAgentApi().listSensors({
         project_id: sensor.project_id,
@@ -201,6 +235,10 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
       setError(err instanceof Error ? err.message : `${err}`);
     }
   };
+  // A run that finishes while the log is open shows up in it.
+  useEffect(() => {
+    if (open) void load();
+  }, [sensor.last_run_at]);
   if (!open)
     return (
       <Button size="small" onClick={() => void load()}>
@@ -209,7 +247,17 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
     );
   if (error) return <Alert type="error" title={error} />;
   if (!runs) return <Spin aria-label="Loading runs" />;
-  if (runs.length === 0) return <Empty description="No runs yet" />;
+  if (runs.length === 0)
+    return (
+      <Empty
+        description={
+          sensor.next_run_at &&
+          new Date(sensor.next_run_at).valueOf() <= Date.now()
+            ? "No runs yet; one is starting now"
+            : "No runs yet"
+        }
+      />
+    );
   return (
     <div style={{ width: "100%" }}>
       {runs.map((run) => (
@@ -268,6 +316,11 @@ function SensorCard({
         revision: sensor.revision,
       });
       onChanged();
+      // The scheduler picks a requested run up within about half a minute;
+      // look again so its result shows without waiting for the next poll.
+      if (op === "run")
+        for (const ms of [15_000, 40_000, 90_000])
+          setTimeout(() => onChanged(), ms);
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
       onChanged();
@@ -363,7 +416,13 @@ function SensorCard({
           )}
           {sensor.next_run_at && (
             <div>
-              Next run <TimeAgo date={sensor.next_run_at} />
+              {new Date(sensor.next_run_at).valueOf() <= Date.now() ? (
+                "Next run: starting now"
+              ) : (
+                <>
+                  Next run <TimeAgo date={sensor.next_run_at} />
+                </>
+              )}
             </div>
           )}
           {kind !== "watch" && (

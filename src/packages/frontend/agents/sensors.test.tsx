@@ -91,9 +91,10 @@ test("a proposal shows the full script and approves the revision reviewed", asyn
     ),
   ).toBeTruthy();
   expect(within(card).getByText("Every 30 minutes")).toBeTruthy();
-  expect(within(card).getByLabelText("Python 3 script").textContent).toBe(
-    "print('checking')",
-  );
+  // The full script, highlighted.
+  expect(
+    within(card).getByLabelText("Python 3 script").textContent?.trim(),
+  ).toBe("print('checking')");
   await userEvent.click(
     within(card).getByRole("button", { name: "Approve and run" }),
   );
