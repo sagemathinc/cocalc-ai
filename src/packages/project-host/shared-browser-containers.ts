@@ -26,6 +26,7 @@ The container:
   without internet), the project's network.
 */
 
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -160,6 +161,34 @@ async function removeContainer(project_id: string, name: string) {
     );
 }
 
+// Chromium's sandbox makes user namespaces.  Ubuntu lets only processes
+// under an AppArmor profile that allows it (its "podman" profile does, as its
+// "chrome" profile does for Chrome); CoCalc's own podman, under /opt, gets
+// no profile by path.  So this container, and only it (not the project's),
+// runs under that profile where the host has it.
+let appArmorPrefix: Promise<string[]> | null = null;
+function podmanAppArmorPrefix(): Promise<string[]> {
+  appArmorPrefix ??= new Promise((resolve) =>
+    execFile(
+      "aa-exec",
+      ["-p", "podman", "--", "true"],
+      { timeout: 10_000 },
+      (err) => resolve(err ? [] : ["aa-exec", "-p", "podman", "--"]),
+    ),
+  );
+  return appArmorPrefix;
+}
+
+async function browserLauncher(project_id: string) {
+  const launcher = projectPoolPodmanLauncher(project_id);
+  const prefix = await podmanAppArmorPrefix();
+  if (prefix.length === 0) return launcher;
+  return {
+    command: prefix[0],
+    argsPrefix: [...prefix.slice(1), launcher.command, ...launcher.argsPrefix],
+  };
+}
+
 export async function startSharedBrowserContainer(
   project_id: string,
   request: SharedBrowserStartRequest,
@@ -276,7 +305,7 @@ export async function startSharedBrowserContainer(
   });
   try {
     await podman(args, {
-      launcher: projectPoolPodmanLauncher(project_id),
+      launcher: await browserLauncher(project_id),
       timeout: 120,
     });
     await verifyProjectContainerInPool({ project_id, name });
