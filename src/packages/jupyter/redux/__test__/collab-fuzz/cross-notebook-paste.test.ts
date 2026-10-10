@@ -70,7 +70,6 @@ describe("copy cells in one notebook, paste into another", () => {
     const inputs = b
       .cellList()
       .map((id: string) => b.store.getIn(["cells", id, "input"]));
-    console.log("B inputs after paste:", inputs, "\nB doc:\n" + b.doc());
     expect(inputs).toEqual(["y = 2", "x = 1", "print(x)", "z = 3"]);
     a.stop();
     b.stop();
