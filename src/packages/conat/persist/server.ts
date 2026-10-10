@@ -97,6 +97,10 @@ const ENABLE_SQLITE_GENERAL_QUERIES = false;
 
 const SEND_THROTTLE = 30;
 
+// After a socket's stream fails to open, a request retries the open at most
+// this often.
+const INIT_RETRY_INTERVAL_MS = 1000;
+
 const streamReleaseQueue = new PersistStreamReleaseQueue({
   onError: (err) => {
     logger.warn("error releasing deferred persistent stream", { err });
@@ -204,38 +208,97 @@ export function server({
     let stream: undefined | PersistentStream = undefined;
     let user = "";
     let added = false;
-    socket.on("data", async (data) => {
-      // log("server: got data ", data);
-      if (stream == null) {
-        storage = data.storage;
-        changefeed = data.changefeed;
+    let initializing: Promise<void> | undefined;
+    let lastInitAttemptAt = 0;
+    let closed = false;
+
+    // Open the stream for this socket. A failure is remembered so requests can
+    // report it, but it is not permanent: storage errors such as a full project
+    // quota are usually transient, and a long-lived client may keep using this
+    // socket for hours, so requests retry the open (see retryInit).
+    const initStream = (): Promise<void> => {
+      initializing ??= (async () => {
+        lastInitAttemptAt = Date.now();
         try {
-          user = socket.subject.split(".")[1];
-          usage.add(user);
-          added = true;
-          stream = await getStream({
+          if (!added) {
+            user = socket.subject.split(".")[1];
+            usage.add(user);
+            added = true;
+          }
+          const opened = await getStream({
             subject: socket.subject,
             storage: storage!,
             service,
             maintenance,
           });
+          if (closed) {
+            streamReleaseQueue.schedule(opened);
+            return;
+          }
+          stream = opened;
+          if (error) {
+            logger.info("persistent stream initialized after earlier failure", {
+              subject: socket.subject,
+              path: storage?.path,
+              previous_error: error,
+            });
+          }
+          error = "";
+          errorCode = undefined;
           if (changefeed) {
             startChangefeed({ socket, stream, messagesThresh });
           }
-          socket.emit("stream-initialized");
         } catch (err) {
           error = `${err}`;
           errorCode =
             (err as any)?.code ??
             classifyPersistStorageErrorCode(err) ??
             (error.includes("permission denied") ? 403 : undefined);
-          socket.write(null, { headers: { error, code: errorCode } });
-          socket.emit("stream-initialized");
+          logger.warn("persistent stream initialization failed", {
+            subject: socket.subject,
+            path: storage?.path,
+            code: errorCode,
+            err: error,
+          });
+          throw err;
+        } finally {
+          initializing = undefined;
         }
+      })();
+      return initializing;
+    };
+
+    const retryInit = async (): Promise<void> => {
+      if (
+        storage == null ||
+        errorCode == 403 ||
+        Date.now() - lastInitAttemptAt < INIT_RETRY_INTERVAL_MS
+      ) {
+        return;
+      }
+      try {
+        await initStream();
+      } catch {
+        // error and errorCode now describe the latest attempt
+      }
+    };
+
+    socket.on("data", async (data) => {
+      // log("server: got data ", data);
+      if (stream == null && initializing == null) {
+        storage = data.storage;
+        changefeed = data.changefeed;
+        try {
+          await initStream();
+        } catch {
+          socket.write(null, { headers: { error, code: errorCode } });
+        }
+        socket.emit("stream-initialized");
       }
     });
     socket.on("closed", () => {
       log("socket closed", id, socket.subject);
+      closed = true;
       storage = undefined;
       if (stream != null) {
         streamReleaseQueue.schedule(stream);
@@ -251,11 +314,13 @@ export function server({
       // log("got request", request);
 
       try {
-        if (error) {
-          throw new ConatError(error, { code: errorCode });
-        }
-        if (stream == null) {
+        if (stream == null && initializing == null && !error) {
           await once(socket, "stream-initialized", request.timeout ?? 30000);
+        } else if (initializing != null) {
+          await initializing.catch(() => {});
+        }
+        if (error) {
+          await retryInit();
         }
         if (error) {
           throw new ConatError(error, { code: errorCode });

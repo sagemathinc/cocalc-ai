@@ -86,3 +86,33 @@ describe("persist socket-ready recovery", () => {
     persist.close();
   });
 });
+
+describe("persist stream open errors", () => {
+  beforeAll(() => {
+    process.env.COCALC_TEST_MODE = "true";
+    disablePermissionCheck();
+  });
+
+  it("reconnects after a storage error instead of closing the shared client", () => {
+    const { persist, socket } = createClient();
+    persist.on("error", () => {});
+
+    socket.emit("data", null, {
+      error: "Error: disk I/O error",
+      code: "SQLITE_IOERR",
+    });
+
+    expect(socket.close).toHaveBeenCalledTimes(1);
+    expect(persist.isClosed()).toBe(false);
+    persist.close();
+  });
+
+  it("closes the client when the server denies permission", () => {
+    const { persist, socket } = createClient();
+    persist.on("error", () => {});
+
+    socket.emit("data", null, { error: "permission denied", code: 403 });
+
+    expect(persist.isClosed()).toBe(true);
+  });
+});

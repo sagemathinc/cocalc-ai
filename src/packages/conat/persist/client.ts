@@ -130,6 +130,7 @@ const stats = {
   reconnectAttemptMax: 0,
   socketDisconnected: 0,
   socketClosed: 0,
+  initErrorReconnects: 0,
   socketReadyRecoveryScheduled: 0,
   socketReadyRecoveryErrors: 0,
   getMissedRuns: 0,
@@ -389,11 +390,22 @@ class PersistStreamClient extends EventEmitter {
 
     this.socket.on("data", (updates, headers) => {
       if (updates == null && headers != null) {
-        // has to be an error
+        // has to be an error: the server could not open the stream
         this.emitRecoverableError(
           new ConatError(headers?.error, { code: headers?.code }),
         );
-        this.close();
+        if (headers?.code == 403) {
+          this.close();
+          return;
+        }
+        // Other failures, e.g., a project that hit its disk quota, are usually
+        // transient.  Do not call this.close(): this client is shared through
+        // the stream refcache, so close() only drops a reference that another
+        // holder owns while every holder keeps using this failed socket.
+        // Close just the socket instead, which reconnects with backoff and
+        // makes the server open the stream again.
+        stats.initErrorReconnects += 1;
+        this.socket.close();
         return;
       }
       if (this.gettingMissed) {
