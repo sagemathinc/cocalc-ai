@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { upsertProjectHost } from "@cocalc/database/postgres/project-hosts";
 import {
   ensureProjectHostRuntimeDeploymentsSchema,
@@ -1120,6 +1121,70 @@ describe("cloud host start failures", () => {
     );
     expect(recovery.rows[0].state).toEqual({ phase: "idle" });
   });
+  it("does not start a host whose stop landed after its recovery start was queued", async () => {
+    // Immediate (verify's standard fallback) and delayed (a Spot retry
+    // queued minutes earlier) recovery starts: the stop commits after they
+    // are queued; when they run, the provider must not be asked to start.
+    for (const source of ["verify_host_ready", "spot_recovery_retry"]) {
+      const hostId = randomUUID();
+      await upsertProjectHost({
+        id: hostId,
+        name: `Stopped after recovery queued (${source})`,
+        region: "us-west4",
+        status: "starting",
+        metadata: {
+          owner: "acct-owner",
+          billing: { funding_mode: "site-funded" },
+          desired_state: "running",
+          pricing_model: "spot",
+          machine: {
+            cloud: "gcp",
+            zone: "us-west4-c",
+            machine_type: "t2d-standard-2",
+            disk_gb: 50,
+            storage_mode: "persistent",
+          },
+          runtime: {
+            provider: "gcp",
+            zone: "us-west4-c",
+            instance_id: `cocalc-host-${hostId}`,
+          },
+        },
+      });
+      const startHost = jest.fn(async () => undefined);
+      getProviderContextMock.mockResolvedValue({
+        entry: {
+          provider: {
+            getStatus: jest.fn(async () => "stopped"),
+            startHost,
+            createHost: jest.fn(async () => undefined),
+          },
+        },
+        creds: {},
+      });
+      // The admin stop commits after the start was queued.
+      await getPool().query(
+        `UPDATE project_hosts
+            SET metadata = jsonb_set(metadata, '{desired_state}', '"stopped"')
+          WHERE id=$1`,
+        [hostId],
+      );
+      const { cloudHostHandlers } = await import("./host-work");
+      await cloudHostHandlers.start({
+        id: randomUUID(),
+        vm_id: hostId,
+        action: "start",
+        payload: { provider: "gcp", source },
+      } as any);
+      expect(startHost).not.toHaveBeenCalled();
+      const host = await getPool().query(
+        "SELECT metadata->>'desired_state' AS desired FROM project_hosts WHERE id=$1",
+        [hostId],
+      );
+      expect(host.rows[0].desired).toBe("stopped");
+    }
+  });
+
   it("queues RootFS pre-pull and reclaims a stale route migration", async () => {
     const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
     const startedAt = new Date(Date.now() - 60_000).toISOString();
