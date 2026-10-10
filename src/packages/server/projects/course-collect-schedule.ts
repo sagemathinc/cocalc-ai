@@ -47,8 +47,14 @@ export async function addStudentsToScheduledCollection({
      ), merged AS (
        SELECT c.op_id,
               c.items || COALESCE((
-                SELECT jsonb_agg(n.item)
-                  FROM jsonb_array_elements($5::jsonb) AS n(item)
+                SELECT jsonb_agg(n.item ORDER BY n.ord)
+                  FROM (
+                    -- one entry per student: the first one in the request
+                    SELECT DISTINCT ON (r.item->>'student_id') r.item, r.ord
+                      FROM jsonb_array_elements($5::jsonb)
+                           WITH ORDINALITY AS r(item, ord)
+                     ORDER BY r.item->>'student_id', r.ord
+                  ) AS n
                  WHERE NOT EXISTS (
                    SELECT 1 FROM jsonb_array_elements(c.items) AS e(item)
                     WHERE e.item->>'student_id' = n.item->>'student_id'

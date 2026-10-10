@@ -90,6 +90,20 @@ describe("adding students to a scheduled collection", () => {
     expect(await students(s.op_id)).toEqual(["s1", "s2", "s3", "s4"]);
   });
 
+  it("adds a student listed twice in one request only once (the first entry)", async () => {
+    const s = await scheduled(["s1"]);
+    const first = { ...item("s2"), dest_path: "first" };
+    const result = await addStudentsToScheduledCollection({
+      ...s,
+      items: [first, { ...item("s2"), dest_path: "second" }, item("s3")],
+      max_items: 500,
+    });
+    expect(result).toEqual({ updated: true, item_count: 3 });
+    const items = (await getLro(s.op_id))?.input?.items ?? [];
+    expect(items.map((x: any) => x.student_id)).toEqual(["s1", "s2", "s3"]);
+    expect(items[1].dest_path).toBe("first");
+  });
+
   it("changes nothing once the collection is no longer queued", async () => {
     for (const status of ["running", "canceled", "succeeded"] as const) {
       const s = await scheduled(["s1"]);
