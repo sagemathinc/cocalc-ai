@@ -2609,8 +2609,11 @@ export interface Hosts {
     keep_snapshot?: boolean;
   }) => Promise<HostLroResponse>;
   // Admin: announce (or clear) a scheduled maintenance window for a host.
+  // Clearing a relocation's fence requires fresh second-factor auth.
   setHostMaintenanceNotice: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     id: string;
     scheduled_for?: string;
     expected_minutes?: number;

@@ -851,9 +851,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "can disable host deletion protection",
   },
   "hosts.setHostMaintenanceNotice": {
-    decision: "fresh-auth-not-required",
+    decision: "fresh-auth-required",
     reason:
-      "site-admin only; schedules or clears a host's maintenance notice, and clears a failed relocation's fence only once its operation has ended (relocation itself requires fresh auth)",
+      "clearing a relocation's fence (preparing, in progress or failed) lets project starts and provider reconciliation resume on a partly moved host; site-admin notice edits alone are not gated",
   },
   "hosts.setHostOwnerSpendLimits": {
     decision: "fresh-auth-required",
