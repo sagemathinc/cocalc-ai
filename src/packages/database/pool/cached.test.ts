@@ -100,6 +100,15 @@ describe("getCachedPool", () => {
     "SELECT * FROM t WHERE id=$1 FOR NO KEY UPDATE",
     "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
     "SELECT nextval('seq')",
+    // a "--" inside a literal is not a comment
+    "WITH label AS (SELECT '--' AS marker), changed AS (UPDATE t SET n=n+1 RETURNING n) SELECT n FROM changed",
+    // functions not known to be read-only, e.g. one that deletes
+    "SELECT lo_unlink($1)",
+    "SELECT my_app_function($1) AS result",
+    'SELECT "lo_unlink"($1)',
+    "SELECT public.do_something($1)",
+    // an unterminated literal
+    "SELECT 'oops",
     { text: "UPDATE t SET a=1 WHERE id=$1 RETURNING a" },
   ])("does not cache %p", async (query) => {
     const { getCachedPool, pool } = await loadCached();
@@ -116,6 +125,9 @@ describe("getCachedPool", () => {
     "SELECT title FROM projects WHERE project_id=$1",
     "  -- a comment mentioning update\n  SELECT a FROM t WHERE note = 'delete me'",
     'WITH x AS (SELECT 1 AS "update") SELECT * FROM x',
+    "SELECT $tag$ update t set a=1; $tag$ AS text, E'it\\'s -- not a comment' AS s",
+    "SELECT COUNT(*), coalesce(max(created), now()) FROM t WHERE id = ANY($1::UUID[])",
+    "SELECT e.key FROM jsonb_each($1::jsonb) AS e(key, value)",
     { text: "SELECT 1" },
   ])("caches the read %p", async (query) => {
     const { getCachedPool, pool } = await loadCached();

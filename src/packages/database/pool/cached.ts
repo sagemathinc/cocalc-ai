@@ -23,7 +23,7 @@ of multiple projects.
 
 Only plain reads are cached: anything that writes, locks rows, or calls a
 function with side effects goes straight to the database, uncached and never
-merged with a concurrent identical call (see isCacheableQuery). Outside
+merged with a concurrent identical call (see cacheable-query.ts). Outside
 production, cached results are frozen, since every caller shares them.
 
 Do not use a cached pool for permission, membership, or billing checks: a
@@ -35,6 +35,7 @@ import { Pool, type QueryResult } from "pg";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
+import { isCacheableQuery } from "./cacheable-query";
 import getPool, { shouldSkipEnsureExists, type PoolOptionInput } from "./pool";
 
 const L = getLogger("db:pool:cached");
@@ -58,35 +59,6 @@ for (const cacheTime in MAX_AGE_S) {
     max: 1000,
     ttl: 1000 * MAX_AGE_S[cacheTime],
   });
-}
-
-// Statements that write or lock, and functions with side effects.
-const NOT_A_PLAIN_READ =
-  /\b(insert|update|delete|merge|truncate|copy|call|do|lock|notify|listen|vacuum|analyze|refresh|alter|create|drop|grant|revoke|nextval|setval|pg_advisory\w*|pg_try_advisory\w*|pg_notify|set_config|txid_current|pg_current_xact_id)\b|\bfor\s+(no\s+key\s+)?(update|share|key\s+share)\b|\binto\b/i;
-
-function queryText(args: unknown[]): string | undefined {
-  const [first] = args;
-  if (typeof first === "string") return first;
-  if (first != null && typeof (first as any).text === "string") {
-    return (first as any).text;
-  }
-  return undefined;
-}
-
-/**
- * Whether a query may be served from the cache: a SELECT (or VALUES, or a
- * WITH that only reads) that writes nothing, locks nothing and calls no
- * function with side effects. Errs toward "no", which just skips the cache.
- */
-export function isCacheableQuery(args: unknown[]): boolean {
-  const text = queryText(args)
-    ?.replace(/--[^\n]*/g, " ")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/'(?:[^']|'')*'/g, "''")
-    .replace(/"(?:[^"]|"")*"/g, '""')
-    .trim();
-  if (!text || !/^(select|values|with|\()/i.test(text)) return false;
-  return !NOT_A_PLAIN_READ.test(text);
 }
 
 function deepFreeze<T>(value: T): T {
