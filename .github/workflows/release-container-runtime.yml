@@ -1,0 +1,185 @@
+name: Release container runtime
+
+# Builds the project-host container runtime (Podman, conmon, crun, netavark,
+# aardvark-dns and pasta, from checksum-pinned sources, against Ubuntu 24.04)
+# natively for amd64 and arm64, and checks each bundle the way a project host
+# does before activating it. Project hosts, including self-hosted ones,
+# download the published bundle from the software store; nobody builds it on a
+# host.
+#
+# A manual run with publish enabled records the tested amd64 bundle as a
+# container-runtime artifact and pushes it to the software store. Hosts never
+# pick a container runtime up automatically: roll it out explicitly with
+# `cocalc host upgrade --artifact container-runtime --artifact-version <id>`.
+# The arm64 bundle is built and checked, and kept as a workflow artifact; the
+# store holds one file per container-runtime artifact, and no arm64 project
+# hosts run yet.
+#
+# The R2 credentials exist only in the protected GitHub environment
+# `cocalc-cli-release` (the same software store the CLI release publishes to),
+# which only the publish job uses. Pull request runs never see them.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-container-runtime.yml"
+      - "src/packages/backend/podman/build-runtime-bundle.sh"
+      - "src/packages/backend/podman/verify-runtime-bundle.sh"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag suffix; blank uses github-<run number>"
+        required: false
+        type: string
+      publish:
+        description: "Push the tested amd64 bundle to the software store (needs approval of the cocalc-cli-release environment)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-runtime-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Create immutable release identity
+        id: release
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          tag="${REQUESTED_TAG:-github-${GITHUB_RUN_NUMBER}}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ || "$tag" == "latest" ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          release_id="$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:8}-${tag}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          printf 'Release ID: %s\n' "$release_id"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    env:
+      # The build pulls Ubuntu anonymously; on shared runner IPs Docker Hub's
+      # anonymous pull limit often refuses it. AWS's public mirror of the same
+      # official image is not subject to it.
+      COCALC_CONTAINER_RUNTIME_BUILD_IMAGE: public.ecr.aws/docker/library/ubuntu:24.04
+      COCALC_CONTAINER_BUILD_ENGINE: docker
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the runtime bundle
+        run: src/packages/backend/podman/build-runtime-bundle.sh
+
+      # Project hosts run Ubuntu 24.04 with the distro Podman installed, which
+      # provides the shared libraries the bundled binaries link against.
+      - name: Install the distro Podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman jq
+
+      - name: Check the bundle as a project host does
+        run: |
+          src/packages/backend/podman/verify-runtime-bundle.sh \
+            "src/packages/backend/podman/build/container-runtime-linux-${{ matrix.arch }}.tar.xz" \
+            "${{ matrix.arch }}"
+          sha256sum "src/packages/backend/podman/build/container-runtime-linux-${{ matrix.arch }}.tar.xz"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: container-runtime-linux-${{ matrix.arch }}
+          path: src/packages/backend/podman/build/container-runtime-linux-${{ matrix.arch }}.tar.xz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs:
+      - plan
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: cocalc-cli-release
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install workspace dependencies and build CLI command
+        run: |
+          pnpm -C src/packages install --frozen-lockfile
+          pnpm --dir src/packages/cli build
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: container-runtime-linux-amd64
+          path: release-assets
+
+      - name: Record and push the tested amd64 bundle
+        env:
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          COCALC_SOFTWARE_LOCAL_STORE: ${{ runner.temp }}/cocalc-software
+          COCALC_R2_ACCOUNT_ID: ${{ secrets.COCALC_R2_ACCOUNT_ID }}
+          COCALC_R2_ACCESS_KEY_ID: ${{ secrets.COCALC_R2_ACCESS_KEY_ID }}
+          COCALC_R2_SECRET_ACCESS_KEY: ${{ secrets.COCALC_R2_SECRET_ACCESS_KEY }}
+          COCALC_R2_BUCKET: ${{ secrets.COCALC_R2_BUCKET }}
+          COCALC_R2_PUBLIC_BASE_URL: ${{ secrets.COCALC_R2_PUBLIC_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          cli=(node src/packages/cli/dist/bin/cocalc.js)
+          "${cli[@]}" software build "container-runtime:${RELEASE_TAG}" \
+            --artifact-id "$RELEASE_ID" \
+            --from-file release-assets/container-runtime-linux-amd64.tar.xz
+          "${cli[@]}" software push "container-runtime:${RELEASE_ID}" --env-file /dev/null
+
+      - name: Check the published bundle downloads intact
+        env:
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+          COCALC_R2_PUBLIC_BASE_URL: ${{ secrets.COCALC_R2_PUBLIC_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          url="${COCALC_R2_PUBLIC_BASE_URL}/software/container-runtime/${RELEASE_ID}/container-runtime-linux-amd64.tar.xz"
+          curl -fsSL "$url" -o published.tar.xz
+          cmp published.tar.xz release-assets/container-runtime-linux-amd64.tar.xz
+          echo "published: $url"
+
+      - name: Release summary
+        env:
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+        run: |
+          {
+            echo "### Container runtime release"
+            echo ""
+            echo "- Artifact: \`$RELEASE_ID\` (linux amd64)"
+            echo "- Roll out: \`cocalc host upgrade <host> --artifact container-runtime --artifact-version $RELEASE_ID\`"
+          } >> "$GITHUB_STEP_SUMMARY"
