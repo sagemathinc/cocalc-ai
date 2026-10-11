@@ -68,6 +68,11 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: { browser_id: "page-1" },
 }));
 
+const openFile = jest.fn();
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: { getProjectActions: () => ({ open_file: openFile }) },
+}));
+
 import { SharedBrowserViewer, type SharedBrowserControl } from "./viewer";
 
 function browserState(
@@ -92,6 +97,7 @@ function browserState(
     title: "Web browser",
     zoom: 1,
     network: null,
+    downloads: [],
     ...overrides,
   };
 }
@@ -257,6 +263,53 @@ describe("SharedBrowserViewer", () => {
     expect(connection.sent).toContainEqual({
       type: "network",
       value: "project",
+    });
+  });
+
+  it("says what it downloaded to ~/Downloads, and opens it", () => {
+    const { show } = open();
+    const paper = {
+      guid: "g2",
+      url: "https://arxiv.org/pdf/1",
+      name: "paper.pdf",
+      receivedBytes: 0,
+      totalBytes: 0,
+    };
+    // Downloads from before this viewer came are old news.
+    show(
+      browserState({
+        downloads: [
+          {
+            ...paper,
+            guid: "g1",
+            name: "old.pdf",
+            state: "completed",
+            path: "/home/user/Downloads/old.pdf",
+          },
+        ],
+      }),
+    );
+    expect(screen.queryByText(/old\.pdf/)).toBeNull();
+    show(browserState({ downloads: [{ ...paper, state: "inProgress" }] }));
+    expect(screen.getByText("Downloading paper.pdf...")).toBeTruthy();
+    show(
+      browserState({
+        downloads: [
+          {
+            ...paper,
+            state: "completed",
+            path: "/home/user/Downloads/paper.pdf",
+          },
+        ],
+      }),
+    );
+    expect(
+      screen.getByText("Downloaded paper.pdf to ~/Downloads."),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByText("Open"));
+    expect(openFile).toHaveBeenCalledWith({
+      path: "/home/user/Downloads/paper.pdf",
+      foreground: true,
     });
   });
 });

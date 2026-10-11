@@ -17,9 +17,11 @@ import {
   useState,
 } from "react";
 
+import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { SharedBrowserRunsOn } from "@cocalc/util/shared-browser";
 import type {
+  SharedBrowserDownload,
   SharedBrowserState,
   SharedBrowserTab,
   ViewQuality,
@@ -89,6 +91,9 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
   const [hint, setHint] = useState<string | null>(null);
   const [notDriving, setNotDriving] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [download, setDownload] = useState<SharedBrowserDownload | null>(null);
+  // The downloads (and how far they got) this viewer has seen.
+  const seenDownloads = useRef<Set<string> | null>(null);
   const [quality, setQuality] = useState<ViewQuality>(loadQuality);
   const [askedZoom, setAskedZoom] = useState<number | null>(null);
   const [connection, setConnection] = useState<SharedBrowserConnection | null>(
@@ -250,9 +255,25 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
       setStatus(value);
       if (value === "live") screenRef.current?.connected();
     });
+    seenDownloads.current = null;
     conn.on("state", (value: SharedBrowserState) => {
       stateRef.current = value;
       setState(value);
+      // A download started, finished or stopped since this viewer came.
+      const seen = seenDownloads.current;
+      const downloads = value.downloads ?? [];
+      const fresh = seen
+        ? downloads.find((d) => !seen.has(`${d.guid}:${d.state}`))
+        : undefined;
+      if (fresh) {
+        setDownload(fresh);
+        if (fresh.state === "inProgress") clearTimeout(timers.current.download);
+        else later("download", 15000, () => setDownload(null));
+      }
+      seenDownloads.current = new Set([
+        ...(seen ?? []),
+        ...downloads.map((d) => `${d.guid}:${d.state}`),
+      ]);
     });
     conn.on("selection", (text: string) => {
       setSelection(text);
@@ -734,6 +755,40 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
               >
                 Upload
               </button>
+            </div>
+          </div>
+        )}
+        {download && (
+          <div className="cc-sbv-overlay cc-sbv-copied">
+            <p>
+              {download.state === "inProgress"
+                ? `Downloading ${download.name}...`
+                : download.state === "completed"
+                  ? `Downloaded ${download.name} to ~/Downloads.`
+                  : `The download of ${download.name} stopped${download.reason ? `: ${download.reason}` : "."}`}
+            </p>
+            <div className="cc-sbv-row">
+              <button
+                onClick={() => {
+                  setDownload(null);
+                  screenRef.current?.focus();
+                }}
+              >
+                Dismiss
+              </button>
+              {download.state === "completed" && download.path && (
+                <button
+                  onClick={() => {
+                    const path = download.path!;
+                    setDownload(null);
+                    redux
+                      .getProjectActions(project_id)
+                      ?.open_file({ path, foreground: true });
+                  }}
+                >
+                  Open
+                </button>
+              )}
             </div>
           </div>
         )}

@@ -569,6 +569,130 @@ test(
 );
 
 test(
+  "downloads land in ~/Downloads under the site's name, made unique; an agent's own download API still works; too large is stopped",
+  needsChrome,
+  async () => {
+    const http = require("node:http");
+    const {
+      mkdtempSync,
+      readdirSync,
+      readFileSync,
+      rmSync,
+    } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const { chromium } = require("playwright-core");
+    const PDF = "%PDF-1.4 hello";
+    const site = http.createServer((req: any, res: any) => {
+      if (req.url === "/paper") {
+        res.writeHead(200, {
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="paper.pdf"',
+        });
+        res.end(PDF);
+      } else if (req.url === "/big") {
+        res.writeHead(200, {
+          "content-type": "application/octet-stream",
+          "content-length": String(3 * 1024 * 1024),
+          "content-disposition": 'attachment; filename="big.bin"',
+        });
+        res.end(Buffer.alloc(3 * 1024 * 1024));
+      } else {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<title>site</title><a id=paper href="/paper">paper</a>`);
+      }
+    });
+    await new Promise<void>((r) => site.listen(0, "127.0.0.1", r));
+    const base = `http://127.0.0.1:${site.address().port}`;
+    const home = mkdtempSync(join(tmpdir(), "sb-home-"));
+    const downloadsTo = join(home, "Downloads");
+    const staging = mkdtempSync(join(tmpdir(), "sb-staging-"));
+    const profile = await createProfileDir("disk", sys);
+    const browser = await launchBrowser({
+      executable: executable!,
+      profileDir: profile.path,
+      args: sharedBrowserChromeArgs(profile.path),
+    });
+    const server = new SharedBrowserServer({
+      host: "127.0.0.1",
+      port: 0,
+      cdpPort: 0,
+      downloadsTo,
+      downloadLimitBytes: 1024 * 1024,
+    });
+    const { cdpPort } = await server.start();
+    const version = await (
+      await fetch(`http://127.0.0.1:${browser.port}/json/version`)
+    ).json();
+    await server.attachChrome(version.webSocketDebuggerUrl, {
+      downloadsDir: staging,
+    });
+    let agent: any = null;
+    try {
+      // The human downloads a paper, twice.
+      const viewer = new TestViewer(server);
+      await viewer.resize(800, 500);
+      await viewer.takeOver();
+      for (const expected of ["paper.pdf", "paper (1).pdf"]) {
+        await viewer.say({ type: "navigate", url: `${base}/paper` });
+        await until(
+          () => viewer.state?.downloads?.[0],
+          (d) => d?.state === "completed" && d.name === expected,
+          `downloaded ${expected}`,
+        );
+      }
+      assert.deepEqual(readdirSync(downloadsTo).sort(), [
+        "paper (1).pdf",
+        "paper.pdf",
+      ]);
+      assert.equal(readFileSync(join(downloadsTo, "paper.pdf"), "utf8"), PDF);
+      assert.equal(
+        viewer.state!.downloads[0].path,
+        join(downloadsTo, "paper (1).pdf"),
+      );
+      // Nothing left where Chromium saved.
+      assert.deepEqual(readdirSync(staging), []);
+
+      // Too large: stopped, not in ~/Downloads.
+      await viewer.say({ type: "navigate", url: `${base}/big` });
+      await until(
+        () => viewer.state?.downloads?.[0],
+        (d) => d?.state === "canceled" && /larger than/.test(d.reason ?? ""),
+        "the large download stopped",
+      );
+      assert.ok(!readdirSync(downloadsTo).includes("big.bin"));
+      await viewer.handBack();
+
+      // An agent with Playwright's own download API.
+      agent = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+      const page = agent.contexts()[0].pages()[0];
+      await page.goto(`${base}/`);
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.click("#paper"),
+      ]);
+      const mine = join(home, "mine.pdf");
+      await download.saveAs(mine);
+      assert.equal(readFileSync(mine, "utf8"), PDF);
+      await until(
+        () => readdirSync(downloadsTo).sort(),
+        (names) => names.includes("paper (2).pdf"),
+        "the agent's download is in ~/Downloads too",
+      );
+      viewer.close();
+    } finally {
+      await agent?.close().catch(() => {});
+      await server.close();
+      await browser.stop();
+      await profile.cleanup();
+      site.close();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(staging, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "take-over is fail closed: tunneled, cookie, DOM and script commands and tab HTTP endpoints wait while the human drives",
   {
     skip: executable ? false : "no Chrome/Chromium installed",

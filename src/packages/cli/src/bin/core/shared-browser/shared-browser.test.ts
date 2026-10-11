@@ -337,3 +337,17 @@ test("the project's own servers are local addresses (a browser on its own networ
   ])
     assert.equal(isLocalAddress(url), false, url);
 });
+
+test("a site's download name is safe in ~/Downloads", () => {
+  const { safeDownloadName } = require("./downloads");
+  assert.equal(safeDownloadName("paper.pdf"), "paper.pdf");
+  assert.equal(safeDownloadName("../../etc/passwd"), "passwd");
+  assert.equal(safeDownloadName("..\\..\\win.ini"), "win.ini");
+  assert.equal(safeDownloadName(".bashrc"), "bashrc");
+  assert.equal(safeDownloadName("a\u0000b<c>.txt"), "a_b_c_.txt");
+  assert.equal(safeDownloadName(""), "download");
+  assert.equal(safeDownloadName(undefined), "download");
+  assert.equal(safeDownloadName(".."), "download");
+  const long = safeDownloadName("x".repeat(300) + ".pdf");
+  assert.ok(Buffer.byteLength(long) <= 200 && long.endsWith(".pdf"), long);
+});

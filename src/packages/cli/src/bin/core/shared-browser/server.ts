@@ -24,6 +24,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { CdpClient, type CdpEvent } from "./cdp-client";
+import { BrowserDownloads } from "./downloads";
 import { FramePacer } from "./frame-pacer";
 import {
   MAX_CLIPBOARD_TEXT,
@@ -138,6 +139,11 @@ export interface SharedBrowserServerOptions {
   offerFiles?: (paths: string[]) => string[];
   // Only these ports for the start page's servers (tests).
   startPagePorts?: number[];
+  // Where what it downloads lands (the project's ~/Downloads); without it,
+  // downloads stay Chromium's business.
+  downloadsTo?: string;
+  // Each download's limit (tests).
+  downloadLimitBytes?: number;
   log?: (message: string) => void;
 }
 
@@ -209,6 +215,8 @@ export class SharedBrowserServer {
   private titleTimer: NodeJS.Timeout | null = null;
   // Renders tabs only as often as someone needs (see frame-pacer.ts).
   private pacer: FramePacer | null = null;
+  // Downloads to the project's ~/Downloads (see downloads.ts).
+  private downloads: BrowserDownloads | null = null;
   private log: (message: string) => void;
 
   constructor(private readonly options: SharedBrowserServerOptions) {
@@ -232,6 +240,7 @@ export class SharedBrowserServer {
       title: options.title ?? "Web browser",
       zoom: 1,
       network: null,
+      downloads: [],
     };
   }
 
@@ -273,8 +282,14 @@ export class SharedBrowserServer {
     this.broadcastState();
   }
 
-  /** Use this browser (e.g. the user's, through a tunnel). */
-  async attachChrome(webSocketUrl: string): Promise<void> {
+  /**
+   * Use this browser (e.g. the user's, through a tunnel).  downloadsDir:
+   * where it can save downloads that the project can read.
+   */
+  async attachChrome(
+    webSocketUrl: string,
+    { downloadsDir }: { downloadsDir?: string } = {},
+  ): Promise<void> {
     if (this.attached) this.detachChrome();
     const cdp = await CdpClient.connect(webSocketUrl);
     this.cdp = cdp;
@@ -297,6 +312,26 @@ export class SharedBrowserServer {
         watched: (targetId) => this.watchersOf(targetId).length > 0,
         log: this.log,
       });
+    if (!this.lightTouch && downloadsDir && this.options.downloadsTo) {
+      const downloads = new BrowserDownloads({
+        send: (method, params) => cdp.send(method, params),
+        stagingDir: downloadsDir,
+        targetDir: this.options.downloadsTo,
+        maxBytes: this.options.downloadLimitBytes,
+        onChange: () => {
+          if (this.downloads !== downloads) return;
+          this.state.downloads = downloads.list().reverse().slice(0, 10);
+          this.broadcastState();
+        },
+        log: this.log,
+      });
+      try {
+        await downloads.start();
+        this.downloads = downloads;
+      } catch (err: any) {
+        this.log(`downloads: ${err?.message ?? err}`);
+      }
+    }
     await cdp.send("Target.setDiscoverTargets", { discover: true });
     const { targetInfos } = await cdp.send("Target.getTargets");
     for (const info of targetInfos) {
@@ -319,6 +354,8 @@ export class SharedBrowserServer {
     this.devtools = null;
     this.pacer?.close();
     this.pacer = null;
+    this.downloads?.close();
+    this.downloads = null;
     this.state.connection = "waiting";
     this.state.tabs = [];
     this.state.active = null;
@@ -745,6 +782,10 @@ export class SharedBrowserServer {
 
   private onCdpEvent(event: CdpEvent): void {
     const { method, params, sessionId } = event;
+    if (!sessionId && method.startsWith("Browser.download")) {
+      this.downloads?.onEvent(method, params);
+      return;
+    }
     if (method === "Target.targetCreated") {
       const before = this.state.tabs.length;
       this.addTab(params.targetInfo);
@@ -1428,12 +1469,34 @@ export class SharedBrowserServer {
     // at the watched rate (see frame-pacer.ts), and its attach requests.
     const sessionTabs = new Map<string, string>();
     const attaching = new Map<number, string>();
+    // Whether this agent chose where downloads go (see downloads.ts).
+    let setDownloads = false;
+    // What goes to the agent, in order; held while a download it will hear
+    // of is copied to where it asked.
+    let toAgentQueue: Promise<void> = Promise.resolve();
+    let holding = 0;
+    const toAgent = (text: string, wait?: Promise<void>) => {
+      if (!wait && holding === 0) {
+        if (client.readyState === WebSocket.OPEN) client.send(text);
+        return;
+      }
+      holding++;
+      toAgentQueue = toAgentQueue
+        .then(() => wait)
+        .catch(() => {})
+        .then(() => {
+          if (client.readyState === WebSocket.OPEN) client.send(text);
+        })
+        .finally(() => {
+          holding--;
+        });
+    };
     this.agentSockets.add(client);
     this.state.agents = this.agentSockets.size;
     this.broadcastState();
     const deliver = (data: WebSocket.RawData) => {
       if (upstream.readyState !== WebSocket.OPEN) return;
-      const text = data.toString();
+      let text = data.toString();
       const msg = parseMessage(text);
       // A dialog answer held while the human drove may refer to a dialog the
       // human already answered; Chromium would reply with an error that some
@@ -1463,6 +1526,14 @@ export class SharedBrowserServer {
       }
       if (msg?.method === "Page.captureScreenshot" && msg.params?.clip)
         clipShots.add(msg.id);
+      // Where Chromium can save and the project can read.
+      if (msg?.method === "Browser.setDownloadBehavior" && this.downloads) {
+        setDownloads = true;
+        text = JSON.stringify({
+          ...msg,
+          params: this.downloads.agentBehavior(msg.params),
+        });
+      }
       void this.zoomFix.then(() => {
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
       });
@@ -1509,7 +1580,16 @@ export class SharedBrowserServer {
           )
           .then(() => {})
           .catch(() => {});
-      if (client.readyState === WebSocket.OPEN) client.send(text);
+      // A finished download: the agent hears of it once it is where it
+      // asked (copied there from where Chromium saved it).
+      if (
+        this.downloads &&
+        text.startsWith('{"method":"Browser.downloadProgress"') &&
+        text.includes('"state":"completed"')
+      ) {
+        const guid = parseMessage(text)?.params?.guid;
+        toAgent(text, guid ? this.downloads.settled(`${guid}`) : undefined);
+      } else toAgent(text);
     });
     client.on("message", (data) => {
       if (!open) pending.push(data);
@@ -1518,6 +1598,8 @@ export class SharedBrowserServer {
     const end = () => {
       if (!this.agentSockets.delete(client)) return;
       this.state.agents = this.agentSockets.size;
+      // Downloads go where we say again.
+      if (setDownloads) void this.downloads?.reassert().catch(() => {});
       // Its held commands have nowhere to go.
       this.held = this.held.filter((entry) => entry.client !== client);
       this.state.agentWaiting = this.held.length > 0;

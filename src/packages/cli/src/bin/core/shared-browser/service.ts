@@ -27,7 +27,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -285,6 +285,8 @@ export async function runSharedBrowserService({
     recent: () => local?.recent() ?? [],
     offerFiles: (paths) => local?.offerFiles(paths) ?? paths,
     onNetwork: (value) => switchNetwork(value),
+    // Downloads land in the project's ~/Downloads (see downloads.ts).
+    downloadsTo: join(homedir(), "Downloads"),
     ...(file
       ? {
           runsOn,
@@ -378,7 +380,9 @@ export async function runSharedBrowserService({
     const version = JSON.parse(
       (await devToolsRequest(endpoint, "/json/version")).text,
     );
-    await server.attachChrome(version.webSocketDebuggerUrl);
+    await server.attachChrome(version.webSocketDebuggerUrl, {
+      downloadsDir: join(tmpdir(), "cocalc-browser-downloads", profileId),
+    });
     server.setNetwork(null);
     log(
       `${version.Browser} in the project, without Chromium's sandbox; profile in ${profile.backing}; ${describeKey(keyring)}`,
@@ -431,7 +435,10 @@ export async function runSharedBrowserService({
       }
     }
     const path = new URL(version.webSocketDebuggerUrl).pathname;
-    await server.attachChrome(`ws+unix://${info.socket}:${path}`);
+    // It saves downloads in its run directory, which the project sees too.
+    await server.attachChrome(`ws+unix://${info.socket}:${path}`, {
+      downloadsDir: join(runDir, "downloads"),
+    });
     // The host decides: a project without internet shares its network.
     server.setNetwork(info.network === "project" ? "project" : "own");
     log(
@@ -621,7 +628,10 @@ export function readBrowserNetwork(appId: string): SharedBrowserNetwork {
   }
 }
 
-function writeBrowserNetwork(appId: string, network: SharedBrowserNetwork) {
+export function writeBrowserNetwork(
+  appId: string,
+  network: SharedBrowserNetwork,
+) {
   const path = browserSettingsPath(appId);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ network })}\n`);

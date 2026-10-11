@@ -69,9 +69,25 @@ export interface SharedBrowserState {
   // as the project's policy allows) or the project's ("project": its
   // localhost servers too).  null: it runs in the project or on a computer.
   network: SharedBrowserNetwork | null;
+  // What it downloaded lately (to the project's ~/Downloads), newest first.
+  downloads: SharedBrowserDownload[];
 }
 
 export type SharedBrowserNetwork = "own" | "project";
+
+export interface SharedBrowserDownload {
+  guid: string;
+  url: string;
+  // Its name in ~/Downloads once complete.
+  name: string;
+  state: "inProgress" | "completed" | "canceled";
+  receivedBytes: number;
+  totalBytes: number;
+  // Where it is in the project, once complete.
+  path?: string;
+  // Why it was stopped, if the service stopped it.
+  reason?: string;
+}
 
 // The screen's picture quality: see the service's QUALITY.
 export type ViewQuality = "sharp" | "balanced" | "fast";
