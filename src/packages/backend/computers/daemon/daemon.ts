@@ -20,7 +20,9 @@ import {
   closeSync,
   existsSync,
   openSync,
+  readdirSync,
   readSync,
+  rmSync,
   statfsSync,
   statSync,
 } from "node:fs";
@@ -48,13 +50,10 @@ import {
   type HubClock,
   type SessionClock,
 } from "./clock";
-import { killGroup, resolveCwd, runExec, type ExecResult } from "./exec";
-import {
-  JobManager,
-  processStartTime,
-  type Job,
-  type JobSummary,
-} from "./jobs";
+import { resolveCwd, runExec, type ExecResult } from "./exec";
+import { Cleanups } from "./cleanups";
+import { JobManager, type Job, type JobSummary } from "./jobs";
+import { processStartTime } from "./launch";
 import { Ledger, LedgerConflict, type LedgerEntry } from "./ledger";
 import type { DaemonStore } from "./state";
 
@@ -70,6 +69,10 @@ export const MAX_ACTIVE_OPERATIONS = 16;
 export const MAX_ACTIVE_OPERATIONS_PER_AGENT = 4;
 /** How often the daemon enforces deadlines on its own, without traffic. */
 export const ENFORCEMENT_INTERVAL_MS = 1000;
+/** How often the timer forgets old records. */
+export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+/** All exec output kept on the machine, together. */
+export const EXEC_OUTPUT_RETENTION_BYTES = 512 * 1024 * 1024;
 
 export type OperationReply =
   | { ok: false; refused: string[] }
@@ -110,6 +113,7 @@ const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 export class ComputerDaemon {
   readonly ledger: Ledger;
   readonly jobs: JobManager;
+  readonly cleanups: Cleanups;
   private running = new Map<
     string,
     { controller: AbortController; agent_id: string }
@@ -123,10 +127,11 @@ export class ComputerDaemon {
 
   constructor(private readonly deps: DaemonDeps) {
     this.ledger = new Ledger(deps.stateDir);
+    this.cleanups = new Cleanups(deps.stateDir, deps.killGraceMs ?? 5000);
     this.jobs = new JobManager(deps.stateDir, {
       shell: deps.shell,
       killGraceMs: deps.killGraceMs,
-      onEnded: (job) => deps.report?.({ kind: "job", job }),
+      onEnded: (job) => this.report({ kind: "job", job }),
       authorize: (job) => this.jobRefusal(job),
       bootClock: deps.bootClock,
     });
@@ -134,14 +139,14 @@ export class ComputerDaemon {
       const entry = this.ledger.get(operation_id);
       if (entry == null) continue;
       // An exec started by a previous daemon may still be running on its
-      // own; its outcome is unknown either way, so stop it.
+      // own; its outcome is unknown either way, so stop it. The cleanup is
+      // durable: every tick re-drives it (TERM, then KILL) until its
+      // verified leader is gone, across further restarts too.
       const r = entry.result as { pid?: number; pid_start?: string } | null;
-      if (entry.operation === "exec" && r?.pid != null) {
-        if (processStartTime(r.pid) === r.pid_start) {
-          killGroup(r.pid, deps.killGraceMs ?? 5000);
-        }
+      if (entry.operation === "exec" && r?.pid != null && r.pid_start != null) {
+        this.cleanups.add(operation_id, r.pid, r.pid_start);
       }
-      deps.report?.({ kind: "operation", entry });
+      this.report({ kind: "operation", entry });
     }
     this.jobs.refresh();
   }
@@ -242,7 +247,7 @@ export class ComputerDaemon {
         exit_code: extra.exit_code ?? null,
         result: SIDE_EFFECTS.has(op.operation) ? result : null,
       });
-      this.deps.report?.({ kind: "operation", entry });
+      this.report({ kind: "operation", entry });
       return {
         ok: true as const,
         operation_id: id,
@@ -342,7 +347,7 @@ export class ComputerDaemon {
             exit_code: r.exit_code,
             result: summary,
           });
-          this.deps.report?.({ kind: "operation", entry });
+          this.report({ kind: "operation", entry });
           return {
             ok: true,
             operation_id: id,
@@ -361,7 +366,7 @@ export class ComputerDaemon {
         state: "failed",
         error: (err as Error).message,
       });
-      this.deps.report?.({ kind: "operation", entry });
+      this.report({ kind: "operation", entry });
       return {
         ok: true,
         operation_id: id,
@@ -513,9 +518,15 @@ export class ComputerDaemon {
    */
   start(intervalMs = ENFORCEMENT_INTERVAL_MS): void {
     if (this.timer != null) return;
+    let lastPrune = 0;
     this.timer = setInterval(() => {
       try {
         this.tick();
+        const now = Date.now();
+        if (now - lastPrune >= PRUNE_INTERVAL_MS) {
+          lastPrune = now;
+          this.prune(now);
+        }
       } catch (err) {
         this.deps.onError?.(err);
       }
@@ -557,6 +568,16 @@ export class ComputerDaemon {
     if (!this.ended && this.deps.session.ended())
       this.endSession("time limit reached");
     this.jobs.refresh(now);
+    this.cleanups.drive(now);
+  }
+
+  /** Tell the hub something; never let that change an operation's outcome. */
+  private report(event: DaemonEvent): void {
+    try {
+      this.deps.report?.(event);
+    } catch (err) {
+      this.deps.onError?.(err);
+    }
   }
 
   endSession(reason: string): void {
@@ -570,8 +591,41 @@ export class ComputerDaemon {
     return this.ended;
   }
 
+  /**
+   * Forget old records: ledger entries and their exec output after 7 days,
+   * exec output beyond EXEC_OUTPUT_RETENTION_BYTES (oldest first), and old
+   * jobs (see JobManager.prune).
+   */
   prune(now = Date.now()): void {
-    this.ledger.prune(LEDGER_RETENTION_MS, now);
+    for (const id of this.ledger.pruneIds(LEDGER_RETENTION_MS, now)) {
+      rmSync(this.execDir(id), { recursive: true, force: true });
+    }
+    const root = join(this.deps.stateDir, "exec");
+    if (existsSync(root)) {
+      const dirs = readdirSync(root)
+        .map((id) => {
+          const path = join(root, id);
+          let bytes = 0;
+          let mtime = 0;
+          try {
+            for (const name of readdirSync(path)) {
+              const st = statSync(join(path, name));
+              bytes += st.size;
+              mtime = Math.max(mtime, st.mtimeMs);
+            }
+          } catch {}
+          return { id, path, bytes, mtime };
+        })
+        // Never the output of an exec still running.
+        .filter((d) => !this.running.has(d.id))
+        .sort((a, b) => a.mtime - b.mtime);
+      let total = dirs.reduce((sum, d) => sum + d.bytes, 0);
+      for (const d of dirs) {
+        if (total <= EXEC_OUTPUT_RETENTION_BYTES) break;
+        rmSync(d.path, { recursive: true, force: true });
+        total -= d.bytes;
+      }
+    }
     this.jobs.prune(now);
   }
 }

@@ -180,9 +180,10 @@ export interface ComputerTicket {
   limits: {
     max_bytes: number | null;
     /**
-     * How many of this agent's operations (execs and running jobs together)
-     * may run on the computer at once, this one included. The daemon
-     * enforces the smaller of this and its own hard limits.
+     * How many of this agent's operations may be active on the computer at
+     * once, this one included: execs running, plus jobs starting, running
+     * or queued (queued jobs count, so they can't pile up behind the limit).
+     * The daemon enforces the smaller of this and its own hard limits.
      */
     concurrency: number;
   };

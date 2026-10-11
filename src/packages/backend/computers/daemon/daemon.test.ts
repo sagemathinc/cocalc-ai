@@ -1153,4 +1153,44 @@ describe("the computer daemon (direct mode)", () => {
       ).toThrow(/different request/);
     });
   });
+
+  describe("housekeeping (re-review of #1035)", () => {
+    it("a report that throws never changes an operation's outcome", async () => {
+      daemon.endSession("replace");
+      const hubClock = new HubClock(clocks);
+      hubClock.observe(0);
+      daemon = new ComputerDaemon({
+        stateDir: dir,
+        store,
+        clocks,
+        hubClock,
+        session: new SessionClock(clocks, { deadline_ms: null, max_ms: null }),
+        workdir,
+        shell: "/bin/bash",
+        report: () => {
+          throw new Error("hub unreachable");
+        },
+      });
+      const reply = ok(await daemon.handle(message("exec", exec("exit 2"))));
+      expect(reply).toMatchObject({ state: "done" });
+      expect(reply.result).toMatchObject({ exit_code: 2 });
+    });
+
+    it("prunes exec output with its ledger entry, and keeps exec output under its quota", async () => {
+      const old = ok(await daemon.handle(message("exec", exec("echo old"))));
+      const recent = ok(
+        await daemon.handle(message("exec", exec("echo recent"))),
+      );
+      const root = join(dir, "exec");
+      expect(existsSync(join(root, old.operation_id))).toBe(true);
+      // Age the first one past retention.
+      const entryPath = join(dir, "ledger", `${old.operation_id}.json`);
+      const entry = JSON.parse(readFileSync(entryPath, "utf8"));
+      entry.updated_at = Date.now() - 8 * 24 * 3600_000;
+      require("node:fs").writeFileSync(entryPath, JSON.stringify(entry));
+      daemon.prune();
+      expect(existsSync(join(root, old.operation_id))).toBe(false);
+      expect(existsSync(join(root, recent.operation_id))).toBe(true);
+    });
+  });
 });

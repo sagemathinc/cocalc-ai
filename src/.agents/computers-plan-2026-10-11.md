@@ -970,6 +970,42 @@ existing namespace and wildcard form: accounts, projects, hosts, hubs, agent
 identity and external, inter-bay, project-host, file-server, browser
 sessions, ACP, admin and `_INBOX`.
 
+**Additions required by the approval of revision 3:**
+- **Two kinds of change, two guarantees.**
+  - Narrowing by the *computer, network or account* (all at the home bay)
+    is linearized by the relay commit: before the commit means nothing is
+    sent.
+  - A project-privacy change belongs to the project's bay. It keeps the
+    documented window: the attestation is good for at most 30 s, and floors
+    are pushed after it.
+  - At relay time the home bay refuses a ticket whose attestation epoch is
+    below a newer project floor it already holds. Tests: privacy change
+    before and after the relay commit, a lost floor push, and a floor
+    arriving before and after daemon admission.
+  - **Release gate:** the combined privacy floor must flow durably from the
+    project's bay to the home bay to every computer session, with tests for
+    a lost push, reconnect, cancelling queued work, and stopping running
+    jobs.
+- **Abuse bounds on computer-to-hub traffic too:** replies and reports are
+  size-capped and rate-limited, globally and per computer and session,
+  before allocation, parsing or any database lookup. A compromised machine
+  can't turn its reply subjects into a CPU, database or memory attack.
+- **Router incarnations:**
+  - Each router process has an incarnation id, recorded on the session
+    rows it owns.
+  - Reclaiming a slot or closing a session bumps the row's generation.
+  - The old process's `requireCurrentLease` and revalidation check that
+    generation, so a router thought dead that later resumes can't keep
+    serving the session.
+  - Test: a router is declared dead, its slot is reclaimed, then it resumes.
+- **A relay row is "dispatched", not "delivered".** It is committed before
+  the publish. Until an answer arrives or the row expires, the audit and the
+  client say the outcome is pending or unknown, never confirmed. A retry is
+  safe because the daemon's ledger is idempotent.
+- **Daemon duties:** the transport calls `daemon.start()` before accepting
+  any traffic (deadline enforcement, kill escalation, cleanup re-drive,
+  hourly pruning), and `stop()` on shutdown.
+
 **Tests before shipping:**
 - **Two live sessions:** the unselected one receives no operation, and
   can't publish an accepted reply or report.

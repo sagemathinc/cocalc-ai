@@ -151,7 +151,12 @@ export class Ledger {
 
   /** Forget finished entries older than maxAgeMs (open ones are kept). */
   prune(maxAgeMs: number, now = Date.now()): number {
-    let removed = 0;
+    return this.pruneIds(maxAgeMs, now).length;
+  }
+
+  /** As prune, returning the operation ids it forgot. */
+  pruneIds(maxAgeMs: number, now = Date.now()): string[] {
+    const removed: string[] = [];
     for (const name of readdirSync(this.dir)) {
       if (!name.endsWith(".json")) continue;
       const path = join(this.dir, name);
@@ -159,7 +164,7 @@ export class Ledger {
       const age = now - (entry?.updated_at ?? statSync(path).mtimeMs);
       if (age > maxAgeMs && (entry == null || !OPEN.includes(entry.state))) {
         rmSync(path, { force: true });
-        removed += 1;
+        removed.push(name.slice(0, -".json".length));
       }
     }
     return removed;

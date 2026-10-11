@@ -18,7 +18,7 @@
 // - Who sees what (the access matrix): other agents see a job's command
 //   line and description, but only its own agent reads its log or kills it.
 
-import { spawn, execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -33,10 +33,19 @@ import { join } from "node:path";
 import { isValidUUID } from "@cocalc/util/misc";
 import { ensurePrivateDir, readJson, writeDurableJson } from "./durable";
 import { loginShell } from "./exec";
+import {
+  leaderAlive,
+  processStartTime,
+  RELEASE_PRELUDE,
+  signalVerifiedGroup,
+  STAY_LEADER,
+} from "./launch";
 import { systemBootClock, type BootClock } from "./clock";
 
 export type JobState =
   | "queued"
+  /** Recorded before it is spawned; released only once its pid is durable. */
+  | "starting"
   | "running"
   | "exited"
   | "killed"
@@ -87,6 +96,9 @@ export interface JobStatus {
   kill_requested: boolean;
   /** When SIGTERM was first sent; SIGKILL follows after the grace period. */
   kill_started_at?: number | null;
+  /** The same moment on this boot's clock (Linux), so a wall-clock jump
+   * can't postpone SIGKILL. */
+  kill_started_boot?: { boot_id: string; since_boot_ms: number } | null;
 }
 
 export type Job = JobSpec & JobStatus;
@@ -115,12 +127,13 @@ const LOG_TAIL_READ_BYTES = 4 * 1024 * 1024;
 /** A job's log keeps at most this much; the rest is drained and counted. */
 export const JOB_LOG_CAP_BYTES = 256 * 1024 * 1024;
 
-const WRAPPER = `
+const WRAPPER = `${RELEASE_PRELUDE}
 cmd=$COCALC_JOB_COMMAND
 exit_file=$COCALC_JOB_EXIT_FILE
 job_shell=$COCALC_JOB_SHELL
 job_nice=$COCALC_JOB_NICE
-unset COCALC_JOB_COMMAND COCALC_JOB_EXIT_FILE COCALC_JOB_SHELL COCALC_JOB_NICE
+log_cap=$COCALC_JOB_LOG_CAP
+unset COCALC_JOB_COMMAND COCALC_JOB_EXIT_FILE COCALC_JOB_SHELL COCALC_JOB_NICE COCALC_JOB_LOG_CAP
 if [ -n "$job_nice" ]; then
   if command -v ionice >/dev/null 2>&1; then
     set -- ionice -c 3 nice -n 10
@@ -130,8 +143,6 @@ if [ -n "$job_nice" ]; then
 else
   set --
 fi
-log_cap=$COCALC_JOB_LOG_CAP
-unset COCALC_JOB_LOG_CAP
 # The log keeps at most log_cap bytes; the rest is read and dropped (so the
 # command never dies of a closed pipe) and counted at the end.
 {
@@ -144,40 +155,19 @@ unset COCALC_JOB_LOG_CAP
   if [ "$rest" -gt 0 ]; then
     printf '\\n[cocalc: log capped; %s more bytes not kept]\\n' "$rest"
   fi
-}
+} &
+# The command started before this, so it doesn't inherit it: the leader
+# survives SIGTERM and leaves only once the job is gone (or by SIGKILL).
+trap '' TERM HUP INT
+wait
+${STAY_LEADER}
 code=$(cat "$exit_file" 2>/dev/null)
 exit "\${code:-1}"
 `;
 
 export class JobError extends Error {}
 
-/** The start time of a process, or undefined if it isn't running. */
-export function processStartTime(pid: number): string | undefined {
-  try {
-    process.kill(pid, 0);
-  } catch (err: any) {
-    if (err?.code !== "EPERM") return undefined;
-  }
-  if (process.platform === "linux") {
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      // Field 22 (starttime), counted after the parenthesized command name.
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      return fields[19];
-    } catch {
-      return undefined;
-    }
-  }
-  try {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", `${pid}`], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return out || undefined;
-  } catch {
-    return undefined;
-  }
-}
+export { processStartTime };
 
 export class JobManager {
   private readonly dir: string;
@@ -195,6 +185,10 @@ export class JobManager {
        */
       authorize?: (job: Job) => string | null;
       bootClock?: BootClock;
+      /** Tests only: called at each launch boundary (to crash or fail). */
+      launchHook?: (
+        point: "starting" | "spawned" | "recorded" | "released",
+      ) => void;
     } = {},
   ) {
     this.dir = join(stateDir, "jobs");
@@ -247,8 +241,9 @@ export class JobManager {
     return jobs.sort((a, b) => a.created_at - b.created_at);
   }
 
+  /** Jobs that may have processes: running, or starting with a pid. */
   private running(): Job[] {
-    return this.list().filter((j) => j.state === "running");
+    return this.list().filter(isLive);
   }
 
   private queued(): Job[] {
@@ -288,15 +283,26 @@ export class JobManager {
     return this.get(spec.job_id)!;
   }
 
+  /**
+   * Start a job, crash-safely:
+   * 1. record it as "starting" (so a restart never dispatches it again);
+   * 2. spawn the wrapper, which waits on fd 3;
+   * 3. record its pid and start time durably;
+   * 4. only then release it ("go" on fd 3).
+   * A crash before 4 closes fd 3 and the wrapper exits without running the
+   * command; refresh() then cancels a "starting" job that has no pid.
+   */
   private start(job_id: string, now: number): Job {
-    const job = this.get(job_id)!;
+    const job = this.setStatus(job_id, { state: "starting" });
+    this.opts.launchHook?.("starting");
     const dir = this.jobDir(job_id);
     const log = openSync(join(dir, "log"), "a", 0o600);
+    let child;
     try {
-      const child = spawn("/bin/sh", ["-c", WRAPPER, "cocalc-job"], {
+      child = spawn("/bin/sh", ["-c", WRAPPER, "cocalc-job"], {
         cwd: job.cwd,
         detached: true,
-        stdio: ["ignore", log, log],
+        stdio: ["ignore", log, log, "pipe"],
         env: {
           ...process.env,
           COCALC_JOB_COMMAND: job.command,
@@ -306,24 +312,37 @@ export class JobManager {
           COCALC_JOB_LOG_CAP: `${this.opts.logCapBytes ?? JOB_LOG_CAP_BYTES}`,
         },
       });
-      child.on("error", () => {});
-      child.unref();
-      if (child.pid == null) {
-        return this.setStatus(job_id, {
-          state: "lost",
-          ended_at: now,
-          error: "the job could not be started",
-        });
-      }
+    } finally {
+      closeSync(log);
+    }
+    child.on("error", () => {});
+    const release = child.stdio[3] as import("node:stream").Writable;
+    release.on("error", () => {});
+    child.unref();
+    if (child.pid == null) {
       return this.setStatus(job_id, {
-        state: "running",
+        state: "lost",
+        ended_at: now,
+        error: "the job could not be started",
+      });
+    }
+    try {
+      this.opts.launchHook?.("spawned");
+      this.setStatus(job_id, {
         pid: child.pid,
         pid_start: processStartTime(child.pid) ?? null,
         started_at: now,
       });
-    } finally {
-      closeSync(log);
+    } catch (err) {
+      // Not recorded, so never released: closing fd 3 ends the wrapper.
+      release.destroy();
+      throw err;
     }
+    this.opts.launchHook?.("recorded");
+    release.end("go\n");
+    (release as any).unref?.();
+    this.opts.launchHook?.("released");
+    return this.setStatus(job_id, { state: "running" });
   }
 
   private exitCode(job_id: string): number | undefined {
@@ -336,34 +355,13 @@ export class JobManager {
     }
   }
 
-  private wrapperAlive(job: Job): boolean {
-    if (job.pid == null) return false;
-    const start = processStartTime(job.pid);
-    if (start == null) return false;
-    // Without a recorded start time we can only trust the pid.
-    return job.pid_start == null || start === job.pid_start;
-  }
-
-  /**
-   * Anything of the job still running: the wrapper, or (if it died) any
-   * process left in its process group, whose id is the wrapper's pid.
-   */
+  /** The job's group leader (the wrapper), verified by pid and start time. */
   private alive(job: Job): boolean {
-    if (job.pid == null) return false;
-    if (this.wrapperAlive(job)) return true;
-    try {
-      process.kill(-job.pid, 0);
-      return true;
-    } catch (err: any) {
-      return err?.code === "EPERM";
-    }
+    return leaderAlive(job.pid, job.pid_start);
   }
 
   private signalGroup(job: Job, signal: NodeJS.Signals): void {
-    if (job.pid == null) return;
-    try {
-      process.kill(-job.pid, signal);
-    } catch {}
+    signalVerifiedGroup(job.pid, job.pid_start, signal);
   }
 
   /** Has the job reached its time limit (wall clock, or this boot's clock)? */
@@ -381,6 +379,28 @@ export class JobManager {
     return false;
   }
 
+  private bootMoment(): { boot_id: string; since_boot_ms: number } | null {
+    const boot_id = this.bootClock.bootId();
+    const since_boot_ms = this.bootClock.sinceBootMs();
+    return boot_id != null && since_boot_ms != null
+      ? { boot_id, since_boot_ms }
+      : null;
+  }
+
+  /** Has the SIGTERM grace period passed (wall clock, or this boot's)? */
+  private graceOver(job: Job, now: number): boolean {
+    const grace = this.opts.killGraceMs ?? 5000;
+    if (job.kill_started_at != null && now - job.kill_started_at >= grace) {
+      return true;
+    }
+    const b = job.kill_started_boot;
+    if (b != null && b.boot_id === this.bootClock.bootId()) {
+      const since = this.bootClock.sinceBootMs();
+      if (since != null && since - b.since_boot_ms >= grace) return true;
+    }
+    return false;
+  }
+
   private get bootClock(): BootClock {
     return this.opts.bootClock ?? systemBootClock;
   }
@@ -394,6 +414,7 @@ export class JobManager {
     this.setStatus(job.job_id, {
       kill_requested: true,
       kill_started_at: job.kill_started_at ?? now,
+      kill_started_boot: job.kill_started_boot ?? this.bootMoment(),
       ...(reason != null && job.error == null ? { error: reason } : {}),
     });
     this.signalGroup(job, "SIGTERM");
@@ -405,46 +426,60 @@ export class JobManager {
    */
   refresh(now = Date.now()): void {
     for (const job of this.list()) {
-      if (
-        job.state === "running" &&
-        !job.kill_requested &&
-        this.deadlinePassed(job, now)
-      ) {
+      if (job.state === "starting" && job.pid == null) {
+        // Recorded but never spawned or recorded: it was never released, so
+        // the command didn't run.
+        this.ended(
+          job.job_id,
+          {
+            state: "cancelled",
+            error: "the daemon stopped before the job started; it did not run",
+          },
+          now,
+        );
+        continue;
+      }
+      if (!isLive(job)) {
+        if (job.state === "queued" && now - job.created_at > MAX_QUEUE_AGE_MS) {
+          this.ended(
+            job.job_id,
+            { state: "cancelled", error: "queued for too long" },
+            now,
+          );
+        }
+        continue;
+      }
+      const alive = this.alive(job);
+      if (alive && !job.kill_requested && this.deadlinePassed(job, now)) {
         this.requestKill(job, "the job reached its time limit", now);
         continue;
       }
-      if (job.state === "running" && job.kill_requested && this.alive(job)) {
+      if (alive && job.kill_requested) {
         // Escalate: a job that ignores SIGTERM gets SIGKILL after the grace
         // period, also when the daemon restarted in between.
-        const started = job.kill_started_at ?? now;
         if (job.kill_started_at == null) {
-          this.setStatus(job.job_id, { kill_started_at: now });
-          this.signalGroup(job, "SIGTERM");
-        } else if (now - started >= (this.opts.killGraceMs ?? 5000)) {
+          this.requestKill(job, null, now);
+        } else if (this.graceOver(job, now)) {
           this.signalGroup(job, "SIGKILL");
         }
         continue;
       }
-      if (job.state === "running") {
-        const code = this.exitCode(job.job_id);
-        if (code != null) {
-          this.ended(job.job_id, { state: "exited", exit_code: code }, now);
-        } else if (!this.alive(job)) {
-          this.ended(
-            job.job_id,
-            job.kill_requested
-              ? { state: "killed", ...(job.error ? { error: job.error } : {}) }
-              : { state: "lost", error: "the job ended without an exit code" },
-            now,
-          );
-        }
-      } else if (
-        job.state === "queued" &&
-        now - job.created_at > MAX_QUEUE_AGE_MS
-      ) {
+      // The leader stays while anything of the job is left (Linux), so a
+      // live leader means a live job.
+      if (alive) continue;
+      const code = this.exitCode(job.job_id);
+      if (job.kill_requested) {
         this.ended(
           job.job_id,
-          { state: "cancelled", error: "queued for too long" },
+          { state: "killed", ...(job.error ? { error: job.error } : {}) },
+          now,
+        );
+      } else if (code != null) {
+        this.ended(job.job_id, { state: "exited", exit_code: code }, now);
+      } else {
+        this.ended(
+          job.job_id,
+          { state: "lost", error: "the job ended without an exit code" },
           now,
         );
       }
@@ -504,7 +539,7 @@ export class JobManager {
       );
       return this.get(job_id)!;
     }
-    if (job.state !== "running") return job;
+    if (!isLive(job)) return job;
     this.requestKill(job, null, now);
     return this.get(job_id)!;
   }
@@ -554,7 +589,9 @@ export class JobManager {
   activeCount(agent_id?: string): number {
     return this.list().filter(
       (j) =>
-        (j.state === "running" || j.state === "queued") &&
+        (j.state === "running" ||
+          j.state === "starting" ||
+          j.state === "queued") &&
         (agent_id == null || j.agent_id === agent_id),
     ).length;
   }
@@ -583,7 +620,7 @@ export class JobManager {
     maxBytes = JOB_RETENTION_BYTES,
   ): string[] {
     const finished = this.list().filter(
-      (j) => j.state !== "running" && j.state !== "queued",
+      (j) => !isLive(j) && j.state !== "queued" && j.state !== "starting",
     );
     const removed: string[] = [];
     const remove = (job: Job) => {
@@ -614,4 +651,10 @@ export class JobManager {
     }
     return total;
   }
+}
+
+function isLive(job: Job): boolean {
+  return (
+    job.state === "running" || (job.state === "starting" && job.pid != null)
+  );
 }
