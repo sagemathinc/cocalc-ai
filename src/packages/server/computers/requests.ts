@@ -46,6 +46,10 @@ import {
   transcriptPairingPhrase,
   verifyEnvelope,
 } from "@cocalc/backend/computers/crypto";
+import type {
+  ComputerRequestSummary,
+  PairingView,
+} from "@cocalc/util/computers/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import { getBaySigningKey } from "./signing-keys";
@@ -133,6 +137,24 @@ export async function createComputerRequest({
         "no such active agent network on this account",
       );
     }
+    if (requested_by) {
+      // An agent can only ask for a computer for a network it is in.
+      const member = await client.query(
+        `SELECT 1 FROM agent_network_members
+          WHERE agent_network_id=$1 AND member_kind='registered' AND removed_at IS NULL
+            AND registered_agent_id=$2 AND project_id=$3`,
+        [
+          policy.agent_network_id,
+          requested_by.agent_id,
+          requested_by.project_id,
+        ],
+      );
+      if (member.rows.length === 0) {
+        throw new ComputerRequestError(
+          "an agent can only request a computer for an agent network it is in",
+        );
+      }
+    }
     const open = await client.query(
       `SELECT count(*)::int AS n FROM account_computer_requests
         WHERE account_id=$1 AND state IN ('pending','paired') AND expires_at > $2`,
@@ -174,20 +196,6 @@ export async function createComputerRequest({
   }
 }
 
-/** What the machine needs to show the owner before pairing. Not secret. */
-export interface PairingView {
-  site: string;
-  cluster_id: string;
-  request_id: string;
-  account_id: string;
-  name: string;
-  requested_policy: RequestedPolicy;
-  why: string;
-  server_nonce: string;
-  state: string;
-  expires_at: number;
-}
-
 export async function getPairingView(
   request_id: string,
   now = Date.now(),
@@ -199,6 +207,7 @@ export async function getPairingView(
     cluster_id: getConfiguredClusterId(),
     request_id: row.request_id,
     account_id: row.account_id,
+    account_label: await accountLabel(row.account_id),
     name: row.name,
     requested_policy: parseRequestedPolicy(row.requested_policy),
     why: row.why,
@@ -521,6 +530,61 @@ export async function expireComputerRequests(
     [new Date(now)],
   );
   return rowCount ?? 0;
+}
+
+/**
+ * How the machine names the account that will control it, so the owner can
+ * tell it's theirs (and spot a line sent by someone else). The email is
+ * partly masked: anyone with the request id can see this.
+ */
+async function accountLabel(account_id: string): Promise<string> {
+  const { rows } = await getPool().query(
+    `SELECT first_name, last_name, email_address FROM accounts WHERE account_id=$1`,
+    [account_id],
+  );
+  const row = rows[0] ?? {};
+  const name = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim();
+  const email = maskEmail(row.email_address);
+  return [name, email && `<${email}>`].filter(Boolean).join(" ") || account_id;
+}
+
+export function maskEmail(email: unknown): string {
+  if (typeof email !== "string" || !email.includes("@")) return "";
+  const [user, domain] = email.split("@", 2);
+  const mask = (part: string) => (part.length <= 1 ? part : `${part[0]}***`);
+  const dot = domain.lastIndexOf(".");
+  return dot > 0
+    ? `${mask(user)}@${mask(domain.slice(0, dot))}${domain.slice(dot)}`
+    : `${mask(user)}@${mask(domain)}`;
+}
+
+export async function listComputerRequests(
+  account_id: string,
+): Promise<ComputerRequestSummary[]> {
+  requireUuid(account_id, "account_id");
+  const { rows } = await getPool().query(
+    `SELECT * FROM account_computer_requests
+      WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50`,
+    [account_id],
+  );
+  return rows.map((row) => {
+    const machine = row.transcript?.payload?.machine ?? null;
+    return {
+      request_id: row.request_id,
+      name: row.name,
+      state: row.state,
+      why: row.why,
+      requested_policy: row.requested_policy,
+      resolved_policy: row.resolved_policy ?? null,
+      pairing_phrase: row.pairing_phrase ?? null,
+      transcript_hash: row.transcript_hash ?? null,
+      machine,
+      requested_by_agent_id: row.requested_by_agent_id ?? null,
+      computer_id: row.computer_id ?? null,
+      expires_at: new Date(row.expires_at).valueOf(),
+      created_at: new Date(row.created_at).valueOf(),
+    };
+  });
 }
 
 async function loadRequest(request_id: string): Promise<any | undefined> {

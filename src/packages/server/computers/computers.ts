@@ -19,37 +19,16 @@ import { isValidUUID } from "@cocalc/util/misc";
 import {
   parseComputerPolicy,
   policyWideningReasons,
-  type ComputerPolicy,
 } from "@cocalc/util/computers/policy";
+import type { ComputerSummary } from "@cocalc/util/computers/api";
 import { computerName } from "./requests";
+
+export type { ComputerSummary };
 
 export const MAX_NOTES_BYTES = 4096;
 export const NOTES_HISTORY = 20;
 
 export class ComputerError extends Error {}
-
-export interface ComputerSummary {
-  computer_id: string;
-  name: string;
-  hostname: string;
-  os: string;
-  arch: string;
-  machine_user: string;
-  mode: "direct" | "isolated";
-  agent_network_id: string;
-  effective_policy: ComputerPolicy;
-  policy_epoch: number;
-  epoch: number;
-  deadline: number | null;
-  max_deadline: number | null;
-  notes: string;
-  notes_revision: number;
-  notes_locked: boolean;
-  connected_at: number | null;
-  last_seen: number | null;
-  revoked_at: number | null;
-  origin: string;
-}
 
 function summary(row: any): ComputerSummary {
   const t = (v: any) => (v == null ? null : new Date(v).valueOf());
@@ -101,6 +80,66 @@ export async function getComputer(
     [account_id, computer_id],
   );
   if (rows[0] == null) throw new ComputerError("no such computer");
+  return summary(rows[0]);
+}
+
+const MEMBER_FILTER = `
+  EXISTS (SELECT 1 FROM agent_networks n
+            JOIN agent_network_members m ON m.agent_network_id = n.agent_network_id
+           WHERE n.agent_network_id = c.agent_network_id AND n.account_id = c.account_id
+             AND n.state = 'active' AND m.member_kind = 'registered'
+             AND m.removed_at IS NULL AND m.registered_agent_id = $2 AND m.project_id = $3)`;
+
+/** The computers an agent may use: those serving a network it is in. */
+export async function listComputersForAgent(
+  account_id: string,
+  agent_id: string,
+  project_id: string,
+): Promise<ComputerSummary[]> {
+  for (const [v, w] of [
+    [account_id, "account_id"],
+    [agent_id, "agent_id"],
+    [project_id, "project_id"],
+  ]) {
+    requireUuid(v, w);
+  }
+  const { rows } = await getPool().query(
+    `SELECT c.* FROM account_computers c
+      WHERE c.account_id=$1 AND c.tombstoned_at IS NULL AND ${MEMBER_FILTER}
+      ORDER BY c.name`,
+    [account_id, agent_id, project_id],
+  );
+  return rows.map(summary);
+}
+
+export async function getComputerForAgent(
+  account_id: string,
+  agent_id: string,
+  project_id: string,
+  ref: string,
+): Promise<ComputerSummary> {
+  const found = (
+    await listComputersForAgent(account_id, agent_id, project_id)
+  ).find((c) => c.computer_id === ref.toLowerCase() || c.name === ref);
+  if (found == null)
+    throw new ComputerError(`no computer '${ref}' for this agent`);
+  return found;
+}
+
+/** A computer by alias or id. */
+export async function getComputerByRef(
+  account_id: string,
+  ref: string,
+): Promise<ComputerSummary> {
+  requireUuid(account_id, "account_id");
+  const byId = isValidUUID(ref);
+  const { rows } = await getPool().query(
+    `SELECT * FROM account_computers
+      WHERE account_id=$1 AND ${byId ? "computer_id" : "name"}=$2
+        AND tombstoned_at IS NULL`,
+    [account_id, byId ? ref.toLowerCase() : ref],
+  );
+  if (rows[0] == null) throw new ComputerError(`no computer '${ref}'`);
   return summary(rows[0]);
 }
 

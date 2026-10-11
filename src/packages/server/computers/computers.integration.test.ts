@@ -56,7 +56,9 @@ const tables = [
   "cluster_computer_signing_keys",
   "bay_computer_signing_keys",
   "agent_networks",
+  "agent_network_members",
   "projects",
+  "accounts",
 ];
 
 describeDb("computers store", () => {

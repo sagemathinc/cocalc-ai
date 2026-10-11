@@ -27,6 +27,8 @@ import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
+import { createInterBayComputersHandler } from "@cocalc/conat/inter-bay/computers";
+import { computersAtThisBay } from "@cocalc/server/computers/routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
 import { repairScheduledCollectionExpiryLocal } from "@cocalc/server/lro/scheduled-collection-expiry-repair";
@@ -674,6 +676,10 @@ export async function initInterBayServices(): Promise<void> {
           parallel: true,
         },
       ),
+      createInterBayComputersHandler(getConfiguredBayId(), computersAtThisBay, {
+        client: getInterBayFabricServiceClient(),
+        parallel: true,
+      }),
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
         client: getInterBayFabricServiceClient(),
         parallel: true,

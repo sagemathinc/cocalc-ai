@@ -54,6 +54,7 @@ const tables = [
   "agent_networks",
   "agent_network_members",
   "projects",
+  "accounts",
 ];
 
 describeDb("computer tickets", () => {

@@ -48,6 +48,7 @@ import * as artifactCatalog from "./artifact-catalog";
 import * as personalLibrary from "./personal-library";
 import * as people from "./people";
 import * as personalUrls from "./personal-urls";
+import * as computers from "./computers";
 import * as notifications from "./notifications";
 import * as adminData from "./admin-data-explorer";
 import * as adminDb from "./admin-db";
@@ -117,6 +118,7 @@ export const hubApi: HubApi = {
   personalLibrary,
   people,
   personalUrls,
+  computers,
   notifications,
   adminData,
   adminDb,
