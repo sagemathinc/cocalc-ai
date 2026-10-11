@@ -23,7 +23,12 @@ Use getPool() for those, and for anything that writes.
 */
 
 import LRU from "lru-cache";
-import { Pool, type QueryResult } from "pg";
+import {
+  Pool,
+  type QueryConfig,
+  type QueryResult,
+  type QueryResultRow,
+} from "pg";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
@@ -33,7 +38,6 @@ import getPool, { shouldSkipEnsureExists } from "./pool";
 const L = getLogger("db:pool:cached");
 
 const MAX_AGE_S = {
-  "": 0, // no cache at all
   short: 5, // just to avoid a very rapid fire sequence of re-requests
   medium: 15, // usually use this.
   long: 30,
@@ -46,7 +50,6 @@ export type CacheTime = keyof typeof MAX_AGE_S;
 const caches = new Map<CacheTime, LRU<string, any>>();
 
 for (const cacheTime in MAX_AGE_S) {
-  if (!cacheTime) continue;
   caches[cacheTime] = new LRU<string, any>({
     max: 1000,
     ttl: 1000 * MAX_AGE_S[cacheTime],
@@ -113,10 +116,18 @@ const cachedQuery = reuseInFlight(
 );
 
 /** Reads served from a per-process query-result cache. */
+/**
+ * The promise forms of pg's query(): what a cached read pool supports. A pg
+ * Pool or PoolClient also fits, so read-only helpers can take either.
+ */
 export interface CachedReadPool {
-  // pg's own signature, so it fits wherever a query-only Pool is expected;
-  // only the promise forms are supported.
-  query: Pool["query"];
+  query<R extends QueryResultRow = any>(
+    text: string,
+    values?: any[],
+  ): Promise<QueryResult<R>>;
+  query<R extends QueryResultRow = any>(
+    config: QueryConfig,
+  ): Promise<QueryResult<R>>;
 }
 
 const STRICT = process.env.NODE_ENV !== "production";

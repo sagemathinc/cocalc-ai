@@ -1008,8 +1008,8 @@ export async function getClusterAccountHomeBayCountsDirect(): Promise<
   Record<string, number>
 > {
   await ensureClusterAccountDirectorySchema();
-  // query-cache-ok: admin statistics
-  const { rows } = await getCachedReadPool("medium").query<{
+  // Uncached: selectSignupHomeBay places new accounts by these counts.
+  const { rows } = await getPool().query<{
     home_bay_id: string;
     count: string;
   }>(

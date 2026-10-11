@@ -41,19 +41,6 @@ const PROTECTED = [
   "http-api/lib/share/get-collaborators.ts",
 ];
 
-// Reporting and maintenance code in those directories, which only reads
-// aggregates for display.
-const REPORTING = new Set([
-  "server/membership/allocation-analytics-series.ts",
-  "server/membership/allocation-analytics.ts",
-  "server/membership/analytics.ts",
-  "server/membership/retention-overview.ts",
-  "server/membership/rootfs-report.ts",
-  "server/membership/usage-retention-maintenance.ts",
-  "server/purchases/compute-revenue-analytics-series.ts",
-  "server/purchases/test-data.ts",
-]);
-
 // A cached read pool, or getPool with a non-object argument (a cache time,
 // a variable or an expression). \s also matches newlines, so a multi-line
 // call is caught.
@@ -94,7 +81,6 @@ describe("query cache policy", () => {
     )
       .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
       .map((file) => relative(PACKAGES, file))
-      .filter((file) => !REPORTING.has(file))
       .flatMap((file) =>
         unannotatedCachedPools(readFileSync(join(PACKAGES, file), "utf8")).map(
           (line) => `${file}:${line}`,
