@@ -140,15 +140,24 @@ export function refCacheSync<
 >({
   createKey,
   createObject,
+  isValid,
   name,
 }: {
   createKey?: (opts: Options) => string | null | undefined;
   createObject: (opts: Options) => T;
+  // An invalid cached object is no longer handed out; the next get creates a
+  // replacement.  Holders of the old object keep their references, and their
+  // close() calls only release the old object.
+  isValid?: (obj: T) => boolean;
   name: string;
 }) {
-  const cache: { [key: string]: T } = {};
-  const count: { [key: string]: number } = {};
-  const close: { [key: number]: Function } = {};
+  interface Entry {
+    obj: T;
+    count: number;
+    closed: boolean;
+    close: () => void;
+  }
+  const cache: { [key: string]: Entry } = {};
   if (createKey == null) {
     createKey = (x) => jsonStableStringify(x) ?? "";
   }
@@ -157,40 +166,50 @@ export function refCacheSync<
       return createObject(opts);
     }
     const key = createKey(opts) ?? "";
-    if (cache[key] != undefined) {
-      count[key] += 1;
+    let entry: Entry | undefined = cache[key];
+    if (entry != null && isValid != null && !isValid(entry.obj)) {
+      delete cache[key];
+      entry = undefined;
+    }
+    if (entry != null) {
+      entry.count += 1;
       if (VERBOSE) {
         console.log("refCacheSync: cache hit", {
           name,
           key,
-          count: count[key],
+          count: entry.count,
         });
       }
-      return cache[key];
+      return entry.obj;
     }
     const obj = createObject(opts);
     if (VERBOSE) {
       console.log("refCacheSync: create", { name, key });
     }
     // we are *the* one setting things up.
-    cache[key] = obj;
-    count[key] = 1;
-    close[key] = obj.close;
+    const newEntry: Entry = { obj, count: 1, closed: false, close: obj.close };
+    cache[key] = newEntry;
     obj.close = () => {
-      count[key] -= 1;
-      if (VERBOSE) {
-        console.log("refCacheSync: close", { name, key, count: count[key] });
+      if (newEntry.closed) {
+        console.warn(
+          "WARNING: bug called .close() too many times on an object",
+          { name, key },
+        );
+        return;
       }
-      if (count[key] <= 0) {
-        close[key]?.();
-        delete cache[key];
-        delete count[key];
-        delete close[key];
-        if (count[key] < 0) {
-          console.warn(
-            "WARNING: bug called .close() too many times on an object",
-            { name, key },
-          );
+      newEntry.count -= 1;
+      if (VERBOSE) {
+        console.log("refCacheSync: close", {
+          name,
+          key,
+          count: newEntry.count,
+        });
+      }
+      if (newEntry.count <= 0) {
+        newEntry.closed = true;
+        newEntry.close();
+        if (cache[key] === newEntry) {
+          delete cache[key];
         }
       }
     };
@@ -198,11 +217,15 @@ export function refCacheSync<
     return obj;
   };
   get.info = () => {
-    return { name, count: { ...count } };
+    const count: { [key: string]: number } = {};
+    for (const key in cache) {
+      count[key] = cache[key].count;
+    }
+    return { name, count };
   };
   get.one = (): T | undefined => {
     for (const key in cache) {
-      return cache[key];
+      return cache[key].obj;
     }
   };
   get.size = () => {

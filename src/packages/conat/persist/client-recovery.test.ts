@@ -107,12 +107,49 @@ describe("persist stream open errors", () => {
     persist.close();
   });
 
-  it("closes the client when the server denies permission", () => {
-    const { persist, socket } = createClient();
-    persist.on("error", () => {});
+  it("shuts down a cached client denied permission without stealing references", () => {
+    const sockets: FakeSocket[] = [];
+    const client: any = {
+      id: `client-${Math.random()}`,
+      state: "connected",
+      socket: {
+        connect: jest.fn(() => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        }),
+      },
+      recoveryScheduler: {
+        registerResource: jest.fn(() => ({
+          requestRecovery: jest.fn(),
+          close: jest.fn(),
+        })),
+      },
+    };
+    const options = {
+      client,
+      user: { hub_id: "test" },
+      storage: { path: `test/${Math.random()}` },
+    };
+    // Two holders share one cached client.
+    const first: any = stream(options);
+    const second: any = stream(options);
+    expect(second).toBe(first);
+    first.on("error", () => {});
 
-    socket.emit("data", null, { error: "permission denied", code: 403 });
+    sockets[0].emit("data", null, { error: "permission denied", code: 403 });
 
-    expect(persist.isClosed()).toBe(true);
+    expect(first.isClosed()).toBe(true);
+    // The denied client is no longer handed out...
+    const third: any = stream(options);
+    expect(third).not.toBe(first);
+    expect(third.isClosed()).toBe(false);
+    // ...and releasing the old holders does not touch the replacement.
+    first.close();
+    second.close();
+    expect(third.isClosed()).toBe(false);
+    expect(Object.values(stream.info().count)).toEqual([1]);
+    third.close();
+    expect(third.isClosed()).toBe(true);
   });
 });

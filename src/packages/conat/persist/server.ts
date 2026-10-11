@@ -217,7 +217,14 @@ export function server({
     // quota are usually transient, and a long-lived client may keep using this
     // socket for hours, so requests retry the open (see retryInit).
     const initStream = (): Promise<void> => {
-      initializing ??= (async () => {
+      if (initializing != null) {
+        return initializing;
+      }
+      // Assign before clearing: an attempt that fails before its first await
+      // (e.g., usage.add over the limit) settles synchronously, and clearing
+      // from inside it would run before this assignment and leave the failed
+      // attempt cached forever.
+      const attempt = (async () => {
         lastInitAttemptAt = Date.now();
         try {
           if (!added) {
@@ -261,11 +268,16 @@ export function server({
             err: error,
           });
           throw err;
-        } finally {
-          initializing = undefined;
         }
       })();
-      return initializing;
+      initializing = attempt;
+      const clear = () => {
+        if (initializing === attempt) {
+          initializing = undefined;
+        }
+      };
+      attempt.then(clear, clear);
+      return attempt;
     };
 
     const retryInit = async (): Promise<void> => {
