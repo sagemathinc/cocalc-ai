@@ -5721,6 +5721,9 @@ WantedBy=multi-user.target
                 script,
             )
             self.assertIn('exec "$NODE_BIN"', script)
+            pool = 'export UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-64}"'
+            self.assertIn(pool, script)
+            self.assertLess(script.index(pool), script.index('exec "$NODE_BIN"'))
 
     def test_install_node_uses_current_nvm_and_requested_node_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

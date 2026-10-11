@@ -1285,6 +1285,105 @@ describeIfLinux("openat2 motivation regressions", () => {
     expect(await fs.exists("moved.txt")).toBe(false);
   });
 
+  it.each(["ENOSYS", "EINVAL"])(
+    "writeFile should fail closed when openat2 openWrite reports %s",
+    async (code) => {
+      const sandboxRoot = join(
+        tempDir,
+        `test-openat2-write-unavailable-${code.toLowerCase()}`,
+      );
+      await mkdir(sandboxRoot);
+      const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+      const openAt2Root = (fs as any).getOpenAt2Root?.();
+      if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+        return;
+      }
+
+      openAt2Root.openWrite = () => {
+        throw new Error(`${code}: simulated openat2 unavailability`);
+      };
+
+      const write = expect(fs.writeFile("new.txt", "unsafe fallback")).rejects;
+      if (code === "ENOSYS") {
+        await write.toThrow("openat2 is required in safe mode");
+      } else {
+        await write.toMatchObject({ code: "EINVAL" });
+      }
+      await expect(stat(join(sandboxRoot, "new.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it("readFile should fail closed when openat2 openRead is unavailable", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-read-unavailable");
+    await mkdir(sandboxRoot);
+    await writeFile(join(sandboxRoot, "inside.txt"), "inside");
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openRead !== "function") {
+      return;
+    }
+
+    openAt2Root.openRead = () => {
+      throw new Error("ENOSYS: simulated openat2 unavailability");
+    };
+
+    await expect(fs.readFile("inside.txt", "utf8")).rejects.toThrow(
+      "openat2 is required in safe mode",
+    );
+  });
+
+  it("move should fail closed when openat2 renameNoReplace is unavailable", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-move-unavailable");
+    await mkdir(sandboxRoot);
+    await writeFile(join(sandboxRoot, "inside.txt"), "inside");
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (
+      openAt2Root == null ||
+      typeof openAt2Root.renameNoReplace !== "function"
+    ) {
+      return;
+    }
+
+    openAt2Root.renameNoReplace = () => {
+      throw new Error("EINVAL: simulated openat2 unavailability");
+    };
+
+    await expect(fs.move("inside.txt", "moved.txt")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+    expect(await readFile(join(sandboxRoot, "inside.txt"), "utf8")).toBe(
+      "inside",
+    );
+    await expect(stat(join(sandboxRoot, "moved.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rm should fail closed when openat2 recursive removal is unavailable", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-rm-unavailable");
+    await mkdir(join(sandboxRoot, "tree"), { recursive: true });
+    await writeFile(join(sandboxRoot, "tree", "inside.txt"), "inside");
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.rm !== "function") {
+      return;
+    }
+
+    openAt2Root.rm = async () => {
+      throw new Error("ENOSYS: simulated openat2 unavailability");
+    };
+
+    await expect(fs.rm("tree", { recursive: true })).rejects.toThrow(
+      "openat2 is required in safe mode",
+    );
+    expect(
+      await readFile(join(sandboxRoot, "tree", "inside.txt"), "utf8"),
+    ).toBe("inside");
+  });
+
   it("rm recursive should not mutate outside sandbox when target is swapped to symlink", async () => {
     const sandboxRoot = join(tempDir, "test-openat2-rm-race");
     const outsideRoot = join(tempDir, "test-openat2-rm-race-outside");
@@ -1558,6 +1657,86 @@ describeIfLinux("openat2 motivation regressions", () => {
       code: "ENOENT",
     });
   });
+
+  // A project user can place a FIFO at a sandbox path. A blocking open of it on
+  // the Node fallback path pins a libuv worker forever; a handful would starve
+  // fs/dns/zlib/crypto for every project this process serves. The fallback must
+  // open nonblocking and reject special files instead of blocking.
+  it("readFile fallback rejects a FIFO without blocking", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-readfile-fallback");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    // disableOpenAt2 forces the Node fallback path (safe mode, no openat2).
+    const fs = new SandboxedFilesystem(sandboxRoot, {
+      unsafeMode: false,
+      disableOpenAt2: true,
+    });
+    await expect(fs.readFile("pipe", "utf8")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+  }, 5000);
+
+  it("readFile rejects a FIFO reached through an in-sandbox symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-readfile-symlink");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    symlinkSync("pipe", join(sandboxRoot, "link"));
+    // Native openRead rejects every symlink (ELOOP) and falls back to Node, so
+    // this exercises the fallback even with openat2 enabled.
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await expect(fs.readFile("link", "utf8")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+  }, 5000);
+
+  it("copyFile fallback rejects a FIFO source without blocking", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-copy-fallback");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    const fs = new SandboxedFilesystem(sandboxRoot, {
+      unsafeMode: false,
+      disableOpenAt2: true,
+    });
+    await expect(fs.copyFile("pipe", "copy")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+    await expect(stat(join(sandboxRoot, "copy"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 5000);
+
+  it("mkdir fallback rejects a FIFO ancestor without blocking", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-mkdir-fallback");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    const fs = new SandboxedFilesystem(sandboxRoot, {
+      unsafeMode: false,
+      disableOpenAt2: true,
+    });
+    await expect(fs.mkdir("pipe/child")).rejects.toMatchObject({
+      code: "EINVAL",
+    });
+  }, 5000);
+
+  it("many concurrent FIFO reads keep the event loop and threadpool responsive", async () => {
+    const sandboxRoot = join(tempDir, "test-fifo-threadpool");
+    await mkdir(sandboxRoot);
+    execFileSync("mkfifo", [join(sandboxRoot, "pipe")]);
+    symlinkSync("pipe", join(sandboxRoot, "link"));
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+
+    // Far more than UV_THREADPOOL_SIZE; if any blocked, this would time out.
+    const reads = Array.from({ length: 32 }, () =>
+      fs.readFile("link", "utf8").then(
+        () => "resolved",
+        (err) => err?.code ?? "error",
+      ),
+    );
+    // An unrelated threadpool operation must still complete promptly.
+    await expect(readFile("/etc/hostname", "utf8")).resolves.toBeDefined();
+    const results = await Promise.all(reads);
+    expect(results.every((r) => r === "EINVAL")).toBe(true);
+  }, 10000);
 });
 
 describeIfLinux("read only sandbox", () => {

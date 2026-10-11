@@ -1,5 +1,6 @@
 import { watch as chokidarWatch, type FSWatcher } from "chokidar";
-import { readFile, stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
+import { readWatchedFileUtf8 } from "./safe-read";
 import { EventEmitter } from "events";
 import { dirname } from "path";
 import { createHash } from "node:crypto";
@@ -39,6 +40,9 @@ export interface WatchEvent {
 export interface WatchMeta {
   project_id?: string;
   syncPath?: string;
+  // Resolved sandbox base this path must stay inside when re-read after an
+  // inotify event; set by the sandbox in safe mode, undefined in unsafe mode.
+  containmentBase?: string;
   string_id?: string;
   history_epoch?: number;
   watchDebounce?: number;
@@ -620,7 +624,7 @@ export class SyncFsService extends EventEmitter {
       let diskContent: string;
       let forceDiff = false;
       try {
-        diskContent = (await readFile(path, "utf8")) as string;
+        diskContent = await readWatchedFileUtf8(path, meta.containmentBase);
       } catch (err: any) {
         if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
           throw err;
@@ -902,7 +906,10 @@ export class SyncFsService extends EventEmitter {
           if (marker != null) {
             if (Date.now() <= marker.until) {
               try {
-                preloaded = (await readFile(path, "utf8")) as string;
+                preloaded = await readWatchedFileUtf8(
+                  path,
+                  meta?.containmentBase,
+                );
               } catch {
                 preloaded = undefined;
               }
@@ -918,7 +925,10 @@ export class SyncFsService extends EventEmitter {
           const change = await this.store.handleExternalChange(
             path,
             async () => {
-              return preloaded ?? ((await readFile(path, "utf8")) as string);
+              return (
+                preloaded ??
+                (await readWatchedFileUtf8(path, meta?.containmentBase))
+              );
             },
             false,
             codec,
@@ -953,7 +963,9 @@ export class SyncFsService extends EventEmitter {
       return true;
     }
     try {
-      const stats = await stat(path);
+      // lstat, not stat: a watched path swapped to a symlink must be treated
+      // as "reconcile" and then refused by the no-follow read, never followed.
+      const stats = await lstat(path);
       if (!stats.isFile()) {
         return true;
       }

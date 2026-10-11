@@ -26,7 +26,7 @@ describe("privileged-rm-helper", () => {
     await mkdir(path.join(root, "dir"), { recursive: true });
     await writeFile(path.join(root, "dir", "file.txt"), "x");
 
-    runPrivilegedRmHelper([
+    await runPrivilegedRmHelper([
       "rm",
       "--root",
       root,
@@ -51,11 +51,13 @@ describe("privileged-rm-helper", () => {
     await writeFile(path.join(outside, "secret.txt"), "secret");
 
     const { SandboxRoot } = require("@cocalc/openat2") as {
-      SandboxRoot: new (root: string) => { rm: (...args: any[]) => void };
+      SandboxRoot: new (root: string) => {
+        rm: (...args: any[]) => void | Promise<void>;
+      };
     };
     const originalRm = SandboxRoot.prototype.rm;
     SandboxRoot.prototype.rm = function (
-      this: { rm: (...args: any[]) => void },
+      this: { rm: (...args: any[]) => void | Promise<void> },
       rel: string,
       recursive?: boolean,
       force?: boolean,
@@ -66,7 +68,7 @@ describe("privileged-rm-helper", () => {
     };
     try {
       try {
-        runPrivilegedRmHelper([
+        await runPrivilegedRmHelper([
           "rm",
           "--root",
           root,

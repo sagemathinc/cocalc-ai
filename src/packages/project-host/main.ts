@@ -1619,12 +1619,15 @@ if (require.main === module) {
       console.error("project-host host-agent failed:", err);
       process.exit(1);
     });
+  } else if (process.argv[2] === "privileged-rm-helper") {
+    runPrivilegedRmHelper(process.argv.slice(3))
+      .then(() => process.exit(0))
+      .catch((err) => {
+        console.error(`${err}`);
+        process.exit(1);
+      });
   } else {
     try {
-      if (process.argv[2] === "privileged-rm-helper") {
-        runPrivilegedRmHelper(process.argv.slice(3));
-        process.exit(0);
-      }
       if (handleDaemonCli(process.argv.slice(2))) {
         process.exit(0);
       }
