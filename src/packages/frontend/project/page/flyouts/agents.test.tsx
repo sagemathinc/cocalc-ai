@@ -568,7 +568,9 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agents-inline-thread-menu")).toBeTruthy(),
     );
-    expect(screen.getByTestId("agents-inline-codex-controls")).toBeTruthy();
+    // The agent's settings live only in the composer (as on the Agents
+    // page); a second copy in this header raced it for model discovery.
+    expect(screen.queryByTestId("agents-inline-codex-controls")).toBeNull();
     expect(screen.getByText("Appearance...")).toBeTruthy();
     expect(screen.getByText("Behavior...")).toBeTruthy();
     expect(screen.getByText("Open Chat File")).toBeTruthy();

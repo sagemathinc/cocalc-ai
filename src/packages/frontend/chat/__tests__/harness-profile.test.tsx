@@ -1095,3 +1095,22 @@ test("a model catalog saved under a superseded Claude pin is rediscovered", asyn
   ).toBeTruthy();
   expect(current).not.toHaveBeenCalled();
 });
+
+test("an agent thread's config button stays a button without compact (an agents flyout header)", async () => {
+  const { CodexConfigButton } = require("../codex");
+  const runtime = harnessRuntimeFromDraft(draft, "/home/user");
+  render(
+    <CodexConfigButton
+      threadKey="thread-flyout"
+      chatPath="agents.chat"
+      projectId="project-a"
+      actions={{ getThreadMetadata: () => ({ agent_runtime: runtime }) } as any}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "ACP: Pi settings" })).toBeTruthy();
+  // Not the settings form itself, which opens from the button.
+  expect(screen.queryByText("Experimental preview")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Load model and mode options" }),
+  ).toBeNull();
+});
