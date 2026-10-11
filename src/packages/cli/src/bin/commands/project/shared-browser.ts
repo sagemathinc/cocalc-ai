@@ -19,6 +19,7 @@ import { chatTarget, NO_CARD_NOTE, publishCardOnce } from "./chat-card";
 import {
   findSharedBrowserChrome,
   sharedBrowserTarget,
+  writeBrowserNetwork,
 } from "../../core/shared-browser/service";
 import {
   normalizeUrl,
@@ -145,6 +146,10 @@ export function registerSharedBrowserCommands(
       "producing message timestamp (default: $COCALC_CODEX_MESSAGE_DATE)",
     )
     .option("--url <url>", "open this URL (or host, or search words) first")
+    .option(
+      "--network <network>",
+      "for a browser in its own container: own (the internet; the default) or project (also the project's servers on localhost); remembered for next time",
+    )
     .option("--no-card", "do not publish a chat card")
     .action(async (opts: any, command: Command) => {
       await withContext(command, "project browser start", async (ctx: any) => {
@@ -154,6 +159,11 @@ export function registerSharedBrowserCommands(
         );
         const target = sharedBrowserTarget(opts.browser);
         const here = process.env.COCALC_PROJECT_ID === project.project_id;
+        const network = opts.network;
+        if (network != null && network !== "own" && network !== "project")
+          throw Error("--network: own or project");
+        // A browser that is not running yet starts on it.
+        if (network && here) writeBrowserNetwork(target.appId, network);
         // Fail early with an install hint instead of a startup timeout.
         if (here) findSharedBrowserChrome(undefined);
         if (here && target.file) await touchBrowserFile(target.file);
@@ -169,6 +179,21 @@ export function registerSharedBrowserCommands(
           interval: 500,
         });
         let state = await attachedState(status.port, target.appId);
+        // One already running (on the other network) switches, keeping its
+        // pages.
+        if (network && state?.network && state.network !== network) {
+          await post(status.port!, "/api/network", { network });
+          const deadline = Date.now() + 90_000;
+          while (
+            (state?.network !== network || state?.connection !== "connected") &&
+            Date.now() < deadline
+          ) {
+            await new Promise((r) => setTimeout(r, 500));
+            state = await serviceState(status.port);
+          }
+          if (state?.network !== network)
+            throw Error(`the browser did not switch to the ${network} network`);
+        }
         let opened: { url: string; title: string } | undefined;
         if (opts.url) {
           if (!state)
@@ -364,6 +389,50 @@ export function registerSharedBrowserCommands(
         );
       },
     );
+
+  browser
+    .command("downloads")
+    .description(
+      "list what the browser downloaded lately (it saves to the project's ~/Downloads, whoever clicked)",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option(BROWSER_FLAG, BROWSER_HELP)
+    .option(
+      "--wait <seconds>",
+      "first wait up to this long for downloads in progress to finish",
+      "0",
+    )
+    .action(async (opts: any, command: Command) => {
+      await withContext(
+        command,
+        "project browser downloads",
+        async (ctx: any) => {
+          const { status } = await running(ctx, opts.project, opts.browser);
+          let state =
+            status.state === "running" ? await serviceState(status.port) : null;
+          if (!state)
+            throw Error(
+              "the shared browser is not running here; run `cocalc project browser start` in the project first",
+            );
+          const deadline = Date.now() + 1000 * (Number(opts.wait) || 0);
+          while (
+            (state.downloads ?? []).some((d) => d.state === "inProgress") &&
+            Date.now() < deadline
+          ) {
+            await new Promise((r) => setTimeout(r, 500));
+            state = (await serviceState(status.port)) ?? state;
+          }
+          return (state.downloads ?? []).map((d) => ({
+            name: d.name,
+            state: d.state,
+            path: d.path ?? null,
+            bytes: d.receivedBytes,
+            url: d.url,
+            ...(d.reason ? { reason: d.reason } : {}),
+          }));
+        },
+      );
+    });
 
   pageCommand("text", "print the current tab's URL, title and visible text")
     .option(
