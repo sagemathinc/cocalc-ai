@@ -596,6 +596,45 @@ export function resolveAcpAttention(opts: {
   return getAcpAttention(opts.attention_id);
 }
 
+/**
+ * The person closes an unanswered async question: no answer and no new turn.
+ * It stops counting toward the pending limits and is closed on every device.
+ * Only the owner's own pending, unanswered async question can be dismissed.
+ */
+export function dismissAcpAsyncAttention(opts: {
+  attention_id: string;
+  account_id: string;
+  project_id: string;
+}): AcpAttentionStoredRecord | undefined {
+  ensureInit();
+  const now = Date.now();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'canceled', resolution_reason = ?, resolved_at = ?,
+           updated_at = ?
+       WHERE attention_id = ? AND account_id = ? AND project_id = ?
+         AND state = 'pending' AND source_kind = 'codex_async_question'
+         AND response_id IS NULL`,
+    )
+    .run(
+      "Dismissed without an answer.",
+      now,
+      now,
+      opts.attention_id,
+      opts.account_id,
+      opts.project_id,
+    );
+  const row = getRow(opts.attention_id);
+  if (
+    !row ||
+    row.account_id !== opts.account_id ||
+    row.project_id !== opts.project_id
+  )
+    return undefined;
+  return toStoredRecord(row);
+}
+
 export function resolveAcpAttentionBySource(opts: {
   project_id: string;
   source_kind: AcpAttentionSourceKind;
@@ -685,39 +724,6 @@ export function markAllPendingAcpSyncAttentionStale(
   return pending
     .filter(({ attention_id }) => changed.has(attention_id))
     .map(({ attention_id }) => getAcpAttention(attention_id))
-    .filter((record): record is AcpAttentionStoredRecord => record != null);
-}
-
-export function markAcpAsyncAttentionSuperseded(opts: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-  reason: string;
-}): AcpAttentionStoredRecord[] {
-  ensureInit();
-  const now = Date.now();
-  const db = getAcpDatabase();
-  const pending = db
-    .prepare(
-      `SELECT attention_id FROM ${TABLE}
-       WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND source_kind = 'codex_async_question' AND state = 'pending'
-         AND response_id IS NULL`,
-    )
-    .all(opts.project_id, opts.path, opts.thread_id) as Array<{
-    attention_id: string;
-  }>;
-  if (pending.length === 0) return [];
-  const ids = pending.map(({ attention_id }) => attention_id);
-  const placeholders = ids.map(() => "?").join(", ");
-  db.prepare(
-    `UPDATE ${TABLE}
-     SET state = 'superseded', resolution_reason = ?, resolved_at = ?, updated_at = ?
-     WHERE attention_id IN (${placeholders}) AND state = 'pending'
-       AND response_id IS NULL`,
-  ).run(opts.reason, now, now, ...ids);
-  return ids
-    .map((attention_id) => getAcpAttention(attention_id))
     .filter((record): record is AcpAttentionStoredRecord => record != null);
 }
 
