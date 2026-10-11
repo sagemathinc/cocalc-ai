@@ -491,6 +491,7 @@ const SPACER_BLOCK_TYPES = new Set<string>([
   "blockquote",
   "guidance",
   "agent-message",
+  "sensor-wake",
   "html_block",
   "meta",
   "math_block",

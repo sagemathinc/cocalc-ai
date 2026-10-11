@@ -4,6 +4,7 @@ import {
   writeCodexSubscriptionSelection,
 } from "../codex-subscription-selection";
 import {
+  copyPaymentSelection,
   createMemoryPaymentApiForTests,
   resetPaymentSelectionStoreForTests,
 } from "../payment-selection-store";
@@ -117,5 +118,21 @@ describe("Codex subscription selection", () => {
     ).toBe(credentialId);
     await settle();
     expect(server.rows.size).toBe(0);
+  });
+
+  it("a strict copy fails when the server did not copy", async () => {
+    const opts = {
+      accountId: "account-a",
+      from: { project_id: "project-a", thread_id: "thread-a" },
+      to: { project_id: "project-a", thread_id: "thread-b" },
+    };
+    server.copyPaymentSelection = async () => {
+      throw Error("hub unavailable");
+    };
+    // Best effort by default (forks keep working), strict for paid reviews.
+    await expect(copyPaymentSelection(opts)).resolves.toBeUndefined();
+    await expect(
+      copyPaymentSelection({ ...opts, strict: true }),
+    ).rejects.toThrow("hub unavailable");
   });
 });

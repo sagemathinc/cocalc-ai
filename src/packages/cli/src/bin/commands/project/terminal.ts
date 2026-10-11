@@ -61,6 +61,63 @@ async function withTerminalClient({
   return { project, terminal };
 }
 
+/** Start a command in a new project terminal session, which outlives this process. */
+export async function spawnProjectTerminalSession({
+  ctx,
+  projectIdentifier,
+  resolveProjectFromArgOrContext,
+  resolveProjectConatClient,
+  id,
+  command,
+  args,
+  cwd,
+  path,
+  rows,
+  cols,
+}: {
+  ctx: CommandContext;
+  projectIdentifier?: string;
+  resolveProjectFromArgOrContext: ProjectCommandDeps["resolveProjectFromArgOrContext"];
+  resolveProjectConatClient: ProjectCommandDeps["resolveProjectConatClient"];
+  id: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  path?: string;
+  rows?: number;
+  cols?: number;
+}): Promise<{
+  project_id: string;
+  id: string;
+  pid: number | null;
+  history: string;
+}> {
+  const { project, terminal } = await withTerminalClient({
+    ctx,
+    projectIdentifier,
+    resolveProjectFromArgOrContext,
+    resolveProjectConatClient,
+  });
+  try {
+    const history = await terminal.spawn(command, args, {
+      id,
+      cwd,
+      path,
+      rows,
+      cols,
+    });
+    await terminal.closeAndWait();
+    return {
+      project_id: project.project_id,
+      id,
+      pid: terminal.pid ?? null,
+      history: history ?? "",
+    };
+  } finally {
+    terminal.close();
+  }
+}
+
 function normalizeMaxChars(value: string | undefined): number | undefined {
   if (value == null || `${value}`.trim() === "") return undefined;
   const parsed = Number(value);
@@ -127,44 +184,39 @@ export function registerProjectTerminalCommands(
         command: Command,
       ) => {
         await withContext(command, "project terminal spawn", async (ctx) => {
-          const { project, terminal } = await withTerminalClient({
+          const id = normalizeTerminalId(opts.id);
+          const rows = normalizePositiveInteger(opts.rows, "--rows");
+          const cols = normalizePositiveInteger(opts.cols, "--cols");
+          const cwd = `${opts.cwd ?? ""}`.trim() || undefined;
+          const path = `${opts.path ?? ""}`.trim() || undefined;
+          const commandText = commandParts.join(" ").trim();
+          const spawnCommand = opts.bash ? "bash" : commandParts[0] || "bash";
+          const spawnArgs = opts.bash
+            ? ["-lc", commandText || "bash"]
+            : commandParts.slice(1);
+          const spawned = await spawnProjectTerminalSession({
             ctx,
             projectIdentifier: opts.project,
             resolveProjectFromArgOrContext,
             resolveProjectConatClient,
+            id,
+            command: spawnCommand,
+            args: spawnArgs,
+            cwd,
+            path,
+            rows,
+            cols,
           });
-          try {
-            const id = normalizeTerminalId(opts.id);
-            const rows = normalizePositiveInteger(opts.rows, "--rows");
-            const cols = normalizePositiveInteger(opts.cols, "--cols");
-            const cwd = `${opts.cwd ?? ""}`.trim() || undefined;
-            const path = `${opts.path ?? ""}`.trim() || undefined;
-            const commandText = commandParts.join(" ").trim();
-            const spawnCommand = opts.bash ? "bash" : commandParts[0] || "bash";
-            const spawnArgs = opts.bash
-              ? ["-lc", commandText || "bash"]
-              : commandParts.slice(1);
-            const history = await terminal.spawn(spawnCommand, spawnArgs, {
-              id,
-              cwd,
-              path,
-              rows,
-              cols,
-            });
-            await terminal.closeAndWait();
-            return {
-              project_id: project.project_id,
-              id,
-              pid: terminal.pid ?? null,
-              command: spawnCommand,
-              args: spawnArgs,
-              cwd: cwd ?? null,
-              path: path ?? null,
-              history: history ?? "",
-            };
-          } finally {
-            terminal.close();
-          }
+          return {
+            project_id: spawned.project_id,
+            id,
+            pid: spawned.pid,
+            command: spawnCommand,
+            args: spawnArgs,
+            cwd: cwd ?? null,
+            path: path ?? null,
+            history: spawned.history,
+          };
         });
       },
     );

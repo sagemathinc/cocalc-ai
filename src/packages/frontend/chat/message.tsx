@@ -169,8 +169,10 @@ import {
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
   agentMessageFence,
+  sensorWakePresentation,
   stripAgentRpcPrompt,
 } from "./agent-message-presentation";
+import { sensorWakeFence } from "@cocalc/frontend/editors/slate/elements/sensor-wake";
 import {
   TurnActivityTimeline,
   type TurnTimelineContext,
@@ -1033,7 +1035,13 @@ export default function Message({
     const value = rpcAttribution
       ? stripAgentRpcPrompt(formattedValue, rpc)
       : formattedValue;
-    return rpcAttribution ? agentMessageFence(value, rpcAttribution) : value;
+    if (rpcAttribution) return agentMessageFence(value, rpcAttribution);
+    // A turn a sensor started: one compact line that expands to the prompt.
+    const sensorTitle = sensorWakeTitle(message);
+    const sensorWake = sensorTitle
+      ? sensorWakePresentation(value, sensorTitle)
+      : undefined;
+    return sensorWake ? sensorWakeFence({ ...sensorWake, value }) : value;
   }, [
     is_viewers_message,
     renderedMessageValue,

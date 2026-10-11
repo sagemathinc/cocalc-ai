@@ -92,6 +92,7 @@ test("connectors are narrowed to what the spec uses", async () => {
   // Only the used connectors are requested from the account's home.
   expect(beginCli.mock.calls[0][0].connectors).toEqual(["github"]);
   expect(lease.missing).toEqual([]);
+  expect(lease.given).toEqual(["cocalc", "github"]);
   const ref = begin.mock.calls[0][0].turn_ref;
   expect(ref).toMatchObject({
     chat_path: "/home/user/a.chat",
@@ -118,6 +119,7 @@ test("connectors the agent lacks are reported, not silently skipped", async () =
     uses: ["cocalc", "cloudflare"],
   });
   expect(lease.missing).toEqual(["cocalc", "cloudflare"]);
+  expect(lease.given).toEqual([]);
 });
 
 test("a failure part way ends what was already issued", async () => {
