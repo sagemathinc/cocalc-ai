@@ -447,6 +447,42 @@ export const TABLE_OWNERSHIP = {
 
   ...entries(
     [
+      "account_computers",
+      "account_computer_requests",
+      "account_computer_operations",
+      "account_computer_jobs",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Agent source project (source_project_id) is a locator checked through its owning bay's attestation, not account-home state.",
+      },
+      notes:
+        "Computers an account connects for its agents (src/.agents/computers-plan-2026-10-11.md): policy ceiling, epochs, pairing requests, operation audit and job mirror. Authoritative only at the account home; account rehome is blocked while any rows exist until an explicit migration exists.",
+    },
+  ),
+  ...entries(["cluster_computer_signing_keys"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    secondary_reference_fields: {
+      bay_id: "Bay holding the private key; the key directory is cluster-wide.",
+    },
+    notes:
+      "Public directory of the Ed25519 keys bays use to sign computer certificates, project attestations and tickets. Daemons on connected computers verify against it.",
+  }),
+  ...entries(["bay_computer_signing_keys"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    notes:
+      "This bay's own computer-signing private keys, encrypted by secret storage. Never replicated; account moves do not move them.",
+  }),
+  ...entries(
+    [
       "agent_cocalc_connector_configs",
       "agent_cocalc_connector_turns",
       "agent_connector_grants",

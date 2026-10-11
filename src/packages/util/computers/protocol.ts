@@ -194,7 +194,7 @@ export function parsePairingTranscript(input: unknown): PairingTranscript {
     type: "cocalc-computer-pairing",
     version: 1,
     site: site(o.site),
-    cluster_id: uuid(o.cluster_id, "cluster_id"),
+    cluster_id: clusterId(o.cluster_id),
     request_id: requestId(o.request_id),
     account_id: uuid(o.account_id, "account_id"),
     policy_hash: hash(o.policy_hash, "policy_hash"),
@@ -245,7 +245,7 @@ export function parseComputerCertificate(input: unknown): ComputerCertificate {
     type: "cocalc-computer-certificate",
     version: 1,
     site: site(o.site),
-    cluster_id: uuid(o.cluster_id, "cluster_id"),
+    cluster_id: clusterId(o.cluster_id),
     computer_id: uuid(o.computer_id, "computer_id"),
     account_id: uuid(o.account_id, "account_id"),
     home_bay_id: bayId(o.home_bay_id),
@@ -301,7 +301,7 @@ export function parseProjectAttestation(input: unknown): ProjectAttestation {
     type: "cocalc-project-attestation",
     version: 1,
     site: site(o.site),
-    cluster_id: uuid(o.cluster_id, "cluster_id"),
+    cluster_id: clusterId(o.cluster_id),
     project_id: uuid(o.project_id, "project_id"),
     project_bay_id: bayId(o.project_bay_id),
     eligible: o.eligible,
@@ -394,7 +394,7 @@ export function parseComputerTicket(input: unknown): ComputerTicket {
     operation: o.operation as OperationKind,
     request_hash: hash(o.request_hash, "request_hash"),
     site: site(o.site),
-    cluster_id: uuid(o.cluster_id, "cluster_id"),
+    cluster_id: clusterId(o.cluster_id),
     issuer_bay_id: bayId(o.issuer_bay_id),
     home_epoch: epoch(o.home_epoch, "home_epoch"),
     computer_id: uuid(o.computer_id, "computer_id"),
@@ -636,6 +636,14 @@ function base64url(
 function requestId(value: unknown): string {
   if (typeof value !== "string" || !/^R-[0-9A-HJ-NP-Z]{10}$/.test(value)) {
     throw new ProtocolError("request_id is malformed");
+  }
+  return value;
+}
+
+/** A cluster id is a label ("standalone" for single-bay sites). */
+function clusterId(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) {
+    throw new ProtocolError("cluster id is malformed");
   }
   return value;
 }

@@ -19,7 +19,7 @@ const ACCOUNT = "0b8f1c9e-1f7c-4c55-9a3e-2f0c4e5d6a7b";
 const PROJECT = "9447b19f-aabe-49d8-8aea-f870de179eb0";
 const COMPUTER = "c0ffee00-1234-4abc-8def-0123456789ab";
 const NETWORK = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
-const CLUSTER = "11111111-2222-4333-8444-555555555555";
+const CLUSTER = "standalone";
 
 function attestation(overrides: Record<string, unknown> = {}) {
   return {

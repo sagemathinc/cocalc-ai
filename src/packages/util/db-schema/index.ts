@@ -45,6 +45,7 @@ import "./cloud-reconcile-state";
 import "./cloud-vm-log";
 import "./cloud-vm-usage";
 import "./cloud-vm-work";
+import "./computers";
 import "./compute-resource-events";
 import "./compute-resource-work";
 import "./compute-funding";

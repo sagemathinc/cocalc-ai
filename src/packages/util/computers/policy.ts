@@ -89,6 +89,80 @@ const TOP_LEVEL_KEYS = [
  * out-of-range values are errors, so a newer or tampered policy fails closed.
  */
 export function parseComputerPolicy(input: unknown): ComputerPolicy {
+  return parsePolicyWith(input, parseMounts);
+}
+
+/** A mount as an agent asks for it, before the machine resolves it. */
+export interface RequestedMount {
+  /** Absolute, or "~" / "~/..." relative to the computer user's home. */
+  path: string;
+  access: MountAccess;
+}
+
+export type RequestedPolicy = Omit<ComputerPolicy, "mounts"> & {
+  mounts: RequestedMount[];
+};
+
+/**
+ * Parse a policy as requested by an agent or the owner. It is the same as a
+ * policy except that mounts aren't resolved yet: the machine resolves them
+ * (canonical absolute path, device, inode) and the owner approves the
+ * resolved policy.
+ */
+export function parseRequestedPolicy(input: unknown): RequestedPolicy {
+  return parsePolicyWith(input, parseRequestedMounts) as RequestedPolicy;
+}
+
+/**
+ * Does a policy resolved on the machine match what was requested? The mount
+ * paths can't be checked here (the owner sees and approves the resolved
+ * ones), but everything else must be identical, and the mounts must have the
+ * same count and access.
+ */
+export function resolvedPolicyMismatches(
+  requested: RequestedPolicy,
+  resolved: ComputerPolicy,
+): string[] {
+  const reasons: string[] = [];
+  for (const key of TOP_LEVEL_KEYS) {
+    if (key === "mounts") continue;
+    if (
+      JSON.stringify(sortKeys(requested[key])) !==
+      JSON.stringify(sortKeys(resolved[key]))
+    ) {
+      reasons.push(`${key} differs from the request`);
+    }
+  }
+  const access = (mounts: { access: MountAccess }[]) =>
+    mounts
+      .map((m) => m.access)
+      .sort()
+      .join(",");
+  if (
+    requested.mounts.length !== resolved.mounts.length ||
+    access(requested.mounts) !== access(resolved.mounts)
+  ) {
+    reasons.push("mounts differ from the request");
+  }
+  return reasons;
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value != null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as object)
+        .sort()
+        .map((k) => [k, sortKeys((value as Record<string, unknown>)[k])]),
+    );
+  }
+  return value;
+}
+
+function parsePolicyWith(
+  input: unknown,
+  mountsParser: (value: unknown) => any[],
+): ComputerPolicy {
   const obj = record(input, "policy");
   onlyKeys(obj, TOP_LEVEL_KEYS, "policy");
   if (obj.version !== COMPUTER_POLICY_VERSION) {
@@ -105,7 +179,7 @@ export function parseComputerPolicy(input: unknown): ComputerPolicy {
   const network = oneOf(obj.network, ["on", "off"] as const, "network");
   if (typeof obj.gpu !== "boolean")
     throw new PolicyError("gpu must be a boolean");
-  const mounts = parseMounts(obj.mounts);
+  const mounts = mountsParser(obj.mounts);
   const images = parseImages(obj.images);
   const scratch_bytes = optionalCount(obj.scratch_bytes, "scratch_bytes");
   const limits = parseLimits(obj.limits);
@@ -176,6 +250,40 @@ function parseDuration(value: unknown): ComputerPolicy["duration"] {
     );
   }
   return { initial_seconds: initial, max_seconds: max };
+}
+
+function parseRequestedMounts(value: unknown): RequestedMount[] {
+  if (!Array.isArray(value)) throw new PolicyError("mounts must be an array");
+  if (value.length > MAX_MOUNTS) {
+    throw new PolicyError(`at most ${MAX_MOUNTS} mounts`);
+  }
+  const mounts = value.map((item, i) => {
+    const obj = record(item, `mounts[${i}]`);
+    onlyKeys(obj, ["path", "access"], `mounts[${i}]`);
+    const path = obj.path;
+    if (typeof path !== "string") {
+      throw new PolicyError(`mounts[${i}].path must be a string`);
+    }
+    if (path === "~") {
+      throw new PolicyError("mounting the whole home directory is not allowed");
+    }
+    if (path.startsWith("~/")) {
+      canonicalAbsolutePath(path.slice(1), `mounts[${i}].path`);
+    } else {
+      canonicalAbsolutePath(path, `mounts[${i}].path`);
+    }
+    return {
+      path,
+      access: oneOf(obj.access, ["ro", "rw"] as const, `mounts[${i}].access`),
+    };
+  });
+  mounts.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  for (let i = 1; i < mounts.length; i++) {
+    if (mounts[i].path === mounts[i - 1].path) {
+      throw new PolicyError(`mount ${mounts[i].path} is listed twice`);
+    }
+  }
+  return mounts;
 }
 
 function parseMounts(value: unknown): ComputerMount[] {

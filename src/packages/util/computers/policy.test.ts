@@ -3,6 +3,8 @@ import {
   directPolicyDefaults,
   MAX_SESSION_SECONDS,
   parseComputerPolicy,
+  parseRequestedPolicy,
+  resolvedPolicyMismatches,
   policyAtMost,
   policyWideningReasons,
   PolicyError,
@@ -253,5 +255,74 @@ describe("policy partial order (the daemon's 'never widen' rule)", () => {
     );
     // ...while isolated is at most direct
     expect(policyAtMost(isolated(), direct)).toBe(true);
+  });
+});
+
+describe("requested policies", () => {
+  const request = {
+    version: 1,
+    mode: "isolated",
+    duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+    agent_network_id: NETWORK,
+    network: "on",
+    gpu: false,
+    mounts: [{ path: "~/datasets", access: "ro" }],
+    images: { kind: "any" },
+    scratch_bytes: null,
+    limits: { cpu_millis: null, memory_bytes: null, pids: null },
+  };
+
+  it("accepts ~ paths and refuses the whole home or relative paths", () => {
+    expect(parseRequestedPolicy(request).mounts).toEqual([
+      { path: "~/datasets", access: "ro" },
+    ]);
+    expect(() =>
+      parseRequestedPolicy({
+        ...request,
+        mounts: [{ path: "~", access: "ro" }],
+      }),
+    ).toThrow(/home/);
+    expect(() =>
+      parseRequestedPolicy({
+        ...request,
+        mounts: [{ path: "datasets", access: "ro" }],
+      }),
+    ).toThrow(PolicyError);
+    expect(() =>
+      parseRequestedPolicy({
+        ...request,
+        mounts: [{ path: "~/a/../b", access: "ro" }],
+      }),
+    ).toThrow(PolicyError);
+  });
+
+  it("matches a resolved policy that only resolves the mounts", () => {
+    const requested = parseRequestedPolicy(request);
+    const resolved = parseComputerPolicy({
+      ...request,
+      mounts: [
+        {
+          path: "/Users/w/datasets",
+          access: "ro",
+          device: "16777230",
+          inode: "42",
+        },
+      ],
+    });
+    expect(resolvedPolicyMismatches(requested, resolved)).toEqual([]);
+  });
+
+  it("reports a resolved policy that changes anything else", () => {
+    const requested = parseRequestedPolicy(request);
+    const widened = parseComputerPolicy({
+      ...request,
+      gpu: true,
+      mounts: [
+        { path: "/Users/w/datasets", access: "rw", device: "1", inode: "2" },
+      ],
+    });
+    const reasons = resolvedPolicyMismatches(requested, widened).join("; ");
+    expect(reasons).toMatch(/gpu differs/);
+    expect(reasons).toMatch(/mounts differ/);
   });
 });
