@@ -4,42 +4,18 @@ const mockInitChat = jest.fn();
 jest.mock("@cocalc/frontend/chat/register", () => ({
   initChat: (...args: any[]) => mockInitChat(...args),
 }));
-const mockQualifiedRuntime = jest.fn();
-jest.mock("@cocalc/frontend/chat/harness-profile", () => ({
-  qualifiedHarnessRuntime: (...args: any[]) => mockQualifiedRuntime(...args),
-}));
-const mockListCredentials = jest.fn();
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      hub: {
-        system: {
-          listExternalCredentials: (...args: any[]) =>
-            mockListCredentials(...args),
-        },
-      },
-    },
-  },
-}));
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
   getProjectHomeDirectory: () => "/home/user",
 }));
-jest.mock("@cocalc/frontend/chat/harness-credential-selection", () => ({
-  readHarnessCredentialSelection: jest.fn(),
-  writeHarnessCredentialSelection: jest.fn(),
-}));
-jest.mock("./agent-subscription-selection", () => ({
-  readAgentSubscriptionSelection: jest.fn(),
-  writeAgentSubscriptionSelection: jest.fn(),
+const mockCopyPayment = jest.fn();
+jest.mock("@cocalc/frontend/chat/payment-selection-store", () => ({
+  copyPaymentSelection: (...args: any[]) => mockCopyPayment(...args),
 }));
 
 import {
-  readHarnessCredentialSelection,
-  writeHarnessCredentialSelection,
-} from "@cocalc/frontend/chat/harness-credential-selection";
-import { readAgentSubscriptionSelection } from "./agent-subscription-selection";
-import {
+  defaultReviewer,
   findSensorReview,
+  reviewerAllowed,
   reviewerOf,
   reviewerOptions,
   reviewVerdict,
@@ -147,21 +123,43 @@ test("the default reviewer is the agent's own model", () => {
   expect(
     reviewerOf({ agent_runtime: { ...claudeRuntime, settings: {} } }).label,
   ).toBe("Claude · Opus");
-  expect(
-    reviewerOf({ agent_runtime: { profile: { id: "my-harness" } } }).value,
-  ).toBe("same");
-  const options = reviewerOptions(
+  const custom = reviewerOf({
+    agent_runtime: { profile: { id: "my-harness" } },
+  });
+  expect(custom.value).toBe("same");
+  expect(defaultReviewer(custom)).toBe("codex:gpt-6.1-sol");
+});
+
+test("a reviewer never has more access than the agent", () => {
+  // Codex reviews read-only, so it may review anyone's script.
+  expect(reviewerAllowed("codex:gpt-6-sol", "claude:opus")).toBe(true);
+  expect(reviewerAllowed("codex:gpt-6-sol", "same")).toBe(true);
+  // Claude Code is not read-only: only for Claude agents.
+  expect(reviewerAllowed("claude:haiku", "claude:opus")).toBe(true);
+  expect(reviewerAllowed("claude:opus", "codex:gpt-6-luna")).toBe(false);
+  expect(reviewerAllowed("claude:opus", "same")).toBe(false);
+
+  const codexAgent = reviewerOptions(
     { value: "codex:gpt-6-luna", label: "Codex · gpt-6-luna" },
     "watcher",
   );
-  expect(options[0]).toEqual({
+  expect(codexAgent[0]).toEqual({
     value: "codex:gpt-6-luna",
     label: "Codex · gpt-6-luna (same as @watcher)",
   });
   expect(
-    options.filter(({ value }) => value === "codex:gpt-6-luna"),
+    codexAgent.filter(({ value }) => value === "codex:gpt-6-luna"),
   ).toHaveLength(1);
-  expect(options.map(({ label }) => label)).toContain("Claude · Sonnet");
+  expect(codexAgent.some(({ value }) => value.startsWith("claude:"))).toBe(
+    false,
+  );
+  const claudeAgent = reviewerOptions(
+    { value: "claude:opus", label: "Claude · Opus" },
+    "watcher",
+  ).map(({ label }) => label);
+  expect(claudeAgent[0]).toBe("Claude · Opus (same as @watcher)");
+  expect(claudeAgent).toContain("Claude · Sonnet");
+  expect(claudeAgent).toContain("Codex · gpt-6-sol");
 });
 
 describe("starting a review", () => {
@@ -197,6 +195,7 @@ describe("starting a review", () => {
       ensureContainingDirectoryExists: jest.fn(),
     });
     mockInitChat.mockReturnValue(review);
+    mockCopyPayment.mockResolvedValue(undefined);
   });
 
   const start = (reviewer?: string) =>
@@ -208,12 +207,16 @@ describe("starting a review", () => {
       account_id: "me",
       reviewer,
     });
+  const copiedPayment = {
+    accountId: "me",
+    from: { project_id: "p", thread_id: "agent-thread" },
+    to: { project_id: "p", thread_id: "review-thread" },
+  };
 
-  test("uses the open agent chat and its own instance of the review chat", async () => {
+  test("uses the open agent chat, its own review chat and the agent's payment", async () => {
     settings = {
       acp_config: { model: "gpt-6-luna", reasoning: "high", sessionId: "s" },
     };
-    (readAgentSubscriptionSelection as jest.Mock).mockReturnValue("sub-1");
     await start();
     // Never a second registration of the agent's chat (the old "already
     // exists" error); the review chat is opened under its own key.
@@ -232,43 +235,25 @@ describe("starting a review", () => {
       name: "Review: New issues (spec abcdef012345)",
       threadAgent: { mode: "codex", model: "gpt-6-luna", codexConfig },
     });
+    // Copied on the server, before the turn starts.
+    expect(mockCopyPayment).toHaveBeenCalledWith(copiedPayment);
+    expect(mockCopyPayment.mock.invocationCallOrder[0]).toBeLessThan(
+      review.sendChat.mock.invocationCallOrder[0],
+    );
     expect(review.sendChat).toHaveBeenCalledWith(
       expect.objectContaining({ acpConfigOverride: codexConfig }),
     );
   });
 
-  test("a Codex agent's script can be reviewed by Claude", async () => {
+  test("a Codex agent's script is never handed to Claude", async () => {
     settings = { acp_config: { model: "gpt-6-luna" } };
-    mockQualifiedRuntime.mockReturnValue({ kind: "acp", fresh: true });
-    mockListCredentials.mockResolvedValue([
-      { id: "c1", kind: "claude-subscription-home-v1", revoked: false },
-    ]);
-    await start("claude:sonnet");
-    expect(mockQualifiedRuntime).toHaveBeenCalledWith(
-      "claude-code",
-      "/home/user",
-      { configOptions: [{ id: "model", value: "sonnet" }] },
-    );
-    expect(review.createEmptyThread).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadAgent: { mode: "acp", runtime: { kind: "acp", fresh: true } },
-      }),
-    );
-    expect(writeHarnessCredentialSelection).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadKey: "review-thread",
-        credential: expect.objectContaining({
-          mode: "account-subscription",
-          credentialId: "c1",
-        }),
-      }),
-    );
+    await expect(start("claude:opus")).rejects.toThrow(/more access/);
+    expect(review.createEmptyThread).not.toHaveBeenCalled();
+    expect(review.sendChat).not.toHaveBeenCalled();
   });
 
   test("a Claude agent's review keeps its harness with another model", async () => {
     settings = { agent_runtime: claudeRuntime };
-    const credential = { mode: "account-api-key", credentialId: "k" };
-    (readHarnessCredentialSelection as jest.Mock).mockReturnValue(credential);
     await start("claude:haiku");
     const runtime =
       review.createEmptyThread.mock.calls[0][0].threadAgent.runtime;
@@ -278,15 +263,10 @@ describe("starting a review", () => {
       { id: "effort", value: "high" },
       { id: "model", value: "haiku" },
     ]);
-    expect(readHarnessCredentialSelection).toHaveBeenCalledWith(
-      expect.objectContaining({ threadKey: "agent-thread" }),
-    );
-    expect(writeHarnessCredentialSelection).toHaveBeenCalledWith(
-      expect.objectContaining({ threadKey: "review-thread", credential }),
-    );
+    expect(mockCopyPayment).toHaveBeenCalledWith(copiedPayment);
   });
 
-  test("a Claude agent's script can be reviewed by Codex", async () => {
+  test("Codex reviewing a Claude agent's script uses the account default", async () => {
     settings = { agent_runtime: claudeRuntime };
     await start("codex:gpt-6-sol");
     expect(review.createEmptyThread).toHaveBeenCalledWith(
@@ -298,5 +278,17 @@ describe("starting a review", () => {
         },
       }),
     );
+    expect(mockCopyPayment).not.toHaveBeenCalled();
+  });
+
+  test("a custom harness's script is reviewed by Codex on the default", async () => {
+    settings = { agent_runtime: { profile: { id: "my-harness" } } };
+    await start();
+    expect(review.createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadAgent: expect.objectContaining({ model: "gpt-6.1-sol" }),
+      }),
+    );
+    expect(mockCopyPayment).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ import type {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   agentReviewer,
+  defaultReviewer,
   findSensorReview,
   openSensorReviewChat,
   reviewerOptions,
@@ -137,7 +138,7 @@ export function SensorReviewPanel({
         popupMatchSelectWidth={false}
         loading={!own}
         disabled={generating}
-        value={choice ?? own?.value}
+        value={choice ?? (own ? defaultReviewer(own) : undefined)}
         onChange={setChoice}
         options={reviewerOptions(own, agent.name)}
         aria-label="Reviewer model"
@@ -176,8 +177,9 @@ export function SensorReviewPanel({
           {picker}
           <div style={{ color: UI_COLORS.secondary, marginTop: 4 }}>
             A new agent that knows nothing else reads the script and tells you
-            what it does and whether it is safe. It doesn't run it. This is one
-            turn on your account.
+            what it does and whether it is safe. It is told not to run or change
+            anything, and never gets more access than @{agent.name}. One turn on
+            your account.
           </div>
         </>
       )}
