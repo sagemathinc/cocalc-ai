@@ -118,7 +118,7 @@ describe("membership packages", () => {
   }
 
   async function setAccountHomeBay(account_id: string, home_bay_id: string) {
-    const pool = getPool("medium");
+    const pool = getPool();
     await pool.query("UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1", [
       account_id,
       home_bay_id,
@@ -150,7 +150,7 @@ describe("membership packages", () => {
     email_address?: string;
     owning_bay_id?: string;
   }) {
-    await getPool("medium").query(
+    await getPool().query(
       `INSERT INTO projects
          (project_id, title, users, last_edited, usage_account_id, owning_bay_id, course)
        VALUES ($1, $2, $3::jsonb, NOW(), NULL, $4, $5::jsonb)`,
@@ -208,7 +208,7 @@ describe("membership packages", () => {
   });
 
   async function listOutboxKinds(): Promise<string[]> {
-    const result = await getPool("medium").query<{ effect_kind: string }>(
+    const result = await getPool().query<{ effect_kind: string }>(
       `SELECT effect_kind
        FROM membership_side_effects_outbox
        WHERE desired_revision > applied_revision
@@ -220,7 +220,7 @@ describe("membership packages", () => {
   async function listOutboxKindsForAssignment(
     assignment_id: string,
   ): Promise<string[]> {
-    const result = await getPool("medium").query<{ effect_kind: string }>(
+    const result = await getPool().query<{ effect_kind: string }>(
       `SELECT effect_kind
        FROM membership_side_effects_outbox
        WHERE assignment_id = $1
@@ -236,7 +236,7 @@ describe("membership packages", () => {
     remoteGrantRevocations = [];
     remoteProjectUsageUpdates = [];
     resetMembershipSideEffectsMaintenanceStateForTests();
-    await getPool("medium").query("DELETE FROM membership_side_effects_outbox");
+    await getPool().query("DELETE FROM membership_side_effects_outbox");
     getInterBayFabricClientMock = jest.fn(() => ({ id: "fabric-client" }));
     createInterBayAccountLocalClientMock = jest.fn(
       ({ dest_bay }: { dest_bay: string }) => ({
@@ -698,7 +698,7 @@ describe("membership packages", () => {
       assigned_by_account_id: owner_account_id,
     });
 
-    const assignmentCount = await getPool("medium").query(
+    const assignmentCount = await getPool().query(
       `SELECT COUNT(*)::int AS count
        FROM membership_package_assignments
        WHERE package_id=$1
@@ -829,7 +829,7 @@ describe("membership packages", () => {
     });
     expect(assignment.grant_id).toBeTruthy();
 
-    await getPool("medium").query(
+    await getPool().query(
       "DELETE FROM membership_grants WHERE package_id=$1 AND account_id=$2",
       [package_id, student_account_id],
     );
@@ -872,7 +872,7 @@ describe("membership packages", () => {
       },
     });
 
-    const pool = getPool("medium");
+    const pool = getPool();
     await pool.query(
       "UPDATE membership_tiers SET price_monthly=$2, updated=NOW() WHERE id=$1",
       [teamTier, 99],
@@ -981,7 +981,7 @@ describe("membership packages", () => {
 
   it("quotes course seats from the selected course-visible membership tier", async () => {
     const course_project_id = uuid();
-    await getPool("medium").query(
+    await getPool().query(
       `INSERT INTO projects (project_id, title, users, course, last_edited)
        VALUES ($1, $2, $3::jsonb, $4::jsonb, NOW())`,
       [
@@ -1025,7 +1025,7 @@ describe("membership packages", () => {
     const owner_account_id = uuid();
     const course_project_id = uuid();
     await createTestAccount(owner_account_id);
-    await getPool("medium").query(
+    await getPool().query(
       `INSERT INTO projects (project_id, title, users, course, last_edited)
        VALUES ($1, $2, $3::jsonb, $4::jsonb, NOW())`,
       [
@@ -1604,7 +1604,7 @@ describe("membership packages", () => {
       assigned_by_account_id: owner_account_id,
       metadata: { project_id },
     });
-    await getPool("medium").query(
+    await getPool().query(
       `UPDATE membership_side_effects_outbox
        SET desired_payload_json = desired_payload_json
          - 'expected_course_project_id'
@@ -1617,7 +1617,7 @@ describe("membership packages", () => {
 
     expect(result.failed).toBe(1);
     expect(remoteProjectUsageUpdates).toHaveLength(0);
-    const outbox = await getPool("medium").query<{ last_error: string }>(
+    const outbox = await getPool().query<{ last_error: string }>(
       `SELECT last_error
        FROM membership_side_effects_outbox
        WHERE effect_key=$1`,
@@ -1996,7 +1996,7 @@ describe("membership packages", () => {
         package_id,
       },
     });
-    const localGrantCount = await getPool("medium").query(
+    const localGrantCount = await getPool().query(
       `SELECT COUNT(*)::int AS count
        FROM membership_grants
        WHERE account_id=$1
@@ -2076,7 +2076,7 @@ describe("membership packages", () => {
       assigned_by_account_id: owner_account_id,
     });
 
-    const client = getPool("medium");
+    const client = getPool();
     const querySpy = jest.spyOn(client, "query");
     try {
       const claimables =
@@ -2990,7 +2990,7 @@ describe("membership packages", () => {
         package_id,
       },
     });
-    const localGrantCount = await getPool("medium").query(
+    const localGrantCount = await getPool().query(
       `SELECT COUNT(*)::int AS count
        FROM membership_grants
        WHERE account_id=$1
@@ -3037,7 +3037,7 @@ describe("membership packages", () => {
       },
     });
 
-    const localGrantCount = await getPool("medium").query(
+    const localGrantCount = await getPool().query(
       `SELECT COUNT(*)::int AS count
        FROM membership_grants
        WHERE account_id=$1

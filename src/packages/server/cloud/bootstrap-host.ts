@@ -75,7 +75,7 @@ import { getHostSshPublicKeys } from "./ssh-key";
 import { observedRuntimeArtifactsFromMetadata } from "../conat/api/hosts-runtime-observation";
 
 const logger = getLogger("server:cloud:bootstrap-host");
-const pool = () => getPool("medium");
+const pool = () => getPool();
 export const DEFAULT_PROJECT_HOST_NODE_VERSION = "26";
 
 type HostBootstrapState = {

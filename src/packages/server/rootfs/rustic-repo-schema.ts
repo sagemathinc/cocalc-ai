@@ -18,7 +18,7 @@ let rootfsRusticRepoSchemaReady: Promise<void> | undefined;
 export async function ensureRootfsRusticRepoSchema(): Promise<void> {
   if (!rootfsRusticRepoSchemaReady) {
     rootfsRusticRepoSchemaReady = (async () => {
-      const pool = getPool("medium");
+      const pool = getPool();
       await pool.query(`
         CREATE TABLE IF NOT EXISTS rootfs_rustic_repos (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

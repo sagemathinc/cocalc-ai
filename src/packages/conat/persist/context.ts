@@ -20,6 +20,12 @@ export let decompress: (data: Buffer) => Buffer = () => {
   throw Error("must initialize persist context");
 };
 
+// Decompression that runs off the event loop (e.g., in the libuv threadpool),
+// used for large messages so one huge stored message cannot stall every other
+// stream served by the same process.  Defaults to the synchronous version.
+export let decompressAsync: (data: Buffer) => Promise<Buffer> = async (data) =>
+  decompress(data);
+
 export let syncFiles = {
   local: "",
   localProjects: "",
@@ -49,6 +55,7 @@ export function initContext(opts: {
   sqlite: { DatabaseSync: new (...args: any[]) => DatabaseSync };
   compress: (Buffer) => Buffer;
   decompress: (Buffer) => Buffer;
+  decompressAsync?: (Buffer) => Promise<Buffer>;
   syncFiles: {
     local: string;
     localProjects: string;
@@ -66,6 +73,8 @@ export function initContext(opts: {
   sqliteModule = opts.sqlite;
   compress = opts.compress;
   decompress = opts.decompress;
+  decompressAsync =
+    opts.decompressAsync ?? (async (data: Buffer) => opts.decompress(data));
   syncFiles = opts.syncFiles;
   ensureContainingDirectoryExists = opts.ensureContainingDirectoryExists;
   statSync = opts.statSync;

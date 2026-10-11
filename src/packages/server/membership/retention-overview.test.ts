@@ -9,6 +9,7 @@ const ensureUxLatencySchemaMock = jest.fn();
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({ query: queryMock }),
+  getCachedReadPool: () => ({ query: queryMock }),
 }));
 
 jest.mock("@cocalc/server/monitoring/ux-latency", () => ({

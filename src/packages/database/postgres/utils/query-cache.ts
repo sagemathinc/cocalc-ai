@@ -18,7 +18,7 @@ interface LRUQueryCacheOpts {
 export type QueryCacheArgs = Array<string | number | Date>;
 
 /**
- * A simple LRU cache for postgres queries. This is better than getPool("some string"),
+ * A simple LRU cache for postgres queries. This is better than getCachedReadPool(...),
  * because you're more in control, sha1 key sums to avoid sticking large keys in the cache,
  * and you can clear the cache any time if you want.
  */

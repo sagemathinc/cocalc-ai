@@ -7,6 +7,7 @@ import getPool from "./pool";
 export default getPool;
 export * from "./pool";
 export type { Client, PoolClient, Pool } from "pg";
-export type { CacheTime } from "./cached";
+export { getCachedReadPool } from "./cached";
+export type { CachedReadPool, CacheTime } from "./cached";
 
 export { timeInSeconds } from "./util";

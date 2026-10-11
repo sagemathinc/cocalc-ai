@@ -53,7 +53,7 @@ afterAll(async () => {
 });
 
 async function makeTestAccountAdmin(account_id: string) {
-  await getPool("medium").query(
+  await getPool().query(
     "UPDATE accounts SET groups=ARRAY['admin']::text[] WHERE account_id=$1",
     [account_id],
   );
@@ -68,7 +68,7 @@ async function createResolverTestSiteLicense({
   name: string;
   organization_name: string;
 }) {
-  const pool = getPool("medium");
+  const pool = getPool();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_licenses (
       id UUID PRIMARY KEY,

@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 
 export const DEFAULT_ADMIN_ALERT_WINDOW_HOURS = 24;
 export const MAX_ADMIN_ALERT_WINDOW_HOURS = 30 * 24;
@@ -34,7 +34,7 @@ export async function getRecentAdminAlertSummary({
     Math.max(1, Math.round(Number(limit) || 0)),
     MAX_RECENT_ADMIN_ALERT_DETAILS,
   );
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getCachedReadPool("medium").query(
     `
     SELECT subject, sent, COUNT(*) OVER()::int AS total_count
       FROM messages

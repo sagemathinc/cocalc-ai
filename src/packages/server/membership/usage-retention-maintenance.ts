@@ -47,7 +47,7 @@ async function deleteExpiredBatch({
   batchSize: number;
 }): Promise<number> {
   try {
-    const { rowCount } = await getPool("medium").query(
+    const { rowCount } = await getPool().query(
       `
         WITH doomed AS (
           SELECT ctid

@@ -3,10 +3,10 @@
    even if called frequently.
 */
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 
 export default async function getHelpEmail(): Promise<string> {
-  const pool = getPool("long");
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT value FROM server_settings WHERE name='help_email'",
   );

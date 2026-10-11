@@ -52,8 +52,9 @@ const MAX_EVENT_LIMIT = 1000;
 let tablesEnsured = false;
 let metadataColumnDropAttempted = false;
 
+// Uncached: the same pool also writes the analytics snapshots.
 function pool(client?: PoolClient): Queryable {
-  return client ?? getPool("medium");
+  return client ?? getPool();
 }
 
 export async function ensureMembershipAnalyticsTables(

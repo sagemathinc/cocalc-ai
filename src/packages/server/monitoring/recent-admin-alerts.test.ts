@@ -10,6 +10,9 @@ jest.mock("@cocalc/database/pool", () => ({
   default: () => ({
     query: (...args: any[]) => queryMock(...args),
   }),
+  getCachedReadPool: () => ({
+    query: (...args: any[]) => queryMock(...args),
+  }),
 }));
 
 describe("recent admin alert summary", () => {

@@ -3,16 +3,17 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// getPool(cacheTime) serves query results from a per-process cache that can
-// be up to that long out of date (see database/pool/cached.ts). A cached
-// answer must never decide who may do what, or what someone may spend or use:
-// a removed admin or collaborator, a revoked session or key would keep
-// access, and limits and counters would lag. This keeps such code on the
-// uncached getPool().
+// getCachedReadPool(cacheTime) serves query results from a per-process cache
+// that can be up to that long out of date (see database/pool/cached.ts). A
+// cached answer must never decide who may do what, or what someone may spend
+// or use: a removed admin or collaborator, a revoked session or key would
+// keep access, and limits and counters would lag. This keeps such code on
+// the uncached getPool().
 //
-// In the paths below, any getPool(...) with an argument, literal or computed,
-// fails unless the call (or the line above it) says why caching is safe
-// there with a "query-cache-ok: <reason>" comment.
+// In the paths below, any getCachedReadPool(...) call fails unless the call
+// (or the line above it) says why caching is safe there with a
+// "query-cache-ok: <reason>" comment. (getPool no longer takes a cache time;
+// a non-object argument to it is flagged too, in case one comes back.)
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -40,22 +41,10 @@ const PROTECTED = [
   "http-api/lib/share/get-collaborators.ts",
 ];
 
-// Reporting and maintenance code in those directories, which only reads
-// aggregates for display.
-const REPORTING = new Set([
-  "server/membership/allocation-analytics-series.ts",
-  "server/membership/allocation-analytics.ts",
-  "server/membership/analytics.ts",
-  "server/membership/retention-overview.ts",
-  "server/membership/rootfs-report.ts",
-  "server/membership/usage-retention-maintenance.ts",
-  "server/purchases/compute-revenue-analytics-series.ts",
-  "server/purchases/test-data.ts",
-]);
-
-// getPool with any argument: a cache time, a variable or an expression.
-// (\s also matches newlines, so a multi-line call is caught.)
-const GET_POOL_WITH_ARGUMENT = /\bgetPool\(\s*[^)\s]/g;
+// A cached read pool, or getPool with a non-object argument (a cache time,
+// a variable or an expression). \s also matches newlines, so a multi-line
+// call is caught.
+const CACHED_POOL = /\bgetCachedReadPool\(|\bgetPool\(\s*[^)\s{]/g;
 const ALLOWED = "query-cache-ok:";
 
 function sourceFiles(path: string): string[] {
@@ -73,7 +62,7 @@ export function unannotatedCachedPools(source: string): number[] {
   const lines = source.split("\n");
   const offenders: number[] = [];
   // Scan the whole source: the argument may start on a later line.
-  for (const match of source.matchAll(GET_POOL_WITH_ARGUMENT)) {
+  for (const match of source.matchAll(CACHED_POOL)) {
     const line = source.slice(0, match.index).split("\n").length;
     if (
       !lines[line - 1].includes(ALLOWED) &&
@@ -92,7 +81,6 @@ describe("query cache policy", () => {
     )
       .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
       .map((file) => relative(PACKAGES, file))
-      .filter((file) => !REPORTING.has(file))
       .flatMap((file) =>
         unannotatedCachedPools(readFileSync(join(PACKAGES, file), "utf8")).map(
           (line) => `${file}:${line}`,
@@ -110,6 +98,12 @@ describe("query cache policy", () => {
     ).toEqual([1]);
     expect(unannotatedCachedPools("const pool = getPool(cache);")).toEqual([1]);
     expect(unannotatedCachedPools("const pool = getPool();")).toEqual([]);
+    expect(
+      unannotatedCachedPools('const pool = getCachedReadPool("medium");'),
+    ).toEqual([1]);
+    expect(
+      unannotatedCachedPools("getPool({ ensureExists: false }).end();"),
+    ).toEqual([]);
     // Arguments on the next line, as prettier may format a longer call.
     expect(
       unannotatedCachedPools('x();\nconst pool = getPool(\n  "medium"\n);'),

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Which queries the getPool(cacheTime) result cache may serve (see cached.ts):
+// Which queries getCachedReadPool (see cached.ts) may serve from its cache:
 // plain reads only. A query is cacheable if it is a SELECT, VALUES or WITH
 // statement that writes nothing, locks nothing and calls only functions known
 // to be read-only. Everything else, including any function not on the list
@@ -248,7 +248,7 @@ function queryText(args: unknown[]): string | undefined {
   return undefined;
 }
 
-/** Whether a query may be served from the getPool(cacheTime) cache. */
+/** Whether getCachedReadPool may serve a query from its cache. */
 export function isCacheableQuery(args: unknown[]): boolean {
   const raw = queryText(args);
   if (raw == null) return false;

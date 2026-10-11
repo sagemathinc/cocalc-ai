@@ -136,7 +136,7 @@ async function resolveHostR2Region(host_id?: string): Promise<string> {
   if (!host_id) {
     return DEFAULT_R2_REGION;
   }
-  const { rows } = await getPool("medium").query<{ region: string | null }>(
+  const { rows } = await getPool().query<{ region: string | null }>(
     "SELECT region FROM project_hosts WHERE id=$1",
     [host_id],
   );
@@ -149,7 +149,7 @@ async function resolveHostR2Region(host_id?: string): Promise<string> {
 async function loadProjectBackupBucketForRegion(
   region: string,
 ): Promise<ProjectBackupBucketRow | null> {
-  const { rows } = await getPool("medium").query<ProjectBackupBucketRow>(
+  const { rows } = await getPool().query<ProjectBackupBucketRow>(
     `SELECT
       id,
       name,
@@ -171,7 +171,7 @@ async function loadProjectBackupBucketForRegion(
 }
 
 async function loadAnyProjectBackupBucket(): Promise<ProjectBackupBucketRow | null> {
-  const { rows } = await getPool("medium").query<ProjectBackupBucketRow>(
+  const { rows } = await getPool().query<ProjectBackupBucketRow>(
     `SELECT
       id,
       name,

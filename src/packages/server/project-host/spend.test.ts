@@ -820,7 +820,7 @@ describe("dedicated host spend accounting", () => {
     const newPricesId = `nebius/prices/global-${uuid()}`;
 
     try {
-      await getPool("medium").query(
+      await getPool().query(
         `
           INSERT INTO cloud_catalog_cache
             (id, provider, kind, scope, payload, fetched_at, ttl_seconds, etag)
@@ -921,7 +921,7 @@ describe("dedicated host spend accounting", () => {
         disk_gb: 93,
       });
     } finally {
-      await getPool("medium").query(
+      await getPool().query(
         `
           DELETE FROM cloud_catalog_cache
           WHERE id = ANY($1::text[])

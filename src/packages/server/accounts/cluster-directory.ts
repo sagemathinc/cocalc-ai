@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import searchLocalAccounts from "@cocalc/server/accounts/search";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -520,7 +520,7 @@ async function searchDirectoryAccounts({
   }
   await ensureClusterAccountDirectorySchema();
   // query-cache-ok: display: directory search results
-  const pool = getPool("medium");
+  const pool = getCachedReadPool("medium");
 
   if (isValidUUID(normalizedQuery)) {
     const direct = await getDirectoryAccountById(normalizedQuery);
@@ -1008,8 +1008,8 @@ export async function getClusterAccountHomeBayCountsDirect(): Promise<
   Record<string, number>
 > {
   await ensureClusterAccountDirectorySchema();
-  // query-cache-ok: admin statistics
-  const { rows } = await getPool("medium").query<{
+  // Uncached: selectSignupHomeBay places new accounts by these counts.
+  const { rows } = await getPool().query<{
     home_bay_id: string;
     count: string;
   }>(

@@ -45,6 +45,10 @@ grep -Fqx '$nrconf{override_rc}{qr(^cocalc-bay-.*\.service$)} = 0;' \
 LIBEXEC="${TARGET_ROOT}/usr/local/libexec/cocalc-bay"
 [[ -x "${LIBEXEC}/bay-config-escrow-run" && -f "${LIBEXEC}/bay-config-escrow.mjs" ]]
 [[ ! -e "${LIBEXEC}/bay-config-escrow.test.sh" ]]
+# So is bay-restore, with its engine and a copy of lib.sh.
+[[ -x "${LIBEXEC}/bay-restore" && -x "${LIBEXEC}/bay-restore-engine.py" && -f "${LIBEXEC}/lib.sh" ]]
+[[ ! -e "${LIBEXEC}/bay-restore-cutover.test.sh" ]]
+[[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-restore" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-config-escrow-run" ]]
 grep -qx 'ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run' \
   "${TARGET_ROOT}/etc/systemd/system/cocalc-bay-config-escrow.service"
