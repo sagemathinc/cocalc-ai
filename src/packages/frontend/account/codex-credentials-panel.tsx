@@ -22,7 +22,12 @@ import {
   Spin,
 } from "antd";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
-import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useAsyncEffect,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
+import { ensureProjectRunningForCodex } from "@cocalc/frontend/chat/codex-submit-preflight";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -669,6 +674,12 @@ function CodexCredentialsPanelBody({
             "Choose the ChatGPT subscription to reconnect, or add a new subscription.",
           );
         }
+        // Sign-in runs Codex in a container built from the project's root
+        // filesystem, which is only set up once the project has started.
+        await ensureProjectRunningForCodex({
+          project_id: authProjectId,
+          redux,
+        });
         const capability =
           await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
             { project_id: authProjectId },
