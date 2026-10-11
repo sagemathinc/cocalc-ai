@@ -147,6 +147,8 @@ function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
 }
 
 function SpecDetails({ spec }: { spec: SensorSpec }) {
+  // Few people read the code; the review summarizes it.
+  const [showScript, setShowScript] = useState(false);
   const kind = kindOf(spec);
   if (kind === "watch") {
     const watch = spec as Extract<SensorSpec, { kind: "watch" }>;
@@ -185,6 +187,8 @@ function SpecDetails({ spec }: { spec: SensorSpec }) {
     );
   }
   const script = spec as ScriptSensorSpec;
+  const access = sensorAccessText(script);
+  const lines = script.script.trimEnd().split("\n").length;
   return (
     <>
       <Descriptions
@@ -193,28 +197,46 @@ function SpecDetails({ spec }: { spec: SensorSpec }) {
         items={[
           { key: "purpose", label: "Purpose", children: script.purpose },
           {
-            key: "schedule",
-            label: "Schedule",
-            children: describeSensorSchedule(script.schedule),
+            key: "runs",
+            label: "Runs",
+            children: `${describeSensorSchedule(script.schedule)}, up to ${script.timeout_seconds} s each`,
           },
           {
             key: "access",
             label: "Access",
-            children: sensorAccessText(script),
+            children: `As you, with ${access[0].toLowerCase()}${access.slice(1)}`,
           },
           {
-            key: "limits",
-            label: "Limits",
-            children: `${script.timeout_seconds} s per run, at most ${script.max_wakes_per_day} wakes per day`,
+            key: "wakes",
+            label: "Wakes",
+            children: `At most ${script.max_wakes_per_day} times a day, each a turn on your account`,
+          },
+          {
+            key: "script",
+            label: "Script",
+            children: (
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, height: "auto" }}
+                aria-expanded={showScript}
+                onClick={() => setShowScript(!showScript)}
+              >
+                {showScript ? "Hide" : "Show"} {LANGUAGE[script.language]},{" "}
+                {lines} {lines === 1 ? "line" : "lines"}
+              </Button>
+            ),
           },
         ]}
       />
-      <CodeBlock
-        label={`${LANGUAGE[script.language]} script`}
-        language={script.language}
-      >
-        {script.script}
-      </CodeBlock>
+      {showScript && (
+        <CodeBlock
+          label={`${LANGUAGE[script.language]} script`}
+          language={script.language}
+        >
+          {script.script}
+        </CodeBlock>
+      )}
     </>
   );
 }
@@ -341,6 +363,17 @@ function SensorCard({
     </Button>
   );
   const pending = sensor.pending_spec;
+  const deleteButton = (
+    <Popconfirm
+      title="Delete this sensor and its run log?"
+      okText="Delete"
+      onConfirm={() => void act("delete")}
+    >
+      <Button size="small" danger type="text" disabled={busy != null}>
+        Delete
+      </Button>
+    </Popconfirm>
+  );
   return (
     <section
       aria-label={`Sensor ${spec.title}`}
@@ -380,7 +413,7 @@ function SensorCard({
             }
             description={
               kindOf(pending) === "script"
-                ? `It runs like a command of @${agent.name}: in this project's software, as you, with: ${sensorAccessText(pending)}. Each wake starts a turn paid by your account. Have an agent review the script, or read it yourself, before approving.`
+                ? undefined
                 : `It starts a turn of @${agent.name} with this prompt on this schedule, paid by your account.`
             }
           />
@@ -393,15 +426,17 @@ function SensorCard({
               hash={sensor.pending_hash}
             />
           )}
-          <Space>
+          <Space wrap>
             {button("approve", "Approve and run", true)}
             {button("reject", "Reject")}
-            {sensor.spec && (
+            {sensor.spec ? (
               <Button size="small" onClick={() => setShowCurrent(!showCurrent)}>
                 {showCurrent
                   ? "Hide approved version"
                   : "Show approved version"}
               </Button>
+            ) : (
+              deleteButton
             )}
           </Space>
         </div>
@@ -442,24 +477,19 @@ function SensorCard({
           )}
         </div>
       )}
-      <Space wrap>
-        {sensor.status === "active" && !done && button("run", "Run now")}
-        {sensor.status === "active" && !done && button("pause", "Pause")}
-        {sensor.status === "paused" &&
-          sensor.spec &&
-          kind !== "watch" &&
-          button("resume", "Resume")}
-        <Popconfirm
-          title="Delete this sensor and its run log?"
-          okText="Delete"
-          onConfirm={() => void act("delete")}
-        >
-          <Button size="small" danger disabled={busy != null}>
-            Delete
-          </Button>
-        </Popconfirm>
-        {sensor.spec && <Runs sensor={sensor} />}
-      </Space>
+      {/* A proposal that never ran has only its own buttons. */}
+      {!(pending && !sensor.spec) && (
+        <Space wrap>
+          {sensor.status === "active" && !done && button("run", "Run now")}
+          {sensor.status === "active" && !done && button("pause", "Pause")}
+          {sensor.status === "paused" &&
+            sensor.spec &&
+            kind !== "watch" &&
+            button("resume", "Resume")}
+          {deleteButton}
+          {sensor.spec && <Runs sensor={sensor} />}
+        </Space>
+      )}
     </section>
   );
 }

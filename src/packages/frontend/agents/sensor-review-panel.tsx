@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// "Review" on a proposed script: an agent with a clean context reads it and
-// says what it does and whether it is safe, so the person approving does not
-// have to read code (or copy it into another chat).
+// "Review the script" on a proposed sensor: an agent with a clean context
+// reads it and says what it does and whether it is safe, so the person
+// approving does not have to read code (or copy it into another chat).
 
 import { useEffect, useState } from "react";
 import { Alert, Button, Select, Space, Spin, Tag } from "antd";
@@ -16,13 +16,15 @@ import type {
   AgentSensor,
   ScriptSensorSpec,
 } from "@cocalc/conat/agents/sensors";
-import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
+  agentReviewer,
   findSensorReview,
   openSensorReviewChat,
+  reviewerOptions,
   sensorReviewChatPath,
   startSensorReview,
+  type ReviewerOption,
   type ReviewVerdict,
   type SensorReview,
 } from "./sensor-review";
@@ -50,8 +52,20 @@ export function SensorReviewPanel({
   const [review, setReview] = useState<SensorReview>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [model, setModel] = useState<string>();
-  const codex = agent.runtime?.kind !== "acp";
+  const [own, setOwn] = useState<ReviewerOption>();
+  const [choice, setChoice] = useState<string>();
+
+  // The agent's own model is the default reviewer.
+  useEffect(() => {
+    let stopped = false;
+    agentReviewer(agent).then(
+      (reviewer) => !stopped && setOwn(reviewer),
+      () => {},
+    );
+    return () => {
+      stopped = true;
+    };
+  }, [agent.path, agent.thread_id]);
 
   // An earlier review of this exact spec, and progress while one runs.
   useEffect(() => {
@@ -90,7 +104,7 @@ export function SensorReviewPanel({
           spec,
           hash,
           account_id,
-          model,
+          reviewer: choice,
         }),
       );
     } catch (err) {
@@ -104,60 +118,68 @@ export function SensorReviewPanel({
       path: sensorReviewChatPath(sensor.project_id, sensor.sensor_id),
     });
   const verdict = review?.verdict ? VERDICT[review.verdict] : undefined;
+  const generating = busy || review?.generating;
+
+  const picker = (
+    <Space wrap size={4}>
+      <Button
+        size="small"
+        loading={busy}
+        disabled={generating}
+        onClick={() => void start()}
+      >
+        {review ? "Review again" : "Review the script"}
+      </Button>
+      <span style={{ color: UI_COLORS.secondary }}>with</span>
+      <Select
+        size="small"
+        variant="borderless"
+        popupMatchSelectWidth={false}
+        loading={!own}
+        disabled={generating}
+        value={choice ?? own?.value}
+        onChange={setChoice}
+        options={reviewerOptions(own, agent.name)}
+        aria-label="Reviewer model"
+      />
+    </Space>
+  );
 
   return (
-    <div
-      aria-label="Agent review"
+    <section
+      aria-label="Script review"
       style={{
-        border: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.inset,
         borderRadius: 6,
-        padding: 8,
+        padding: "8px 12px",
         margin: "8px 0",
       }}
     >
-      <Space wrap>
-        <strong>Agent review</strong>
-        {verdict && <Tag color={verdict.color}>{verdict.label}</Tag>}
-        {review?.generating && (
-          <>
-            <Spin size="small" /> Reviewing…
-          </>
-        )}
-        {codex && (
-          <Select
-            size="small"
-            style={{ minWidth: 180 }}
-            placeholder="The agent's model"
-            allowClear
-            value={model}
-            onChange={setModel}
-            options={DEFAULT_CODEX_MODELS.map(({ name }) => ({
-              value: name,
-              label: name,
-            }))}
-            aria-label="Model for the review"
-          />
-        )}
-        <Button
-          size="small"
-          loading={busy}
-          disabled={review?.generating}
-          onClick={() => void start()}
-        >
-          {review ? "Review again" : `Review with @${agent.name}'s settings`}
-        </Button>
-        {review && (
-          <Button size="small" type="link" onClick={openThread}>
-            Open review
-          </Button>
-        )}
-      </Space>
-      {!review && !busy && (
-        <div style={{ color: UI_COLORS.secondary, marginTop: 6 }}>
-          A fresh agent, with no context but this sensor, reads the script and
-          tells you what it does and whether it is safe. It does not run it. The
-          review is a turn paid like the agent's.
-        </div>
+      {review ? (
+        <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
+          <Space wrap size={6}>
+            {verdict && <Tag color={verdict.color}>{verdict.label}</Tag>}
+            {review.generating && <Spin size="small" />}
+            <span style={{ color: UI_COLORS.secondary }}>
+              {review.generating ? "Reviewing" : "Reviewed"}
+              {review.reviewer ? ` by ${review.reviewer}` : ""}
+              {review.generating ? "…" : ""}
+            </span>
+            <Button size="small" type="link" onClick={openThread}>
+              Open
+            </Button>
+          </Space>
+          {!review.generating && picker}
+        </Space>
+      ) : (
+        <>
+          {picker}
+          <div style={{ color: UI_COLORS.secondary, marginTop: 4 }}>
+            A new agent that knows nothing else reads the script and tells you
+            what it does and whether it is safe. It doesn't run it. This is one
+            turn on your account.
+          </div>
+        </>
       )}
       {error && (
         <Alert type="error" title={error} showIcon style={{ marginTop: 8 }} />
@@ -167,6 +189,6 @@ export function SensorReviewPanel({
           <StaticMarkdown value={review.text} />
         </div>
       )}
-    </div>
+    </section>
   );
 }

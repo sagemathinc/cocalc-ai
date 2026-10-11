@@ -5,9 +5,9 @@
 
 // A proposed sensor script is reviewed by an agent with a clean context, not
 // left for a person to read line by line. CoCalc starts the review itself: a
-// new thread, with the proposing agent's harness, model and payment (or a
-// chosen model), in a chat of its own for that sensor, so the agent's chat
-// is not cluttered and nobody has to set up a reviewer.
+// new thread, with the proposing agent's harness, model and payment (or
+// another Codex or Claude model), in a chat of its own for that sensor, so the
+// agent's chat is not cluttered and nobody has to set up a reviewer.
 
 import { redux } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
@@ -29,6 +29,14 @@ import type {
   ScriptSensorSpec,
 } from "@cocalc/conat/agents/sensors";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
+import {
+  DEFAULT_CODEX_MODEL_NAME,
+  DEFAULT_CODEX_MODELS,
+} from "@cocalc/util/ai/codex";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
+import { qualifiedHarnessRuntime } from "@cocalc/frontend/chat/harness-profile";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { preferredClaudeCredential } from "./claude-credential-options";
 
 export type ReviewVerdict = "safe" | "concerns" | "reject";
 
@@ -103,16 +111,22 @@ export function reviewVerdict(text: string): ReviewVerdict | undefined {
   return;
 }
 
+// Our own instance, so a chat that is also open as a file (the agent's chat
+// in its tab, or a review someone opened) is not registered twice.
+const REVIEW_INSTANCE = { instanceKey: "sensor-review" };
+
 async function readyChat(
   project_id: string,
   path: string,
 ): Promise<ChatActions> {
-  const actions = initChat(project_id, path);
+  const actions: ChatActions =
+    (redux.getEditorActions(project_id, path) as any)?.getChatActions?.() ??
+    initChat(project_id, path, REVIEW_INSTANCE);
   if (actions.syncdb?.get_state?.() === "ready") return actions;
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error("Timed out opening the review chat"));
+      reject(new Error("Timed out opening the chat"));
     }, 15_000);
     const ready = () => {
       cleanup();
@@ -133,6 +147,90 @@ async function readyChat(
   return actions;
 }
 
+/**
+ * Who reviews: a model of Codex or Claude, written "codex:<model>" or
+ * "claude:<model>", or "same" for the agent's own (custom) harness.
+ */
+export type ReviewerChoice = string;
+
+export interface ReviewerOption {
+  value: ReviewerChoice;
+  label: string;
+}
+
+/** Claude Code's model aliases; each is the newest of its family. */
+export const CLAUDE_REVIEW_MODELS = [
+  { value: "opus", label: "Opus" },
+  { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku" },
+];
+
+function claudeModelOf(runtime: any): string | undefined {
+  return runtime?.settings?.configOptions?.find(
+    (option: { id: string }) => option?.id === "model",
+  )?.value;
+}
+
+/** The reviewer a thread's settings amount to, e.g. "Codex · gpt-5.5". */
+export function reviewerOf(settings: any): ReviewerOption {
+  const runtime = settings?.agent_runtime;
+  if (runtime) {
+    if (runtime.profile?.id !== "claude-code")
+      return { value: "same", label: "Custom harness" };
+    // Without a chosen model CoCalc runs the newest Opus.
+    const model = claudeModelOf(runtime) ?? "opus";
+    return {
+      value: `claude:${model}`,
+      label: reviewerLabel(`claude:${model}`),
+    };
+  }
+  const model =
+    settings?.acp_config?.model ??
+    settings?.agent_model ??
+    DEFAULT_CODEX_MODEL_NAME;
+  return { value: `codex:${model}`, label: reviewerLabel(`codex:${model}`) };
+}
+
+export function reviewerLabel(choice: ReviewerChoice): string {
+  const [harness, ...rest] = choice.split(":");
+  const model = rest.join(":");
+  if (harness === "codex") return `Codex · ${model}`;
+  if (harness === "claude")
+    return `Claude · ${
+      CLAUDE_REVIEW_MODELS.find(({ value }) => value === model)?.label ?? model
+    }`;
+  return "Custom harness";
+}
+
+/** Every model to choose from; the agent's own first, marked as such. */
+export function reviewerOptions(
+  own: ReviewerOption | undefined,
+  agentName: string,
+): ReviewerOption[] {
+  const all = [
+    ...DEFAULT_CODEX_MODELS.map(({ name }) => `codex:${name}`),
+    ...CLAUDE_REVIEW_MODELS.map(({ value }) => `claude:${value}`),
+  ];
+  const others = all
+    .filter((value) => value !== own?.value)
+    .map((value) => ({ value, label: reviewerLabel(value) }));
+  if (!own) return others;
+  return [
+    { value: own.value, label: `${own.label} (same as @${agentName})` },
+    ...others,
+  ];
+}
+
+/** The agent's own model, the default reviewer. */
+export async function agentReviewer(
+  agent: NamedAgent,
+): Promise<ReviewerOption> {
+  const source = await readyChat(agent.endpoint.project_id, agent.path);
+  return reviewerOf(
+    source.getThreadMetadata?.(agent.thread_id, { threadId: agent.thread_id }),
+  );
+}
+
 /** The review chat for a sensor, if one exists already. */
 export async function openSensorReviewChat(
   project_id: string,
@@ -149,6 +247,8 @@ export interface SensorReview {
   text: string;
   generating: boolean;
   verdict?: ReviewVerdict;
+  /** Who reviewed, e.g. "Claude · Opus". */
+  reviewer?: string;
 }
 
 /** The newest review of this exact spec in a sensor's review chat. */
@@ -172,17 +272,23 @@ export function findSensorReview(
   );
   const reply = replies[replies.length - 1];
   const text = reply ? newest_content(reply).trim() : "";
+  const settings = actions.getThreadMetadata?.(thread_id, {
+    threadId: thread_id,
+  });
   return {
     thread_id,
     text,
     generating: reply ? field<boolean>(reply, "generating") === true : true,
     verdict: reviewVerdict(text),
+    ...(settings ? { reviewer: reviewerOf(settings).label } : {}),
   };
 }
 
 /**
- * Start a review of the sensor's pending (or current) spec: a new thread with
- * the proposing agent's settings, read-only, and the review prompt.
+ * Start a review of the sensor's pending (or current) spec: a new thread,
+ * read-only where the harness can be, with the review prompt. The agent's own
+ * model reviews with the agent's settings and payment; another model of
+ * Codex or Claude with the account's defaults for it.
  */
 export async function startSensorReview({
   agent,
@@ -190,7 +296,7 @@ export async function startSensorReview({
   spec,
   hash,
   account_id,
-  model,
+  reviewer,
 }: {
   agent: NamedAgent;
   sensor: AgentSensor;
@@ -198,8 +304,8 @@ export async function startSensorReview({
   /** The spec's hash (pending_hash or script_hash). */
   hash: string;
   account_id?: string;
-  /** Another model of the same harness; default the agent's own. */
-  model?: string;
+  /** Default: the agent's own model. */
+  reviewer?: ReviewerChoice;
 }): Promise<SensorReview> {
   const project_id = sensor.project_id;
   const projectActions = redux.getProjectActions(project_id);
@@ -211,46 +317,36 @@ export async function startSensorReview({
     threadId: agent.thread_id,
   }) as any;
   if (!settings) throw new Error("The agent's settings are unavailable.");
+  const own = reviewerOf(settings).value;
+  const choice = reviewer ?? own;
+  const [harness, ...rest] = choice.split(":");
+  const model = rest.join(":");
+  const sameHarness =
+    choice === own || (harness === "claude") === own.startsWith("claude:");
   const path = sensorReviewChatPath(project_id, sensor.sensor_id);
   if (!(await fs.exists(path))) {
     await projectActions.ensureContainingDirectoryExists(path);
     await fs.writeFile(path, "");
   }
   const actions = await readyChat(project_id, path);
-  const runtime = settings.agent_runtime;
-  const { sessionId: _session, ...agentConfig } = settings.acp_config ?? {};
-  const codexConfig = {
-    ...agentConfig,
-    ...(model ? { model } : {}),
-    // A reviewer reads; it never changes the project.
-    sessionMode: "read-only" as const,
-  };
-  const thread_id = actions.createEmptyThread({
-    name: sensorReviewThreadName(spec.title, hash),
-    threadAgent: runtime
-      ? { mode: "acp", runtime }
-      : {
-          mode: "codex",
-          model: codexConfig.model ?? settings.agent_model,
-          codexConfig,
-        },
-  });
-  if (!thread_id) throw new Error("Unable to start the review");
-  // Paid the way the agent is.
-  if (runtime) {
-    const credential = readHarnessCredentialSelection({
-      accountId: account_id,
-      projectId: project_id,
-      threadKey: agent.thread_id,
+  const name = sensorReviewThreadName(spec.title, hash);
+
+  if (harness === "codex") {
+    const { sessionId: _session, ...agentConfig } = sameHarness
+      ? (settings.acp_config ?? {})
+      : {};
+    const codexConfig = {
+      ...agentConfig,
+      model,
+      // A reviewer reads; it never changes the project.
+      sessionMode: "read-only" as const,
+    };
+    const thread_id = actions.createEmptyThread({
+      name,
+      threadAgent: { mode: "codex", model, codexConfig },
     });
-    if (credential)
-      writeHarnessCredentialSelection({
-        accountId: account_id,
-        projectId: project_id,
-        threadKey: thread_id,
-        credential,
-      });
-  } else {
+    if (!thread_id) throw new Error("Unable to start the review");
+    // Paid the way the agent is (else the account's default for Codex).
     writeAgentSubscriptionSelection({
       accountId: account_id,
       projectId: project_id,
@@ -262,14 +358,86 @@ export async function startSensorReview({
       }),
     });
     actions.setCodexConfig(thread_id, codexConfig);
+    return await send(actions, thread_id, spec, codexConfig);
   }
+
+  // Claude, or the agent's own custom harness. Claude Code has no read-only
+  // mode CoCalc can enforce; the review prompt tells it not to run anything.
+  let runtime: any;
+  if (choice === own) runtime = settings.agent_runtime;
+  else if (sameHarness) {
+    const options = (
+      settings.agent_runtime.settings?.configOptions ?? []
+    ).filter(
+      // Fast mode belongs to the agent's model, not necessarily this one.
+      ({ id }: { id: string }) => id !== "model" && id !== "fast",
+    );
+    runtime = {
+      ...settings.agent_runtime,
+      settings: {
+        ...settings.agent_runtime.settings,
+        configOptions: [...options, { id: "model", value: model }],
+      },
+    };
+  } else
+    runtime = qualifiedHarnessRuntime(
+      "claude-code",
+      getProjectHomeDirectory(project_id),
+      { configOptions: [{ id: "model", value: model }] },
+    );
+  const credential = sameHarness
+    ? readHarnessCredentialSelection({
+        accountId: account_id,
+        projectId: project_id,
+        threadKey: agent.thread_id,
+      })
+    : await accountClaudeCredential(account_id);
+  const thread_id = actions.createEmptyThread({
+    name,
+    threadAgent: { mode: "acp", runtime },
+  });
+  if (!thread_id) throw new Error("Unable to start the review");
+  if (credential)
+    writeHarnessCredentialSelection({
+      accountId: account_id,
+      projectId: project_id,
+      threadKey: thread_id,
+      credential,
+    });
+  return await send(actions, thread_id, spec);
+}
+
+/** The account's Claude credential, as a new agent would get it. */
+async function accountClaudeCredential(
+  account_id?: string,
+): Promise<AcpHarnessCredential> {
+  const rows =
+    await webapp_client.conat_client.hub.system.listExternalCredentials({
+      provider: "anthropic",
+      scope: "account",
+    });
+  return preferredClaudeCredential(
+    readHarnessCredentialSelection({
+      accountId: account_id,
+      forNewAgent: true,
+    }),
+    rows,
+  );
+}
+
+async function send(
+  actions: ChatActions,
+  thread_id: string,
+  spec: ScriptSensorSpec,
+  codexConfig?: object,
+): Promise<SensorReview> {
   const chatIdentity = actions.reserveChatSendIdentity({
     reply_thread_id: thread_id,
   });
   const sent = actions.sendChat({
     input: sensorReviewPrompt(spec),
     reply_thread_id: thread_id,
-    acpConfigOverride: runtime ? undefined : codexConfig,
+    acpConfigOverride: codexConfig as any,
     chatIdentity,
   });
   await actions.syncdb?.save();
