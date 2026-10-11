@@ -251,8 +251,8 @@ function Runs({
   onSettled,
 }: {
   sensor: AgentSensor;
-  /** Run now was pressed: the newest run then, if any (server time). */
-  requested?: { after: string | null };
+  /** Run now was pressed: when the server took the request. */
+  requested?: { at: string };
   /** The requested run finished (or never showed up in time). */
   onSettled?: () => void;
 }) {
@@ -277,9 +277,12 @@ function Runs({
     if (!requested) void load();
   }, [sensor.last_run_at]);
   // After Run now, open the log and follow the run until it is done.
+  // The run it asked for: a manual run started after the request, not one
+  // that was already running when Run now was pressed.
   const isNew = (run: AgentSensorRun) =>
-    !requested?.after ||
-    new Date(run.started_at).valueOf() > new Date(requested.after).valueOf();
+    requested != null &&
+    run.manual &&
+    new Date(run.started_at).valueOf() >= new Date(requested.at).valueOf();
   useEffect(() => {
     if (!requested) return;
     let stopped = false;
@@ -371,7 +374,7 @@ function SensorCard({
   const [busy, setBusy] = useState<SensorManageOp>();
   const [error, setError] = useState("");
   const [showCurrent, setShowCurrent] = useState(false);
-  const [requested, setRequested] = useState<{ after: string | null }>();
+  const [requested, setRequested] = useState<{ at: string }>();
   const [logOpen, setLogOpen] = useState(false);
   const spec = sensor.spec ?? sensor.pending_spec!;
   const kind = kindOf(spec);
@@ -381,15 +384,18 @@ function SensorCard({
     setBusy(op);
     setError("");
     try {
-      await personalAgentApi().manageSensor({
+      const result = await personalAgentApi().manageSensor({
         project_id: sensor.project_id,
         sensor_id: sensor.sensor_id,
         op,
         revision: sensor.revision,
       });
-      // The run log opens and follows the run it asked for.
+      // The run log opens and follows the run it asked for. The request's
+      // time is the database's, like the run's start.
       if (op === "run") {
-        setRequested({ after: sensor.last_run_at });
+        setRequested({
+          at: result?.sensor?.updated ?? new Date().toISOString(),
+        });
         setLogOpen(true);
       }
       onChanged();

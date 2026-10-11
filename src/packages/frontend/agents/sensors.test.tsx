@@ -217,11 +217,28 @@ test("Run now opens the log and follows the run to its result", async () => {
     manual: true,
   };
   const done = { ...running, outcome: "wake", summary: "1 new issue" };
-  // Not started yet, then running, then done.
+  // A scheduled run was already going when Run now was pressed: it is not
+  // the run asked for, even when it finishes first.
+  const scheduled = {
+    ...earlier,
+    run_id: "rs",
+    started_at: "2026-10-10T12:59:00.000Z",
+    finished_at: null,
+    outcome: null,
+  };
+  const scheduledDone = { ...scheduled, outcome: "timeout" };
+  mockApi.manageSensor.mockResolvedValue({
+    sensor: { updated: "2026-10-10T12:59:30.000Z" },
+  });
+  // Scheduled run going; it finishes; the requested run runs; it is done.
   mockApi.listSensors
-    .mockResolvedValueOnce({ sensors: [], runs: [earlier] })
-    .mockResolvedValueOnce({ sensors: [], runs: [running, earlier] })
-    .mockResolvedValue({ sensors: [], runs: [done, earlier] });
+    .mockResolvedValueOnce({ sensors: [], runs: [scheduled, earlier] })
+    .mockResolvedValueOnce({ sensors: [], runs: [scheduledDone, earlier] })
+    .mockResolvedValueOnce({
+      sensors: [],
+      runs: [running, scheduledDone, earlier],
+    })
+    .mockResolvedValue({ sensors: [], runs: [done, scheduledDone, earlier] });
   const refresh = jest.fn();
   render(
     <AgentSensorsModal
@@ -246,6 +263,12 @@ test("Run now opens the log and follows the run to its result", async () => {
   // No "No runs yet": the run it asked for is on its way.
   expect(await screen.findByText(/Starting the run/)).toBeTruthy();
   expect(screen.queryByText(/No runs yet/)).toBeNull();
+  // The scheduled run finishing does not end the wait.
+  expect(
+    await screen.findByText(/Timed out/, undefined, { timeout: 5_000 }),
+  ).toBeTruthy();
+  expect(screen.getByText(/Starting the run/)).toBeTruthy();
+  expect(refresh).toHaveBeenCalledTimes(1);
   expect(
     await screen.findByText(
       /Woke the agent · run by hand · 1 new issue/,
@@ -257,7 +280,7 @@ test("Run now opens the log and follows the run to its result", async () => {
   ).toBeTruthy();
   expect(screen.queryByText(/Starting the run/)).toBeNull();
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
-}, 15_000);
+}, 25_000);
 
 test("sensorsSummary names what needs attention", () => {
   expect(sensorsSummary(undefined)).toBe("");
