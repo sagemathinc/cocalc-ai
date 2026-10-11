@@ -312,22 +312,63 @@ stage_trusted_scaffold >/dev/null
 check_trusted_scaffold
 remove_trusted_scaffold
 # A static deploy installs only the needrestart policy (Perl that root
-# evaluates), also from a trusted copy of its bundle.
+# evaluates) and the release runner its health check uses, also from a
+# trusted copy of its bundle, and refuses a bundle without the runner.
 static_root="${TMP_ROOT}/static-bundle/cocalc-bay-static-test"
 mkdir -p "${static_root}/scripts/bay-systemd/needrestart"
 printf '# trusted policy\n' > "${static_root}/scripts/bay-systemd/needrestart/cocalc-bay.conf"
+tar -czf "${TMP_ROOT}/static-bundle.tar.gz" -C "${TMP_ROOT}/static-bundle" cocalc-bay-static-test
+STATIC_BUNDLE_PATH="${TMP_ROOT}/static-bundle.tar.gz"
+if (stage_trusted_scaffold static >/dev/null 2>&1); then
+  echo "static scaffold staged without cocalc-bay-run" >&2
+  exit 1
+fi
+rm -rf "${TMP_ROOT}"/cocalc-bay-scaffold.*
+mkdir -p "${static_root}/scripts/bay-systemd/sbin"
+printf '#!/usr/bin/env bash\n# trusted runner\n' > "${static_root}/scripts/bay-systemd/sbin/cocalc-bay-run"
 tar -czf "${TMP_ROOT}/static-bundle.tar.gz" -C "${TMP_ROOT}/static-bundle" cocalc-bay-static-test
 mkdir -p "${TARGET_RELEASE}/scripts/bay-systemd/needrestart"
 printf 'system("touch /tmp/pwned");\n' > "${TARGET_RELEASE}/scripts/bay-systemd/needrestart/cocalc-bay.conf"
 STATIC_BUNDLE_PATH="${TMP_ROOT}/static-bundle.tar.gz"
 SOURCE_ROOT=""
 NEEDRESTART_POLICY_PATH="${TMP_ROOT}/installed-needrestart.conf"
-stage_trusted_scaffold needrestart >/dev/null
+BAY_RUN_PATH="${TMP_ROOT}/sbin/cocalc-bay-run"
+stage_trusted_scaffold static >/dev/null
 install_needrestart_policy >/dev/null
+install_bay_runner >/dev/null
 remove_trusted_scaffold
 [[ "$(cat "$NEEDRESTART_POLICY_PATH")" == "# trusted policy" ]] ||
   { echo "needrestart policy did not come from the bundle" >&2; exit 1; }
+[[ -x "$BAY_RUN_PATH" ]] && grep -q '# trusted runner' "$BAY_RUN_PATH" ||
+  { echo "cocalc-bay-run was not installed from the static bundle" >&2; exit 1; }
+if ! awk '/stage_trusted_scaffold static/ { staged = 1 }
+    staged && /install_bay_runner/ { installed = 1 }
+    installed && /set_current_release/ { found = 1; exit }
+    END { exit !found }' "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
+  echo "a static deploy does not install cocalc-bay-run before switching releases" >&2
+  exit 1
+fi
 STATIC_BUNDLE_PATH=""
+# Root changes ownership in the bay-owned trees only with protected_hardlinks.
+for value in 0 2 ""; do
+  printf '%s\n' "$value" > "${TMP_ROOT}/protected_hardlinks"
+  if (PROTECTED_HARDLINKS_PATH="${TMP_ROOT}/protected_hardlinks" require_protected_hardlinks 2>/dev/null); then
+    echo "deploy allowed with protected_hardlinks=${value}" >&2
+    exit 1
+  fi
+done
+if (PROTECTED_HARDLINKS_PATH="${TMP_ROOT}/missing" require_protected_hardlinks 2>/dev/null); then
+  echo "deploy allowed with protected_hardlinks unreadable" >&2
+  exit 1
+fi
+printf '1\n' > "${TMP_ROOT}/protected_hardlinks"
+PROTECTED_HARDLINKS_PATH="${TMP_ROOT}/protected_hardlinks" require_protected_hardlinks
+bay_chown='^ *run chown -R "\$\{BAY_USER\}'
+if [[ "$(grep -cE "$bay_chown" "${SCRIPT_DIR}/bay-bootstrap-release.sh")" != \
+  "$(grep -B1 -E "$bay_chown" "${SCRIPT_DIR}/bay-bootstrap-release.sh" | grep -c '^ *require_protected_hardlinks$')" ]]; then
+  echo "a recursive root chown is not preceded by require_protected_hardlinks" >&2
+  exit 1
+fi
 # Nothing root reads into /etc (overlay env, needrestart) comes from the
 # release, and the CDN preservation runs its code and copies as the bay user.
 if grep -nE '(cat|<) "\$\{TARGET_RELEASE\}' "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then

@@ -29,6 +29,8 @@ NODE_VERSION="26.2.0"
 NVM_DIR="/opt/cocalc/nvm"
 RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 NEEDRESTART_POLICY_PATH="${COCALC_BAY_NEEDRESTART_POLICY_PATH:-/etc/needrestart/conf.d/cocalc-bay.conf}"
+BAY_RUN_PATH="${COCALC_BAY_RUN_PATH:-/usr/local/sbin/cocalc-bay-run}"
+PROTECTED_HARDLINKS_PATH="${COCALC_BAY_PROTECTED_HARDLINKS_PATH:-/proc/sys/fs/protected_hardlinks}"
 
 usage() {
   cat <<'EOF'
@@ -98,7 +100,8 @@ find_node() {
 SCAFFOLD_STAGE_PARENT="${COCALC_BAY_SCAFFOLD_STAGE_PARENT:-/run}"
 TRUSTED_SCAFFOLD_DIR=""
 
-# A static bundle carries only needrestart/; pass "needrestart" to stage it.
+# A static bundle carries only needrestart/ and sbin/cocalc-bay-run; pass
+# "static" to stage it.
 stage_trusted_scaffold() {
   local stage bundle="${HUB_BUNDLE_PATH:-${BUNDLE_PATH:-$STATIC_BUNDLE_PATH}}"
   local required="${1:-install-scaffold.sh}"
@@ -119,11 +122,14 @@ stage_trusted_scaffold() {
   TRUSTED_SCAFFOLD_DIR="${stage}/scripts/bay-systemd"
   # Removed by remove_trusted_scaffold; a stage left by a failed bootstrap is
   # root-only (0700) and goes with /run at the next boot.
-  if [[ "$required" == needrestart ]]; then
-    if [[ ! -f "${TRUSTED_SCAFFOLD_DIR}/needrestart/cocalc-bay.conf" ]]; then
-      echo "${bundle:-$SOURCE_ROOT} is missing scripts/bay-systemd/needrestart/cocalc-bay.conf" >&2
-      exit 1
-    fi
+  if [[ "$required" == static ]]; then
+    local file
+    for file in needrestart/cocalc-bay.conf sbin/cocalc-bay-run; do
+      if [[ ! -f "${TRUSTED_SCAFFOLD_DIR}/${file}" ]]; then
+        echo "${bundle:-$SOURCE_ROOT} is missing scripts/bay-systemd/${file}" >&2
+        exit 1
+      fi
+    done
   elif [[ ! -x "${TRUSTED_SCAFFOLD_DIR}/install-scaffold.sh" ]]; then
     echo "${bundle:-$SOURCE_ROOT} is missing scripts/bay-systemd/install-scaffold.sh" >&2
     exit 1
@@ -139,15 +145,31 @@ remove_trusted_scaffold() {
 
 # The release tree under INSTALL_BASE and the state tree under BAY_ROOT belong
 # to the bay account, which can replace anything in them (even files it does
-# not own, by renaming their directory). Root therefore never reads, writes,
-# follows or executes anything there: that work runs as the bay account.
-# Root only reads the operator's bundle or source and installs from the
-# trusted scaffold copy into root-owned places.
+# not own, by renaming their directory). Root therefore never writes, copies
+# or executes anything there, and never reads files there into root-owned
+# places: that work runs as the bay account. Root only inspects names there
+# (resolving current, testing paths, listing releases) to choose what the bay
+# account does, changes ownership (only with protected_hardlinks), reads the
+# operator's bundle or source, and installs from the trusted scaffold copy
+# into root-owned places.
 as_bay() {
   if [[ "$(id -u)" == 0 ]]; then
     runuser -u "$BAY_USER" -- "$@"
   else
     "$@"
+  fi
+}
+
+# Root's recursive chown over the bay-owned trees does not follow symbolic
+# links, but a hard link is the file itself: without the kernel's
+# protected_hardlinks the bay account could link a root-owned file into its
+# tree and have the next deploy give it away. Refuse to deploy in that case.
+require_protected_hardlinks() {
+  local value=""
+  value="$(cat "$PROTECTED_HARDLINKS_PATH" 2>/dev/null)" || true
+  if [[ "$value" != 1 ]]; then
+    echo "fs.protected_hardlinks is ${value:-unreadable}, not 1; refusing to change ownership of bay-owned trees as root (set it with sysctl -w fs.protected_hardlinks=1)" >&2
+    exit 1
   fi
 }
 
@@ -168,6 +190,7 @@ ensure_install_dirs() {
   done
   run as_bay mkdir -p "$RELEASES_DIR"
   if [[ "$(id -u)" == 0 ]]; then
+    require_protected_hardlinks
     run chown -R "${BAY_USER}:${BAY_GROUP}" "$RELEASES_DIR"
   fi
 }
@@ -195,6 +218,15 @@ install_needrestart_policy() {
   run install -D -m 0644 \
     "${TRUSTED_SCAFFOLD_DIR}/needrestart/cocalc-bay.conf" \
     "$NEEDRESTART_POLICY_PATH"
+}
+
+# The deploy's health checks run release commands through this root helper.
+# Full and hub deploys install it with the rest of the scaffold; a static
+# deploy installs it here, so a host's first static deploy has it too.
+install_bay_runner() {
+  run install -D -m 0755 \
+    "${TRUSTED_SCAFFOLD_DIR}/sbin/cocalc-bay-run" \
+    "$BAY_RUN_PATH"
 }
 
 require_root() {
@@ -1057,8 +1089,9 @@ main() {
   fi
   validate_release
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
-    stage_trusted_scaffold needrestart
+    stage_trusted_scaffold static
     install_needrestart_policy
+    install_bay_runner
     remove_trusted_scaffold
   fi
   set_current_release
@@ -1120,6 +1153,7 @@ EOF
 
   # Normalise ownership of older installs (physical walk, never following
   # links), then create anything missing as the bay account.
+  require_protected_hardlinks
   run chown -R "${BAY_USER}:${BAY_GROUP}" "$BAY_ROOT" "${INSTALL_BASE}"
   run as_bay mkdir -p "${BAY_ROOT}/secrets" "${BAY_ROOT}/projects" "${BAY_ROOT}/bin"
 

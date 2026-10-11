@@ -119,6 +119,15 @@ copy_needrestart_policy() {
     "$dest/scripts/bay-systemd/needrestart/"
 }
 
+# The static deploy's health check runs release commands through this root
+# helper, so a static deploy installs it too.
+copy_bay_runner() {
+  local dest="$1"
+  echo "- Copy bay release runner"
+  mkdir -p "$dest/scripts/bay-systemd/sbin"
+  cp "scripts/bay-systemd/sbin/cocalc-bay-run" "$dest/scripts/bay-systemd/sbin/"
+}
+
 mkdir -p "$OUT_PARENT"
 trap cleanup EXIT
 
@@ -164,6 +173,8 @@ copy_provider_setup_scripts "$OUT"
 
 copy_needrestart_policy "$OUT"
 
+copy_bay_runner "$OUT"
+
 echo "- Write static manifest"
 node - "$OUT/bay-static-manifest.json" "$ROOT" <<'NODE'
 const fs = require("node:fs");
@@ -200,6 +211,7 @@ const manifest = {
     computeVmSetup: "runtime/control-plane/bundle/gcp/compute-vm-setup.sh",
     nebiusSetup: "runtime/control-plane/bundle/nebius/nebius-setup.sh",
     needrestartPolicy: "scripts/bay-systemd/needrestart/cocalc-bay.conf",
+    bayRunner: "scripts/bay-systemd/sbin/cocalc-bay-run",
   },
 };
 
@@ -218,6 +230,7 @@ validate_file "$OUT/runtime/control-plane/bundle/gcp/gcp-setup.sh"
 validate_file "$OUT/runtime/control-plane/bundle/gcp/compute-vm-setup.sh"
 validate_file "$OUT/runtime/control-plane/bundle/nebius/nebius-setup.sh"
 validate_file "$OUT/scripts/bay-systemd/needrestart/cocalc-bay.conf"
+validate_file "$OUT/scripts/bay-systemd/sbin/cocalc-bay-run"
 validate_file "$OUT/bay-static-manifest.json"
 
 echo "- Publish output directory"
