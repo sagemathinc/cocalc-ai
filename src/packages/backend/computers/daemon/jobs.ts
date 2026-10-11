@@ -32,7 +32,8 @@ import {
 import { join } from "node:path";
 import { isValidUUID } from "@cocalc/util/misc";
 import { ensurePrivateDir, readJson, writeDurableJson } from "./durable";
-import { killGroup, loginShell } from "./exec";
+import { loginShell } from "./exec";
+import { systemBootClock, type BootClock } from "./clock";
 
 export type JobState =
   | "queued"
@@ -66,6 +67,12 @@ export interface JobAuthorization {
   privacy_epoch: number;
   /** Wall-clock time after which the job is stopped (ticket and session). */
   deadline_at: number | null;
+  /**
+   * The same deadline on this boot's monotonic clock (Linux), so setting the
+   * wall clock back doesn't extend it, even across daemon restarts.
+   */
+  boot_id?: string | null;
+  boot_deadline_ms?: number | null;
 }
 
 export interface JobStatus {
@@ -78,6 +85,8 @@ export interface JobStatus {
   exit_code: number | null;
   error: string | null;
   kill_requested: boolean;
+  /** When SIGTERM was first sent; SIGKILL follows after the grace period. */
+  kill_started_at?: number | null;
 }
 
 export type Job = JobSpec & JobStatus;
@@ -185,6 +194,7 @@ export class JobManager {
        * changed, session ended), or null to start it.
        */
       authorize?: (job: Job) => string | null;
+      bootClock?: BootClock;
     } = {},
   ) {
     this.dir = join(stateDir, "jobs");
@@ -221,6 +231,7 @@ export class JobManager {
       exit_code: job.exit_code,
       error: job.error,
       kill_requested: job.kill_requested,
+      kill_started_at: job.kill_started_at ?? null,
       ...patch,
     };
     writeDurableJson(join(this.jobDir(job_id), "status.json"), status);
@@ -325,12 +336,67 @@ export class JobManager {
     }
   }
 
-  private alive(job: Job): boolean {
+  private wrapperAlive(job: Job): boolean {
     if (job.pid == null) return false;
     const start = processStartTime(job.pid);
     if (start == null) return false;
     // Without a recorded start time we can only trust the pid.
     return job.pid_start == null || start === job.pid_start;
+  }
+
+  /**
+   * Anything of the job still running: the wrapper, or (if it died) any
+   * process left in its process group, whose id is the wrapper's pid.
+   */
+  private alive(job: Job): boolean {
+    if (job.pid == null) return false;
+    if (this.wrapperAlive(job)) return true;
+    try {
+      process.kill(-job.pid, 0);
+      return true;
+    } catch (err: any) {
+      return err?.code === "EPERM";
+    }
+  }
+
+  private signalGroup(job: Job, signal: NodeJS.Signals): void {
+    if (job.pid == null) return;
+    try {
+      process.kill(-job.pid, signal);
+    } catch {}
+  }
+
+  /** Has the job reached its time limit (wall clock, or this boot's clock)? */
+  deadlinePassed(job: Job, now: number): boolean {
+    const a = job.auth;
+    if (a.deadline_at != null && now >= a.deadline_at) return true;
+    if (
+      a.boot_id != null &&
+      a.boot_deadline_ms != null &&
+      a.boot_id === this.bootClock.bootId()
+    ) {
+      const since = this.bootClock.sinceBootMs();
+      if (since != null && since >= a.boot_deadline_ms) return true;
+    }
+    return false;
+  }
+
+  private get bootClock(): BootClock {
+    return this.opts.bootClock ?? systemBootClock;
+  }
+
+  /**
+   * Start stopping a job: record it durably, then SIGTERM its process
+   * group. refresh() sends SIGKILL once the grace period has passed, also
+   * after a daemon restart, until nothing of it is left.
+   */
+  private requestKill(job: Job, reason: string | null, now: number): void {
+    this.setStatus(job.job_id, {
+      kill_requested: true,
+      kill_started_at: job.kill_started_at ?? now,
+      ...(reason != null && job.error == null ? { error: reason } : {}),
+    });
+    this.signalGroup(job, "SIGTERM");
   }
 
   /**
@@ -342,14 +408,21 @@ export class JobManager {
       if (
         job.state === "running" &&
         !job.kill_requested &&
-        job.auth.deadline_at != null &&
-        now >= job.auth.deadline_at
+        this.deadlinePassed(job, now)
       ) {
-        this.setStatus(job.job_id, {
-          kill_requested: true,
-          error: "the job reached its time limit",
-        });
-        if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
+        this.requestKill(job, "the job reached its time limit", now);
+        continue;
+      }
+      if (job.state === "running" && job.kill_requested && this.alive(job)) {
+        // Escalate: a job that ignores SIGTERM gets SIGKILL after the grace
+        // period, also when the daemon restarted in between.
+        const started = job.kill_started_at ?? now;
+        if (job.kill_started_at == null) {
+          this.setStatus(job.job_id, { kill_started_at: now });
+          this.signalGroup(job, "SIGTERM");
+        } else if (now - started >= (this.opts.killGraceMs ?? 5000)) {
+          this.signalGroup(job, "SIGKILL");
+        }
         continue;
       }
       if (job.state === "running") {
@@ -432,8 +505,7 @@ export class JobManager {
       return this.get(job_id)!;
     }
     if (job.state !== "running") return job;
-    this.setStatus(job_id, { kill_requested: true });
-    if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
+    this.requestKill(job, null, now);
     return this.get(job_id)!;
   }
 
@@ -442,8 +514,7 @@ export class JobManager {
     const killed: string[] = [];
     for (const job of this.running()) {
       if (!filter(job)) continue;
-      this.setStatus(job.job_id, { kill_requested: true, error: reason });
-      if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
+      this.requestKill(job, reason, Date.now());
       killed.push(job.job_id);
     }
     return killed;
@@ -453,8 +524,7 @@ export class JobManager {
   killAll(reason: string, now = Date.now()): void {
     this.cancelQueued(reason, () => true, now);
     for (const job of this.running()) {
-      this.setStatus(job.job_id, { kill_requested: true });
-      if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
+      this.requestKill(job, reason, now);
     }
   }
 
@@ -478,6 +548,15 @@ export class JobManager {
     const lines = buffer.toString("utf8").split("\n");
     if (lines[lines.length - 1] === "") lines.pop();
     return lines.slice(-tailLines).join("\n");
+  }
+
+  /** Jobs that hold or will hold processes: running and queued. */
+  activeCount(agent_id?: string): number {
+    return this.list().filter(
+      (j) =>
+        (j.state === "running" || j.state === "queued") &&
+        (agent_id == null || j.agent_id === agent_id),
+    ).length;
   }
 
   /** Every job, as the asking agent may see it. */

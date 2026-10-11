@@ -81,7 +81,9 @@ export class Ledger {
     if (existing != null) {
       if (
         existing.request_hash !== entry.request_hash ||
-        existing.agent_id !== entry.agent_id
+        existing.agent_id !== entry.agent_id ||
+        existing.operation !== entry.operation ||
+        existing.source_project_id !== entry.source_project_id
       ) {
         throw new LedgerConflict(
           "that operation_id was used for a different request",

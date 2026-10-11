@@ -50,6 +50,9 @@ export const OPERATION_KINDS = [
 ] as const;
 export type OperationKind = (typeof OPERATION_KINDS)[number];
 
+/** The hub's default for limits.concurrency (see ComputerTicket). */
+export const DEFAULT_AGENT_CONCURRENCY = 4;
+
 /** A ticket must be started within this long after it was issued. */
 export const MAX_START_WINDOW_MS = 2 * 60 * 1000;
 /** ... and within this long after the daemon received it (its own clock). */
@@ -174,7 +177,15 @@ export interface ComputerTicket {
   issued_at: number;
   start_by: number;
   max_runtime_ms: number;
-  limits: { max_bytes: number | null; concurrency: number };
+  limits: {
+    max_bytes: number | null;
+    /**
+     * How many of this agent's operations (execs and running jobs together)
+     * may run on the computer at once, this one included. The daemon
+     * enforces the smaller of this and its own hard limits.
+     */
+    concurrency: number;
+  };
 }
 
 // ---------------------------------------------------------------- parsers

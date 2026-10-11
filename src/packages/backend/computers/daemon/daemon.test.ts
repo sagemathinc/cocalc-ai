@@ -237,7 +237,7 @@ describe("the computer daemon (direct mode)", () => {
       issued_at: now,
       start_by: now + 30_000,
       max_runtime_ms: 600_000,
-      limits: { max_bytes: null, concurrency: 1 },
+      limits: { max_bytes: null, concurrency: 4 },
       ...opts.ticket,
     });
     return {
@@ -975,7 +975,7 @@ describe("the computer daemon (direct mode)", () => {
       await new Promise((r) => setTimeout(r, 200));
       const fifth = await daemon.handle(message("exec", exec("true")));
       expect((fifth as any).refused).toEqual([
-        "too many commands running on this computer; try again",
+        "too many operations running on this computer; try again",
       ]);
       // Another agent still gets one.
       ok(
@@ -984,6 +984,173 @@ describe("the computer daemon (direct mode)", () => {
         ),
       );
       for (const r of await Promise.all(slow)) ok(r);
+    });
+  });
+
+  describe("enforcement (re-review of #1035)", () => {
+    const run = (command: string, extra: Record<string, unknown> = {}) => ({
+      command,
+      cwd: null,
+      description: "test job",
+      name: null,
+      exclusive: false,
+      nice: false,
+      ...extra,
+    });
+    const groupAlive = (pid: number) => {
+      try {
+        process.kill(-pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    it("a ticket's concurrency of 1 refuses a second exec or run while one runs", async () => {
+      const one = { ticket: { limits: { max_bytes: null, concurrency: 1 } } };
+      const first = daemon.handle(message("exec", exec("sleep 1"), one));
+      await new Promise((r) => setTimeout(r, 200));
+      for (const second of [
+        message("exec", exec("true"), one),
+        message("run", run("true"), one),
+      ]) {
+        expect(((await daemon.handle(second)) as any).refused).toEqual([
+          "too many operations running on this computer; try again",
+        ]);
+      }
+      ok(await first);
+      ok(await daemon.handle(message("run", run("sleep 0.1"), one)));
+    });
+
+    it("runs hit the hard cap too, and a restarted daemon counts them again", async () => {
+      const started = [];
+      for (let i = 0; i < 4; i++) {
+        started.push(ok(await daemon.handle(message("run", run("sleep 30")))));
+      }
+      const fifth = await daemon.handle(message("run", run("sleep 30")));
+      expect((fifth as any).refused).toEqual([
+        "too many operations running on this computer; try again",
+      ]);
+      daemon = makeDaemon(); // a restart: the jobs are still running
+      const again = await daemon.handle(message("run", run("sleep 30")));
+      expect((again as any).refused).toEqual([
+        "too many operations running on this computer; try again",
+      ]);
+      // A retry of a known operation still gets its recorded answer.
+      const known = started[0];
+      const retry = await daemon.handle(
+        message("run", run("sleep 30"), { operation_id: known.operation_id }),
+      );
+      expect(retry).toMatchObject({ ok: true, replayed: true });
+    });
+
+    it("a quiet daemon stops a job at its ticket limit and everything at the session's end", async () => {
+      daemon.endSession("replace");
+      daemon = makeDaemon({ deadline_ms: 1500, max_ms: 1500 });
+      daemon.start(50);
+      try {
+        const short = ok(
+          await daemon.handle(
+            message("run", run("sleep 30"), {
+              ticket: { max_runtime_ms: 300 },
+            }),
+          ),
+        );
+        const long = ok(await daemon.handle(message("run", run("sleep 30"))));
+        const pid = (id: string) => daemon.jobs.get(id)!.pid!;
+        const a = pid((short.result as any).job_id);
+        const b = pid((long.result as any).job_id);
+        // No more calls and no manual refresh: only the timer acts.
+        await waitFor(() => !groupAlive(a), 5000);
+        expect(groupAlive(b)).toBe(true);
+        await waitFor(() => !groupAlive(b), 5000);
+        expect(daemon.sessionEnded).toBe(true);
+      } finally {
+        daemon.stop();
+      }
+    });
+
+    it("a job that ignores SIGTERM is SIGKILLed after the grace period, even across a restart", async () => {
+      const { JobManager } = await import("./jobs");
+      const first = new JobManager(join(dir, "stubborn"), {
+        killGraceMs: 600_000,
+      });
+      const job_id = randomUUID();
+      first.submit({
+        job_id,
+        operation_id: job_id,
+        agent_id: agent,
+        source_project_id: project_id,
+        name: null,
+        description: "stubborn",
+        command: "trap '' TERM; while :; do sleep 0.1; done",
+        cwd: workdir,
+        nice: false,
+        exclusive: false,
+        auth: {
+          computer_epoch: 0,
+          policy_epoch: 0,
+          privacy_epoch: 1,
+          deadline_at: null,
+        },
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      const pid = first.get(job_id)!.pid!;
+      first.kill(job_id, agent);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(groupAlive(pid)).toBe(true); // it ignored SIGTERM
+      // The daemon restarts during the grace period.
+      const second = new JobManager(join(dir, "stubborn"), {
+        killGraceMs: 100,
+      });
+      await waitFor(() => {
+        second.refresh();
+        return second.get(job_id)?.state === "killed";
+      });
+      expect(groupAlive(pid)).toBe(false);
+    });
+
+    it("setting the wall clock back doesn't extend a job (this boot's clock still runs)", async () => {
+      const { JobManager } = await import("./jobs");
+      let since = 1_000_000;
+      const jobs = new JobManager(join(dir, "clock"), {
+        bootClock: { bootId: () => "boot-a", sinceBootMs: () => since },
+      });
+      const job = {
+        auth: {
+          computer_epoch: 0,
+          policy_epoch: 0,
+          privacy_epoch: 0,
+          deadline_at: Date.now() + 60_000,
+          boot_id: "boot-a",
+          boot_deadline_ms: since + 60_000,
+        },
+      } as any;
+      expect(jobs.deadlinePassed(job, Date.now())).toBe(false);
+      since += 60_000; // an hour of wall time "un-happens"; the boot clock ran
+      expect(jobs.deadlinePassed(job, Date.now() - 3_600_000)).toBe(true);
+      // On another boot only the wall clock counts.
+      job.auth.boot_id = "boot-b";
+      expect(jobs.deadlinePassed(job, Date.now())).toBe(false);
+    });
+
+    it("the ledger also refuses an operation_id reused for another operation or project", () => {
+      const operation_id = randomUUID();
+      const base = {
+        operation_id,
+        operation: "exec" as const,
+        request_hash: "sha256:x",
+        ticket_id: randomUUID(),
+        agent_id: agent,
+        source_project_id: project_id,
+      };
+      daemon.ledger.begin(base);
+      expect(() => daemon.ledger.begin({ ...base, operation: "run" })).toThrow(
+        /different request/,
+      );
+      expect(() =>
+        daemon.ledger.begin({ ...base, source_project_id: randomUUID() }),
+      ).toThrow(/different request/);
     });
   });
 });

@@ -131,3 +131,27 @@ export class HubClock {
     return this.clocks.wall() + this.offsetMs;
   }
 }
+
+/**
+ * This boot's id and the time since boot (counting suspend), where the OS
+ * offers them (Linux). A deadline recorded with both survives a daemon
+ * restart and a wall-clock jump; after a reboot only the wall-clock bound is
+ * left, and the jobs are gone anyway.
+ */
+export interface BootClock {
+  bootId(): string | undefined;
+  sinceBootMs(): number | undefined;
+}
+
+export const systemBootClock: BootClock = {
+  bootId: () => {
+    if (process.platform !== "linux") return undefined;
+    try {
+      return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    } catch {
+      return undefined;
+    }
+  },
+  sinceBootMs: () =>
+    process.platform === "linux" ? linuxBootTimeMs() : undefined,
+};

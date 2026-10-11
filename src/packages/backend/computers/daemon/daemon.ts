@@ -41,18 +41,35 @@ import {
 } from "@cocalc/util/computers/operations";
 import type { ComputerTicket } from "@cocalc/util/computers/protocol";
 import { admit, RateLimiter, type AdmissionInput } from "./admission";
-import type { Clocks, HubClock, SessionClock } from "./clock";
-import { resolveCwd, runExec, type ExecResult } from "./exec";
-import { JobManager, type Job, type JobSummary } from "./jobs";
+import {
+  systemBootClock,
+  type BootClock,
+  type Clocks,
+  type HubClock,
+  type SessionClock,
+} from "./clock";
+import { killGroup, resolveCwd, runExec, type ExecResult } from "./exec";
+import {
+  JobManager,
+  processStartTime,
+  type Job,
+  type JobSummary,
+} from "./jobs";
 import { Ledger, LedgerConflict, type LedgerEntry } from "./ledger";
 import type { DaemonStore } from "./state";
 
 const execFileAsync = promisify(execFile);
 
 export const LEDGER_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-/** At most this many execs at once, and per agent. */
-export const MAX_CONCURRENT_EXECS = 8;
-export const MAX_CONCURRENT_EXECS_PER_AGENT = 4;
+/**
+ * Hard limits on what runs at once (execs plus running or queued jobs): in
+ * total, and per agent. A ticket's limits.concurrency can only lower the
+ * per-agent one.
+ */
+export const MAX_ACTIVE_OPERATIONS = 16;
+export const MAX_ACTIVE_OPERATIONS_PER_AGENT = 4;
+/** How often the daemon enforces deadlines on its own, without traffic. */
+export const ENFORCEMENT_INTERVAL_MS = 1000;
 
 export type OperationReply =
   | { ok: false; refused: string[] }
@@ -78,6 +95,9 @@ export interface DaemonDeps {
   killGraceMs?: number;
   /** Told about every finished operation and ended job (for the hub). */
   report?: (event: DaemonEvent) => void;
+  /** Errors from the enforcement timer (it keeps running). */
+  onError?: (err: unknown) => void;
+  bootClock?: BootClock;
   version?: string;
 }
 
@@ -95,6 +115,7 @@ export class ComputerDaemon {
     { controller: AbortController; agent_id: string }
   >();
   private ended = false;
+  private timer?: ReturnType<typeof setInterval>;
   // Before anything else (messages arrive before they are authenticated), a
   // global bucket; after admission, one per agent.
   private readonly globalLimiter = new RateLimiter(50, 100);
@@ -107,10 +128,20 @@ export class ComputerDaemon {
       killGraceMs: deps.killGraceMs,
       onEnded: (job) => deps.report?.({ kind: "job", job }),
       authorize: (job) => this.jobRefusal(job),
+      bootClock: deps.bootClock,
     });
     for (const operation_id of this.ledger.markInterrupted()) {
       const entry = this.ledger.get(operation_id);
-      if (entry) deps.report?.({ kind: "operation", entry });
+      if (entry == null) continue;
+      // An exec started by a previous daemon may still be running on its
+      // own; its outcome is unknown either way, so stop it.
+      const r = entry.result as { pid?: number; pid_start?: string } | null;
+      if (entry.operation === "exec" && r?.pid != null) {
+        if (processStartTime(r.pid) === r.pid_start) {
+          killGroup(r.pid, deps.killGraceMs ?? 5000);
+        }
+      }
+      deps.report?.({ kind: "operation", entry });
     }
     this.jobs.refresh();
   }
@@ -132,22 +163,26 @@ export class ComputerDaemon {
     if (!this.agentLimiter.allow(ticket.agent_id, Date.now())) {
       return { ok: false, refused: ["too many operations; slow down"] };
     }
-    // A new exec must fit the concurrency limits (a retry of a known
-    // operation always gets its recorded answer).
+    // A new exec or run must fit the concurrency limits: the smaller of the
+    // ticket's and the daemon's per agent, and the daemon's in total. Jobs
+    // are counted from disk, so this holds across restarts. A retry of a
+    // known operation always gets its recorded answer instead.
     if (
-      operation.operation === "exec" &&
+      (operation.operation === "exec" || operation.operation === "run") &&
       this.ledger.get(ticket.operation_id) == null
     ) {
-      const mine = [...this.running.values()].filter(
-        (r) => r.agent_id === ticket.agent_id,
-      ).length;
-      if (
-        this.running.size >= MAX_CONCURRENT_EXECS ||
-        mine >= MAX_CONCURRENT_EXECS_PER_AGENT
-      ) {
+      const mine =
+        [...this.running.values()].filter((r) => r.agent_id === ticket.agent_id)
+          .length + this.jobs.activeCount(ticket.agent_id);
+      const all = this.running.size + this.jobs.activeCount();
+      const perAgent = Math.min(
+        ticket.limits.concurrency,
+        MAX_ACTIVE_OPERATIONS_PER_AGENT,
+      );
+      if (all >= MAX_ACTIVE_OPERATIONS || mine >= perAgent) {
         return {
           ok: false,
-          refused: ["too many commands running on this computer; try again"],
+          refused: ["too many operations running on this computer; try again"],
         };
       }
     }
@@ -260,9 +295,9 @@ export class ComputerDaemon {
               computer_epoch: ticket.computer_epoch,
               policy_epoch: ticket.policy_epoch,
               privacy_epoch: ticket.attestation.payload.privacy_epoch,
-              deadline_at:
-                Date.now() +
+              ...this.jobDeadline(
                 Math.min(ticket.max_runtime_ms, remaining ?? Infinity),
+              ),
             },
           });
           return done({ job_id: job.job_id, state: job.state });
@@ -291,6 +326,11 @@ export class ComputerDaemon {
                 shell: this.deps.shell,
                 killGraceMs: this.deps.killGraceMs,
                 signal: controller.signal,
+                // Recorded, so a later daemon can stop it if this one dies.
+                onSpawn: (pid) =>
+                  this.ledger.update(id, {
+                    result: { pid, pid_start: processStartTime(pid) ?? null },
+                  }),
               },
             );
           } finally {
@@ -448,6 +488,45 @@ export class ComputerDaemon {
     return { raised, cancelled, killed };
   }
 
+  /** A job's deadline, on the wall clock and on this boot's clock. */
+  private jobDeadline(ms: number): {
+    deadline_at: number | null;
+    boot_id: string | null;
+    boot_deadline_ms: number | null;
+  } {
+    if (!Number.isFinite(ms)) {
+      return { deadline_at: null, boot_id: null, boot_deadline_ms: null };
+    }
+    const boot = this.deps.bootClock ?? systemBootClock;
+    const id = boot.bootId();
+    const since = boot.sinceBootMs();
+    return {
+      deadline_at: this.deps.clocks.wall() + ms,
+      boot_id: id != null && since != null ? id : null,
+      boot_deadline_ms: id != null && since != null ? since + ms : null,
+    };
+  }
+
+  /**
+   * Enforce deadlines on a timer, whether or not anything arrives: the
+   * session's end, jobs' limits and SIGTERM-to-SIGKILL escalation.
+   */
+  start(intervalMs = ENFORCEMENT_INTERVAL_MS): void {
+    if (this.timer != null) return;
+    this.timer = setInterval(() => {
+      try {
+        this.tick();
+      } catch (err) {
+        this.deps.onError?.(err);
+      }
+    }, intervalMs);
+  }
+
+  stop(): void {
+    if (this.timer != null) clearInterval(this.timer);
+    this.timer = undefined;
+  }
+
   /** Why a queued job may no longer start, or null. */
   private jobRefusal(job: Job): string | null {
     if (this.ended) return "the session on this computer has ended";
@@ -464,7 +543,7 @@ export class ComputerDaemon {
     if (job.auth.policy_epoch !== state.policy_epoch) {
       return "the computer's policy changed before it started";
     }
-    if (job.auth.deadline_at != null && Date.now() >= job.auth.deadline_at) {
+    if (this.jobs.deadlinePassed(job, Date.now())) {
       return "its time limit passed while it was queued";
     }
     return null;
@@ -482,6 +561,7 @@ export class ComputerDaemon {
 
   endSession(reason: string): void {
     this.ended = true;
+    // The enforcement timer keeps running: killed jobs still need SIGKILL.
     for (const { controller } of this.running.values()) controller.abort();
     this.jobs.killAll(reason);
   }

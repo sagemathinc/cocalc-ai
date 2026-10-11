@@ -46,6 +46,8 @@ export interface ExecOptions {
   killGraceMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
+  /** Called with the process (group) id once it started. */
+  onSpawn?: (pid: number) => void;
 }
 
 /** A cwd relative to the working directory, or absolute; it must exist. */
@@ -96,6 +98,7 @@ export async function runExec(
     stdio: [request.stdin == null ? "ignore" : "pipe", "pipe", "pipe"],
   });
 
+  if (child.pid != null) opts.onSpawn?.(child.pid);
   const kept: Record<"stdout" | "stderr", Buffer[]> = {
     stdout: [],
     stderr: [],
