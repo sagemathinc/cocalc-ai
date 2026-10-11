@@ -570,10 +570,27 @@ export async function runSharedBrowserService({
   // Follow the project's browser key; and the file (the viewer, an edit, or
   // `connect` may change it) and the tunnel: a computer that connects takes
   // over the file's browser.
+  let restarts: number[] = [];
   const poll = setInterval(() => {
     switching = switching
       .then(async () => {
         if (stopping) return;
+        // A browser in its own container that went away (it crashed, or
+        // its container stopped): start it again, with its pages.  (One in
+        // the project stops this service, which starts again when used.)
+        if (isolate && runsOn !== "computer" && local && !server.attached) {
+          restarts = restarts.filter((at) => Date.now() - at < 5 * 60_000);
+          if (restarts.length >= 3) {
+            void stop("the browser keeps stopping");
+            return;
+          }
+          restarts.push(Date.now());
+          log("the browser went away: starting it again");
+          const urls = server.lastPages();
+          await stopLocal();
+          await startLocal(urls.length > 0 ? urls : undefined);
+          return;
+        }
         if (local && keyFingerprint(readBrowserKey()) !== local.keyId) {
           log("the project's browser key changed: restarting the browser");
           await restartLocal();

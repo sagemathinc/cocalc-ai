@@ -217,6 +217,8 @@ export class SharedBrowserServer {
   private pacer: FramePacer | null = null;
   // Downloads to the project's ~/Downloads (see downloads.ts).
   private downloads: BrowserDownloads | null = null;
+  // The pages open when the browser went away, to open them again.
+  private lastUrls: string[] = [];
   private log: (message: string) => void;
 
   constructor(private readonly options: SharedBrowserServerOptions) {
@@ -246,6 +248,11 @@ export class SharedBrowserServer {
 
   get attached(): boolean {
     return this.devtools != null;
+  }
+
+  /** The web pages that were open when the browser went away. */
+  lastPages(): string[] {
+    return [...this.lastUrls];
   }
 
   // Whether this browser renders only when asked (null: not known yet).
@@ -352,6 +359,9 @@ export class SharedBrowserServer {
     if (!this.attached) return;
     const cdp = this.cdp;
     this.devtools = null;
+    this.lastUrls = this.state.tabs
+      .map((tab) => tab.url)
+      .filter((url) => /^https?:\/\//.test(url));
     this.pacer?.close();
     this.pacer = null;
     this.downloads?.close();
