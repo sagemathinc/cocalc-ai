@@ -44,8 +44,8 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import {
   getBaySigningKey,
+  keyMap,
   listSigningKeyDirectory,
-  trustedSigningKeys,
 } from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority, lockAgentControls } from "./authority";
@@ -419,7 +419,10 @@ async function checkAttestation(
     parseProjectAttestation,
     "attestation",
   );
-  const keys = await trustedSigningKeys();
+  // A fresh directory (no stale fallback): issuance fails closed while the
+  // seed is unreachable, so a revoked key is never honored late here.
+  const directory = await listSigningKeyDirectory({ allowStale: false });
+  const keys = keyMap(directory);
   if (
     !verifyEnvelope(SIGNED_KINDS.attestation, envelope, (kid) => keys.get(kid))
   ) {
@@ -429,9 +432,7 @@ async function checkAttestation(
   }
   const a = envelope.payload;
   // The key must belong to the bay the attestation names.
-  const entry = (await listSigningKeyDirectory()).find(
-    (k) => k.kid === envelope.kid,
-  );
+  const entry = directory.find((k) => k.kid === envelope.kid);
   if (entry?.bay_id !== a.project_bay_id) {
     throw new TicketError(
       "the project attestation is signed by another bay's key",

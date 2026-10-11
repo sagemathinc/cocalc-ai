@@ -156,6 +156,27 @@ These override older text below wherever they differ:
   changes.
 - **The relay exception** to "the data path never goes through the hub" is
   stated in rule 14 below.
+- **The privacy epoch** is `runtime_authority_revision +
+  computers_privacy_revision`.
+  - Triggers advance it on every change to the users map and to the
+    project's public shares (`public_project_paths`: create, enable,
+    disable, delete; any code path, legacy replay included).
+  - The attestation locks the project row, then reads shares and counters in
+    a later statement, so it never pairs a new epoch with old shares.
+    (Measured: a single locking statement under READ COMMITTED does exactly
+    that.)
+- **Only the owning bay attests**, under the project-rehome fence:
+  - never while a rehome runs;
+  - never once its own row names another owner.
+
+  The project row, epoch included, moves with the project, so the epoch
+  never goes back. An attestation made just before a rehome starts is good
+  for at most 30 s, and a ticket's start-by can't outlive it: the same
+  bounded window as any other change. The project's next change at its new
+  bay advances the epoch past it, for the floors.
+- **Ticket issuance reads the key directory fresh:** at most 30 s cached, no
+  stale fallback. It fails closed while the seed is unreachable. Other
+  readers may use the last answer for up to 10 minutes.
 
 ## Decisions (William, Oct 11)
 

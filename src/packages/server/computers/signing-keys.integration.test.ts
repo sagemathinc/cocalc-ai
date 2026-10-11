@@ -257,6 +257,38 @@ describeDb("computer signing keys", () => {
     }
   });
 
+  it("when the seed is unreachable, ticket issuance fails closed; other readers may use the last answer", async () => {
+    const { listSigningKeyDirectory, resetSigningKeyCacheForTesting } =
+      await import("./signing-keys");
+    const key = generateSigningKey();
+    const entry = {
+      kid: key.fingerprint,
+      bay_id: "bay-0",
+      public_key: key.publicDer,
+      not_after: Date.now() + DAY,
+    };
+    role = "attached";
+    const realNow = Date.now;
+    try {
+      resetSigningKeyCacheForTesting();
+      seedKeys.mockResolvedValueOnce([entry]);
+      expect(await listSigningKeyDirectory()).toEqual([entry]);
+      // Past the 30 s cache, with the seed down.
+      const later = realNow() + 60_000;
+      Date.now = () => later;
+      seedKeys.mockRejectedValue(new Error("seed down"));
+      await expect(
+        listSigningKeyDirectory({ allowStale: false }),
+      ).rejects.toThrow(/seed down/);
+      expect(await listSigningKeyDirectory()).toEqual([entry]);
+    } finally {
+      Date.now = realNow;
+      role = "standalone";
+      seedKeys.mockReset();
+      resetSigningKeyCacheForTesting();
+    }
+  });
+
   it("accepts a whole chain in one heartbeat, oldest first", async () => {
     const { acceptDirectoryKeys } = await import("./signing-keys");
     const a = generateSigningKey();

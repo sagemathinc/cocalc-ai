@@ -40,6 +40,7 @@ const describeReal = postgresBinDir() != null ? describe : describe.skip;
 const tables = [
   "accounts",
   "projects",
+  "public_project_paths",
   "agent_personal_controls",
   "agent_personal_names",
   "agent_networks",
@@ -463,6 +464,133 @@ describeReal("computers: races on real PostgreSQL", () => {
       await release();
       await create;
       await expect(rehome).rejects.toThrow(/Account rehome is unavailable/);
+    });
+  });
+
+  describe("the owning bay's attestation, public shares and project rehome", () => {
+    const attest = async () =>
+      (
+        await (
+          await import("./attestation")
+        ).attestProjectLocal({
+          project_id: project,
+          account_id: account,
+          home_bay_id: "bay-0",
+        })
+      ).payload;
+
+    /** Hold a lock (given by sql) in an open transaction until released. */
+    async function hold(sql: string, values: unknown[]) {
+      const client = await pool.connect();
+      await client.query("BEGIN");
+      await client.query(sql, values);
+      let released = false;
+      const release = async () => {
+        if (released) return;
+        released = true;
+        pendingRelease = undefined;
+        await client.query("COMMIT");
+        client.release();
+      };
+      pendingRelease = release;
+      return { client, release };
+    }
+
+    it("share first: the attestation waits for it and sees it", async () => {
+      const before = await attest();
+      const share = await hold(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), project],
+      );
+      const after = attest();
+      await waiters(1);
+      await share.release();
+      const a = await after;
+      expect(a.eligible).toBe(false);
+      expect(a.privacy_epoch).toBeGreaterThan(before.privacy_epoch);
+    });
+
+    it("attestation first: the share waits for its read, then advances the epoch", async () => {
+      const before = await attest();
+      // What the attestation holds while it reads: the project row FOR SHARE.
+      const read = await hold(
+        "SELECT 1 FROM projects WHERE project_id=$1 FOR SHARE",
+        [project],
+      );
+      const share = pool.query(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), project],
+      );
+      await waiters(1);
+      await read.release();
+      await share;
+      const a = await attest();
+      expect(a.eligible).toBe(false);
+      expect(a.privacy_epoch).toBeGreaterThan(before.privacy_epoch);
+    });
+
+    async function rehomeTable() {
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS project_rehome_operations
+           (op_id TEXT, project_id UUID, source_bay_id TEXT, dest_bay_id TEXT,
+            stage TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now())`,
+      );
+    }
+    afterEach(async () => {
+      await pool.query("DROP TABLE IF EXISTS project_rehome_operations");
+    });
+
+    it("rehome first: the old owner refuses to attest", async () => {
+      await rehomeTable();
+      // As createProjectRehomeOperation does: the fence, then the running row.
+      const rehome = await hold(
+        "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+        ["project-rehome", project],
+      );
+      await rehome.client.query(
+        "INSERT INTO project_rehome_operations VALUES ('p1',$1,'bay-0','bay-1','requested','running',now())",
+        [project],
+      );
+      const a = attest();
+      await waiters(1);
+      await rehome.release();
+      await expect(a).rejects.toThrow(/project rehome p1 is running/);
+    });
+
+    it("attestation first: the rehome waits until the attestation is done", async () => {
+      await rehomeTable();
+      // Hold the attestation inside its fence (blocked on the project row).
+      const row = await hold(
+        "SELECT 1 FROM projects WHERE project_id=$1 FOR UPDATE",
+        [project],
+      );
+      const a = attest();
+      await waiters(1);
+      let rehomeStarted = false;
+      const rehome = (async () => {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+            ["project-rehome", project],
+          );
+          rehomeStarted = true;
+          await client.query(
+            "INSERT INTO project_rehome_operations VALUES ('p2',$1,'bay-0','bay-1','requested','running',now())",
+            [project],
+          );
+          await client.query("COMMIT");
+        } finally {
+          client.release();
+        }
+      })();
+      await waiters(2);
+      expect(rehomeStarted).toBe(false);
+      await row.release();
+      expect((await a).eligible).toBe(true);
+      await rehome;
+      await expect(attest()).rejects.toThrow(/project rehome p2 is running/);
     });
   });
 });

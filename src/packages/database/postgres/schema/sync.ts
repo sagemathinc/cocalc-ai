@@ -56,6 +56,10 @@ import {
   ensureProjectRuntimeAuthorityRevisionSchema,
   projectRuntimeAuthorityRevisionSchemaNeedsSync,
 } from "./project-runtime-authority-revision";
+import {
+  ensureProjectComputersPrivacySchema,
+  projectComputersPrivacySchemaNeedsSync,
+} from "./project-computers-privacy";
 
 const log = getLogger("db:schema:sync");
 
@@ -484,6 +488,9 @@ export async function syncSchema(
     if (dbSchema.projects != null) {
       await ensureProjectRuntimeAuthorityRevisionSchema(db);
     }
+    if (dbSchema.projects != null && dbSchema.public_project_paths != null) {
+      await ensureProjectComputersPrivacySchema(db);
+    }
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
     }
@@ -601,6 +608,14 @@ export async function schemaNeedsSync(
       (await projectRuntimeAuthorityRevisionSchemaNeedsSync(db))
     ) {
       dbg("detected missing project runtime authority revision trigger");
+      return true;
+    }
+    if (
+      dbSchema.projects != null &&
+      dbSchema.public_project_paths != null &&
+      (await projectComputersPrivacySchemaNeedsSync(db))
+    ) {
+      dbg("detected missing project computers privacy trigger");
       return true;
     }
     if (

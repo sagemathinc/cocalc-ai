@@ -187,8 +187,11 @@ describeDb("computer tickets", () => {
       request: { command: "docker ps" },
       operation_id: randomUUID(),
       pop_key: generateSigningKey().publicDer,
-      attestation: await attestation(),
       ...overrides,
+      attestation:
+        "attestation" in overrides
+          ? overrides.attestation
+          : await attestation(),
     } as any);
   }
 

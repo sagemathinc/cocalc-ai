@@ -383,10 +383,13 @@ function parsePublishedSigningKey(input: any): PublishedSigningKey {
 /**
  * The directory of trusted bay keys. It is seed-global: the seed (or a
  * standalone bay) reads its own table; an attached bay asks the seed, caching
- * the answer briefly and using the last answer for at most 10 minutes while
- * the seed is unreachable.
+ * the answer for 30 s. Readers that allow it (allowStale, the default) keep
+ * using the last answer for at most 10 minutes while the seed is
+ * unreachable; ticket issuance does not, and fails closed instead.
  */
-export async function listSigningKeyDirectory(): Promise<DirectoryKey[]> {
+export async function listSigningKeyDirectory({
+  allowStale = true,
+}: { allowStale?: boolean } = {}): Promise<DirectoryKey[]> {
   if (publishesLocally()) return await listSigningKeyDirectoryLocal();
   const now = Date.now();
   if (directoryCache != null && now - directoryCache.at < DIRECTORY_CACHE_MS) {
@@ -399,7 +402,7 @@ export async function listSigningKeyDirectory(): Promise<DirectoryKey[]> {
         client: getInterBayFabricClient(),
         timeout,
       }).computerSigningKeys({}),
-    { allowStale: true },
+    { allowStale },
   );
   directoryCache = { keys, at: now };
   return keys;
@@ -432,9 +435,15 @@ export async function listSigningKeyDirectoryLocal(): Promise<DirectoryKey[]> {
 }
 
 /** Look up a trusted public key by kid (for verifying envelopes). */
-export async function trustedSigningKeys(): Promise<Map<string, KeyObject>> {
+export async function trustedSigningKeys(
+  opts: { allowStale?: boolean } = {},
+): Promise<Map<string, KeyObject>> {
+  return keyMap(await listSigningKeyDirectory(opts));
+}
+
+export function keyMap(entries: DirectoryKey[]): Map<string, KeyObject> {
   const map = new Map<string, KeyObject>();
-  for (const entry of await listSigningKeyDirectory()) {
+  for (const entry of entries) {
     map.set(entry.kid, signingPublicKeyFromDer(entry.public_key));
   }
   return map;
