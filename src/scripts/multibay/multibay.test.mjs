@@ -1096,8 +1096,8 @@ describe("computers across bays", () => {
       attempt({ bay_id: "bay-9", source_bay_id: "bay-9" }),
       /source_bay_id must match authenticated bay/,
     );
-    // (A bay publishing keys under another bay's registry row is covered
-    // by the unit tests; here it would register a bogus bay.)
+    // Keys claimed for another bay's registry row are covered by the unit
+    // tests (bay-registry.test.ts).
   });
 
   it("issues a ticket at the attached home for a seed-owned private project", async () => {
