@@ -295,6 +295,17 @@ function hasStrictPermissions(mode: number): boolean {
   return (mode & 0o077) === 0;
 }
 
+// systemd hands a unit its credentials as root:root 0440 files, with an ACL
+// for the unit's user, in a per-unit root-only directory. Group root there
+// gives no one else access, so only access by other users counts.
+export function hasStrictCredentialPermissions(
+  info: { mode: number; gid: number },
+  systemdCredential: boolean,
+): boolean {
+  if (hasStrictPermissions(info.mode)) return true;
+  return systemdCredential && info.gid === 0 && (info.mode & 0o027) === 0;
+}
+
 function parseKeyContents({
   contents,
   path,
@@ -953,7 +964,10 @@ async function getMasterKeyFileStatus(
       readable = false;
       warning = `file exists but is not readable or valid: ${err}`;
     }
-    const strict = hasStrictPermissions(info.mode);
+    const strict = hasStrictCredentialPermissions(
+      info,
+      file.source === "systemd-credential",
+    );
     if (!strict) {
       warning = "file is readable or writable by group/other users";
     }
@@ -994,9 +1008,11 @@ async function getKeyringStatus(
   opts: SiteMasterKeyPathOptions,
 ): Promise<SiteMasterKeyringStatus> {
   const { path, read_only } = resolveSiteMasterKeyringFile(opts);
-  let mode: number | undefined;
+  const systemdCredential =
+    resolveSiteMasterKeyFile(opts).source === "systemd-credential";
+  let info: { mode: number; gid: number } | undefined;
   try {
-    mode = (await stat(path)).mode;
+    info = await stat(path);
   } catch (err: any) {
     if (err?.code !== "ENOENT") {
       return {
@@ -1009,7 +1025,7 @@ async function getKeyringStatus(
       };
     }
   }
-  if (mode == null) {
+  if (info == null) {
     return {
       path,
       read_only,
@@ -1018,7 +1034,7 @@ async function getKeyringStatus(
       keys: [],
     };
   }
-  const strict = hasStrictPermissions(mode);
+  const strict = hasStrictCredentialPermissions(info, systemdCredential);
   try {
     const keys = (await readSiteMasterKeyring(opts)).map(
       ({ id, role, added_at }) => ({
