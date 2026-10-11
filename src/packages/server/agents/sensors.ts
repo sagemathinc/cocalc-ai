@@ -61,11 +61,16 @@ const iso = (value: unknown): string | null =>
   value == null ? null : new Date(value as any).toISOString();
 
 export function toSensor(row: any): AgentSensor {
+  // A watcher that fired or expired is done, though stored as active.
+  const done =
+    row.status === "active" &&
+    sensorKind(row.spec) === "watch" &&
+    row.next_run_at == null;
   return {
     sensor_id: row.sensor_id,
     project_id: row.project_id,
     agent_id: row.agent_id,
-    status: row.status,
+    status: done ? "done" : row.status,
     spec: row.spec ?? null,
     script_hash: row.script_hash ?? null,
     pending_spec: row.pending_spec ?? null,
@@ -186,13 +191,19 @@ export async function agentSensorRequest(
     };
   }
   if (request.op === "pause") {
+    // A done watcher (fired or expired) stays done.
     const { rows } = await db.query(
       `UPDATE agent_sensors SET status='paused', pause_reason='Paused by the agent',
          revision=revision+1, updated=now()
-       WHERE sensor_id=$1 AND agent_id=$2 AND status='active' RETURNING *`,
+       WHERE sensor_id=$1 AND agent_id=$2 AND status='active'
+         AND NOT (spec->>'kind' = 'watch' AND next_run_at IS NULL)
+       RETURNING *`,
       [request.sensor_id, agent.agent_id],
     );
-    if (!rows[0]) throw new Error("no active sensor with that id");
+    if (!rows[0])
+      throw new Error(
+        "no active sensor with that id (a done watcher can only be deleted)",
+      );
     return { sensor: toSensor(rows[0]) };
   }
   if (request.op === "delete") {
@@ -588,6 +599,8 @@ export async function sensorControlLocal(
         [],
       );
     case "pause":
+      if (toSensor(row).status === "done")
+        throw new Error("this watcher is done; delete it instead");
       if (row.status !== "active") throw new Error("sensor is not active");
       return await update(
         "status='paused', pause_reason='Paused by a person'",

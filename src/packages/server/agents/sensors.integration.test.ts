@@ -951,6 +951,33 @@ describeDb("agent sensors", () => {
     // Done: never runs again, but its queued wake is still authorized.
     expect(await runDue()).toBe(0);
     expect(host.runAgentSensor).toHaveBeenCalledTimes(2);
+    // ...and says so: an agent sees it as done, not active.
+    const shown = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "show",
+      sensor_id: watched.sensor.sensor_id,
+    })) as any;
+    expect(shown.sensor).toMatchObject({
+      status: "done",
+      next_run_at: null,
+      last_outcome: "wake",
+    });
+    const listed = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "list",
+    })) as any;
+    expect(
+      listed.sensors.find((s: any) => s.sensor_id === watched.sensor.sensor_id)
+        ?.status,
+    ).toBe("done");
+    // It cannot be paused into a misleading state.
+    await expect(
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "pause",
+        sensor_id: watched.sensor.sensor_id,
+      }),
+    ).rejects.toThrow(/done watcher/);
     await expect(
       authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
         prompt_sha256: sha(prompt),
@@ -1231,21 +1258,30 @@ describeDb("agent sensors", () => {
     await makeDue(done.sensor_id);
     await runDue();
     expect(await released(done.sensor_id)).toBe(true);
-    // Done is final: people can neither run nor resume a watcher.
-    await expect(
-      sensorControlLocal(owner, project_id, {
-        op: "run",
-        sensor_id: done.sensor_id,
-      }),
-    ).rejects.toThrow(/watcher is done/);
-    await sensorControlLocal(owner, project_id, {
-      op: "pause",
-      sensor_id: done.sensor_id,
-    });
+    // Done is final: people can neither run, pause nor resume a watcher.
+    for (const op of ["run", "pause"] as const)
+      await expect(
+        sensorControlLocal(owner, project_id, {
+          op,
+          sensor_id: done.sensor_id,
+        }),
+      ).rejects.toThrow(/watcher is done/);
     await expect(
       sensorControlLocal(owner, project_id, {
         op: "resume",
         sensor_id: done.sensor_id,
+      }),
+    ).rejects.toThrow(/resumed/);
+    // A watcher paused before it fired cannot be resumed either.
+    const paused = (await watch()).sensor;
+    await sensorControlLocal(owner, project_id, {
+      op: "pause",
+      sensor_id: paused.sensor_id,
+    });
+    await expect(
+      sensorControlLocal(owner, project_id, {
+        op: "resume",
+        sensor_id: paused.sensor_id,
       }),
     ).rejects.toThrow(/cannot be resumed/);
   });
