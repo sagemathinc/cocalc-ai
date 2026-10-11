@@ -46,6 +46,7 @@ import {
   sensorSpecHash,
   utcDay,
 } from "./sensors";
+import { setSensorSchedulerKick } from "./sensor-kick";
 import { agentStore } from "./store";
 
 const logger = getLogger("agents:sensors");
@@ -784,12 +785,20 @@ export async function removeDoneWatchers(): Promise<void> {
   await pruneSensorEvents();
 }
 
-export function startSensorScheduler(): () => void {
+export function startSensorScheduler(pollMs: number = POLL_MS): () => void {
   if (process.env.COCALC_SENSORS_DISABLED === "1") return () => {};
   let stopped = false;
+  let running = false;
+  // Kicked during a tick: look again as soon as it ends.
+  let again = false;
   let timer: ReturnType<typeof setTimeout>;
+  const schedule = (ms: number) => {
+    timer = setTimeout(tick, ms);
+    timer.unref();
+  };
   const tick = async () => {
     if (stopped) return;
+    running = true;
     try {
       await removeDoneWatchers();
       const due = await claimDueSensors();
@@ -809,16 +818,26 @@ export function startSensorScheduler(): () => void {
     } catch (err) {
       logger.warn("sensor scheduler tick failed", { err: errorText(err) });
     } finally {
+      running = false;
       if (!stopped) {
-        timer = setTimeout(tick, POLL_MS);
-        timer.unref();
+        schedule(again ? 0 : pollMs);
+        again = false;
       }
     }
   };
-  timer = setTimeout(tick, POLL_MS);
-  timer.unref();
+  setSensorSchedulerKick(() => {
+    if (stopped) return;
+    if (running) {
+      again = true;
+      return;
+    }
+    clearTimeout(timer);
+    schedule(0);
+  });
+  schedule(pollMs);
   return () => {
     stopped = true;
+    setSensorSchedulerKick(undefined);
     clearTimeout(timer);
   };
 }

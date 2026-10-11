@@ -30,6 +30,7 @@ import { assertActor, assertAgent } from "./access";
 import { agentStore, type AgentRun } from "./store";
 import { sensorBudget } from "./cocalc-connector-routing";
 import { NO_SENSORS, sensorLimits } from "./sensor-budget";
+import { kickSensorScheduler } from "./sensor-kick";
 import type { PoolClient } from "@cocalc/database/pool";
 
 /** People may start a sensor by hand at most this often. */
@@ -625,9 +626,11 @@ export async function sensorControlLocal(
         Date.now() - new Date(row.last_run_at).valueOf() < MANUAL_RUN_MIN_GAP_MS
       )
         throw new Error("this sensor ran less than a minute ago");
-      return await update("run_requested_by=$3, next_run_at=now()", [
+      const requested = await update("run_requested_by=$3, next_run_at=now()", [
         account_id,
       ]);
+      kickSensorScheduler();
+      return requested;
     }
     case "delete": {
       await db.query(

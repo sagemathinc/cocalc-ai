@@ -241,12 +241,24 @@ function SpecDetails({ spec }: { spec: SensorSpec }) {
   );
 }
 
-function Runs({ sensor }: { sensor: AgentSensor }) {
+/** How long the log watches for a requested run before it gives up. */
+const RUN_WATCH_MS = 3 * 60_000;
+const RUN_POLL_MS = 2_000;
+
+function Runs({
+  sensor,
+  requested,
+  onSettled,
+}: {
+  sensor: AgentSensor;
+  /** Run now was pressed: the newest run then, if any (server time). */
+  requested?: { after: string | null };
+  /** The requested run finished (or never showed up in time). */
+  onSettled?: () => void;
+}) {
   const [runs, setRuns] = useState<AgentSensorRun[]>();
   const [error, setError] = useState("");
-  const [open, setOpen] = useState(false);
   const load = async () => {
-    setOpen(true);
     setError("");
     try {
       const result = await personalAgentApi().listSensors({
@@ -254,23 +266,43 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
         sensor_id: sensor.sensor_id,
       });
       setRuns(result.runs ?? []);
+      return result.runs ?? [];
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
     }
   };
-  // A run that finishes while the log is open shows up in it.
+  // A run that finishes while the log is open shows up in it (while a
+  // requested run is followed, that loop loads).
   useEffect(() => {
-    if (open) void load();
+    if (!requested) void load();
   }, [sensor.last_run_at]);
-  if (!open)
-    return (
-      <Button size="small" onClick={() => void load()}>
-        Run log
-      </Button>
-    );
+  // After Run now, open the log and follow the run until it is done.
+  const isNew = (run: AgentSensorRun) =>
+    !requested?.after ||
+    new Date(run.started_at).valueOf() > new Date(requested.after).valueOf();
+  useEffect(() => {
+    if (!requested) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const until = Date.now() + RUN_WATCH_MS;
+    const look = async () => {
+      const latest = await load();
+      if (stopped) return;
+      const run = latest?.find(isNew);
+      if ((run && run.outcome) || Date.now() > until) onSettled?.();
+      else timer = setTimeout(() => void look(), RUN_POLL_MS);
+    };
+    void look();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [requested]);
+  const starting = requested != null && !runs?.some(isNew);
   if (error) return <Alert type="error" title={error} />;
-  if (!runs) return <Spin aria-label="Loading runs" />;
-  if (runs.length === 0)
+  if (!runs)
+    return starting ? <StartingRun /> : <Spin aria-label="Loading runs" />;
+  if (runs.length === 0 && !starting)
     return (
       <Empty
         description={
@@ -283,12 +315,19 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
     );
   return (
     <div style={{ width: "100%" }}>
+      {starting && <StartingRun />}
       {runs.map((run) => (
         <details key={run.run_id} style={{ marginBottom: 4 }}>
           <summary>
             <TimeAgo date={run.started_at} />
             {" · "}
-            {run.outcome ? (OUTCOME[run.outcome] ?? run.outcome) : "Running"}
+            {run.outcome ? (
+              (OUTCOME[run.outcome] ?? run.outcome)
+            ) : (
+              <>
+                <Spin size="small" /> Running
+              </>
+            )}
             {run.manual ? " · run by hand" : ""}
             {run.summary ? ` · ${run.summary}` : ""}
           </summary>
@@ -312,6 +351,14 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
   );
 }
 
+function StartingRun() {
+  return (
+    <div role="status" style={{ marginBottom: 4 }}>
+      <Spin size="small" /> Starting the run…
+    </div>
+  );
+}
+
 function SensorCard({
   agent,
   sensor,
@@ -324,6 +371,8 @@ function SensorCard({
   const [busy, setBusy] = useState<SensorManageOp>();
   const [error, setError] = useState("");
   const [showCurrent, setShowCurrent] = useState(false);
+  const [requested, setRequested] = useState<{ after: string | null }>();
+  const [logOpen, setLogOpen] = useState(false);
   const spec = sensor.spec ?? sensor.pending_spec!;
   const kind = kindOf(spec);
   const done =
@@ -338,12 +387,12 @@ function SensorCard({
         op,
         revision: sensor.revision,
       });
+      // The run log opens and follows the run it asked for.
+      if (op === "run") {
+        setRequested({ after: sensor.last_run_at });
+        setLogOpen(true);
+      }
       onChanged();
-      // The scheduler picks a requested run up within about half a minute;
-      // look again so its result shows without waiting for the next poll.
-      if (op === "run")
-        for (const ms of [15_000, 40_000, 90_000])
-          setTimeout(() => onChanged(), ms);
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
       onChanged();
@@ -487,8 +536,28 @@ function SensorCard({
             kind !== "watch" &&
             button("resume", "Resume")}
           {deleteButton}
-          {sensor.spec && <Runs sensor={sensor} />}
+          {sensor.spec && (
+            <Button
+              size="small"
+              aria-expanded={logOpen}
+              onClick={() => setLogOpen(!logOpen)}
+            >
+              {logOpen ? "Hide run log" : "Run log"}
+            </Button>
+          )}
         </Space>
+      )}
+      {sensor.spec && logOpen && (
+        <div style={{ marginTop: 8 }}>
+          <Runs
+            sensor={sensor}
+            requested={requested}
+            onSettled={() => {
+              setRequested(undefined);
+              onChanged();
+            }}
+          />
+        </div>
       )}
     </section>
   );

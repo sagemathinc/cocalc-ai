@@ -194,6 +194,71 @@ test("an active sensor offers run, pause and its log, and shows errors", async (
   ).toBeTruthy();
 });
 
+test("Run now opens the log and follows the run to its result", async () => {
+  const earlier = {
+    run_id: "r0",
+    sensor_id: "s",
+    started_at: "2026-10-10T12:00:00.000Z",
+    finished_at: "2026-10-10T12:00:01.000Z",
+    outcome: "quiet",
+    exit_code: 0,
+    summary: null,
+    output: null,
+    error: null,
+    manual: false,
+    connectors: [],
+  };
+  const running = {
+    ...earlier,
+    run_id: "r1",
+    started_at: "2026-10-10T13:00:00.000Z",
+    finished_at: null,
+    outcome: null,
+    manual: true,
+  };
+  const done = { ...running, outcome: "wake", summary: "1 new issue" };
+  // Not started yet, then running, then done.
+  mockApi.listSensors
+    .mockResolvedValueOnce({ sensors: [], runs: [earlier] })
+    .mockResolvedValueOnce({ sensors: [], runs: [running, earlier] })
+    .mockResolvedValue({ sensors: [], runs: [done, earlier] });
+  const refresh = jest.fn();
+  render(
+    <AgentSensorsModal
+      agent={agent}
+      open
+      onClose={() => {}}
+      sensors={[
+        sensor({
+          status: "active",
+          spec,
+          pending_spec: null,
+          script_hash: "h",
+          last_run_at: "2026-10-10T12:00:01.000Z",
+          last_outcome: "quiet",
+        }),
+      ]}
+      error=""
+      refresh={refresh}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Run now" }));
+  // No "No runs yet": the run it asked for is on its way.
+  expect(await screen.findByText(/Starting the run/)).toBeTruthy();
+  expect(screen.queryByText(/No runs yet/)).toBeNull();
+  expect(
+    await screen.findByText(
+      /Woke the agent · run by hand · 1 new issue/,
+      undefined,
+      {
+        timeout: 8_000,
+      },
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText(/Starting the run/)).toBeNull();
+  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+}, 15_000);
+
 test("sensorsSummary names what needs attention", () => {
   expect(sensorsSummary(undefined)).toBe("");
   expect(sensorsSummary([])).toBe("None");

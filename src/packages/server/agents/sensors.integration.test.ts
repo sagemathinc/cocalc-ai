@@ -95,6 +95,7 @@ import {
   claimDueSensors,
   runClaimedSensor,
   setSensorDispatchHookForTests,
+  startSensorScheduler,
 } from "./sensor-scheduler";
 
 const HOST = "44444444-4444-4444-8444-444444444444";
@@ -797,6 +798,34 @@ describeDb("agent sensors", () => {
       op: "list",
     })) as any);
     expect(sensors[0].status).toBe("active");
+  });
+
+  test("Run now starts a run right away, not at the next poll", async () => {
+    const { sensor } = await propose();
+    const active = (await approve(sensor)).sensor;
+    // Polling hourly: only the kick from Run now can start this run.
+    const stop = startSensorScheduler(60 * 60_000);
+    try {
+      await sensorControlLocal(owner, project_id, {
+        op: "run",
+        sensor_id: active.sensor_id,
+        revision: active.revision,
+      });
+      let runs: any[] = [];
+      for (let i = 0; i < 100; i++) {
+        runs = (
+          await getPool().query(
+            "SELECT outcome, manual FROM agent_sensor_runs WHERE sensor_id=$1",
+            [active.sensor_id],
+          )
+        ).rows;
+        if (runs[0]?.outcome) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(runs).toEqual([{ outcome: "wake", manual: true }]);
+    } finally {
+      stop();
+    }
   });
 
   test("agents can read their sensor's run log", async () => {
