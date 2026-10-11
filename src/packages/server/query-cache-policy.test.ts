@@ -89,6 +89,40 @@ describe("query cache policy", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("gives every cached read its own literal metric label", () => {
+    // cocalc_database_cached_reads_total{label} only shows whether a cache
+    // pays for itself if each call site is counted separately.
+    const calls = ["server", "http-api", "database", "hub"]
+      .flatMap((path) => sourceFiles(join(PACKAGES, path)))
+      .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
+      .flatMap((file) => {
+        const source = readFileSync(file, "utf8");
+        return [...source.matchAll(/\bgetCachedReadPool\(\s*"/g)].map(
+          (match) => ({
+            where: `${relative(PACKAGES, file)}:${source.slice(0, match.index).split("\n").length}`,
+            label: source
+              .slice(match.index)
+              .match(
+                /^getCachedReadPool\(\s*"\w+",\s*\{\s*label:\s*"([^"]+)"/,
+              )?.[1],
+          }),
+        );
+      });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(
+      calls.filter(({ label }) => !label).map(({ where }) => where),
+    ).toEqual([]);
+    const seen = new Map<string, string>();
+    const duplicates: string[] = [];
+    for (const { where, label } of calls) {
+      if (seen.has(label!)) {
+        duplicates.push(`${label}: ${seen.get(label!)} and ${where}`);
+      }
+      seen.set(label!, where);
+    }
+    expect(duplicates).toEqual([]);
+  });
+
   it("catches literal, conditional and variable cache times", () => {
     expect(unannotatedCachedPools('const pool = getPool("medium");')).toEqual([
       1,

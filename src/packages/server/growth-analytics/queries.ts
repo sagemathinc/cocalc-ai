@@ -100,7 +100,7 @@ async function readSeries({
   range: Range;
 }): Promise<GrowthMetricSeries[]> {
   const { rows } = await getCachedReadPool("medium", {
-    label: "growth-analytics",
+    label: "growth-analytics-series",
   }).query<{
     metric_name: string;
     period_start: string;
@@ -262,7 +262,7 @@ export async function getRetentionMatrix(
   const range = normalizeRange(opts);
   const cohortGrain = opts.cohort_grain === "week" ? "week" : "day";
   const { rows } = await getCachedReadPool("medium", {
-    label: "growth-analytics",
+    label: "growth-retention-matrix",
   }).query<{
     cohort_start: string;
     period_index: number | string;
@@ -329,7 +329,7 @@ export async function getWeeklyGrowthAccounting(
 ): Promise<GrowthWeeklyAccounting> {
   const range = normalizeRange(opts);
   const { rows } = await getCachedReadPool("medium", {
-    label: "growth-analytics",
+    label: "growth-weekly-accounting",
   }).query<{
     week_start: string;
     new_accounts: number | string;
