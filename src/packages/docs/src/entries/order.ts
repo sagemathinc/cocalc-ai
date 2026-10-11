@@ -62,6 +62,7 @@ export const DOCS_ENTRY_IDS = [
   "cli.builds-and-versions",
   "api.http-api",
   "projects.open-terminal",
+  "projects.web-browser",
   "terminal.use-terminal",
   "terminal.graphical-applications",
   "terminal.ssh-access",

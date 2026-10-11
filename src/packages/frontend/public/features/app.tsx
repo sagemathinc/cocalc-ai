@@ -61,6 +61,7 @@ import ResearchComputeFeaturePage from "./research-compute-page";
 import SlidesFeaturePage from "./slides-page";
 import TeachingFeaturePage from "./teaching-page";
 import TerminalFeaturePage from "./terminal-page";
+import WebBrowserFeaturePage from "./web-browser-page";
 import WhiteboardFeaturePage from "./whiteboard-page";
 import X11FeaturePage from "./x11-page";
 
@@ -97,12 +98,14 @@ const FEATURE_DETAIL_COMPONENTS = {
   "software-environment": SoftwareEnvironmentFeaturePage,
   teaching: TeachingFeaturePage,
   terminal: TerminalFeaturePage,
+  "web-browser": WebBrowserFeaturePage,
   whiteboard: WhiteboardFeaturePage,
   x11: X11FeaturePage,
 } as const;
 
 const FEATURE_INDEX_PRIORITY = [
   "ai",
+  "web-browser",
   "research-compute",
   "jupyter-notebook",
   "latex-editor",
@@ -144,7 +147,7 @@ const FEATURE_GROUPS = [
     description:
       "Use Codex, terminal-based agents, scripts, and pipelines with the same persistent project.",
     icon: "robot",
-    slugs: ["ai", "api", "compare"],
+    slugs: ["ai", "web-browser", "api", "compare"],
     title: "AI workflows",
     variant: "cards",
   },
@@ -817,6 +820,14 @@ function FeatureDetail({
   if (slug === "terminal") {
     return (
       <TerminalFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "web-browser") {
+    return (
+      <WebBrowserFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />

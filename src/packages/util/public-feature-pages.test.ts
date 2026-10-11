@@ -80,6 +80,30 @@ describe("public feature page catalog", () => {
     }
   });
 
+  it("links the web browser page to its current documentation", () => {
+    const page = getPublicFeaturePage("web-browser")!;
+    expect(getPublicFeatureIndexPages()).toContain(page);
+    expect(
+      PUBLIC_FEATURE_NAV_ITEMS.find((item) => item.slug === "web-browser")
+        ?.label,
+    ).toBe("Browser");
+    const links = [
+      page.docsUrl,
+      ...(page.sections ?? []).flatMap(
+        (section) => section.links?.map((link) => link.href) ?? [],
+      ),
+    ];
+    expect(links).toContain("/docs/projects/web-browser");
+    for (const href of links) {
+      expect(href).toMatch(/^\/docs\//);
+      expect(
+        getDocsEntry(href!.slice("/docs/".length), {
+          siteProfile: "cocalc-ai",
+        }),
+      ).toBeDefined();
+    }
+  });
+
   it("keeps managed VMs off the research compute page", () => {
     // The page and its crawler fallback take their copy from this record.
     // Managed VMs come back only once they are generally available.
@@ -149,12 +173,17 @@ describe("public feature page catalog", () => {
 
 describe("research compute product availability", () => {
   it.each([{}, { cocalc_product: "plus" }, { cocalc_product: "invalid" }])(
-    "excludes only research compute for %j",
-    (config) => {
-      expect(getPublicFeaturePage("research-compute", config)).toBeUndefined();
+    "excludes only research compute (and on Plus the web browser) for %j",
+    (config: { cocalc_product?: string }) => {
+      const hidden =
+        config.cocalc_product === "plus"
+          ? ["research-compute", "web-browser"]
+          : ["research-compute"];
+      for (const slug of hidden)
+        expect(getPublicFeaturePage(slug, config)).toBeUndefined();
       expect(getPublicFeatureIndexPages(config)).toEqual(
         getPublicFeatureIndexPages().filter(
-          (page) => page.slug !== "research-compute",
+          (page) => !hidden.includes(page.slug),
         ),
       );
       expect(
@@ -162,12 +191,10 @@ describe("research compute product availability", () => {
           getPublicFeaturePage(slug, config),
         ),
       ).toEqual(
-        PUBLIC_FEATURE_NAV_ITEMS.filter(
-          ({ slug }) => slug !== "research-compute",
-        ),
+        PUBLIC_FEATURE_NAV_ITEMS.filter(({ slug }) => !hidden.includes(slug)),
       );
       for (const page of PUBLIC_FEATURE_PAGES.filter(
-        (page) => page.slug !== "research-compute",
+        (page) => !hidden.includes(page.slug),
       )) {
         for (const slug of [page.slug, ...(page.aliases ?? [])]) {
           expect(getPublicFeaturePage(slug, config)).toBe(page);

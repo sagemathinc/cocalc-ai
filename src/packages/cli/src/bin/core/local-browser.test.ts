@@ -77,6 +77,7 @@ test("launches with a private profile and an OS-chosen DevTools port", () => {
   assert.deepEqual(chromeLaunchArgs({ profileDir: "/p", headless: true }), [
     "--user-data-dir=/p",
     "--remote-debugging-port=0",
+    "--disable-blink-features=AutomationControlled",
     "--no-first-run",
     "--no-default-browser-check",
     "--disk-cache-size=67108864",

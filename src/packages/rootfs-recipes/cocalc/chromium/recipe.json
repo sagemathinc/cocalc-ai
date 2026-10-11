@@ -1,0 +1,24 @@
+{
+  "id": "cocalc/chromium",
+  "version": 1,
+  "description": "Install Chromium (a real .deb, not the Ubuntu snap stub) for the shared browser that agents and people use together.",
+  "timeout": 1800,
+  "inputs": {},
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "browser",
+      "tags": ["chromium", "browser", "agents"]
+    },
+    "content": {
+      "version": 1,
+      "title": "Chromium",
+      "subtitle": "The browser behind `cocalc project browser start`: an agent drives it and you can watch and take over in a chat card.",
+      "highlights": [
+        "Chromium from the xtradeb PPA (Ubuntu's chromium package is a snap stub that does not run in containers)",
+        "Used headless by the shared browser; no desktop packages needed"
+      ]
+    }
+  }
+}

@@ -29,6 +29,12 @@ export const QUICK_CREATE_CATALOG: QuickCreateSpec[] = [
   { id: "term", ext: "term", label: "Terminal", icon: NEW_FILETYPE_ICONS.term },
   { id: "x11", ext: "x11", label: "X11", icon: NEW_FILETYPE_ICONS.x11 },
   {
+    id: "browser",
+    ext: "browser",
+    label: "Web Browser",
+    icon: NEW_FILETYPE_ICONS.browser,
+  },
+  {
     id: "course",
     ext: "course",
     label: "Course",

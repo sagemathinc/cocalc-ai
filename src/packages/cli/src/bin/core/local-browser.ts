@@ -6,16 +6,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statfsSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, posix, win32 } from "node:path";
+import WebSocket from "ws";
 
 export type ProfileStorage = "memory" | "disk";
 
@@ -49,7 +50,15 @@ export function defaultLocalBrowserSystem(): LocalBrowserSystem {
     platform: process.platform,
     env: process.env,
     home: homedir(),
-    exists: existsSync,
+    // A browser is an executable file: on PATH, a directory with a browser's
+    // name (such as CoCalc's own bin2/cocalc-chromium) must not match.
+    exists: (path) => {
+      try {
+        return statSync(path).isFile();
+      } catch {
+        return false;
+      }
+    },
     statfsType: (path) => {
       try {
         return statfsSync(path).type;
@@ -160,6 +169,13 @@ export function startUrl(value?: string): string {
   return url;
 }
 
+// With remote debugging on, Chrome sets navigator.webdriver = true on every
+// page, which sites' bot detection reads (X refuses to sign in).  This keeps
+// the debugging port and turns that signal off.
+export const HIDE_AUTOMATION = [
+  "--disable-blink-features=AutomationControlled",
+];
+
 export function chromeLaunchArgs({
   profileDir,
   url,
@@ -173,6 +189,7 @@ export function chromeLaunchArgs({
     `--user-data-dir=${profileDir}`,
     // 0: Chrome picks a free loopback port and writes it to DevToolsActivePort.
     "--remote-debugging-port=0",
+    ...HIDE_AUTOMATION,
     "--no-first-run",
     "--no-default-browser-check",
     `--disk-cache-size=${DISK_CACHE_BYTES}`,
@@ -284,24 +301,50 @@ export interface LaunchedBrowser {
   port: number;
   exited: Promise<void>;
   stop: () => Promise<void>;
+  /** The last lines Chromium wrote to stderr (with captureStderr). */
+  stderrTail: () => string;
 }
+
+const STDERR_TAIL_BYTES = 4096;
 
 export async function launchBrowser({
   executable,
   args,
   profileDir,
   timeoutMs = 30_000,
+  captureStderr = false,
+  env,
 }: {
   executable: string;
   args: string[];
   profileDir: string;
   timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+  // Keep Chromium's last stderr lines to explain a crash.  Only for a browser
+  // that must not outlive this process: its stderr is a pipe to us.
+  captureStderr?: boolean;
 }): Promise<LaunchedBrowser> {
+  // A reused (persistent) profile still has the previous browser's port file;
+  // we must wait for this browser's.
+  rmSync(posix.join(profileDir, "DevToolsActivePort"), { force: true });
   // Own process group: Ctrl-C reaches us, and we decide the teardown order.
   const child = spawn(executable, args, {
-    stdio: "ignore",
+    ...(env ? { env } : {}),
+    stdio: captureStderr ? ["ignore", "ignore", "pipe"] : "ignore",
     detached: process.platform !== "win32",
   });
+  let tail = "";
+  let truncated = false;
+  child.stderr?.on("data", (chunk: Buffer) => {
+    tail += chunk.toString();
+    if (tail.length > STDERR_TAIL_BYTES) {
+      tail = tail.slice(-STDERR_TAIL_BYTES);
+      truncated = true;
+    }
+  });
+  // Without a partial first line.
+  const stderrTail = () =>
+    (truncated ? tail.slice(tail.indexOf("\n") + 1) : tail).trim();
   let hasExited = false;
   const exited = new Promise<void>((resolve) => {
     child.once("exit", () => {
@@ -313,8 +356,17 @@ export async function launchBrowser({
       resolve();
     });
   });
+  let devToolsPort: number | null = null;
   const stop = async () => {
     if (hasExited) return;
+    if (devToolsPort != null) {
+      await closeOverDevTools(devToolsPort).catch(() => {});
+      await Promise.race([
+        exited,
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+      if (hasExited) return;
+    }
     child.kill("SIGTERM");
     const timer = setTimeout(() => {
       if (!hasExited) child.kill("SIGKILL");
@@ -325,14 +377,51 @@ export async function launchBrowser({
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (hasExited) {
-      throw new Error(`${executable} exited before DevTools started`);
+      throw new Error(
+        `${executable} exited before DevTools started${stderrTail() ? `: ${stderrTail()}` : ""}`,
+      );
     }
     const port = readDevToolsPort(profileDir);
-    if (port != null) return { child, port, exited, stop };
+    if (port != null) {
+      devToolsPort = port;
+      return { child, port, exited, stop, stderrTail };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await stop();
   throw new Error(`${executable} did not start DevTools within ${timeoutMs}ms`);
+}
+
+// Ask Chromium to quit as if its last window closed, so it first writes out
+// what it holds in memory: it saves cookies only every 30 seconds or so, and
+// Chromium (unlike the headless shell) loses them on SIGTERM.
+async function closeOverDevTools(port: number): Promise<void> {
+  const version = await (
+    await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: AbortSignal.timeout(2000),
+    })
+  ).json();
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(version.webSocketDebuggerUrl);
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("Browser.close timed out"));
+    }, 2000);
+    const done = () => {
+      clearTimeout(timer);
+      ws.terminate();
+      resolve();
+    };
+    ws.once("open", () =>
+      ws.send(JSON.stringify({ id: 1, method: "Browser.close" })),
+    );
+    ws.once("message", done);
+    ws.once("close", done);
+    ws.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 // The id in webSocketDebuggerUrl is unique per browser process, so matching it

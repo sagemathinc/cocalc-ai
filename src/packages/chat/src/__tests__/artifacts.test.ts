@@ -6,6 +6,8 @@ import {
   validateArtifactPublication,
   validateArtifactFeedback,
   artifactFeedbackPrompt,
+  validateArtifactApp,
+  validateArtifactTerminal,
   validateArtifactFile,
   withoutArtifactStorageDate,
 } from "../artifacts";
@@ -42,6 +44,57 @@ test("file publications pin locators and include locator changes in editing base
       operation_id: "stale",
     }),
   ).toThrow();
+});
+
+test.each(["", "-x", "a b", "../x", "x".repeat(66)])(
+  "rejects invalid app id %s",
+  (id) => {
+    expect(() => validateArtifactApp({ id })).toThrow();
+  },
+);
+
+test("app publications embed a project app by id and cannot mix object types", () => {
+  const db = store();
+  const initial = { ...input, app: { id: "cocalc-browser" } };
+  const first = publishArtifact(db, initial);
+  expect(first.artifact.kind).toBe("app");
+  expect(first.artifact.app).toEqual({ id: "cocalc-browser" });
+  expect(first.publication.snapshot.app).toEqual({ id: "cocalc-browser" });
+  expect(readArtifact(db, initial).artifact.app?.id).toBe("cocalc-browser");
+  expect(() =>
+    publishArtifact(db, {
+      ...input,
+      operation_id: "mixed",
+      app: { id: "cocalc-browser" },
+      file: { path: "/home/user/x" },
+    }),
+  ).toThrow(/mix/);
+});
+
+test.each(["", "  ", "a\nb", "x".repeat(1025)])(
+  "rejects invalid terminal path %s",
+  (path) => {
+    expect(() => validateArtifactTerminal({ path })).toThrow();
+  },
+);
+
+test("terminal publications show a terminal session and cannot mix object types", () => {
+  const db = store();
+  const terminal = { path: "/home/user/.a.chat-t.term" };
+  const initial = { ...input, terminal };
+  const first = publishArtifact(db, initial);
+  expect(first.artifact.kind).toBe("terminal");
+  expect(first.artifact.terminal).toEqual(terminal);
+  expect(first.publication.snapshot.terminal).toEqual(terminal);
+  expect(readArtifact(db, initial).artifact.terminal).toEqual(terminal);
+  expect(() =>
+    publishArtifact(db, {
+      ...input,
+      operation_id: "mixed",
+      terminal,
+      app: { id: "cocalc-browser" },
+    }),
+  ).toThrow(/mix/);
 });
 
 test("feedback validates rendered offsets and preserves the source snapshot", () => {

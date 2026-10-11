@@ -14,6 +14,7 @@ import { project_id } from "@cocalc/project/data";
 import { hubApi } from "@cocalc/project/conat/hub";
 import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { getLogger } from "@cocalc/project/logger";
+import { projectScopedCliEnv } from "@cocalc/project/project-cli-env";
 import type { AppTemplateCatalogEntry } from "@cocalc/conat/project/api/apps";
 import {
   type AppStaticSpec,
@@ -882,6 +883,9 @@ export async function startApp(
     cwd: spec.command.cwd ?? process.env.HOME,
     env: {
       ...process.env,
+      // Like a terminal: apps can use the CoCalc CLI as the project (e.g.
+      // the shared browser serves its viewers over conat).
+      ...projectScopedCliEnv(),
       ...(spec.command.env ?? {}),
       PORT: `${port}`,
       HOST: host,

@@ -3,7 +3,7 @@ import { spawn } from "node-pty";
 import { getIdentity } from "./connection";
 import { getLogger } from "@cocalc/project/logger";
 import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
-import { conatServer, data } from "@cocalc/backend/data";
+import { data } from "@cocalc/backend/data";
 import { project_id } from "@cocalc/project/data";
 import { randomId } from "@cocalc/conat/names";
 import { join } from "path";
@@ -12,12 +12,11 @@ import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 import { supportsTerminalCwdLookup, terminalCwdForPid } from "./terminal/cwd";
 import { console_init_filename, path_split } from "@cocalc/util/misc";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
-import {
-  PROJECT_SECRETS_ENV,
-  PROJECT_SECRETS_MOUNT_PATH,
-} from "@cocalc/util/project-secrets";
 import { projectRuntimePathForProcess } from "@cocalc/util/project-runtime";
 import { getProjectHubApi } from "./hub";
+import { normalizeSiteUrl, projectScopedCliEnv } from "../project-cli-env";
+
+export { projectScopedCliEnv };
 
 const logger = getLogger("project:conat:terminal-server");
 
@@ -59,31 +58,8 @@ export function normalizeTerminalCommand(
   hook.args = ["-NoLogo"];
 }
 
-export function projectScopedCliEnv(): Record<string, string> {
-  const env = {
-    COCALC_API_URL: conatServer,
-    COCALC_PROJECT_ID: project_id,
-    COCALC_SECRET_TOKEN: join(data, "secret-token"),
-    [PROJECT_SECRETS_ENV]: PROJECT_SECRETS_MOUNT_PATH,
-  };
-  const siteUrl = normalizeSiteUrl(process.env.COCALC_SITE_URL);
-  return siteUrl ? { ...env, COCALC_SITE_URL: siteUrl } : env;
-}
-
 let resolvedSiteUrl: string | undefined;
 let siteUrlRequest: Promise<string | undefined> | undefined;
-
-function normalizeSiteUrl(value?: string): string | undefined {
-  const raw = `${value ?? ""}`.trim();
-  if (!raw) return;
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return;
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return;
-  }
-}
 
 async function requestProjectSiteUrl(): Promise<string | undefined> {
   const fromEnv = normalizeSiteUrl(process.env.COCALC_SITE_URL);
