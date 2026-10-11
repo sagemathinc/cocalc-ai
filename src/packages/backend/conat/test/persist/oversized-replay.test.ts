@@ -105,7 +105,7 @@ describe("message size limit", () => {
     delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
   });
 
-  it("refuses to store a message over the limit", async () => {
+  it("refuses to replay a stream holding a message over the limit", async () => {
     client = connect();
     s = stream({
       client,
@@ -114,18 +114,48 @@ describe("message size limit", () => {
     });
     await s.set({ messageData: messageData("x".repeat(500_000)) });
     process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES = "100000";
-    await expect(
-      s.set({ messageData: messageData("x".repeat(200_000)) }),
-    ).rejects.toMatchObject({ code: 413 });
-  });
-
-  it("refuses to replay a stream holding a message over the limit", async () => {
-    process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES = "100000";
     await expect(s.getAll({ timeout: 5000 })).rejects.toMatchObject({
       code: 413,
     });
     delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
     expect(await s.getAll({ timeout: 5000 })).toHaveLength(1);
+  });
+});
+
+describe("a message written during a replay", () => {
+  let client, s;
+
+  afterAll(() => {
+    useDecompressAsync(fastDecompress);
+  });
+
+  it("is delivered exactly once: by the changefeed, not also by the replay", async () => {
+    client = connect();
+    s = stream({
+      client,
+      user: { hub_id: "x" },
+      storage: { path: `hub/replay-exactly-once-${Math.random()}` },
+    });
+    // a large message makes the replay pause on its decompression
+    await s.set({ messageData: messageData("x".repeat(3_000_000)) });
+    await s.set({ messageData: messageData("small") });
+    const cf = await s.changefeed();
+    useDecompressAsync(async (buf) => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return await fastDecompress(buf);
+    });
+
+    const replayed = s.getAll({ changefeed: true, timeout: 500 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const { seq: appended } = await s.set({
+      messageData: messageData("written during the replay"),
+    });
+
+    const seqs = (await replayed).map((m) => m.seq);
+    expect(seqs).toEqual([1, 2]);
+    const { value: updates } = await cf.next();
+    expect(updates.map((u) => u.seq)).toEqual([appended]);
+    cf.close?.();
   });
 });
 

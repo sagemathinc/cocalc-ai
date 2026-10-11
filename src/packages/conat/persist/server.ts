@@ -65,6 +65,7 @@ import {
   type PersistentStream,
   type StorageOptions,
   type ChangefeedOperation,
+  ASYNC_DECOMPRESS_MIN_BYTES,
   maxPersistMessageBytes,
   persistMessageTooLargeError,
   storedRowToMessage,
@@ -212,7 +213,7 @@ export function server({
     let user = "";
     let added = false;
     // in-progress replays on this socket; stopped when it closes
-    const replays = new Set<ReplayControl>();
+    const replays = new Set<AbortController>();
     let initializing: Promise<void> | undefined;
     let lastInitAttemptAt = 0;
     let closed = false;
@@ -316,7 +317,7 @@ export function server({
     socket.on("closed", () => {
       log("socket closed", id, socket.subject);
       closed = true;
-      for (const control of replays) control.cancelled = true;
+      for (const abort of replays) abort.abort();
       replays.clear();
       storage = undefined;
       if (stream != null) {
@@ -441,12 +442,19 @@ export function server({
               { code: 503 },
             );
           }
-          const control: ReplayControl = { cancelled: false };
-          replays.add(control);
+          const abort = new AbortController();
+          replays.add(abort);
           try {
-            await replay({ stream, mesg, request, messagesThresh, control });
+            await replay({
+              stream,
+              mesg,
+              request,
+              messagesThresh,
+              signal: abort.signal,
+              changefeedActive: changefeed,
+            });
           } finally {
-            replays.delete(control);
+            replays.delete(abort);
           }
         } else if (request.cmd == "changefeed") {
           log("changefeed", changefeed);
@@ -500,25 +508,114 @@ export function replayKeepaliveMs(requestTimeout?: number): number {
 // retrying; the excess is refused with a retryable error.
 const MAX_REPLAYS_PER_SOCKET = 8;
 
-export interface ReplayControl {
-  cancelled: boolean;
+// A replay page holding a message of ASYNC_DECOMPRESS_MIN_BYTES or more is
+// "heavy".  Heavy pages are admitted process-wide before their data is read,
+// so at most MAX_HEAVY_REPLAY_PAGES are in memory and being decompressed at
+// once (decompression shares the libuv threadpool with filesystem I/O),
+// waiting replays hold no message data, and at most
+// MAX_QUEUED_HEAVY_REPLAY_PAGES wait; the excess is refused with a retryable
+// error.
+const MAX_HEAVY_REPLAY_PAGES = 2;
+const MAX_QUEUED_HEAVY_REPLAY_PAGES = 32;
+
+export class ReplayAdmission {
+  private active = 0;
+  private waiting: { admit: () => void }[] = [];
+
+  constructor(
+    private readonly max: number,
+    private readonly maxWaiting: number,
+  ) {}
+
+  // Resolves to a release function, or rejects if the signal aborts first or
+  // too many are already waiting.
+  acquire = async (signal: AbortSignal): Promise<() => void> => {
+    signal.throwIfAborted();
+    if (this.active < this.max) {
+      this.active += 1;
+      return this.releaser();
+    }
+    if (this.waiting.length >= this.maxWaiting) {
+      throw new ConatError(
+        "persist server is busy replaying large streams; try again",
+        { code: 503 },
+      );
+    }
+    await new Promise<void>((resolve, reject) => {
+      const entry = {
+        admit: () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        },
+      };
+      const onAbort = () => {
+        const i = this.waiting.indexOf(entry);
+        if (i >= 0) this.waiting.splice(i, 1);
+        reject(signal.reason ?? new Error("aborted"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.waiting.push(entry);
+    });
+    // the releasing replay handed its slot over directly
+    return this.releaser();
+  };
+
+  stats = () => ({ active: this.active, waiting: this.waiting.length });
+
+  private releaser = (): (() => void) => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = this.waiting.shift();
+      if (next != null) {
+        next.admit();
+      } else {
+        this.active -= 1;
+      }
+    };
+  };
+}
+
+let heavyReplayPages = new ReplayAdmission(
+  MAX_HEAVY_REPLAY_PAGES,
+  MAX_QUEUED_HEAVY_REPLAY_PAGES,
+);
+
+// for unit tests
+export function resetReplayAdmission(
+  max = MAX_HEAVY_REPLAY_PAGES,
+  maxWaiting = MAX_QUEUED_HEAVY_REPLAY_PAGES,
+): ReplayAdmission {
+  heavyReplayPages = new ReplayAdmission(max, maxWaiting);
+  return heavyReplayPages;
 }
 
 // Replay a stream for a getAll request.  Errors propagate to the request
-// handler, which sends a small error-only response.  Stops quietly once
-// control.cancelled is set (the socket closed).
+// handler, which sends a small error-only response.  Stops quietly once signal
+// aborts (the socket closed).
+//
+// Where it ends: at the newest message that existed when it started (or
+// request.end_seq, if lower).  When a changefeed is active for the connection
+// that is the end: the changefeed delivers everything after, so going further
+// would deliver those messages twice, and a stream under constant writes could
+// keep the replay chasing its tail.  Without a changefeed it makes one more
+// pass up to the newest message at the end of the first pass, so a message
+// rewritten under the same key meanwhile is still included, and then stops.
 export async function replay({
   stream,
   mesg,
   request,
   messagesThresh,
-  control = { cancelled: false },
+  signal = new AbortController().signal,
+  changefeedActive = false,
 }: {
   stream: PersistentStream;
   mesg;
   request;
   messagesThresh: number;
-  control?: ReplayControl;
+  signal?: AbortSignal;
+  changefeedActive?: boolean;
 }): Promise<void> {
   let seq = 0;
   let sentConfig = false;
@@ -574,15 +671,21 @@ export async function replay({
     lastSentAt = Date.now();
   };
 
+  const endAt = (newest: number | undefined): number =>
+    Math.min(newest ?? 0, request.end_seq ?? Number.MAX_SAFE_INTEGER);
+  let end = endAt(newest_retained_seq);
+  let extend = !changefeedActive;
+
   // An empty frame is a valid partial response for every client version.
   const keepaliveMs = replayKeepaliveMs(request.timeout);
   const keepalive = setInterval(
     () => {
-      if (!control.cancelled && Date.now() - lastSentAt >= keepaliveMs) {
+      if (!signal.aborted && Date.now() - lastSentAt >= keepaliveMs) {
         respond([]);
       }
     },
-    Math.max(50, Math.floor(keepaliveMs / 2)),
+    // checking 4x as often keeps the longest gap near keepaliveMs
+    Math.max(25, Math.floor(keepaliveMs / 4)),
   );
   keepalive.unref?.();
   try {
@@ -591,41 +694,73 @@ export async function replay({
     let size = 0;
     let after_seq = startSeq == null ? 0 : startSeq - 1;
     while (true) {
-      if (control.cancelled) return;
+      if (signal.aborted) return;
       if (stream.isClosing()) {
         throw new ConatError("stream closed during replay", { code: 503 });
       }
-      const page = stream.getPage({
+      const plan = stream.planPage({
         after_seq,
-        end_seq: request.end_seq,
+        end_seq: end,
         maxRows: REPLAY_PAGE_ROWS,
         maxBytes: REPLAY_PAGE_BYTES,
       });
-      if (page.length == 0) {
+      if (plan.length == 0) {
+        if (extend) {
+          extend = false;
+          const next = endAt(stream.seqBounds().newest_retained_seq);
+          if (next > end) {
+            end = next;
+            continue;
+          }
+        }
         break;
       }
-      for (const row of page) {
-        if (Number(row.size) > sizeLimit) {
-          throw persistMessageTooLargeError({
-            size: Number(row.size),
-            limit: sizeLimit,
-            seq: row.seq,
-          });
+      const oversized = plan.find((row) => row.size > sizeLimit);
+      if (oversized != null) {
+        // refuse before reading or decompressing it
+        throw persistMessageTooLargeError({
+          size: oversized.size,
+          limit: sizeLimit,
+          seq: oversized.seq,
+        });
+      }
+      const last_seq = plan[plan.length - 1].seq;
+      const heavy = plan.some((row) => row.size >= ASYNC_DECOMPRESS_MIN_BYTES);
+      let release: (() => void) | undefined;
+      if (heavy) {
+        try {
+          release = await heavyReplayPages.acquire(signal);
+        } catch (err) {
+          if (signal.aborted) return;
+          throw err;
         }
-        const message = await storedRowToMessage(row);
-        if (control.cancelled) return;
-        messages.push(message);
-        size += message.raw.length;
-        if (size >= messagesThresh) {
+      }
+      try {
+        if (signal.aborted) return;
+        for (const row of stream.readPage(after_seq, last_seq)) {
+          const message = await storedRowToMessage(row);
+          if (signal.aborted) return;
+          messages.push(message);
+          size += message.raw.length;
+          if (size >= messagesThresh) {
+            respond(messages);
+            messages.length = 0;
+            size = 0;
+          }
+        }
+        if (heavy && messages.length > 0) {
+          // do not hold large decompressed data past the admission
           respond(messages);
           messages.length = 0;
           size = 0;
         }
+      } finally {
+        release?.();
       }
-      after_seq = page[page.length - 1].seq;
+      after_seq = last_seq;
       await new Promise((resolve) => setImmediate(resolve));
     }
-    if (control.cancelled) return;
+    if (signal.aborted) return;
     if (messages.length > 0) {
       respond(messages);
     }
