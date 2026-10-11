@@ -19,6 +19,7 @@ import {
   isCanonicalPublicSiteHost,
   isCocalcAiOnlyPublicSection,
 } from "./public-site-policy";
+import { trimTrailingSlashes } from "./linear-text";
 
 // Rspack renders this exact element into public.html. The hub replaces it
 // with the route-specific head block when serving a public page.
@@ -248,7 +249,7 @@ function hasConfiguredText(value?: string): boolean {
 function normalizeBasePath(basePath?: string): string {
   const trimmed = `${basePath ?? ""}`.trim();
   if (!trimmed || trimmed === "/") return "";
-  return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  return `/${trimTrailingSlashes(trimmed.replace(/^\/+/, ""))}`;
 }
 
 function publicPath(

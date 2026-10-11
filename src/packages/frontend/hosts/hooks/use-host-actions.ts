@@ -10,7 +10,10 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import type { HostDrainOptions } from "../types";
 
-const HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS = 120_000;
+// Disk changes resize the cloud disk and then grow the filesystem on the host
+// before returning; on a busy host this exceeds the default 30 s RPC timeout,
+// and the browser reports a failure for a resize that succeeded.
+const HOST_DISK_RPC_TIMEOUT_MS = 120_000;
 
 type HubClient = {
   hosts: {
@@ -465,8 +468,8 @@ export const useHostActions = ({
         id,
         browser_id,
         ...opts,
-        ...(scratchOperation
-          ? { timeout: HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS }
+        ...(scratchOperation || opts.disk_gb != null
+          ? { timeout: HOST_DISK_RPC_TIMEOUT_MS }
           : undefined),
       });
       await refresh();

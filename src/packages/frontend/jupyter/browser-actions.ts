@@ -64,7 +64,10 @@ import { getExportKernelSpec } from "./export-kernelspec";
 import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
 import { downloadHTML } from "./download-html";
-import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
+import {
+  JUPYTER_MIMETYPES,
+  splitSourceLines,
+} from "@cocalc/jupyter/util/misc";
 import { parse } from "path";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import getKernelSpec from "@cocalc/frontend/jupyter/kernelspecs";
@@ -209,7 +212,7 @@ function normalizePortableIpynbForComparison(ipynb: any): any {
     );
     if (!complete) continue;
     cell.source = wasArray
-      ? (rewritten.match(/.*(?:\n|$)/g)?.filter(Boolean) ?? [])
+      ? splitSourceLines(rewritten)
       : rewritten;
     delete cell.attachments;
   }

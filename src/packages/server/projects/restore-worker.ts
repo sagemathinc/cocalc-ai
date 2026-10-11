@@ -21,6 +21,7 @@ import {
   reserveProjectRuntimeSlot,
 } from "@cocalc/server/projects/runtime-slots";
 import { replaceProjectRootfsStates } from "@cocalc/server/projects/rootfs-state";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:restore-worker");
 
@@ -265,6 +266,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] });
     const running = await updateLro({
       op_id,
       status: "running",

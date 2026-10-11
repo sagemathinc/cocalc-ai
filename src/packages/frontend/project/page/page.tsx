@@ -81,6 +81,7 @@ import { StartButton } from "@cocalc/frontend/project/start-button";
 import { useProjectPageHostState } from "./use-project-page-host-state";
 import {
   expectsProjectHostConnection,
+  getHostMaintenanceDisplay,
   getHostRecoveryDisplay,
   getProjectLifecycleView,
   hostUnavailableBannerDelay,
@@ -122,6 +123,8 @@ import {
 } from "@cocalc/frontend/project/runtime-recovery";
 import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-latency";
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
+import { HostMaintenanceBanner } from "./host-maintenance-banner";
+import { useHostMaintenanceRefresh } from "./use-host-maintenance-refresh";
 import { HostRecoveryBanner } from "./host-recovery-banner";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { useStableRenderOrder } from "@cocalc/frontend/components/stable-render-order";
@@ -183,8 +186,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
   const userType = useTypedRedux("account", "user_type") as string | undefined;
   const accountId = useTypedRedux("account", "account_id") as
-    | string
-    | undefined;
+    string | undefined;
   const groups = useTypedRedux("account", "groups") as string[] | undefined;
   const project = useRedux(["projects", "project_map", props.project_id]);
   if (props.is_active && project != null) {
@@ -297,8 +299,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     });
   const projectHostConnected = projectHostConnection.connected;
   const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
-    | MoveLroState
-    | undefined;
+    MoveLroState | undefined;
   const moveReopenRequired = !!useTypedRedux(
     { project_id },
     "move_reopen_required",
@@ -373,6 +374,20 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     projectHostConnection.unavailableSince,
   ]);
   const hostUnavailable = hostUnavailableCandidate && hostUnavailableConfirmed;
+  const hostMaintenance = useMemo(
+    () => getHostMaintenanceDisplay(hostInfo, hostRecoveryNow),
+    [hostInfo, hostRecoveryNow],
+  );
+  // Find maintenance announced after the page opened, and keep an announced
+  // or running window current. (Outages refresh separately, below.)
+  useHostMaintenanceRefresh({
+    host_id,
+    maintenanceState: hostMaintenance?.state,
+    active: is_active,
+    hostUnavailable,
+    refresh: (id) => redux.getActions("projects")?.ensure_host_info(id, true),
+    tick: () => setHostRecoveryNow(Date.now()),
+  });
   useEffect(() => {
     if (!hostUnavailable) return;
     const refresh = () =>
@@ -1067,6 +1082,12 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     );
   }
 
+  function renderHostMaintenanceBanner() {
+    // While the project is cut off, the reconnect banner explains the window.
+    if (!hostMaintenance || hostUnavailable || hardDeleteBlocked) return;
+    return <HostMaintenanceBanner maintenance={hostMaintenance} />;
+  }
+
   function renderHostUnavailableBanner() {
     if (!hostUnavailable || hardDeleteBlocked) return;
     return (
@@ -1259,6 +1280,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
           {props.publicDirectoryShare ? (
             <PublicDirectoryShareBanner share={props.publicDirectoryShare} />
           ) : null}
+          {renderHostMaintenanceBanner()}
           {renderHostUnavailableBanner()}
           {renderRuntimeRecoveryBanner()}
           {!hardDeleteBlocked && browserRuntimePresenceEnabled ? (

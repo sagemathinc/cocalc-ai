@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { trimTrailingSlashes } from "./linear-text";
+
 export function joinUrlPath(
   ...parts: Array<string | undefined | null>
 ): string {
@@ -31,6 +33,6 @@ export function appendUrlPath(
   ...parts: Array<string | undefined | null>
 ): string {
   const path = joinUrlPath(...parts).replace(/^\/+/, "");
-  const base = url.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(url);
   return path ? `${base}/${path}` : base;
 }

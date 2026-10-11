@@ -6,6 +6,7 @@
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import {
   BLOB_ATTACHMENT_METADATA_KEY,
+  blobUrlScanForTesting,
   embedCoCalcBlobImages,
   externalizeJupyterAttachments,
   MAX_JUPYTER_ATTACHMENT_COUNT,
@@ -308,5 +309,176 @@ describe("portable Jupyter blob attachments", () => {
       }),
     ).rejects.toThrow("too many image attachments");
     expect(saveBlob).not.toHaveBeenCalled();
+  });
+
+  describe("blob URL scan", () => {
+    const { blobUrlMatches, GLOBAL_BLOB_URL, isUrlDelimiter } =
+      blobUrlScanForTesting;
+    const reference = (text: string) =>
+      [...text.matchAll(GLOBAL_BLOB_URL)].map((m) => [m.index, m[0]]);
+    const linear = (text: string) =>
+      blobUrlMatches(text).map((m) => [m.index, m[0]]);
+
+    it("ends URLs at exactly the pattern's delimiters", () => {
+      const delimiter = /[\s"'<>()[\]]/;
+      const mismatches: number[] = [];
+      for (let code = 0; code < 0x10000; code++) {
+        if (
+          isUrlDelimiter(code) !== delimiter.test(String.fromCharCode(code))
+        ) {
+          mismatches.push(code);
+        }
+      }
+      expect(mismatches).toEqual([]);
+    });
+
+    it("finds exactly what the pattern finds", () => {
+      const pieces = [
+        "/blobs/a.png?uuid=1",
+        "https://cocalc.ai/blobs/b.png?uuid=2",
+        "HTTP://Example.COM/x/BLOBS/c",
+        "hTtPs://h/BlObS/x",
+        "blobs/",
+        "BLOBS/",
+        "blobs",
+        "/",
+        "//",
+        "///",
+        "https://",
+        "http://",
+        "https:/",
+        "http:",
+        "http://h",
+        "x",
+        "s",
+        "\u017f", // long s: /i does not match it to "s"
+        "\u212a", // Kelvin sign
+        "\u0130", // dotted capital I
+        " ",
+        "\n",
+        "\u00a0",
+        "\u2028",
+        "\ufeff",
+        "\u200a",
+        "(",
+        ")",
+        "[",
+        "]",
+        "<",
+        ">",
+        '"',
+        "'",
+        "![i](",
+        '<img src="',
+        "?uuid=",
+        "%20",
+        "/x".repeat(40),
+      ];
+      let seed = 12345;
+      const random = () => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return seed / 2147483648;
+      };
+      for (let i = 0; i < 20000; i++) {
+        let text = "";
+        const n = 1 + Math.floor(random() * 16);
+        for (let j = 0; j < n; j++) {
+          text += pieces[Math.floor(random() * pieces.length)];
+        }
+        expect([text, linear(text)]).toEqual([text, reference(text)]);
+      }
+    });
+
+    it("scans a large inline base64 image in linear time", () => {
+      // 3 MB of base64: minutes of CPU with the pattern itself.
+      const base64 = Buffer.alloc(2_300_000, 7)
+        .toString("base64")
+        .replace(/c/g, "/");
+      const url = `/blobs/diagram.png?uuid=${pngUuid}`;
+      const text = `![inline](data:image/png;base64,${base64})\n![blob](${url})\n`;
+      const started = Date.now();
+      expect(linear(text)).toEqual([[text.indexOf(url), url]]);
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it("scans crafted near-miss runs in linear time", () => {
+      // Many slashes, then "blobs/" with nothing after it, so the pattern
+      // retries from every slash; short runs separated by spaces (review
+      // reproduction), and one long run.
+      const nearMiss = `${"/x".repeat(4093)}blobs/`;
+      const text = `${Array(200).fill(nearMiss).join(" ")} ${"/x".repeat(1_000_000)}blobs/`;
+      const started = Date.now();
+      expect(linear(text)).toEqual([]);
+      expect(Date.now() - started).toBeLessThan(2000);
+      // Still exact on a smaller copy the pattern can check quickly.
+      const small = `${Array(3)
+        .fill(`${"/x".repeat(50)}blobs/`)
+        .join(" ")} /blobs/a`;
+      expect(linear(small)).toEqual(reference(small));
+    });
+
+    it("saves a notebook with a large inline image without stalling", async () => {
+      const base64 = Buffer.alloc(2_300_000, 9)
+        .toString("base64")
+        .replace(/c/g, "/");
+      const live = notebook(
+        `![inline](data:image/png;base64,${base64})\n` +
+          `![diagram](/blobs/diagram.png?uuid=${pngUuid})\n`,
+      );
+      const loadBlob = jest.fn(async () => ({ bytes: png }));
+      const started = Date.now();
+      const saved = await embedCoCalcBlobImages({ ipynb: live, loadBlob });
+      expect(saved.cells[0].source).toContain(
+        "![diagram](attachment:diagram.png)",
+      );
+      expect(saved.cells[0].source).toContain("data:image/png;base64,");
+      const reopened = await externalizeJupyterAttachments({
+        ipynb: saved,
+        loadBlob,
+        saveBlob: async ({ content_id, filename }) => ({
+          uuid: content_id,
+          url: `/blobs/${filename}?uuid=${content_id}`,
+        }),
+      });
+      expect(reopened.cells[0].source).toContain(`/blobs/diagram.png?uuid=`);
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
+  });
+
+  it("keeps carriage returns and line separators in list sources", async () => {
+    const live = notebook([
+      "intro\r\n",
+      "a\rb\u2028c\n",
+      `![diagram](/blobs/diagram.png?uuid=${pngUuid})`,
+    ]);
+    const loadBlob = jest.fn(async () => ({ bytes: png }));
+
+    const saved = await embedCoCalcBlobImages({ ipynb: live, loadBlob });
+
+    expect(saved.cells[0].source).toEqual([
+      "intro\r\n",
+      "a\rb\u2028c\n",
+      "![diagram](attachment:diagram.png)",
+    ]);
+  });
+
+  it("splits a long CRLF line of a list source in linear time", async () => {
+    // A long line ending in "\r\n": the line regexp retried from every
+    // character before the "\r", which took seconds here.
+    const long = `${"x".repeat(2_000_000)}\r\n`;
+    const live = notebook([
+      long,
+      `![diagram](/blobs/diagram.png?uuid=${pngUuid})\n`,
+    ]);
+    const loadBlob = jest.fn(async () => ({ bytes: png }));
+    const started = Date.now();
+
+    const saved = await embedCoCalcBlobImages({ ipynb: live, loadBlob });
+
+    expect(saved.cells[0].source).toEqual([
+      long,
+      "![diagram](attachment:diagram.png)\n",
+    ]);
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });

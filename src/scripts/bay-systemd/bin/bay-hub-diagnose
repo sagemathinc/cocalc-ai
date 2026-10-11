@@ -14,13 +14,16 @@ fi
 : "${COCALC_BAY_HUB_DIAGNOSTIC_DIR:=/var/log/cocalc-bay/hub-watchdog-incidents}"
 : "${COCALC_BAY_HUB_DIAGNOSTIC_RETENTION_DAYS:=14}"
 : "${COCALC_BAY_HUB_DIAGNOSTIC_MAX_FILES:=100}"
+: "${COCALC_BAY_HUB_CTL:=/usr/local/sbin/cocalc-bay-hub-ctl}"
 
 incident_dir="$COCALC_BAY_HUB_DIAGNOSTIC_DIR"
 if [[ -L "$incident_dir" ]]; then
   bay_log "refusing symlink diagnostic directory: ${incident_dir}"
   exit 1
 fi
-install -d -o root -g root -m 0700 "$incident_dir"
+# Owned by whoever captures (the watchdog runs as the bay user, with this as
+# its systemd logs directory); private either way.
+install -d -m 0700 "$incident_dir"
 
 unit="cocalc-bay-hub@${worker_id}.service"
 pid="$(systemctl show "$unit" --property=MainPID --value 2>/dev/null || printf '0')"
@@ -104,7 +107,13 @@ frontdoor_health="$(cat || true)"
   fi
 
   printf '\n### recent-worker-journal (last 200)\n'
-  journalctl -u "$unit" -n 200 --no-pager -o short-iso 2>&1 || true
+  # The bay user cannot read the system journal; the root helper prints only
+  # this worker's recent lines.
+  if [[ "$(id -u)" == 0 ]]; then
+    "$COCALC_BAY_HUB_CTL" journal "$worker_id" 2>&1 || true
+  else
+    sudo -n "$COCALC_BAY_HUB_CTL" journal "$worker_id" 2>&1 || true
+  fi
 } > "$tmp"
 
 mv -f "$tmp" "$incident"

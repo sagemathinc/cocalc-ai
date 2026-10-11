@@ -26,9 +26,17 @@ case "$COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED" in
 esac
 
 UNIT="cocalc-bay-cloudflared.service"
-STATE_DIR="${COCALC_BAY_RUN_DIR}/cloudflared-watchdog"
+: "${COCALC_BAY_CLOUDFLARED_CTL:=/usr/local/sbin/cocalc-bay-cloudflared-ctl}"
+# The unit runs this as the bay user, with a systemd state directory; root
+# privileges (the tunnel's journal, restarting it) go through the root-owned
+# cloudflared-ctl.
+STATE_DIR="${STATE_DIRECTORY:-${COCALC_BAY_RUN_DIR}/cloudflared-watchdog}"
 mkdir -p "$STATE_DIR"
-chmod 0750 "$STATE_DIR"
+chmod 0700 "$STATE_DIR"
+cloudflared_ctl=("$COCALC_BAY_CLOUDFLARED_CTL")
+if [[ "$(id -u)" != 0 ]]; then
+  cloudflared_ctl=(sudo -n "$COCALC_BAY_CLOUDFLARED_CTL")
+fi
 failure_file="${STATE_DIR}/failures"
 restart_file="${STATE_DIR}/last-restart"
 last_seen_file="${STATE_DIR}/last-journal-timestamp"
@@ -91,7 +99,7 @@ fi
 # Output: "<total failures> <connIndex with most failures> <its failures>
 # <timestamp of the newest journal line read>".
 read -r total top_conn top_failures newest < <(
-  journalctl --unit "$UNIT" --since "@${since}" --output short-unix --no-pager 2>/dev/null | \
+  "${cloudflared_ctl[@]}" journal-since "$since" 2>/dev/null | \
     awk -v since="$since" -v last_seen="$last_seen" '
       BEGIN { after = since + 0; if (last_seen + 0 > after) after = last_seen + 0; newest = 0 }
       $1 ~ /^[0-9]+(\.[0-9]+)?$/ {
@@ -175,9 +183,8 @@ bay_log "cloudflared watchdog restarting ${UNIT}: ${reason}; edges: ${edges:-unk
 # Record the attempt before entering systemctl so a failed or hung restart
 # still respects the cooldown.
 printf '%s\n' "$now" > "$restart_file"
-systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
 if ! timeout "${COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_TIMEOUT_S}" \
-    systemctl restart "$UNIT"; then
+    "${cloudflared_ctl[@]}" restart; then
   bay_log "cloudflared watchdog failed to restart ${UNIT}"
   exit 0
 fi

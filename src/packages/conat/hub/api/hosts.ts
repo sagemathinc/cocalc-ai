@@ -172,6 +172,14 @@ export interface HostSpotRecoveryState {
   active_machine_type?: string;
   machine_type_attempt_started_at?: string;
   spot_machine_types_tried?: string[];
+  // Recovery options ("spot:n2d-standard-32", "on_demand:t2d-standard-16")
+  // that already failed during this outage, and full passes over all of them.
+  fallback_rungs_tried?: string[];
+  fallback_ladder_cycle?: number;
+  // Consecutive transient failures while retrying a fallback option.
+  transient_retries?: number;
+  // The option ("pricing:machine_type") that transient_retries counts for.
+  transient_rung?: string;
 }
 
 export interface HostBillingEnforcement {
@@ -210,6 +218,7 @@ export const HOST_LRO_KINDS = [
   "host-runtime-fleet-rollout",
   "host-rollout-managed-components",
   "host-public-route",
+  "host-relocate",
   "host-deprovision",
   "host-delete",
   "host-force-deprovision",
@@ -1320,6 +1329,40 @@ export interface Host {
   bootstrap_lifecycle?: HostBootstrapLifecycle;
 }
 
+// A maintenance window announced to users of a host's projects. "scheduled"
+// is shown in advance; "in_progress" while the host is down for it.
+// scheduled: announced in advance. preparing: a relocation holds the host's
+// lease and is backing up / snapshotting online (users keep working, host
+// lifecycle changes are refused). in_progress: the host is down for it.
+// failed: rollback did not complete; the host stays fenced until an admin
+// clears it.
+export type HostMaintenanceState =
+  | "scheduled"
+  | "preparing"
+  | "in_progress"
+  | "completed"
+  | "failed";
+
+export interface HostMaintenanceNotice {
+  kind: "relocation" | "maintenance";
+  state: HostMaintenanceState;
+  scheduled_for?: string;
+  started_at?: string;
+  expected_duration_ms?: number;
+  expected_end_at?: string;
+  finished_at?: string;
+  message?: string;
+  op_id?: string;
+  // Identifies the relocation that holds the host's lease (never shown).
+  lease_id?: string;
+  updated_at?: string;
+}
+
+export interface HostRelocationTarget {
+  zone?: string;
+  machine_type?: string;
+}
+
 export interface HostConnectionInfo {
   host_id: string;
   // What a project started now would run, so a running project can tell
@@ -1350,6 +1393,7 @@ export interface HostConnectionInfo {
   reason_unavailable?: string;
   unavailable_since?: string;
   recovery_duration_estimate_ms?: number;
+  maintenance?: HostMaintenanceNotice;
 }
 
 export interface HostLogEntry {
@@ -1811,6 +1855,8 @@ export const hosts = {
   upgradeHostSoftware: authFirstRequireAccount,
   reconcileHostSoftware: authFirstRequireAccount,
   setHostPublicRouteMode: authFirstRequireAccount,
+  relocateHost: authFirstRequireAccount,
+  setHostMaintenanceNotice: authFirstRequireAccount,
   listHostRuntimeDeployments: authFirstRequireAccount,
   getHostRuntimeDeploymentStatus: authFirstRequireAccount,
   setHostRuntimeDeployments: authFirstRequireAccount,
@@ -2604,6 +2650,32 @@ export interface Hosts {
     id: string;
     mode: HostPublicRouteMode;
   }) => Promise<HostLroResponse>;
+  // Admin: move a host to another zone and/or machine type, keeping its data
+  // disk (snapshot and restore across zones). Projects see a maintenance banner.
+  relocateHost: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    id: string;
+    zone?: string;
+    machine_type?: string;
+    expected_minutes?: number;
+    message?: string;
+    skip_backups?: boolean;
+    keep_snapshot?: boolean;
+  }) => Promise<HostLroResponse>;
+  // Admin: announce (or clear) a scheduled maintenance window for a host.
+  // Clearing a relocation's fence requires fresh second-factor auth.
+  setHostMaintenanceNotice: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    id: string;
+    scheduled_for?: string;
+    expected_minutes?: number;
+    message?: string;
+    clear?: boolean;
+  }) => Promise<HostMaintenanceNotice | null>;
   getHostManagedComponentStatus: (opts: {
     account_id?: string;
     id: string;

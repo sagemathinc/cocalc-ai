@@ -1070,6 +1070,25 @@ export async function savePlacement(
   }
 }
 
+// A host being relocated is stopped, deprovisioned and restored elsewhere;
+// starting a project on it then would race the move. The project page shows
+// the maintenance banner with the expected end.
+async function assertHostNotUnderMaintenance(host_id: string): Promise<void> {
+  const { rows } = await pool().query<{ state: string | null }>(
+    "SELECT maintenance->>'state' AS state FROM project_hosts WHERE id=$1",
+    [host_id],
+  );
+  // A failed relocation stays fenced until an admin clears it.
+  if (rows[0]?.state === "in_progress" || rows[0]?.state === "failed") {
+    throw Object.assign(
+      new Error(
+        "This project's server is down for scheduled maintenance and will be back shortly.",
+      ),
+      { code: "host_maintenance_in_progress" },
+    );
+  }
+}
+
 export async function ensurePlacement(
   project_id: string,
   account_id?: string,
@@ -1326,6 +1345,7 @@ export async function startProjectOnHost(
 
     phaseStarted = Date.now();
     const placement = await ensurePlacement(project_id, opts?.account_id);
+    await assertHostNotUnderMaintenance(placement.host_id);
     const client = await getRoutedHostControlClient({
       host_id: placement.host_id,
       timeout: START_PROJECT_TIMEOUT_MS,

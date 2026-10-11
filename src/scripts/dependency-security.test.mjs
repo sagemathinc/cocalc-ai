@@ -17,6 +17,9 @@ const liteRequire = createRequire(
 const frontendRequire = createRequire(
   new URL("../packages/frontend/package.json", import.meta.url),
 );
+const staticRequire = createRequire(
+  new URL("../packages/static/package.json", import.meta.url),
+);
 
 function dependencyRequire(parent, name) {
   return createRequire(parent.resolve(name));
@@ -34,6 +37,48 @@ const micromatchRequire = dependencyRequire(
 const braces = micromatchRequire("braces");
 const katex = frontendRequire("katex");
 const proxyAddr = dependencyRequire(liteRequire, "express")("proxy-addr");
+const handlebars = staticRequire("handlebars");
+
+test("Handlebars precompiled strings escape HTML script delimiters without changing rendered text", () => {
+  const source = "before</ScRiPt><script>fixture</script><!--after";
+  assert.equal(handlebars.compile(source)({}), source);
+  assert.doesNotMatch(handlebars.precompile(source), /<\/?script|<!--/i);
+});
+
+test("Handlebars rejects malformed AST block parameters in compile and precompile", () => {
+  const source = "{{#if ready}}Ready{{/if}}";
+  assert.equal(
+    handlebars.compile(handlebars.parse(source))({ ready: true }),
+    "Ready",
+  );
+  for (const compile of [
+    (ast) => handlebars.compile(ast)({ ready: true }),
+    (ast) => handlebars.precompile(ast),
+  ]) {
+    const ast = handlebars.parse(source);
+    ast.body[0].program.blockParams = { length: "0" };
+    assert.throws(
+      () => compile(ast),
+      /Invalid AST: Program blockParams must be an array/,
+    );
+  }
+});
+
+test("Handlebars blocks Function constructor lookup through prototype own properties", () => {
+  const instance = handlebars.create();
+  instance.registerHelper("kind", (value) => typeof value);
+  const render = instance.compile(
+    '{{kind (lookup (lookup fn "__proto__") "constructor")}}',
+  );
+  assert.equal(
+    render({ fn() {} }, { allowProtoMethodsByDefault: true }),
+    "undefined",
+  );
+  assert.equal(
+    instance.compile('{{lookup person "name"}}')({ person: { name: "Ada" } }),
+    "Ada",
+  );
+});
 
 test("Forge accepts valid signatures and rejects extra nested DigestAlgorithm elements", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", {

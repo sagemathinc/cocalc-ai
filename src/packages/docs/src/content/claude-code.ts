@@ -131,11 +131,13 @@ project.
 Work accepted by this agent consumes the selected subscription's usage
 allowance. Agent Network authorization and recipient payment authorization
 are separate requirements: a valid sender identity does not select a recipient's
-subscription. The network account must first send a human message in the
-recipient thread with its selected subscription. Network turns then reuse that
-privately stored selection and connectors choice, with authorization rechecked
-at delivery. Never work around a rejected delivery by borrowing another
-account's credentials.
+subscription. Choose a payment method for the recipient agent, or set an
+account default. Network turns use that account's stored payment selection,
+including its claude.ai connector preference, with authorization rechecked
+at delivery. If no stored selection is available, CoCalc falls back to that
+account's most recent human turn in the recipient
+thread; it may ask you to send a message with the selected payment method first.
+Never work around a rejected delivery by borrowing another account's credentials.
 
 CoCalc checks credential authority when admitting and running work and before
 mediated project commands. Disconnect prevents future authorized use; it

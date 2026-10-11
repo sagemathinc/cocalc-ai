@@ -39,6 +39,7 @@ import {
   unsafeArchiveMemberPathReason,
 } from "./archive-member-path";
 import { parseTarExtractedLine, parseTarVerboseLine } from "./tar-output";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const PROJECT_ARCHIVE_RESTORE_TIMEOUT_MS = Math.max(
   60 * 60 * 1000,
@@ -155,7 +156,7 @@ function truncateProgressPath(path: string): string {
 }
 
 function normalizeProjectArchiveMemberPath(raw: string): string {
-  return normalizeArchivePath(raw).replace(/\/+$/, "");
+  return trimTrailingSlashes(normalizeArchivePath(raw));
 }
 
 function normalizeProjectArchivePathRoots(

@@ -55,6 +55,21 @@ import {
   isPlannedProjectHostRuntimeTransitionActive,
   type PlannedProjectHostRuntimeTransition,
 } from "@cocalc/server/hosts/runtime-transition";
+import { recoverHostToRunning } from "@cocalc/server/hosts/desired-state";
+
+// A GCP Spot VM gets a new ephemeral public IP on every start, and a host
+// stack started at boot reports the previous boot's address until it is
+// restarted. The provider-observed IP is authoritative (as in the provider
+// reconcile), so registrations cannot write a stale SSH endpoint and the
+// boot-time reconcile does not need a restart just to refresh it.
+export function authoritativeSshServer(
+  metadata: any,
+  reported: string | undefined,
+): string | undefined {
+  if (metadata?.machine?.cloud !== "gcp") return reported;
+  const publicIp = `${metadata?.runtime?.public_ip ?? ""}`.trim();
+  return publicIp ? `${publicIp}:2222` : reported;
+}
 
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
@@ -336,10 +351,7 @@ type HostRestartRecoveryProject = {
 };
 
 type HostRestartRecoveryMetadataStatus =
-  | "queued"
-  | "running"
-  | "finished"
-  | "failed";
+  "queued" | "running" | "finished" | "failed";
 
 function recoveryInflightKey(
   host_id: string,
@@ -1436,6 +1448,10 @@ export async function initHostRegistryService() {
         const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
+          ssh_server: authoritativeSshServer(
+            previousRows[0]?.metadata,
+            sanitized.ssh_server,
+          ),
           bay_id: registryBayId,
           status: "running",
           last_seen: new Date(),
@@ -1536,6 +1552,10 @@ export async function initHostRegistryService() {
         const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
+          ssh_server: authoritativeSshServer(
+            previousRows[0]?.metadata,
+            sanitized.ssh_server,
+          ),
           bay_id: registryBayId,
           status: "running",
           last_seen: new Date(),
@@ -1656,8 +1676,8 @@ export async function initHostRegistryService() {
           shutdown_notice: notice,
         };
         await pool().query(
-          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
-          [host_id, nextMetadata],
+          "UPDATE project_hosts SET metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{shutdown_notice}', $2::jsonb), updated=NOW() WHERE id=$1 AND deleted IS NULL",
+          [host_id, JSON.stringify(notice)],
         );
         if (
           notice.reason !== "host-shutdown" ||
@@ -1697,11 +1717,45 @@ export async function initHostRegistryService() {
             previousRecovery.active_machine_type ??
             nextMetadata.machine?.machine_type,
         };
-        nextMetadata.desired_state = "running";
-        await pool().query(
-          "UPDATE project_hosts SET status='starting', last_seen=NULL, metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
-          [host_id, nextMetadata],
-        );
+        // Recovery must not override a stop recorded since this row was read
+        // (by an admin or billing enforcement): mark it wanted running and
+        // queue the start in one transaction that refuses while it is wanted
+        // stopped, writing only the recovery state it changed.
+        const enqueued = await recoverHostToRunning({
+          host_id,
+          write: async (client) => {
+            await client.query(
+              `UPDATE project_hosts
+                  SET status='starting',
+                      last_seen=NULL,
+                      metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{spot_recovery_state}', $2::jsonb),
+                      updated=NOW()
+                WHERE id=$1 AND deleted IS NULL`,
+              [host_id, JSON.stringify(nextMetadata.spot_recovery_state)],
+            );
+          },
+          enqueue: async (client, intent_generation) =>
+            await enqueueCloudVmWorkOnce(
+              {
+                vm_id: host_id,
+                action: "start",
+                not_before: retryAt,
+                payload: {
+                  source: "shutdown_notice",
+                  signal: notice.signal,
+                  reason: notice.reason,
+                  intent_generation,
+                },
+              },
+              { inTransaction: client },
+            ),
+        });
+        if (!enqueued) {
+          logger.info("shutdown notice: host is wanted stopped; no recovery", {
+            host_id,
+          });
+          return;
+        }
         await recordHostAvailabilityObservation({
           host_id,
           state: "recovering",
@@ -1719,16 +1773,6 @@ export async function initHostRegistryService() {
           },
         });
         await notifyProjectHostUpdate({ host_id });
-        const enqueued = await enqueueCloudVmWorkOnce({
-          vm_id: host_id,
-          action: "start",
-          not_before: retryAt,
-          payload: {
-            source: "shutdown_notice",
-            signal: notice.signal,
-            reason: notice.reason,
-          },
-        });
         logger.info("processed shutdown notice for spot host", {
           host_id,
           signal: notice.signal,

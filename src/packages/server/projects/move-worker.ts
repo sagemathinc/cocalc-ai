@@ -44,6 +44,7 @@ import {
   computePlacementPermission,
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:move-worker");
 const pool = () => getPool();
@@ -360,6 +361,10 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({
+      project_ids: [project_id],
+      host_ids: [dest_host_id, input.source_host_id],
+    });
     let canceled = false;
     const shouldAbort = async () => {
       if (canceled) return true;

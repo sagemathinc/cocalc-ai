@@ -288,6 +288,14 @@ describe("bootstrap-host shell templates", () => {
       `python3 "$BOOTSTRAP_DIR/bootstrap.py" environment --bootstrap-dir "$BOOTSTRAP_DIR"`,
     );
     expect(source).toContain(`COCALC_BOOTSTRAP_RECONCILE_SCOPE`);
+    // Only the provider's boot-time run (no control-plane scope) keeps a
+    // running stack whose software did not change.
+    expect(source).toContain(
+      `BOOTSTRAP_RECONCILE_RESTART_ARG="--restart-if-changed"`,
+    );
+    expect(source).toContain(
+      `reconcile --bootstrap-dir "$BOOTSTRAP_DIR" $BOOTSTRAP_RECONCILE_RESTART_ARG`,
+    );
     expect(source).not.toContain(
       `python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared`,
     );

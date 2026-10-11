@@ -4,12 +4,13 @@
  */
 
 import { posix as pathPosix } from "path";
+import { trimTrailingSlashes } from "./linear-text";
 
 function stripTrailingSlash(path: string): string {
   if (path === "/") {
     return path;
   }
-  return path.replace(/\/+$/, "");
+  return trimTrailingSlashes(path);
 }
 
 function ensureAbsolute(path: string): string {
