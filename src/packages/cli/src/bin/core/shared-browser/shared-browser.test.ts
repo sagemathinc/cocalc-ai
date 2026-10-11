@@ -351,3 +351,18 @@ test("a site's download name is safe in ~/Downloads", () => {
   const long = safeDownloadName("x".repeat(300) + ".pdf");
   assert.ok(Buffer.byteLength(long) <= 200 && long.endsWith(".pdf"), long);
 });
+
+test("the viewer's ping is answered even before hello", async () => {
+  const { SharedBrowserServer } = require("./server");
+  const server = new SharedBrowserServer({
+    host: "127.0.0.1",
+    port: 0,
+    cdpPort: 0,
+  });
+  const channel = { send() {}, sendFrame() {} };
+  assert.equal(await server.viewerRequest(channel, { type: "ping" }), "pong");
+  await assert.rejects(
+    server.viewerRequest(channel, { type: "start" }),
+    /say hello first/,
+  );
+});

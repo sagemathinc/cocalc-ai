@@ -1091,7 +1091,9 @@ export class SharedBrowserServer {
   async viewerRequest(
     channel: ViewerChannel,
     request: ViewerRequest,
-  ): Promise<StartPageData | FaviconData> {
+  ): Promise<StartPageData | FaviconData | "pong"> {
+    // The viewer checks the path (and says hello again after).
+    if (request?.type === "ping") return "pong";
     if (!this.views.has(channel)) throw Error("say hello first");
     if (request?.type === "start") return await this.startPage();
     if (request?.type === "favicon") {

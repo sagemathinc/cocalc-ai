@@ -5,9 +5,14 @@
 
 // The viewer's connection to a shared browser: a conat socket on the
 // project's subject, over the user's own connection to the project's host,
-// as a terminal has (see @cocalc/util/shared-browser-protocol).
+// as a terminal has (see @cocalc/util/shared-browser-protocol).  Like a
+// terminal, it recovers through the shared reconnect coordinator: a socket
+// can look ready and be dead (the service gave up on a tab that was in the
+// background, or the hub restarted), so coming back to the tab checks it end
+// to end and starts it over if it does not answer.
 
 import { EventEmitter } from "events";
+import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   FRAME_HEADER,
@@ -20,6 +25,10 @@ import {
 } from "@cocalc/util/shared-browser-protocol";
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting";
+
+// How long the service has to answer a check before the viewer starts over.
+const PING_TIMEOUT_MS = 4000;
+const READY_TIMEOUT_MS = 20_000;
 
 export interface Hello {
   view?: string;
@@ -36,6 +45,7 @@ export class SharedBrowserConnection extends EventEmitter {
   status: ConnectionStatus = "connecting";
   private socket: any = null;
   private closed = false;
+  private reconnectResource: RegisteredReconnectResource | null = null;
 
   constructor(
     private readonly project_id: string,
@@ -43,6 +53,14 @@ export class SharedBrowserConnection extends EventEmitter {
     private readonly hello: Hello,
   ) {
     super();
+    this.reconnectResource =
+      webapp_client.conat_client.registerReconnectResource?.({
+        canReconnect: () => !this.closed,
+        isConnected: () => this.socket?.state === "ready",
+        probeOnForeground: () => !this.closed,
+        priority: () => "foreground",
+        reconnect: this.recover,
+      }) ?? null;
     void this.open();
   }
 
@@ -61,6 +79,15 @@ export class SharedBrowserConnection extends EventEmitter {
       socket.on("ready", this.onReady);
       socket.on("disconnected", () => this.setStatus("reconnecting"));
       socket.on("data", this.onData);
+      // The service closed it (e.g. it gave up on this tab): start over.
+      socket.on("closed", () => {
+        if (this.closed || socket !== this.socket) return;
+        this.setStatus("reconnecting");
+        this.reconnectResource?.requestReconnect({
+          reason: "shared_browser_socket_closed",
+          resetBackoff: true,
+        });
+      });
       if (socket.state === "ready") this.onReady();
     } catch (err) {
       if (this.closed) return;
@@ -77,6 +104,41 @@ export class SharedBrowserConnection extends EventEmitter {
       this.socket.write({ type: "hello", ...this.hello });
     } catch {}
     this.setStatus("live");
+  };
+
+  /**
+   * The coordinator's check (the tab came back, or the socket closed): the
+   * service answers, and gets hello again (it restarts this viewer's
+   * stream); or the viewer starts over on a new socket.
+   */
+  private recover = async (): Promise<void> => {
+    if (this.closed) return;
+    const socket = this.socket;
+    if (socket?.state === "ready") {
+      try {
+        await socket.request({ type: "ping" } satisfies ViewerRequest, {
+          timeout: PING_TIMEOUT_MS,
+        });
+        this.onReady();
+        return;
+      } catch {
+        // A ready-looking socket with a dead path.
+      }
+    }
+    this.socket = null;
+    socket?.removeAllListeners?.();
+    try {
+      socket?.close();
+    } catch {}
+    this.setStatus("reconnecting");
+    await this.open();
+    const deadline = Date.now() + READY_TIMEOUT_MS;
+    while (this.socket?.state !== "ready") {
+      if (this.closed) return;
+      if (Date.now() > deadline)
+        throw Error("the shared browser did not answer");
+      await new Promise((r) => setTimeout(r, 200));
+    }
   };
 
   private setStatus(status: ConnectionStatus): void {
@@ -136,6 +198,8 @@ export class SharedBrowserConnection extends EventEmitter {
 
   close(): void {
     this.closed = true;
+    this.reconnectResource?.close();
+    this.reconnectResource = null;
     this.socket?.close();
     this.socket = null;
     this.removeAllListeners();

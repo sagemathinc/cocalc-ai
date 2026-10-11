@@ -163,6 +163,8 @@ export type ServiceMessage =
 export type ViewerRequest =
   // A new tab's start page.
   | { type: "start" }
+  // Is the path to the service alive end to end?  ("pong")
+  | { type: "ping" }
   // A site's icon (a tab's, or a recent site's on the start page).
   | { type: "favicon"; url: string };
 
