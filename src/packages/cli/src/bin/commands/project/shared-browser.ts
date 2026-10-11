@@ -297,7 +297,12 @@ export function registerSharedBrowserCommands(
     ctx: any,
     project: string | undefined,
     browser: string | undefined,
-    fn: (page: SharedBrowserPage, state: SharedBrowserState) => Promise<T>,
+    fn: (
+      page: SharedBrowserPage,
+      state: SharedBrowserState,
+      // The browser's state now.
+      refresh: () => Promise<SharedBrowserState | null>,
+    ) => Promise<T>,
   ): Promise<T> => {
     const { status } = await running(ctx, project, browser);
     const state =
@@ -318,7 +323,7 @@ export function registerSharedBrowserCommands(
       );
     const page = await SharedBrowserPage.open(state.cdp, state.active);
     try {
-      return await fn(page, state);
+      return await fn(page, state, () => serviceState(status.port));
     } finally {
       page.close();
     }
@@ -335,12 +340,36 @@ export function registerSharedBrowserCommands(
     "open a URL (or host, or search words) in the shared browser's current tab and wait for it to load",
   ).action(async (url: string, opts: any, command: Command) => {
     await withContext(command, "project browser goto", (ctx: any) =>
-      onPage(ctx, opts.project, opts.browser, (page, state) => {
+      onPage(ctx, opts.project, opts.browser, async (page, state, refresh) => {
         if (state.network === "own" && isLocalAddress(url))
           throw Error(
             "this browser has a network of its own, so it cannot reach the project's servers. Run `cocalc project browser network project` first: the browser restarts on the project's network with its pages open",
           );
-        return page.goto(url);
+        const before = new Set((state.downloads ?? []).map((d) => d.guid));
+        try {
+          return await page.goto(url);
+        } catch (err: any) {
+          // A file: Chromium downloads it instead of opening a page.
+          if (!/ERR_ABORTED/.test(`${err?.message ?? err}`)) throw err;
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            const download = ((await refresh())?.downloads ?? []).find(
+              (d) => !before.has(d.guid),
+            );
+            if (download)
+              return {
+                download: download.name,
+                state: download.state,
+                ...(download.path ? { path: download.path } : {}),
+                note:
+                  download.state === "inProgress"
+                    ? "downloading to ~/Downloads: `cocalc project browser downloads --wait 60` says when it is done"
+                    : undefined,
+              };
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          throw err;
+        }
       }),
     );
   });
