@@ -559,6 +559,12 @@ Table({
       pg_default: "0",
       desc: "Monotonic owning-bay revision of the project collaborator authority map.",
     },
+    computers_public_shares: {
+      type: "integer",
+      pg_type: "INTEGER",
+      pg_default: "0",
+      desc: "Number of the project's active public shares, kept current by a trigger on public_project_paths. It is copied with the project when it is rehomed (the share rows are not), so a moved project that had shares is never attested private for computers.",
+    },
     computers_privacy_revision: {
       type: "integer",
       pg_type: "BIGINT",

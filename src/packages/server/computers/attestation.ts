@@ -21,7 +21,10 @@
 // every change to the project's public shares, whatever code path makes them
 // (database/postgres/schema/project-runtime-authority-revision.ts and
 // project-computers-privacy.ts). Both are copied with the project when it is
-// rehomed, so the epoch never goes back.
+// rehomed, so the epoch never goes back. The same trigger keeps a count of
+// active shares on the project row and refuses share changes while a rehome
+// of the project runs; the count moves with the project (the share rows
+// don't yet), so a moved project that had shares is never attested private.
 //
 // Only the owning bay attests, under the project-rehome fence: never while a
 // rehome runs, and never once this bay's row says another bay owns it. An
@@ -130,6 +133,7 @@ export async function attestProjectLocal({
       `SELECT users, deleted, owning_bay_id,
               COALESCE(runtime_authority_revision, 0)::text AS authority,
               COALESCE(computers_privacy_revision, 0)::text AS privacy,
+              COALESCE(computers_public_shares, 0) AS public_shares,
               ${
                 (await publicSharesExist(db))
                   ? `EXISTS (SELECT 1 FROM public_project_paths s
@@ -152,7 +156,10 @@ export async function attestProjectLocal({
   const eligible =
     !row.deleted &&
     projectEligibleForComputers(row.users, account_id) &&
-    !row.shared;
+    !row.shared &&
+    // The share count moves with the project; its share rows don't (yet).
+    // So a moved project that had shares stays ineligible here.
+    Number(row.public_shares) === 0;
   const privacy_epoch = Number(row.authority) + Number(row.privacy);
   const payload: ProjectAttestation = parseProjectAttestation({
     type: "cocalc-project-attestation",

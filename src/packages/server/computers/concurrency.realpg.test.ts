@@ -540,6 +540,62 @@ describeReal("computers: races on real PostgreSQL", () => {
       await pool.query("DROP TABLE IF EXISTS project_rehome_operations");
     });
 
+    it("rehome first: a share change is refused", async () => {
+      await rehomeTable();
+      const rehome = await hold(
+        "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+        ["project-rehome", project],
+      );
+      await rehome.client.query(
+        "INSERT INTO project_rehome_operations VALUES ('p3',$1,'bay-0','bay-1','requested','running',now())",
+        [project],
+      );
+      const share = pool.query(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), project],
+      );
+      await waiters(1);
+      await rehome.release();
+      await expect(share).rejects.toThrow(/project rehome p3 is running/);
+    });
+
+    it("share first: the rehome waits, then copies the current share count", async () => {
+      await rehomeTable();
+      const share = await hold(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), project],
+      );
+      let started = false;
+      const rehome = (async () => {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+            ["project-rehome", project],
+          );
+          started = true;
+          await client.query(
+            "INSERT INTO project_rehome_operations VALUES ('p4',$1,'bay-0','bay-1','requested','running',now())",
+            [project],
+          );
+          await client.query("COMMIT");
+        } finally {
+          client.release();
+        }
+        // What rehome copies: the project row.
+        const { rows } = await pool.query(
+          "SELECT computers_public_shares AS n FROM projects WHERE project_id=$1",
+          [project],
+        );
+        return Number(rows[0].n);
+      })();
+      await waiters(1);
+      expect(started).toBe(false);
+      await share.release();
+      expect(await rehome).toBe(1);
+    });
+
     it("rehome first: the old owner refuses to attest", async () => {
       await rehomeTable();
       // As createProjectRehomeOperation does: the fence, then the running row.
