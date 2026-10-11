@@ -58,6 +58,10 @@ tempdirs="${COCALC_STAR_DOCKER_STATE_DIR:-/var/lib/cocalc/star-docker}/container
 if [ -d "$tempdirs" ] && [ -n "$(find "$tempdirs" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
   echo "[star-docker-entrypoint] removing stale Podman temporary layer directories" | tee -a "$LOG_FILE" >&2
   find "$tempdirs" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || true
+  # Keep the container up for `docker exec`, but say why Podman will fail.
+  if [ -n "$(find "$tempdirs" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || echo unknown)" ]; then
+    echo "[star-docker-entrypoint] ERROR: could not remove stale Podman temporary layer directories in ${tempdirs}; Podman will fail until they are removed" | tee -a "$LOG_FILE" >&2
+  fi
 fi
 
 export COCALC_STAR_DOCKER_TEE_STDOUT="${COCALC_STAR_DOCKER_TEE_STDOUT:-0}"
