@@ -74,6 +74,27 @@ export function unannotatedCachedPools(source: string): number[] {
   return offenders;
 }
 
+// Every getCachedReadPool(...) call in source (comments and the function
+// definition aside), with its line and literal label, if it has one.
+export function cachedReadLabels(
+  source: string,
+): { line: number; label?: string }[] {
+  // Blank out comments, keeping newlines so line numbers still match.
+  const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (comment) =>
+    comment.replace(/[^\n]/g, " "),
+  );
+  return [...code.matchAll(/(\bfunction\s+)?\bgetCachedReadPool\(/g)]
+    .filter((match) => !match[1])
+    .map((match) => ({
+      line: code.slice(0, match.index).split("\n").length,
+      label: code
+        .slice(match.index! + match[0].length)
+        .match(
+          /^[^,()]*(?:\([^()]*\)[^,()]*)*,\s*\{\s*label:\s*"([^"]+)"/,
+        )?.[1],
+    }));
+}
+
 describe("query cache policy", () => {
   it("keeps authorization, entitlement and spend checks off the query cache", () => {
     const offenders = PROTECTED.flatMap((path) =>
@@ -95,19 +116,12 @@ describe("query cache policy", () => {
     const calls = ["server", "http-api", "database", "hub"]
       .flatMap((path) => sourceFiles(join(PACKAGES, path)))
       .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
-      .flatMap((file) => {
-        const source = readFileSync(file, "utf8");
-        return [...source.matchAll(/\bgetCachedReadPool\(\s*"/g)].map(
-          (match) => ({
-            where: `${relative(PACKAGES, file)}:${source.slice(0, match.index).split("\n").length}`,
-            label: source
-              .slice(match.index)
-              .match(
-                /^getCachedReadPool\(\s*"\w+",\s*\{\s*label:\s*"([^"]+)"/,
-              )?.[1],
-          }),
-        );
-      });
+      .flatMap((file) =>
+        cachedReadLabels(readFileSync(file, "utf8")).map(({ line, label }) => ({
+          where: `${relative(PACKAGES, file)}:${line}`,
+          label,
+        })),
+      );
     expect(calls.length).toBeGreaterThan(0);
     expect(
       calls.filter(({ label }) => !label).map(({ where }) => where),
@@ -121,6 +135,33 @@ describe("query cache policy", () => {
       seen.set(label!, where);
     }
     expect(duplicates).toEqual([]);
+  });
+
+  it("finds every getCachedReadPool call and its literal label", () => {
+    expect(
+      cachedReadLabels(
+        'const a = getCachedReadPool("medium", { label: "one" });\n' +
+          'const ttl: CacheTime = "long";\n' +
+          'getCachedReadPool(ttl, { label: "two" });\n' +
+          'getCachedReadPool(\n  cond ? "short" : "long",\n  { label: "three" },\n);\n' +
+          "getCachedReadPool(ttl, { label });\n" +
+          "getCachedReadPool(ttl, opts);",
+      ),
+    ).toEqual([
+      { line: 1, label: "one" },
+      { line: 3, label: "two" },
+      { line: 4, label: "three" },
+      { line: 8, label: undefined },
+      { line: 9, label: undefined },
+    ]);
+    // Comments and the definition itself are not calls.
+    expect(
+      cachedReadLabels(
+        "/* getCachedReadPool(cacheTime): a cache */\n" +
+          "// use getCachedReadPool(...) here\n" +
+          "export function getCachedReadPool(\n  cacheTime: CacheTime,\n) {}",
+      ),
+    ).toEqual([]);
   });
 
   it("catches literal, conditional and variable cache times", () => {
