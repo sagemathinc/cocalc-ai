@@ -34,7 +34,6 @@ export function registerProjectChatCommands(
     buildCodexSessionConfig,
     projectChatThreadCreateData,
     projectChatThreadStatusData,
-    projectChatAutomationData,
     projectChatActivityData,
     projectChatSendData,
     readAllStdin,
@@ -592,44 +591,4 @@ Two kinds of send share this command:
         });
       },
     );
-
-  const automation = chat
-    .command("automation")
-    .description(
-      "retired scheduled automations: inspect, pause or delete old ones (agents now use `cocalc sensor`)",
-    );
-
-  for (const action of [
-    ["pause", "pause a retired automation"],
-    ["delete", "delete a retired automation"],
-    ["status", "show automation config/state for a thread"],
-  ] as const) {
-    const [name, description] = action;
-    automation
-      .command(name)
-      .description(description)
-      .requiredOption("--path <path>", "chat document path inside the project")
-      .requiredOption("--thread-id <id>", "thread id")
-      .option("-w, --project <project>", "project id or name")
-      .action(
-        async (
-          opts: { path: string; threadId: string; project?: string },
-          command: Command,
-        ) => {
-          await withContext(
-            command,
-            `project chat automation ${name}`,
-            async (ctx) => {
-              return await projectChatAutomationData({
-                ctx,
-                projectIdentifier: opts.project,
-                path: normalizePath(opts.path),
-                threadId: normalizeThreadId(opts.threadId),
-                action: name,
-              });
-            },
-          );
-        },
-      );
-  }
 }

@@ -60,7 +60,6 @@ import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { authorizeProjectHostHubApiRequest } from "./hub/api-request-authorization";
 import { wireDbApi } from "./hub/db";
 import { wireComputeApi } from "./hub/compute";
-import { listAcpAutomationProjectIds } from "@cocalc/lite/hub/sqlite/acp-automations";
 import {
   getAccountEffectiveLimits,
   getProjectOwnerEffectiveLimits,
@@ -81,10 +80,8 @@ import { startProvisionedInventoryReporter } from "./master-status";
 import { startReconciler } from "./reconcile";
 import {
   acpAdmissionLimitsFromEffectiveLimits,
-  clearLocalAcpAutomationsForProject,
   configureAcpDetachedWorkerRunning,
   init as initAcp,
-  rehydrateAcpAutomationsForProject,
   setAcpAdmissionLimitsProvider,
   setCodexCredentialAdmissionResolver,
 } from "@cocalc/lite/hub/acp";
@@ -238,12 +235,6 @@ const PROJECT_HTTP_PORT_POLL_MS = Math.max(
   100,
   Number(process.env.COCALC_PROJECT_HTTP_PORT_POLL_MS ?? 500),
 );
-const ACP_STARTUP_REHYDRATE_CONCURRENCY = Math.max(
-  1,
-  Number(
-    process.env.COCALC_PROJECT_HOST_ACP_STARTUP_REHYDRATE_CONCURRENCY ?? 4,
-  ) || 4,
-);
 const PRIVATE_APP_ROUTE_CACHE_MS = Math.max(
   1000,
   Number(process.env.COCALC_PROJECT_HOST_PRIVATE_APP_ROUTE_CACHE_MS ?? 30_000),
@@ -347,73 +338,6 @@ async function waitForProjectHttpPort(project_id: string): Promise<number> {
       setTimeout(resolve, PROJECT_HTTP_PORT_POLL_MS),
     );
   }
-}
-
-async function rehydrateAcpAutomationsOnStartup(): Promise<void> {
-  const localAutomationProjectIds = listAcpAutomationProjectIds();
-  const rehydrateProjectIds: string[] = [];
-  const staleProjectIds: string[] = [];
-  for (const project_id of localAutomationProjectIds) {
-    if (getProject(project_id)) {
-      rehydrateProjectIds.push(project_id);
-    } else {
-      staleProjectIds.push(project_id);
-    }
-  }
-
-  for (const project_id of staleProjectIds) {
-    try {
-      clearLocalAcpAutomationsForProject(project_id);
-    } catch (err) {
-      logger.warn("failed clearing stale local ACP automations on startup", {
-        project_id,
-        err: `${err}`,
-      });
-    }
-  }
-
-  if (rehydrateProjectIds.length === 0) {
-    return;
-  }
-  const concurrency = Math.min(
-    ACP_STARTUP_REHYDRATE_CONCURRENCY,
-    rehydrateProjectIds.length,
-  );
-  let index = 0;
-  let restored = 0;
-  let failed = 0;
-  logger.info("starting ACP automation rehydrate after startup", {
-    local_automation_projects: localAutomationProjectIds.length,
-    stale_local_projects: staleProjectIds.length,
-    projects: rehydrateProjectIds.length,
-    concurrency,
-  });
-  const worker = async () => {
-    while (true) {
-      const project_id = rehydrateProjectIds[index++];
-      if (!project_id) return;
-      try {
-        restored += await rehydrateAcpAutomationsForProject(project_id);
-      } catch (err) {
-        failed += 1;
-        logger.warn("failed to rehydrate project ACP automations on startup", {
-          project_id,
-          err: `${err}`,
-        });
-      }
-    }
-  };
-  await Promise.all(
-    Array.from({ length: concurrency }, async () => await worker()),
-  );
-  logger.info("completed ACP automation rehydrate after startup", {
-    local_automation_projects: localAutomationProjectIds.length,
-    stale_local_projects: staleProjectIds.length,
-    projects: rehydrateProjectIds.length,
-    restored,
-    failed,
-    concurrency,
-  });
 }
 
 export async function main(
@@ -566,8 +490,8 @@ export async function main(
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   const stopHarnessReaper = startHarnessReaper();
   const stopClaudeLoginReaper = startClaudeLoginReaper();
-  // Local persist must exist before ACP startup so automation indexes can
-  // republish into the project-scoped DKV stores on restart.
+  // Local persist must exist before ACP startup, which uses project-scoped
+  // stores.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
   const persistServer = externalPersist
     ? undefined
@@ -1545,11 +1469,6 @@ export async function main(
   stopProvisionedInventoryReporter = startProvisionedInventoryReporter({
     bootstrapProjectIds: bootstrapProvisionedProjectInventory,
     verifyBatch: verifyProvisionedProjectInventoryBatch,
-  });
-  void rehydrateAcpAutomationsOnStartup().catch((err) => {
-    logger.warn("startup ACP automation rehydrate failed", {
-      err: `${err}`,
-    });
   });
 
   let gcpPreemptionNoticeSent = false;

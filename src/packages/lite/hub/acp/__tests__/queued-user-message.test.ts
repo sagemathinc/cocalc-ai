@@ -89,7 +89,7 @@ describe("queued user message refresh helpers", () => {
     ).toBe(request);
   });
 
-  it("preserves an automation prompt behind its visible run label", () => {
+  it("preserves a prompt behind its visible label", () => {
     const visibleLabel = "Manual run: hi";
     const request = {
       project_id: "proj-1",
@@ -103,7 +103,6 @@ describe("queued user message refresh helpers", () => {
         message_id: "assistant-1",
         message_date: "2026-05-07T21:00:00.000Z",
         sender_id: "openai-codex-agent",
-        automation_id: "automation-1",
         user_message_content: visibleLabel,
       },
     };

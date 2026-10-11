@@ -59,7 +59,7 @@ export function setPaymentSelectionResolver(
 
 // The account's stored choice for this conversation (shared by all of its
 // devices), for turns that arrive without one: agent messages, CLI sends,
-// automations. Undefined when nothing is stored or the hub cannot answer.
+// sensor wakes. Undefined when nothing is stored or the hub cannot answer.
 async function storedPaymentSelection<T>(
   request: AcpJobRequest,
   provider: AgentPaymentProvider,
@@ -97,7 +97,6 @@ export function setCodexCredentialAdmissionResolver(
 export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
-  if (request.request_kind === "command") return request;
   reportAgentRuntimeOnce(request);
   if (request.runtime !== undefined) {
     const claudeCode =
@@ -128,7 +127,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
         thread_id: request.chat.thread_id!,
       });
       const admitted = previous && decodeAcpJobRequest(previous);
-      if (!admitted || admitted.request_kind === "command" || !admitted.runtime)
+      if (!admitted || !admitted.runtime)
         throw agentRecipientSetupError(
           "human-turn",
           "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",

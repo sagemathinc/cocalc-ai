@@ -3,7 +3,7 @@
  *
  * This adapter enforces:
  * - browser cookie auth when AUTH_TOKEN is enabled
- * - optional agent-scoped bearer auth for automation
+ * - optional agent-scoped bearer auth for agents and scripts
  * - explicit opt-in for unauthenticated conat on non-loopback hosts
  */
 
@@ -23,7 +23,6 @@ import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { getAuthCookieName, parseCookies } from "./auth-token";
 import { isLoopbackHost } from "@cocalc/backend/network/policy";
 import { isValidUUID } from "@cocalc/util/misc";
-import { parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 
 export const DEFAULT_AGENT_SCOPES = [
   "browser_session",
@@ -247,17 +246,6 @@ export function createLiteConatAuth({
     }
 
     const userId = getCoCalcUserId(liteUser);
-    const acp = parseAcpSubject(subject);
-    if (acp?.operation === "automation") {
-      return (
-        userType === "account" &&
-        liteUser.auth_actor === "account" &&
-        type === "pub" &&
-        acp.project_id === project_id &&
-        (acp.version !== "account-project" || acp.account_id === userId)
-      );
-    }
-
     if (isAgentScoped(liteUser)) {
       if (type === "pub" && subject.startsWith("_INBOX.")) return true;
       const common = checkCommonPermissions({

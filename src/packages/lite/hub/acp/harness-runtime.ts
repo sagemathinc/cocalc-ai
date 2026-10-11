@@ -209,7 +209,6 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     (request.runtime_env && Object.keys(request.runtime_env).length) ||
     request.recovery_parent_op_id ||
     request.chat.recovery_parent_op_id ||
-    request.chat.automation_id ||
     (request.chat.agent_message &&
       !request.chat.agent_rpc_execution &&
       !request.chat.sensor_wake)

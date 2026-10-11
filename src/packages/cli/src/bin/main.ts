@@ -2641,7 +2641,6 @@ const {
   projectChatThreadForkData,
   projectChatArtifactData,
   projectChatThreadStatusData,
-  projectChatAutomationData,
   projectChatActivityData,
 } = createProjectChatOps<CommandContext, ProjectRow>({
   resolveProjectConatClient,
@@ -3272,7 +3271,6 @@ const projectCommandDeps = {
   projectChatSendData,
   projectChatArtifactData,
   projectChatThreadStatusData,
-  projectChatAutomationData,
   projectChatActivityData,
   projectJupyterCellsData,
   projectJupyterKernelData,

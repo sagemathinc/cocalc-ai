@@ -50,7 +50,6 @@ it("does not bind historical prompt content or model-authored input", async () =
   for (const chat of [
     { ...request.chat!, user_message_content: "plain @reviewer" },
     { ...request.chat!, agent_message: true },
-    { ...request.chat!, automation_id: "scheduled" },
   ]) {
     expect(
       await resolveHumanTurnMentions(

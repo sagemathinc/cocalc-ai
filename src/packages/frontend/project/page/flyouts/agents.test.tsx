@@ -28,7 +28,6 @@ const mockOpenExportModal = jest.fn();
 const mockOpenImportModal = jest.fn();
 const mockOpenForkModal = jest.fn();
 const mockConfirmDeleteThread = jest.fn();
-const mockUpsertThreadAutomation = jest.fn();
 const mockAntdMessageInfo = jest.fn();
 const mockAntdMessageError = jest.fn();
 
@@ -246,18 +245,7 @@ jest.mock("@cocalc/frontend/chat/use-codex-payment-source", () => ({
   }),
 }));
 
-jest.mock("@cocalc/frontend/chat/acp-api", () => ({
-  upsertThreadAutomation: (...args: any[]) =>
-    mockUpsertThreadAutomation(...args),
-}));
-
-jest.mock("@cocalc/frontend/chat/automation-form", () => {
-  const actual = jest.requireActual("@cocalc/frontend/chat/automation-form");
-  return {
-    ...actual,
-    AutomationConfigFields: () => <div>Automation fields</div>,
-  };
-});
+jest.mock("@cocalc/frontend/chat/acp-api", () => ({}));
 
 jest.mock("@cocalc/frontend/chat/chatroom-modals", () => ({
   ChatRoomModals: ({ onHandlers }: any) => {
@@ -413,7 +401,6 @@ describe("AgentsPanel session cards", () => {
     mockOpenImportModal.mockClear();
     mockOpenForkModal.mockClear();
     mockConfirmDeleteThread.mockClear();
-    mockUpsertThreadAutomation.mockClear();
     mockWatchAgentSessionsForProject.mockReset();
     mockWatchAgentSessionsForProject.mockImplementation(
       async (_args: any, cb: (records: any[]) => void) => {
@@ -585,8 +572,6 @@ describe("AgentsPanel session cards", () => {
     expect(screen.getByText("Appearance...")).toBeTruthy();
     expect(screen.getByText("Behavior...")).toBeTruthy();
     expect(screen.getByText("Open Chat File")).toBeTruthy();
-    // Thread automations were replaced by agent sensors.
-    expect(screen.queryByText("Automation settings…")).toBeNull();
     expect(screen.getByText("Git browser")).toBeTruthy();
     expect(screen.getByText("Export...")).toBeTruthy();
 
@@ -754,7 +739,6 @@ describe("AgentsPanel session cards", () => {
     expect(screen.getByText("Behavior...")).toBeTruthy();
     expect(screen.getByText("Pin chat")).toBeTruthy();
     expect(screen.getByText("Archive chat")).toBeTruthy();
-    expect(screen.queryByText("Automation settings…")).toBeNull();
     expect(screen.getByText("Git browser")).toBeTruthy();
     expect(screen.getByText("Export...")).toBeTruthy();
     expect(screen.getByText("Import...")).toBeTruthy();

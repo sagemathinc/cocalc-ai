@@ -9,7 +9,6 @@ import {
   Button,
   Empty,
   Modal,
-  Popconfirm,
   Space,
   Switch,
   Tag,
@@ -38,22 +37,6 @@ import {
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
-import type {
-  AcpAutomationConfig,
-  AcpAutomationRecord,
-} from "@cocalc/conat/ai/acp/types";
-import {
-  AutomationConfigFields,
-  buildAutomationDraft,
-  describeAutomationSchedule,
-  formatAutomationPausedReason,
-  hasAutomationConfigContent,
-  normalizeAutomationConfigForSave,
-  shouldShowAutomationNextRun,
-} from "@cocalc/frontend/chat/automation-form";
-import { showActiveAutomationLimitModal } from "@cocalc/frontend/chat/automation-limit";
-import { upsertThreadAutomation } from "@cocalc/frontend/chat/acp-api";
-import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
   initChat,
   getChatActions,
@@ -73,11 +56,7 @@ import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-s
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { agentSessionTitle } from "@cocalc/frontend/chat/recent-agent-sessions";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
-import {
-  get_local_storage,
-  html_to_text,
-  set_local_storage,
-} from "@cocalc/frontend/misc";
+import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { User } from "@cocalc/frontend/users/user";
 import {
@@ -106,7 +85,6 @@ import {
 } from "@cocalc/frontend/project/workspaces/runtime";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
@@ -177,20 +155,6 @@ function displayThreadLabel(title?: string): string | null {
   const clean = `${title ?? ""}`.trim();
   if (!clean) return null;
   return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
-}
-
-function threadSupportsCodexAutomation(
-  metadata?: {
-    agent_kind?: string | null;
-    agent_model?: string | null;
-    acp_config?: unknown;
-  } | null,
-): boolean {
-  if (!metadata) return false;
-  if (metadata.agent_kind === "acp" || metadata.acp_config != null) {
-    return true;
-  }
-  return isCodexModelName(`${metadata.agent_model ?? ""}`.trim());
 }
 
 function deriveAgentRootPath(opts: {
@@ -300,16 +264,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
-  const [automations, setAutomations] = useState<AcpAutomationRecord[]>([]);
   const [missingChatPaths, setMissingChatPaths] = useState<Set<string>>(
     () => new Set(),
   );
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState<"mine" | "others">("mine");
   const [showArchived, setShowArchived] = useState(false);
-  const [showAutomations, setShowAutomations] = useState(
-    () => layout !== "flyout",
-  );
   const [workspaceOnly, setWorkspaceOnly] = useState<boolean>(() =>
     loadWorkspaceOnly(project_id),
   );
@@ -319,8 +279,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     useState<AgentPanelLaunchState | null>(() =>
       loadPendingAgentSessionLaunch(project_id),
     );
-  const [automationControlBusyKey, setAutomationControlBusyKey] =
-    useState<string>("");
   const [openedSelection, setOpenedSelection] =
     useState<OpenedAgentSessionSelection | null>(() =>
       loadOpenedAgentSessionSelection(project_id, layout),
@@ -333,15 +291,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [inlineError, setInlineError] = useState<string>("");
   const [modalHandlers, setModalHandlers] =
     useState<ChatRoomModalHandlers | null>(null);
-  const [automationModalThreadKey, setAutomationModalThreadKey] = useState<
-    string | null
-  >(null);
-  const [automationDraft, setAutomationDraft] = useState<
-    AcpAutomationConfig | undefined
-  >(undefined);
-  const [automationSaving, setAutomationSaving] = useState(false);
-  const [automationActions, setAutomationActions] =
-    useState<ChatActions | null>(null);
   const [gitBrowserOpen, setGitBrowserOpen] = useState(false);
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
@@ -425,33 +374,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [account_id, project_id]);
 
   useEffect(() => {
-    let closed = false;
-    let unsubscribe: (() => void) | undefined;
-    void watchAutomationsForProject(
-      { project_id },
-      (records: AcpAutomationRecord[]) => {
-        if (closed) return;
-        setAutomations(records);
-      },
-    )
-      .then((cleanup) => {
-        if (closed) {
-          cleanup();
-          return;
-        }
-        unsubscribe = cleanup;
-      })
-      .catch((err) => {
-        if (closed) return;
-        setError((prev) => prev || `${err}`);
-      });
-    return () => {
-      closed = true;
-      unsubscribe?.();
-    };
-  }, [project_id]);
-
-  useEffect(() => {
     const node = panelRef.current;
     if (!node) return;
     const update = () => {
@@ -478,16 +400,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const knownChatPaths = useMemo(() => {
     return Array.from(
       new Set(
-        [
-          ...sessions.map((session) => session.chat_path),
-          ...automations.map((a) => a.path),
-        ].filter(
+        [...sessions.map((session) => session.chat_path)].filter(
           (path): path is string =>
             typeof path === "string" && path.trim().length > 0,
         ),
       ),
     );
-  }, [automations, sessions]);
+  }, [sessions]);
 
   useEffect(() => {
     const fs = actions?.fs?.();
@@ -908,48 +827,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }, [inlineMarkdownLinkBasePath, inlineSession?.chat_path, project_id]);
 
-  const automationActionSource = automationActions ?? inlineActions;
-  const automationModalMetadata = useMemo(
-    () =>
-      automationModalThreadKey
-        ? automationActionSource?.getThreadMetadata?.(
-            automationModalThreadKey,
-            {
-              threadId: automationModalThreadKey,
-            },
-          )
-        : undefined,
-    [automationActionSource, automationModalThreadKey],
-  );
-
-  const automationModalConfig = useMemo(
-    () =>
-      hasAutomationConfigContent(automationModalMetadata?.automation_config)
-        ? automationModalMetadata?.automation_config
-        : undefined,
-    [automationModalMetadata?.automation_config],
-  );
-
-  const automationModalAllowsCodex = useMemo(
-    () => threadSupportsCodexAutomation(automationModalMetadata),
-    [automationModalMetadata],
-  );
-
-  useEffect(() => {
-    if (!automationModalThreadKey) return;
-    setAutomationDraft(
-      buildAutomationDraft({
-        config: automationModalConfig,
-        enabled: automationModalConfig?.enabled !== false,
-        allowCodexRunKind: automationModalAllowsCodex,
-      }),
-    );
-  }, [
-    automationModalAllowsCodex,
-    automationModalConfig,
-    automationModalThreadKey,
-  ]);
-
   function closeInlineSession(): void {
     setInlineSessionId(null);
     setOpenedSelection(null);
@@ -1014,26 +891,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     }
   }
 
-  function openAutomation(record: AcpAutomationRecord): void {
-    saveNavigatorSelectedThreadKey(record.thread_id, record.path);
-    actions?.open_file({ path: record.path });
-  }
-
-  function openAutomationModal(
-    threadKey: string,
-    sourceActions?: ChatActions | null,
-  ): void {
-    const key = `${threadKey ?? ""}`.trim();
-    if (!key) return;
-    setAutomationActions(sourceActions ?? inlineActions ?? null);
-    setAutomationModalThreadKey(key);
-  }
-
-  function closeAutomationModal(): void {
-    setAutomationModalThreadKey(null);
-    setAutomationActions(null);
-  }
-
   function openGitBrowserForThread(
     threadKey: string,
     sourceActions?: ChatActions | null,
@@ -1059,56 +916,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setGitBrowserActions(actionsForThread ?? null);
     setGitBrowserSourcePath(sourcePath);
     setGitBrowserOpen(true);
-  }
-
-  async function saveAutomationModal(): Promise<void> {
-    if (!automationActionSource || !automationModalThreadKey) return;
-    const config = normalizeAutomationConfigForSave({
-      draft: automationDraft,
-      automationId: automationModalConfig?.automation_id,
-      allowCodexRunKind: automationModalAllowsCodex,
-    });
-    if (!config) {
-      antdMessage.error(
-        "Automation needs a title and a prompt or command before saving.",
-      );
-      return;
-    }
-    setAutomationSaving(true);
-    try {
-      const response = await upsertThreadAutomation({
-        actions: automationActionSource,
-        threadId: automationModalThreadKey,
-        config,
-      });
-      showActiveAutomationLimitModal({ project_id, response });
-      closeAutomationModal();
-    } finally {
-      setAutomationSaving(false);
-    }
-  }
-
-  async function controlAutomation(
-    record: AcpAutomationRecord,
-    action: "run_now" | "pause" | "resume" | "acknowledge" | "delete",
-  ): Promise<void> {
-    const busyKey = `${record.automation_id}:${action}`;
-    setAutomationControlBusyKey(busyKey);
-    try {
-      const response = await webapp_client.conat_client.automationAcp({
-        project_id,
-        path: record.path,
-        thread_id: record.thread_id,
-        action,
-      });
-      showActiveAutomationLimitModal({ project_id, response });
-    } catch (err) {
-      antdMessage.error(`${err}`);
-    } finally {
-      setAutomationControlBusyKey((current) =>
-        current === busyKey ? "" : current,
-      );
-    }
   }
 
   function recordMetaParts(record: AgentSessionRecord): string[] {
@@ -1191,7 +998,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               confirmDeleteInlineThread(record, menuActions)
             }
             openChatFile={() => openNavigatorSession(record)}
-            openAutomationModal={(key) => openAutomationModal(key, menuActions)}
             openGitBrowser={(key) =>
               openGitBrowserForThread(key, menuActions, record.chat_path)
             }
@@ -1285,9 +1091,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             confirmResetThread={() => confirmClearThread(record)}
             confirmDeleteThread={() => confirmDeleteInlineThread(record)}
             openChatFile={() => actions?.open_file({ path: record.chat_path })}
-            openAutomationModal={(key) =>
-              openAutomationModal(key, inlineActions)
-            }
             openGitBrowser={(key) =>
               openGitBrowserForThread(key, inlineActions, record.chat_path)
             }
@@ -1311,36 +1114,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         selectedThreadLabel={normalizedTitle(sessionMenuRecord)}
         onHandlers={setSessionMenuModalHandlers}
       />
-    );
-  }
-
-  function renderAutomationModal(): React.JSX.Element {
-    return (
-      <Modal
-        title="Thread automation"
-        open={automationModalThreadKey != null}
-        destroyOnHidden
-        onCancel={closeAutomationModal}
-        onOk={() => {
-          void saveAutomationModal();
-        }}
-        okText="Save"
-        confirmLoading={automationSaving}
-      >
-        <AutomationConfigFields
-          draft={automationDraft}
-          allowCodexRunKind={automationModalAllowsCodex}
-          onChange={(patch) =>
-            setAutomationDraft((prev) => ({
-              ...buildAutomationDraft({
-                config: prev,
-                allowCodexRunKind: automationModalAllowsCodex,
-              }),
-              ...patch,
-            }))
-          }
-        />
-      </Modal>
     );
   }
 
@@ -1814,233 +1587,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderAutomation(record: AcpAutomationRecord): React.JSX.Element {
-    const title =
-      html_to_text(record.title ?? "").trim() || "Scheduled automation";
-    const status =
-      record.status ?? (record.enabled === false ? "paused" : "active");
-    const updatedAt = record.updated_at;
-    const busy = (action: string) =>
-      automationControlBusyKey === `${record.automation_id}:${action}`;
-    return (
-      <div key={`${record.path}::${record.thread_id}`}>
-        <div
-          style={{
-            width: "100%",
-            border: `1px solid ${UI_COLORS.border}`,
-            borderRadius: 8,
-            padding: isFlyout ? 8 : 10,
-            background: UI_COLORS.surface,
-            color: UI_COLORS.text,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              marginBottom: 6,
-            }}
-          >
-            <Typography.Text strong title={title}>
-              {ellipsize(title, isFlyout ? 48 : 56)}
-            </Typography.Text>
-            <Tag
-              color={
-                status === "error"
-                  ? "red"
-                  : status === "paused"
-                    ? "orange"
-                    : "blue"
-              }
-            >
-              {status}
-            </Tag>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              marginBottom: 8,
-            }}
-          >
-            {describeAutomationSchedule(record) ? (
-              <Typography.Text type="secondary">
-                {describeAutomationSchedule(record)}
-              </Typography.Text>
-            ) : null}
-            {record.next_run_at_ms != null &&
-            shouldShowAutomationNextRun(record) ? (
-              <Typography.Text type="secondary">
-                Next run{" "}
-                <TimeAgo
-                  date={new Date(record.next_run_at_ms)}
-                  click_to_toggle={false}
-                />
-              </Typography.Text>
-            ) : null}
-            {record.last_run_finished_at_ms ? (
-              <Typography.Text type="secondary">
-                Last run{" "}
-                <TimeAgo
-                  date={new Date(record.last_run_finished_at_ms)}
-                  click_to_toggle={false}
-                />
-              </Typography.Text>
-            ) : null}
-            {typeof record.unacknowledged_runs === "number" &&
-            record.unacknowledged_runs > 0 ? (
-              <Typography.Text type="secondary">
-                {record.unacknowledged_runs} unacknowledged run(s)
-              </Typography.Text>
-            ) : null}
-            {record.paused_reason ? (
-              <Typography.Text type="secondary">
-                {formatAutomationPausedReason(record.paused_reason)}
-              </Typography.Text>
-            ) : null}
-            {record.last_error ? (
-              <Typography.Text type="danger">
-                {record.last_error}
-              </Typography.Text>
-            ) : null}
-            {updatedAt ? (
-              <Typography.Text type="secondary">
-                Updated <TimeAgo date={updatedAt} click_to_toggle={false} />
-              </Typography.Text>
-            ) : null}
-          </div>
-          <Space size={[4, 4]} wrap>
-            <Button
-              size="small"
-              type="primary"
-              disabled={!!automationControlBusyKey}
-              onClick={() => openAutomation(record)}
-            >
-              Open
-            </Button>
-            <Button
-              size="small"
-              disabled={status === "running" || !!automationControlBusyKey}
-              loading={busy("run_now")}
-              onClick={() => void controlAutomation(record, "run_now")}
-            >
-              Run now
-            </Button>
-            {status === "paused" || record.enabled === false ? (
-              <Button
-                size="small"
-                disabled={!!automationControlBusyKey}
-                loading={busy("resume")}
-                onClick={() => void controlAutomation(record, "resume")}
-              >
-                Resume
-              </Button>
-            ) : (
-              <Button
-                size="small"
-                disabled={!!automationControlBusyKey}
-                loading={busy("pause")}
-                onClick={() => void controlAutomation(record, "pause")}
-              >
-                Pause
-              </Button>
-            )}
-            <Button
-              size="small"
-              disabled={!!automationControlBusyKey}
-              loading={busy("acknowledge")}
-              onClick={() => void controlAutomation(record, "acknowledge")}
-            >
-              Acknowledge
-            </Button>
-            <Popconfirm
-              title="Delete scheduled automation?"
-              description="This removes the schedule from this chat thread."
-              okText="Delete"
-              cancelText="Cancel"
-              onConfirm={() => void controlAutomation(record, "delete")}
-            >
-              <Button
-                danger
-                size="small"
-                disabled={!!automationControlBusyKey}
-                loading={busy("delete")}
-              >
-                Delete schedule
-              </Button>
-            </Popconfirm>
-          </Space>
-        </div>
-      </div>
-    );
-  }
-
-  const visibleAutomations = useMemo(
-    () => automations.filter((record) => !missingChatPaths.has(record.path)),
-    [automations, missingChatPaths],
-  );
-
-  const automationUnacknowledgedRuns = useMemo(
-    () =>
-      visibleAutomations.reduce(
-        (total, record) => total + Math.max(0, record.unacknowledged_runs ?? 0),
-        0,
-      ),
-    [visibleAutomations],
-  );
-
-  function renderAutomationsSection(): React.JSX.Element | null {
-    if (visibleAutomations.length === 0) return null;
-    const isOpen = showAutomations;
-    const countLabel = `${visibleAutomations.length}`;
-    return (
-      <div style={{ marginTop: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 6,
-          }}
-        >
-          <Typography.Text strong>
-            Automations{" "}
-            <Typography.Text type="secondary">({countLabel})</Typography.Text>
-            {automationUnacknowledgedRuns > 0 ? (
-              <Typography.Text type="secondary">
-                {" "}
-                · {automationUnacknowledgedRuns} unacknowledged
-              </Typography.Text>
-            ) : null}
-          </Typography.Text>
-          <Button
-            size="small"
-            onClick={() => setShowAutomations((value) => !value)}
-          >
-            {isOpen ? "Hide automations" : "Show automations"}
-          </Button>
-        </div>
-        {isOpen ? (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isFlyout
-                ? "1fr"
-                : "repeat(auto-fit, minmax(360px, 1fr))",
-              gap: isFlyout ? 8 : 12,
-            }}
-          >
-            {visibleAutomations.map((record) => renderAutomation(record))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
   if (loading) {
     if (pendingLaunch) {
       return <PendingAgentLaunch launch={pendingLaunch} />;
@@ -2243,7 +1789,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               selectedThreadLabel={inlineTitle}
               onHandlers={setModalHandlers}
             />
-            {renderAutomationModal()}
             {renderGitBrowserDrawer()}
           </>
         ) : null}
@@ -2395,9 +1940,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           ) : null}
         </Space>
       )}
-      {renderAutomationsSection()}
       {renderSessionMenuSupport()}
-      {renderAutomationModal()}
       {renderGitBrowserDrawer()}
     </div>
   );

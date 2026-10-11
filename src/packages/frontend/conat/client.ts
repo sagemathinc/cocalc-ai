@@ -28,7 +28,6 @@ import type {
 import { listingsClient } from "@cocalc/conat/service/listings";
 import getTime, { getSkew, init as initTime } from "@cocalc/conat/time";
 import * as acp from "@cocalc/conat/ai/acp/client";
-import type { AcpAutomationResponse } from "@cocalc/conat/ai/acp/types";
 import { inventory } from "@cocalc/conat/sync/inventory";
 import { EventEmitter } from "events";
 import {
@@ -114,7 +113,6 @@ import {
   waitForExamModeConfiguration,
 } from "@cocalc/frontend/customize/exam-mode";
 import { registerSyncDocLoader } from "@cocalc/conat/sync-doc/factories";
-import { withProjectHostAccountClient } from "./project-host-account-client";
 
 registerSyncDocLoader(async () => {
   await import("@cocalc/conat/sync-doc/install");
@@ -3744,38 +3742,6 @@ export class ConatClient extends EventEmitter {
       { account_id: this.client.account_id, ...request },
       this.conat(),
     );
-  };
-
-  automationAcp = async (request) => {
-    const account_id = this.client.account_id;
-    if (!account_id) {
-      throw Error("user must be signed in");
-    }
-    if (usesDefaultProjectConnection()) {
-      return await acp.automationAcp({ account_id, ...request }, this.conat());
-    }
-
-    const routing = await this.ensureProjectRoutingInfo(request.project_id);
-    if (!routing) {
-      throw Error(
-        `unable to route automation to project-host for project ${request.project_id}; host routing info unavailable`,
-      );
-    }
-    const token = await this.getProjectHostToken({
-      host_id: routing.host_id,
-      project_id: request.project_id,
-    });
-    // Browser-session credentials are intentionally limited to runtime
-    // presence. Automation settings are human-account mutations, so perform
-    // them with a short-lived account credential instead of the shared routed
-    // browser client.
-    return await withProjectHostAccountClient<AcpAutomationResponse>({
-      account_id,
-      address: routing.address,
-      token,
-      action: async (client) =>
-        await acp.automationAcp({ account_id, ...request }, client),
-    });
   };
 
   attentionAcp = async (request) => {

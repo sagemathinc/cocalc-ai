@@ -469,7 +469,6 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         parsed == null ||
         (user.auth_actor === "agent" &&
           parsed.project_id !== user.auth_project_id) ||
-        (parsed.operation === "automation" && user.auth_actor !== "account") ||
         (parsed.version === "account-project" && parsed.account_id !== userId)
       ) {
         return false;

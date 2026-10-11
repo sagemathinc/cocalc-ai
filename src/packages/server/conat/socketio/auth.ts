@@ -732,7 +732,6 @@ export async function isAllowed({
       if (
         type !== "pub" ||
         parsed == null ||
-        parsed.operation === "automation" ||
         (parsed.version === "account-project" &&
           parsed.account_id !== userId) ||
         !agentUser.auth_scopes?.includes("project_session") ||
