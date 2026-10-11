@@ -84,6 +84,11 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.previewEmailProjectInvite": collabInviteFromOpts,
   "projects.respondEmailProjectInvite": collabInviteFromOpts,
   // Course secrets live on the course project's owning bay.
+  // Course collections live on the course project's owning bay (#1001).
+  "projects.collectAssignment": courseProjectFromOpts,
+  "projects.addScheduledCollectionStudents": courseProjectFromOpts,
+  "projects.getCourseCollectionOperation": courseProjectFromOpts,
+  "projects.cancelCourseCollectionOperation": courseProjectFromOpts,
   "projects.listCourseShareableSecrets": courseProjectFromOpts,
   "projects.getCourseSecretPolicy": courseProjectFromOpts,
   "projects.previewCourseSecretSync": courseProjectFromOpts,
