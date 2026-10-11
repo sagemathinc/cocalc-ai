@@ -11,17 +11,26 @@ if [[ "$(id -u)" != 0 ]] && ! sudo -n true 2>/dev/null; then
   exit 0
 fi
 TMP_ROOT="$(mktemp -d)"
-trap 'sudo -n rm -rf "$TMP_ROOT" 2>/dev/null || rm -rf "$TMP_ROOT"' EXIT
+# bay-restore refuses to run as root unless it, lib.sh and the engine are
+# root-owned, as installed in /usr/local/libexec/cocalc-bay.
+TRUSTED="$(sudo -n mktemp -d)"
+# Containers may have a / that is not root's; stop the ownership walk there.
+ASSUME_TRUSTED_DIR=""
+[[ "$(stat -c %u /)" == 0 ]] || ASSUME_TRUSTED_DIR=/
+trap 'sudo -n rm -rf "$TMP_ROOT" "$TRUSTED" 2>/dev/null || rm -rf "$TMP_ROOT"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
 
-mkdir -p "${TMP_ROOT}/bin" "${TMP_ROOT}/fake"
-cp "${SCRIPT_DIR}/bay-restore" "${SCRIPT_DIR}/lib.sh" "${TMP_ROOT}/bin/"
-# bay-health passes once the "healthy" file exists.
-cat > "${TMP_ROOT}/bin/bay-health" <<EOF
+mkdir -p "${TMP_ROOT}/bin" "${TMP_ROOT}/current/bin" "${TMP_ROOT}/fake"
+sudo -n install -m 0755 "${SCRIPT_DIR}/bay-restore" "${SCRIPT_DIR}/bay-restore-engine.py" "${TRUSTED}/"
+sudo -n install -m 0644 "${SCRIPT_DIR}/../bin/lib.sh" "${TRUSTED}/"
+sudo -n chmod 0755 "$TRUSTED"
+cp "${SCRIPT_DIR}/bay-restore" "${SCRIPT_DIR}/../bin/lib.sh" "${TMP_ROOT}/bin/"
+# bay-health (bay code, run as the bay user) passes once "healthy" exists.
+cat > "${TMP_ROOT}/current/bin/bay-health" <<EOF
 #!/usr/bin/env bash
 [[ -e "${TMP_ROOT}/healthy" ]]
 EOF
@@ -52,7 +61,7 @@ case "\$1" in
 esac
 exit 0
 EOF
-chmod 0755 "${TMP_ROOT}/bin/"* "${TMP_ROOT}/fake/"*
+chmod 0755 "${TMP_ROOT}/bin/"* "${TMP_ROOT}/current/bin/"* "${TMP_ROOT}/fake/"*
 
 setup() {
   local work="$1"
@@ -65,6 +74,12 @@ setup() {
 }
 
 cutover() {
+  run_cutover "${TRUSTED}/bay-restore" "$@"
+}
+
+run_cutover() {
+  local script="$1"
+  shift
   sudo -n env PATH="${TMP_ROOT}/fake:${PATH}" \
     COCALC_BAY_ENV_FILE=/nonexistent COCALC_BAY_WORKERS_ENV_FILE=/nonexistent \
     COCALC_BAY_OVERLAY_ENV_FILE=/nonexistent COCALC_BAY_TOPOLOGY_ENV_FILE=/nonexistent \
@@ -72,8 +87,17 @@ cutover() {
     COCALC_BAY_NODE_BIN=/nonexistent COCALC_BAY_ID=bay-test COCALC_BAY_ROOT="${TMP_ROOT}/bay" \
     COCALC_BAY_POSTGRES_DATA_DIR="${TMP_ROOT}/bay/postgres" COCALC_BAY_SQLITE_SOURCE_DIR="${TMP_ROOT}/bay/sync" \
     COCALC_BAY_USER="$(id -un)" COCALC_BAY_GROUP="$(id -gn)" \
-    bash "${TMP_ROOT}/bin/bay-restore" cutover --work-dir "$1" --yes > "${TMP_ROOT}/out" 2>&1
+    COCALC_BAY_CURRENT_LINK="${TMP_ROOT}/current" \
+    COCALC_BAY_RESTORE_ASSUME_TRUSTED_DIR="${ASSUME_TRUSTED_DIR}" \
+    bash "$script" cutover --work-dir "$1" --yes > "${TMP_ROOT}/out" 2>&1
 }
+
+# Root does not run a copy the bay account could have replaced.
+work="${TMP_ROOT}/work0"
+setup "$work"
+run_cutover "${TMP_ROOT}/bin/bay-restore" "$work" && fail "ran a copy not owned by root"
+grep -q "refusing to run as root" "${TMP_ROOT}/out" || fail "no refusal message: $(cat "${TMP_ROOT}/out")"
+[[ ! -s "${TMP_ROOT}/systemctl.log" ]] || fail "a refused run touched systemd"
 
 # Healthy: timers and running jobs stop before the bay; timers restart only
 # after the bay is healthy; the full backup is queued.

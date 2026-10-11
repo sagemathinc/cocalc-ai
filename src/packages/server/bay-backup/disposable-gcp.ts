@@ -249,8 +249,10 @@ export async function createTemporaryR2ReadCredentials({
 }
 
 // The restore engine is one Python program shared by the disposable drill and
-// production restores (bay-restore). It ships with every bay release in its
-// bin/ directory; tests and development read it from the repository.
+// production restores (bay-restore). It ships with every bay release in
+// scripts/bay-systemd/libexec, and is installed root-owned (for root's
+// bay-restore) in /usr/local/libexec/cocalc-bay; tests and development read
+// it from the repository.
 const RESTORE_ENGINE_FILE = "bay-restore-engine.py";
 
 export function restoreEngineSourcePath(): string {
@@ -258,12 +260,21 @@ export function restoreEngineSourcePath(): string {
     `${process.env.COCALC_BAY_RESTORE_ENGINE_PATH ?? ""}`.trim(),
     join(
       `${process.env.COCALC_BAY_CURRENT_LINK ?? "/opt/cocalc/bay/current"}`,
-      "bin",
+      "scripts/bay-systemd/libexec",
       RESTORE_ENGINE_FILE,
     ),
-    // src/packages/server/{dist,}/bay-backup -> src/scripts/bay-systemd/bin
-    join(__dirname, "../../../../scripts/bay-systemd/bin", RESTORE_ENGINE_FILE),
-    join(__dirname, "../../../scripts/bay-systemd/bin", RESTORE_ENGINE_FILE),
+    join("/usr/local/libexec/cocalc-bay", RESTORE_ENGINE_FILE),
+    // src/packages/server/{dist,}/bay-backup -> src/scripts/bay-systemd/libexec
+    join(
+      __dirname,
+      "../../../../scripts/bay-systemd/libexec",
+      RESTORE_ENGINE_FILE,
+    ),
+    join(
+      __dirname,
+      "../../../scripts/bay-systemd/libexec",
+      RESTORE_ENGINE_FILE,
+    ),
   ].filter(Boolean);
   const found = candidates.find((path) => existsSync(path));
   if (!found) {

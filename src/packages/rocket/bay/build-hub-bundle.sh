@@ -197,8 +197,9 @@ validate_file "$OUT/scripts/bay-systemd/install-scaffold.sh"
 validate_file "$OUT/scripts/bay-systemd/sbin/cocalc-bay-master-key"
 validate_file "$OUT/scripts/bay-systemd/libexec/bay-config-escrow-run"
 validate_file "$OUT/scripts/bay-systemd/libexec/bay-config-escrow.mjs"
-# The disposable drill and bay-restore both run this engine.
-validate_file "$OUT/scripts/bay-systemd/bin/bay-restore-engine.py"
+# The disposable drill and root's bay-restore both run this engine.
+validate_file "$OUT/scripts/bay-systemd/libexec/bay-restore"
+validate_file "$OUT/scripts/bay-systemd/libexec/bay-restore-engine.py"
 validate_file "$OUT/scripts/bay-systemd/needrestart/cocalc-bay.conf"
 validate_file "$OUT/scripts/bay-systemd/systemd/cocalc-bay-hub@.service"
 validate_file "$OUT/bay-hub-manifest.json"

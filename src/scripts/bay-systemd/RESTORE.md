@@ -5,10 +5,16 @@ that an agent with shell access can carry it out with a human supplying only
 two secrets. Everything else (configuration, other secrets, data) comes from
 the backups in R2.
 
-The restore is done by `bin/bay-restore`, which runs `bin/bay-restore-engine.py`:
+The restore is done by `bay-restore`, which runs `bay-restore-engine.py`:
 the same engine the weekly disposable PITR drill runs (`cocalc bay restore-test
 <bay> --disposable-gcp`). A passing drill means this procedure works for the
 backups as they are now.
+
+Both are installed root-owned in `/usr/local/libexec/cocalc-bay` by
+`install-scaffold.sh` (the bay bootstrap runs it). Always run that copy: the
+release tree under `/opt/cocalc/bay` belongs to the bay account, and
+`bay-restore` refuses to run as root from anywhere the bay account could
+change.
 
 ## If you are an agent asked to restore CoCalc, read this first
 
@@ -56,7 +62,7 @@ On the bay host (for prod: `gcloud compute ssh ubuntu@prod-bay-0
 3. Restore and verify without touching the live bay:
 
    ```sh
-   sudo /opt/cocalc/bay/current/bin/bay-restore restore \
+   sudo /usr/local/libexec/cocalc-bay/bay-restore restore \
      --target-time "2026-10-08 03:00:00+00" --no-cutover
    ```
 
@@ -68,7 +74,7 @@ On the bay host (for prod: `gcloud compute ssh ubuntu@prod-bay-0
    `bay-health`):
 
    ```sh
-   sudo /opt/cocalc/bay/current/bin/bay-restore cutover --work-dir <work-dir>
+   sudo /usr/local/libexec/cocalc-bay/bay-restore cutover --work-dir <work-dir>
    ```
 
    Omit `--no-cutover` in step 3 to do both in one command (it asks first;
@@ -194,7 +200,7 @@ that state still exists on the hosts and in project backups.
 8. **Restore and start the bay:**
 
    ```sh
-   sudo /opt/cocalc/bay/current/bin/bay-restore restore --latest --yes
+   sudo /usr/local/libexec/cocalc-bay/bay-restore restore --latest --yes
    ```
 
    This restores PostgreSQL to the newest archived transaction and Conat to its

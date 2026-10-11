@@ -48,8 +48,11 @@ curl -s -o /dev/null https://localhost/ || { cat /var/log/s3.log; fail "s3 serve
 log "bay layout and configuration"
 id cocalc-bay >/dev/null 2>&1 || useradd --system --create-home cocalc-bay
 mkdir -p /etc/cocalc /mnt/cocalc/bays/bay-0/sync/projects /mnt/cocalc/bays/bay-0/run /opt/cocalc/bay/current/bin /var/lib/e2e
-cp "${BAY_SYSTEMD}/bin/lib.sh" "${BAY_SYSTEMD}/bin/bay-restore" "${BAY_SYSTEMD}/bin/bay-restore-engine.py" \
-  /opt/cocalc/bay/current/bin/
+# As install-scaffold.sh installs them: root-owned, outside the release.
+install -d -m 0755 /usr/local/libexec/cocalc-bay
+install -m 0755 "${BAY_SYSTEMD}/libexec/bay-restore" "${BAY_SYSTEMD}/libexec/bay-restore-engine.py" \
+  /usr/local/libexec/cocalc-bay/
+install -m 0644 "${BAY_SYSTEMD}/bin/lib.sh" /usr/local/libexec/cocalc-bay/
 cat > /opt/cocalc/bay/current/bin/bay-health <<'EOF'
 #!/bin/bash
 runuser -u cocalc-bay -- psql -X -h /mnt/cocalc/bays/bay-0/run -p 5432 -d cocalc-bay -tAc "select 1" | grep -q 1
@@ -165,7 +168,7 @@ sqlite3 /mnt/cocalc/bays/bay-0/sync/projects/a.db "insert into t values ('after-
 psql_bay "select pg_switch_wal()" >/dev/null
 sleep 20  # archive_timeout + archive-push
 
-RESTORE=/opt/cocalc/bay/current/bin/bay-restore
+RESTORE=/usr/local/libexec/cocalc-bay/bay-restore
 log "1. restore to $TARGET without cutover"
 "$RESTORE" restore --target-time "$TARGET" --no-cutover --work-dir /mnt/cocalc/bays/bay-0/restore-pitr \
   > /var/lib/e2e/pitr.log 2>&1 || { tail -80 /var/lib/e2e/pitr.log; fail "PITR restore failed"; }
