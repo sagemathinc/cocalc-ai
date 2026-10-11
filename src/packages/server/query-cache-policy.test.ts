@@ -54,7 +54,8 @@ const REPORTING = new Set([
 ]);
 
 // getPool with any argument: a cache time, a variable or an expression.
-const GET_POOL_WITH_ARGUMENT = /\bgetPool\(\s*[^)\s]/;
+// (\s also matches newlines, so a multi-line call is caught.)
+const GET_POOL_WITH_ARGUMENT = /\bgetPool\(\s*[^)\s]/g;
 const ALLOWED = "query-cache-ok:";
 
 function sourceFiles(path: string): string[] {
@@ -70,13 +71,18 @@ function sourceFiles(path: string): string[] {
 
 export function unannotatedCachedPools(source: string): number[] {
   const lines = source.split("\n");
-  return lines.flatMap((line, i) =>
-    GET_POOL_WITH_ARGUMENT.test(line) &&
-    !line.includes(ALLOWED) &&
-    !(lines[i - 1] ?? "").includes(ALLOWED)
-      ? [i + 1]
-      : [],
-  );
+  const offenders: number[] = [];
+  // Scan the whole source: the argument may start on a later line.
+  for (const match of source.matchAll(GET_POOL_WITH_ARGUMENT)) {
+    const line = source.slice(0, match.index).split("\n").length;
+    if (
+      !lines[line - 1].includes(ALLOWED) &&
+      !(lines[line - 2] ?? "").includes(ALLOWED)
+    ) {
+      offenders.push(line);
+    }
+  }
+  return offenders;
 }
 
 describe("query cache policy", () => {
@@ -104,6 +110,14 @@ describe("query cache policy", () => {
     ).toEqual([1]);
     expect(unannotatedCachedPools("const pool = getPool(cache);")).toEqual([1]);
     expect(unannotatedCachedPools("const pool = getPool();")).toEqual([]);
+    // Arguments on the next line, as prettier may format a longer call.
+    expect(
+      unannotatedCachedPools('x();\nconst pool = getPool(\n  "medium"\n);'),
+    ).toEqual([2]);
+    expect(
+      unannotatedCachedPools("const pool = getPool(\n  cache,\n);"),
+    ).toEqual([1]);
+    expect(unannotatedCachedPools("const pool = getPool(\n);")).toEqual([]);
     expect(
       unannotatedCachedPools(
         '// query-cache-ok: display only\nconst pool = getPool("long");',
