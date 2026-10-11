@@ -19,6 +19,17 @@ sensors), a security review by @lite1-review, and a survey of similar products
   blockers, 7 high, 6 medium). This revision rebuilds the trust model around
   what can honestly be enforced. "Review history" maps every finding to where
   it is addressed.
+- **5:** @lite1-review's re-review of revision 4 ("most resolved; with these
+  changes I would approve stage 1's architecture"):
+  - project-bay attestations with an expiry the daemon checks, and leases
+    for interactive work;
+  - the approved policy as a local **ceiling** with a defined partial order;
+  - a signed pairing transcript with a short authentication string, and a
+    certificate instead of a delivered secret;
+  - a release-signing root kept offline, outside the online service;
+  - a sticky eligibility flag owned by the project's bay;
+  - broker isolation as a stage-3 gate;
+  - corrected wording for PoP and for the local log.
 
 ## The idea
 
@@ -59,8 +70,8 @@ cards and docs say plainly which one you chose.
 | What the agents can do | Anything that user can do, including installing things that outlive the session | Only what the container allows: the approved mounts, the approved network, the image |
 | Time limit | Stops new operations and kills the processes it tracked: **best effort, not a security boundary** | Enforced: the containers are stopped |
 | "Options from the line" | Only a statement of intent | Enforced by the daemon |
-| Local log | A convenience, not evidence (commands can edit it) | Evidence, up to a container or kernel escape |
-| If CoCalc itself were compromised | **Full control of that OS user** | Bounded by what the line allows, until the time limit or Ctrl-C |
+| Local log | A convenience, not evidence (commands can edit it) | Evidence of what the *containerized jobs* did, up to a container or kernel escape. Not evidence against the machine's owner or admin, a compromised host, a modified daemon, or a compromised release. |
+| If CoCalc's online service were compromised | **Full control of that OS user** | Bounded by the **policy ceiling** you approved, until the time limit or Ctrl-C. This assumes an already installed, verified daemon and an uncompromised offline release key (see "Supply chain"). |
 | Connector tokens passed to jobs | Not offered | Offered (stage 3), through a broker |
 | Typical use | Docker Desktop on your Mac; fixing your laptop's configuration | Research servers, spare machines, anything with data you care about |
 
@@ -78,11 +89,12 @@ cards and docs say plainly which one you chose.
 
 Every process in a CoCalc project runs as the same Linux user.
 
-**What that means:** while an agent's turn is running, any process in that
-project can read the turn's runtime credential from `/proc` and act as that
-agent:
+**What that means:** while an agent's turn is running, **any process in that
+project** can read the turn's runtime credential from `/proc`, act as that
+agent, and start detached jobs:
 - another agent of yours;
 - a script it started;
+- any untrusted code or dependency run in the project;
 - something a former collaborator left behind.
 
 The per-agent switch says *which agents are meant to use a computer*, and
@@ -95,14 +107,25 @@ So:
     running could steal a later turn's credential.
   - The way back is a new project.
   - The Connectors menu offers "create a private project for this agent".
-  - Eligibility is decided from the project's collaborator history, as
-    recorded in project-log invite/remove events and the project events
-    outbox (`project_events_outbox_collaborator_history_idx`). To verify while
-    building: whether that history is complete for older projects. If it
-    can't prove the project was never shared, the project is ineligible.
-  - Once another collaborator is added, eligibility is cleared permanently.
-- **The docs say plainly** that every agent in that project can effectively use
-  the computer while a granted agent's turn is running.
+  - Eligibility is a **sticky, authoritative flag kept by the project's bay**
+    under the project's membership lock. It is not recomputed from logs.
+    - **Existing projects start ineligible** ("uncertain"): their history may
+      predate the event machinery.
+    - Only **new projects created clean** start eligible.
+    - The flag is cleared, atomically and irreversibly, by any collaborator
+      addition and by any ownership transfer.
+    - Making the project public, or creating share links, is defined
+      separately: it clears the flag if anyone else could then run code
+      there.
+    - The flag moves with the project when it is rehomed.
+  - "Create a private project" always makes a **fresh** project.
+  - The docs distinguish collaboration history from trust in files: copying,
+    restoring or importing files into a new project does not make them
+    trustworthy.
+- **The docs say plainly** that every process, and any untrusted code, in
+  that project can use the computer while a granted agent's turn is running,
+  including starting detached jobs. "Never shared" keeps out *people*. It
+  does not make the project's code trustworthy.
 - **Long term** (a later stage): run each agent's turns as their own principal,
   with a broker on the project host that authenticates the actual run. Then the
   per-agent switch becomes a real boundary.
@@ -235,24 +258,32 @@ So:
   - a **policy** (below);
   - **notes**;
   - status (online/offline, time left).
-- **Policy:** the canonical, typed set of options the owner approved:
+- **Policy ceiling (`P0`):** the canonical, typed set of options the owner
+  approved at pairing. It is **immutable** on the machine. It contains:
   - mode;
   - `initial_duration` and `max_duration` (or no limit);
-  - image rules, mounts, network on/off, GPU, scratch soft quota, resource
-    limits;
+  - image rules, **resolved** mounts, network on/off, GPU, scratch soft quota,
+    resource limits;
   - nice;
-  - eligible agents.
-
-  It has a hash. The daemon stores it locally and enforces it, and every
-  ticket names that hash. The hub can narrow it but never widen it; widening
-  means a new pairing.
+  - the **agent ceiling**: a set of stable agent ids, or "any agent of this
+    account in an eligible project" if the owner chose that at pairing.
+- **Effective policy:** what is currently allowed.
+  - The daemon accepts a new one only when it verifies, field by field, that
+    it is ≤ `P0` under a defined partial order (see "Policy and time").
+  - Each change carries a monotonic `policy_epoch`.
+  - Grants turn agents on and off *within* the agent ceiling.
+  - Anything above the ceiling (another agent, mount, network, GPU, more
+    time, other images) needs local confirmation on the machine, which
+    re-pairs it.
 - **Daemon:** `cocalc computer connect`, part of the CLI.
   - One per user per machine.
   - One outbound websocket to the site's conat (HTTPS 443).
 - **Request:** an agent's (or the owner's) proposal of a policy, shown as a
   native card. It has a **non-secret** request id.
-- **Pairing:** the machine's key pair registered against a request. The owner
-  approves *that key*.
+- **Pairing:** the machine's keys, registered against a request through a
+  signed **transcript**. The owner approves that transcript, recognized by its
+  short authentication phrase. The result is a **computer certificate** (a
+  public document signed by the home bay), not a secret.
 - **Grant:** a per-agent switch for one computer (`agent_computer_grants`,
   unique per account, agent, project and computer). Fresh auth on every
   enable.
@@ -290,27 +321,33 @@ Markdown, and visually distinct:
 │                                                                 │
 │ Run on that computer:                                           │
 │   cocalc computer connect https://cocalc.ai/c/R-7Q2M9K          │
-│ (No secret: nothing happens until you approve the computer      │
-│  here.)                                                         │
+│ (Not sufficient for access: nothing is allowed until you        │
+│  approve that computer here.)                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The line contains only the site and a non-secret request id. Copying it
-anywhere is harmless.
+The line contains only the site and a non-secret request id.
+- It is **not sufficient for access**.
+- A third party who copies it can at most cause a mismatch: a second
+  claimant invalidates the request, so you would make a new one.
 
 ### 2. On the computer
 
 `cocalc computer connect …`:
-- generates the machine's key pair;
-- fetches the request's canonical policy from the site;
-- shows it, with a **pairing phrase**.
+- generates the machine's keys: a signing key and a separate key for key
+  agreement;
+- fetches the request's policy from the site;
+- **resolves it locally:** mount paths become absolute, canonical paths, and
+  the image rules and limits are checked;
+- shows the resolved policy, with a **pairing phrase** derived from the signed
+  transcript.
 
 ```
 This will let agents of the CoCalc account wstein@… on https://cocalc.ai
 use THIS computer (wstein@macbook):
   Isolated (rootless podman) · 1 hour, extendable to 8 hours
-  Mounts: ~/datasets (read-only) · Network: on
-  Agents: @claude-sagebrush
+  Mounts: /Users/wstein/datasets (read-only) · Network: on
+  Agents: @claude-sagebrush (id a76c…)
 Only continue if that is YOUR CoCalc account.
 Pairing phrase: tiger-violin-42
 Continue? [y/N]
@@ -321,11 +358,15 @@ line that would connect your computer to *their* account.
 
 ### 3. Approve in CoCalc
 
-The card now says "**Approve wstein@macbook (tiger-violin-42)?**".
-- The human checks the phrase and approves, with fresh auth.
-- The approval binds the request to that machine's public key.
-- The hub sends the computer's credential encrypted to that key.
-- The daemon connects.
+The card now shows the **resolved** policy (the absolute mount path) and asks
+"**Approve wstein@macbook (tiger-violin-42)?**".
+- The human checks the phrase and the resolved policy, and approves with
+  fresh auth.
+- The approval binds the **transcript hash**: protocol, site, request,
+  account, resolved policy, both key fingerprints, nonces.
+- The home bay issues the computer's certificate.
+- The daemon proves possession of its key by answering a challenge, and
+  connects.
 
 **What the human did:** paste one line, press `y`, click Approve. **What never
 appears in chat, in a URL, in argv or in shell history:** a redeemable secret.
@@ -334,8 +375,9 @@ appears in chat, in a URL, in argv or in shell history:** a redeemable secret.
 | sh -s -- R-7Q2M9K`).
 - The docs say plainly that running it trusts the download origin with your
   user account.
-- The bootstrap verifies the release signature against a key pinned in the
-  script, and the installed CLI verifies its own updates (see "Supply chain").
+- The bootstrap verifies the release against the offline release root
+  pinned in the script, and the installed CLI verifies its own updates (see
+  "Supply chain").
 
 ### On the computer, afterwards
 
@@ -466,13 +508,15 @@ fields:
 - **Audience:** `computer_id` and the daemon's **key fingerprint**.
 - **Context:**
   - `account_id`, `agent_id`;
-  - `source_project_id` and its **privacy epoch**;
+  - `source_project_id` and the project bay's **signed attestation**
+    (eligibility, epoch, not-after);
   - `grant_id` and its epoch;
   - the computer's epoch;
   - `run_id` and its lease generation;
-  - the **policy hash**.
+  - the **policy ceiling hash** and the effective `policy_epoch`.
 - **Proof of possession:** the request's public key.
-- **Time:** issued-at, **start-by** (about 60 s), maximum runtime.
+- **Time:** issued-at, **start-by** (about 60 s, and never later than the
+  attestation's not-after), maximum runtime.
 - **Limits:** bytes and concurrency.
 - **Signature:** the signing **key id** and the signature.
 
@@ -485,14 +529,23 @@ fields:
    rollback.
 3. **Audience:** `computer_id` and its own key fingerprint must match.
 4. **Proof of possession:** the request must be signed by the ticket's PoP
-   key. A copied ticket alone is useless.
+   key, so a copied ticket alone is useless. PoP protects **only against
+   copying or replaying tickets in transit**. A process in the project that
+   holds a granted turn's runtime identity can make its own PoP key and get
+   its own tickets: that is the accepted limit in "Trust boundaries".
 5. **Epochs:** the ticket's computer, grant, project-privacy and home-bay
    epochs must be ≥ the daemon's persisted **floors**, which the hub pushes,
    signed, on every change. Deleting and recreating a grant never resets its
    epoch.
-6. **Policy:** the policy hash must match the local policy. The operation must
-   be allowed by the local policy, which wins.
-7. **Time:**
+6. **Policy:** the ceiling hash must match `P0`, and the `policy_epoch` must
+   be the daemon's current one. The operation must be allowed by the
+   effective policy, which is ≤ `P0`. The local policy always wins.
+7. **Project authorization:**
+   - the attestation is signed by the **project's bay** (verified through the
+     cluster's bay-key directory);
+   - it is not expired at admission;
+   - its epoch is ≥ the daemon's floor for that project.
+8. **Time:**
    - start-by is checked against the hub time offset, and the offset may only
      drift within a small bound between reconnects;
    - **independently,** a ticket must be started within a fixed local
@@ -501,7 +554,7 @@ fields:
      suspend** (`CLOCK_BOOTTIME` on Linux, `mach_continuous_time` on macOS),
      anchored at pairing. A signed far-future time can't extend it beyond
      `max_duration`.
-8. **The ledger** (below), then the operation runs.
+9. **The ledger** (below), then the operation runs.
 
 The outcome goes to the hub (exit code, duration, bytes) and completes the
 audit row. Byte counts used for billing come from CoCalc's side, never from
@@ -528,24 +581,45 @@ the daemon (see "Files").
 ### Privacy fence across bays
 
 - **Two authorities:** the grant and computer rows live at the **account's
-  home bay**; project membership lives at the **project's bay**.
-- **The project's privacy epoch:** the project's bay keeps a monotonic
-  **project privacy epoch**. Every change to membership, public access or
-  ownership bumps it under the project's membership lock.
-- **Attestation:**
-  - To issue tickets for a project, the home bay holds an **attestation**
-    from the project's bay: "eligible (never shared, not public) at epoch E",
-    signed, with a short lease (≤ 30 s).
-  - It renews this as needed; it never uses a projected copy.
-  - Tickets carry E.
-- **Bumps:** on a bump, the project's bay pushes the new floor to the home bay,
-  which pushes it to the computers. The daemon then rejects tickets with older
-  E and cancels that project's queued work and streams.
-- **The accepted window** is bounded by the attestation lease (≤ 30 s) plus
-  push latency when a push is lost, and it is documented. Two-bay tests cover:
-  - a collaborator added or removed while tickets are being issued;
-  - the project's owner changing during admission;
-  - a lost invalidation;
+  home bay**; project membership and the sticky eligibility flag live at the
+  **project's bay**.
+- **The project's privacy epoch:** the project's bay keeps a monotonic epoch.
+  Every change to membership, public access, ownership or eligibility bumps
+  it under the project's membership lock.
+- **Signed attestations:** to issue tickets for a project, the home bay holds
+  an attestation from the project's bay, signed with that bay's key. It binds:
+  - protocol, site and cluster;
+  - project id;
+  - eligibility and epoch;
+  - issued-at and **not-after** (≤ 30 s);
+  - the intended account and home bay.
+  The home bay renews it as needed and never uses a projected copy.
+- **What the daemon checks:**
+  - Tickets carry the attestation, so **the daemon verifies the project bay's
+    signature and expiry itself**.
+  - A ticket's start-by is never later than the attestation's not-after.
+  - So **admission** after a collaborator is added is bounded by the 30 s
+    lease, even if every invalidation push is lost.
+- **Interactive work holds renewable leases** that stop when they expire,
+  even if the invalidation never arrives: streams, transfers, credential
+  leases, and later kernels and ports. That is a renewable
+  project-authorization lease at the daemon (e.g. 60 s).
+- **Detached jobs** (`run`) admitted before an invalidation **keep running
+  until the invalidation (or a reconnect) arrives**. This is a deliberate
+  choice: jobs survive network loss.
+  - The docs say: admission is bounded; jobs already admitted continue until
+    the computer hears about it.
+  - Computers with a time limit are bounded by their local deadline anyway.
+- **Invalidation path:** the project's bay pushes the new floor to the home
+  bay, which pushes it to the computers. The daemon then rejects older
+  epochs, cancels that project's queued work and streams, and stops its jobs.
+- **Two-bay tests:**
+  - loss of the push at each hop;
+  - a ticket issued an instant before the attestation expires;
+  - an attempted admission after it expires;
+  - a long job whose invalidation never arrives (it continues, as
+    documented);
+  - a collaborator added or removed, or the owner changing, during issuance;
   - a stale answer from the project's bay.
 
 ### Multi-bay, rehoming, deletion
@@ -570,45 +644,99 @@ the daemon (see "Files").
 
 ### Enrollment and the daemon's identity
 
-- **Pairing** (above): the machine generates its key pair. The approval binds
-  that public key, and the credential is delivered encrypted to it. A request
-  can be paired once; a second pairing attempt invalidates the request and
-  tells the owner.
+- **Keys:** the machine generates two keys, and never uses one key for both
+  jobs:
+  - a **signing key** (Ed25519);
+  - a separate **key-agreement key** (X25519, used through HPKE with the
+    transcript as associated data, if any secret ever has to be delivered).
+- **The transcript.** The machine signs a pairing transcript containing:
+  - protocol version;
+  - the exact normalized site URL and cluster id;
+  - request id and account id;
+  - the canonical **resolved** policy hash;
+  - both key fingerprints;
+  - client and server nonces.
+- **The pairing phrase** (a short authentication string) is derived from the
+  transcript hash, and the approval row stores that hash, not loose fields.
+- **The result is a certificate, not a secret.** The home bay signs a
+  **computer certificate** for the signing key, binding:
+  - computer id, account and home-bay epoch;
+  - the ceiling hash;
+  - validity.
+
+  No reusable bearer credential is delivered.
 - **conat:** the daemon is a new principal type, "computer".
-  - It gets short-lived conat tokens by **challenge and response** with its
-    key.
+  - It gets short-lived conat tokens by answering a **challenge** with its
+    signing key, alongside the certificate.
   - It may serve only `computer.<id>.>`, reply into requesters' `_INBOX`
     (precedent: project-hosts replying to accounts), and report to the hub's
     computer service.
-  - The router can **revoke the principal's sessions** at once.
+  - The router can revoke the principal's sessions at once.
+- **A second claimant never replaces the first key.** A second pairing attempt
+  invalidates the request; the card says "multiple claimants; create a new
+  request". Pairing attempts are rate-limited, since anyone can trigger this
+  denial of service with a public request id.
 - **Key storage:**
   - Time-limited computers keep the key in memory only.
   - Computers without a limit keep it in a mode-600 file or the OS keychain,
-    rotatable.
-  - In direct mode, commands can read that file, so the docs say so. That is
-    one more reason for isolated mode, or a dedicated user.
+    rotatable; rotating it means re-pairing.
+  - In direct mode, commands can read the key file, and the docs say so.
 - **Never in a project's home.**
 
 ### Supply chain
 
-- **Releases** of the CLI are signed. The installed CLI verifies updates
-  against a pinned key and refuses downgrades.
-- **The bootstrap line** verifies the release it downloads. The docs say that
-  the bootstrap script itself trusts its origin.
-- **The hub refuses daemons below a minimum version**, so known-vulnerable
-  daemons are cut off.
-- **Unknown versions** of a ticket, key set or floor message fail closed.
+- **An offline release root.** CLI releases are signed by a release authority
+  **kept offline, separate from the online service** (threshold or offline
+  keys).
+  - Metadata is signed: version, expiry, rotation and recovery, in the style
+    of TUF.
+  - A compromise of CoCalc's online service can't sign a release.
+- **Updates:**
+  - The daemon verifies every update against that root and refuses
+    downgrades.
+  - Updating is **started locally** (`cocalc computer update`), or
+    automatically only if the owner enabled verified auto-update when
+    pairing.
+  - The hub can never cause an update by itself.
+- **Minimum version:** when the hub says "minimum version N", a daemon below N
+  **stops serving** (fail closed) and tells the owner to update. It is not
+  an instruction to install anything.
+- **Unknown versions** of a ticket, key set, attestation or floor message fail
+  closed.
+- **The bootstrap line** trusts its download origin, and the docs say so
+  plainly. It verifies the release it fetches against the pinned root.
+- **The public claim is scoped:** an already installed, verified daemon, with
+  the offline release root uncompromised, bounds an online-service
+  compromise to the policy ceiling (isolated mode).
 
 ### Policy and time
 
 - **The line and the policy:** the line carries only the request id. The
-  policy is fetched, shown and confirmed locally, and stored by the daemon.
+  policy is fetched, **resolved locally** (canonical absolute mount paths,
+  recorded with their device and inode), shown, confirmed, approved through
+  the transcript, and stored by the daemon as the immutable ceiling `P0`.
+- **The partial order.** "Narrower" is defined for every field, and the daemon
+  computes it itself; the hub can't just call a new policy narrower.
+  - duration ≤;
+  - mounts: a subset, with `ro` ≤ `rw`;
+  - network: `off` ≤ `on`;
+  - GPU: `none` ≤ allowed;
+  - image rules: a subset;
+  - limits: ≤;
+  - agents: a subset of the agent ceiling;
+  - nice: on ≤ off.
+
+  Effective-policy updates carry a monotonic `policy_epoch` and are accepted
+  only if they are ≤ `P0`.
+- **Mounts at use:** a mount must resolve to the same approved object (path,
+  device and inode), or it is refused.
 - **Duration:** the policy has `initial_duration` and `max_duration` (for
   example 1 h and 8 h), or no limit.
   - **Extend** (fresh auth) moves the deadline within `max_duration`. The
     daemon enforces `max_duration` with its local continuous clock.
-- **The hub can narrow the policy but never widen it.** Widening means a new
-  pairing.
+- **The hub can narrow the policy but never widen it.** Widening means
+  confirming on the machine (a new pairing), including adding an agent that
+  isn't in the agent ceiling.
 - **At the deadline:**
   - **Isolated:** all containers are stopped, the queue is discarded, the key
     is wiped (time-limited), and the daemon exits. This is enforced locally,
@@ -622,7 +750,7 @@ the daemon (see "Files").
 | Action | New tickets | Queued work and streams | Running jobs | Credential leases | Offline machine |
 |---|---|---|---|---|---|
 | Turn an agent's grant off | stop | cancelled for that agent | continue unless "also stop its jobs" | revoked | applied on reconnect |
-| Project becomes ineligible | stop for that project | cancelled for that project | stopped | revoked | applied on reconnect |
+| Project becomes ineligible | stop for that project (admission bounded by the attestation's not-after, even if pushes are lost) | cancelled for that project (interactive leases expire on their own) | stopped when the invalidation arrives; continue until then (documented) | revoked; renewal fails within the lease | applied on reconnect |
 | Disconnect / revoke computer | stop; router revokes the principal | discarded | stopped (isolated: enforced; direct: best effort) | revoked | the key is tombstoned; on reconnect it is refused, and the daemon stops its jobs |
 | Time limit reached | stop | discarded | stopped (as above) | revoked | enforced locally |
 | Account deleted | stop | discarded | stopped (as above) | revoked | as disconnect, from the outbox |
@@ -740,10 +868,20 @@ the daemon (see "Files").
 
 - **Mode and container:** passthrough is offered **only in isolated mode**,
   always in a **fresh container** with no persistent volume.
-- **Broker first:**
-  - The daemon runs, outside the container, an HTTPS proxy that adds
-    authorization for allowlisted hosts (GitHub, Cloudflare APIs and git over
-    HTTPS), so **the job never sees the token**.
+- **Broker first** (a **security gate for stage 3**):
+  - The daemon runs, outside the container, a broker that adds authorization
+    for allowlisted origins (GitHub, Cloudflare APIs and git over HTTPS), so
+    **the job never sees the token**.
+  - **Each job gets its own broker capability:** a Unix socket mounted only
+    into that fresh container (no shared localhost listener), bound to the
+    job, lease, provider and account, and destroyed when the job stops.
+  - **Strict origins:**
+    - exact HTTPS origins and allowed methods;
+    - DNS resolved and pinned safely;
+    - URLs with userinfo or ambiguous hosts rejected;
+    - no HTTP downgrade, no `CONNECT`, no redirects off the allowlist.
+  - **Tests:** a concurrent container trying another job's broker; redirects;
+    DNS changes.
   - Where a tool needs the raw token, the job gets it through a credential
     helper or file descriptor for that job, and the docs say that the job can
     then copy it.
@@ -827,15 +965,15 @@ the daemon (see "Files").
 | Threat | Mitigation |
 |---|---|
 | A collaborator uses my computer | Only eligible projects (never shared, not public). The account check on every ticket. |
-| Another agent or process in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. Eligibility (never shared) keeps outsiders out, and the docs say every agent in that project can effectively use it. Later: per-agent runtime principals. |
+| Another agent, process or untrusted dependency in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. A process holding the identity of a granted turn gets its own tickets, because PoP doesn't stop that. Never-shared eligibility keeps people out, and the docs say every process in that project can use it during such a turn. Later: per-agent runtime principals. |
 | A former collaborator's leftover process steals a later credential | Never-shared eligibility: removing a collaborator doesn't restore it. |
-| A collaborator is added while tickets are being issued (two bays) | Privacy epoch attested by the project's bay, carried in tickets, floors pushed. The window is bounded by the attestation lease (documented). |
+| A collaborator is added while tickets are being issued (two bays) | Attestations signed by the project's bay with not-after, verified by the daemon; start-by ≤ not-after. Interactive leases expire on their own. Detached jobs continue until the invalidation arrives (documented). |
 | A revoke races a ticket | One transaction with `FOR SHARE`/`FOR UPDATE`, the audit row committed before release, epochs and floors on the daemon. |
 | A copied ticket | Audience-bound (computer and key), proof of possession, one-time, start-by. |
 | A replay after a daemon restart | A persisted ledger and floors, anti-rollback key sets. |
 | A lost answer, then a retry | `operation_id` and the ledger: no repeated side effects; unknown outcomes reported. |
 | A wrong or malicious clock, or a far-future ticket | A local continuous clock for the session's `max_duration`; bounded hub-offset drift; a local start-by maximum. |
-| The enrollment line is stolen or shown to someone | It has no secret. Approval binds the specific machine key (pairing phrase), and the CLI shows which account will control the computer. |
+| The enrollment line is stolen or shown to someone | It is not sufficient for access. Approval binds a signed transcript (keys, resolved policy, site, account) recognized by its phrase. A second claimant invalidates the request but never replaces the key. |
 | A malicious page or agent shows someone a line for *its* account | The CLI shows the site, the account and the policy, and asks for confirmation ("only if this is YOUR account"). |
 | The bootstrap line runs code from the site | Documented. Signed releases are verified against a pinned key. The installed CLI is preferred. |
 | Commands in direct mode persist beyond the session, or tamper with the daemon, its key or its logs | Acknowledged: direct mode is full trust in the allowed agents and CoCalc as that user. Isolated mode is the default; dedicated users are recommended. |
@@ -847,7 +985,8 @@ the daemon (see "Files").
 | Floods and loops | Rate limits before signature checks, non-waiting admission, hard caps. |
 | A stale former home bay issues tickets after a rehome | Home-bay ownership epoch in tickets and credentials; rehoming blocked while computers exist. |
 | Deletion while a machine is offline | Tombstone, router revocation, outbox; documented as taking effect on reconnect (except local deadlines). |
-| A compromised CoCalc service | **Isolated:** within the policy you approved, until the deadline or Ctrl-C. **Direct:** full control of that OS user. Both are documented. |
+| A compromised CoCalc online service | **Isolated:** within the policy ceiling, until the deadline or Ctrl-C, given an installed verified daemon and the offline release root. It can't widen the ceiling, add agents, or push an update. **Direct:** full control of that OS user. Both are documented. |
+| A hub-forced update turns into code execution | Releases are signed by the offline root. Updating is local or opt-in auto-update of verified releases only. A minimum-version message only stops the daemon. |
 | The daemon looks like a hidden backdoor (the VS Code tunnel abuse) | Always visible: banner, `status`, `uninstall`. No start at boot without `--service`. Signed releases. |
 
 **Fresh auth** (`dangerous-rpc-registry.ts`) is required for:
@@ -864,9 +1003,10 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
 
 - **`account_computers`:**
   - `computer_id`, `account_id`, `name`, `os`, `arch`, `user`;
-  - `mode`, `policy` (jsonb) and `policy_hash`;
+  - `mode`, `policy_ceiling` (jsonb, as resolved on the machine),
+    `ceiling_hash`, `effective_policy`, `policy_epoch`;
   - `notes` (with attribution and versions);
-  - `credential_key` (public) and fingerprint;
+  - signing and key-agreement public keys, fingerprints, and `certificate`;
   - `status`, `connected_at`, `last_seen`, `deadline`, `max_deadline`;
   - `origin` (`user` | `provider:<connection id>`);
   - `epoch`, `home_epoch`, `created`, `revoked_at`, `tombstoned_at`.
@@ -875,7 +1015,8 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
   - requesting agent, run, thread and project;
   - `policy`, `why`;
   - `state` (`pending|paired|approved|declined|expired|invalidated`);
-  - `paired_key`, `pairing_phrase`;
+  - `transcript_hash`, the paired key fingerprints, the resolved policy,
+    `claimants`;
   - `approved_by`, `approved_at`.
 - **`account_computer_jobs`:** the job mirror. Command lines are visible only
   under the access matrix.
@@ -884,8 +1025,11 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
 - **`agent_computer_grants`:** `grant_id`, `account_id`, `agent_id`,
   `source_project_id`, `computer_id` (unique together), `enabled`, `epoch`
   (monotonic across delete and recreate), timestamps.
-- **On the project's bay:** a `privacy_epoch` and a never-shared flag per
-  project.
+- **On the project's bay:** `privacy_epoch`, and `computers_eligibility`
+  (`eligible | ineligible | uncertain`, sticky; existing projects are
+  `uncertain`), both changed under the membership lock and moved with the
+  project when it is rehomed. The bay also has a signing key for
+  attestations, published in the cluster's bay-key directory.
 - **Bay ownership:** all `account_computer*` and `agent_computer_grants` rows
   are account-home tables. Rehoming is blocked while any exist. Deletion uses
   a tombstone plus an outbox.
@@ -908,13 +1052,18 @@ built, and reviewed by a security reviewer before release.
     - **Direct** is full trust in the allowed agents *and in CoCalc* as that
       OS user: commands can install things that outlive the session, and the
       local log is not evidence.
-    - **Isolated** bounds them to the policy you approved, short of a
-      container or kernel escape.
+    - **Isolated** bounds them to the policy ceiling you approved, short of
+      a container or kernel escape.
+    - The local log is evidence about the containerized jobs, not against
+      the machine's owner or a compromised host or daemon.
   - **Who can use a computer:**
     - Operations must be started from a verified turn of an agent you
       switched on, in a never-shared project of yours.
-    - Within that project, every agent can effectively use it while such a
-      turn runs.
+    - Within that project, **every process and any untrusted code or
+      dependency** can use it while such a turn runs, including starting
+      detached jobs.
+    - "Never shared" keeps people out; it doesn't make the project's code,
+      or imported files, trustworthy.
     - Detached jobs continue after the turn, until their own or the session's
       deadline.
   - **What CoCalc stores:**
@@ -933,7 +1082,11 @@ built, and reviewed by a security reviewer before release.
     - the computer's own key and where it lives (readable by direct-mode
       commands).
   - **The limits of trust:**
-    - a compromised CoCalc, in each mode;
+    - a compromised CoCalc online service, in each mode, and the conditions
+      for the isolated-mode bound (an installed, verified daemon; the offline
+      release root);
+    - after a project becomes ineligible, admission stops within 30 s, but
+      jobs already running continue until the computer hears about it;
     - a modified daemon;
     - offline machines;
     - the bootstrap line;
@@ -961,9 +1114,17 @@ Each stage ships with tests and a live check on real machines:
 - requests and the native card;
 - device-first pairing with key binding;
 - the daemon and its conat principal;
-- the full ticket protocol: binding, PoP, epochs and floors, key sets, start-by,
-  local clock;
-- the privacy fence with two-bay attestation;
+- the full ticket protocol: binding, PoP, epochs and floors, key sets,
+  start-by, local clock;
+- the privacy fence with signed project-bay attestations (not-after) and
+  interactive leases;
+- the sticky eligibility flag (existing projects start "uncertain") and fresh
+  private projects;
+- the policy ceiling, its partial order, and `policy_epoch`;
+- the signed pairing transcript with its short authentication phrase, and the
+  computer certificate with challenge and response;
+- the offline release root, verified local or opt-in updates, and
+  fail-closed minimum versions;
 - the operation ledger;
 - `list`, `info`, `notes`, `exec`, `run`, `jobs`, `logs`, `kill`, `ops`,
   `put`, `get`;
@@ -993,12 +1154,24 @@ Each stage ships with tests and a live check on real machines:
 - **bench-1 without a limit:** two agents run jobs, one `--exclusive` and one
   `--no-nice`; the machine reboots and comes back.
 - **Blocker tests** (from the review):
-  - a second, ungranted agent, and a process left by a removed collaborator,
-    try a live granted lease;
+  - a genuinely ungranted run identity is refused;
+  - a formerly shared project is permanently ineligible;
+  - a same-UID process holding a *granted* turn's identity succeeds with its
+    own PoP key. This is the documented limit, tested so the docs stay true;
   - a race for enrollment from an exposed line, where approval stays bound to
     the intended key;
   - two-bay races: a collaborator added or removed, or the owner moving,
     during issuance;
+  - an invalidation push lost at each hop;
+  - a ticket issued just before the attestation expires, and admission
+    attempted after;
+  - a long job whose invalidation never arrives (it continues, as
+    documented), while streams and credential leases stop on their own;
+  - narrowing the policy (accepted only if ≤ `P0`), and enabling an agent
+    outside the ceiling (refused without local confirmation);
+  - a pairing transcript with a mismatched phrase, site, policy or key, and a
+    second claimant;
+  - a hub-sent minimum version stops the daemon and never installs anything;
   - a lost answer plus a new ticket never repeats an exec or run;
   - a crash at the nonce, admission and spawn boundaries;
   - a queued job revoked before dispatch never starts;
@@ -1145,7 +1318,19 @@ Each is a new operation kind in the same ticket protocol.
     on the trusted side.
 15. **Output, logs and notes are data, not instructions,** in every
     agent-facing surface.
-16. **The daemon is small, self-contained and tidy:**
+16. **Project-bay attestations have an expiry the daemon checks.** Start-by,
+    stream leases and credential leases never outlive them.
+17. **The approved policy is a local ceiling** with a fully defined partial
+    order. Adding an agent is widening.
+18. **Pairing approval binds a signed transcript and a locally resolved
+    policy.** Signing and key-agreement keys are separate, and the result is
+    a certificate, not a secret.
+19. **PoP is not an intra-project boundary,** and every surface says so.
+20. **Release signing is independent of the online service.** A minimum
+    version fails closed and never triggers remote updates.
+21. **Eligibility is a sticky fact owned by the project's bay;** uncertain
+    legacy projects fail closed.
+22. **The daemon is small, self-contained and tidy:**
     - one directory and one daemon per user;
     - `uninstall`;
     - no dependency the standalone CLI can't load (#937).
@@ -1183,6 +1368,27 @@ Each is a new operation kind in the same ticket protocol.
 5. **Network in isolated mode:** default *on* (pip, git and downloads need it),
    shown on the card, with cloud metadata addresses blocked where possible.
    Or default off?
+6. **The agent ceiling** (revision 5). At pairing, the owner chooses either
+   "these agents" (the requesting one by default) or "any of my agents in an
+   eligible project".
+   - With "these agents", turning on another agent later means confirming on
+     the machine.
+   - For a research server you want to hand to agents freely, "any of my
+     agents" avoids that, and grants still choose.
+   - Default for time-limited computers: "these agents"; without a limit:
+     ask.
+7. **Existing projects start ineligible** (revision 5). Computers would work
+   only from new private projects, which the Connectors menu creates in one
+   click. Acceptable? The alternative, trusting old projects' collaborator
+   history, fails open when that history is incomplete.
+8. **Detached jobs after a project becomes ineligible:** they continue until
+   the computer hears about it, so jobs survive network loss. The
+   alternative stops them when a short lease lapses, which breaks long jobs
+   on flaky networks. I recommend continuing, documented.
+9. **Updates:** updating the daemon is started locally (`cocalc computer
+   update`), with *opt-in* automatic updates of releases signed by the
+   offline root. Fine? It also means CoCalc needs an offline release-signing
+   key and procedure, a one-time setup for you.
 
 ## Review history
 
@@ -1224,6 +1430,23 @@ Each is a new operation kind in the same ticket protocol.
     - **M16:** caps. "Limits".
     - **M17:** supply chain.
   - Its stage-1 blocker tests are in stage 1's "Done when".
+- **@lite1-review, revision 4** (re-review): most findings resolved; request
+  changes on:
+  - **1:** privacy-lease enforcement at the daemon. Signed attestations with
+    not-after, start-by ≤ not-after, interactive leases, and documented job
+    continuation.
+  - **2:** narrow-only needs a defined ceiling. `P0`, the partial order,
+    `policy_epoch`, the agent ceiling.
+  - **3:** the pairing transcript. Signed transcript, phrase derived from it,
+    separate keys, a certificate instead of a secret, mounts resolved before
+    approval, second claimants.
+  - **4:** release signing independent of the online service. Offline root,
+    local or opt-in verified updates, fail-closed minimum versions.
+  - **5 (stage-3 gate):** broker isolation. A per-job Unix socket and strict
+    origins.
+  - **6–8 (wording):** PoP's meaning, sticky eligibility, and the scope of the
+    local log as evidence.
+  - Its verdict: "With those changes, I would approve stage 1's architecture."
 
 ## Prior art and lessons
 
