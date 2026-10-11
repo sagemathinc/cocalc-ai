@@ -101,6 +101,11 @@ export interface WebappClient extends EventEmitter {
   set_deleted: Function;
   mark_file: (opts: any) => Promise<void>;
   getConatClient: () => ReturnType<ConatClient["conat"]>;
+  purgeHistory: (opts: {
+    project_id: string;
+    path: string;
+    oversized_seq?: number;
+  }) => Promise<{ deleted: number; history_epoch: number; reset?: boolean }>;
   set_connected?: Function;
   version: Function;
   alert_message: Function;
@@ -171,6 +176,11 @@ class Client extends EventEmitter implements WebappClient {
   is_deleted: (filename: string, project_id: string) => boolean;
   mark_file: (opts: any) => Promise<void>;
   getConatClient: () => ReturnType<ConatClient["conat"]>;
+  purgeHistory: (opts: {
+    project_id: string;
+    path: string;
+    oversized_seq?: number;
+  }) => Promise<{ deleted: number; history_epoch: number; reset?: boolean }>;
 
   idle_reset: Function;
   latency: Function;
@@ -226,6 +236,7 @@ class Client extends EventEmitter implements WebappClient {
     this.callConatService = this.conat_client.callConatService;
     this.createConatService = this.conat_client.createConatService;
     this.getConatClient = this.conat_client.conat.bind(this.conat_client);
+    this.purgeHistory = (opts) => this.conat_client.hub.sync.purgeHistory(opts);
 
     this.query = this.query_client.query.bind(this.query_client);
     this.async_query = this.query_client.query.bind(this.query_client);

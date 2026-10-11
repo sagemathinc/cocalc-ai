@@ -1,5 +1,9 @@
 import { conat } from "@cocalc/backend/conat";
-import { type Patch, type HistoryInfo } from "@cocalc/conat/hub/api/sync";
+import {
+  type Patch,
+  type HistoryInfo,
+  type PurgeHistoryResult,
+} from "@cocalc/conat/hub/api/sync";
 import {
   history as historyImpl,
   purgeHistory as purgeHistoryImpl,
@@ -34,15 +38,18 @@ export async function purgeHistory({
   account_id,
   project_id,
   path,
+  oversized_seq,
 }: {
   account_id?: string;
   project_id: string;
   path: string;
-}): Promise<{ deleted: number; history_epoch: number }> {
+  oversized_seq?: number;
+}): Promise<PurgeHistoryResult> {
   return await purgeHistoryImpl({
     account_id,
     project_id,
     path,
+    oversized_seq,
     client: conat(),
     assertAccess: assertCollab,
   });

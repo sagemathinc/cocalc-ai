@@ -395,6 +395,8 @@ export function server({
           mesg.respondSync(stream.setMetadata(mesg.data));
         } else if (request.cmd == "patchMetadata") {
           mesg.respondSync(stream.patchMetadata(mesg.data));
+        } else if (request.cmd == "resetHistory") {
+          mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
         } else if (request.cmd == "checkpoints") {
           mesg.respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
@@ -469,10 +471,14 @@ export function server({
           });
         }
       } catch (err) {
+        const oversizedSeq = (err as any)?.oversizedSeq;
         mesg.respondSync(null, {
           headers: {
             error: `${err}`,
             code: (err as any)?.code ?? classifyPersistStorageErrorCode(err),
+            ...(typeof oversizedSeq == "number"
+              ? { oversized_seq: oversizedSeq }
+              : {}),
           },
         });
       }

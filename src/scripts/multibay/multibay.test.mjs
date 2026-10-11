@@ -446,6 +446,61 @@ describe("project control across bays", () => {
   });
 });
 
+describe("document history across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, reads and purges a document's edit history (TimeTravel), which
+  // lives with the project.
+  const path = "history.txt";
+
+  it("reads and purges the history on the project's bay", async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { conat } = require("@cocalc/backend/conat");
+       const { patchesStreamName } = require("@cocalc/conat/sync/synctable-stream");
+       const stream = conat().sync.astream({
+         project_id: ${JSON.stringify(bob.project)},
+         name: patchesStreamName({ path: ${JSON.stringify(path)} }),
+         noInventory: true,
+       });
+       for (let i = 0; i < 3; i++) {
+         const time = Date.now() + i;
+         await stream.publish({ time, wall: time, patch: "[]", user_id: 0, parents: [] });
+       }
+       stream.close();`,
+    );
+    const history = await alice.client.call("sync.history", {
+      project_id: bob.project,
+      path,
+    });
+    assert.equal(history.patches.length, 3);
+    const result = await alice.client.call("sync.purgeHistory", {
+      project_id: bob.project,
+      path,
+    });
+    assert.deepEqual(result, { deleted: 3, history_epoch: 1, reset: true });
+    const purged = await alice.client.call("sync.history", {
+      project_id: bob.project,
+      path,
+    });
+    assert.equal(purged.patches.length, 0);
+  });
+
+  it("refuses a non-member on the other bay", async () => {
+    const hana = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "hana",
+    });
+    hana.client = await client(hana);
+    await assert.rejects(
+      hana.client.call("sync.history", { project_id: bob.project, path }),
+    );
+    await assert.rejects(
+      hana.client.call("sync.purgeHistory", { project_id: bob.project, path }),
+    );
+  });
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course

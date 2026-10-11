@@ -545,6 +545,16 @@ export class SyncDoc extends EventEmitter {
           if (this.isClosed()) {
             return true;
           }
+          if (await this.resetOversizedHistory(err)) {
+            // the history was reset, so open again right away
+            try {
+              await this.initAll();
+              this.emitOpenPhase("init_attempt_done", { attempt });
+              return true;
+            } catch (retryErr) {
+              err = retryErr;
+            }
+          }
           const m = `WARNING: problem initializing ${this.path} -- ${err}`;
           log(m);
           if (DEBUG || true) {
@@ -572,6 +582,66 @@ export class SyncDoc extends EventEmitter {
     }
     this.emit_change(); // from nothing to something.
   });
+
+  // A patch too large to load (e.g., a runaway notebook output saved as one
+  // 500 MB patch) makes every open of this document fail with 413.  Rather
+  // than leave the user stuck, reset the history, as TimeTravel's "purge
+  // history" does -- open copies of the document see the new history epoch
+  // and close instead of writing stale state, and the persist server fences
+  // out writes from the old epoch -- but keep the old history aside, and tell
+  // the user.  The reset only happens if that patch is still there, so when
+  // several clients hit it at once only the first resets the history.  Only
+  // clients that can purge (browsers) do this, at most once per SyncDoc.
+  private oversizedHistoryReset = false;
+  private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
+    const oversized_seq = (err as any)?.oversizedHistorySeq;
+    if (
+      typeof oversized_seq != "number" ||
+      this.oversizedHistoryReset ||
+      typeof this.client.purgeHistory != "function"
+    ) {
+      return false;
+    }
+    this.oversizedHistoryReset = true;
+    let result: { history_epoch: number; reset?: boolean };
+    try {
+      result = await this.client.purgeHistory({
+        project_id: this.project_id,
+        path: this.syncPath,
+        oversized_seq,
+      });
+    } catch (purgeErr) {
+      // e.g., no permission or no connection: keep retrying the open, and
+      // try the reset again next time
+      this.oversizedHistoryReset = false;
+      this.dbg("resetOversizedHistory")(`failed -- ${purgeErr}`);
+      return false;
+    }
+    // Open with the epoch now in effect -- from our reset, or from whoever
+    // reset the history first -- rather than close, as this document would
+    // when it sees the epoch change.
+    this.history_epoch = result.history_epoch;
+    if (result.reset) {
+      this.client.alert_message?.({
+        type: "info",
+        title: "Edit history reset",
+        message: `The edit history (TimeTravel) of ${this.path} contained an entry too large to load, most likely a huge output, so its edit history was reset and the file opened normally. CoCalc kept a copy of the old history; contact support if you need it.`,
+        block: true,
+      });
+    }
+    return true;
+  };
+
+  // A 413 while loading the patches means the edit history itself holds a
+  // patch too large to load (see resetOversizedHistory), as opposed to some
+  // other stream this document uses.
+  private markOversizedHistory = (err: unknown): unknown => {
+    const seq = (err as any)?.oversizedSeq;
+    if ((err as any)?.code == 413 && typeof seq == "number") {
+      (err as any).oversizedHistorySeq = seq;
+    }
+    return err;
+  };
 
   private resolveCanonicalSyncIdentityPath = async (
     path: string,
@@ -1904,7 +1974,11 @@ export class SyncDoc extends EventEmitter {
         this.patch_table_query(this.useConat ? undefined : this.last_snapshot),
       ],
     };
-    this.patches_table = await this.synctable(query, [], this.patch_interval);
+    try {
+      this.patches_table = await this.synctable(query, [], this.patch_interval);
+    } catch (err) {
+      throw this.markOversizedHistory(err);
+    }
     this.registerTableConnectionState(this.patches_table);
     this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
