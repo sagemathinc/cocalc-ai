@@ -278,9 +278,19 @@ export function findSensorReview(
     .sort((a: any, b: any) =>
       `${b.date ?? ""}`.localeCompare(`${a.date ?? ""}`),
     );
-  const thread_id = threads[0]?.thread_id as string | undefined;
+  // A review that failed before its prompt was sent left only an empty
+  // thread: skip it, so it neither shows as running nor blocks a retry.
+  let thread_id: string | undefined;
+  let messages: any[] = [];
+  for (const row of threads) {
+    messages = actions.getMessagesInThread(row.thread_id) ?? [];
+    if (messages.length > 0) {
+      thread_id = row.thread_id;
+      break;
+    }
+  }
   if (!thread_id) return;
-  const replies = (actions.getMessagesInThread(thread_id) ?? []).filter(
+  const replies = messages.filter(
     (message) => field<string>(message, "sender_id") !== account_id,
   );
   const reply = replies[replies.length - 1];

@@ -69,6 +69,8 @@ test("finds the newest review of the spec and the reviewer's reply", () => {
     listThreadConfigRows: () => [
       { thread_id: "old", name, date: "2026-10-10T18:00:00.000Z" },
       { thread_id: "new", name, date: "2026-10-10T19:00:00.000Z" },
+      // A start that failed before sending: no messages.
+      { thread_id: "failed", name, date: "2026-10-10T20:00:00.000Z" },
       { thread_id: "other", name: "Review: x (spec 999)", date: "z" },
     ],
     getMessagesInThread: (thread_id: string) =>
@@ -251,6 +253,15 @@ describe("starting a review", () => {
     mockCopyPayment.mockRejectedValue(new Error("hub unavailable"));
     await expect(start()).rejects.toThrow("hub unavailable");
     expect(review.sendChat).not.toHaveBeenCalled();
+    // The empty thread it left is not a review in progress: retry is open.
+    const name = review.createEmptyThread.mock.calls[0][0].name;
+    review.listThreadConfigRows = () => [
+      { thread_id: "review-thread", name, date: "2026-10-11T00:00:00.000Z" },
+    ];
+    review.getMessagesInThread = () => [];
+    expect(
+      findSensorReview(review, "New issues", "abcdef0123456789", "me"),
+    ).toBeUndefined();
   });
 
   test("a Codex agent's script is never handed to Claude", async () => {
