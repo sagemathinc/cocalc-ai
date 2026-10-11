@@ -746,6 +746,77 @@ the daemon (see "Files").
   - In direct mode, commands can read the key file, and the docs say so.
 - **Never in a project's home.**
 
+### The computer principal and the data path (part 4b design, Oct 11)
+
+*Proposed for review before any code; it refines "Control path" and
+"Enrollment".*
+
+**Agents never talk to a computer directly; the hub relays.**
+- Agent identities stay sealed. Today a run identity may publish only to
+  `agent-messaging.<agent>.<run>` and subscribe only to
+  `_INBOX.agent-identity.<agent>.<run>.*`, and no other principal may publish
+  into `_INBOX.agent-identity.*`. That stays exactly as it is.
+- The agent's CLI makes two agent-messaging calls (action `computer`):
+  1. `ticket`: as today (part 3). The hub returns the signed ticket.
+  2. `send`: the ticket, the PoP proof and the request. The home bay sends
+     them to `computer.<id>.op` **as the hub**, and returns the daemon's answer.
+     It does not sign anything here; the daemon checks the ticket and PoP as
+     before.
+- **Long operations:** the relay waits at most about 60 s. An `exec` still
+  running then answers `running` with its `operation_id`. It keeps running,
+  and `ops` returns its recorded outcome and output once it's done (the
+  daemon keeps the output on the machine).
+- **Consequences:**
+  - Output passes through CoCalc (≤ 1 MB per operation), which is where
+    metering belongs anyway.
+  - Transfers (part 6) need their own streaming design, not this relay.
+  - The router change is confined to the new principal.
+
+**The principal.** A new user type `computer`, with `computer_id`, handled
+first in `isAllowed`, and **default deny**:
+- **sub:** `computer.<id>.>` (requests from the hub) and its own inbox
+  `_INBOX.computer-<id>.>`.
+- **pub:**
+  - `_INBOX.*` for replies, except the reserved agent inboxes. Conat replies
+    go to a fresh random subject per request, so a computer can answer only
+    requests it received.
+  - `hub.computer.<id>.api` for reports: job and operation outcomes, and
+    heartbeats carrying hub time.
+- Nothing else. Every other code path that switches on the user type treats
+  `computer` as unknown, which means denied.
+- The home bay's `computers` service is the only consumer of
+  `hub.computer.<id>.api`, and it takes the computer id from the
+  authenticated principal, never from the message.
+
+**Session tokens by challenge and response** (`/api/v2/computers/session`,
+at the home bay):
+1. `challenge {computer_id}` returns a challenge **signed by the bay key**:
+   computer id, nonce, and an expiry 60 s ahead. Being stateless, it works
+   behind any hub process.
+2. `token {challenge, signature}`: the signature must be by the computer's
+   certified key over (site, computer id, challenge). The computer must not
+   be revoked or tombstoned, and the certificate must not have expired. The
+   answer is a bay-signed session token: computer id, account, key
+   fingerprint, the computer epoch, issued at, and not_after 15 minutes ahead.
+3. **The bearer** `cocalc-computer.<base64url envelope>`: `getUser` verifies
+   the signature (a directory key of this bay), the expiry, and that the
+   computer's **current epoch equals the token's**.
+   - Revoking, or narrowing its network, bumps the epoch, so the next
+     revalidation drops the connection.
+   - The home bay also closes the computer's live connections at once on
+     revoke, as for project-hosts.
+- **The hub time offset** comes from the challenge's issue time, bounded as
+  in "The daemon's checks".
+
+**Questions for the reviewer:**
+- (a) Is relaying through the hub acceptable, rather than opening a direct
+  agent-to-computer path, given that it keeps run identities sealed?
+- (b) Is the stateless bay-signed challenge fine, given that replaying one
+  within 60 s only yields another token for whoever holds the computer's
+  private key?
+- (c) Is epoch equality at revalidation, plus an immediate close on revoke,
+  enough?
+
 ### Supply chain
 
 - **An offline release root.** CLI releases are signed by a release authority
