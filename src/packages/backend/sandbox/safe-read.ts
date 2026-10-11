@@ -25,14 +25,21 @@ same fd-anchored check the sandbox applies to its own reads and writes.
 
 import { open, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
-import { relative, isAbsolute } from "node:path";
+import { relative, isAbsolute, sep } from "node:path";
 
 function isInside(child: string, base: string): boolean {
   if (child === base) {
     return true;
   }
   const rel = relative(base, child);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  // Only a leading ".." component leaves the base; names such as "..hidden"
+  // are ordinary entries inside it.
+  return (
+    rel !== "" &&
+    rel !== ".." &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
 }
 
 export async function readWatchedFileUtf8(

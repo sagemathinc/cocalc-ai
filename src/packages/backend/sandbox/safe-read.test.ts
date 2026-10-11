@@ -58,6 +58,28 @@ describeIfLinux("readWatchedFileUtf8", () => {
       ).rejects.toMatchObject({ code: "EACCES" });
     });
 
+    it("reads in-base names that start with two dots", async () => {
+      const base = join(dir, "base3");
+      await mkdir(join(base, "..hidden"), { recursive: true });
+      await writeFile(join(base, "..hidden", "doc.txt"), "dots");
+      await writeFile(join(base, "..notes.txt"), "more dots");
+      expect(
+        await readWatchedFileUtf8(join(base, "..hidden", "doc.txt"), base),
+      ).toBe("dots");
+      expect(await readWatchedFileUtf8(join(base, "..notes.txt"), base)).toBe(
+        "more dots",
+      );
+    });
+
+    it("refuses a file in a sibling of the base", async () => {
+      const base = join(dir, "base4");
+      await mkdir(base);
+      await writeFile(join(dir, "sibling.txt"), "sibling");
+      await expect(
+        readWatchedFileUtf8(join(dir, "sibling.txt"), base),
+      ).rejects.toMatchObject({ code: "EACCES" });
+    });
+
     it("allows a regular file through an in-base symlinked parent", async () => {
       const base = join(dir, "base2");
       await mkdir(join(base, "real"), { recursive: true });
