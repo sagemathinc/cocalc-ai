@@ -249,6 +249,13 @@ So:
     Releases are still signed by an offline key, verified, and protected
     against downgrades. A hub "minimum version" message only stops the
     daemon. *(William, Oct 11)*
+28. **The account-wide agent kill switch covers computers:** pausing all agent
+    messaging (or "revoke all") bumps the epoch of every computer on the
+    account, and no tickets are issued while paused. Narrowing one network
+    (removing a member, pausing, closing) bumps only its computers. Ticket
+    issuance locks controls, then network, then computer: the same order as
+    every narrowing path. Account rehome is refused while any computer,
+    pairing request or audit row exists. *(implementation, Oct 11)*
 
 ## What exists to build on (traced, origin/main 25f42495b2)
 

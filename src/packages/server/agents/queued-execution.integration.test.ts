@@ -91,6 +91,7 @@ describeDb("accepted queued work outlives the sending run", () => {
     "agent_personal_controls",
     "agent_personal_names",
     "agent_networks",
+    "account_computers",
     "agent_network_members",
     "agent_network_mutations",
     "agent_network_activity",

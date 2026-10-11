@@ -40,6 +40,7 @@ describeDb("native identity recovery", () => {
           "agent_identity_runs",
           "agent_personal_names",
           "agent_networks",
+          "account_computers",
           "agent_network_members",
         ].map((name) => [name, SCHEMA[name]]),
       ),

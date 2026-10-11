@@ -36,6 +36,10 @@ import {
 } from "@cocalc/conat/agents/personal";
 import type { AgentStore } from "./store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
+import {
+  bumpComputersForAccount,
+  bumpComputersForNetwork,
+} from "@cocalc/server/computers/computers";
 
 const MAX_ACTIVE_NETWORKS = 100;
 const MAX_RETAINED_NETWORKS = 1000;
@@ -1386,6 +1390,12 @@ export class PersonalAgentStore {
           binding,
           row.agent_network_id,
         );
+        if (
+          options.action === "remove-member" ||
+          options.action === "pause" ||
+          options.action === "close"
+        )
+          await bumpComputersForNetwork(db, account, row.agent_network_id);
         return updated.agent_network_id;
       },
     );
@@ -1707,6 +1717,7 @@ export class PersonalAgentStore {
           "UPDATE agent_networks SET state='closed',generation=$2,updated_at=now(),closed_at=now() WHERE account_id=$1 AND state<>'closed'",
           [account, randomUUID()],
         );
+      if (opts.action !== "resume") await bumpComputersForAccount(db, account);
       return row;
     });
   }

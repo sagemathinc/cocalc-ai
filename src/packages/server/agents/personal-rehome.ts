@@ -23,6 +23,15 @@ export const EXTERNAL_AGENT_STATE_TABLES = [
   "agent_external_inbox",
 ] as const;
 
+/** Computers are signed for their home bay (home_epoch): no rehome while any
+ * remain, including their requests and audit. */
+export const COMPUTER_STATE_TABLES = [
+  "account_computers",
+  "account_computer_requests",
+  "account_computer_operations",
+  "account_computer_jobs",
+] as const;
+
 export type PersonalAuthorityDb = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
@@ -53,6 +62,7 @@ export async function assertNoPersonalStateForRehome(
   const tables = [
     ...PERSONAL_AGENT_STATE_TABLES,
     ...EXTERNAL_AGENT_STATE_TABLES,
+    ...COMPUTER_STATE_TABLES,
   ];
   const existing = new Set(
     (
@@ -72,7 +82,7 @@ export async function assertNoPersonalStateForRehome(
       ).rows.length
     )
       throw new Error(
-        "Account rehome is unavailable while this account has People state, personal agent names, networks, controls, proposals, or external-agent history. Personal state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
+        "Account rehome is unavailable while this account has People state, personal agent names, networks, controls, proposals, computers, or external-agent history. Personal state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
       );
   }
 }

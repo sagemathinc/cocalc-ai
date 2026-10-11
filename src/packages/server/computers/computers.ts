@@ -372,8 +372,19 @@ export async function setEffectivePolicy({
  * network paused or closed): bump those computers' epochs, inside the
  * caller's transaction so it commits with the network change.
  */
+/** Anything with a query method: a pool client inside a transaction. */
+export interface Queryable {
+  query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
+}
+
+/**
+ * The agent network narrowed (a member removed, paused or closed): bump the
+ * epoch of every computer serving it, in the caller's transaction, so tickets
+ * issued before no longer start and detached jobs end when the computer
+ * learns the new epoch. Returns the computers to notify.
+ */
 export async function bumpComputersForNetwork(
-  client: PoolClient,
+  client: Queryable,
   account_id: string,
   agent_network_id: string,
 ): Promise<string[]> {
@@ -383,6 +394,20 @@ export async function bumpComputersForNetwork(
         AND revoked_at IS NULL AND tombstoned_at IS NULL
       RETURNING computer_id`,
     [account_id, agent_network_id],
+  );
+  return rows.map((r) => r.computer_id);
+}
+
+/** Agent messaging was paused or every network closed: all of them. */
+export async function bumpComputersForAccount(
+  client: Queryable,
+  account_id: string,
+): Promise<string[]> {
+  const { rows } = await client.query(
+    `UPDATE account_computers SET epoch=epoch+1, updated_at=now()
+      WHERE account_id=$1 AND revoked_at IS NULL AND tombstoned_at IS NULL
+      RETURNING computer_id`,
+    [account_id],
   );
   return rows.map((r) => r.computer_id);
 }

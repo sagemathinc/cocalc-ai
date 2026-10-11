@@ -7,9 +7,10 @@
 // account's home bay. Plan: src/.agents/computers-plan-2026-10-11.md
 // ("Control path", "The ticket", "Operation ledger and retries").
 //
-// In ONE transaction, holding FOR SHARE on the computer and on the agent
-// network (revoke, narrowing and membership removal take FOR UPDATE and bump
-// epochs), the hub checks everything, records the operation, and only then
+// In ONE transaction, holding FOR SHARE on the account's agent messaging
+// controls, the agent network and the computer (revoke, pause, narrowing and
+// membership removal lock them for update and bump epochs), the hub checks
+// everything, records the operation, and only then
 // releases the signed ticket. A retry with the same operation_id and request
 // gets a new ticket for the same operation, never a second operation; a
 // different request under the same operation_id is refused.
@@ -121,25 +122,30 @@ export async function issueComputerTicket(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    // Lock order matches every narrowing path (agent messaging controls,
+    // then the network, then the computer), so they serialize instead of
+    // deadlocking: a narrowing either sees this operation recorded or this
+    // issue sees the narrowing.
     const byId = isValidUUID(input.computer);
-    const { rows } = await client.query(
-      `SELECT * FROM account_computers
-        WHERE account_id=$1 AND ${byId ? "computer_id" : "name"}=$2
-          AND tombstoned_at IS NULL
-        FOR SHARE`,
-      [input.account_id, byId ? input.computer.toLowerCase() : input.computer],
+    const found = (
+      await client.query(
+        `SELECT computer_id, agent_network_id FROM account_computers
+          WHERE account_id=$1 AND ${byId ? "computer_id" : "name"}=$2
+            AND tombstoned_at IS NULL`,
+        [
+          input.account_id,
+          byId ? input.computer.toLowerCase() : input.computer,
+        ],
+      )
+    ).rows[0];
+    if (found == null) throw new TicketError(`no computer '${input.computer}'`);
+
+    const controls = await client.query(
+      `SELECT paused FROM agent_personal_controls WHERE account_id=$1 FOR SHARE`,
+      [input.account_id],
     );
-    const computer = rows[0];
-    if (computer == null)
-      throw new TicketError(`no computer '${input.computer}'`);
-    if (computer.revoked_at != null) {
-      throw new TicketError(`${computer.name} is disconnected`);
-    }
-    if (
-      computer.deadline != null &&
-      new Date(computer.deadline).valueOf() <= now
-    ) {
-      throw new TicketError(`the session on ${computer.name} has ended`);
+    if (controls.rows[0]?.paused) {
+      throw new TicketError("agent messaging is paused for this account");
     }
 
     // The agent must be a registered member of the computer's network, in
@@ -152,12 +158,34 @@ export async function issueComputerTicket(
           AND m.registered_agent_id=$3 AND m.project_id=$4
         FOR SHARE OF n`,
       [
-        computer.agent_network_id,
+        found.agent_network_id,
         input.account_id,
         input.agent_id,
         input.source_project_id,
       ],
     );
+
+    const computer = (
+      await client.query(
+        `SELECT * FROM account_computers
+          WHERE computer_id=$1 AND tombstoned_at IS NULL FOR SHARE`,
+        [found.computer_id],
+      )
+    ).rows[0];
+    if (
+      computer == null ||
+      computer.agent_network_id !== found.agent_network_id
+    )
+      throw new TicketError(`no computer '${input.computer}'`);
+    if (computer.revoked_at != null) {
+      throw new TicketError(`${computer.name} is disconnected`);
+    }
+    if (
+      computer.deadline != null &&
+      new Date(computer.deadline).valueOf() <= now
+    ) {
+      throw new TicketError(`the session on ${computer.name} has ended`);
+    }
     if (member.rows.length === 0) {
       throw new TicketError(
         `this agent is not in the agent network that ${computer.name} serves`,

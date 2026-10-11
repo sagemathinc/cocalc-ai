@@ -51,6 +51,7 @@ const tables = [
   "account_computer_jobs",
   "cluster_computer_signing_keys",
   "bay_computer_signing_keys",
+  "agent_personal_controls",
   "agent_networks",
   "agent_network_members",
   "projects",
@@ -314,7 +315,7 @@ describeDb("computer tickets", () => {
     );
   });
 
-  it("refuses a revoked computer, an ended session, a paused network, a removed member", async () => {
+  it("refuses a revoked computer, an ended session, a paused network, a removed member, paused agent messaging", async () => {
     const { revokeComputer } = await import("./computers");
     await db().query("UPDATE account_computers SET deadline=$1", [
       new Date(Date.now() - 1),
@@ -329,6 +330,13 @@ describeDb("computer tickets", () => {
     await db().query("UPDATE agent_network_members SET removed_at=now()");
     await expect(issue()).rejects.toThrow(/not in the agent network/);
     await db().query("UPDATE agent_network_members SET removed_at=NULL");
+    await db().query(
+      "INSERT INTO agent_personal_controls(account_id, paused) VALUES ($1, true)",
+      [account],
+    );
+    await expect(issue()).rejects.toThrow(/agent messaging is paused/);
+    await db().query("UPDATE agent_personal_controls SET paused=false");
+    await expect(issue()).resolves.toHaveProperty("ticket");
     await revokeComputer({ account_id: account, computer_id });
     await expect(issue()).rejects.toThrow(/disconnected/);
   });

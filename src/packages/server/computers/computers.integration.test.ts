@@ -55,6 +55,7 @@ const tables = [
   "account_computer_jobs",
   "cluster_computer_signing_keys",
   "bay_computer_signing_keys",
+  "agent_personal_controls",
   "agent_networks",
   "agent_network_members",
   "projects",
