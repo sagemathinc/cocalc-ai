@@ -10,7 +10,7 @@ const guides = {
   "ai/codex-settings": "Reasoning level",
   "ai/codex-conversations": "Fork chat",
   "ai/codex-goals": "Snooze 5 minutes",
-  "ai/codex-automation": "unacknowledged",
+  "ai/codex-automation": "Scheduled thread automations",
   "ai/codex-notifications": "Stop all active or uncertain",
   "ai/editor-agent": "Automatically submit to Agent",
 };

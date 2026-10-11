@@ -585,7 +585,8 @@ describe("AgentsPanel session cards", () => {
     expect(screen.getByText("Appearance...")).toBeTruthy();
     expect(screen.getByText("Behavior...")).toBeTruthy();
     expect(screen.getByText("Open Chat File")).toBeTruthy();
-    expect(screen.getByText("Automation settings…")).toBeTruthy();
+    // Thread automations were replaced by agent sensors.
+    expect(screen.queryByText("Automation settings…")).toBeNull();
     expect(screen.getByText("Git browser")).toBeTruthy();
     expect(screen.getByText("Export...")).toBeTruthy();
 
@@ -593,9 +594,6 @@ describe("AgentsPanel session cards", () => {
     expect(mockOpenFile).toHaveBeenCalledWith({
       path: "/home/user/agent.chat",
     });
-
-    fireEvent.click(screen.getByText("Automation settings…"));
-    expect(screen.getByText("Thread automation")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Git browser"));
     expect(screen.getByText("Git browser drawer")).toBeTruthy();
@@ -756,7 +754,7 @@ describe("AgentsPanel session cards", () => {
     expect(screen.getByText("Behavior...")).toBeTruthy();
     expect(screen.getByText("Pin chat")).toBeTruthy();
     expect(screen.getByText("Archive chat")).toBeTruthy();
-    expect(screen.getByText("Automation settings…")).toBeTruthy();
+    expect(screen.queryByText("Automation settings…")).toBeNull();
     expect(screen.getByText("Git browser")).toBeTruthy();
     expect(screen.getByText("Export...")).toBeTruthy();
     expect(screen.getByText("Import...")).toBeTruthy();

@@ -108,12 +108,14 @@ export function ChatRoomThreadMenu({
           },
         ]
       : [];
+  // Thread automations were replaced by agent sensors; only a thread that
+  // still has a stored automation offers its settings, to pause or delete it.
   const automationItems: NonNullable<MenuProps["items"]> =
-    (isAI || isAutomation) && openAutomationModal
+    isAutomation && openAutomationModal
       ? [
           {
             key: "automation",
-            label: "Automation settings…",
+            label: "Retired automation…",
           },
         ]
       : [];

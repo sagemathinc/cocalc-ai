@@ -233,7 +233,7 @@ function preparationKey(e: AgentRpcEnvelope) {
   });
 }
 
-async function hostFor(endpoint: AgentEndpoint) {
+export async function hostFor(endpoint: AgentEndpoint) {
   const project = (
     await agentStore().query(
       "SELECT host_id,state FROM projects WHERE project_id=$1 AND deleted IS NOT TRUE",

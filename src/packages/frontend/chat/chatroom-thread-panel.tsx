@@ -15,7 +15,6 @@ import {
   Radio,
   Select,
   Space,
-  Switch,
 } from "antd";
 import {
   React,
@@ -1702,22 +1701,6 @@ export function ChatRoomThreadPanel({
             }}
           >
             <div style={{ fontWeight: 600 }}>New chat setup</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ color: UI_COLORS.text, fontSize: 13 }}>
-                Automation
-              </span>
-              <Switch
-                checked={automationEnabled}
-                onChange={(checked) =>
-                  update({
-                    automationConfig: {
-                      ...automationDraft,
-                      enabled: checked,
-                    },
-                  })
-                }
-              />
-            </div>
           </div>
           <div
             style={{

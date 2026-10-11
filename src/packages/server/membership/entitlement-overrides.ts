@@ -80,6 +80,8 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "acp_max_running_per_account",
   "acp_max_running_per_project",
   "acp_max_active_automations_per_project",
+  "sensor_min_interval_minutes",
+  "sensor_max_wakes_per_day",
   "blob_account_total_bytes",
   "blob_account_count",
   "blob_project_total_bytes",
@@ -303,6 +305,18 @@ const OVERRIDE_EFFECT_FIELDS = [
     key: "acp_max_active_automations_per_project",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .acp_max_active_automations_per_project,
+  },
+  {
+    section: "usage_limits",
+    key: "sensor_min_interval_minutes",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .sensor_min_interval_minutes,
+  },
+  {
+    section: "usage_limits",
+    key: "sensor_max_wakes_per_day",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .sensor_max_wakes_per_day,
   },
   {
     section: "usage_limits",

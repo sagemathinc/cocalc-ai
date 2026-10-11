@@ -5,7 +5,11 @@
 
 import { lazy, Suspense, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import { ApartmentOutlined, ApiOutlined } from "@ant-design/icons";
+import {
+  ApartmentOutlined,
+  ApiOutlined,
+  ScheduleOutlined,
+} from "@ant-design/icons";
 import { Alert, Button, Dropdown, Modal, Spin } from "antd";
 import type { MenuProps } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
@@ -30,6 +34,13 @@ const CliConnectorAgentModal = lazy(() =>
     default: module.CliConnectorAgentModal,
   })),
 );
+// Loaded only when the Sensors dialog is opened.
+const AgentSensorsModal = lazy(() =>
+  import("./sensors").then((module) => ({
+    default: module.AgentSensorsModal,
+  })),
+);
+import { sensorsSummary, useAgentSensors } from "./sensors-store";
 import { CocalcConnector } from "./cocalc-connector";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
@@ -181,6 +192,20 @@ function NamedAgentConnectors({
   const [networksOpen, setNetworksOpen] = useState(false);
   const [detailsId, setDetailsId] = useState<string>();
   const [cliOpen, setCliOpen] = useState<CliConnector>();
+  const [sensorsOpen, setSensorsOpen] = useState(false);
+  // Sensors run on the hub's scheduler, which CoCalc Lite does not have.
+  const {
+    sensors,
+    error: sensorsError,
+    refresh: refreshSensors,
+  } = useAgentSensors(agent, { enabled: !lite });
+  const sensorsToReview =
+    sensors?.filter((sensor) => sensor.pending_spec != null).length ?? 0;
+  const sensorsActive =
+    sensors?.filter((sensor) => sensor.status === "active").length ?? 0;
+  const sensorsStatus = sensorsError
+    ? "Unable to load"
+    : sensorsSummary(sensors);
   const {
     data: cli,
     error: cliError,
@@ -276,6 +301,25 @@ function NamedAgentConnectors({
           ...(cliEnabled.includes("cloudflare")
             ? [cliItem("cloudflare", "Cloudflare", "cloud")]
             : []),
+          ...(lite
+            ? []
+            : [
+                {
+                  key: "sensors",
+                  label: "Sensors",
+                  extra: sensorsStatus ? (
+                    <Status
+                      text={sensorsStatus}
+                      warning={!!sensorsError || sensorsToReview > 0}
+                    />
+                  ) : undefined,
+                  icon: <ScheduleOutlined aria-hidden />,
+                  onClick: () => {
+                    setSensorsOpen(true);
+                    void refreshSensors();
+                  },
+                },
+              ]),
           {
             key: "agent-networks",
             label: "Agent Networks",
@@ -300,7 +344,11 @@ function NamedAgentConnectors({
     const cocalcConfigured = supportsCocalcAccess && cocalc?.config != null;
     const cocalcOn = cocalcConfigured && cocalc?.config?.enabled === true;
     const networksOn = assigned.length > 0 && !paused;
-    const active = Number(cocalcOn) + cliOn.length + Number(networksOn);
+    const active =
+      Number(cocalcOn) +
+      cliOn.length +
+      Number(networksOn) +
+      Number(sensorsActive > 0);
     const parts = [
       ...(cocalcConfigured ? [`CoCalc access ${cocalcStatus}`] : []),
       ...cliOn.map(
@@ -308,6 +356,9 @@ function NamedAgentConnectors({
           `${connector === "github" ? "GitHub" : "Cloudflare"} ${cliConnectorSummary(cli, agent, connector)}`,
       ),
       ...(assigned.length > 0 ? [`Agent Networks ${networksStatus}`] : []),
+      ...(sensorsActive > 0 || sensorsToReview > 0
+        ? [`Sensors ${sensorsStatus}`]
+        : []),
     ];
     return (
       <>
@@ -318,7 +369,12 @@ function NamedAgentConnectors({
           <ConnectorsChip
             label={`Connectors for @${agent.name}: ${parts.join("; ")}`}
             active={active}
-            warning={!!cocalc?.loadError || !!error || !!cliError}
+            warning={
+              !!cocalc?.loadError ||
+              !!error ||
+              !!cliError ||
+              sensorsToReview > 0
+            }
             items={connectors}
             chipRef={chipRef}
           />
@@ -383,6 +439,21 @@ function NamedAgentConnectors({
             open
             onClose={() => {
               setCliOpen(undefined);
+              chipRef.current?.focus();
+            }}
+          />
+        </Suspense>
+      )}
+      {sensorsOpen && (
+        <Suspense fallback={null}>
+          <AgentSensorsModal
+            agent={agent}
+            open
+            sensors={sensors}
+            error={sensorsError}
+            refresh={refreshSensors}
+            onClose={() => {
+              setSensorsOpen(false);
               chipRef.current?.focus();
             }}
           />

@@ -210,12 +210,16 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.recovery_parent_op_id ||
     request.chat.recovery_parent_op_id ||
     request.chat.automation_id ||
-    (request.chat.agent_message && !request.chat.agent_rpc_execution)
+    (request.chat.agent_message &&
+      !request.chat.agent_rpc_execution &&
+      !request.chat.sensor_wake)
   )
     throw Error("Unsupported ACP harness request options");
   if (
     credential.mode === "account-api-key" &&
-    (request.chat.agent_message || request.chat.agent_rpc_execution)
+    (request.chat.agent_message ||
+      request.chat.agent_rpc_execution ||
+      request.chat.sensor_wake)
   ) {
     throw Error("Agent-authored ACP turns cannot select account credentials");
   }
