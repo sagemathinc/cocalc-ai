@@ -109,6 +109,7 @@ jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
 jest.mock("@cocalc/conat/sync/akv", () => ({
   akv: jest.fn(() => ({
     set: jest.fn(async () => {}),
+    close: jest.fn(),
   })),
 }));
 jest.mock("@cocalc/conat/hub/call-hub", () => ({
@@ -256,6 +257,7 @@ beforeEach(() => {
   (akv as any)?.mockReset?.();
   (akv as any)?.mockImplementation?.(() => ({
     set: jest.fn(async () => {}),
+    close: jest.fn(),
   }));
   callHubMock.mockReset();
   callHubMock.mockResolvedValue(undefined);
@@ -4980,5 +4982,78 @@ describe("terminal storage recovery candidates", () => {
         reason: "model request failed",
       } as any),
     ).toBe(false);
+  });
+});
+
+describe("ChatStreamWriter activity log storage failures", () => {
+  it("completes a turn whose reply was saved even if the activity log cannot be", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const ioError = Object.assign(new Error("Error: disk I/O error"), {
+      code: "ERR_SQLITE_ERROR",
+    });
+    const logSet = jest.fn(async () => {
+      throw ioError;
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () => ({ set: logSet }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "the answer" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "summary",
+      finalResponse: "the answer",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(logSet).toHaveBeenCalled();
+    // The activity log store is separate from the chat document, so its
+    // failure must not stop chat writes or relabel the turn.
+    expect(writer.syncdbError).toBeUndefined();
+    expect(writer.getTerminalState()).toBe("completed");
+    const final = findLastChatSet(sets)!;
+    expect(final.generating).toBe(false);
+    expect(final.acp_interrupted).not.toBe(true);
+    expect(final.history[0].content).toContain("the answer");
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ state: "completed" })],
+      ]),
+    );
+    // Keep the queued payloads so a replay can rebuild the activity log.
+    expect(queue.clearAcpPayloads).not.toHaveBeenCalled();
+    writer.dispose(true);
+  });
+
+  it("releases the activity log store it opened when disposed", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const close = jest.fn();
+    (akv as any).mockImplementationOnce(() => ({
+      set: async () => {},
+      close,
+    }));
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+    });
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+    writer.dispose(true);
+    await writer.waitUntilDisposed();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

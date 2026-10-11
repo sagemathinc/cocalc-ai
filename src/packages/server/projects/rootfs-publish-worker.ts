@@ -43,6 +43,7 @@ import type {
   PublishProjectRootfsArtifact,
   RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:rootfs-publish-worker");
 
@@ -525,8 +526,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
   let lastProgressKey: string | null = null;
   const timings = createPhaseTimingRecorder();
   let registeredRelease:
-    | Awaited<ReturnType<typeof upsertPublishedRootfsRelease>>
-    | undefined;
+    Awaited<ReturnType<typeof upsertPublishedRootfsRelease>> | undefined;
   let catalogEntrySaved = false;
   const progress = (update: {
     step: string;
@@ -559,6 +559,10 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({
+      project_ids: [project_id],
+      host_ids: [input.project_host_id],
+    });
     const runningOp = await updateLro({
       op_id,
       status: "running",

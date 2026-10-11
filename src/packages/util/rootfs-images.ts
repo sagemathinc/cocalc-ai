@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { trimTrailingSlashes } from "./linear-text";
+
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 export const ROOTFS_CONTENT_MANIFEST_VERSION = 1;
 export const ROOTFS_CONFIG_EXPORT_KIND = "cocalc-rootfs-config";
@@ -286,8 +288,7 @@ export function rootfsEntryMatchesImageTarget(
 ): boolean {
   const value = trimmed(target);
   if (!value) return false;
-  const imageParts = trimmed(entry.image)
-    .replace(/\/+$/, "")
+  const imageParts = trimTrailingSlashes(trimmed(entry.image))
     .split("/")
     .filter(Boolean);
   const candidates = [

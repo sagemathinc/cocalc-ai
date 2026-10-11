@@ -194,7 +194,13 @@ describe("project-backup", () => {
     }));
     deleteObjectMock = jest.fn(async () => undefined);
     listBucketsMock = jest.fn(async () => ["cocalc-backups-wnam"]);
-    readFileMock = jest.fn(async () => masterKeyBase64);
+    readFileMock = jest.fn(async (path: string) => {
+      // No key rotation keyring.
+      if (`${path}`.endsWith(".keyring")) {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }
+      return masterKeyBase64;
+    });
     writeFileMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (

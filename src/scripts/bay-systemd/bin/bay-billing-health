@@ -17,6 +17,11 @@ while (( $# > 0 )); do
   esac
 done
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || exit 2
+# Each probe cold-starts a hub process (about 6s on prod, longer right after a
+# worker roll), so one attempt needs headroom well beyond that.
+probe_limit="${COCALC_BAY_BILLING_PROBE_TIMEOUT_S:-30}"
+generation_seconds="${COCALC_BAY_BILLING_GENERATION_TIMEOUT_S:-90}"
+[[ "$probe_limit" =~ ^[1-9][0-9]*$ && "$generation_seconds" =~ ^[1-9][0-9]*$ ]] || exit 2
 if (( generation_only )) && { [[ -n "$after_generation" ]] || (( wait_seconds > 0 )); }; then exit 2; fi
 skip_billing() {
   if (( generation_only )); then printf '0\n'; fi
@@ -33,9 +38,17 @@ require_var COCALC_BAY_HUB_MAIN
 if (( generation_only )); then
   # Exit 1 is also the hub probe's valid not-ready result. Require valid JSON
   # either way; database errors/timeouts must abort, not invent a baseline.
-  status=0
-  health="$(timeout --kill-after=2s 15s "$COCALC_BAY_NODE_BIN" \
-    "$COCALC_BAY_HUB_MAIN" --billing-health-check)" || status=$?
+  # A timed-out attempt is retried until the budget runs out, then aborts.
+  deadline=$((SECONDS + generation_seconds))
+  while true; do
+    remaining=$((deadline - SECONDS))
+    probe_timeout=$(( remaining < probe_limit ? remaining : probe_limit ))
+    status=0
+    health="$(timeout --kill-after=2s "${probe_timeout}s" "$COCALC_BAY_NODE_BIN" \
+      "$COCALC_BAY_HUB_MAIN" --billing-health-check)" || status=$?
+    if (( status != 124 && status != 137 )) || (( SECONDS >= deadline )); then break; fi
+    bay_log "billing generation probe timed out after ${probe_timeout}s; retrying"
+  done
   if (( status != 0 && status != 1 )); then exit "$status"; fi
   printf '%s' "$health" | "$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/billing-probe.js" generation
   exit "$?"
@@ -46,7 +59,7 @@ fi
 deadline=$((SECONDS + wait_seconds))
 while true; do
   remaining=$((deadline - SECONDS))
-  probe_timeout=15
+  probe_timeout=$probe_limit
   if (( wait_seconds > 0 && remaining < probe_timeout )); then
     probe_timeout=$remaining
   fi

@@ -305,6 +305,243 @@ pgBackRest. Restore the legacy interval only if an operator intentionally wants
 to resume the old scheduler. Do not delete either new repository or any legacy
 snapshot during rollback.
 
+### Configuration Escrow
+
+The pgBackRest repository is encrypted with `COCALC_BAY_PGBACKREST_CIPHER_PASS`.
+That value, the backup R2 credentials, the SQLite repository password, and the
+session and cluster secrets live only in `/etc/cocalc/bay-secrets.env` on the
+bay. The bay secrets directory (`$SECRETS`, e.g. `/mnt/cocalc/bays/bay-0/secrets`)
+holds the project-host auth key pair that every project host trusts, the
+project backup shared secret, the Conat password, the host-owner SSH key, and
+the Cloudflare tunnel credentials. If the bay VM is lost, a replacement cannot
+restore the backups or reconnect to the project hosts without them. Only the
+site master key is kept elsewhere (1Password).
+
+`cocalc-bay-config-escrow.timer` runs `bay-config-escrow-run` daily as root:
+
+- it seals `bay.env`, `bay-local.env`, `bay-overlay.env`, `bay-topology.env`,
+  `bay-workers.env` and `bay-secrets.env` (root `etc-cocalc`) and the secrets
+  directory tree (root `bay-secrets`, without `launchpad-cloudflare/bin`,
+  whose binaries are downloadable, and `*.pid` files at any depth) with
+  AES-256-GCM, using a key derived from the site master key (HKDF purpose
+  `bay-config-escrow:v1`). Every envelope field is authenticated, and file
+  names are inside the ciphertext;
+- it uploads the result to
+  `s3://$COCALC_BAY_PGBACKREST_S3_BUCKET/cocalc-escrow/<bay-id>/bay-config.v1.json`,
+  plus a dated copy under `history/`;
+- it reads the copy back and verifies that it decrypts to the live files,
+  modes and owners;
+- it deletes dated copies older than `COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS`
+  (default 30), so superseded secrets do not stay in R2 indefinitely;
+- it writes `/var/lib/cocalc-bay-config-escrow/status.json`. The bay backup
+  health check (for pgBackRest and SQLite-only bays alike) alerts when that
+  file is missing, failed, older than three days, or reports that pruning
+  failed.
+
+The master key itself is never escrowed. Enable the timer once, and run it
+again after any change to `/etc/cocalc/*.env` or the secrets directory:
+
+```sh
+systemctl enable --now cocalc-bay-config-escrow.timer
+systemctl start cocalc-bay-config-escrow.service
+cat /var/lib/cocalc-bay-config-escrow/status.json
+```
+
+**Running as root over a tree the bay account owns.** The release tree under
+`/opt/cocalc/bay` and the secrets directory belong to `cocalc-bay`, so the job
+must not trust them:
+
+- `install-scaffold.sh` installs the job root-owned in
+  `/usr/local/libexec/cocalc-bay`, and the unit runs that copy with
+  `ProtectSystem=strict`;
+- it refuses to execute `node` or `curl`, or read the master key, from a path
+  that `cocalc-bay` owns or that is group- or world-writable;
+- it reads the secrets tree through descriptors opened with `O_NOFOLLOW`,
+  refusing symbolic links and special files, and bounds file sizes, counts
+  and depth while walking;
+- downloads, envelopes and decrypted payloads are size-checked and validated
+  before anything is parsed further or written.
+
+**Authority.** The site master key together with any escrow object, current
+or a history copy, is full-site root authority. It yields every credential
+the bay holds: live session forgery, cluster and Conat access, the key every
+project host trusts, the host-owner SSH key and the Cloudflare tunnel. The
+1Password item holding the master key must be treated accordingly: as few
+holders as possible, MFA, and access reviewed with the other critical
+infrastructure accounts.
+
+**Recovery needs two things kept off the bay:** the site master key and an R2
+credential that can read the bucket. The bay's own R2 keys are inside the
+escrow, so they cannot be used to fetch it. Keep a read-only R2 API token,
+scoped to this bucket, in 1Password next to the master key, or be ready to
+mint one with the Cloudflare account login. Check that it still works at
+every restore rehearsal.
+
+The escrow is in the same bucket as the backups. That is fine for
+confidentiality, but it is not a separate failure domain: anyone holding the
+bay's R2 key can delete both.
+
+To recover the files on any machine with Node.js and a checkout of this
+repository:
+
+```sh
+curl --aws-sigv4 aws:amz:auto:s3 --user "$R2_ACCESS_KEY:$R2_SECRET_KEY" \
+  --max-filesize 8388608 -o bay-config.v1.json \
+  "https://<account>.r2.cloudflarestorage.com/<bucket>/cocalc-escrow/<bay-id>/bay-config.v1.json"
+node src/scripts/bay-systemd/libexec/bay-config-escrow.mjs info \
+  --in bay-config.v1.json --master-key site-master-key
+node src/scripts/bay-systemd/libexec/bay-config-escrow.mjs open \
+  --master-key site-master-key --in bay-config.v1.json --chown \
+  --map etc-cocalc=/etc/cocalc --map bay-secrets=/mnt/cocalc/bays/<bay-id>/secrets
+```
+
+Use `--out-dir DIR` instead of `--map` to inspect the files first; each root
+is written to `DIR/<root>/`. The behaviour of `open`:
+
+- The parent of each mapped directory must already exist.
+- Directories the restore creates get their recorded mode.
+- `--chown` (root only, and an error otherwise) gives files and created
+  directories their recorded owner and group. Those users and groups must
+  exist first; host bootstrap creates `cocalc-bay`. Existing directories are
+  left as they are.
+- `open` never follows a symbolic link in the destination.
+- It refuses to overwrite existing files unless `--force` is given.
+- A wrong master key is reported as such, and any modification of the escrow
+  fails authentication.
+- `info` without `--master-key` shows unauthenticated metadata only.
+
+**Rotation.** Rotate the live credentials after a recovery that used the
+escrow, and whenever the master key, an escrow copy, or the bay itself may
+have been exposed. Replace the current copy, and also revoke what the history
+copies still contain (they persist for up to 30 days):
+
+- the session, cookie, Conat and cluster secrets and the R2 keys in
+  `bay-secrets.env`;
+- the project-host auth key pair (re-trust it on every project host);
+- the host-owner SSH key (remove the old public key from the hosts);
+- the Cloudflare tunnel credentials.
+
+Then run the escrow job so the current copy holds the new values. The site
+master key also protects database secret settings and project secrets, and
+CoCalc has no tooling yet to rotate it. Keep any retired master key for as
+long as escrow copies or backups sealed with it are retained.
+
+Tests: `bash src/scripts/bay-systemd/libexec/bay-config-escrow.test.sh`. With
+passwordless sudo it also checks `--chown` and the symlink defences as root.
+
+## Site Master Key Rotation
+
+The site master key (`/etc/cocalc/site-master-key`) wraps every
+application-level secret in the database:
+
+- secret server settings;
+- second factors;
+- external credentials;
+- project backup repository secrets;
+- project secrets;
+- invites, registration tokens and connector tokens;
+- the configuration escrow, where installed.
+
+Rotate it after a recovery that used it, when someone with access leaves, or
+whenever it may have been exposed.
+
+A rotation never makes data unreadable, because a key is never dropped while
+anything needs it:
+
+- `/etc/cocalc/site-master-key.keyring` (0600, root) holds a **staged next
+  key** and **retired keys**.
+- Every service loads the keyring as a systemd credential.
+- New data is always encrypted with the active key.
+- Decryption, and matching of keyed hashes, accept any key in the keyring.
+- Key ids (`smk_…`) are derived from the keys and are not secret; use them to
+  name the keys in 1Password.
+
+Run each step on the bay as root with `cocalc-bay-master-key`, which
+`install-scaffold.sh` installs root-owned in `/usr/local/sbin`.
+
+- Key-file changes take a lock (`site-master-key.keyring.lock`), so two
+  invocations cannot interleave.
+- Every rename is synced to disk before the next step starts.
+
+With several bays sharing one site key, finish each step on every bay before
+the next one, and compare `cocalc-bay-master-key status` across the bays.
+
+1. **Stage a new key:**
+
+   ```sh
+   cocalc-bay-master-key prepare --export /root/new-site-master-key
+   ```
+
+   This writes the new key to the export file, durably, then to the keyring
+   as `next`. Nothing encrypts with it yet.
+   - On every other bay sharing the site key, run
+     `cocalc-bay-master-key prepare --import /root/new-site-master-key` with a
+     copy of that file. This stages the *same* key, so `status` shows the same
+     next key id everywhere.
+   - Store the file's contents in 1Password under the printed key id, then
+     delete every copy.
+2. **Restart the services:** `cocalc-bay-master-key restart`. This restarts
+   the hub workers one at a time, then Conat, frontdoor, billing and
+   cloudflared. Every process can now decrypt what the new key will encrypt.
+3. **Activate it:**
+
+   ```sh
+   cocalc-bay-master-key activate <new key id> --backed-up
+   cocalc-bay-master-key restart
+   ```
+
+   The previous key stays in the keyring as `retired`. If the configuration
+   escrow is installed, run `systemctl start cocalc-bay-config-escrow.service`
+   so the escrow is sealed with the new key.
+4. **Re-encrypt:**
+
+   ```sh
+   cocalc-bay-master-key reencrypt            # dry run: rows per key id
+   cocalc-bay-master-key reencrypt --execute
+   cocalc-bay-master-key doctor
+   ```
+
+   This runs as `cocalc-bay`, with the keys as credentials. Every update is
+   compare-and-swap, so it is safe while the site runs and can be run again.
+   It also:
+   - recomputes invite email hashes;
+   - makes project hosts re-sync rewrapped project secrets.
+5. **Retire the old key** once it has been retired for 24 hours. Email
+   sign-in challenges and connector turns made under it must expire first.
+   The command enforces the wait; set
+   `COCALC_SITE_MASTER_KEY_RETIRE_MIN_AGE_HOURS` to change it.
+
+   ```sh
+   cocalc-bay-master-key retire <old key id>
+   cocalc-bay-master-key restart
+   ```
+
+   `retire` refuses while any row is still encrypted under that key. It
+   also refuses while hash-only registration tokens exist: they cannot be
+   attributed to a key or re-encrypted, so recreate them first. `--force`
+   skips these checks.
+   - Keep the old key in 1Password, marked retired, for as long as backups
+     made before the rotation exist. That means the pgBackRest retention, the
+     escrow history and offsite copies: at most four calendar months.
+   - To restore such a backup, put the old key back in the keyring with
+     `cocalc-bay-master-key add-retired --import FILE` (FILE holds the
+     base64 key), restart, then run `reencrypt --execute`.
+
+**Rollback** before step 5: run `activate <old key id> --backed-up` and
+restart. Both keys are still online, so nothing is lost.
+
+Project hosts keep the last few project-secret keys they were sent, so they
+can still start a project from cached secrets across the change.
+`cocalc admin master-key rotate prepare|add-retired|activate|retire` and
+`cocalc admin master-key reencrypt` do the same for a non-bay deployment.
+
+Tests:
+
+- `bash src/scripts/bay-systemd/cocalc-bay-master-key.test.sh`
+- `master-key-lifecycle.test.ts` in `packages/util`
+- `settings/master-key-migration.test.ts` in `packages/database`, which runs a
+  full rotation over every store
+
 ## GCP Bootstrap Service Account
 
 Run this in a trusted admin `gcloud` shell to create or update the project
@@ -608,6 +845,29 @@ digest manifest as a one-shot enrollment file. On the first installation use
 - Rollout helpers assume versioned bundles live under
   `/opt/cocalc/bay/releases/<version>` and the active bundle is the symlink
   `/opt/cocalc/bay/current`.
+- The release tree under `/opt/cocalc/bay` and the state tree under the bay
+  root belong to the bay account, which can replace anything in them. So root
+  never reads, writes, follows or executes anything there:
+  - **Release and state work runs as the bay account.** Unpacking a bundle
+    (root only reads the operator's tarball and pipes it in), hard-link
+    copies, asset preservation, the `current` link, the version files,
+    pruning, and the postgres and secrets directories all run as
+    `cocalc-bay`. The one exception is root's ownership normalisation, a
+    `chown -R` that walks physically and never follows links.
+  - **The installer runs from a trusted copy.** `install-scaffold.sh` and
+    everything it installs as root (units, sudoers, sbin helpers, the
+    `needrestart` policy, the overlay environment) come from a root-owned
+    copy of `scripts/bay-systemd`, taken straight from the bundle or source
+    tree and staged under `/run`. It writes the release's `bin/` as the bay
+    account.
+  - **Deploy scripts run release commands through `cocalc-bay-run`.** This is
+    `/usr/local/sbin/cocalc-bay-run <bay-command>`, root-owned, which runs the
+    command as `cocalc-bay` with the services' environment. Migrations use
+    `runuser`.
+  - **The hub and cloudflared watchdogs run as `cocalc-bay`.** Their only
+    privileged actions go through the root-owned `cocalc-bay-hub-ctl` and
+    `cocalc-bay-cloudflared-ctl`, which sudoers allows for exactly those
+    commands.
 
 ## Implementation Scope And Validation
 

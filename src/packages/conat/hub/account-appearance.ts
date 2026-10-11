@@ -10,6 +10,7 @@ import {
   type AppearancePreference,
 } from "@cocalc/util/appearance";
 import callHub from "./call-hub";
+import { trimSlashes, trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 // Lightweight entries load this transport only on an explicit save. The route
 // comes from authenticated bootstrap, never from the cosmetic local theme cache.
@@ -22,11 +23,9 @@ export async function saveAccountAppearance(
     throw Error("Invalid account appearance request");
   }
   const client = connect({
-    address:
-      `${home_bay_url.replace(/\/+$/, "")}/${appBasePath.replace(/^\/+|\/+$/g, "")}`.replace(
-        /\/+$/,
-        "",
-      ),
+    address: trimTrailingSlashes(
+      `${trimTrailingSlashes(home_bay_url)}/${trimSlashes(appBasePath)}`,
+    ),
     inboxPrefix: inboxPrefix({ account_id }),
     forceNew: true,
     noCache: true,

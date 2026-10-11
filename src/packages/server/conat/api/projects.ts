@@ -99,6 +99,7 @@ import {
   courseCollectLroResponse,
   triggerCourseCollectLroWorker,
 } from "@cocalc/server/projects/course-collect-worker";
+import { addStudentsToScheduledCollection } from "@cocalc/server/projects/course-collect-schedule";
 import {
   COURSE_RECONFIGURE_LRO_KIND,
   type CourseReconfigureLroInput,
@@ -758,6 +759,52 @@ export async function collectAssignment({
   }
   triggerCourseCollectLroWorker();
   return courseCollectLroResponse(op);
+}
+
+// Students who receive an assignment after its collection was scheduled are
+// added to that still-queued collection (support #20954). Same checks as
+// collectAssignment; the change itself is one conditional update.
+export async function addScheduledCollectionStudents({
+  account_id,
+  course_project_id,
+  assignment_id,
+  op_id,
+  items,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  assignment_id: string;
+  op_id: string;
+  items: CourseCollectAssignmentItem[];
+}): Promise<{ updated: boolean; item_count?: number }> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!isValidUUID(op_id)) {
+    throw new Error("invalid op_id");
+  }
+  const normalizedItems = normalizeCourseCollectItems(items);
+  await assertCollab({ account_id, project_id: course_project_id });
+  const studentProjectIds = Array.from(
+    new Set(normalizedItems.map((item) => item.student_project_id)),
+  );
+  await ensureCourseManagerAccess({
+    account_id,
+    course_project_id,
+    project_ids: studentProjectIds,
+  });
+  await assertProjectCollaboratorAccessAllowRemoteBatch({
+    account_id,
+    project_ids: studentProjectIds,
+    warmRoute: false,
+  });
+  return await addStudentsToScheduledCollection({
+    op_id,
+    course_project_id,
+    assignment_id: `${assignment_id ?? ""}`,
+    items: normalizedItems,
+    max_items: MAX_COURSE_COLLECT_ITEMS,
+  });
 }
 
 const MAX_COURSE_RECONFIGURE_STUDENTS = 1000;
@@ -5207,7 +5254,8 @@ async function runProjectStartLikeAction({
     await runStart();
   } else if (foreground_wait_ms != null && foreground_wait_ms > 0) {
     type ForegroundStartResult =
-      { status: "succeeded" } | { status: "failed"; error: unknown };
+      | { status: "succeeded" }
+      | { status: "failed"; error: unknown };
     const completion: Promise<ForegroundStartResult> = runStart().then(
       () => ({ status: "succeeded" }),
       (error) => ({ status: "failed", error }),

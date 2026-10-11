@@ -4,6 +4,7 @@
  */
 import type { ProjectedChatMessage } from "./types";
 import { markdownToSpeechText } from "./speech-text";
+import { trimTrailingChars } from "@cocalc/util/linear-text";
 
 export interface LiveEvent {
   type: string;
@@ -25,11 +26,10 @@ export interface LiveInterruptTarget {
 
 /** Only an explicit request to stop the current agent turn may interrupt it. */
 export function isExplicitInterruptRequest(text: string): boolean {
-  const request = text
-    .trim()
-    .toLowerCase()
-    .replace(/[.!?]+$/, "")
-    .replace(/\s+/g, " ");
+  const request = trimTrailingChars(text.trim().toLowerCase(), ".!?").replace(
+    /\s+/g,
+    " ",
+  );
   return /^(?:(?:please|can you|could you|would you|i want (?:you to|to)) )?(?:just )?(?:stop|interrupt|cancel|end|abort|halt) (?:(?:the|this|my) )?(?:(?:current|running|active) )?(?:(?:agent|codex) )?(?:turn|task|run|work|job)(?: now| please)?$/.test(
     request,
   );

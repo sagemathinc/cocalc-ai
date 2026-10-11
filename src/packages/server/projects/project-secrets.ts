@@ -7,8 +7,10 @@ import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
-  deriveSiteMasterKey,
-  getOrCreateSiteMasterKey,
+  decryptWithAnyKey,
+  deriveSiteMasterKeyring,
+  getSiteMasterKeyring,
+  type DerivedSiteKey,
 } from "@cocalc/util/master-key-lifecycle";
 import {
   decryptProjectSecretValue,
@@ -72,19 +74,62 @@ export interface CourseManagedSecretsResult {
   conflicts: string[];
 }
 
-let cachedProjectSecretsKey: Buffer | undefined;
+let cachedProjectSecretsKeys: DerivedSiteKey[] | undefined;
 
 function pool(): Queryable {
   return getPool();
 }
 
-async function getProjectSecretsKey(): Promise<Buffer> {
-  if (cachedProjectSecretsKey) return cachedProjectSecretsKey;
-  cachedProjectSecretsKey = deriveSiteMasterKey(
-    await getOrCreateSiteMasterKey({ secretsDir: secrets }),
+// The active key first (used to encrypt and sent to project hosts), then any
+// staged or retired keys of a site master key rotation (used only to decrypt).
+async function getProjectSecretsKeys(): Promise<DerivedSiteKey[]> {
+  if (cachedProjectSecretsKeys) return cachedProjectSecretsKeys;
+  cachedProjectSecretsKeys = deriveSiteMasterKeyring(
+    await getSiteMasterKeyring({ secretsDir: secrets }),
     PROJECT_SECRETS_PURPOSE,
   );
-  return cachedProjectSecretsKey;
+  return cachedProjectSecretsKeys;
+}
+
+function decryptStoredProjectSecret({
+  project_id,
+  name,
+  encrypted,
+  keys,
+}: {
+  project_id: string;
+  name: string;
+  encrypted: EncryptedProjectSecretValue;
+  keys: DerivedSiteKey[];
+}): string {
+  return decryptWithAnyKey(keys, (key) =>
+    decryptProjectSecretValue({ project_id, name, encrypted, key }),
+  ).value;
+}
+
+// What a project host can decrypt with the active key it is sent: a value
+// still under an older key of a rotation is rewrapped on the way out.
+function encryptedForActiveKey({
+  project_id,
+  name,
+  encrypted,
+  keys,
+}: {
+  project_id: string;
+  name: string;
+  encrypted: EncryptedProjectSecretValue;
+  keys: DerivedSiteKey[];
+}): EncryptedProjectSecretValue {
+  const { value, key } = decryptWithAnyKey(keys, (candidate) =>
+    decryptProjectSecretValue({ project_id, name, encrypted, key: candidate }),
+  );
+  if (key.role === "active") return encrypted;
+  return encryptProjectSecretValue({
+    project_id,
+    name,
+    value,
+    key: keys[0].key,
+  });
 }
 
 // Run once per process: the setup includes ALTER TABLE, which takes an ACCESS
@@ -359,7 +404,7 @@ export async function getProjectSecretsForRuntime({
   db?: Queryable;
 }): Promise<Record<string, string>> {
   await ensureProjectSecretsSchema(db);
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
   const { rows } = await db.query(
     `SELECT name, encrypted_value
      FROM project_secrets
@@ -370,11 +415,11 @@ export async function getProjectSecretsForRuntime({
   return Object.fromEntries(
     rows.map((row) => [
       row.name,
-      decryptProjectSecretValue({
+      decryptStoredProjectSecret({
         project_id,
         name: row.name,
         encrypted: encryptedValue(row.encrypted_value),
-        key,
+        keys,
       }),
     ]),
   );
@@ -388,7 +433,8 @@ export async function getProjectSecretsRuntimeCache({
   db?: Queryable;
 }): Promise<ProjectSecretsRuntimeCache> {
   await ensureProjectSecretsSchema(db);
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
+  const key = keys[0].key;
   const { rows } = await db.query(
     `SELECT state.generation, secrets.name, secrets.encrypted_value,
             secrets.value_bytes, secrets.updated_at
@@ -409,7 +455,12 @@ export async function getProjectSecretsRuntimeCache({
       .filter((row) => row.name != null)
       .map((row) => ({
         name: row.name,
-        encrypted_value: encryptedValue(row.encrypted_value),
+        encrypted_value: encryptedForActiveKey({
+          project_id,
+          name: row.name,
+          encrypted: encryptedValue(row.encrypted_value),
+          keys,
+        }),
         value_bytes: Number(row.value_bytes ?? 0),
         updated_at: row.updated_at,
       })),
@@ -427,7 +478,7 @@ export async function exportProjectSecretsForCopy({
 }): Promise<ExportProjectSecretsForCopyResult> {
   await ensureProjectSecretsSchema(db);
   const selectedNames = normalizeNames(names);
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
   const params: any[] = [project_id];
   let nameSql = "";
   if (selectedNames) {
@@ -450,11 +501,11 @@ export async function exportProjectSecretsForCopy({
     secrets: Object.fromEntries(
       rows.map((row) => [
         row.name,
-        decryptProjectSecretValue({
+        decryptStoredProjectSecret({
           project_id,
           name: row.name,
           encrypted: encryptedValue(row.encrypted_value),
-          key,
+          keys,
         }),
       ]),
     ),
@@ -487,7 +538,8 @@ export async function importProjectSecretsForCopy({
   if (entries.length === 0) {
     return { copied: [], conflicts: [], missing: [] };
   }
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
+  const key = keys[0].key;
   return await withTransaction(async (db) => {
     await ensureProjectSecretsSchema(db);
     if (overwrite) {
@@ -571,7 +623,8 @@ export async function setProjectSecret({
 }): Promise<ProjectSecretMetadata> {
   const normalizedName = normalizeProjectSecretName(name);
   const valueBytes = validateProjectSecretValue(value);
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
+  const key = keys[0].key;
   const encrypted = encryptProjectSecretValue({
     project_id,
     name: normalizedName,
@@ -689,7 +742,8 @@ export async function copyProjectSecrets({
 }): Promise<CopyProjectSecretsResult> {
   const selectedNames = normalizeNames(names);
   const excludedNames = normalizeNames(exclude_names) ?? [];
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
+  const key = keys[0].key;
   return await withTransaction(async (db) => {
     await ensureProjectSecretsSchema(db);
     const params: any[] = [source_project_id];
@@ -743,11 +797,11 @@ export async function copyProjectSecrets({
       );
     }
     for (const row of sourceRows) {
-      const value = decryptProjectSecretValue({
+      const value = decryptStoredProjectSecret({
         project_id: source_project_id,
         name: row.name,
         encrypted: encryptedValue(row.encrypted_value),
-        key,
+        keys,
       });
       const encrypted = encryptProjectSecretValue({
         project_id: target_project_id,
@@ -854,7 +908,7 @@ export async function getCourseShareableSecretValues({
   await ensureProjectSecretsSchema(db);
   const selected = normalizeNames(names) ?? [];
   if (selected.length === 0) return [];
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
   const { rows } = await db.query(
     `SELECT name, encrypted_value, revision, value_bytes
      FROM project_secrets
@@ -873,11 +927,11 @@ export async function getCourseShareableSecretValues({
   }
   return rows.map((row) => ({
     name: row.name,
-    value: decryptProjectSecretValue({
+    value: decryptStoredProjectSecret({
       project_id,
       name: row.name,
       encrypted: encryptedValue(row.encrypted_value),
-      key,
+      keys,
     }),
     revision: Number(row.revision ?? 1),
     value_bytes: Number(row.value_bytes ?? 0),
@@ -983,7 +1037,8 @@ export async function installCourseManagedProjectSecrets({
   if (normalizedSecrets.length === 0) {
     return { copied: [], unchanged: [], conflicts: [] };
   }
-  const key = await getProjectSecretsKey();
+  const keys = await getProjectSecretsKeys();
+  const key = keys[0].key;
   return await withTransaction(async (db) => {
     await ensureProjectSecretsSchema(db);
     const association = await validateCourseSecretTargetAssociation({

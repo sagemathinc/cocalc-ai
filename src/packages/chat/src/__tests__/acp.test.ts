@@ -15,6 +15,7 @@ import {
   getLatestMessageText,
   getLatestSummaryText,
   mergeProgressiveMessageText,
+  tokenBeforeFinalDot,
 } from "../acp";
 
 describe("buildCodexAcpConfig", () => {
@@ -1247,5 +1248,31 @@ describe("Claude-style delta streams with guidance", () => {
         ({ text }) => text,
       ),
     ).toEqual(blocks.map(({ text }) => text));
+  });
+});
+
+describe("tokenBeforeFinalDot", () => {
+  it("agrees with /([^\\s]+)\\.$/ and is linear", () => {
+    const pieces = ["a", ".", " ", "\n", " ", "x.y", ".."];
+    let seed = 11;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let i = 0; i < 10000; i++) {
+      let text = "";
+      const n = Math.floor(random() * 10);
+      for (let j = 0; j < n; j++) {
+        text += pieces[Math.floor(random() * pieces.length)];
+      }
+      expect([text, tokenBeforeFinalDot(text)]).toEqual([
+        text,
+        text.match(/([^\s]+)\.$/)?.[1] ?? "",
+      ]);
+    }
+    const started = Date.now();
+    tokenBeforeFinalDot(`${"a".repeat(2_000_000)}.x`);
+    tokenBeforeFinalDot(`${"a ".repeat(1_000_000)}.`);
+    expect(Date.now() - started).toBeLessThan(500);
   });
 });

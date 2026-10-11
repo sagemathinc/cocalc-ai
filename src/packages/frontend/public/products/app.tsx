@@ -943,7 +943,7 @@ function CocalcStarPage() {
           },
         ]}
         title="Run your own CoCalc with one Docker command."
-        body="CoCalc Star is free and runs anywhere Docker runs. Try it on your laptop, or put it on a server with automatic HTTPS."
+        body="CoCalc Star is free. Run it with Docker Desktop on your laptop, or Docker Engine on a Linux server with automatic HTTPS."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
@@ -955,8 +955,9 @@ function CocalcStarPage() {
             <a href="https://www.docker.com/products/docker-desktop/">
               Docker Desktop
             </a>{" "}
-            on macOS or Windows, or Docker Engine on Linux, and start it. Give
-            Docker at least 4 CPUs, 8 GB of memory, and 50 GB of disk.
+            on macOS or Windows, or Docker Engine with cgroup v2 on Linux, and
+            start it. Give Docker at least 4 CPUs and 16 GB of memory, with at
+            least 50 GB of free disk space for its volume.
           </Paragraph>
           <Paragraph style={{ margin: 0 }}>
             2. Run this in a terminal (on Windows, in PowerShell):

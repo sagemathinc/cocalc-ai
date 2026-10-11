@@ -194,6 +194,9 @@ export interface AgentNetworkAuthorization {
 
 export interface AgentNetworkPeer {
   member: AgentNetworkMember;
+  // Whether a registered peer runs in the asking agent's own project, so the
+  // same paths name the same files. Absent when either side is external.
+  same_project?: boolean;
   networks: Array<
     Pick<
       AgentNetwork,

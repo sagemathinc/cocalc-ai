@@ -9,6 +9,7 @@ import {
   disposableRestoreInstanceName,
   isRetryableDisposablePitrWalFailure,
   runDisposableGcpRestoreWorker,
+  workerStageSeconds,
   type DisposableRestoreWorkerConfig,
   type DisposableRestoreWorkerResult,
 } from "./disposable-gcp";
@@ -177,11 +178,17 @@ test("startup script supports checkpoint-only snapshot recovery", () => {
     "utf8",
   );
   expect(workerSource).toContain(
-    'STAGE = "postgres-" + CONFIG["restore_mode"]',
+    'STAGE = enter_stage("postgres-" + CONFIG["restore_mode"])',
   );
   expect(workerSource).toContain('"recovery.signal", "standby.signal"');
   expect(workerSource).toContain('"-c", "fsync=off"');
-  expect(workerSource).toContain('STAGE = "postgres-snapshot-recovery"');
+  // The result must say so for PITR runs as well as snapshot runs.
+  expect(workerSource).toContain(
+    '"durability": "fsync-disabled-disposable-validation" if CONFIG["restore_mode"] in ("snapshot", "pitr") else "normal"',
+  );
+  expect(workerSource).toContain(
+    'STAGE = enter_stage("postgres-snapshot-recovery")',
+  );
   expect(workerSource).toContain('input_text="SELECT 1;\\n"');
   expect(workerSource).toContain('"--user", "999:999"');
   expect(workerSource).toContain("postgres_diagnostics(container)");
@@ -208,7 +215,22 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
     snapshot_id: "sqlite-snapshot-1",
     target_time: "2026-07-19 12:00:00.000+00",
   });
-  expect(workerSource).toContain('STAGE = "build-pgbackrest"');
+  expect(workerSource).toContain('STAGE = enter_stage("build-pgbackrest")');
+  // WAL is prefetched in parallel instead of one R2 request per segment.
+  expect(workerSource).toContain('"archive-async=y"');
+  expect(workerSource).toContain('"spool-path=/var/spool/pgbackrest"');
+  expect(workerSource).toContain(
+    "mkdir -p /var/spool/pgbackrest && chown 999:999 /var/spool/pgbackrest",
+  );
+  expect(workerSource).toContain(
+    '"process-max=" + str(PGBACKREST_PROCESS_MAX)',
+  );
+  expect(workerSource).not.toContain('"process-max=2"');
+  // Replay settings apply to the disposable PITR server only.
+  expect(workerSource).toContain('if CONFIG["restore_mode"] == "pitr":');
+  expect(workerSource).toContain(
+    '"-c", "shared_buffers=" + str(POSTGRES_SHARED_BUFFERS_MB) + "MB"',
+  );
   expect(workerSource).toContain('"--type=time"');
   expect(workerSource).toContain('"--target-action=promote"');
   expect(workerSource).toContain('if REPOSITORY_TYPE != "pgbackrest"');
@@ -546,4 +568,141 @@ test("GCP worker deletes the VM when the serial result is invalid", async () => 
     }),
   ).rejects.toThrow("serial API failed");
   expect(deleteInstance).toHaveBeenCalledTimes(1);
+});
+
+function workerFunctions(workerSource: string, names: string[]): string {
+  // The generated module runs the drill at import; extract only definitions.
+  const extract = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import ast, sys
+names = set(sys.argv[1:])
+source = sys.stdin.read()
+tree = ast.parse(source)
+for node in tree.body:
+    if isinstance(node, (ast.FunctionDef, ast.Assign)) and (
+        getattr(node, "name", None) in names or any(
+            isinstance(t, ast.Name) and t.id in names
+            for t in getattr(node, "targets", [])
+        )
+    ):
+        print(ast.get_source_segment(source, node))
+`,
+      ...names,
+    ],
+    { input: workerSource, encoding: "utf8" },
+  );
+  expect(extract.stderr).toBe("");
+  return extract.stdout;
+}
+
+test("Conat SQLite checks run in-process and report corrupt or missing databases", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  expect(workerSource).not.toContain('["sqlite3", "-readonly", str(path)');
+  const functions = workerFunctions(workerSource, [
+    "bounded",
+    "sqlite_quick_check",
+    "QUICK_CHECK_WORKERS",
+  ]);
+  const checked = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import os, pathlib, sqlite3, sys, tempfile, time
+from concurrent.futures import ThreadPoolExecutor
+exec(sys.stdin.read())
+root = pathlib.Path(tempfile.mkdtemp())
+good = root / "with space?#.db"
+connection = sqlite3.connect(good)
+connection.execute("create table t(x)")
+connection.executemany("insert into t values (?)", [(i,) for i in range(1000)])
+connection.commit()
+connection.close()
+corrupt = root / "corrupt.db"
+data = bytearray(good.read_bytes())
+data[4096:8192] = b"\\xff" * 4096
+corrupt.write_bytes(bytes(data))
+with ThreadPoolExecutor(max_workers=QUICK_CHECK_WORKERS) as pool:
+    results = list(pool.map(sqlite_quick_check, [good, corrupt, root / "missing.db"]))
+print(results[0])
+print("corrupt-ok" if results[1] == "ok" else "corrupt-detected")
+print("missing-ok" if results[2] == "ok" else "missing-detected")
+print(QUICK_CHECK_WORKERS >= 2)
+# A read-only check never creates or changes files.
+print(sorted(path.name for path in root.iterdir()))
+`,
+    ],
+    { input: functions, encoding: "utf8" },
+  );
+  expect(checked.stderr).toBe("");
+  expect(checked.stdout.trim().split("\n")).toEqual([
+    "ok",
+    "corrupt-detected",
+    "missing-detected",
+    "True",
+    "['corrupt.db', 'with space?#.db']",
+  ]);
+});
+
+test("the worker result records the time spent in each stage", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  expect(workerSource).toContain('"stage_seconds": stage_seconds()');
+  const functions = workerFunctions(workerSource, [
+    "STAGE",
+    "STAGE_SECONDS",
+    "enter_stage",
+    "stage_seconds",
+  ]);
+  const checked = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import json, sys, time
+class Clock:
+    now = 100.0
+    def time(self):
+        return self.now
+time = Clock()
+_STAGE_ENTERED = time.time()
+exec(sys.stdin.read())
+time.now = 103.0
+STAGE = enter_stage("restore-rustic")
+time.now = 110.0
+STAGE = enter_stage("validate-conat")
+time.now = 111.5
+print(json.dumps(stage_seconds(), sort_keys=True))
+`,
+    ],
+    { input: functions, encoding: "utf8" },
+  );
+  expect(checked.stderr).toBe("");
+  expect(JSON.parse(checked.stdout.trim().split("\n").at(-1)!)).toEqual({
+    bootstrap: 3,
+    "restore-rustic": 7,
+    "validate-conat": 1.5,
+  });
+});
+
+test("stage timings from a worker result are bounded and numeric", () => {
+  expect(workerStageSeconds(undefined)).toBeNull();
+  expect(workerStageSeconds({})).toBeNull();
+  expect(
+    workerStageSeconds({
+      stage_seconds: {
+        "validate-conat": 241.26,
+        "postgres-pitr": 1534,
+        "Bad Stage": 1,
+        "restore-pgbackrest": Number.NaN,
+        complete: -3,
+      } as any,
+    }),
+  ).toEqual({ "validate-conat": 241.3, "postgres-pitr": 1534, complete: 0 });
 });

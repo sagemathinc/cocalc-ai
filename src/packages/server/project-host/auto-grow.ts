@@ -38,6 +38,10 @@ import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
 import type { MoneyValue } from "@cocalc/util/money";
 import { getRoutedHostControlClient } from "./client";
+import {
+  hostLifecycleFenced,
+  withTrackedHostWork,
+} from "@cocalc/server/hosts/maintenance";
 
 const log = getLogger("server:project-host:auto-grow");
 const GIB = 1024 ** 3;
@@ -99,7 +103,15 @@ type HostRow = {
   region?: string;
   status?: string;
   metadata?: Record<string, any>;
+  maintenance?: Record<string, any> | null;
 };
+
+// Auto-grow writes back the whole metadata object it read before resizing.
+// Skip the write if a relocation took the host or moved it meanwhile.
+const AUTO_GROW_WRITE_GUARD = `
+       AND COALESCE(maintenance->>'state', '') NOT IN ('preparing','in_progress','failed')
+       AND metadata->'machine'->>'zone' IS NOT DISTINCT FROM ($2::jsonb)->'machine'->>'zone'
+       AND metadata->'machine'->>'machine_type' IS NOT DISTINCT FROM ($2::jsonb)->'machine'->>'machine_type'`;
 
 type AutoGrowConfig = {
   enabled: boolean;
@@ -656,7 +668,7 @@ function canAutoGrowSharedScratchNow(
 
 async function loadHostRow(host_id: string): Promise<HostRow | undefined> {
   const { rows } = await pool().query<HostRow>(
-    `SELECT id, name, region, status, metadata
+    `SELECT id, name, region, status, metadata, maintenance
      FROM project_hosts
      WHERE id=$1 AND deleted IS NULL`,
     [host_id],
@@ -695,7 +707,26 @@ async function ensureRuntimeForResize(
   return { runtime, providerId };
 }
 
+// Disk resizes run as tracked host work: a relocation waits for one already
+// running and refuses new ones.
 async function performAutoGrow(
+  row: HostRow,
+  config: AutoGrowConfig,
+  opts?: {
+    trigger?: "reservation_failure" | "background_low_headroom";
+    reason?: string;
+  },
+): Promise<AutoGrowResult> {
+  return await withTrackedHostWork({
+    host_id: row.id,
+    kind: "host-auto-grow-disk",
+    input: { trigger: opts?.trigger },
+    refused: () => ({ grown: false, reason: "host is being relocated" }),
+    run: async () => await performAutoGrowNow(row, config, opts),
+  });
+}
+
+async function performAutoGrowNow(
   row: HostRow,
   config: AutoGrowConfig,
   opts?: {
@@ -782,7 +813,7 @@ async function performAutoGrow(
   await pool().query(
     `UPDATE project_hosts
      SET metadata=$2, updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
+     WHERE id=$1 AND deleted IS NULL${AUTO_GROW_WRITE_GUARD}`,
     [row.id, nextMetadata],
   );
   await logCloudVmEvent({
@@ -805,6 +836,23 @@ async function performAutoGrow(
 }
 
 async function performSharedScratchAutoGrow(
+  row: HostRow,
+  config: AutoGrowConfig,
+  opts?: {
+    trigger?: "background_low_headroom";
+    reason?: string;
+  },
+): Promise<AutoGrowResult> {
+  return await withTrackedHostWork({
+    host_id: row.id,
+    kind: "host-auto-grow-scratch",
+    input: { trigger: opts?.trigger },
+    refused: () => ({ grown: false, reason: "host is being relocated" }),
+    run: async () => await performSharedScratchAutoGrowNow(row, config, opts),
+  });
+}
+
+async function performSharedScratchAutoGrowNow(
   row: HostRow,
   config: AutoGrowConfig,
   opts?: {
@@ -916,7 +964,7 @@ async function performSharedScratchAutoGrow(
   await pool().query(
     `UPDATE project_hosts
      SET metadata=$2, updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
+     WHERE id=$1 AND deleted IS NULL${AUTO_GROW_WRITE_GUARD}`,
     [row.id, nextMetadata],
   );
   if (
@@ -979,6 +1027,9 @@ export async function maybeAutoGrowHostDiskForReservationFailure({
   const task = (async (): Promise<AutoGrowResult> => {
     const row = await loadHostRow(host_id);
     if (!row) return { grown: false, reason: "host not found" };
+    if (hostLifecycleFenced(row.maintenance)) {
+      return { grown: false, reason: "host is being relocated" };
+    }
     const config = resolveAutoGrowConfig(row);
     if (!config) {
       return {
@@ -1031,6 +1082,9 @@ export async function maybeAutoGrowHostDiskForBackgroundPressure({
   const task = (async (): Promise<AutoGrowResult> => {
     const row = await loadHostRow(host_id);
     if (!row) return { grown: false, reason: "host not found" };
+    if (hostLifecycleFenced(row.maintenance)) {
+      return { grown: false, reason: "host is being relocated" };
+    }
     const config = resolveAutoGrowConfig(row);
     if (!config) {
       return {
@@ -1083,6 +1137,9 @@ export async function maybeAutoGrowSharedScratchForBackgroundPressure({
   const task = (async (): Promise<AutoGrowResult> => {
     const row = await loadHostRow(host_id);
     if (!row) return { grown: false, reason: "host not found" };
+    if (hostLifecycleFenced(row.maintenance)) {
+      return { grown: false, reason: "host is being relocated" };
+    }
     const config = resolveSharedScratchAutoGrowConfig(row);
     if (!config) {
       return {

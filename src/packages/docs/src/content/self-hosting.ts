@@ -6,10 +6,10 @@
 export const COCALC_STAR_BODY = `
 ## What CoCalc Star is
 
-CoCalc Star is a complete CoCalc site in one Docker container: Jupyter, LaTeX,
-terminals, chat, agents, and real-time collaboration for a lab, course, or
-small team. It is free, and it runs anywhere Docker runs: Docker Desktop on
-macOS and Windows, or Docker Engine on Linux.
+CoCalc Star runs a shared CoCalc site in one Docker container, with agent chat,
+project files, terminals, and real-time collaboration. Built-in editors include
+Jupyter and LaTeX. It is free and runs with Docker Desktop on macOS or Windows,
+or Docker Engine with cgroup v2 on Linux.
 
 All of its state (accounts, projects, settings, certificates) lives in one
 Docker volume. Upgrading means running a newer image with the same volume;
@@ -18,8 +18,9 @@ removing the container and the volume removes all of its data.
 ## Quick start on your own computer
 
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-   (macOS or Windows) or Docker Engine (Linux) and start it. Give Docker at
-   least 4 CPUs, 8 GB of memory, and 50 GB of disk.
+   (macOS or Windows) or Docker Engine with cgroup v2 (Linux) and start it.
+   Allocate at least 4 CPUs and 16 GB of memory to Docker, with at least 50 GB
+   of free disk space for its volume.
 2. In a terminal (on Windows, in PowerShell), run:
 
 ~~~sh
@@ -39,8 +40,8 @@ docker logs -f cocalc-star
 
 ## On a server with a domain
 
-Point a DNS name at a Linux server with Docker, open TCP port 443 (port 80 is
-optional), and pass the domain:
+Point a DNS name at a Linux server with Docker Engine and cgroup v2, open TCP
+port 443 (port 80 is optional), and pass the domain:
 
 ~~~sh
 docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 443:443 -p 80:80 -e COCALC_STAR_DOMAIN=star.example.com sagemathinc/star
@@ -177,7 +178,8 @@ and terminals end to end.
 When helping someone install Star:
 
 1. Confirm Docker is installed and running (\`docker info\`), with at least
-   4 CPUs, 8 GB of memory, and 50 GB of disk available to it.
+   4 CPUs and 16 GB of memory allocated to it and at least 50 GB of free disk
+   space for its volume. Linux requires cgroup v2.
 2. Use the one-line \`docker run\` commands above unchanged; they work in macOS
    and Linux shells and in Windows PowerShell.
 3. For a public server, the domain must already resolve to the server and
@@ -203,7 +205,7 @@ own hardware, run CoCalc Star locally. It is especially useful when you want:
 ## Use Docker Desktop
 
 CoCalc Star runs in one Docker container. Install Docker Desktop (macOS or
-Windows) or Docker Engine (Linux), then follow the quick start in the
+Windows) or Docker Engine with cgroup v2 (Linux), then follow the quick start in the
 [CoCalc Star guide](/docs/self-hosting/cocalc-star). You open CoCalc in your
 normal browser at http://localhost:8170.
 
