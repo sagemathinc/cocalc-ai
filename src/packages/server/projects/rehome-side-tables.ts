@@ -51,6 +51,17 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Owner-issued messaging recovery fences require explicit destination reconciliation, not raw row copying.",
   },
+  agent_sensors: {
+    table: "agent_sensors",
+    status: "not-portable",
+    reason:
+      "Approvals are bound to project-owned agent identities that do not move.",
+  },
+  agent_sensor_runs: {
+    table: "agent_sensor_runs",
+    status: "not-portable",
+    reason: "Run logs of project-owned sensors that do not move.",
+  },
   agent_rpc_admission_state: {
     table: "agent_rpc_admission_state",
     status: "operation-local",

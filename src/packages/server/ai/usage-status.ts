@@ -1,4 +1,4 @@
-import getPool, { CacheTime } from "@cocalc/database/pool";
+import getPool from "@cocalc/database/pool";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   getActiveAccountUsageWindow,
@@ -52,7 +52,6 @@ export async function getAIUsageStatus({
     account_id,
     analytics_cookie,
     limit: limits.units_5h,
-    cache: "short",
     include_site_funded_credits,
   });
   windows.push(window5h);
@@ -63,7 +62,6 @@ export async function getAIUsageStatus({
     account_id,
     analytics_cookie,
     limit: limits.units_7d,
-    cache: "short",
     include_site_funded_credits,
   });
   windows.push(window7d);
@@ -80,7 +78,6 @@ async function getUsageWindow({
   account_id,
   analytics_cookie,
   limit,
-  cache,
   include_site_funded_credits,
 }: {
   window: AIUsageWindowStatus["window"];
@@ -88,7 +85,6 @@ async function getUsageWindow({
   account_id?: string;
   analytics_cookie?: string;
   limit?: number;
-  cache?: CacheTime;
   include_site_funded_credits?: boolean;
 }): Promise<AIUsageWindowStatus> {
   const activeWindow = account_id
@@ -103,14 +99,13 @@ async function getUsageWindow({
         ? await usageInFixedWindow({
             account_id,
             usageWindow: activeWindow,
-            cache,
             include_site_funded_credits,
           })
         : { used: 0, site_funded_credits_microusd: {} }
       : undefined;
   const used = fixedWindowUsage
     ? fixedWindowUsage.used
-    : await recentUsageUnits({ period, analytics_cookie, cache });
+    : await recentUsageUnits({ period, analytics_cookie });
   const reset_at =
     activeWindow?.resets_at ??
     (account_id
@@ -144,18 +139,17 @@ async function getUsageWindow({
 async function usageInFixedWindow({
   account_id,
   usageWindow,
-  cache,
   include_site_funded_credits,
 }: {
   account_id: string;
   usageWindow: AccountUsageWindow;
-  cache?: CacheTime;
   include_site_funded_credits?: boolean;
 }): Promise<{
   used: number;
   site_funded_credits_microusd?: Record<string, number>;
 }> {
-  const pool = getPool(cache);
+  // Uncached: these sums admit paid and site-funded AI work.
+  const pool = getPool();
   if (include_site_funded_credits) {
     const { rows } = await pool.query(
       `WITH per_turn AS (
@@ -235,14 +229,13 @@ async function recentUsageUnits({
   period,
   account_id,
   analytics_cookie,
-  cache,
 }: {
   period: string;
   account_id?: string;
   analytics_cookie?: string;
-  cache?: CacheTime;
 }): Promise<number> {
-  const pool = getPool(cache);
+  // Uncached: these sums admit paid and site-funded AI work.
+  const pool = getPool();
   let query;
   let args: string[] = [];
   if (account_id) {
@@ -267,7 +260,7 @@ async function getWindowResetAt({
   account_id?: string;
   analytics_cookie?: string;
 }): Promise<Date | undefined> {
-  const pool = getPool("short");
+  const pool = getPool();
   let query;
   let args: string[] = [];
   if (account_id) {

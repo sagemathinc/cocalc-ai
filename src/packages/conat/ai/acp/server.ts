@@ -3,8 +3,6 @@ import { getLogger } from "@cocalc/conat/logger";
 import type {
   AcpAttentionRequest,
   AcpAttentionResponse,
-  AcpAutomationRequest,
-  AcpAutomationResponse,
   AcpControlRequest,
   AcpControlResponse,
   AcpForkSessionRequest,
@@ -28,7 +26,6 @@ import { ConcurrencyLimiter } from "./concurrency-limiter";
 
 export {
   acpAttentionSubject,
-  acpAutomationSubject,
   acpControlSubject,
   acpForkSubject,
   acpInterruptSubject,
@@ -47,7 +44,6 @@ let steerSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
 let truncateSub: Subscription | null = null;
 let controlSub: Subscription | null = null;
-let automationSub: Subscription | null = null;
 let attentionSub: Subscription | null = null;
 const legacySubs: Subscription[] = [];
 function nonNegativeIntegerFromEnv(name: string, fallback: number): number {
@@ -131,9 +127,6 @@ type TruncateHandler = (
 type ControlHandler = (
   options: AcpControlRequest,
 ) => Promise<AcpControlResponse>;
-type AutomationHandler = (
-  options: AcpAutomationRequest,
-) => Promise<AcpAutomationResponse>;
 type AttentionHandler = (
   options: AcpAttentionRequest,
 ) => Promise<AcpAttentionResponse>;
@@ -146,7 +139,6 @@ export async function init(
     forkSession?: ForkHandler;
     truncateSession?: TruncateHandler;
     control?: ControlHandler;
-    automation?: AutomationHandler;
     attention?: AttentionHandler;
     evaluateHarness?: EvaluateHandler;
   },
@@ -201,16 +193,6 @@ export async function init(
     listenControls(handlers.control);
     await subscribeLegacy(client, "control");
   }
-  if (handlers.automation) {
-    automationSub = await client.subscribe(
-      acpSubscriptionSubject("automation"),
-      {
-        queue: "acp-automation-q",
-      },
-    );
-    listenAutomations(handlers.automation);
-    await subscribeLegacy(client, "automation");
-  }
   if (handlers.attention) {
     attentionSub = await client.subscribe(acpSubscriptionSubject("attention"), {
       queue: "acp-attention-q",
@@ -257,10 +239,6 @@ export async function close(): Promise<void> {
   if (controlSub != null) {
     controlSub.close();
     controlSub = null;
-  }
-  if (automationSub != null) {
-    automationSub.close();
-    automationSub = null;
   }
   if (attentionSub != null) {
     attentionSub.close();
@@ -388,19 +366,6 @@ function listenControls(controlHandler: ControlHandler): void {
     }
   })().catch((err) => {
     logger.warn("acp control listener stopped", err);
-  });
-}
-
-function listenAutomations(automationHandler: AutomationHandler): void {
-  if (automationSub == null) return;
-  (async () => {
-    for await (const mesg of automationSub!) {
-      void runLimited("automation", mesg, () =>
-        handleAutomationMessage(mesg, automationHandler),
-      );
-    }
-  })().catch((err) => {
-    logger.warn("acp automation listener stopped", err);
   });
 }
 
@@ -707,28 +672,6 @@ async function handleControlMessage(
   try {
     bindOptionsToSubject(options, mesg.subject, "control");
     const result = await control(options);
-    await respond(result);
-  } catch (err) {
-    await respond(undefined, `${err}`);
-  }
-}
-
-async function handleAutomationMessage(
-  mesg,
-  automation: AutomationHandler,
-): Promise<void> {
-  const options = mesg.data ?? {};
-  const respond = async (payload?: any, error?: string) => {
-    const data: any = payload ?? {};
-    if (error) {
-      data.error = error;
-    }
-    await mesg.respond(data, { noThrow: true });
-  };
-
-  try {
-    bindOptionsToSubject(options, mesg.subject, "automation");
-    const result = await automation(options);
     await respond(result);
   } catch (err) {
     await respond(undefined, `${err}`);

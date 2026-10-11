@@ -49,6 +49,14 @@ function withTimeout(promise, ms, what) {
   ]).finally(() => clearTimeout(timer));
 }
 
+// Errors that do not say whether the call took effect: the edge's explicit
+// OUTCOME_UNKNOWN, a client-side timeout and a lost connection.
+export function isUnknownOutcome(error) {
+  return /OUTCOME_UNKNOWN|outcome unknown|\btimeout\b|code='408'|CONNECTION_LOST|socket has been disconnected/i.test(
+    `${error}`,
+  );
+}
+
 export class FuzzRun {
   constructor(cluster, { seed, steps, faultRate, checkEvery, allow, outDir }) {
     this.cluster = cluster;
@@ -66,6 +74,7 @@ export class FuzzRun {
     this.violations = [];
     this.warnings = [];
     this.failedRenames = [];
+    this.unknownOutcomes = 0;
     this.pendingInvites = new Set();
     this.step = 0;
     this.projectCount = 0;
@@ -133,6 +142,7 @@ export class FuzzRun {
       violations: this.violations,
       warnings: this.warnings,
       timings: this.timings(),
+      unknownOutcomes: this.unknownOutcomes,
     };
   }
 
@@ -162,7 +172,12 @@ export class FuzzRun {
       ...(error ? { error } : {}),
     });
     if (error) {
-      if (op.kind === "rename") {
+      // A timeout or lost connection does not say whether the call ran, and
+      // the edge says so explicitly (OUTCOME_UNKNOWN) when the owning bay
+      // never answered. Honest errors (I6) holds for definite errors only.
+      const unknownOutcome = isUnknownOutcome(error);
+      if (unknownOutcome) this.unknownOutcomes += 1;
+      if (op.kind === "rename" && !unknownOutcome) {
         this.failedRenames.push({
           project_id: op.project_id,
           title: op.title,
@@ -512,6 +527,7 @@ export class FuzzRun {
           violations: this.violations,
           warnings: this.warnings,
           timings: this.timings(),
+          unknownOutcomes: this.unknownOutcomes,
           log: this.log,
         },
         null,

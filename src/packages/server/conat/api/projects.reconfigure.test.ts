@@ -277,66 +277,32 @@ describe("course reconfiguration LRO admission", () => {
     expect(secondHash).toBe(firstHash);
   });
 
-  it("coordinates the operation on the course project's owning bay", async () => {
-    const remoteResult = {
-      op_id: "remote-op",
-      scope_type: "project",
-      scope_id: COURSE_PROJECT_ID,
-      service: "persist-service",
-      stream_name: "stream:remote-op",
-      requested_snapshot_hash: "requested",
-      operation_snapshot_hash: "active",
-    };
+  it("is routed to the course project's owning bay, and runs there without the bridge", async () => {
+    // The receiving hub forwards the whole call (edge routing; see
+    // edge-routing.test.ts and the two-bay suite), so these methods are
+    // single-bay code.
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    for (const name of [
+      "reconfigureCourseProjects",
+      "getCourseReconfigureOperation",
+      "cancelCourseReconfigureOperation",
+    ]) {
+      const route = getHubApiRoute(`projects.${name}`);
+      expect([name, route?.owner]).toEqual([name, "project"]);
+      expect(route?.key([{ course_project_id: COURSE_PROJECT_ID }])).toBe(
+        COURSE_PROJECT_ID,
+      );
+    }
     resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-remote" });
-    remoteReconfigureMock.mockResolvedValue(remoteResult);
-    const { reconfigureCourseProjects } = await import("./projects");
-
-    await expect(
-      reconfigureCourseProjects(request(STUDENT_PROJECT_ID)),
-    ).resolves.toEqual(remoteResult);
-    expect(remoteReconfigureMock).toHaveBeenCalledWith(
-      request(STUDENT_PROJECT_ID),
-    );
-    expect(createLroDetailedMock).not.toHaveBeenCalled();
-    expect(assertCollabMock).not.toHaveBeenCalled();
-  });
-
-  it("routes durable status and cancellation to the same owning bay", async () => {
-    const summary = {
-      op_id: "remote-op",
-      kind: "course-reconfigure-projects",
-      scope_type: "project",
-      scope_id: COURSE_PROJECT_ID,
-      status: "running",
-    };
-    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-remote" });
-    remoteGetOperationMock.mockResolvedValue(summary);
-    const { cancelCourseReconfigureOperation, getCourseReconfigureOperation } =
-      await import("./projects");
-
+    const { getCourseReconfigureOperation } = await import("./projects");
     await expect(
       getCourseReconfigureOperation({
         account_id: ACCOUNT_ID,
         course_project_id: COURSE_PROJECT_ID,
-        op_id: "remote-op",
-      }),
-    ).resolves.toEqual(summary);
-    await expect(
-      cancelCourseReconfigureOperation({
-        account_id: ACCOUNT_ID,
-        course_project_id: COURSE_PROJECT_ID,
-        op_id: "remote-op",
+        op_id: "op",
       }),
     ).resolves.toBeUndefined();
-    expect(remoteGetOperationMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      course_project_id: COURSE_PROJECT_ID,
-      op_id: "remote-op",
-    });
-    expect(remoteCancelOperationMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      course_project_id: COURSE_PROJECT_ID,
-      op_id: "remote-op",
-    });
+    expect(assertCollabMock).toHaveBeenCalled();
+    expect(remoteGetOperationMock).not.toHaveBeenCalled();
   });
 });

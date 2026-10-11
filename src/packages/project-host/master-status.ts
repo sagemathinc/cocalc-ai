@@ -5,7 +5,6 @@
 // running reports while keeping the master view convergent during disconnects.
 import type { Client } from "@cocalc/conat/core/client";
 import getLogger from "@cocalc/backend/logger";
-import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import {
   createHostStatusClient,
   type HostStatusApi,
@@ -77,14 +76,6 @@ function provisionedInventoryIntervalMs(): number {
 
 async function deleteProjectDataLocal(project_id: string) {
   await deleteVolume(project_id, { reportProvisioned: false });
-  try {
-    clearLocalAcpAutomationsForProject(project_id);
-  } catch (err) {
-    logger.debug("clearLocalAcpAutomationsForProject failed", {
-      project_id,
-      err,
-    });
-  }
   try {
     deleteProjectLocal(project_id);
   } catch (err) {

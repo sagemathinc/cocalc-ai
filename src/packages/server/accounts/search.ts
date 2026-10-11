@@ -171,6 +171,7 @@ const FIELDS =
 async function getUserByEmailAddress(
   email_address: string,
 ): Promise<DBUser | undefined> {
+  // query-cache-ok: display: account search results
   const pool = getPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address=$1`,
@@ -182,6 +183,7 @@ async function getUserByEmailAddress(
 async function getUserByAccountId(
   account_id: string,
 ): Promise<DBUser | undefined> {
+  // query-cache-ok: display: account search results
   const pool = getPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE account_id=$1`,
@@ -192,6 +194,7 @@ async function getUserByAccountId(
 
 // only for admin search
 async function getCollaborators(project_id: string): Promise<DBUser[]> {
+  // query-cache-ok: display: account search results
   const pool = getPool("medium");
   let subQuery = `SELECT jsonb_object_keys(users) AS account_id FROM projects WHERE project_id=$1`;
   const queryParams = [project_id];
@@ -213,6 +216,7 @@ async function getUsersByEmailAddresses(
   logger.debug("getUsersByEmailAddresses", email_queries);
   if (email_queries.length == 0 || limit <= 0) return [];
 
+  // query-cache-ok: display: account search results
   const pool = getPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address = ANY($1::TEXT[]) AND deleted IS NULL`,
@@ -268,6 +272,7 @@ async function getUsersByStringQueries(
   i += 1;
   params.push(limit);
 
+  // query-cache-ok: display: account search results
   const pool = getPool("medium");
   const { rows } = await pool.query(query, params);
   return rows;

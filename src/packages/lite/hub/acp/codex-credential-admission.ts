@@ -59,7 +59,7 @@ export function setPaymentSelectionResolver(
 
 // The account's stored choice for this conversation (shared by all of its
 // devices), for turns that arrive without one: agent messages, CLI sends,
-// automations. Undefined when nothing is stored or the hub cannot answer.
+// sensor wakes. Undefined when nothing is stored or the hub cannot answer.
 async function storedPaymentSelection<T>(
   request: AcpJobRequest,
   provider: AgentPaymentProvider,
@@ -97,7 +97,6 @@ export function setCodexCredentialAdmissionResolver(
 export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
-  if (request.request_kind === "command") return request;
   reportAgentRuntimeOnce(request);
   if (request.runtime !== undefined) {
     const claudeCode =
@@ -117,7 +116,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
     }
     if (
       claudeCode &&
-      request.chat?.agent_rpc_execution &&
+      (request.chat?.agent_rpc_execution || request.chat?.sensor_wake) &&
       !harness_credential
     ) {
       // Nothing stored yet: fall back to this account's last human turn.
@@ -128,7 +127,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
         thread_id: request.chat.thread_id!,
       });
       const admitted = previous && decodeAcpJobRequest(previous);
-      if (!admitted || admitted.request_kind === "command" || !admitted.runtime)
+      if (!admitted || !admitted.runtime)
         throw agentRecipientSetupError(
           "human-turn",
           "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected payment method before using Agent Networks.",
@@ -193,7 +192,9 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       preference === "subscription-credential" ? "subscription" : preference,
     credential_id: requestedCredentialId || undefined,
   });
-  const agentMessage = !!request.chat?.agent_rpc_execution;
+  const agentMessage = !!(
+    request.chat?.agent_rpc_execution || request.chat?.sensor_wake
+  );
   if (resolved.source !== "subscription") {
     if (preference !== "auto") {
       const reason =
@@ -212,7 +213,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   }
   const credentialId = `${resolved.credentialId ?? ""}`.trim();
   if (!credentialId) {
-    if (resolved.credentialPinRequired && request.chat?.agent_rpc_execution) {
+    if (resolved.credentialPinRequired && agentMessage) {
       throw agentRecipientSetupError(
         "codex-connection",
         "The recipient agent has no payment method recorded for this account. Open it and send one message with its selected ChatGPT subscription before using Agent Networks.",

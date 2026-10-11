@@ -225,7 +225,7 @@ async function getPasswordHashWithDb({
 
 async function accountHasPassword(account_id: string): Promise<boolean> {
   return !!(await getPasswordHashWithDb({
-    db: getPool("short"),
+    db: getPool(),
     account_id,
   }));
 }
@@ -237,7 +237,7 @@ async function getFreshAuthSsoMethods(
   if (!googleState.configured || googleState.strategy == null) {
     return [];
   }
-  const { rows } = await getPool("short").query<{
+  const { rows } = await getPool().query<{
     passports?: Record<string, unknown> | null;
   }>(
     `

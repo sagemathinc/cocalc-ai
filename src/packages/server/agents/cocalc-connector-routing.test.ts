@@ -12,6 +12,9 @@ const localGet = jest.fn();
 const remoteGet = jest.fn();
 const localRemove = jest.fn();
 const remoteRemove = jest.fn();
+const localReserveWake = jest.fn();
+const remoteReserveWake = jest.fn();
+const remoteReleaseWatcher = jest.fn();
 
 jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => homeBay(...args),
@@ -27,7 +30,15 @@ jest.mock("@cocalc/conat/inter-bay/agent-connector", () => ({
     begin: (...args: any[]) => remoteBegin(...args),
     getConfig: (...args: any[]) => remoteGet(...args),
     removeConfig: (...args: any[]) => remoteRemove(...args),
+    reserveSensorWake: (...args: any[]) => remoteReserveWake(...args),
+    releaseSensorWatcher: (...args: any[]) => remoteReleaseWatcher(...args),
   }),
+}));
+jest.mock("./sensor-budget", () => ({
+  reserveSensorWakeAtHome: (...args: any[]) => localReserveWake(...args),
+  releaseSensorWakeAtHome: jest.fn(),
+  reserveSensorWatcherAtHome: jest.fn(),
+  releaseSensorWatcherAtHome: jest.fn(),
 }));
 jest.mock("./cocalc-connector-turn", () => ({
   beginManagedCocalcConnectorTurn: (...args: any[]) => localBegin(...args),
@@ -105,6 +116,39 @@ test("a different account home uses the inter-bay connector service", async () =
   expect(localGet).not.toHaveBeenCalled();
 });
 
+test("sensor budgets are kept at the account's home, wherever the project is", async () => {
+  const { sensorBudget } = await import("./cocalc-connector-routing");
+  const wake = {
+    account_id: accountId,
+    project_id: "project",
+    agent_id: "agent",
+    sensor_id: "sensor",
+    run_id: "run",
+  };
+  await sensorBudget.reserveWake(wake);
+  expect(localReserveWake).toHaveBeenCalledWith(wake);
+  expect(remoteReserveWake).not.toHaveBeenCalled();
+  localReserveWake.mockClear();
+  homeBay.mockResolvedValue({ home_bay_id: "account-home" });
+  remoteReserveWake.mockResolvedValue({ reserved: false });
+  await expect(sensorBudget.reserveWake(wake)).resolves.toEqual({
+    reserved: false,
+  });
+  expect(remoteReserveWake).toHaveBeenCalledWith(wake);
+  expect(localReserveWake).not.toHaveBeenCalled();
+  await sensorBudget.releaseWatcher({ account_id: accountId, sensor_id: "s" });
+  expect(remoteReleaseWatcher).toHaveBeenCalledWith({
+    account_id: accountId,
+    sensor_id: "s",
+  });
+  // No home, no budget: never a local fallback.
+  homeBay.mockResolvedValue({ home_bay_id: undefined });
+  await expect(sensorBudget.reserveWake(wake)).rejects.toThrow(
+    "account home unavailable",
+  );
+  expect(localReserveWake).not.toHaveBeenCalled();
+});
+
 test("missing authenticated host identity fails before routing", async () => {
   const { beginCocalcConnectorTurn } =
     await import("./cocalc-connector-routing");
@@ -125,4 +169,31 @@ test("missing authenticated host identity fails before routing", async () => {
   ).rejects.toThrow("authenticated project host required");
   expect(remoteBegin).not.toHaveBeenCalled();
   expect(localBegin).not.toHaveBeenCalled();
+});
+
+test("a host cannot present a sensor run; only the hub's scheduler can", async () => {
+  const { beginCocalcConnectorTurn, sensorConnectors } =
+    await import("./cocalc-connector-routing");
+  const turn_ref = {
+    chat_path: "work.chat",
+    message_date: "date",
+    message_id: "run",
+    thread_id: "thread",
+    sensor_run_id: "run",
+  };
+  const opts = {
+    account_id: accountId,
+    host_id: hostId,
+    agent_id: "agent",
+    source_project_id: "source",
+    run_id: "run",
+    idempotency_key: "retry",
+    turn_ref,
+  };
+  await beginCocalcConnectorTurn(opts);
+  expect(localBegin.mock.calls[0][0].turn_ref).not.toHaveProperty(
+    "sensor_run_id",
+  );
+  await sensorConnectors.begin(opts);
+  expect(localBegin.mock.calls[1][0].turn_ref.sensor_run_id).toBe("run");
 });

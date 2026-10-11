@@ -8,7 +8,10 @@
 // advisory locks so multiple hubs can run safely without duplicating work.
 
 import getLogger from "@cocalc/backend/logger";
-import getPool, { withSessionAdvisoryLock } from "@cocalc/database/pool";
+import getPool, {
+  type PoolClient,
+  withSessionAdvisoryLock,
+} from "@cocalc/database/pool";
 import type { ProviderId } from "@cocalc/cloud";
 import { getProviderContext, getProviderPrefix } from "./provider-context";
 import { DisksClient } from "@google-cloud/compute";
@@ -29,6 +32,7 @@ import {
 } from "./spot-restore";
 import { recordHostAvailabilityFromSnapshot } from "@cocalc/server/hosts/availability";
 import { hostOfflineFenced } from "@cocalc/server/hosts/maintenance";
+import { recoverHostToRunning } from "@cocalc/server/hosts/desired-state";
 export { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 
 const logger = getLogger("server:cloud:reconcile");
@@ -599,12 +603,14 @@ export async function updateHostFromProviderSnapshot(
   updates: {
     status?: string;
     runtime?: Record<string, any> | null;
-    desired_state?: "running" | "stopped";
     spot_recovery_state?: Record<string, any>;
     public_url?: string | null;
     internal_url?: string | null;
   },
+  // Optional connection, to write inside a caller's transaction.
+  opts: { db?: Pick<PoolClient, "query"> } = {},
 ) {
+  const db = opts.db ?? pool();
   if (updates.status !== undefined) {
     const stack = new Error().stack;
     logger.debug("status update", {
@@ -627,17 +633,12 @@ export async function updateHostFromProviderSnapshot(
     metadataExpression = `jsonb_set(${metadataExpression}, '{runtime}', $${idx++}::jsonb, true)`;
     params.push(JSON.stringify(updates.runtime));
   }
-  if (updates.desired_state !== undefined) {
-    metadataExpression = `jsonb_set(${metadataExpression}, '{desired_state}', to_jsonb($${idx++}::text), true)`;
-    params.push(updates.desired_state);
-  }
   if (updates.spot_recovery_state !== undefined) {
     metadataExpression = `jsonb_set(${metadataExpression}, '{spot_recovery_state}', $${idx++}::jsonb, true)`;
     params.push(JSON.stringify(updates.spot_recovery_state));
   }
   if (
     updates.runtime !== undefined ||
-    updates.desired_state !== undefined ||
     updates.spot_recovery_state !== undefined
   ) {
     sets.push(`metadata = ${metadataExpression}`);
@@ -663,7 +664,7 @@ export async function updateHostFromProviderSnapshot(
     where.push(`metadata->'runtime'->>'instance_id'=$${idx++}`);
     params.push(expectedInstanceId);
   }
-  const result = await pool().query(
+  const result = await db.query(
     `UPDATE project_hosts
         SET ${sets.join(", ")}, updated=NOW()
       WHERE ${where.join(" AND ")}
@@ -677,17 +678,25 @@ export async function updateHostFromProviderSnapshot(
       expected_instance_id: expectedInstanceId,
     });
   }
+  // Inside a caller's transaction the row may still roll back: the caller
+  // records availability once it has committed.
+  if (!opts.db) {
+    await recordCommittedHostAvailability(row.id);
+  }
+  return updated;
+}
+
+async function recordCommittedHostAvailability(host_id: string) {
   const { rows } = await pool().query(
     `SELECT id, status, deleted, last_seen, metadata
        FROM project_hosts
       WHERE id=$1
       LIMIT 1`,
-    [row.id],
+    [host_id],
   );
   if (rows[0]) {
     await recordHostAvailabilityFromSnapshot(rows[0], "cloud_reconcile");
   }
-  return updated;
 }
 
 const updateHost = updateHostFromProviderSnapshot;
@@ -729,14 +738,59 @@ async function enqueueSpotRestore(
           row.metadata?.machine?.machine_type,
       }
     : undefined;
-  const enqueued = await enqueueCloudVmWorkOnce({
-    vm_id: row.id,
-    action: "start",
-    payload: {
-      source: "cloud_reconcile",
-      reason,
+  const runtimeMetadata = nextRuntime.metadata ?? {};
+  const reconcileMetadata = runtimeMetadata.reconcile ?? {};
+  let enqueued: string | undefined;
+  // This row was read before the provider call: a stop recorded since (by
+  // an admin or billing enforcement) must win. Marked wanted running and
+  // queued in one transaction that refuses while it is wanted stopped.
+  const restored = await recoverHostToRunning({
+    host_id: row.id,
+    write: async (client) => {
+      await updateHost(
+        row,
+        {
+          status: "starting",
+          spot_recovery_state: nextRecoveryState,
+          runtime: {
+            ...nextRuntime,
+            public_ip: undefined,
+            metadata: {
+              ...runtimeMetadata,
+              reconcile: {
+                ...reconcileMetadata,
+                auto_restore_reason: reason,
+                auto_restore_requested_at: new Date().toISOString(),
+              },
+            },
+          },
+        },
+        { db: client },
+      );
+    },
+    enqueue: async (client, intent_generation) => {
+      enqueued = await enqueueCloudVmWorkOnce(
+        {
+          vm_id: row.id,
+          action: "start",
+          payload: {
+            source: "cloud_reconcile",
+            reason,
+            intent_generation,
+          },
+        },
+        { inTransaction: client },
+      );
     },
   });
+  if (!restored) {
+    logger.info("cloud reconcile: host is wanted stopped; no auto-restore", {
+      provider,
+      host_id: row.id,
+    });
+    return false;
+  }
+  await recordCommittedHostAvailability(row.id);
   logger.warn("cloud reconcile: auto-restoring interrupted spot host", {
     provider,
     host_id: row.id,
@@ -745,25 +799,6 @@ async function enqueueSpotRestore(
     rapid_preemption_circuit_breaker:
       preemption?.circuit_breaker_triggered ?? false,
     standard_hold_until: preemption?.state.standard_hold_until,
-  });
-  const runtimeMetadata = nextRuntime.metadata ?? {};
-  const reconcileMetadata = runtimeMetadata.reconcile ?? {};
-  await updateHost(row, {
-    status: "starting",
-    desired_state: "running",
-    spot_recovery_state: nextRecoveryState,
-    runtime: {
-      ...nextRuntime,
-      public_ip: undefined,
-      metadata: {
-        ...runtimeMetadata,
-        reconcile: {
-          ...reconcileMetadata,
-          auto_restore_reason: reason,
-          auto_restore_requested_at: new Date().toISOString(),
-        },
-      },
-    },
   });
   await bumpReconcile(provider, DEFAULT_INTERVALS.running_ms);
   return true;

@@ -171,7 +171,7 @@ function generateRootfsSlugCandidate(): string {
 }
 
 async function generateUniqueRootfsSlug(): Promise<string> {
-  const pool = getPool("medium");
+  const pool = getPool();
   for (let i = 0; i < 10; i += 1) {
     const slug = generateRootfsSlugCandidate();
     const { rows } = await pool.query<{ slug: string }>(
@@ -198,7 +198,7 @@ export async function assertRootfsSlugAvailable({
     params.push(image_id);
     excludeCurrentImage = "AND image_id<>$2";
   }
-  const { rows } = await getPool("medium").query<{ image_id: string }>(
+  const { rows } = await getPool().query<{ image_id: string }>(
     `SELECT image_id
      FROM rootfs_images
      WHERE slug=$1 ${excludeCurrentImage}
@@ -598,7 +598,7 @@ function rowToAdminEntry({
 
 async function collaboratorIdsFor(account_id?: string): Promise<Set<string>> {
   if (!account_id) return new Set<string>();
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<{ jsonb_object_keys?: string }>(
     "SELECT DISTINCT jsonb_object_keys(users) FROM projects WHERE users ? $1::TEXT",
     [account_id],
@@ -611,7 +611,7 @@ async function collaboratorIdsFor(account_id?: string): Promise<Set<string>> {
 }
 
 export async function ensureBuiltinRootfsImages(): Promise<void> {
-  const pool = getPool("medium");
+  const pool = getPool();
   for (const entry of BUILTIN_ROOTFS_IMAGES) {
     await pool.query(
       `INSERT INTO rootfs_images
@@ -861,7 +861,7 @@ async function queryRootfsCatalogRows(
   } = {},
 ): Promise<RootfsCatalogQueryResult> {
   await ensureRootfsRusticRepoSchema();
-  const pool = getPool("medium");
+  const pool = getPool();
   const values: unknown[] = [];
   const where: string[] = [];
   if (opts.visibleFor) {
@@ -1026,7 +1026,7 @@ function shouldSyncSeedCatalogEntry(entry: RootfsImageEntry): boolean {
 async function upsertSeedCatalogEntry(
   entry: RootfsImageEntry,
 ): Promise<string | null | undefined> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const contentResult = normalizeRootfsContentManifest(entry.content);
   const slug = validateRootfsSlug(entry.slug);
   const { rows } = await pool.query<{ owner_id: string | null }>(
@@ -1168,7 +1168,7 @@ async function queryReplicaStorageRows(
     return new Map();
   }
   await ensureRootfsRusticRepoSchema();
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<RootfsReplicaStorageRow>(
     `SELECT
       release_id::TEXT AS release_id,
@@ -1462,7 +1462,7 @@ export async function assertRootfsSupersessionAllowed({
   if (predecessorId === image_id) {
     throw Error("a rootfs image cannot supersede itself");
   }
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<{
     image_id: string;
     owner_id: string | null;
@@ -1549,7 +1549,7 @@ async function upsertRootfsRow({
   content_key?: string | null;
   release_id?: string | null;
 }): Promise<{ image_id: string; slug: string; entry?: RootfsImageEntry }> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const admin = await isAdmin(account_id);
   const image = trimString(body.image);
   const label = trimString(body.label);
@@ -2062,7 +2062,7 @@ async function getDeleteBlockers({
       total: 0,
     };
   }
-  const pool = getPool("medium");
+  const pool = getPool();
   const [projects, catalogEntries, prepullEntries, childReleases] =
     await Promise.all([
       pool.query<{ count: string }>(
@@ -2127,7 +2127,7 @@ export async function requestRootfsImageDeletion({
   image_id: string;
   reason?: string;
 }): Promise<RootfsDeleteRequestResult> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const admin = await isAdmin(account_id);
   const { rows } = await pool.query<{
     image_id: string;
@@ -2230,7 +2230,7 @@ export async function requestRootfsImageDeletion({
 export async function deleteRootfsImagesForAccountDeletion(
   account_id: string,
 ): Promise<RootfsDeleteRequestResult[]> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<{ image_id: string }>(
     `SELECT image_id
      FROM rootfs_images

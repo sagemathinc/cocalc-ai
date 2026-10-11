@@ -43,7 +43,7 @@ test("send preserves JSON text and uses the thread's configuration and distinct 
   assert.equal(request.chat.send_mode, undefined);
 });
 
-test("send recovers the latest interactive session, not an automation or another thread", () => {
+test("send recovers the latest interactive session, not a retired automation's or another thread's", () => {
   const rows = [
     {
       event: "chat",

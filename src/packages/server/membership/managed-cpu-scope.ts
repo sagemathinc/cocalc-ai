@@ -145,7 +145,7 @@ export async function getManagedCpuAccountingClassificationForHost(opts: {
 }): Promise<ManagedCpuAccountingClassification> {
   const host_id = `${opts.host_id ?? ""}`.trim();
   if (host_id) {
-    const { rows } = await getPool("short").query<{
+    const { rows } = await getPool().query<{
       tier: number | null;
       metadata: any;
     }>(
@@ -159,7 +159,7 @@ export async function getManagedCpuAccountingClassificationForHost(opts: {
 
   const project_id = `${opts.project_id ?? ""}`.trim();
   if (project_id) {
-    const { rows } = await getPool("short").query<{
+    const { rows } = await getPool().query<{
       tier: number | null;
       metadata: any;
     }>(

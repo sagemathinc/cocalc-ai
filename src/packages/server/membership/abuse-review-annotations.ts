@@ -162,7 +162,7 @@ export async function createAbuseReviewAnnotation(opts: {
   const account_id = normalizeRequiredText(opts.account_id, "account_id");
   const created_by = normalizeRequiredText(opts.created_by, "created_by");
   const reason = normalizeRequiredText(opts.reason, "reason").slice(0, 4000);
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       INSERT INTO ${TABLE}
         (
@@ -207,7 +207,7 @@ export async function revokeAbuseReviewAnnotation(opts: {
     opts.revoked_reason,
     "revoked_reason",
   ).slice(0, 4000);
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       UPDATE ${TABLE}
          SET revoked_by = $2,
@@ -253,7 +253,7 @@ export async function listAbuseReviewAnnotations(opts: {
       ? Math.max(1, Math.min(100, Math.floor(opts.limit)))
       : 50;
   params.push(limit);
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT *
         FROM ${TABLE}
@@ -306,7 +306,7 @@ export async function listActiveAbuseReviewAnnotations(opts: {
     params.push(categories);
     where.push(`category = ANY($${params.length}::text[])`);
   }
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT *
         FROM ${TABLE}

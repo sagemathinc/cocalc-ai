@@ -213,8 +213,6 @@ import type {
   ProjectBackupSchedule,
   CourseManagerAccessResult,
   CourseReconfigureManagedProjectType,
-  CourseReconfigureRequest,
-  CourseReconfigureResult,
   CourseStudentInviteAccountRepairInput,
   CourseStudentInviteAccountRepairRow,
   ProjectCollabInviteAction,
@@ -1202,7 +1200,9 @@ export interface AccountLocalGetDedicatedHostAdmissionSnapshotRequest {
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
   funding_mode_override?:
-    "account-prepaid" | "account-postpaid" | "site-funded";
+    | "account-prepaid"
+    | "account-postpaid"
+    | "site-funded";
 }
 
 export interface AccountLocalReconcileDedicatedHostPurchaseSessionRequest {
@@ -1257,7 +1257,11 @@ export interface AccountLocalRecordDedicatedHostMeteredUsageResult {
 }
 
 export type ProjectRuntimeSlotState =
-  "starting" | "running" | "released" | "expired" | "failed";
+  | "starting"
+  | "running"
+  | "released"
+  | "expired"
+  | "failed";
 
 export interface ProjectRuntimeSlotWire {
   sponsor_account_id: string;
@@ -2547,12 +2551,6 @@ export interface ProjectCourseManagedProjectState {
   env: ProjectEnv | null;
 }
 
-export interface ProjectCourseReconfigureOperationRequest {
-  account_id: string;
-  course_project_id: string;
-  op_id: string;
-}
-
 export interface ProjectOwnershipTransferRequest {
   account_id: string;
   project_id: string;
@@ -2652,6 +2650,8 @@ export type HostConnectionMethod =
   | "upgrade-host-software"
   | "reconcile-host-software"
   | "set-host-public-route-mode"
+  | "relocate-host"
+  | "set-host-maintenance-notice"
   | "reconcile-host-runtime-deployments"
   | "rollback-host-runtime-deployments"
   | "rollout-host-managed-components"
@@ -2957,7 +2957,11 @@ export type AccountLocalMethod =
   | "public-directory-share-grant-temporary-viewer-access"
   | "public-directory-share-get-temporary-viewer-read-policy";
 export type AuthTokenMethod =
-  "requires-token" | "validate" | "redeem" | "disable" | "delete";
+  | "requires-token"
+  | "validate"
+  | "redeem"
+  | "disable"
+  | "delete";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
@@ -3008,9 +3012,6 @@ export type ProjectCollabInviteMethod =
   | "ensure-course-manager-access"
   | "reconcile-course-managed-project"
   | "get-course-managed-project-states"
-  | "reconfigure-course-projects"
-  | "get-course-reconfigure-operation"
-  | "cancel-course-reconfigure-operation"
   | "access-landing-info"
   | "request-access"
   | "list-access-requests"
@@ -3430,6 +3431,12 @@ export interface InterBayHostConnectionApi {
   setHostPublicRouteMode: (
     opts: Parameters<Hosts["setHostPublicRouteMode"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostPublicRouteMode"]>>>;
+  relocateHost: (
+    opts: Parameters<Hosts["relocateHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["relocateHost"]>>>;
+  setHostMaintenanceNotice: (
+    opts: Parameters<Hosts["setHostMaintenanceNotice"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostMaintenanceNotice"]>>>;
   reconcileHostRuntimeDeployments: (
     opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
@@ -3678,6 +3685,11 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "upgradeHostSoftware", method: "upgrade-host-software" },
   { name: "reconcileHostSoftware", method: "reconcile-host-software" },
   { name: "setHostPublicRouteMode", method: "set-host-public-route-mode" },
+  { name: "relocateHost", method: "relocate-host" },
+  {
+    name: "setHostMaintenanceNotice",
+    method: "set-host-maintenance-notice",
+  },
   {
     name: "reconcileHostRuntimeDeployments",
     method: "reconcile-host-runtime-deployments",
@@ -5031,15 +5043,6 @@ export interface InterBayProjectCollabInviteApi {
   getCourseManagedProjectStates: (
     opts: ProjectCourseManagedProjectStatesRequest,
   ) => Promise<ProjectCourseManagedProjectState[]>;
-  reconfigureCourseProjects: (
-    opts: CourseReconfigureRequest & { account_id: string },
-  ) => Promise<CourseReconfigureResult>;
-  getCourseReconfigureOperation: (
-    opts: ProjectCourseReconfigureOperationRequest,
-  ) => Promise<LroSummary | undefined>;
-  cancelCourseReconfigureOperation: (
-    opts: ProjectCourseReconfigureOperationRequest,
-  ) => Promise<void>;
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
@@ -12342,33 +12345,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "get-course-managed-project-states",
     }),
   });
-  const reconfigureCourseProjectsClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "reconfigureCourseProjects">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "reconfigure-course-projects",
-    }),
-  });
-  const getCourseReconfigureOperationClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "getCourseReconfigureOperation">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "get-course-reconfigure-operation",
-    }),
-  });
-  const cancelCourseReconfigureOperationClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "cancelCourseReconfigureOperation">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "cancel-course-reconfigure-operation",
-    }),
-  });
   const transferProjectOwnershipClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
   >({
@@ -12417,16 +12393,6 @@ export function createInterBayProjectCollabInviteClient({
       ),
     getCourseManagedProjectStates: async (opts) =>
       await getCourseManagedProjectStatesClient.getCourseManagedProjectStates(
-        opts,
-      ),
-    reconfigureCourseProjects: async (opts) =>
-      await reconfigureCourseProjectsClient.reconfigureCourseProjects(opts),
-    getCourseReconfigureOperation: async (opts) =>
-      await getCourseReconfigureOperationClient.getCourseReconfigureOperation(
-        opts,
-      ),
-    cancelCourseReconfigureOperation: async (opts) =>
-      await cancelCourseReconfigureOperationClient.cancelCourseReconfigureOperation(
         opts,
       ),
     leaveOrDeleteProjects: async (opts) =>
@@ -12574,48 +12540,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         getCourseManagedProjectStates: async (opts) =>
           await impl.getCourseManagedProjectStates(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "reconfigureCourseProjects">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "reconfigure-course-projects",
-      }),
-      impl: {
-        reconfigureCourseProjects: async (opts) =>
-          await impl.reconfigureCourseProjects(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "getCourseReconfigureOperation">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "get-course-reconfigure-operation",
-      }),
-      impl: {
-        getCourseReconfigureOperation: async (opts) =>
-          await impl.getCourseReconfigureOperation(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "cancelCourseReconfigureOperation">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "cancel-course-reconfigure-operation",
-      }),
-      impl: {
-        cancelCourseReconfigureOperation: async (opts) =>
-          await impl.cancelCourseReconfigureOperation(opts),
       },
     }),
     createServiceHandler<

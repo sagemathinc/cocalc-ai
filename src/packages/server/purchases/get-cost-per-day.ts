@@ -55,7 +55,7 @@ export default async function getCostPerDay({
     value: offset,
     min: 0,
   });
-  const db = getPool("long");
+  const db = getPool();
   const { rows } = await db.query(
     `SELECT date_trunc('day', "time" AT TIME ZONE 'UTC') AS date, ROUND(SUM(${COST_OR_METERED_COST}), 2) AS total_cost
 FROM purchases

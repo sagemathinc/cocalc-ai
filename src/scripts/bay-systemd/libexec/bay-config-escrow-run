@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# Seal this bay's configuration and secrets with the site master key and keep
+# the copy in R2 next to the backups, then read it back and prove it decrypts
+# to the live files. Dated history copies older than
+# COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS are deleted, so superseded secrets do
+# not stay in R2 indefinitely. See bay-config-escrow.mjs and the
+# "Configuration Escrow" section of the bay-systemd README.
+#
+# This runs as root. It is installed root-owned in /usr/local/libexec/
+# cocalc-bay by install-scaffold.sh and deliberately does not use lib.sh or
+# anything else in the release tree, which the bay account can write. It
+# refuses to execute any program, or read the master key, from a path that
+# account could change.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ESCROW_MJS="${SCRIPT_DIR}/bay-config-escrow.mjs"
+
+: "${COCALC_BAY_CONFIG_DIR:=/etc/cocalc}"
+: "${COCALC_SITE_MASTER_KEY_PATH:=${COCALC_BAY_CONFIG_DIR}/site-master-key}"
+: "${COCALC_BAY_ROOT:=/mnt/cocalc/bays/${COCALC_BAY_ID:-}}"
+: "${COCALC_BAY_USER:=cocalc-bay}"
+# systemd's StateDirectory= sets STATE_DIRECTORY: root-owned, 0755.
+: "${COCALC_BAY_CONFIG_ESCROW_STATUS_FILE:=${STATE_DIRECTORY:-/var/lib/cocalc-bay-config-escrow}/status.json}"
+: "${COCALC_BAY_CONFIG_ESCROW_PREFIX:=cocalc-escrow/${COCALC_BAY_ID:-}}"
+: "${COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS:=30}"
+: "${COCALC_BAY_NODE_BIN:=$(command -v node || true)}"
+: "${CURL_BIN:=curl}"
+: "${COCALC_BAY_SECRETS_DIR:=${SECRETS:-${COCALC_BAY_ROOT}/secrets}}"
+# What a replacement bay needs: its /etc/cocalc configuration and its secrets
+# directory (project-host auth keys, backup shared secret, Conat password,
+# tunnel credentials, ...). Never the master key itself, and not the
+# re-downloadable cloudflared binaries or runtime pid files.
+ESCROW_FILES=(bay.env bay-local.env bay-overlay.env bay-topology.env bay-workers.env bay-secrets.env)
+ESCROW_EXCLUDES=(--exclude 'launchpad-cloudflare/bin' --exclude '**/*.pid')
+MAX_ESCROW_BYTES=$((8 * 1024 * 1024))
+
+log() {
+  printf '%s bay-config-escrow: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+work=""
+status_tmp=""
+cleanup() {
+  [[ -n "$work" ]] && rm -rf "$work"
+  [[ -n "$status_tmp" ]] && rm -f "$status_tmp"
+  return 0
+}
+trap cleanup EXIT
+
+write_status() {
+  local level="$1" detail="$2" dir
+  dir="$(dirname "$COCALC_BAY_CONFIG_ESCROW_STATUS_FILE")"
+  [[ -d "$dir" ]] || install -d -m 0755 "$dir"
+  # A fresh, unpredictable name (O_EXCL) renamed over the status file.
+  status_tmp="$(mktemp "${dir}/.status.XXXXXXXX")"
+  LEVEL="$level" DETAIL="$detail" BUCKET="${COCALC_BAY_PGBACKREST_S3_BUCKET:-}" \
+    KEY="${COCALC_BAY_CONFIG_ESCROW_PREFIX}/bay-config.v1.json" \
+    "$COCALC_BAY_NODE_BIN" -e '
+      const detail = process.env.DETAIL;
+      const status = {
+        level: process.env.LEVEL,
+        generated_at: new Date().toISOString(),
+        bucket: process.env.BUCKET || null,
+        object_key: process.env.KEY,
+      };
+      if (process.env.LEVEL === "error") status.error = detail.slice(0, 2000);
+      else Object.assign(status, JSON.parse(detail));
+      process.stdout.write(JSON.stringify(status, null, 2) + "\n");
+    ' > "$status_tmp"
+  chmod 0644 "$status_tmp"
+  mv -f "$status_tmp" "$COCALC_BAY_CONFIG_ESCROW_STATUS_FILE"
+  status_tmp=""
+}
+
+fail() {
+  log "failed: $1"
+  if [[ -x "${COCALC_BAY_NODE_BIN:-}" ]]; then write_status error "$1" || true; fi
+  exit 1
+}
+
+# Root must not trust what the bay account can change. Each path is resolved
+# once to its canonical form, every directory on that path is checked (not
+# owned by that account, not writable by group or others unless sticky),
+# and only the canonical path is used afterwards, so a symbolic link cannot
+# be swapped between the check and the use.
+# COCALC_BAY_CONFIG_ESCROW_ASSUME_TRUSTED_DIR stops the walk at that
+# directory; it exists only for tests in containers whose / is
+# group-writable, and like everything here it comes from root's environment.
+check_chain() {
+  local path="$1" bay_uid="$2" uid mode
+  [[ "$path" == /* ]] || { echo "$path is not an absolute path"; return 1; }
+  while :; do
+    [[ -n "${COCALC_BAY_CONFIG_ESCROW_ASSUME_TRUSTED_DIR:-}" &&
+      "$path" == "$COCALC_BAY_CONFIG_ESCROW_ASSUME_TRUSTED_DIR" ]] && return 0
+    uid="$(stat -c %u -- "$path")" || return 1
+    mode="$(stat -c %a -- "$path")" || return 1
+    # A sticky directory (like /tmp) lets no one else replace what is in it.
+    (( 8#$mode & 8#1000 )) && mode=0
+    if [[ -L "$path" || "$uid" == "$bay_uid" ]] || (( 8#$mode & 8#022 )); then
+      echo "$path is a symbolic link, is owned by ${COCALC_BAY_USER} or is group/world-writable"
+      return 1
+    fi
+    [[ "$path" == / ]] && return 0
+    path="$(dirname -- "$path")"
+  done
+}
+# require_trusted VAR: replace $VAR with its checked canonical path.
+require_trusted() {
+  local var="$1" path="${!1}" bay_uid problem resolved
+  bay_uid="$(id -u "$COCALC_BAY_USER" 2>/dev/null || echo -1)"
+  [[ "$path" == /* ]] || fail "refusing to trust $path: not an absolute path"
+  resolved="$(readlink -e -- "$path")" || fail "cannot resolve $path"
+  problem="$(check_chain "$resolved" "$bay_uid")" ||
+    fail "refusing to trust $path: $problem"
+  printf -v "$var" '%s' "$resolved"
+}
+
+for name in COCALC_BAY_ID COCALC_BAY_PGBACKREST_S3_BUCKET COCALC_BAY_PGBACKREST_S3_ENDPOINT \
+  COCALC_BAY_PGBACKREST_S3_ACCESS_KEY COCALC_BAY_PGBACKREST_S3_SECRET_KEY; do
+  [[ -n "${!name:-}" ]] || fail "missing required environment variable: $name"
+done
+[[ "$COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS" =~ ^[1-9][0-9]{0,3}$ ]] ||
+  fail "COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS must be a positive number of days"
+[[ -x "$COCALC_BAY_NODE_BIN" ]] || fail "node is not executable: ${COCALC_BAY_NODE_BIN:-unset}"
+require_trusted COCALC_BAY_NODE_BIN
+require_trusted ESCROW_MJS
+SELF="${BASH_SOURCE[0]}"
+require_trusted SELF
+[[ "$CURL_BIN" == */* ]] || CURL_BIN="$(type -P "$CURL_BIN")" || fail "curl not found"
+require_trusted CURL_BIN
+[[ -r "$COCALC_SITE_MASTER_KEY_PATH" ]] || fail "site master key is not readable: $COCALC_SITE_MASTER_KEY_PATH"
+require_trusted COCALC_SITE_MASTER_KEY_PATH
+
+includes=()
+for name in "${ESCROW_FILES[@]}"; do
+  [[ -f "${COCALC_BAY_CONFIG_DIR}/${name}" ]] && includes+=(--include "etc-cocalc=${COCALC_BAY_CONFIG_DIR}/${name}")
+done
+[[ -f "${COCALC_BAY_CONFIG_DIR}/bay-secrets.env" ]] || fail "bay-secrets.env is missing from ${COCALC_BAY_CONFIG_DIR}"
+[[ -d "$COCALC_BAY_SECRETS_DIR" ]] || fail "bay secrets directory is missing: ${COCALC_BAY_SECRETS_DIR}"
+includes+=(--include "bay-secrets=${COCALC_BAY_SECRETS_DIR}" "${ESCROW_EXCLUDES[@]}")
+
+endpoint="${COCALC_BAY_PGBACKREST_S3_ENDPOINT%/}"
+[[ "$endpoint" == http://* || "$endpoint" == https://* ]] || endpoint="https://${endpoint}"
+bucket_url="${endpoint}/${COCALC_BAY_PGBACKREST_S3_BUCKET}"
+base="${bucket_url}/${COCALC_BAY_CONFIG_ESCROW_PREFIX}"
+
+umask 077
+work="$(mktemp -d)"
+escrow="${work}/bay-config.v1.json"
+r2() {
+  # Credentials go to curl on stdin, never on its command line.
+  local quoted="${COCALC_BAY_PGBACKREST_S3_ACCESS_KEY}:${COCALC_BAY_PGBACKREST_S3_SECRET_KEY}"
+  [[ "$quoted" != *$'\n'* && "$quoted" != *$'\r'* ]] || fail "R2 credentials contain a line break"
+  quoted="${quoted//\\/\\\\}"
+  quoted="${quoted//\"/\\\"}"
+  printf 'user = "%s"\n' "$quoted" |
+    "$CURL_BIN" --config - --silent --show-error --fail --retry 3 \
+      --max-time 120 --aws-sigv4 "aws:amz:auto:s3" "$@"
+}
+download() {
+  # The object comes from R2, so its size is bounded before anything parses it.
+  r2 --max-filesize "$MAX_ESCROW_BYTES" --output "$2" "$1" 2>"${work}/err" || return 1
+  (( $(wc -c < "$2") <= MAX_ESCROW_BYTES ))
+}
+
+# Delete dated history copies older than the retention period. Keys sort by
+# date, and the newest copies (including today's) are always kept.
+prune_history() {
+  local prefix cutoff key day
+  prefix="${COCALC_BAY_CONFIG_ESCROW_PREFIX}/history/"
+  cutoff="$(date -u -d "-${COCALC_BAY_CONFIG_ESCROW_HISTORY_DAYS} days" +%F)"
+  r2 --max-filesize 1048576 --output "${work}/history.xml" \
+    "${bucket_url}?list-type=2&prefix=${prefix//\//%2F}" 2>"${work}/err" || {
+    echo "listing history failed: $(head -c 300 "${work}/err")"
+    return 1
+  }
+  pruned=0
+  while read -r key; do
+    day="${key#"$prefix"}"
+    day="${day%.json}"
+    [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$day" < "$cutoff" ]] || continue
+    r2 -X DELETE "${bucket_url}/${key}" >/dev/null 2>"${work}/err" || {
+      echo "deleting ${key} failed: $(head -c 300 "${work}/err")"
+      return 1
+    }
+    pruned=$((pruned + 1))
+  done < <(grep -o '<Key>[^<]*</Key>' "${work}/history.xml" | sed 's/<[^>]*>//g' || true)
+}
+
+sealed="$("$COCALC_BAY_NODE_BIN" "$ESCROW_MJS" seal \
+  --master-key "$COCALC_SITE_MASTER_KEY_PATH" --bay-id "$COCALC_BAY_ID" \
+  --out "$escrow" "${includes[@]}" 2>&1)" || fail "seal: $sealed"
+r2 --upload-file "$escrow" "${base}/bay-config.v1.json" >/dev/null 2>"${work}/err" ||
+  fail "upload: $(head -c 500 "${work}/err")"
+# One copy per day, so a bad seal can never replace the only good one.
+r2 --upload-file "$escrow" "${base}/history/$(date -u +%F).json" >/dev/null 2>"${work}/err" ||
+  fail "upload history copy: $(head -c 500 "${work}/err")"
+download "${base}/bay-config.v1.json" "${work}/readback.json" ||
+  fail "read back: $(head -c 500 "${work}/err")"
+verified="$("$COCALC_BAY_NODE_BIN" "$ESCROW_MJS" verify \
+  --master-key "$COCALC_SITE_MASTER_KEY_PATH" --in "${work}/readback.json" "${includes[@]}" 2>&1)" ||
+  fail "verify: $verified"
+
+level=ok
+pruned=0
+prune_history > "${work}/prune-error" || level=warning
+prune_error="$(cat "${work}/prune-error")"
+detail="$(SEALED="$sealed" BYTES="$(wc -c < "$escrow")" PRUNED="$pruned" \
+  PRUNE_ERROR="$prune_error" "$COCALC_BAY_NODE_BIN" -e '
+  const sealed = JSON.parse(process.env.SEALED);
+  const detail = {
+    sealed_at: sealed.created_at,
+    files: sealed.sealed.length,
+    directories: sealed.directories,
+    bytes: Number(process.env.BYTES),
+    verified: true,
+    history_pruned: Number(process.env.PRUNED),
+  };
+  if (process.env.PRUNE_ERROR) {
+    detail.error = `sealed and verified, but pruning old history copies failed: ${process.env.PRUNE_ERROR}`;
+  }
+  process.stdout.write(JSON.stringify(detail));
+')"
+write_status "$level" "$detail"
+if [[ "$level" == ok ]]; then
+  log "sealed and verified: ${base}/bay-config.v1.json"
+else
+  log "sealed and verified, but history pruning failed: $prune_error"
+  exit 1
+fi

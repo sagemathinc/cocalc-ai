@@ -531,6 +531,12 @@ function tierToFormValues(tier: Partial<Tier>) {
       normalizedOptionalNumber(
         tier.usage_limits?.acp_max_active_automations_per_project,
       ),
+    usage_limit_sensor_min_interval_minutes: normalizedOptionalNumber(
+      tier.usage_limits?.sensor_min_interval_minutes,
+    ),
+    usage_limit_sensor_max_wakes_per_day: normalizedOptionalNumber(
+      tier.usage_limits?.sensor_max_wakes_per_day,
+    ),
     active: !tier.disabled,
   };
 }
@@ -691,6 +697,16 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     usage_limits,
     "acp_max_active_automations_per_project",
     values.usage_limit_acp_max_active_automations_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "sensor_min_interval_minutes",
+    values.usage_limit_sensor_min_interval_minutes,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "sensor_max_wakes_per_day",
+    values.usage_limit_sensor_max_wakes_per_day,
   );
 
   return pick(
@@ -2288,7 +2304,23 @@ export function MembershipTiers() {
                 <Col {...fieldCol}>
                   <Form.Item
                     name="usage_limit_acp_max_active_automations_per_project"
-                    label="Active ACP automations / project"
+                    label="Active sensors / project"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_sensor_min_interval_minutes"
+                    label="Sensor minimum interval (minutes)"
+                  >
+                    <InputNumber min={1} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_sensor_max_wakes_per_day"
+                    label="Sensor wakes / day"
                   >
                     <InputNumber min={0} step={1} precision={0} />
                   </Form.Item>

@@ -73,6 +73,8 @@ export function isAcpAssistantMessage(msg: ChatMessage | undefined): boolean {
   return Number.isFinite(startedAt) && startedAt > 0;
 }
 
+// Legacy: replies of the retired scheduled thread automations ran in their
+// own sessions, so a thread never resumes from them.
 export function isAcpAutomationMessage(msg: ChatMessage | undefined): boolean {
   const automationId = field<string>(msg, "acp_automation_id");
   return typeof automationId === "string" && automationId.trim().length > 0;

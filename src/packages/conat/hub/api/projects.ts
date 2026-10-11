@@ -1190,6 +1190,9 @@ export const projects = {
   createProjectWithBootstrap: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
   collectAssignment: authFirstRequireAccount,
+  addScheduledCollectionStudents: authFirstRequireAccount,
+  getCourseCollectionOperation: authFirstRequireAccount,
+  cancelCourseCollectionOperation: authFirstRequireAccount,
   reconfigureCourseProjects: authFirstRequireAccount,
   getCourseReconfigureOperation: authFirstRequireAccount,
   cancelCourseReconfigureOperation: authFirstRequireAccount,
@@ -1404,6 +1407,33 @@ export interface Projects {
     options?: CopyOptions;
     run_at?: string;
   }) => Promise<CourseCollectAssignmentResult>;
+
+  // Add students to a scheduled collection that has not started yet; a no-op
+  // (updated: false) once it has started, finished or been canceled.
+  addScheduledCollectionStudents: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    assignment_id: string;
+    op_id: string;
+    items: CourseCollectAssignmentItem[];
+  }) => Promise<{ updated: boolean; item_count?: number }>;
+
+  // A collection operation of this course (collectAssignment), read on the
+  // course project's owning bay. Undefined if that bay has no such operation.
+  getCourseCollectionOperation: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    op_id: string;
+    timeout?: number;
+  }) => Promise<LroSummary | undefined>;
+
+  // Cancel a collection operation of this course on the course project's
+  // owning bay; found is false if that bay has no such operation.
+  cancelCourseCollectionOperation: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    op_id: string;
+  }) => Promise<{ found: boolean }>;
 
   reconfigureCourseProjects: (
     opts: CourseReconfigureRequest,

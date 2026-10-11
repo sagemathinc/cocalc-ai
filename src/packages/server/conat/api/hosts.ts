@@ -1221,6 +1221,7 @@ async function setHostDesiredState(
                 '{desired_state}',
                 to_jsonb($2::text)
               ),
+              ${BUMP_DESIRED_STATE_GENERATION},
               updated = NOW()
           WHERE id=$1 AND deleted IS NULL
         `,
@@ -1250,6 +1251,7 @@ async function markHostDeprovisioned(row: any, action: string) {
                ssh_server=NULL,
                last_seen=$3,
                metadata=$4,
+               ${BUMP_DESIRED_STATE_GENERATION},
                updated=NOW()
         WHERE id=$1 AND deleted IS NULL`,
         [row.id, "deprovisioned", new Date(), nextMetadata],
@@ -1676,7 +1678,6 @@ export async function getProjectOwnerEffectiveLimitsLocal({
       acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
-      acp_max_active_automations_per_project: 0,
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
@@ -1733,7 +1734,6 @@ export async function getAccountEffectiveLimitsLocal({
       acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
-      acp_max_active_automations_per_project: 0,
     };
   }
   const resolution = await resolveMembershipForAccount(accountId);
@@ -9056,20 +9056,25 @@ function assertHostNotUnderMaintenance(row: any): void {
   }
 }
 
-async function requireAdminForHostMaintenance(
+// Relocation and maintenance notices are site-admin operations. For a host
+// owned by another bay the call is forwarded there, where these checks run
+// again against its own host row (admin status resolves via the account's
+// home bay; fresh auth via the caller's session).
+async function requireHostMaintenanceAdmin(
   account_id: string | undefined,
-  id: string,
-): Promise<{ owner: string; row: any }> {
+): Promise<string> {
   const owner = requireAccount(account_id);
   if (!(await isAdmin(owner))) {
     throw new Error("not authorized");
   }
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    throw new Error(
-      `host is owned by another bay (${remoteBay}); run this on that bay`,
-    );
-  }
+  return owner;
+}
+
+async function requireAdminForHostMaintenance(
+  account_id: string | undefined,
+  id: string,
+): Promise<{ owner: string; row: any }> {
+  const owner = await requireHostMaintenanceAdmin(account_id);
   return { owner, row: await loadHostForRootfsManagement(id, owner) };
 }
 
@@ -9103,6 +9108,22 @@ export async function relocateHost({
     browser_id,
     session_hash,
   });
+  await requireHostMaintenanceAdmin(account_id);
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).relocateHost({
+      account_id,
+      browser_id,
+      session_hash,
+      id,
+      zone,
+      machine_type,
+      expected_minutes,
+      message,
+      skip_backups,
+      keep_snapshot,
+    });
+  }
   const { owner, row } = await requireAdminForHostMaintenance(account_id, id);
   assertHostNotUnderMaintenance(row);
   // Validate now, so a bad request fails here instead of in the worker.
@@ -9198,6 +9219,22 @@ export async function setHostMaintenanceNotice({
   message?: string;
   clear?: boolean;
 }): Promise<HostMaintenanceNotice | null> {
+  await requireHostMaintenanceAdmin(account_id);
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostMaintenanceNotice({
+        account_id,
+        browser_id,
+        session_hash,
+        id,
+        scheduled_for,
+        expected_minutes,
+        message,
+        clear,
+      });
+  }
   const { row } = await requireAdminForHostMaintenance(account_id, id);
   const current = row.maintenance;
   if (hostLifecycleFenced(current)) {
@@ -10467,6 +10504,7 @@ export async function deleteHostInternal({
         `UPDATE project_hosts
            SET status=$2,
                metadata=(jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)) - 'runtime_deployments'),
+               ${BUMP_DESIRED_STATE_GENERATION},
                updated=NOW()
          WHERE id=$1 AND deleted IS NULL`,
         [id, "deprovisioned", "stopped"],
@@ -10487,6 +10525,7 @@ export {
 } from "./project-api-relay";
 
 import { updateProjectApiRelayUsage as updateProjectApiRelayUsageImpl } from "./project-api-relay";
+import { BUMP_DESIRED_STATE_GENERATION } from "@cocalc/server/hosts/desired-state";
 export async function updateProjectApiRelayUsage(
   opts: Parameters<typeof updateProjectApiRelayUsageImpl>[0],
 ) {

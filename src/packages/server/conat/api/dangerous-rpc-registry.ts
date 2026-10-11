@@ -68,6 +68,20 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.authorizeSensorExecution": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.createScheduledPrompt": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "a project collaborator's bound human session schedules a prompt for an agent in that project: a normal agent turn on a schedule, paid by that person and capped per day",
+  },
+  "agent.manageSensor": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "a project collaborator's bound human session approves, pauses or deletes an agent's sensor in that project; it runs like the agent's own commands, with only the access that person already gave the agent, and wakes are capped per day",
+  },
   "agent.registerIdentity": {
     decision: "fresh-auth-not-required",
     reason:
@@ -1054,10 +1068,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "course-project collaborator cancellation of an in-project durable reconciliation operation",
   },
-  "projects.cancelCourseReconfigureOperationLocal": {
-    decision: "internal-auth-only",
-    reason: INTERNAL_AUTH_ONLY,
-  },
   "projects.cancelProjectRootfsBuild": {
     decision: "fresh-auth-not-required",
     reason:
@@ -1071,9 +1081,19 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin project disk entitlement override removal",
   },
+  "projects.cancelCourseCollectionOperation": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "cancels this course's own collection operation, with the same checks as lro.cancel; removes no safety control",
+  },
   "projects.cleanupRestoreStaging": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.addScheduledCollectionStudents": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "adds already-assigned students to the course's own still-queued scheduled collection, with the same course-manager checks as collectAssignment; removes no safety control",
   },
   "projects.createBackup": {
     decision: "fresh-auth-not-required",

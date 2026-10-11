@@ -70,7 +70,7 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
     "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview",
     "Agent-to-agent messaging across projects | Supported | Unverified",
     "Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported",
-    "Schedule agent prompts](/docs/ai/codex-automation) | Supported | Not supported",
+    "Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified",
     "Accepted means admitted, not completed",
     "live-verified",
     "not a copy of project files",

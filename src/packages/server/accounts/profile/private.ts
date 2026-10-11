@@ -16,6 +16,7 @@ export default async function getPrivateProfile(
   account_id: string,
   noCache: boolean = false,
 ): Promise<Profile> {
+  // query-cache-ok: display: the signed-in user's own profile (is_admin here is only shown; access checks use isAdmin)
   const pool = getPool(noCache ? undefined : "medium");
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name, profile, groups, email_address FROM accounts WHERE account_id=$1",

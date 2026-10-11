@@ -20,7 +20,6 @@ export interface ChatRoomThreadMenuProps {
   hasCustomName?: boolean;
   isPinned?: boolean;
   isAI?: boolean;
-  isAutomation?: boolean;
   isCodexThread?: boolean;
   notificationMuted?: boolean;
   threadColor?: string;
@@ -40,7 +39,6 @@ export interface ChatRoomThreadMenuProps {
   confirmResetThread: (threadKey: string, label: string) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
   openChatFile?: () => void;
-  openAutomationModal?: (threadKey: string) => void;
   openHistory?: () => void;
   openMaintenance?: () => void;
   archiveLabel?: string;
@@ -69,7 +67,6 @@ export function ChatRoomThreadMenu({
   hasCustomName = false,
   isPinned = false,
   isAI = false,
-  isAutomation = false,
   isCodexThread = false,
   notificationMuted = false,
   threadColor,
@@ -83,7 +80,6 @@ export function ChatRoomThreadMenu({
   confirmResetThread,
   confirmDeleteThread,
   openChatFile,
-  openAutomationModal,
   openHistory,
   openMaintenance,
   archiveLabel = "Archive chat",
@@ -105,15 +101,6 @@ export function ChatRoomThreadMenu({
           {
             key: "git-browser",
             label: "Git browser",
-          },
-        ]
-      : [];
-  const automationItems: NonNullable<MenuProps["items"]> =
-    (isAI || isAutomation) && openAutomationModal
-      ? [
-          {
-            key: "automation",
-            label: "Automation settings…",
           },
         ]
       : [];
@@ -144,7 +131,6 @@ export function ChatRoomThreadMenu({
         key: "archive",
         label: archiveLabel,
       },
-      ...automationItems,
       ...codexItems,
       {
         type: "divider",
@@ -278,8 +264,6 @@ export function ChatRoomThreadMenu({
           return;
         }
         antdMessage.success("Chat archived.");
-      } else if (key === "automation") {
-        openAutomationModal?.(threadKey);
       } else if (key === "git-browser") {
         openGitBrowser?.(threadKey);
       } else if (key === "delete") {

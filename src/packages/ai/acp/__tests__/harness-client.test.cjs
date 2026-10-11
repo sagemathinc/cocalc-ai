@@ -1816,8 +1816,14 @@ test("harness context preserves user input and does not invent missing attributi
       ),
     );
     assert.ok(guidance.includes("not an authorization grant"));
-    assert.ok(guidance.includes("cannot wake a completed turn"));
-    assert.ok(!prompt.includes("cannot wake a completed turn"));
+    // Waiting is done with watchers, not by keeping the turn open.
+    assert.ok(guidance.includes("does not wake you"));
+    assert.ok(
+      guidance.includes(
+        '`"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" sensor watch ...`',
+      ),
+    );
+    assert.ok(!prompt.includes("sensor watch"));
   }
   assert.ok(project.includes("/home/user/.claude/skills/cocalc/SKILL.md"));
   assert.ok(

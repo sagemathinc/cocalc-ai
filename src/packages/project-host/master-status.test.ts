@@ -27,11 +27,6 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   })),
 }));
 
-jest.mock("@cocalc/lite/hub/acp", () => ({
-  __esModule: true,
-  clearLocalAcpAutomationsForProject: jest.fn(),
-}));
-
 jest.mock("./sqlite/projects", () => ({
   __esModule: true,
   listUnreportedProjects: jest.fn(() => []),

@@ -374,7 +374,7 @@ function cachedEgressSummary(vm: ComputeVmRow) {
 async function egressSummary(vm: ComputeVmRow) {
   if (hasCourseVmFunding(vm)) return cachedEgressSummary(vm);
   try {
-    const { rows } = await getPool("medium").query(
+    const { rows } = await getPool().query(
       `WITH intervals AS (
          SELECT bytes::numeric AS bytes, amount_usd AS amount, ended_at
            FROM compute_egress_meter_intervals WHERE resource_id=$1

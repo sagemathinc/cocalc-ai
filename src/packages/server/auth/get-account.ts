@@ -61,16 +61,17 @@ export default async function getAccountId(
 
 export async function getAccountIdFromRememberMe(
   hash: string,
-  {
-    noCache,
-  }: {
+  // Always uncached now; noCache is kept for existing callers.
+  _opts: {
     noCache?: boolean;
   } = {},
 ) {
   if (!hash) {
     throw Error("hash must be given");
   }
-  const pool = getPool(noCache ? "" : "medium");
+  // Uncached: signing out, a password reset or a revoked session must stop
+  // this cookie from working at once, on every hub process.
+  const pool = getPool();
   // important to use CHAR(127) instead of TEXT for 100x performance gain.
   const result = await pool.query(
     "SELECT account_id, expire FROM remember_me WHERE hash = $1::CHAR(127)",

@@ -206,9 +206,11 @@ export const AI_ENTRIES: DocsEntry[] = [
       "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
     slug: "ai/codex-automation",
     status: "ready",
+    searchKeywords:
+      "sensor sensors schedule automation wake watch periodic approve script cron",
     summary:
-      "Schedule Codex prompts or Bash commands, review runs, and pause automation.",
-    title: "Schedule agent work",
+      "Schedule prompts for an agent, and let it watch for events with one-shot watchers or approved scripts that wake it.",
+    title: "Watch for events with sensors",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily CoCalc Bay configuration escrow
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1d
+RandomizedDelaySec=30min
+Persistent=true
+Unit=cocalc-bay-config-escrow.service
+
+[Install]
+WantedBy=timers.target

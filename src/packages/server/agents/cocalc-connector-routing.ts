@@ -34,6 +34,12 @@ import {
   listCliConnectorGrants as listCliGrantsAtHome,
   saveCliConnectorGrant as saveCliGrantAtHome,
 } from "./cli-connectors";
+import {
+  releaseSensorWakeAtHome,
+  releaseSensorWatcherAtHome,
+  reserveSensorWakeAtHome,
+  reserveSensorWatcherAtHome,
+} from "./sensor-budget";
 
 export const agentConnectorControl: InterBayAgentConnectorApi = {
   getConfig: getConfigAtHome,
@@ -52,6 +58,10 @@ export const agentConnectorControl: InterBayAgentConnectorApi = {
   begin: beginManagedCocalcConnectorTurn,
   renew: renewManagedCocalcConnectorTurn,
   end: endManagedCocalcConnectorTurn,
+  reserveSensorWake: reserveSensorWakeAtHome,
+  releaseSensorWake: releaseSensorWakeAtHome,
+  reserveSensorWatcher: reserveSensorWatcherAtHome,
+  releaseSensorWatcher: releaseSensorWatcherAtHome,
 };
 
 function requiredAccount<T extends { account_id?: string }>(
@@ -80,8 +90,56 @@ function requiredHost<T extends { account_id?: string; host_id?: string }>(
   if (!isValidUUID(opts.account_id) || !isValidUUID(opts.host_id)) {
     throw Error("authenticated project host required");
   }
+  // Only the hub's sensor scheduler may present a sensor run; a host request
+  // is always about a chat turn on that host.
+  const turn_ref = (opts as { turn_ref?: { sensor_run_id?: string } }).turn_ref;
+  if (turn_ref && "sensor_run_id" in turn_ref) {
+    const { sensor_run_id: _ignored, ...rest } = turn_ref;
+    return { ...opts, turn_ref: rest } as T & {
+      account_id: string;
+      host_id: string;
+    };
+  }
   return opts as T & { account_id: string; host_id: string };
 }
+
+/**
+ * The sensor scheduler's credentials for one run, issued on the approver's
+ * home bay with the same grants, scopes and audit as a chat turn's. The run
+ * itself (live, leased, approved by this account) replaces the live-turn
+ * check. Internal: never reachable from a host or browser.
+ */
+export const sensorConnectors = {
+  begin: async (opts: Parameters<InterBayAgentConnectorApi["begin"]>[0]) =>
+    await (await accountHomeApi(opts.account_id)).begin(opts),
+  renew: async (opts: Parameters<InterBayAgentConnectorApi["renew"]>[0]) =>
+    await (await accountHomeApi(opts.account_id)).renew(opts),
+  end: async (opts: Parameters<InterBayAgentConnectorApi["end"]>[0]) =>
+    await (await accountHomeApi(opts.account_id)).end(opts),
+  beginCli: async (
+    opts: Parameters<InterBayAgentConnectorApi["beginCliTurn"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).beginCliTurn(opts),
+};
+
+/**
+ * Sensor budgets per account (wakes in any 24 hours, active watchers), kept
+ * on the account's home bay so they hold across all of its projects' bays.
+ * Internal: never reachable from a host or browser.
+ */
+export const sensorBudget = {
+  reserveWake: async (
+    opts: Parameters<InterBayAgentConnectorApi["reserveSensorWake"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).reserveSensorWake(opts),
+  releaseWake: async (
+    opts: Parameters<InterBayAgentConnectorApi["releaseSensorWake"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).releaseSensorWake(opts),
+  reserveWatcher: async (
+    opts: Parameters<InterBayAgentConnectorApi["reserveSensorWatcher"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).reserveSensorWatcher(opts),
+  releaseWatcher: async (
+    opts: Parameters<InterBayAgentConnectorApi["releaseSensorWatcher"]>[0],
+  ) => await (await accountHomeApi(opts.account_id)).releaseSensorWatcher(opts),
+};
 
 export const beginCocalcConnectorTurn: AgentApi["beginCocalcConnectorTurn"] =
   async (input) => {

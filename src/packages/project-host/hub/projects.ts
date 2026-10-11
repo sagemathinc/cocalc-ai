@@ -119,7 +119,6 @@ import {
   releaseCodexDeviceAuthLease,
 } from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
-import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { getImage } from "@cocalc/project-runner/run/podman";
 import {
   imageCachePath,
@@ -1913,24 +1912,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     );
   }
 
-  async function rehydrateAcpAutomations(
-    project_id: string,
-    context: string,
-  ): Promise<void> {
-    try {
-      await rehydrateAcpAutomationsForProject(project_id);
-    } catch (err) {
-      logger.warn(`${context}: failed to rehydrate ACP automations`, {
-        project_id,
-        err: `${err}`,
-      });
-    }
-  }
-
-  function kickOffAcpRehydrate(project_id: string, context: string): void {
-    void rehydrateAcpAutomations(project_id, context);
-  }
-
   async function createProject(
     opts: CreateProjectOptions = {},
   ): Promise<string> {
@@ -2035,9 +2016,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           tools_version: (status as any)?.tools_version,
           secret_names: resolved.secret_names,
         });
-        if (!syntheticRuntimeProbeProjects.has(project_id)) {
-          kickOffAcpRehydrate(project_id, "createProject: post-start");
-        }
       } finally {
         endProjectHostActivity(activity_id);
       }
@@ -2495,9 +2473,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           secret_names: startMetadata.secret_names,
         });
       });
-      // During move/restore the destination project root may not exist until
-      // runnerApi.start has created or restored it, so ACP rehydrate must wait.
-      kickOffAcpRehydrate(project_id, "start: post-start");
       publishStartProgress({
         activity_id,
         project_id,

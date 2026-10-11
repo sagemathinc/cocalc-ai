@@ -1119,7 +1119,7 @@ export class PassportManager {
   private async hasLinkedGoogleOidcPassport(
     account_id: string,
   ): Promise<boolean> {
-    const { rows } = await getPool("short").query<{
+    const { rows } = await getPool().query<{
       passports?: Record<string, unknown> | null;
     }>(
       `
@@ -1149,7 +1149,7 @@ export class PassportManager {
       strategy: GOOGLE_SSO_STRATEGY,
       id: googleSub,
     });
-    const { rows } = await getPool("short").query<{ account_id: string }>(
+    const { rows } = await getPool().query<{ account_id: string }>(
       `
         SELECT account_id
           FROM accounts

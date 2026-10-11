@@ -147,7 +147,7 @@ async function getExistingPurchase({
   invoice_id: string;
   client?: PoolClient;
 }): Promise<AdminMembershipPackagePurchaseResult | undefined> {
-  const { rows } = await (client ?? getPool("medium")).query(
+  const { rows } = await (client ?? getPool()).query(
     `SELECT id, account_id, service, cost, description, period_start, period_end
        FROM purchases
       WHERE invoice_id=$1

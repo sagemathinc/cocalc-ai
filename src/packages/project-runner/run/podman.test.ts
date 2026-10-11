@@ -129,6 +129,7 @@ import {
   cleanupProjectSecretsHostPath,
   cleanupStaleProjectContainers,
   cleanupStaleProjectSecretsHostPaths,
+  containerConatHostArgs,
   getAll,
   projectSecretsHostPath,
   PROJECT_SECRETS_HOST_ROOT,
@@ -189,6 +190,30 @@ describe("project-runner Podman host alias resolution", () => {
     await expect(
       resolveHostContainersInternalAddress("--network=none"),
     ).resolves.toBeUndefined();
+  });
+  it("points an ephemeral container's conat at the host, like the project container", async () => {
+    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR = "10.206.0.1";
+    const env: Record<string, string> = {
+      CONAT_SERVER: "http://host.containers.internal:9102",
+    };
+    await expect(
+      containerConatHostArgs("--network=pasta:--map-gw", env),
+    ).resolves.toEqual(["--add-host", "host.containers.internal:10.206.0.1"]);
+    expect(env.CONAT_SERVER).toBe("http://10.206.0.1:9102/");
+    const slirp: Record<string, string> = {
+      CONAT_SERVER: "http://host.containers.internal:9102",
+    };
+    await expect(
+      containerConatHostArgs("--network=slirp4netns", slirp),
+    ).resolves.toEqual([]);
+    expect(slirp.CONAT_SERVER).toBe("http://10.0.2.2:9102/");
+    const other: Record<string, string> = {
+      CONAT_SERVER: "http://conat.example:9102",
+    };
+    await expect(
+      containerConatHostArgs("--network=pasta:--map-gw", other),
+    ).resolves.toEqual([]);
+    expect(other.CONAT_SERVER).toBe("http://conat.example:9102");
   });
 });
 
