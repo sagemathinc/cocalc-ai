@@ -1,5 +1,6 @@
 import path from "path";
 import { projectRuntimeHomeRelativePath } from "../project-runtime";
+import { trimTrailingSlashes } from "../linear-text";
 
 // subdirectory of HOME where snapshots are stored:
 
@@ -11,7 +12,7 @@ function stripLeadingSlash(path: string): string {
 
 export function isSnapshotsPath(path?: string): boolean {
   if (path == null) return false;
-  const normalized = `${path}`.replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(`${path}`);
   const stripped = stripLeadingSlash(normalized);
   return (
     stripped === SNAPSHOTS ||
@@ -31,9 +32,9 @@ export function getSnapshotPathTarget(
   options?: { homePath?: string },
 ): SnapshotPathTarget | undefined {
   if (rawPath == null) return undefined;
-  const normalized = path.posix
-    .normalize(`${rawPath}`.replace(/\\/g, "/"))
-    .replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(
+    path.posix.normalize(`${rawPath}`.replace(/\\/g, "/")),
+  );
   if (!normalized || normalized === "." || normalized === "/") {
     return undefined;
   }
@@ -44,12 +45,12 @@ export function getSnapshotPathTarget(
   }
   const runtimeRelative = projectRuntimeHomeRelativePath(normalized);
   if (runtimeRelative != null) {
-    candidates.add(stripLeadingSlash(runtimeRelative.replace(/\/+$/, "")));
+    candidates.add(stripLeadingSlash(trimTrailingSlashes(runtimeRelative)));
   }
   if (options?.homePath) {
-    const normalizedHome = path.posix
-      .normalize(`${options.homePath}`.replace(/\\/g, "/"))
-      .replace(/\/+$/, "");
+    const normalizedHome = trimTrailingSlashes(
+      path.posix.normalize(`${options.homePath}`.replace(/\\/g, "/")),
+    );
     if (normalized === normalizedHome) {
       candidates.add("");
     } else if (normalized.startsWith(`${normalizedHome}/`)) {
@@ -57,7 +58,7 @@ export function getSnapshotPathTarget(
     }
   }
   for (const candidate of candidates) {
-    const relative = stripLeadingSlash(candidate.replace(/\/+$/, ""));
+    const relative = stripLeadingSlash(trimTrailingSlashes(candidate));
     if (relative === SNAPSHOTS) {
       return { kind: "snapshots-root" };
     }

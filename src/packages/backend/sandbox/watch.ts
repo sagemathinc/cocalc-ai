@@ -14,6 +14,7 @@ import getLogger from "@cocalc/backend/logger";
 import { DiffMatchPatch, compressPatch } from "@cocalc/util/dmp";
 import { sha1 } from "@cocalc/backend/sha1";
 import { trackBackendWatcher } from "../watcher-debug";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 // this is used specifically for loading from disk, where the patch
 // explaining the last change on disk gets merged into the live version
@@ -70,7 +71,7 @@ const HIGH_FANOUT_SYSTEM_DIRS = new Set([
 
 function normalizeWatchPath(path: string): string {
   if (path === "/") return "/";
-  return path.replace(/\/+$/, "");
+  return trimTrailingSlashes(path);
 }
 
 function isPseudoFsPath(path: string): boolean {

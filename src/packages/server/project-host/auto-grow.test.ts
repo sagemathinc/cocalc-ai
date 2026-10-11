@@ -54,6 +54,18 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
+const mockTrackedHostWork: any[] = [];
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  createLro: jest.fn(async (opts: any) => {
+    mockTrackedHostWork.push({ ...opts, events: [] });
+    return { op_id: `op-${mockTrackedHostWork.length}` };
+  }),
+  updateLro: jest.fn(async (opts: any) => {
+    mockTrackedHostWork.at(-1)?.events.push(opts.status);
+    return null;
+  }),
+}));
+
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,
   getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
@@ -288,6 +300,124 @@ describe("guarded host auto-grow", () => {
         status: "success",
       }),
     );
+  });
+
+  it("runs a resize as tracked host work, and not once a relocation holds the host", async () => {
+    mockTrackedHostWork.length = 0;
+    const resizeDiskMock = jest.fn(async () => {
+      // A relocation's quiesce counts this host operation while it runs.
+      expect(mockTrackedHostWork).toHaveLength(1);
+      expect(mockTrackedHostWork[0]).toMatchObject({
+        kind: "host-auto-grow-disk",
+        scope_type: "host",
+        scope_id: "host-1",
+        status: "running",
+      });
+      return undefined;
+    });
+    getProviderContextMock = jest.fn(async () => ({
+      entry: { provider: { resizeDisk: resizeDiskMock } },
+      creds: {},
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      growBtrfs: jest.fn(async () => ({ ok: true })),
+    }));
+    let maintenance: any = null;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.startsWith("SELECT maintenance FROM project_hosts")) {
+        return { rows: [{ maintenance }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              region: "us-west1",
+              status: "running",
+              metadata: {
+                runtime: { instance_id: "instance-1" },
+                machine: {
+                  cloud: "gcp",
+                  disk_gb: 200,
+                  storage_mode: "persistent",
+                  metadata: {
+                    auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 500,
+                      growth_step_gb: 50,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        return { rows: [], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { maybeAutoGrowHostDiskForReservationFailure } =
+      await import("./auto-grow");
+    await expect(
+      maybeAutoGrowHostDiskForReservationFailure({
+        host_id: "host-1",
+        err: new Error("host storage reservation denied"),
+      }),
+    ).resolves.toEqual({ grown: true, next_disk_gb: 250 });
+    expect(mockTrackedHostWork[0].events).toEqual(["succeeded"]);
+
+    // The lease was taken after the first fence check but before the
+    // registration was checked: the resize must not start.
+    mockTrackedHostWork.length = 0;
+    resizeDiskMock.mockClear();
+    maintenance = { kind: "relocation", state: "preparing" };
+    jest.resetModules();
+    const again = await import("./auto-grow");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.startsWith("SELECT maintenance FROM project_hosts")) {
+        return { rows: [{ maintenance }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              region: "us-west1",
+              status: "running",
+              maintenance: null,
+              metadata: {
+                runtime: { instance_id: "instance-1" },
+                machine: {
+                  cloud: "gcp",
+                  disk_gb: 200,
+                  storage_mode: "persistent",
+                  metadata: {
+                    auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 500,
+                      growth_step_gb: 50,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await expect(
+      again.maybeAutoGrowHostDiskForReservationFailure({
+        host_id: "host-1",
+        err: new Error("host storage reservation denied"),
+      }),
+    ).resolves.toEqual({ grown: false, reason: "host is being relocated" });
+    expect(resizeDiskMock).not.toHaveBeenCalled();
+    expect(mockTrackedHostWork[0].events[0]).toBe("canceled");
   });
 
   it("repairs stale disk metadata from the provider-observed size", async () => {

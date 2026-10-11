@@ -22,6 +22,7 @@ import type {
 } from "@cocalc/conat/hub/api/agent";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
 import { resolveCurrentCodexModel } from "@cocalc/util/ai/codex";
+import { firstCodeFenceBody } from "@cocalc/util/linear-text";
 import { getLiteConatClient } from "./runtime-client";
 
 function getProjectId(): string {
@@ -230,8 +231,7 @@ function buildRunnerInput({
 
 function extractJsonFromText(text: string): unknown {
   const trimmed = text.trim();
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const candidate = (fence?.[1] ?? trimmed).trim();
+  const candidate = (firstCodeFenceBody(trimmed, "json") ?? trimmed).trim();
   try {
     return JSON.parse(candidate);
   } catch {

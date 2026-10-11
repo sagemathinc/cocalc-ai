@@ -2652,6 +2652,8 @@ export type HostConnectionMethod =
   | "upgrade-host-software"
   | "reconcile-host-software"
   | "set-host-public-route-mode"
+  | "relocate-host"
+  | "set-host-maintenance-notice"
   | "reconcile-host-runtime-deployments"
   | "rollback-host-runtime-deployments"
   | "rollout-host-managed-components"
@@ -3430,6 +3432,12 @@ export interface InterBayHostConnectionApi {
   setHostPublicRouteMode: (
     opts: Parameters<Hosts["setHostPublicRouteMode"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostPublicRouteMode"]>>>;
+  relocateHost: (
+    opts: Parameters<Hosts["relocateHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["relocateHost"]>>>;
+  setHostMaintenanceNotice: (
+    opts: Parameters<Hosts["setHostMaintenanceNotice"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostMaintenanceNotice"]>>>;
   reconcileHostRuntimeDeployments: (
     opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
@@ -3678,6 +3686,11 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "upgradeHostSoftware", method: "upgrade-host-software" },
   { name: "reconcileHostSoftware", method: "reconcile-host-software" },
   { name: "setHostPublicRouteMode", method: "set-host-public-route-mode" },
+  { name: "relocateHost", method: "relocate-host" },
+  {
+    name: "setHostMaintenanceNotice",
+    method: "set-host-maintenance-notice",
+  },
   {
     name: "reconcileHostRuntimeDeployments",
     method: "reconcile-host-runtime-deployments",

@@ -130,6 +130,7 @@ const stats = {
   reconnectAttemptMax: 0,
   socketDisconnected: 0,
   socketClosed: 0,
+  initErrorReconnects: 0,
   socketReadyRecoveryScheduled: 0,
   socketReadyRecoveryErrors: 0,
   getMissedRuns: 0,
@@ -337,7 +338,7 @@ class PersistStreamClient extends EventEmitter {
 
   private init = () => {
     if (this.client.state == "closed") {
-      this.close();
+      this.shutdown();
       return;
     }
     if (this.isClosed()) {
@@ -389,11 +390,21 @@ class PersistStreamClient extends EventEmitter {
 
     this.socket.on("data", (updates, headers) => {
       if (updates == null && headers != null) {
-        // has to be an error
+        // has to be an error: the server could not open the stream
         this.emitRecoverableError(
           new ConatError(headers?.error, { code: headers?.code }),
         );
-        this.close();
+        if (headers?.code == 403) {
+          // Permission is not going to change for this client; shut it down
+          // (the stream cache then stops handing it out).
+          this.shutdown();
+          return;
+        }
+        // Other failures, e.g., a project that hit its disk quota, are usually
+        // transient.  Close just the socket, which reconnects with backoff and
+        // makes the server open the stream again.
+        stats.initErrorReconnects += 1;
+        this.socket.close();
         return;
       }
       if (this.gettingMissed) {
@@ -641,7 +652,7 @@ class PersistStreamClient extends EventEmitter {
     this.emit("changefeed", updates);
   };
 
-  private isClosed = () => this.state == "closed";
+  isClosed = () => this.state == "closed";
 
   private scheduleReconnect = () => {
     if (this.state == "closed") {
@@ -721,7 +732,14 @@ class PersistStreamClient extends EventEmitter {
     }
   };
 
+  // stream() wraps close() so that it releases one cached reference.  Internal
+  // terminal failures call shutdown() directly instead: calling this.close()
+  // would only drop a reference owned by some other holder.
   close = () => {
+    this.shutdown();
+  };
+
+  private shutdown = () => {
     if (this.state == "closed") {
       return;
     }
@@ -1400,6 +1418,9 @@ interface Options {
 
 export const stream = refCacheSync<Options, PersistStreamClient>({
   name: "persistent-stream-client",
+  // A client that shut itself down, e.g., after a permission error, must not
+  // be handed to new users.
+  isValid: (client) => !client.isClosed(),
   createKey: ({
     user,
     storage,

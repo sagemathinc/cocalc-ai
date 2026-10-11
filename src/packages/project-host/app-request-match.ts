@@ -8,6 +8,7 @@ import { join } from "node:path";
 import TTL from "@isaacs/ttlcache";
 import { getMountPoint } from "./file-server";
 import type { AppStaticIntegrationSpec } from "./public-viewer";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const SUPPORT_FILES = new Set([
   "runtime-state.json",
@@ -37,7 +38,7 @@ const cache = new TTL<string, AppSpec[]>({ max: 10_000, ttl: 1_000 });
 
 function normalizePrefix(value: string): string {
   const withLeading = value.startsWith("/") ? value : `/${value}`;
-  return withLeading.replace(/\/+$/, "") || "/";
+  return trimTrailingSlashes(withLeading) || "/";
 }
 
 function projectAppsDir(project_id: string): string | undefined {

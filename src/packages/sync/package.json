@@ -43,7 +43,7 @@
     "immutable": "^4.3.9",
     "json-stable-stringify": "^1.0.1",
     "lodash": "^4.18.1",
-    "patchflow": "^0.12.0"
+    "patchflow": "^0.13.0"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/sync",
   "repository": {

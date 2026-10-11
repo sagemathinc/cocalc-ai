@@ -608,6 +608,36 @@ describe("project-host daemon stop", () => {
     );
   });
 
+  it("archives the previous host-agent log instead of deleting it", () => {
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
+    const bundleRoot = mkTempDir("cocalc-project-host-bundle-");
+    const runtimeRoot = path.join(bundleRoot, "1776319000002");
+    fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
+    const currentLink = path.join(bundleRoot, "current");
+    fs.symlinkSync(runtimeRoot, currentLink);
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_CURRENT = currentLink;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    fs.writeFileSync(
+      path.join(dataDir, "host-agent.log"),
+      "why the previous agent stopped\n",
+    );
+    mockSpawn().mockReturnValue({ pid: 7879, unref: () => {} } as any);
+    jest.spyOn(console, "log").mockImplementation(() => {});
+
+    startHostAgent(0);
+
+    const archived = fs
+      .readdirSync(path.join(dataDir, "log-history"))
+      .filter((name) => name.startsWith("host-agent-"));
+    expect(archived).toHaveLength(1);
+    expect(
+      fs.readFileSync(path.join(dataDir, "log-history", archived[0]), "utf8"),
+    ).toBe("why the previous agent stopped\n");
+  });
+
   it("rejects an explicitly configured external router URL for host-agent", () => {
     const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;

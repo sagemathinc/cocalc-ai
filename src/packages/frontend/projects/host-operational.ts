@@ -2,6 +2,7 @@ import { COMPUTE_STATES } from "@cocalc/util/compute-states";
 
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const DEFAULT_RECOVERY_ESTIMATE_MS = 3 * 60 * 1000;
+const STALE_OUTAGE_START_MS = 30 * 60 * 1000;
 export const HOST_UNAVAILABLE_BANNER_GRACE_MS = 5_000;
 
 type HostInfoLike = {
@@ -18,6 +19,9 @@ export type HostOperationalState = {
 
 export type HostRecoveryDisplay = {
   active: boolean;
+  // Replaces the generic banner headline and adds a short inline summary.
+  headline?: string;
+  summary?: string;
   title?: string;
   description?: string;
   etaMinutes?: number;
@@ -90,11 +94,121 @@ export function hostUnavailableBannerDelay({
   return Math.max(0, graceMs - elapsed);
 }
 
+export type HostMaintenanceDisplay = {
+  state: "scheduled" | "in_progress" | "failed";
+  kind: "relocation" | "maintenance";
+  // Scheduled start, or when the window actually started.
+  startsAt?: string;
+  expectedEndAt?: string;
+  expectedMinutes?: number;
+  // Past the expected end (in progress) or past the scheduled start.
+  overdue: boolean;
+  message?: string;
+};
+
+function plain(value: any): any {
+  return typeof value?.toJS === "function" ? value.toJS() : value;
+}
+
+function clockTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function getHostMaintenanceDisplay(
+  hostInfo: HostInfoLike | undefined,
+  now = Date.now(),
+): HostMaintenanceDisplay | undefined {
+  const notice = plain(read(hostInfo, "maintenance"));
+  if (!notice || typeof notice !== "object") return undefined;
+  const state = notice.state;
+  if (state !== "scheduled" && state !== "in_progress" && state !== "failed") {
+    return undefined;
+  }
+  const kind = notice.kind === "relocation" ? "relocation" : "maintenance";
+  const startsAtMs = timestamp(
+    state === "scheduled" ? notice.scheduled_for : notice.started_at,
+  );
+  const durationMs = Number(notice.expected_duration_ms);
+  const expectedMinutes =
+    Number.isFinite(durationMs) && durationMs > 0
+      ? Math.max(1, Math.round(durationMs / 60_000))
+      : undefined;
+  const expectedEndMs =
+    timestamp(notice.expected_end_at) ??
+    (startsAtMs != null && expectedMinutes != null
+      ? startsAtMs + durationMs
+      : undefined);
+  const overdue =
+    state === "scheduled"
+      ? startsAtMs != null && now > startsAtMs
+      : expectedEndMs != null && now > expectedEndMs + 60_000;
+  const message = `${notice.message ?? ""}`.trim();
+  return {
+    state,
+    kind,
+    ...(startsAtMs != null
+      ? { startsAt: new Date(startsAtMs).toISOString() }
+      : {}),
+    ...(expectedEndMs != null
+      ? { expectedEndAt: new Date(expectedEndMs).toISOString() }
+      : {}),
+    ...(expectedMinutes != null ? { expectedMinutes } : {}),
+    overdue,
+    ...(message ? { message } : {}),
+  };
+}
+
+function maintenanceRecoveryDisplay(
+  maintenance: HostMaintenanceDisplay,
+  now: number,
+): HostRecoveryDisplay {
+  const endMs = timestamp(maintenance.expectedEndAt);
+  const minutes = maintenance.expectedMinutes;
+  const timingDescription =
+    maintenance.state === "failed" || maintenance.overdue
+      ? "This is taking longer than expected. CoCalc staff have been notified, and your saved files are safe."
+      : endMs != null
+        ? `Expected back around ${clockTime(endMs)}${
+            minutes ? ` (the whole window is about ${minutes} minute${minutes === 1 ? "" : "s"})` : ""
+          }.`
+        : "It should be back shortly.";
+  return {
+    active: true,
+    headline: "Down for scheduled maintenance",
+    summary:
+      maintenance.state === "failed" || maintenance.overdue
+        ? "Taking longer than expected"
+        : endMs != null
+          ? `Expected back around ${clockTime(endMs)}`
+          : undefined,
+    title:
+      maintenance.state === "failed"
+        ? "Scheduled maintenance is taking longer than planned"
+        : "This project's server is down for scheduled maintenance",
+    description:
+      maintenance.kind === "relocation"
+        ? "CoCalc is moving the server that runs this project to a new machine. Your files, snapshots and settings move with it."
+        : "CoCalc is doing scheduled maintenance on the server that runs this project.",
+    ...(endMs != null
+      ? { etaMinutes: Math.max(1, Math.ceil((endMs - now) / 60_000)) }
+      : {}),
+    ...(maintenance.startsAt ? { startedAt: maintenance.startsAt } : {}),
+    timingDescription,
+  };
+}
+
 export function getHostRecoveryDisplay(
   hostInfo: HostInfoLike | undefined,
   now = Date.now(),
   clientUnavailableSince?: string,
 ): HostRecoveryDisplay {
+  const maintenance = getHostMaintenanceDisplay(hostInfo, now);
+  if (maintenance && maintenance.state !== "scheduled") {
+    return maintenanceRecoveryDisplay(maintenance, now);
+  }
   const recovery = read(hostInfo, "spot_recovery_state");
   const phase = `${
     read(hostInfo, "recovery_phase") ?? read(recovery, "phase") ?? ""
@@ -122,13 +236,39 @@ export function getHostRecoveryDisplay(
     : 3;
   const lastSeenMs = timestamp(read(hostInfo, "last_seen"));
   const clientStartedAtMs = timestamp(clientUnavailableSince);
+  // The replacement VM heartbeats before recovery finishes, so last_seen
+  // passes the outage start while the banner is still up: that must not hide
+  // when the outage started. An outage start much older than the current
+  // start attempt (e.g. a restart during a Standard hold) is stale.
+  const outageStartedAtMs = isSpotRecovery
+    ? timestamp(read(recovery, "outage_started_at"))
+    : undefined;
+  const attemptStartedAtMs = isSpotRecovery
+    ? timestamp(read(recovery, "verification_started_at"))
+    : undefined;
+  let spotStartedAtMs = outageStartedAtMs ?? attemptStartedAtMs;
+  if (
+    outageStartedAtMs != null &&
+    attemptStartedAtMs != null &&
+    attemptStartedAtMs - outageStartedAtMs > STALE_OUTAGE_START_MS
+  ) {
+    spotStartedAtMs = attemptStartedAtMs;
+  }
+  if (
+    spotStartedAtMs != null &&
+    attemptStartedAtMs == null &&
+    lastSeenMs != null &&
+    spotStartedAtMs < lastSeenMs &&
+    now - spotStartedAtMs > STALE_OUTAGE_START_MS
+  ) {
+    spotStartedAtMs = undefined;
+  }
   const serverStartedAtCandidates = [
-    isSpotRecovery ? read(recovery, "outage_started_at") : undefined,
-    read(hostInfo, "unavailable_since"),
-  ]
-    .map(timestamp)
-    .filter((value): value is number => value != null && value <= now)
-    .filter((value) => lastSeenMs == null || value >= lastSeenMs);
+    ...(spotStartedAtMs != null ? [spotStartedAtMs] : []),
+    ...[timestamp(read(hostInfo, "unavailable_since"))].filter(
+      (value) => value != null && (lastSeenMs == null || value >= lastSeenMs),
+    ),
+  ].filter((value): value is number => value != null && value <= now);
   // Once this browser witnesses a disconnect, its timestamp is the stable
   // identity of this incident. Provider recovery state can retain an older
   // outage while a Standard fallback hold remains active; accepting that value
@@ -280,6 +420,8 @@ export function isHostRecoveryTransient(
     read(hostInfo, "recovery_phase") ?? read(recovery, "phase") ?? ""
   }`.trim();
   const recoveryActive = phase.length > 0 && phase !== "idle";
+  const maintenance = getHostMaintenanceDisplay(hostInfo);
+  if (maintenance && maintenance.state !== "scheduled") return true;
 
   if (status === "starting") return true;
   if (desiredState !== "running") return false;

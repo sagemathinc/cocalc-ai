@@ -42,8 +42,15 @@ TasksCurrent=1
 OUT
 EOF
 
-cat > "${FAKE_BIN}/journalctl" <<'EOF'
+# The journal comes through the root helper (with sudo as the bay user).
+cat > "${FAKE_BIN}/sudo" <<'EOF'
 #!/usr/bin/env bash
+[[ "$1" == "-n" ]] && shift
+exec "$@"
+EOF
+cat > "${FAKE_BIN}/cocalc-bay-hub-ctl" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "journal 1" ]] || exit 2
 printf 'diagnostic journal marker\n'
 EOF
 
@@ -61,6 +68,7 @@ export COCALC_BAY_OVERLAY_ENV_FILE="${TMP}/missing-overlay.env"
 export COCALC_BAY_TOPOLOGY_ENV_FILE="${TMP}/missing-topology.env"
 export COCALC_BAY_SECRETS_ENV_FILE="${TMP}/missing-secrets.env"
 export COCALC_BAY_HUB_DIAGNOSTIC_DIR="${TMP}/incidents"
+export COCALC_BAY_HUB_CTL="${FAKE_BIN}/cocalc-bay-hub-ctl"
 export COCALC_BAY_HUB_DIAGNOSTIC_RETENTION_DAYS=14
 export COCALC_BAY_HUB_DIAGNOSTIC_MAX_FILES=1
 

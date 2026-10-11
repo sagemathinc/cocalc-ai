@@ -7,6 +7,7 @@ import type { Client as CoreConatClient } from "./core/client";
 import type { DKV, DKVOptions } from "./sync/dkv";
 import { uuid } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 export const WORKSPACES_STORE_VERSION = 1;
 export const WORKSPACES_STORE_VERSION_KEY = "version";
@@ -184,7 +185,7 @@ export function normalizeWorkspacePath(path: string): string {
     next = `/${next}`;
   }
   if (next.length > 1) {
-    next = next.replace(/\/+$/g, "");
+    next = trimTrailingSlashes(next);
   }
   return next || "/";
 }

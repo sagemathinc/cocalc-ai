@@ -40,6 +40,7 @@ import { createProjectHostConatAuth } from "./conat-auth";
 import { attachProjectApiRelay } from "./api-relay";
 import type { Client } from "@cocalc/conat/core/client";
 import { API_RELAY_PATH } from "@cocalc/conat/project-host/api-relay";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:conat-router");
 const LONG_LIVED_HTTP_TIMEOUT_MS = Math.max(
@@ -495,7 +496,7 @@ export function rewriteProjectHostConatProxyUrl(
   if (firstPathSegment && isValidUUID(firstPathSegment)) {
     return;
   }
-  const trimmedPath = parsed.pathname.replace(/\/+$/, "");
+  const trimmedPath = trimTrailingSlashes(parsed.pathname);
   if (!trimmedPath.endsWith("/conat") && trimmedPath !== "/conat") {
     return;
   }
