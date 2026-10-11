@@ -241,6 +241,57 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     ],
   },
   {
+    slug: "web-browser",
+    title: "Web Browser",
+    navLabel: "Browser",
+    metadataTitle: "A Web Browser You Share With Your AI Agents",
+    tagline: "A web browser for you and your agents.",
+    summary:
+      "Agents browse the web in a real Chromium that belongs to your project. Watch them work, take over to sign in or solve a CAPTCHA, then hand it back.",
+    metadataSummary:
+      "Give AI agents a real Chromium browser in your CoCalc project. Watch it live, take over for sign-ins and CAPTCHAs, test your own web app, and keep downloads in the project.",
+    image: "/public/landing/project-web-browser-20261011.jpg",
+    docsUrl: "/docs/projects/web-browser",
+    highlights: [
+      "Agents browse in a real Chromium",
+      "Watch live, take over, hand back",
+      "Sign in once; sign-ins stay encrypted",
+      "Downloads land in ~/Downloads",
+    ],
+    index: true,
+    signUpLabel: "Start on CoCalc.ai",
+    sections: [
+      {
+        title: "Watch the agent, and step in when it needs you",
+        paragraphs: [
+          "An agent's browser appears live in its chat, and a .browser file is a browser of your own that you open like any document. Click Take over to sign in, enter a two-factor code, or solve a CAPTCHA; the agent waits until you hand it back, and can ask you to take over.",
+          "Browsing the web needs a project with internet access; without it, the browser opens only the servers running in the project.",
+        ],
+        links: [
+          { href: "/docs/projects/web-browser", label: "Use the web browser" },
+        ],
+      },
+      {
+        title: "Test the web app you are building",
+        paragraphs: [
+          "Start a development server in the project and ask an agent to click through it, fill in forms, and report what breaks. A new tab's start page lists the servers running in the project; the browser reaches them once it is on the project's network.",
+        ],
+      },
+      {
+        title: "Works with the tools agents already use",
+        paragraphs: [
+          "Agents drive it with the CoCalc CLI (open, click, type, read, screenshot), or connect Playwright, Puppeteer, or chrome-devtools-mcp to its DevTools endpoint. Files it downloads land in the project's ~/Downloads.",
+        ],
+      },
+      {
+        title: "Isolated, and light on resources",
+        paragraphs: [
+          "Each browser runs in a container of its own with Chromium's sandbox, and sees none of the project's files. Its sign-ins are encrypted with a project secret and kept outside the project's files and backups. It renders only as often as someone needs, so a browser nobody is watching costs almost nothing.",
+        ],
+      },
+    ],
+  },
+  {
     slug: "linux",
     title: "Online Linux Environment",
     navLabel: "Linux",
@@ -722,6 +773,11 @@ export function getPublicFeaturePage(
 ): PublicFeaturePage | undefined {
   if (!slug) return;
   const page = PUBLIC_FEATURE_PAGE_MAP.get(slug);
+  // CoCalc Plus runs one local project, without the project hosts the web
+  // browser runs on, and its docs leave the browser out.
+  if (page?.slug === "web-browser" && config?.cocalc_product === "plus") {
+    return;
+  }
   // Omitted config is the authoring catalog. Renderers supply config even
   // before the product is known, so unavailable compute links stay hidden.
   if (

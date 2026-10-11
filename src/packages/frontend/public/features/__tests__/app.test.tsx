@@ -506,6 +506,82 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
   });
 
+  it("renders the web browser page from its feature record, like the crawler fallback", () => {
+    const page = getPublicFeaturePage("web-browser")!;
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
+          help_email: "help@example.com",
+          site_name: "CoCalc",
+        }}
+        initialRoute={{ slug: "web-browser", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: page.tagline }),
+    ).not.toBeNull();
+    expect(screen.getByText(page.summary)).not.toBeNull();
+    expect(page.highlights).toHaveLength(4);
+    for (const highlight of page.highlights!) {
+      expect(screen.getByText(highlight)).not.toBeNull();
+    }
+    expect(page.sections).toHaveLength(4);
+    for (const { bullets, links, paragraphs, title } of page.sections!) {
+      expect(bullets).toBeUndefined();
+      expect(
+        screen.getByRole("heading", { level: 3, name: title }),
+      ).not.toBeNull();
+      for (const paragraph of paragraphs!) {
+        expect(screen.getByText(paragraph)).not.toBeNull();
+      }
+      for (const { href, label } of links ?? []) {
+        expect(
+          screen.getByRole("link", { name: label }).getAttribute("href"),
+        ).toBe(href);
+      }
+    }
+    const ctas = screen.getAllByRole("link", { name: page.signUpLabel });
+    expect(ctas).toHaveLength(2);
+    for (const cta of ctas) {
+      expect(cta.getAttribute("href")).toBe("/auth/sign-up?intent=code");
+    }
+    expect(page.image).toBe("/public/landing/project-web-browser-20261011.jpg");
+    const screenshots = Array.from(container.querySelectorAll("img")).filter(
+      (img) => img.getAttribute("alt") !== "",
+    );
+    expect(screenshots).toHaveLength(1);
+    expect(screenshots[0].getAttribute("src")).toBe(page.image);
+    expect(screenshots[0].getAttribute("alt")).toMatch(/Take over/);
+    // In the feature navigation, next to the terminal.
+    const active = container.querySelector(
+      '.cocalc-feature-subnav a[aria-current="page"]',
+    );
+    expect(active?.getAttribute("href")).toBe(featurePath("web-browser"));
+  });
+
+  it("uses projects as the web browser CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "web-browser", view: "detail" }}
+      />,
+    );
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks).toHaveLength(2);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+  });
+
   it("uses projects as the terminal CTA for authenticated users", () => {
     // On cocalc.ai, where signed-out visitors see the record's sign-up label.
     render(

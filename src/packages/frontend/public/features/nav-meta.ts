@@ -51,6 +51,7 @@ const FEATURE_META = {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     icon: "terminal",
   },
+  "web-browser": { accent: COLORS.BLUE_D, icon: "global" },
   whiteboard: { accent: COLORS.FG_RED, icon: "layout" },
   x11: {
     accent: COLORS.RUN,
