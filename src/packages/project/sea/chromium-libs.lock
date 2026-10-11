@@ -1,5 +1,6 @@
-# Ubuntu focal .deb files bundled with the headless Chromium; see
-# pin-chromium-libs.py.  arch package version filename sha256
+# Ubuntu .deb files bundled with the headless Chromium (libraries from
+# focal, fonts from noble); see pin-chromium-libs.py.
+# arch package version filename sha256
 amd64 libasound2 1.2.2-2.1ubuntu2.5 pool/main/a/alsa-lib/libasound2_1.2.2-2.1ubuntu2.5_amd64.deb 5ea02b4590b210bb2d4a180007184c10e8941d0ee1f025361950b0d0084578a6
 amd64 libatk-bridge2.0-0 2.34.2-0ubuntu2~20.04.1 pool/main/a/at-spi2-atk/libatk-bridge2.0-0_2.34.2-0ubuntu2~20.04.1_amd64.deb 2fcfc11cdb476274e1c11f0321c2dcabe97186dab45eb9ca91ee9dc1f6906603
 amd64 libatk1.0-0 2.35.1-1ubuntu2 pool/main/a/atk1.0/libatk1.0-0_2.35.1-1ubuntu2_amd64.deb 3bfb6d72e35771481be152dcc96d39b899d6ff246c995658c181114357f46656
@@ -40,6 +41,10 @@ amd64 libxkbcommon0 0.10.0-1 pool/main/libx/libxkbcommon/libxkbcommon0_0.10.0-1_
 amd64 libxrandr2 2:1.5.2-0ubuntu1 pool/main/libx/libxrandr/libxrandr2_1.5.2-0ubuntu1_amd64.deb e6b232c3b2e6f8858aee0f1e46d2cec1575de1b85cb9cfdff93b8b951b15ff97
 amd64 libxrender1 1:0.9.10-1 pool/main/libx/libxrender/libxrender1_0.9.10-1_amd64.deb bfda6dc44a39d6500ac2974b3113105477adce457699aadd99f022d5a4858c1c
 amd64 libzstd1 1.4.4+dfsg-3ubuntu0.1 pool/main/libz/libzstd/libzstd1_1.4.4+dfsg-3ubuntu0.1_amd64.deb 7a4422dadb90510dc90765c308d65e61a3e244ceb3886394335e48cff7559e69
+amd64 fonts-dejavu-core 2.37-8 pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb 40049660c194f3b8a2541fc7369efebb10e9f94bdac836a2f38fafedd10fa73a
+amd64 fonts-liberation 1:2.1.5-3 pool/main/f/fonts-liberation/fonts-liberation_2.1.5-3_all.deb 065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc
+amd64 fonts-noto-cjk 1:20230817+repack1-3 pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20230817+repack1-3_all.deb 7d64b985f6fe128c99eae5610d5c047338e572bdcfb2bb09736be01b824a7f6c
+amd64 fonts-noto-color-emoji 2.047-0ubuntu0.24.04.1 pool/main/f/fonts-noto-color-emoji/fonts-noto-color-emoji_2.047-0ubuntu0.24.04.1_all.deb b102b62ce6a7313315223cff5e052bdf8fc0ad162c9e961ce0dc2202bc139ce2
 arm64 libasound2 1.2.2-2.1ubuntu2.5 pool/main/a/alsa-lib/libasound2_1.2.2-2.1ubuntu2.5_arm64.deb 3cf3900c1b9e5aa90c340099b15f04d8f93c078cd69acf1856ea65fea42b003e
 arm64 libatk-bridge2.0-0 2.34.2-0ubuntu2~20.04.1 pool/main/a/at-spi2-atk/libatk-bridge2.0-0_2.34.2-0ubuntu2~20.04.1_arm64.deb 3a50e4c2112a0fae245aae3c7ed30b7468d2cf5601cb85547f0b3459c214ef52
 arm64 libatk1.0-0 2.35.1-1ubuntu2 pool/main/a/atk1.0/libatk1.0-0_2.35.1-1ubuntu2_arm64.deb c67756f42f3655a896300145ad5faa313426e5e2353005e3a555ebad78fbe32e
@@ -80,3 +85,7 @@ arm64 libxkbcommon0 0.10.0-1 pool/main/libx/libxkbcommon/libxkbcommon0_0.10.0-1_
 arm64 libxrandr2 2:1.5.2-0ubuntu1 pool/main/libx/libxrandr/libxrandr2_1.5.2-0ubuntu1_arm64.deb 32d7f174ee845be1c7c4198113b401520f5bd77e4cf09b534c53eca0e496dc21
 arm64 libxrender1 1:0.9.10-1 pool/main/libx/libxrender/libxrender1_0.9.10-1_arm64.deb 931f3d61ec6528221a0a2dc6f9fdac494e24d7e92e49ce1811c495571f3b2cea
 arm64 libzstd1 1.4.4+dfsg-3ubuntu0.1 pool/main/libz/libzstd/libzstd1_1.4.4+dfsg-3ubuntu0.1_arm64.deb e675e593d1f270ed757778f809ab67dd966f054d345e2c213e076cf418428f0b
+arm64 fonts-dejavu-core 2.37-8 pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb 40049660c194f3b8a2541fc7369efebb10e9f94bdac836a2f38fafedd10fa73a
+arm64 fonts-liberation 1:2.1.5-3 pool/main/f/fonts-liberation/fonts-liberation_2.1.5-3_all.deb 065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc
+arm64 fonts-noto-cjk 1:20230817+repack1-3 pool/main/f/fonts-noto-cjk/fonts-noto-cjk_20230817+repack1-3_all.deb 7d64b985f6fe128c99eae5610d5c047338e572bdcfb2bb09736be01b824a7f6c
+arm64 fonts-noto-color-emoji 2.047-0ubuntu0.24.04.1 pool/main/f/fonts-noto-color-emoji/fonts-noto-color-emoji_2.047-0ubuntu0.24.04.1_all.deb b102b62ce6a7313315223cff5e052bdf8fc0ad162c9e961ce0dc2202bc139ce2

@@ -14,7 +14,9 @@ set -Eeuo pipefail
 # both ZIP_SHA256 below, and rebuild the tools. The shared libraries it needs beyond glibc are
 # taken from Ubuntu 20.04 packages, so they need nothing newer than glibc 2.31
 # and do not depend on what the project image provides. The wrapper puts them
-# on LD_LIBRARY_PATH for the browser process only.
+# on LD_LIBRARY_PATH for the browser process only.  Fonts for every script and
+# emoji come along too (from Ubuntu 24.04: data, so the newest), next to the
+# image's own: an image without CJK fonts otherwise shows boxes.
 #
 # Every input is pinned: the .deb files and their SHA256 are listed in
 # chromium-libs.lock (made by pin-chromium-libs.py from Ubuntu's signed
@@ -109,6 +111,39 @@ for lib in "$INSTALL"/lib/*; do
   fi
 done
 
+# Fonts: Noto Sans CJK in one weight (Chromium makes bold), color emoji,
+# Liberation (the metrics of Arial, Times New Roman, Courier New) and DejaVu.
+mkdir -p "$INSTALL/fonts"
+FONTS="opentype/noto/NotoSansCJK-Regular.ttc truetype/noto/NotoColorEmoji.ttf
+truetype/dejavu/DejaVuSans.ttf truetype/dejavu/DejaVuSans-Bold.ttf
+truetype/dejavu/DejaVuSerif.ttf truetype/dejavu/DejaVuSerif-Bold.ttf"
+for style in Regular Bold Italic BoldItalic; do
+  for family in Sans Serif Mono; do
+    FONTS="$FONTS truetype/liberation/Liberation$family-$style.ttf"
+  done
+done
+for font in $FONTS; do
+  if [ ! -f "$WORK/root/usr/share/fonts/$font" ]; then
+    echo "Bundled Chromium is missing the font $font" >&2
+    exit 1
+  fi
+  cp "$WORK/root/usr/share/fonts/$font" "$INSTALL/fonts/"
+done
+# The image's fonts and settings, and ours; generic families fall back to
+# ours where the image names none.
+cat >"$INSTALL/fonts.conf" <<'EOF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <dir prefix="relative">fonts</dir>
+  <cachedir prefix="xdg">fontconfig</cachedir>
+  <alias binding="same"><family>sans-serif</family><default><family>Liberation Sans</family><family>DejaVu Sans</family></default></alias>
+  <alias binding="same"><family>serif</family><default><family>Liberation Serif</family><family>DejaVu Serif</family></default></alias>
+  <alias binding="same"><family>monospace</family><default><family>Liberation Mono</family><family>DejaVu Sans Mono</family></default></alias>
+</fontconfig>
+EOF
+
 # Every library the browser loads must be bundled or part of glibc/libgcc.
 missing=""
 for elf in "$INSTALL/browser/chrome-headless-shell" "$INSTALL"/browser/*.so* \
@@ -134,10 +169,12 @@ DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 LD_LIBRARY_PATH="$DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # The bundled GLib must not load the image's GIO modules.
 GIO_MODULE_DIR="$DIR/lib/gio-modules"
-export LD_LIBRARY_PATH GIO_MODULE_DIR
+# The image's fonts and the bundled ones (see install-chromium.sh).
+FONTCONFIG_FILE="$DIR/fonts.conf"
+export LD_LIBRARY_PATH GIO_MODULE_DIR FONTCONFIG_FILE
 exec "$DIR/browser/chrome-headless-shell" "$@"
 EOF
 chmod +x "$INSTALL/chromium"
-printf 'chrome-headless-shell %s (%s), libraries from Ubuntu %s\n' \
+printf 'chrome-headless-shell %s (%s), libraries from Ubuntu %s, fonts from Ubuntu noble\n' \
   "$CHROME_VERSION" "$ARCH" "$SUITE" >"$INSTALL/VERSION"
 du -sh "$INSTALL" | awk '{print "  - Chromium installed: " $1}'

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Regenerate chromium-libs.lock: the exact Ubuntu 20.04 (focal) .deb files that
-install-chromium.sh bundles with the headless Chromium, and their SHA256.
+Regenerate chromium-libs.lock: the exact Ubuntu .deb files that
+install-chromium.sh bundles with the headless Chromium, and their SHA256:
+libraries from 20.04 (focal, for its old glibc), fonts from 24.04 (noble,
+data only, so newer: current emoji).
 
 The build trusts only the lock file (immutable, reproducible inputs).  This
 script, run by hand when the libraries need to change, trusts a package index
@@ -25,7 +27,7 @@ MIRRORS = {
     "arm64": "https://ports.ubuntu.com/ubuntu-ports",
 }
 SUITE = "focal"
-POCKETS = [SUITE, f"{SUITE}-updates", f"{SUITE}-security"]
+FONT_SUITE = "noble"
 COMPONENTS = ["main", "universe"]
 KEYRING = os.environ.get("KEYRING", "/usr/share/keyrings/ubuntu-archive-keyring.gpg")
 
@@ -38,6 +40,12 @@ PACKAGES = """
   libpcre3 libselinux1 libsqlite3-0 libsystemd0 libudev1 libwayland-server0 libx11-6
   libxau6 libxcb-randr0 libxcb1 libxcomposite1 libxdamage1 libxdmcp6 libxext6
   libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libzstd1
+""".split()
+
+# Fonts for every script and emoji, whatever the project's image has
+# (install-chromium.sh takes the files it needs from them).
+FONT_PACKAGES = """
+  fonts-dejavu-core fonts-liberation fonts-noto-cjk fonts-noto-color-emoji
 """.split()
 
 
@@ -75,36 +83,47 @@ def newer(a: str, b: str) -> bool:
     )
 
 
+def pockets(suite: str) -> list:
+    return [suite, f"{suite}-updates", f"{suite}-security"]
+
+
 def main() -> None:
-    print("# Ubuntu focal .deb files bundled with the headless Chromium; see")
-    print("# pin-chromium-libs.py.  arch package version filename sha256")
+    print("# Ubuntu .deb files bundled with the headless Chromium (libraries from")
+    print("# focal, fonts from noble); see pin-chromium-libs.py.")
+    print("# arch package version filename sha256")
     for arch, mirror in MIRRORS.items():
-        best: dict = {}
-        for pocket in POCKETS:
-            hashes = verified_index_hashes(mirror, pocket)
-            for component in COMPONENTS:
-                name = f"{component}/binary-{arch}/Packages.xz"
-                data = fetch(f"{mirror}/dists/{pocket}/{name}")
-                if hashlib.sha256(data).hexdigest() != hashes.get(name):
-                    sys.exit(f"{pocket}/{name} does not match its signed InRelease")
-                for stanza in lzma.decompress(data).decode().split("\n\n"):
-                    fields = dict(
-                        line.split(": ", 1)
-                        for line in stanza.splitlines()
-                        if ": " in line and not line.startswith(" ")
-                    )
-                    package = fields.get("Package")
-                    if package not in PACKAGES:
-                        continue
-                    entry = (fields["Version"], fields["Filename"], fields["SHA256"])
-                    if package not in best or newer(entry[0], best[package][0]):
-                        best[package] = entry
-        missing = [p for p in PACKAGES if p not in best]
-        if missing:
-            sys.exit(f"missing for {arch}: {' '.join(missing)}")
-        for package in PACKAGES:
-            version, filename, sha256 = best[package]
-            print(arch, package, version, filename, sha256)
+        pin(arch, mirror, SUITE, PACKAGES)
+        pin(arch, mirror, FONT_SUITE, FONT_PACKAGES)
+
+
+def pin(arch: str, mirror: str, suite: str, packages: list) -> None:
+    """Print the newest version of each package in the suite's pockets."""
+    best: dict = {}
+    for pocket in pockets(suite):
+        hashes = verified_index_hashes(mirror, pocket)
+        for component in COMPONENTS:
+            name = f"{component}/binary-{arch}/Packages.xz"
+            data = fetch(f"{mirror}/dists/{pocket}/{name}")
+            if hashlib.sha256(data).hexdigest() != hashes.get(name):
+                sys.exit(f"{pocket}/{name} does not match its signed InRelease")
+            for stanza in lzma.decompress(data).decode().split("\n\n"):
+                fields = dict(
+                    line.split(": ", 1)
+                    for line in stanza.splitlines()
+                    if ": " in line and not line.startswith(" ")
+                )
+                package = fields.get("Package")
+                if package not in packages:
+                    continue
+                entry = (fields["Version"], fields["Filename"], fields["SHA256"])
+                if package not in best or newer(entry[0], best[package][0]):
+                    best[package] = entry
+    missing = [p for p in packages if p not in best]
+    if missing:
+        sys.exit(f"missing for {arch} in {suite}: {' '.join(missing)}")
+    for package in packages:
+        version, filename, sha256 = best[package]
+        print(arch, package, version, filename, sha256)
 
 
 if __name__ == "__main__":
