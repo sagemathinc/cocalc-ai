@@ -4,6 +4,7 @@ let assertCollabMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let interBayStopMock: jest.Mock;
 let getProjectMock: jest.Mock;
+let handleStopMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -75,6 +76,11 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/inter-bay/project-control", () => ({
+  __esModule: true,
+  handleProjectControlStop: (...args: any[]) => handleStopMock(...args),
+}));
+
 jest.mock("@cocalc/server/projects/copy-db", () => ({
   __esModule: true,
   cancelCopy: jest.fn(),
@@ -129,12 +135,15 @@ describe("projects.stop", () => {
       epoch: 4,
     }));
     interBayStopMock = jest.fn(async () => undefined);
+    handleStopMock = jest.fn(async () => undefined);
     getProjectMock = jest.fn(async () => ({
       stop: jest.fn(async () => undefined),
     }));
   });
 
-  it("uses remote-aware auth and routes stop through the inter-bay bridge", async () => {
+  it("is routed to the owning bay and stops there, without the bridge", async () => {
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    expect(getHubApiRoute("projects.stop")?.owner).toBe("project");
     const { stop } = await import("./projects");
     await expect(
       stop({
@@ -147,11 +156,8 @@ describe("projects.stop", () => {
       account_id: "acct-1",
       project_id: "proj-1",
     });
-    expect(resolveProjectBayMock).toHaveBeenCalledWith("proj-1");
-    expect(interBayStopMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      epoch: 4,
-    });
-    expect(getProjectMock).not.toHaveBeenCalled();
+    // The owning bay's handler checks that this bay owns the project.
+    expect(handleStopMock).toHaveBeenCalledWith({ project_id: "proj-1" });
+    expect(interBayStopMock).not.toHaveBeenCalled();
   });
 });
