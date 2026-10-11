@@ -822,7 +822,7 @@ test("the production engine runs host binaries as the bay user and never on the 
   expect(workerSource).toContain('"--no-ownership"');
   expect(workerSource).toContain('PSQL_OPTIONS = "-c search_path=pg_catalog"');
   expect(workerSource).toContain(
-    '"SELECT pg_catalog.to_regclass(\'public." + table + "\')::text"',
+    '"SELECT (pg_catalog.to_regclass(\'public." + table + "\') IS NOT NULL)::text"',
   );
   const cleanup = workerSource.slice(workerSource.lastIndexOf("finally:"));
   expect(cleanup).toContain("assert_no_bay_processes()");

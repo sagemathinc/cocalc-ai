@@ -1085,8 +1085,10 @@ curl "${common[@]}" --fail "$base" -o "$destination"
 
     tables = ["accounts", "projects", "server_settings"]
     for table in tables:
-        value = psql(container, "SELECT pg_catalog.to_regclass('public." + table + "')::text")
-        if value != table:
+        # (Not the regclass as text: with search_path=pg_catalog it prints
+        # schema-qualified.)
+        value = psql(container, "SELECT (pg_catalog.to_regclass('public." + table + "') IS NOT NULL)::text")
+        if value != "true":
             raise RuntimeError(f"missing restored table {table}")
     if psql(container, "SELECT pg_catalog.pg_is_in_recovery()::text") != "false":
         raise RuntimeError("restored PostgreSQL did not promote after PITR target")
