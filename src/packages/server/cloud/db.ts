@@ -353,6 +353,10 @@ export async function enqueueCloudVmWorkOnce(
         await insertQueuedWork(client, id, row, notBefore);
         return id;
       }
+      if (isNewerIntent(existing.payload, row.payload)) {
+        // Older (or legacy) work must not reschedule newer work either.
+        return undefined;
+      }
       if (existing.state === "queued" && notBefore) {
         await client.query(
           `

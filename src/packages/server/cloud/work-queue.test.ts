@@ -479,6 +479,42 @@ describe("deduplication never loses a newer intent", () => {
     ]);
   });
 
+  it("an older or unversioned request does not reschedule a newer queued start", async () => {
+    const schedule = async (vm_id: string) =>
+      (
+        await getPool().query(
+          "SELECT not_before FROM cloud_vm_work WHERE vm_id=$1",
+          [vm_id],
+        )
+      ).rows.map((row) => row.not_before?.getTime() ?? null);
+    // An immediate newer start is not delayed ...
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-6",
+      action: "start",
+      payload: { intent_generation: 5 },
+    });
+    // ... and a newer start's backoff is not cut short.
+    const backoff = later();
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-7",
+      action: "start",
+      payload: { intent_generation: 5 },
+      not_before: backoff,
+    });
+    for (const payload of [{ intent_generation: 4 }, {}]) {
+      for (const vm_id of ["vm-6", "vm-7"]) {
+        await enqueueCloudVmWorkOnce({
+          vm_id,
+          action: "start",
+          payload,
+          not_before: new Date(Date.now() + 5_000),
+        });
+      }
+    }
+    expect(await schedule("vm-6")).toEqual([null]);
+    expect(await schedule("vm-7")).toEqual([backoff.getTime()]);
+  });
+
   it("a newer start queues behind an older or unversioned one already running", async () => {
     for (const running of [{ intent_generation: 4 }, {}]) {
       await getPool().query("DELETE FROM cloud_vm_work");
