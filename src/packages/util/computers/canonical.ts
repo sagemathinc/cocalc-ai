@@ -87,3 +87,14 @@ export function signingInput(kind: string, payload: unknown): string {
   // Domain separation: a signature over one kind can never verify as another.
   return `cocalc-computers\u0000v1\u0000${kind}\u0000${canonicalJson(payload)}`;
 }
+
+/**
+ * Text that ends up in front of a person deciding whether to trust a computer
+ * (pairing prompts, cards, logs) must not carry terminal controls, bidi
+ * overrides or invisible marks. LINE: labels and paths. TEXT: multi-line text
+ * (tab and newline allowed).
+ */
+export const UNSAFE_LINE_CHARS =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/;
+export const UNSAFE_TEXT_CHARS =
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/;

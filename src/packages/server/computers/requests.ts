@@ -55,6 +55,8 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import { getBaySigningKey } from "./signing-keys";
 import { computersSite } from "./site";
+import { assertComputersAuthority } from "./authority";
+import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
 
 export const REQUEST_LIFETIME_MS = 15 * 60 * 1000;
 export const MAX_OPEN_REQUESTS_PER_ACCOUNT = 10;
@@ -117,6 +119,11 @@ export async function createComputerRequest({
   if (typeof why !== "string" || why.length > MAX_WHY_LENGTH) {
     throw new ComputerRequestError("why must be at most 1000 characters");
   }
+  if (UNSAFE_TEXT_CHARS.test(why)) {
+    throw new ComputerRequestError(
+      "why must not contain control characters or bidi overrides",
+    );
+  }
   if (requested_by) {
     requireUuid(requested_by.agent_id, "agent_id");
     requireUuid(requested_by.run_id, "run_id");
@@ -125,12 +132,16 @@ export async function createComputerRequest({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertComputersAuthority(client, account_id, "request a computer");
     // Serialize per account so the cap holds under concurrency.
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       `account_computer_requests:${account_id}`,
     ]);
+    // Locked so adding a member (which needs fresh auth once a request
+    // exists) serializes with this.
     const network = await client.query(
-      `SELECT state FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2`,
+      `SELECT state FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2
+        FOR SHARE`,
       [account_id, policy.agent_network_id],
     );
     if (network.rows[0]?.state !== "active") {
@@ -170,8 +181,8 @@ export async function createComputerRequest({
       `INSERT INTO account_computer_requests
          (request_id, account_id, requested_by_agent_id, requested_by_run_id,
           source_project_id, thread_id, name, requested_policy, why, state,
-          server_nonce, expires_at, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11,$12,$12)`,
+          server_nonce, expires_at, created_at, updated_at, agent_network_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11,$12,$12,$13)`,
       [
         request_id,
         account_id,
@@ -185,6 +196,7 @@ export async function createComputerRequest({
         randomNonce(),
         new Date(expires_at),
         new Date(now),
+        policy.agent_network_id,
       ],
     );
     await client.query("COMMIT");
@@ -278,6 +290,15 @@ export async function submitPairing({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    const owner = (
+      await client.query(
+        `SELECT account_id FROM account_computer_requests WHERE request_id=$1`,
+        [request_id],
+      )
+    ).rows[0]?.account_id;
+    if (owner == null)
+      throw new ComputerRequestError("no such computer request");
+    await assertComputersAuthority(client, owner, "pair a computer");
     const { rows } = await client.query(
       `SELECT * FROM account_computer_requests WHERE request_id=$1 FOR UPDATE`,
       [request_id],
@@ -288,6 +309,15 @@ export async function submitPairing({
       throw new ComputerRequestError(
         "this computer request expired; make a new one",
       );
+    }
+    if (row.state === "paired" && row.transcript_hash === transcriptHash(t)) {
+      // The same claim again (a lost answer): byte-for-byte the same signed
+      // transcript, so the same key and nonces. Answer as before.
+      await client.query("COMMIT");
+      return {
+        pairing_phrase: row.pairing_phrase,
+        transcript_hash: row.transcript_hash,
+      };
     }
     if (row.state === "paired") {
       // Someone else already paired: never replace the first key. The owner
@@ -424,11 +454,17 @@ export async function approveComputerRequest({
   account_id,
   request_id,
   transcript_hash,
+  agent_network_generation,
   now = Date.now(),
 }: {
   account_id: string;
   request_id: string;
   transcript_hash: string;
+  /**
+   * The generation of the agent network the owner was shown (it changes
+   * with every membership change). Approval refuses if it moved.
+   */
+  agent_network_generation: string;
   now?: number;
 }): Promise<ApprovedComputer> {
   requireUuid(account_id, "account_id");
@@ -437,9 +473,40 @@ export async function approveComputerRequest({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertComputersAuthority(client, account_id, "approve a computer");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       `account_computers:${account_id}`,
     ]);
+    const requestNetwork = (
+      await client.query(
+        `SELECT account_id, agent_network_id FROM account_computer_requests
+          WHERE request_id=$1`,
+        [request_id],
+      )
+    ).rows[0];
+    if (requestNetwork == null || requestNetwork.account_id !== account_id) {
+      throw new ComputerRequestError("no such computer request");
+    }
+    // The network the computer will serve must be active and exactly the
+    // membership the owner reviewed; adding a member takes this row FOR
+    // UPDATE, so it can't slip in before the commit either.
+    const network = (
+      await client.query(
+        `SELECT state, generation FROM agent_networks
+          WHERE account_id=$1 AND agent_network_id=$2 FOR SHARE`,
+        [account_id, requestNetwork.agent_network_id],
+      )
+    ).rows[0];
+    if (network?.state !== "active") {
+      throw new ComputerRequestError(
+        "the agent network this computer would serve is not active",
+      );
+    }
+    if (network.generation !== agent_network_generation) {
+      throw new ComputerRequestError(
+        "the agent network changed since you saw it; look again",
+      );
+    }
     const { rows } = await client.query(
       `SELECT * FROM account_computer_requests WHERE request_id=$1 FOR UPDATE`,
       [request_id],
@@ -551,9 +618,16 @@ export async function approveComputerRequest({
     );
     await client.query(
       `UPDATE account_computer_requests
-          SET state='approved', computer_id=$2, approved_by=$3, approved_at=$4, updated_at=$4
+          SET state='approved', computer_id=$2, approved_by=$3, approved_at=$4,
+              updated_at=$4, approved_network_generation=$5
         WHERE request_id=$1`,
-      [request_id, computer_id, account_id, new Date(now)],
+      [
+        request_id,
+        computer_id,
+        account_id,
+        new Date(now),
+        agent_network_generation,
+      ],
     );
     await client.query("COMMIT");
     return { computer_id, certificate, policy };
@@ -574,13 +648,25 @@ export async function declineComputerRequest({
   request_id: string;
   now?: number;
 }): Promise<void> {
-  const { rowCount } = await getPool().query(
-    `UPDATE account_computer_requests SET state='declined', updated_at=$3
-      WHERE request_id=$1 AND account_id=$2 AND state IN ('pending','paired')`,
-    [request_id, account_id, new Date(now)],
-  );
-  if (!rowCount)
-    throw new ComputerRequestError("no open computer request to decline");
+  requireUuid(account_id, "account_id");
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await assertComputersAuthority(client, account_id, "decline a computer");
+    const { rowCount } = await client.query(
+      `UPDATE account_computer_requests SET state='declined', updated_at=$3
+        WHERE request_id=$1 AND account_id=$2 AND state IN ('pending','paired')`,
+      [request_id, account_id, new Date(now)],
+    );
+    if (!rowCount)
+      throw new ComputerRequestError("no open computer request to decline");
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** Mark open requests past their expiry; returns how many. */
@@ -630,6 +716,24 @@ export async function listComputerRequests(
       WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50`,
     [account_id],
   );
+  const networks = new Map<string, ComputerRequestSummary["agent_network"]>();
+  for (const id of new Set(rows.map((r) => r.agent_network_id))) {
+    const n = (
+      await getPool().query(
+        `SELECT agent_network_id, title, state, generation FROM agent_networks
+          WHERE account_id=$1 AND agent_network_id=$2`,
+        [account_id, id],
+      )
+    ).rows[0];
+    if (n == null) continue;
+    const members = await getPool().query(
+      `SELECT registered_agent_id AS agent_id, project_id FROM agent_network_members
+        WHERE agent_network_id=$1 AND member_kind='registered' AND removed_at IS NULL
+        ORDER BY added_at`,
+      [id],
+    );
+    networks.set(id, { ...n, members: members.rows });
+  }
   return rows.map((row) => {
     const machine = row.transcript?.payload?.machine ?? null;
     return {
@@ -643,6 +747,7 @@ export async function listComputerRequests(
       transcript_hash: row.transcript_hash ?? null,
       machine,
       requested_by_agent_id: row.requested_by_agent_id ?? null,
+      agent_network: networks.get(row.agent_network_id) ?? null,
       computer_id: row.computer_id ?? null,
       expires_at: new Date(row.expires_at).valueOf(),
       created_at: new Date(row.created_at).valueOf(),

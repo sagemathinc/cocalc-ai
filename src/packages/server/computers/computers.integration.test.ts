@@ -67,14 +67,27 @@ describeDb("computers store", () => {
   const account = randomUUID();
   const network = randomUUID();
 
+  async function networkGeneration(): Promise<string> {
+    const { rows } = await getPool().query(
+      "SELECT generation FROM agent_networks WHERE agent_network_id=$1",
+      [network],
+    );
+    return rows[0].generation;
+  }
+
   beforeAll(async () => {
     await syncSchema(Object.fromEntries(tables.map((t) => [t, SCHEMA[t]])));
   });
 
   beforeEach(async () => {
-    for (const t of tables) await db().query(`DELETE FROM ${t}`);
+    for (const t of tables.slice().reverse())
+      await db().query(`DELETE FROM ${t}`);
     const { resetSigningKeyCacheForTesting } = await import("./signing-keys");
     resetSigningKeyCacheForTesting();
+    await db().query(
+      "INSERT INTO accounts (account_id, email_address, created) VALUES ($1,'a@example.org',now())",
+      [account],
+    );
     await db().query(
       `INSERT INTO agent_networks
          (agent_network_id, account_id, title, state, delivery_mode, generation, created_by)
@@ -184,6 +197,39 @@ describeDb("computers store", () => {
       expect(env.payload.eligible).toBe(false);
     });
 
+    it("is not eligible while anything in it is shared publicly", async () => {
+      const { attestProjectLocal } = await import("./attestation");
+      const project_id = await project({ [account]: { group: "owner" } });
+      await db().query(
+        `CREATE TABLE IF NOT EXISTS public_project_paths
+           (project_id UUID, disabled BOOLEAN, visibility TEXT)`,
+      );
+      try {
+        await db().query(
+          "INSERT INTO public_project_paths VALUES ($1, false, 'unlisted')",
+          [project_id],
+        );
+        const shared = await attestProjectLocal({
+          project_id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
+        expect(shared.payload.eligible).toBe(false);
+        await db().query(
+          "UPDATE public_project_paths SET visibility='disabled' WHERE project_id=$1",
+          [project_id],
+        );
+        const unshared = await attestProjectLocal({
+          project_id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
+        expect(unshared.payload.eligible).toBe(true);
+      } finally {
+        await db().query("DROP TABLE public_project_paths");
+      }
+    });
+
     it("is not eligible for an account that isn't the owner", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } });
@@ -260,13 +306,14 @@ describeDb("computers store", () => {
           user: "w",
         },
       });
-      const result = await submitPairing({
+      const args = {
         request_id,
         transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, signing),
         signing_public_key: signing.publicDer,
         resolved_policy: resolved,
-      });
-      return { ...result, signing, transcript };
+      };
+      const result = await submitPairing(args);
+      return { ...result, signing, transcript, args };
     }
 
     async function newRequest(name = "laptop") {
@@ -286,6 +333,7 @@ describeDb("computers store", () => {
       const paired = await machinePairs(request_id);
       expect(paired.pairing_phrase).toMatch(/^[a-z]+(-[a-z]+){3}$/);
       const approved = await approveComputerRequest({
+        agent_network_generation: await networkGeneration(),
         account_id: account,
         request_id,
         transcript_hash: paired.transcript_hash,
@@ -320,6 +368,54 @@ describeDb("computers store", () => {
       expect(computer.max_deadline! - computer.deadline!).toBe(7 * 3600 * 1000);
     });
 
+    it("the same claim sent again (a lost answer) is answered again, not invalidated", async () => {
+      const { submitPairing } = await import("./requests");
+      const { request_id } = await newRequest();
+      const first = await machinePairs(request_id);
+      expect(await submitPairing(first.args)).toEqual({
+        pairing_phrase: first.pairing_phrase,
+        transcript_hash: first.transcript_hash,
+      });
+      const { rows } = await db().query(
+        "SELECT state FROM account_computer_requests WHERE request_id=$1",
+        [request_id],
+      );
+      expect(rows[0].state).toBe("paired");
+    });
+
+    it("refuses control characters and bidi overrides in what the owner reads", async () => {
+      const { createComputerRequest } = await import("./requests");
+      for (const why of ["\u001b[2Jclear", "rm \u202eexe.txt", "a\u0007b"]) {
+        await expect(
+          createComputerRequest({
+            account_id: account,
+            name: "x",
+            requested_policy: requested,
+            why,
+          }),
+        ).rejects.toThrow(/control characters/);
+      }
+      await expect(
+        createComputerRequest({
+          account_id: account,
+          name: "x",
+          requested_policy: {
+            ...requested,
+            mounts: [{ path: "~/data\u202e", access: "ro" }],
+          },
+        }),
+      ).rejects.toThrow(/not a valid path/);
+      // Newlines and tabs in the reason are fine.
+      await expect(
+        createComputerRequest({
+          account_id: account,
+          name: "x",
+          requested_policy: requested,
+          why: "line one\n\tline two",
+        }),
+      ).resolves.toHaveProperty("request_id");
+    });
+
     it("a second claimant invalidates the request and never replaces the first key", async () => {
       const { approveComputerRequest } = await import("./requests");
       const { request_id } = await newRequest();
@@ -335,6 +431,7 @@ describeDb("computers store", () => {
       expect(Number(rows[0].claimants)).toBe(2); // BIGINT comes back as a string
       await expect(
         approveComputerRequest({
+          agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id,
           transcript_hash: first.transcript_hash,
@@ -386,11 +483,17 @@ describeDb("computers store", () => {
     });
 
     it("refuses approval of a changed transcript, by another account, or after expiry", async () => {
+      const stranger = randomUUID();
+      await db().query(
+        "INSERT INTO accounts (account_id, email_address, created) VALUES ($1,'s@example.org',now())",
+        [stranger],
+      );
       const { approveComputerRequest } = await import("./requests");
       const { request_id } = await newRequest();
       const paired = await machinePairs(request_id);
       await expect(
         approveComputerRequest({
+          agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id,
           transcript_hash: "sha256:" + "x".repeat(43),
@@ -398,13 +501,15 @@ describeDb("computers store", () => {
       ).rejects.toThrow(/changed since you saw it/);
       await expect(
         approveComputerRequest({
-          account_id: randomUUID(),
+          agent_network_generation: await networkGeneration(),
+          account_id: stranger,
           request_id,
           transcript_hash: paired.transcript_hash,
         }),
       ).rejects.toThrow(/no such computer request/);
       await expect(
         approveComputerRequest({
+          agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id,
           transcript_hash: paired.transcript_hash,
@@ -426,6 +531,7 @@ describeDb("computers store", () => {
       const one = await newRequest("dup");
       const p1 = await machinePairs(one.request_id);
       await approveComputerRequest({
+        agent_network_generation: await networkGeneration(),
         account_id: account,
         request_id: one.request_id,
         transcript_hash: p1.transcript_hash,
@@ -434,6 +540,7 @@ describeDb("computers store", () => {
       const p2 = await machinePairs(two.request_id);
       await expect(
         approveComputerRequest({
+          agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id: two.request_id,
           transcript_hash: p2.transcript_hash,
@@ -491,6 +598,7 @@ describeDb("computers store", () => {
       });
       return {
         ...(await approveComputerRequest({
+          agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id,
           transcript_hash,
@@ -561,8 +669,28 @@ describeDb("computers store", () => {
     it("notes: compare-and-swap, attribution, owner lock", async () => {
       const { setComputerNotes, getComputer } = await import("./computers");
       const { computer_id } = await approvedComputer();
-      const agent = { kind: "agent" as const, agent_id: randomUUID() };
+      const agent = {
+        kind: "agent" as const,
+        agent_id: randomUUID(),
+        project_id: randomUUID(),
+      };
       const owner = { kind: "owner" as const, account_id: account };
+      // Not a member of the computer's network yet: refused.
+      await expect(
+        setComputerNotes({
+          account_id: account,
+          computer_id,
+          author: agent,
+          notes: "sneaky",
+          expected_revision: 0,
+        }),
+      ).rejects.toThrow(/no such computer for this agent/);
+      await db().query(
+        `INSERT INTO agent_network_members
+           (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by)
+         VALUES ($1,'registered',$2,$2,$3,$4)`,
+        [network, agent.agent_id, agent.project_id, account],
+      );
       await setComputerNotes({
         account_id: account,
         computer_id,
@@ -606,6 +734,35 @@ describeDb("computers store", () => {
           expected_revision: 2,
         }),
       ).rejects.toThrow(/locked/);
+      // Removed from the network, or messaging paused: refused, in the same
+      // transaction as the write.
+      await db().query("UPDATE account_computers SET notes_locked=false");
+      await db().query("UPDATE agent_network_members SET removed_at=now()");
+      await expect(
+        setComputerNotes({
+          account_id: account,
+          computer_id,
+          author: agent,
+          notes: "x",
+          expected_revision: 2,
+        }),
+      ).rejects.toThrow(/no such computer for this agent/);
+      await db().query("UPDATE agent_network_members SET removed_at=NULL");
+      await db().query(
+        `INSERT INTO agent_personal_controls(account_id, paused) VALUES ($1,true)
+         ON CONFLICT (account_id) DO UPDATE SET paused=true`,
+        [account],
+      );
+      await expect(
+        setComputerNotes({
+          account_id: account,
+          computer_id,
+          author: agent,
+          notes: "x",
+          expected_revision: 2,
+        }),
+      ).rejects.toThrow(/paused/);
+      await db().query("UPDATE account_computers SET notes_locked=true");
       const c = await getComputer(account, computer_id);
       expect(c).toMatchObject({
         notes: "benchmarks need --exclusive",

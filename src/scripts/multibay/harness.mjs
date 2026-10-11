@@ -120,6 +120,10 @@ export async function runInBay(
     DATA: pg,
     COCALC_DATA_DIR: pg,
   };
+  // As packages/hub/bin/start.sh does: the hub derives its secret-settings
+  // keys from the site master key, not this legacy override, so a snippet
+  // must too to read what the hub encrypted.
+  delete env.COCALC_SECRET_SETTINGS_KEY_PATH;
   const marker = "__MULTIBAY_RESULT__";
   const script = `
 const server = (p) => require(${JSON.stringify(path.join(SRC, "packages/server/dist"))} + "/" + p);

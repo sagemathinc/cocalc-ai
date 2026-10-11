@@ -40,6 +40,7 @@ describeDb("fresh conversation identity persistence", () => {
           "agent_personal_controls",
           "agent_networks",
           "account_computers",
+          "account_computer_requests",
           "agent_network_members",
           "agent_external_identities",
           "agent_external_installations",

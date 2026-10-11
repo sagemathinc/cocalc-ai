@@ -61,6 +61,7 @@ export interface InterBayComputersApi {
     session_hash?: string;
     request_id: string;
     transcript_hash: string;
+    agent_network_generation: string;
   }): Promise<{
     computer_id: string;
     certificate: SignedEnvelope<ComputerCertificate>;
@@ -105,7 +106,7 @@ export interface InterBayComputersApi {
     computer: string;
     author:
       | { kind: "owner"; account_id: string }
-      | { kind: "agent"; agent_id: string };
+      | { kind: "agent"; agent_id: string; project_id: string };
     notes: string;
     expected_revision: number;
     locked?: boolean;

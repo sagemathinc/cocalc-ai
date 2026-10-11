@@ -67,22 +67,15 @@ export async function agentComputerRequest(
         requested_policy: request.policy,
         why: request.why ?? "",
       });
-    case "notes": {
-      // Only for a computer this agent may use.
-      const computer = await home.getForAgent({
-        account_id,
-        agent_id,
-        project_id,
-        computer: request.computer,
-      });
+    case "notes":
+      // One home-bay transaction rechecks membership while it writes.
       return await home.setNotes({
         account_id,
-        computer: computer.computer_id,
-        author: { kind: "agent", agent_id },
+        computer: request.computer,
+        author: { kind: "agent", agent_id, project_id },
         notes: request.notes,
         expected_revision: request.expected_revision,
       });
-    }
     case "ticket":
       return await home.issueTicket({
         account_id,

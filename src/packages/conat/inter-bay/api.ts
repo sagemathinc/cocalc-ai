@@ -1,4 +1,7 @@
-import type { PublishedSigningKey } from "@cocalc/util/computers/api";
+import type {
+  DirectorySigningKey,
+  PublishedSigningKey,
+} from "@cocalc/util/computers/api";
 import type {
   LiveVoiceRequest,
   LiveVoiceResult,
@@ -2124,8 +2127,15 @@ export interface BayRegistryRegisterRequest {
   public_target_kind?: string | null;
   accepts_project_ownership?: boolean;
   project_ownership_note?: string | null;
-  /** This bay's public keys for computers (see server/computers/signing-keys). */
-  computer_signing_keys?: PublishedSigningKey[];
+  /**
+   * This bay's public keys for computers (see server/computers/signing-keys).
+   * source_bay_id must be the authenticated calling bay (typed services
+   * enforce that), so a bay can only publish keys for itself.
+   */
+  computer_signing_keys?: {
+    source_bay_id: string;
+    keys: PublishedSigningKey[];
+  };
 }
 
 export interface BayRegistryListRequest {}
@@ -2965,7 +2975,7 @@ export type AuthTokenMethod =
   | "redeem"
   | "disable"
   | "delete";
-export type BayRegistryMethod = "register" | "list";
+export type BayRegistryMethod = "register" | "list" | "computer-signing-keys";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
@@ -4899,6 +4909,10 @@ export interface InterBayBayRegistryApi {
     opts: BayRegistryRegisterRequest,
   ) => Promise<BayRegistryRegisterResult>;
   list: (opts: BayRegistryListRequest) => Promise<BayRegistryEntry[]>;
+  /** The seed's directory of bays' public keys for computers. */
+  computerSigningKeys: (
+    opts: Record<string, never>,
+  ) => Promise<DirectorySigningKey[]>;
 }
 
 export interface InterBayBayOpsApi {
@@ -11208,9 +11222,17 @@ export function createInterBayBayRegistryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayRegistrySubject({ method: "list" }),
   });
+  const keysClient = createServiceClient<
+    Pick<InterBayBayRegistryApi, "computerSigningKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayRegistrySubject({ method: "computer-signing-keys" }),
+  });
   return {
     register: async (opts) => await registerClient.register(opts),
     list: async (opts) => await listClient.list(opts),
+    computerSigningKeys: async (opts) =>
+      await keysClient.computerSigningKeys(opts),
   };
 }
 
@@ -11676,6 +11698,15 @@ export function createInterBayBayRegistryHandlers({
       subject: bayRegistrySubject({ method: "list" }),
       impl: {
         list: async (opts) => await impl.list(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayRegistryApi, "computerSigningKeys">>({
+      ...options,
+      service: "inter-bay-bay-registry",
+      subject: bayRegistrySubject({ method: "computer-signing-keys" }),
+      impl: {
+        computerSigningKeys: async (opts) =>
+          await impl.computerSigningKeys(opts),
       },
     }),
   ];

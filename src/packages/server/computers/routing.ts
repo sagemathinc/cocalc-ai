@@ -64,12 +64,14 @@ export const computersAtThisBay: InterBayComputersApi = {
     session_hash,
     request_id,
     transcript_hash,
+    agent_network_generation,
   }) => {
     await requireFreshAuth(account_id, session_hash);
     return await approveComputerRequest({
       account_id,
       request_id,
       transcript_hash,
+      agent_network_generation,
     });
   },
   declineRequest: async (opts) => await declineComputerRequest(opts),
