@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 // How often an open, visible project page looks for a newly announced
 // maintenance window (or one that was cleared) on its host. Host info is
@@ -21,8 +21,9 @@ export function maintenanceRefreshIntervalMs(state?: string): number {
 }
 
 // Keep the host's maintenance notice current on an open project page. Polls
-// only while the page is active and the browser tab is visible, and refreshes
-// as soon as the tab becomes visible again. (Outages refresh separately.)
+// only while the page is active and the browser tab is visible. Since nothing
+// polls otherwise, it refreshes as soon as the page becomes active or the tab
+// visible again. (Outages refresh separately.)
 export function useHostMaintenanceRefresh({
   host_id,
   maintenanceState,
@@ -39,7 +40,10 @@ export function useHostMaintenanceRefresh({
   // Re-evaluates time-dependent display (e.g. "starts in 5 minutes").
   tick?: () => void;
 }): void {
+  const wasActive = useRef(active);
   useEffect(() => {
+    const becameActive = active && !wasActive.current;
+    wasActive.current = active;
     if (!host_id || !active || hostUnavailable) return;
     const visible = () =>
       typeof document === "undefined" || document.visibilityState !== "hidden";
@@ -48,6 +52,8 @@ export function useHostMaintenanceRefresh({
       tick?.();
       refresh(host_id);
     };
+    // Switching back to a page that sat inactive: its notice may be stale.
+    if (becameActive) update();
     const timer = window.setInterval(
       update,
       maintenanceRefreshIntervalMs(maintenanceState),

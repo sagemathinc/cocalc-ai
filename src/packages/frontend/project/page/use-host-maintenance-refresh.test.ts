@@ -82,6 +82,27 @@ describe("useHostMaintenanceRefresh", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("refreshes at once when an inactive page becomes active again", () => {
+    const refresh = jest.fn();
+    const { rerender } = renderHook(
+      ({ active }: { active: boolean }) =>
+        useHostMaintenanceRefresh({
+          host_id: "host-1",
+          active,
+          hostUnavailable: false,
+          refresh,
+        }),
+      { initialProps: { active: false } },
+    );
+    act(() => jest.advanceTimersByTime(MAINTENANCE_DISCOVERY_MS));
+    expect(refresh).not.toHaveBeenCalled();
+    rerender({ active: true });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // A rerender while staying active does not refresh again.
+    rerender({ active: true });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("stays quiet for inactive pages and while the host is down", () => {
     const refresh = jest.fn();
     renderHook(() =>
