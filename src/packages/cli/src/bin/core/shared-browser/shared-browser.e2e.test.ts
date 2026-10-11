@@ -22,7 +22,7 @@ import {
 } from "../local-browser";
 import { SharedBrowserPage } from "./agent-page";
 import { CdpClient } from "./cdp-client";
-import { BUSY_MS, WATCHED_FPS } from "./frame-pacer";
+import { BUSY_MS, INTERACTIVE_FPS, WATCHED_FPS } from "./frame-pacer";
 import { profileSecret, startBrowserKeyring } from "./keyring";
 import {
   SharedBrowserServer,
@@ -550,6 +550,35 @@ test(
       assert.ok(
         viewer.frames.length - before <= 2.5 * WATCHED_FPS,
         `screencast frames in 2 s: ${viewer.frames.length - before}`,
+      );
+
+      // The human uses it: the interactive rate.  (The agent's commands wait
+      // while the human drives: time the window by the page's clock.)
+      const pageNow = await page.evaluate(() => performance.now());
+      const offset = pageNow - Date.now();
+      await viewer.takeOver();
+      const using = Date.now() + offset;
+      for (let i = 0; i < 10; i++) {
+        await viewer.say({
+          type: "mouse",
+          event: "mouseMoved",
+          x: 100 + 10 * i,
+          y: 100,
+          button: "none",
+          buttons: 0,
+          clickCount: 0,
+        });
+        await sleep(200);
+      }
+      await viewer.handBack();
+      const interactive = await framesIn(page, using + 300, using + 1800);
+      t.diagnostic(
+        `animation frames a second: ${idle / 2} nobody watching, ${watched / 2} watched, ${Math.round(interactive / 1.5)} in use`,
+      );
+      assert.ok(
+        interactive >= 1.1 * WATCHED_FPS * 1.5 &&
+          interactive <= 1.5 * INTERACTIVE_FPS * 1.5,
+        `frames in 1.5 s used: ${interactive}`,
       );
 
       // The viewer leaves; an agent's screenshot of the tab is still quick.

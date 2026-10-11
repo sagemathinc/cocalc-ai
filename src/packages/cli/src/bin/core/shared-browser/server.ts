@@ -1226,6 +1226,7 @@ export class SharedBrowserServer {
     if (!page || !s) return;
     // Agents act where the human is working.
     this.state.active = page.targetId;
+    this.pacer?.interact(page.targetId);
     switch (msg.type) {
       case "mouse":
         // Not awaited: a click that opens alert() is only acknowledged once
