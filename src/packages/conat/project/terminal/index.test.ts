@@ -242,4 +242,155 @@ describe("terminalServer", () => {
     });
     socket.emit("closed");
   });
+
+  function fakeTerminalServer(maxSessions?: number) {
+    const server = new EventEmitter() as any;
+    const client = {
+      socket: {
+        listen: jest.fn(() => server),
+      },
+    } as any;
+    const ptys: any[] = [];
+    const spawn = jest.fn(() => {
+      const pty = new EventEmitter() as any;
+      pty.pid = 5000 + ptys.length;
+      pty.pause = jest.fn();
+      pty.resume = jest.fn();
+      pty.destroy = jest.fn();
+      ptys.push(pty);
+      return pty;
+    });
+    terminalServer({ client, project_id: "project-1", spawn, maxSessions });
+    let sockets = 0;
+    const connect = () => {
+      const socket = new EventEmitter() as any;
+      socket.id = `reap-socket-${++sockets}`;
+      socket.subject = `terminal.project-project-1.0.server.server-1.${socket.id}`;
+      socket.write = jest.fn();
+      socket.request = jest.fn(async () => ({ data: undefined }));
+      socket.end = jest.fn();
+      server.emit("connection", socket);
+      const request = (data: any) =>
+        new Promise<any>((resolve, reject) => {
+          socket.emit("request", {
+            data,
+            respondSync: (resp, opts) =>
+              opts?.headers?.error
+                ? reject(new Error(opts.headers.error))
+                : resolve(resp),
+          });
+        });
+      return { socket, request };
+    };
+    return { ptys, connect };
+  }
+
+  it("forgets a session whose process exits after its client left", async () => {
+    const { ptys, connect } = fakeTerminalServer(1);
+    const cli = connect();
+    await cli.request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-cli-job" },
+    });
+    // the CLI disconnects right after spawning; the command ends later
+    cli.socket.emit("closed");
+    ptys[0].emit("data", "done\n");
+    ptys[0].emit("exit");
+
+    const other = connect();
+    expect(await other.request({ cmd: "state", id: "reap-cli-job" })).toBe(
+      "off",
+    );
+    // what it printed stays readable
+    expect(await other.request({ cmd: "history", id: "reap-cli-job" })).toBe(
+      "done\n",
+    );
+    // and it no longer counts against the session limit
+    const next = await other.request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-next-job" },
+    });
+    expect(next.pid).toBe(ptys[1].pid);
+    // the same id starts a new process instead of reusing the dead one
+    ptys[1].emit("exit");
+    const again = await connect().request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-cli-job" },
+    });
+    expect(again.pid).toBe(ptys[2].pid);
+    ptys[2].emit("exit");
+    other.socket.emit("closed");
+  });
+
+  it("frees the slot at once when a session is destroyed", async () => {
+    const { ptys, connect } = fakeTerminalServer(1);
+    const { socket, request } = connect();
+    await request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-destroyed" },
+    });
+    await request({ cmd: "destroy" });
+    expect(ptys[0].destroy).toHaveBeenCalled();
+    const next = await connect().request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-after-destroy" },
+    });
+    expect(next.pid).toBe(ptys[1].pid);
+    // a late exit of the destroyed process does not touch the new session
+    ptys[0].emit("exit");
+    expect(
+      await connect().request({ cmd: "state", id: "reap-after-destroy" }),
+    ).toBe("running");
+    ptys[1].emit("exit");
+    socket.emit("closed");
+  });
+
+  it("keeps a destroyed process's late output out of a new session with its id", async () => {
+    const { ptys, connect } = fakeTerminalServer();
+    const first = connect();
+    await first.request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-reused" },
+    });
+    await first.request({ cmd: "destroy" });
+    await connect().request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-reused" },
+    });
+    ptys[0].emit("data", "stale output");
+    ptys[1].emit("data", "new output");
+    expect(await connect().request({ cmd: "history", id: "reap-reused" })).toBe(
+      "new output",
+    );
+    ptys[0].emit("exit");
+    ptys[1].emit("exit");
+  });
+
+  it("keeps the output of only the most recent ended sessions", async () => {
+    const { ptys, connect } = fakeTerminalServer();
+    for (let i = 0; i < 40; i++) {
+      const { socket, request } = connect();
+      await request({
+        cmd: "spawn",
+        command: "bash",
+        options: { id: `reap-bulk-${i}` },
+      });
+      socket.emit("closed");
+      ptys[i].emit("data", `out ${i}`);
+      ptys[i].emit("exit");
+    }
+    const listed = new Set(
+      (await connect().request({ cmd: "list" })).map(({ id }) => id),
+    );
+    for (let i = 0; i < 40; i++) {
+      expect(listed.has(`reap-bulk-${i}`)).toBe(i >= 8);
+    }
+  });
 });
