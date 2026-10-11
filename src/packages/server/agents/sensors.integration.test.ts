@@ -90,6 +90,7 @@ import {
   authorizeSensorExecutionLocal,
   sensorControlLocal,
   setSensorConsumeHookForTests,
+  setSensorManageHookForTests,
 } from "./sensors";
 import {
   claimDueSensors,
@@ -1272,6 +1273,30 @@ describeDb("agent sensors", () => {
         sensor_id: done.sensor_id,
       }),
     ).rejects.toThrow(/resumed/);
+    // The scheduler finishing it between a person's checks and the pause
+    // (with the same revision) still leaves it done, and its wake valid.
+    const racing = (await watch()).sensor;
+    setSensorManageHookForTests(async () => {
+      await getPool().query(
+        "UPDATE agent_sensors SET next_run_at=NULL WHERE sensor_id=$1",
+        [racing.sensor_id],
+      );
+    });
+    try {
+      await expect(
+        sensorControlLocal(owner, project_id, {
+          op: "pause",
+          sensor_id: racing.sensor_id,
+        }),
+      ).rejects.toThrow(/changed/);
+    } finally {
+      setSensorManageHookForTests(undefined);
+    }
+    const { rows: raced } = await getPool().query(
+      "SELECT status FROM agent_sensors WHERE sensor_id=$1",
+      [racing.sensor_id],
+    );
+    expect(raced[0].status).toBe("active");
     // A watcher paused before it fired cannot be resumed either.
     const paused = (await watch()).sensor;
     await sensorControlLocal(owner, project_id, {

@@ -60,6 +60,10 @@ export function sensorSpecHash(spec: SensorSpec): string {
 const iso = (value: unknown): string | null =>
   value == null ? null : new Date(value as any).toISOString();
 
+/** SQL: the row is not a watcher that already fired or expired. */
+const NOT_DONE_WATCHER =
+  "NOT (spec->>'kind' = 'watch' AND next_run_at IS NULL)";
+
 export function toSensor(row: any): AgentSensor {
   // A watcher that fired or expired is done, though stored as active.
   const done =
@@ -196,7 +200,7 @@ export async function agentSensorRequest(
       `UPDATE agent_sensors SET status='paused', pause_reason='Paused by the agent',
          revision=revision+1, updated=now()
        WHERE sensor_id=$1 AND agent_id=$2 AND status='active'
-         AND NOT (spec->>'kind' = 'watch' AND next_run_at IS NULL)
+         AND ${NOT_DONE_WATCHER}
        RETURNING *`,
       [request.sensor_id, agent.agent_id],
     );
@@ -532,7 +536,10 @@ export async function sensorControlLocal(
     activateWithin?: number,
     /** Approve or resume: wakes from the earlier approval never run. */
     newApproval = false,
+    /** A condition that must still hold when the row is updated. */
+    stillTrue?: string,
   ) => {
+    await beforeManageUpdateHook?.();
     const { rows } = await db.transaction(async (client) => {
       if (activateWithin !== undefined) {
         await lockProjectSensors(client, project_id);
@@ -546,7 +553,8 @@ export async function sensorControlLocal(
       }
       const updated = await client.query(
         `UPDATE agent_sensors SET ${sql}, revision=revision+1, updated=now()
-         WHERE sensor_id=$1 AND revision=$2 RETURNING *`,
+         WHERE sensor_id=$1 AND revision=$2${stillTrue ? ` AND (${stillTrue})` : ""}
+         RETURNING *`,
         [row.sensor_id, row.revision, ...values],
       );
       if (newApproval && updated.rows[0])
@@ -602,9 +610,14 @@ export async function sensorControlLocal(
       if (toSensor(row).status === "done")
         throw new Error("this watcher is done; delete it instead");
       if (row.status !== "active") throw new Error("sensor is not active");
+      // The scheduler finishes a watcher without changing its revision, so
+      // "not done" is checked again in the update itself.
       return await update(
         "status='paused', pause_reason='Paused by a person'",
         [],
+        undefined,
+        false,
+        NOT_DONE_WATCHER,
       );
     case "resume": {
       if (row.status !== "paused" || !row.spec)
@@ -765,4 +778,12 @@ export function setSensorConsumeHookForTests(
   hook: (() => Promise<void>) | undefined,
 ) {
   beforeConsumeHook = hook;
+}
+
+let beforeManageUpdateHook: (() => Promise<void>) | undefined;
+/** Tests only: run something between a manage op's checks and its update. */
+export function setSensorManageHookForTests(
+  hook: (() => Promise<void>) | undefined,
+) {
+  beforeManageUpdateHook = hook;
 }
