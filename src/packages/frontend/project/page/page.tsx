@@ -124,6 +124,7 @@ import {
 import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-latency";
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
 import { HostMaintenanceBanner } from "./host-maintenance-banner";
+import { useHostMaintenanceRefresh } from "./use-host-maintenance-refresh";
 import { HostRecoveryBanner } from "./host-recovery-banner";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { useStableRenderOrder } from "@cocalc/frontend/components/stable-render-order";
@@ -185,8 +186,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
   const userType = useTypedRedux("account", "user_type") as string | undefined;
   const accountId = useTypedRedux("account", "account_id") as
-    | string
-    | undefined;
+    string | undefined;
   const groups = useTypedRedux("account", "groups") as string[] | undefined;
   const project = useRedux(["projects", "project_map", props.project_id]);
   if (props.is_active && project != null) {
@@ -299,8 +299,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     });
   const projectHostConnected = projectHostConnection.connected;
   const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
-    | MoveLroState
-    | undefined;
+    MoveLroState | undefined;
   const moveReopenRequired = !!useTypedRedux(
     { project_id },
     "move_reopen_required",
@@ -379,18 +378,16 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     () => getHostMaintenanceDisplay(hostInfo, hostRecoveryNow),
     [hostInfo, hostRecoveryNow],
   );
-  const hostMaintenanceState = hostMaintenance?.state;
-  useEffect(() => {
-    // Keep an announced or running window current: its start, its end, and
-    // the banner going away. (Outages refresh separately, below.)
-    if (!hostMaintenanceState || hostUnavailable || !host_id) return;
-    const everyMs = hostMaintenanceState === "scheduled" ? 5 * 60_000 : 30_000;
-    const timer = window.setInterval(() => {
-      setHostRecoveryNow(Date.now());
-      redux.getActions("projects")?.ensure_host_info(host_id, true);
-    }, everyMs);
-    return () => window.clearInterval(timer);
-  }, [hostMaintenanceState, hostUnavailable, host_id]);
+  // Find maintenance announced after the page opened, and keep an announced
+  // or running window current. (Outages refresh separately, below.)
+  useHostMaintenanceRefresh({
+    host_id,
+    maintenanceState: hostMaintenance?.state,
+    active: is_active,
+    hostUnavailable,
+    refresh: (id) => redux.getActions("projects")?.ensure_host_info(id, true),
+    tick: () => setHostRecoveryNow(Date.now()),
+  });
   useEffect(() => {
     if (!hostUnavailable) return;
     const refresh = () =>

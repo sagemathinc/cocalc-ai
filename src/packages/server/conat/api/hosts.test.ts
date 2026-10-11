@@ -29,6 +29,8 @@ let hostConnectionGetHostMetricsHistoryMock: jest.Mock;
 let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
 let hostConnectionStartHostMock: jest.Mock;
 let hostConnectionStopHostMock: jest.Mock;
+let hostConnectionRelocateHostMock: jest.Mock;
+let hostConnectionSetHostMaintenanceNoticeMock: jest.Mock;
 let hostConnectionRestartHostMock: jest.Mock;
 let hostConnectionBackupHostProjectsMock: jest.Mock;
 let hostConnectionDrainHostMock: jest.Mock;
@@ -430,6 +432,9 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionGetHostRuntimeDeploymentStatusMock(...args),
       startHost: (...args: any[]) => hostConnectionStartHostMock(...args),
       stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
+      relocateHost: (...args: any[]) => hostConnectionRelocateHostMock(...args),
+      setHostMaintenanceNotice: (...args: any[]) =>
+        hostConnectionSetHostMaintenanceNoticeMock(...args),
       restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
       backupHostProjects: (...args: any[]) =>
         hostConnectionBackupHostProjectsMock(...args),
@@ -1023,6 +1028,15 @@ beforeEach(() => {
     stream_name: "lro:remote-start-op",
     kind: "host-start",
   }));
+  hostConnectionRelocateHostMock = jest.fn(async () => ({
+    op_id: "remote-relocate-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-relocate-op",
+    kind: "host-relocate",
+  }));
+  hostConnectionSetHostMaintenanceNoticeMock = jest.fn(async () => null);
   hostConnectionStopHostMock = jest.fn(async () => ({
     op_id: "remote-stop-op",
     scope_type: "host",
@@ -3734,6 +3748,76 @@ describe("hosts browser fresh auth gating", () => {
     } finally {
       queryMock = previousQueryMock;
       isAdminMock = previousIsAdminMock;
+    }
+  });
+
+  it("forwards relocation and maintenance notices for a remote host to its owning bay", async () => {
+    // Later tests in this file rely on the shared query/admin mocks.
+    const previousQueryMock = queryMock;
+    const previousIsAdminMock = isAdminMock;
+    const previousResolveHostBayMock = resolveHostBayMock;
+    try {
+      getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+      isAdminMock = jest.fn(async () => true);
+      resolveHostBayMock = jest.fn(async () => ({ bay_id: "bay-1", epoch: 2 }));
+      queryMock = jest.fn(async (sql: string) => {
+        throw new Error(`unexpected local query: ${sql}`);
+      });
+      const { relocateHost, setHostMaintenanceNotice } =
+        await import("./hosts");
+      const op = await relocateHost({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+        zone: "us-west2-a",
+        expected_minutes: 12,
+        skip_backups: true,
+      });
+      expect(op.op_id).toBe("remote-relocate-op");
+      // Checked here first (second factor, admin), then again on the owner.
+      expect(requireFreshAuthForSessionHashMock).toHaveBeenCalled();
+      expect(hostConnectionRelocateHostMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account_id: ACCOUNT_ID,
+          browser_id: "browser-1",
+          id: HOST_ID,
+          zone: "us-west2-a",
+          expected_minutes: 12,
+          skip_backups: true,
+        }),
+      );
+      await setHostMaintenanceNotice({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+        clear: true,
+      });
+      expect(hostConnectionSetHostMaintenanceNoticeMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account_id: ACCOUNT_ID,
+          browser_id: "browser-1",
+          id: HOST_ID,
+          clear: true,
+        }),
+      );
+      expect(createLroMock).not.toHaveBeenCalled();
+
+      // Not an admin: refused before anything is forwarded.
+      hostConnectionRelocateHostMock.mockClear();
+      isAdminMock = jest.fn(async () => false);
+      await expect(
+        relocateHost({
+          account_id: ACCOUNT_ID,
+          browser_id: "browser-1",
+          id: HOST_ID,
+          zone: "us-west2-a",
+        }),
+      ).rejects.toThrow("not authorized");
+      expect(hostConnectionRelocateHostMock).not.toHaveBeenCalled();
+    } finally {
+      queryMock = previousQueryMock;
+      isAdminMock = previousIsAdminMock;
+      resolveHostBayMock = previousResolveHostBayMock;
     }
   });
 
