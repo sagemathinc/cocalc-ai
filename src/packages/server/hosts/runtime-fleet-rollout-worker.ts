@@ -597,6 +597,21 @@ async function runHostRollout({
     const auxiliaryComponents = components.filter(
       (component) => component !== "project-host",
     );
+    if (components.includes("project-host") && auxiliaryComponents.length) {
+      // The project-host child succeeds once the host agent has scheduled the
+      // switch, before the host reports the new artifact. Rolling the other
+      // components meanwhile makes them stage that artifact again, through a
+      // project-host that may still be restarting, and a timeout there fails
+      // a host that is in fact upgraded.
+      await waitForStableRuntime({
+        account_id,
+        host_id,
+        version,
+        components: ["project-host"],
+        stabilize_seconds: 0,
+        shouldCancel,
+      });
+    }
     if (auxiliaryComponents.length) {
       const componentChild = await rolloutHostManagedComponents({
         account_id,
@@ -1125,5 +1140,6 @@ export const __test__ = {
   runtimeDeploymentsForPromotion,
   runtimeObservationIsStable,
   recoveryStopGateFailure,
+  runHostRollout,
   savedRecoveryStopGateBaseline,
 };
