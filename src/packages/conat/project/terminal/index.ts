@@ -797,7 +797,10 @@ export function terminalServer({
               ended.delete(id);
               spawned.once("exit", () => endSession(id, spawned));
               const maxLen = options?.maxHistoryLength ?? MAX_HISTORY_LENGTH;
-              pty.on("data", (data) => {
+              spawned.on("data", (data) => {
+                // Output a destroyed process still flushes must not land in
+                // the history of a new session with the same id.
+                if (sessions[id] !== spawned) return;
                 history[id] += data;
                 if (history[id].length > maxLen + 1000) {
                   history[id] = history[id].slice(-maxLen);

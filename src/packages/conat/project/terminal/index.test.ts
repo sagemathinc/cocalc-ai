@@ -350,6 +350,29 @@ describe("terminalServer", () => {
     socket.emit("closed");
   });
 
+  it("keeps a destroyed process's late output out of a new session with its id", async () => {
+    const { ptys, connect } = fakeTerminalServer();
+    const first = connect();
+    await first.request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-reused" },
+    });
+    await first.request({ cmd: "destroy" });
+    await connect().request({
+      cmd: "spawn",
+      command: "bash",
+      options: { id: "reap-reused" },
+    });
+    ptys[0].emit("data", "stale output");
+    ptys[1].emit("data", "new output");
+    expect(await connect().request({ cmd: "history", id: "reap-reused" })).toBe(
+      "new output",
+    );
+    ptys[0].emit("exit");
+    ptys[1].emit("exit");
+  });
+
   it("keeps the output of only the most recent ended sessions", async () => {
     const { ptys, connect } = fakeTerminalServer();
     for (let i = 0; i < 40; i++) {
