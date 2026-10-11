@@ -370,6 +370,36 @@ describe("process-wide admission of replay pages", () => {
     expect(replayedSeqs(frames)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
+  it("charges every message, so pages of empty messages still wait for budget", async () => {
+    // 1000 empty messages are 1000 objects to read and send, not 0 bytes:
+    // each page is charged about 1 MB.
+    const admission = resetReplayAdmission(1_500_000, 32);
+    const streams = [1, 2].map(() =>
+      fakeStream(Array.from({ length: 1000 }, (_, i) => row(i + 1, 0, 0))),
+    );
+    const hold = await admission.acquire(
+      1_000_000,
+      new AbortController().signal,
+    );
+    const replays = streams.map(({ stream }) =>
+      replay({
+        stream,
+        mesg: fakeMesg().mesg,
+        request: {},
+        messagesThresh: 1e9,
+      }),
+    );
+    await flush();
+    await flush();
+    // neither page fits beside the hold, so neither reads anything yet
+    expect(streams.map((s) => s.readCalls.length)).toEqual([0, 0]);
+    expect(admission.stats()).toEqual({ used: 1_000_000, waiting: 2 });
+    hold();
+    await Promise.all(replays);
+    expect(streams.map((s) => s.readCalls.length)).toEqual([1, 1]);
+    expect(admission.stats()).toEqual({ used: 0, waiting: 0 });
+  });
+
   it("sends each page before releasing its admission", async () => {
     resetReplayAdmission();
     const rows = Array.from({ length: 2500 }, (_, i) => row(i + 1, 10, 0));

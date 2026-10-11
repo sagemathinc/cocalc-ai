@@ -519,6 +519,10 @@ const MAX_REPLAYS_PER_SOCKET = 8;
 // wait; the excess is refused with a retryable error.
 const REPLAY_BUDGET_BYTES = 64_000_000;
 const MAX_WAITING_REPLAY_PAGES = 256;
+// Each message in a page is charged at least this much, since reading and
+// sending it costs objects and work even when it is empty; otherwise a page of
+// 1000 empty messages would weigh almost nothing.
+const REPLAY_MESSAGE_CHARGE_BYTES = 1024;
 
 export class ReplayAdmission {
   private used = 0;
@@ -739,7 +743,10 @@ export async function replay({
         });
       }
       const last_seq = plan[plan.length - 1].seq;
-      const pageBytes = plan.reduce((total, row) => total + row.size, 0);
+      const pageBytes = plan.reduce(
+        (total, row) => total + Math.max(row.size, REPLAY_MESSAGE_CHARGE_BYTES),
+        0,
+      );
       const heavy = plan.some((row) => row.size >= ASYNC_DECOMPRESS_MIN_BYTES);
       let release: () => void;
       try {
