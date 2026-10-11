@@ -1194,6 +1194,62 @@ describeIfLinux("safe mode race-condition regressions", () => {
   });
 });
 
+describeIfLinux("safe mode rm of a single entry", () => {
+  let fs;
+  const root = () => join(tempDir, "test-safe-rm-entry");
+  beforeAll(async () => {
+    await mkdir(root());
+    fs = new SandboxedFilesystem(root(), { unsafeMode: false });
+  });
+
+  it("removes a FIFO without opening it", async () => {
+    execFileSync("mkfifo", [join(root(), "pipe")]);
+    await fs.rm("pipe");
+    await expect(stat(join(root(), "pipe"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 5000);
+
+  it("removes a FIFO in a subdirectory and a list of entries", async () => {
+    await mkdir(join(root(), "sub"));
+    execFileSync("mkfifo", [join(root(), "sub", "pipe")]);
+    await writeFile(join(root(), "sub", "file.txt"), "x");
+    await fs.rm(["sub/pipe", "sub/file.txt"]);
+    expect(await readdir(join(root(), "sub"))).toEqual([]);
+  }, 5000);
+
+  it("ignores a missing entry only with force", async () => {
+    await fs.rm("missing.txt", { force: true });
+    await expect(fs.rm("missing.txt")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("still refuses a directory without recursive", async () => {
+    await mkdir(join(root(), "dir"));
+    await expect(fs.rm("dir")).rejects.toThrow();
+    expect((await stat(join(root(), "dir"))).isDirectory()).toBe(true);
+  });
+
+  it("removes a file through an in-sandbox symlinked directory", async () => {
+    await mkdir(join(root(), "real"));
+    await writeFile(join(root(), "real", "doc.txt"), "x");
+    await symlink(join(root(), "real"), join(root(), "alias"));
+    await fs.rm("alias/doc.txt");
+    expect(await readdir(join(root(), "real"))).toEqual([]);
+  });
+
+  it("removes an in-sandbox symlink, not its target", async () => {
+    await writeFile(join(root(), "target.txt"), "keep");
+    await symlink(join(root(), "target.txt"), join(root(), "inside-link"));
+    await fs.rm("inside-link");
+    expect(await readFile(join(root(), "target.txt"), "utf8")).toBe("keep");
+    await expect(stat(join(root(), "inside-link"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
 describeIfLinux("openat2 motivation regressions", () => {
   it("mkdir should not mutate outside sandbox when an intermediate component is swapped to a symlink", async () => {
     const sandboxRoot = join(tempDir, "test-openat2-mkdir-race");

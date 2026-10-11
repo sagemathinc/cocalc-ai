@@ -2818,6 +2818,24 @@ export class SandboxedFilesystem {
           this.throwOpenAt2PathError(inputPath, err);
         }
       }
+      if (!recursive && openAt2Target != null) {
+        // Remove the entry itself: the parent is opened beneath the sandbox
+        // root and the entry is never opened, so a FIFO, socket or device can
+        // be removed (the checked path below opens it to pin its inode, and
+        // refuses special files). A symlink in the parent path (ELOOP) or a
+        // directory (EISDIR) keeps the checked path and its errors.
+        try {
+          openAt2Target.root.unlink(openAt2Target.rel);
+          void this.notifySyncFsLocalDelete(inputPath);
+          return;
+        } catch (err) {
+          const code = this.parseOpenAt2Error(err).code;
+          if (code === "ENOENT" && force) return;
+          if (code !== "ELOOP" && code !== "EISDIR") {
+            this.throwOpenAt2PathError(inputPath, err);
+          }
+        }
+      }
       await this.preflightExistingSource(inputPath, absPath);
       await rm(absPath, options);
       void this.notifySyncFsLocalDelete(inputPath);
