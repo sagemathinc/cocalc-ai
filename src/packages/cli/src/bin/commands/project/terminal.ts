@@ -4,7 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 
-import { terminalClient } from "@cocalc/conat/project/terminal";
+import {
+  terminalClient,
+  type TerminalClient,
+} from "@cocalc/conat/project/terminal";
 import type { ProjectCommandDeps } from "../project";
 
 type CommandContext = any;
@@ -116,6 +119,20 @@ export async function spawnProjectTerminalSession({
   } finally {
     terminal.close();
   }
+}
+
+// Attach to the session and destroy it: its process gets SIGHUP and its slot
+// is freed.  What it printed stays readable with history.
+export async function killTerminalSession(
+  terminal: Pick<TerminalClient, "state" | "attach" | "destroy">,
+  id: string,
+): Promise<{ id: string; killed: boolean; reason?: string }> {
+  if ((await terminal.state(id)) !== "running") {
+    return { id, killed: false, reason: "terminal is not running" };
+  }
+  await terminal.attach(id, { historyLimit: 1 });
+  await terminal.destroy();
+  return { id, killed: true };
 }
 
 function normalizeMaxChars(value: string | undefined): number | undefined {
@@ -287,6 +304,30 @@ export function registerProjectTerminalCommands(
           });
           try {
             return await terminal.state(id);
+          } finally {
+            terminal.close();
+          }
+        });
+      },
+    );
+
+  terminal
+    .command("kill <id>")
+    .description(
+      "end a terminal session: stop its process and free its slot (its output stays readable with history)",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (id: string, opts: { project?: string }, command: Command) => {
+        await withContext(command, "project terminal kill", async (ctx) => {
+          const { terminal } = await withTerminalClient({
+            ctx,
+            projectIdentifier: opts.project,
+            resolveProjectFromArgOrContext,
+            resolveProjectConatClient,
+          });
+          try {
+            return await killTerminalSession(terminal, id);
           } finally {
             terminal.close();
           }
