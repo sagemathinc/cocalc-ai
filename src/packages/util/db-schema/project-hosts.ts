@@ -61,6 +61,11 @@ Table({
       type: "map",
       desc: "Additional metadata/config for this host.",
     },
+    desired_state_generation: {
+      type: "number",
+      pg_type: "BIGINT",
+      desc: "Bumped whenever metadata.desired_state is changed on purpose (a start or stop request, billing enforcement, a relocation, recovery). Lifecycle work records the generation it was queued under and skips itself once a newer intent exists; a trigger reverts desired_state changes that do not bump it.",
+    },
     maintenance: {
       type: "map",
       desc: "Announced or active maintenance window (relocation lease, user-facing notice). Kept out of metadata so that handlers writing back a whole metadata object cannot resurrect or drop it.",

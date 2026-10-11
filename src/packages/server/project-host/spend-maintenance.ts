@@ -44,6 +44,11 @@ import {
 } from "@cocalc/util/money";
 import type { DedicatedHostBillingState } from "@cocalc/util/project-host-pricing";
 import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
+import { metadataPatch } from "@cocalc/server/hosts/metadata-patch";
+import {
+  BUMP_DESIRED_STATE_GENERATION,
+  hostIntentGeneration,
+} from "@cocalc/server/hosts/desired-state";
 
 const logger = getLogger("server:project-host:spend-maintenance");
 const CHECK_INTERVAL_MS = Math.max(
@@ -84,23 +89,7 @@ type CandidateHostRow = {
 const HOST_NOT_HELD = `
         AND COALESCE(maintenance->>'state', '') NOT IN ('preparing','in_progress','failed')`;
 
-export function metadataPatch(
-  previous: Record<string, any> | null | undefined,
-  next: Record<string, any> | null | undefined,
-): { set: Record<string, any>; remove: string[] } {
-  const before = previous ?? {};
-  const after = next ?? {};
-  const set: Record<string, any> = {};
-  const remove: string[] = [];
-  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-    if (after[key] === undefined) {
-      if (before[key] !== undefined) remove.push(key);
-    } else if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-      set[key] = after[key];
-    }
-  }
-  return { set, remove };
-}
+export { metadataPatch };
 
 // Apply this pass's metadata changes (and optionally a status) unless a
 // relocation holds the host. Returns whether the row was written.
@@ -112,11 +101,11 @@ async function writeHostBillingChanges({
   row: CandidateHostRow;
   metadata: Record<string, any>;
   status?: { status: string; clear_last_seen?: boolean };
-}): Promise<boolean> {
+}): Promise<{ written: boolean; generation?: number }> {
   const { set, remove } = metadataPatch(row.metadata, metadata);
   if (!status && Object.keys(set).length === 0 && remove.length === 0) {
     // Nothing changed relative to what this pass read.
-    return true;
+    return { written: true };
   }
   const params: any[] = [row.id];
   const sets: string[] = [];
@@ -132,17 +121,24 @@ async function writeHostBillingChanges({
   sets.push(
     `metadata=(COALESCE(metadata, '{}'::jsonb) - $${params.length}::text[]) || $${params.length - 1}::jsonb`,
   );
-  const { rowCount } = await getPool().query(
+  // Stopping a host for billing is an intent: it supersedes queued starts
+  // and stops work queued before it.
+  if (set.desired_state !== undefined || remove.includes("desired_state")) {
+    sets.push(BUMP_DESIRED_STATE_GENERATION);
+  }
+  const { rows, rowCount } = await getPool().query(
     `UPDATE project_hosts SET ${sets.join(", ")}, updated=NOW()
-      WHERE id=$1 AND deleted IS NULL${HOST_NOT_HELD}`,
+      WHERE id=$1 AND deleted IS NULL${HOST_NOT_HELD}
+      RETURNING desired_state_generation`,
     params,
   );
   if (!rowCount) {
     logger.info("deferred billing change: host is being relocated", {
       host_id: row.id,
     });
+    return { written: false };
   }
-  return (rowCount ?? 0) > 0;
+  return { written: true, generation: hostIntentGeneration(rows[0]) };
 }
 
 export function billingStateForHost(
@@ -436,7 +432,7 @@ async function updateHostBillingMetadata({
   row: CandidateHostRow;
   metadata: any;
 }): Promise<boolean> {
-  return await writeHostBillingChanges({ row, metadata });
+  return (await writeHostBillingChanges({ row, metadata })).written;
 }
 
 async function requestHostStopForExceededLane({
@@ -490,19 +486,18 @@ async function requestHostStopForExceededLane({
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
   metadata.last_action_at = now.toISOString();
-  if (
-    !(await writeHostBillingChanges({
-      row,
-      metadata,
-      status: { status: "stopping", clear_last_seen: true },
-    }))
-  ) {
+  const stopIntent = await writeHostBillingChanges({
+    row,
+    metadata,
+    status: { status: "stopping", clear_last_seen: true },
+  });
+  if (!stopIntent.written) {
     return;
   }
   await enqueueCloudVmWork({
     vm_id: row.id,
     action: "stop",
-    payload: { provider },
+    payload: { provider, intent_generation: stopIntent.generation },
   });
   await notifyBillingEnforcementTransition({
     row,
@@ -549,19 +544,18 @@ async function requestHostStopForOwnerSpendLimit({
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
   metadata.last_action_at = nowIso;
-  if (
-    !(await writeHostBillingChanges({
-      row,
-      metadata,
-      status: { status: "stopping", clear_last_seen: true },
-    }))
-  ) {
+  const stopIntent = await writeHostBillingChanges({
+    row,
+    metadata,
+    status: { status: "stopping", clear_last_seen: true },
+  });
+  if (!stopIntent.written) {
     return;
   }
   await enqueueCloudVmWork({
     vm_id: row.id,
     action: "stop",
-    payload: { provider },
+    payload: { provider, intent_generation: stopIntent.generation },
   });
   logger.warn("stopped dedicated host after owner spend cap was exceeded", {
     host_id: row.id,
@@ -822,7 +816,8 @@ async function updateHostStatusAndBillingMetadata({
   status: string;
   metadata: any;
 }): Promise<boolean> {
-  return await writeHostBillingChanges({ row, metadata, status: { status } });
+  return (await writeHostBillingChanges({ row, metadata, status: { status } }))
+    .written;
 }
 
 async function requestHostDrainForBilling({

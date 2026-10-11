@@ -719,7 +719,7 @@ describe("dedicated host spend maintenance", () => {
     expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith({
       vm_id: "host-1",
       action: "stop",
-      payload: { provider: "gcp" },
+      payload: { provider: "gcp", intent_generation: 0 },
     });
     expect(createLroMock).not.toHaveBeenCalled();
   });
@@ -998,7 +998,7 @@ describe("dedicated host spend maintenance", () => {
     expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith({
       vm_id: "host-1",
       action: "stop",
-      payload: { provider: "gcp" },
+      payload: { provider: "gcp", intent_generation: 0 },
     });
     expect(
       notifyDedicatedHostBillingEnforcementBestEffortMock,
