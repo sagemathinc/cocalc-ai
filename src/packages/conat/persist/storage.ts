@@ -67,6 +67,7 @@ import {
   type Database,
   compress,
   decompress,
+  decompressAsync,
   statSync,
   copyFileSync,
   ensureContainingDirectoryExists,
@@ -220,6 +221,110 @@ const DEFAULT_COMPRESSION = {
   algorithm: CompressionAlgorithm.Zstd,
   threshold: 1024,
 };
+
+// Largest message (uncompressed raw data plus headers and key) a stream will
+// store or replay.  A message is decompressed and sent whole, so an unbounded
+// one -- e.g., a runaway notebook output saved as a single 500 MB patch --
+// made every read of its stream stall the shared persist server for seconds.
+// Notebook outputs are capped far below this and blobs at 25 MB, so the limit
+// only catches pathological messages.
+export const DEFAULT_MAX_PERSIST_MESSAGE_BYTES = 256 * 1024 * 1024;
+
+export function maxPersistMessageBytes(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const value = Number(env.COCALC_PERSIST_MAX_MESSAGE_BYTES);
+  return Number.isSafeInteger(value) && value > 0
+    ? value
+    : DEFAULT_MAX_PERSIST_MESSAGE_BYTES;
+}
+
+export function persistMessageTooLargeError({
+  size,
+  limit,
+  seq,
+}: {
+  size: number;
+  limit: number;
+  seq?: number;
+}): ConatError {
+  return new ConatError(
+    seq == null
+      ? `message of ${size} bytes exceeds the ${limit} byte limit for persisted messages`
+      : `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
+    { code: 413 },
+  );
+}
+
+// A stored message as read from the database, before decompression.
+export interface StoredRow {
+  seq: number;
+  key?: string | null;
+  time: number;
+  compress: CompressionAlgorithm;
+  encoding: DataEncoding;
+  raw: Buffer;
+  headers?: string | null;
+  // uncompressed size of raw data plus headers and key
+  size: number;
+}
+
+// Messages at least this large (uncompressed) are decompressed off the event
+// loop, at most ASYNC_DECOMPRESS_CONCURRENCY at a time since they share the
+// libuv threadpool with filesystem I/O.
+const ASYNC_DECOMPRESS_MIN_BYTES = 1_000_000;
+const ASYNC_DECOMPRESS_CONCURRENCY = 2;
+
+class Limiter {
+  private active = 0;
+  private waiting: (() => void)[] = [];
+  constructor(private readonly max: number) {}
+
+  run = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (this.active >= this.max) {
+      // the releasing task hands its slot over directly
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    } else {
+      this.active += 1;
+    }
+    try {
+      return await fn();
+    } finally {
+      const next = this.waiting.shift();
+      if (next != null) {
+        next();
+      } else {
+        this.active -= 1;
+      }
+    }
+  };
+}
+
+const asyncDecompressions = new Limiter(ASYNC_DECOMPRESS_CONCURRENCY);
+
+export async function storedRowToMessage(
+  row: StoredRow,
+): Promise<StoredMessage> {
+  let raw: Buffer;
+  if (row.compress == CompressionAlgorithm.None) {
+    raw = row.raw;
+  } else if (row.compress == CompressionAlgorithm.Zstd) {
+    raw =
+      row.size >= ASYNC_DECOMPRESS_MIN_BYTES
+        ? await asyncDecompressions.run(() => decompressAsync(row.raw))
+        : decompress(row.raw);
+  } else {
+    throw Error(`unknown compression ${row.compress}`);
+  }
+  return {
+    seq: row.seq,
+    time: row.time * 1000,
+    key: row.key != null ? row.key : undefined,
+    encoding: row.encoding,
+    raw,
+    headers: row.headers ? JSON.parse(row.headers) : undefined,
+  };
+}
 
 export interface StoredMessage {
   // server assigned positive increasing integer number
@@ -682,6 +787,8 @@ export class PersistentStream extends EventEmitter {
     };
   };
 
+  isClosing = (): boolean => this.closing;
+
   close = () => {
     const path = this.options?.path;
     if (path == null || this.closing) {
@@ -884,6 +991,11 @@ export class PersistentStream extends EventEmitter {
       (serializedHeaders?.length ?? 0) +
       (raw?.length ?? 0) +
       (key?.length ?? 0);
+    const sizeLimit = maxPersistMessageBytes();
+    if (size > sizeLimit) {
+      // Never store a message that could not be replayed.
+      throw persistMessageTooLargeError({ size, limit: sizeLimit });
+    }
 
     this.enforceLimits(size, changes);
 
@@ -1051,7 +1163,7 @@ export class PersistentStream extends EventEmitter {
     if (seq) {
       x = this.db
         .prepare(
-          `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?`,
+          `SELECT seq, key, time, compress, encoding, raw, headers, size${ttl} FROM messages WHERE seq=?`,
         )
         .get(seq);
     } else if (key != null) {
@@ -1059,11 +1171,19 @@ export class PersistentStream extends EventEmitter {
       // row with a given key.  Also there's a unique constraint.
       x = this.db
         .prepare(
-          `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE key=?`,
+          `SELECT seq, key, time, compress, encoding, raw, headers, size${ttl} FROM messages WHERE key=?`,
         )
         .get(key);
     } else {
       x = undefined;
+    }
+    const sizeLimit = maxPersistMessageBytes();
+    if (x != null && Number(x.size) > sizeLimit) {
+      throw persistMessageTooLargeError({
+        size: Number(x.size),
+        limit: sizeLimit,
+        seq: Number(x.seq),
+      });
     }
     return dbToMessage(x as any);
   };
@@ -1089,6 +1209,49 @@ export class PersistentStream extends EventEmitter {
           ? undefined
           : Number(row.newest_retained_seq),
     };
+  };
+
+  // One page of a replay: the messages after after_seq (through end_seq),
+  // ending once their uncompressed sizes reach maxBytes but always including at
+  // least one message.  Each page is read with complete queries, so a caller
+  // can yield between pages without holding a SQLite iterator open.
+  getPage = ({
+    after_seq,
+    end_seq,
+    maxRows,
+    maxBytes,
+  }: {
+    after_seq: number;
+    end_seq?: number;
+    maxRows: number;
+    maxBytes: number;
+  }): StoredRow[] => {
+    const where = "seq>?" + (end_seq != null ? " AND seq<=?" : "");
+    const params = end_seq != null ? [after_seq, end_seq] : [after_seq];
+    // Choose the page from sizes alone; only then read the (possibly large)
+    // data of exactly those rows.
+    const sizes = this.db
+      .prepare(
+        `SELECT seq, size FROM messages WHERE ${where} ORDER BY seq LIMIT ?`,
+      )
+      .all(...params, maxRows) as { seq: number; size: number }[];
+    if (sizes.length == 0) {
+      return [];
+    }
+    let last = sizes[0].seq;
+    let bytes = 0;
+    for (const { seq, size } of sizes) {
+      bytes += Number(size);
+      if (bytes > maxBytes && seq != sizes[0].seq) {
+        break;
+      }
+      last = seq;
+    }
+    return this.db
+      .prepare(
+        `SELECT seq, key, time, compress, encoding, raw, headers, size FROM messages WHERE seq>? AND seq<=? ORDER BY seq`,
+      )
+      .all(after_seq, last) as unknown as StoredRow[];
   };
 
   *getAll({

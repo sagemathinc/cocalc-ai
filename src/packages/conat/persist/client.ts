@@ -603,7 +603,13 @@ class PersistStreamClient extends EventEmitter {
             this.changefeedEmit(updates);
             recovered = true;
             return true;
-          } catch {
+          } catch (err) {
+            if ((err as any)?.code == 413) {
+              // The stream holds a message too large to replay; retrying
+              // would only repeat the failed replay.
+              this.emitRecoverableError(err as Error);
+              return true;
+            }
             stats.getMissedRetries += 1;
             return false;
           }

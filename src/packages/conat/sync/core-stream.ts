@@ -807,7 +807,14 @@ export class CoreStream<T = any> extends EventEmitter {
             );
           }
           stats.syncFromPersistRetries += 1;
-          if (err.code == 400 || err.code == 403 || err.code == 429) {
+          // 413: the stream holds a message too large to replay, which
+          // retrying cannot fix.
+          if (
+            err.code == 400 ||
+            err.code == 403 ||
+            err.code == 413 ||
+            err.code == 429
+          ) {
             throw err;
           }
           return false;

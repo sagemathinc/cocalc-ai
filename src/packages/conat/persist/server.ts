@@ -60,11 +60,14 @@ import {
   type ConatSocketServer,
   type ServerSocket,
 } from "@cocalc/conat/socket";
-import type {
-  StoredMessage,
-  PersistentStream,
-  StorageOptions,
-  ChangefeedOperation,
+import {
+  type StoredMessage,
+  type PersistentStream,
+  type StorageOptions,
+  type ChangefeedOperation,
+  maxPersistMessageBytes,
+  persistMessageTooLargeError,
+  storedRowToMessage,
 } from "./storage";
 import { getStream, SERVICE, MAX_PER_USER, MAX_GLOBAL, RESOURCE } from "./util";
 import { throttle } from "lodash";
@@ -208,6 +211,8 @@ export function server({
     let stream: undefined | PersistentStream = undefined;
     let user = "";
     let added = false;
+    // in-progress replays on this socket; stopped when it closes
+    const replays = new Set<ReplayControl>();
     let initializing: Promise<void> | undefined;
     let lastInitAttemptAt = 0;
     let closed = false;
@@ -311,6 +316,8 @@ export function server({
     socket.on("closed", () => {
       log("socket closed", id, socket.subject);
       closed = true;
+      for (const control of replays) control.cancelled = true;
+      replays.clear();
       storage = undefined;
       if (stream != null) {
         streamReleaseQueue.schedule(stream);
@@ -428,7 +435,19 @@ export function server({
           }
           // getAll uses requestMany which responds with all matching messages,
           // so no call to mesg.respond here.
-          getAll({ stream, mesg, request, messagesThresh });
+          if (replays.size >= MAX_REPLAYS_PER_SOCKET) {
+            throw new ConatError(
+              "too many concurrent replays on this connection; try again",
+              { code: 503 },
+            );
+          }
+          const control: ReplayControl = { cancelled: false };
+          replays.add(control);
+          try {
+            await replay({ stream, mesg, request, messagesThresh, control });
+          } finally {
+            replays.delete(control);
+          }
         } else if (request.cmd == "changefeed") {
           log("changefeed", changefeed);
           if (!changefeed) {
@@ -455,9 +474,52 @@ export function server({
   return server;
 }
 
-// Keep replay synchronous: do not yield with a SQLite iterator open. Errors
-// propagate to the request handler, which sends a small error-only response.
-function getAll({ stream, mesg, request, messagesThresh }) {
+// Replay pacing.  A replay reads pages bounded by uncompressed bytes,
+// decompresses large messages off the event loop, and yields between pages, so
+// replaying a huge stream never blocks other requests for long.  (Each page is
+// read with complete queries, so no SQLite iterator stays open across a yield.)
+const REPLAY_PAGE_ROWS = 1000;
+const REPLAY_PAGE_BYTES = 8_000_000;
+// While a replay is working on large messages it sends empty frames, so the
+// requester's idle timeout (sent with the request) does not expire and trigger
+// a retry that starts the whole replay again.
+const REPLAY_KEEPALIVE_MS = 1000;
+const REPLAY_KEEPALIVE_MIN_MS = 100;
+
+export function replayKeepaliveMs(requestTimeout?: number): number {
+  const timeout = Number(requestTimeout);
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    return REPLAY_KEEPALIVE_MS;
+  }
+  return Math.max(
+    REPLAY_KEEPALIVE_MIN_MS,
+    Math.min(REPLAY_KEEPALIVE_MS, Math.floor(timeout / 3)),
+  );
+}
+// Bounds replays piling up on one connection, e.g., from requesters that keep
+// retrying; the excess is refused with a retryable error.
+const MAX_REPLAYS_PER_SOCKET = 8;
+
+export interface ReplayControl {
+  cancelled: boolean;
+}
+
+// Replay a stream for a getAll request.  Errors propagate to the request
+// handler, which sends a small error-only response.  Stops quietly once
+// control.cancelled is set (the socket closed).
+export async function replay({
+  stream,
+  mesg,
+  request,
+  messagesThresh,
+  control = { cancelled: false },
+}: {
+  stream: PersistentStream;
+  mesg;
+  request;
+  messagesThresh: number;
+  control?: ReplayControl;
+}): Promise<void> {
   let seq = 0;
   let sentConfig = false;
   let sentMetadata = false;
@@ -485,6 +547,7 @@ function getAll({ stream, mesg, request, messagesThresh }) {
       : oldest_retained_seq == null
         ? startSeq
         : Math.max(startSeq, oldest_retained_seq);
+  let lastSentAt = Date.now();
   const respond = (messages?: StoredMessage[]) => {
     const headers = {
       seq,
@@ -508,28 +571,69 @@ function getAll({ stream, mesg, request, messagesThresh }) {
     sentCheckpoints = true;
     sentReplayInfo = true;
     seq += 1;
+    lastSentAt = Date.now();
   };
 
-  const messages: StoredMessage[] = [];
-  let size = 0;
-  for (const message of stream.getAll({
-    start_seq: startSeq,
-    end_seq: request.end_seq,
-  })) {
-    messages.push(message);
-    size += message.raw.length;
-    if (size >= messagesThresh) {
-      respond(messages);
-      messages.length = 0;
-      size = 0;
+  // An empty frame is a valid partial response for every client version.
+  const keepaliveMs = replayKeepaliveMs(request.timeout);
+  const keepalive = setInterval(
+    () => {
+      if (!control.cancelled && Date.now() - lastSentAt >= keepaliveMs) {
+        respond([]);
+      }
+    },
+    Math.max(50, Math.floor(keepaliveMs / 2)),
+  );
+  keepalive.unref?.();
+  try {
+    const sizeLimit = maxPersistMessageBytes();
+    const messages: StoredMessage[] = [];
+    let size = 0;
+    let after_seq = startSeq == null ? 0 : startSeq - 1;
+    while (true) {
+      if (control.cancelled) return;
+      if (stream.isClosing()) {
+        throw new ConatError("stream closed during replay", { code: 503 });
+      }
+      const page = stream.getPage({
+        after_seq,
+        end_seq: request.end_seq,
+        maxRows: REPLAY_PAGE_ROWS,
+        maxBytes: REPLAY_PAGE_BYTES,
+      });
+      if (page.length == 0) {
+        break;
+      }
+      for (const row of page) {
+        if (Number(row.size) > sizeLimit) {
+          throw persistMessageTooLargeError({
+            size: Number(row.size),
+            limit: sizeLimit,
+            seq: row.seq,
+          });
+        }
+        const message = await storedRowToMessage(row);
+        if (control.cancelled) return;
+        messages.push(message);
+        size += message.raw.length;
+        if (size >= messagesThresh) {
+          respond(messages);
+          messages.length = 0;
+          size = 0;
+        }
+      }
+      after_seq = page[page.length - 1].seq;
+      await new Promise((resolve) => setImmediate(resolve));
     }
+    if (control.cancelled) return;
+    if (messages.length > 0) {
+      respond(messages);
+    }
+    // successful finish
+    respond();
+  } finally {
+    clearInterval(keepalive);
   }
-
-  if (messages.length > 0) {
-    respond(messages);
-  }
-  // successful finish
-  respond();
 }
 
 function startChangefeed({ socket, stream, messagesThresh }) {
