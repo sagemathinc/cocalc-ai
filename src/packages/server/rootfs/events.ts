@@ -68,7 +68,7 @@ export async function appendRootfsImageEvent({
   reason?: string | null;
   payload?: Record<string, any> | null;
 }): Promise<void> {
-  await getPool("medium").query(
+  await getPool().query(
     `INSERT INTO rootfs_image_events
        (event_id, image_id, release_id, event_type, actor_account_id, reason, payload, created)
      VALUES
@@ -98,7 +98,7 @@ export async function appendRootfsImageEventForReleaseImages({
   reason?: string | null;
   payload?: Record<string, any> | null;
 }): Promise<void> {
-  const { rows } = await getPool("medium").query<{ image_id: string }>(
+  const { rows } = await getPool().query<{ image_id: string }>(
     `SELECT image_id
      FROM rootfs_images
      WHERE release_id=$1
@@ -129,7 +129,7 @@ export async function listRecentRootfsImageEvents({
   const ids = Array.from(new Set(image_ids.map((id) => `${id ?? ""}`.trim())));
   const result = new Map<string, RootfsImageEvent[]>();
   if (!ids.length) return result;
-  const { rows } = await getPool("medium").query<EventRow & { rn: number }>(
+  const { rows } = await getPool().query<EventRow & { rn: number }>(
     `SELECT *
      FROM (
        SELECT

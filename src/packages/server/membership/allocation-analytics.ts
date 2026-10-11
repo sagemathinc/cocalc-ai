@@ -88,8 +88,9 @@ export interface DailyCentAllocation {
 
 const MAX_PROJECT_BATCH = 1000;
 
+// Uncached: the same pool also writes allocation facts.
 function queryable(client?: Queryable): Queryable {
-  return client ?? getPool("medium");
+  return client ?? getPool();
 }
 
 function utcDateKey(value: Date | string): string {
@@ -280,11 +281,7 @@ export async function recordMembershipAllocationRefund({
       ? -Number(fact.purchased_capacity)
       : 0;
     const revenue = toDecimal(fact.revenue_cents).div(100).neg();
-    if (
-      activeMemberships === 0 &&
-      purchasedCapacity === 0 &&
-      revenue.eq(0)
-    ) {
+    if (activeMemberships === 0 && purchasedCapacity === 0 && revenue.eq(0)) {
       continue;
     }
     if (
@@ -403,7 +400,9 @@ export async function projectOutstandingMembershipAllocationFacts({
     1,
     Math.min(MAX_PROJECT_BATCH, Math.floor(Number(limit) || 100)),
   );
-  const { rows } = await getPool("medium").query<{ fact_key: string }>(
+  const { rows } = await getPool().query<{
+    fact_key: string;
+  }>(
     `SELECT f.fact_key
        FROM membership_allocation_facts f
        LEFT JOIN membership_allocation_projections p

@@ -6,7 +6,7 @@ export default async function getAccountId({
 }: {
   email_address: string;
 }): Promise<string> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query(
     "SELECT account_id FROM accounts WHERE email_address=$1",
     [email_address],

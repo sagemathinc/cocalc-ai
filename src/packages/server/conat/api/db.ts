@@ -1,7 +1,7 @@
 import { db } from "@cocalc/database";
 import userQuery from "@cocalc/database/user-query";
 import { callback2 } from "@cocalc/util/async-utils";
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { assertCollab } from "./util";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
@@ -51,7 +51,7 @@ export async function getLegacyTimeTravelInfo({
   project_id: string;
   path: string;
 }): Promise<{ uuid: string; users?: string[] }> {
-  const pool = getPool("long");
+  const pool = getCachedReadPool("long");
   const D = db();
   const string_id = D.sha1(project_id, path);
   const { rows } = await pool.query(

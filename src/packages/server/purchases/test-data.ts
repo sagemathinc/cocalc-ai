@@ -70,7 +70,7 @@ export async function createTestMembershipTier(opts: {
   features?: Record<string, unknown>;
   usage_limits?: Record<string, unknown>;
 }) {
-  const pool = getPool("medium");
+  const pool = getPool();
   await pool.query(
     `INSERT INTO membership_tiers
       (id, label, store_visible, team_visible, course_store_visible, priority,
@@ -145,7 +145,7 @@ export async function createTestAccountEntitlementOverride(
     updated_at?: Date;
   },
 ) {
-  const pool = getPool("medium");
+  const pool = getPool();
   await pool.query(
     `INSERT INTO account_entitlement_overrides (
        account_id, enabled, features, project_defaults, ai_limits,
@@ -191,7 +191,7 @@ export async function createTestAdminAssignedMembership(
     notes?: string | null;
   },
 ) {
-  const pool = getPool("medium");
+  const pool = getPool();
   const assigned_by = opts.assigned_by ?? uuid();
   const assigned_at = opts.assigned_at ?? new Date();
   const expires_at = opts.expires_at ?? null;
@@ -237,7 +237,7 @@ export async function createTestMembershipGrant(
     metadata?: Record<string, unknown> | null;
   },
 ) {
-  const pool = getPool("medium");
+  const pool = getPool();
   await pool.query(
     `INSERT INTO membership_grants (
       id,
@@ -281,7 +281,7 @@ export async function createTestMembershipPackage(opts: {
   expires_at?: Date | null;
   metadata?: Record<string, unknown> | null;
 }) {
-  const pool = getPool("medium");
+  const pool = getPool();
   const id = uuid();
   await pool.query(
     `INSERT INTO membership_packages (

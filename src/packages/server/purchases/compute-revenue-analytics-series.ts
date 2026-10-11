@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { getCachedReadPool, type CachedReadPool } from "@cocalc/database/pool";
 import type {
   ComputeRevenueDailyRow,
   ComputeRevenueSeriesQuery,
@@ -11,7 +11,8 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { utcDay } from "./compute-revenue-analytics";
 
-type Queryable = Pick<PoolClient, "query">;
+// Reads only: a pool, a client or a cached read pool.
+type Queryable = CachedReadPool;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DAYS = 365;
 
@@ -62,7 +63,8 @@ interface UsageResult extends Omit<
 
 export async function getComputeRevenueSeriesLocal({
   query = {},
-  client = getPool("medium"),
+  // query-cache-ok: admin analytics: compute revenue series
+  client = getCachedReadPool("medium"),
 }: {
   query?: ComputeRevenueSeriesQuery;
   client?: Queryable;

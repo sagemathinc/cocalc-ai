@@ -45,7 +45,7 @@ export type ServerProviderEntry = {
   getBootstrapSharedScratchDiskDevices?: (spec: HostSpec) => string;
 };
 
-const pool = () => getPool("medium");
+const pool = () => getPool();
 
 export async function loadHyperstackCatalog(): Promise<{
   flavors: FlavorRegionData[];

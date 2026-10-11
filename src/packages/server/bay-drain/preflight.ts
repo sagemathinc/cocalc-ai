@@ -208,7 +208,7 @@ export function evaluateBayDrainPreflight({
 export async function listLocalPostgresTableStats(): Promise<
   BayDrainPreflightTableStats[]
 > {
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getPool().query<{
     table_name: string;
     estimated_rows: number | string | null;
   }>(

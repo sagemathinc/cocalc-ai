@@ -167,9 +167,7 @@ async function listCandidateSnapshots({
   config: ProjectArchiveLifecycleConfig;
 }): Promise<ArchiveLifecycleProjectSnapshot[]> {
   const bayId = getConfiguredBayId();
-  const { rows } = await getPool(
-    "medium",
-  ).query<ArchiveLifecycleCandidateSnapshot>(
+  const { rows } = await getPool().query<ArchiveLifecycleCandidateSnapshot>(
     `WITH banned_account_ids AS MATERIALIZED (
        SELECT account_id::text AS account_id
          FROM accounts

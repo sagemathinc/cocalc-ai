@@ -66,7 +66,7 @@ export async function sync(
   delete: number;
   salesloft_ids: { [account_id: string]: number };
 }> {
-  const cocalc = getPool("long");
+  const cocalc = getPool();
   const salesloft_ids: { [account_id: string]: number } = {};
 
   log(
@@ -246,7 +246,7 @@ function marketingConsentSql(): string {
 }
 
 async function getAccountIds(condition: string): Promise<string[]> {
-  const db = getPool("long");
+  const db = getPool();
   const { rows } = await db.query(
     `SELECT account_id FROM accounts WHERE ${condition}`,
   );

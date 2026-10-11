@@ -16,7 +16,7 @@ const logger = getLogger("server:cloud:fallback-ladder");
 export async function loadGcpZoneMachineTypes(
   zone: string,
 ): Promise<GcpMachineTypeEntry[]> {
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `SELECT payload
        FROM cloud_catalog_cache
       WHERE provider='gcp' AND kind='machine_types' AND scope=$1
@@ -31,7 +31,7 @@ export async function loadGcpZoneMachineTypes(
 export async function loadGcpCatalogPrices(): Promise<
   GcpCatalogPrices | undefined
 > {
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `SELECT payload
        FROM cloud_catalog_cache
       WHERE provider='gcp' AND kind='prices'

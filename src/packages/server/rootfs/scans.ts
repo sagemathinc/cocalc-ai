@@ -138,7 +138,7 @@ export async function loadRootfsReleaseForScan({
 }: {
   release_id: string;
 }): Promise<RootfsReleaseForScan | undefined> {
-  const { rows } = await getPool("medium").query<RootfsReleaseScanRow>(
+  const { rows } = await getPool().query<RootfsReleaseScanRow>(
     `SELECT
        release_id,
        content_key,
@@ -166,7 +166,7 @@ export async function createRootfsReleaseScanRun({
   }
   const scan_run_id = uuid();
   const bay_id = getConfiguredBayId();
-  const { rows } = await getPool("medium").query<RootfsReleaseScanRunRow>(
+  const { rows } = await getPool().query<RootfsReleaseScanRunRow>(
     `INSERT INTO rootfs_release_scan_runs
        (
          scan_run_id,
@@ -193,7 +193,7 @@ export async function createRootfsReleaseScanRun({
       bay_id,
     ],
   );
-  await getPool("medium").query(
+  await getPool().query(
     `UPDATE rootfs_releases
      SET scan_status='pending',
          scan_tool='trivy',
@@ -217,7 +217,7 @@ export async function markRootfsReleaseScanRunStarted({
   scan_run_id: string;
   host_id?: string | null;
 }): Promise<RootfsReleaseScanRun> {
-  const { rows } = await getPool("medium").query<RootfsReleaseScanRunRow>(
+  const { rows } = await getPool().query<RootfsReleaseScanRunRow>(
     `UPDATE rootfs_release_scan_runs
      SET status='running',
          host_id=$2,
@@ -230,7 +230,7 @@ export async function markRootfsReleaseScanRunStarted({
   if (!rows[0]) {
     throw new Error(`RootFS scan run ${scan_run_id} not found`);
   }
-  await getPool("medium").query(
+  await getPool().query(
     `UPDATE rootfs_releases
      SET scan_status='pending',
          scan_tool='trivy',
@@ -263,7 +263,7 @@ export async function storeRootfsReleaseScanReport({
   retention_until: Date;
 }): Promise<RootfsScanReportRef> {
   const report_id = uuid();
-  await getPool("medium").query(
+  await getPool().query(
     `INSERT INTO rootfs_release_scan_reports
      (report_id, scan_run_id, release_id, format, report_json, report_bytes, report_sha256, retention_until, created_at)
      VALUES ($1, $2, $3, 'trivy-json', $4::JSONB, $5, $6, $7, NOW())`,
@@ -291,7 +291,7 @@ export async function getRootfsReleaseScanReport({
 }: {
   report_id: string;
 }): Promise<RootfsReleaseScanReport | undefined> {
-  const { rows } = await getPool("medium").query<RootfsReleaseScanReportRow>(
+  const { rows } = await getPool().query<RootfsReleaseScanReportRow>(
     `SELECT report_id,
             scan_run_id,
             release_id,
@@ -325,7 +325,7 @@ export async function completeRootfsReleaseScanRun({
   const dbUpdatedAt = summary.db?.updated_at
     ? new Date(summary.db.updated_at)
     : null;
-  const { rows } = await getPool("medium").query<RootfsReleaseScanRunRow>(
+  const { rows } = await getPool().query<RootfsReleaseScanRunRow>(
     `UPDATE rootfs_release_scan_runs
      SET status=$2,
          host_id=COALESCE($3, host_id),
@@ -366,7 +366,7 @@ export async function completeRootfsReleaseScanRun({
   if (!rows[0]) {
     throw new Error(`RootFS scan run ${scan_run_id} not found`);
   }
-  await getPool("medium").query(
+  await getPool().query(
     `UPDATE rootfs_releases
      SET scan_status=$2,
          scan_tool=COALESCE($3, scan_tool),
@@ -415,7 +415,7 @@ export async function failRootfsReleaseScanRun({
       code: error_code,
     },
   };
-  const { rows } = await getPool("medium").query<RootfsReleaseScanRunRow>(
+  const { rows } = await getPool().query<RootfsReleaseScanRunRow>(
     `UPDATE rootfs_release_scan_runs
      SET status='error',
          host_id=COALESCE($2, host_id),
@@ -437,7 +437,7 @@ export async function failRootfsReleaseScanRun({
   if (!rows[0]) {
     throw new Error(`RootFS scan run ${scan_run_id} not found`);
   }
-  await getPool("medium").query(
+  await getPool().query(
     `UPDATE rootfs_releases
      SET scan_status='error',
          scan_tool='trivy',
