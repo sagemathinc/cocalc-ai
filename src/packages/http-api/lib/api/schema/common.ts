@@ -38,7 +38,7 @@ export type OkAPIOperation = z.infer<typeof OkAPIOperationSchema>;
 export const RequestNoCacheSchema = z
   .boolean()
   .describe(
-    "**Administrators only**. Disables database caching for this query.",
+    "Ignored: these queries are no longer cached. Still accepted so existing clients keep working.",
   )
   .optional();
 

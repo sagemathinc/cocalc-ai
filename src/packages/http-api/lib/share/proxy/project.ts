@@ -2,7 +2,7 @@ import { getCachedReadPool } from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export default async function getProxyProjectId(): Promise<string> {
-  const pool = getCachedReadPool("long");
+  const pool = getCachedReadPool("long", { label: "share-proxy-project" });
   const { rows } = await pool.query(
     "SELECT value FROM server_settings WHERE name='github_project_id'",
   );
