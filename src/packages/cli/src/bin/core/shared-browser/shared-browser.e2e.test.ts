@@ -581,6 +581,25 @@ test(
         `frames in 1.5 s used: ${interactive}`,
       );
 
+      // Several animated tabs at once: frames one at a time for the whole
+      // browser (two at once kill Chromium's GPU process, and then
+      // Chromium), so it lives and every tab keeps animating.
+      const others: any[] = [];
+      for (let i = 0; i < 3; i++) {
+        const other = await page.context().newPage();
+        await other.goto(RAF_PAGE);
+        others.push(other);
+      }
+      await sleep(3000);
+      for (const other of others) {
+        const now = await other.evaluate(() => performance.now());
+        assert.ok(
+          (await framesIn(other, now - 1000, now)) >= 2,
+          "another tab animates",
+        );
+        await other.close();
+      }
+
       // The viewer leaves; an agent's screenshot of the tab is still quick.
       viewer.close();
       await sleep(BUSY_MS + 500);

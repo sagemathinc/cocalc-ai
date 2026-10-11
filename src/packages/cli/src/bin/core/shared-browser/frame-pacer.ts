@@ -12,8 +12,14 @@ when asked (HeadlessExperimental.beginFrame), every tab, popups too.  So we
 ask: 30 times a second while the human uses a tab (0.46 cores), 15 while
 someone just watches it or an agent works in it, and 4 for the others (0.01
 cores), which keeps their pages running (requestAnimationFrame, screenshots)
-without drawing for nobody.  A page busy in JavaScript holds its frame up,
-and gets no more until it is done.
+without drawing for nobody.
+
+One frame at a time, for the whole browser: Chromium has one begin-frame
+source for all its tabs, and a second frame asked for before the first is
+done (any tab) kills its GPU process ("overlapping IssueExternalBeginFrame");
+the sixth time, Chromium exits.  A frame takes a few milliseconds (12 on
+average for three animated tabs), also while a page is busy in JavaScript,
+so one lane is plenty.
 
 Full Chrome ignores the flag and has no beginFrame: the first answer says so,
 and the pacer stops for good.
@@ -45,6 +51,8 @@ interface PacedTab {
 
 export class FramePacer {
   private tabs = new Map<string, PacedTab>();
+  // The frame being made, for any tab (see above): the next waits for it.
+  private lane: Promise<void> = Promise.resolve();
   // null: not known yet (no answer to beginFrame so far).
   supported: boolean | null = null;
 
@@ -146,10 +154,15 @@ export class FramePacer {
     if (tab.inFlight) return;
     tab.inFlight = true;
     const started = Date.now();
-    this.options
-      .send("HeadlessExperimental.beginFrame", {}, tab.session)
+    const frame = this.lane
       .then(() => {
-        this.supported = true;
+        // Closed while it waited its turn.
+        if (tab.closed || !tab.session || this.supported === false) return;
+        return this.options
+          .send("HeadlessExperimental.beginFrame", {}, tab.session)
+          .then(() => {
+            this.supported = true;
+          });
       })
       .catch((err) => {
         const message = `${err?.message ?? err}`;
@@ -165,15 +178,16 @@ export class FramePacer {
           this.close();
         }
         // Otherwise the tab is closing or between pages: keep going.
-      })
-      .finally(() => {
-        tab.inFlight = false;
-        const interval = 1000 / this.fps(targetId, tab);
-        this.schedule(
-          targetId,
-          tab,
-          Math.max(0, interval - (Date.now() - started)),
-        );
       });
+    this.lane = frame;
+    void frame.finally(() => {
+      tab.inFlight = false;
+      const interval = 1000 / this.fps(targetId, tab);
+      this.schedule(
+        targetId,
+        tab,
+        Math.max(0, interval - (Date.now() - started)),
+      );
+    });
   }
 }
