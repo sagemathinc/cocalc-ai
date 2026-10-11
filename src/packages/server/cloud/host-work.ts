@@ -244,7 +244,12 @@ async function waitForProviderStatus(opts: {
   const intervalMs = opts.intervalMs ?? 5000;
   const deadline = Date.now() + timeoutMs;
   let lastStatus:
-    "running" | "starting" | "off" | "stopped" | "error" | undefined;
+    | "running"
+    | "starting"
+    | "off"
+    | "stopped"
+    | "error"
+    | undefined;
   while (Date.now() < deadline) {
     try {
       if (opts.entry.provider.getStatus) {
@@ -355,7 +360,8 @@ async function observeProviderReadyStatus(opts: {
       }
       const mapped =
         (entry.provider.mapStatus?.(remote.status) as
-          ProviderReadyObservation["mapped_status"] | undefined) ??
+          | ProviderReadyObservation["mapped_status"]
+          | undefined) ??
         (remote.status as ProviderReadyObservation["mapped_status"]);
       return {
         mapped_status: mapped,
@@ -1738,18 +1744,21 @@ async function handleStart(row: any) {
         const nextMachineMeta = { ...(nextMachine.metadata ?? {}) };
         if (providerId === "gcp") {
           const runtimeMeta = runtime.metadata as
-            { data_disk_name?: string } | undefined;
+            | { data_disk_name?: string }
+            | undefined;
           nextMachineMeta.data_disk_name =
             runtimeMeta?.data_disk_name ?? `${runtime.instance_id}-data`;
         } else if (providerId === "nebius") {
           const runtimeMeta = runtime.metadata as
-            { diskIds?: { data?: string } } | undefined;
+            | { diskIds?: { data?: string } }
+            | undefined;
           if (runtimeMeta?.diskIds?.data) {
             nextMachineMeta.data_disk_id = runtimeMeta.diskIds.data;
           }
         } else if (providerId === "hyperstack") {
           const runtimeMeta = runtime.metadata as
-            { data_volume_id?: number; data_volume_name?: string } | undefined;
+            | { data_volume_id?: number; data_volume_name?: string }
+            | undefined;
           if (runtimeMeta?.data_volume_id) {
             nextMachineMeta.data_volume_id = runtimeMeta.data_volume_id;
           }
@@ -2721,7 +2730,12 @@ async function handleStart(row: any) {
       }
     }
     let statusAfterStart:
-      "running" | "starting" | "off" | "stopped" | "error" | undefined;
+      | "running"
+      | "starting"
+      | "off"
+      | "stopped"
+      | "error"
+      | undefined;
     if (
       providerId === "gcp" ||
       providerId === "nebius" ||
@@ -3316,7 +3330,12 @@ async function handleRefreshRuntime(row: any) {
     network,
   });
   const mappedProviderStatus = network?.mapped_status as
-    "running" | "starting" | "off" | "stopped" | "error" | undefined;
+    | "running"
+    | "starting"
+    | "off"
+    | "stopped"
+    | "error"
+    | undefined;
   const nextMetadata = {
     ...(host.metadata ?? {}),
     runtime: {
@@ -3349,15 +3368,24 @@ async function handleRefreshRuntime(row: any) {
       nextStatus === "off" &&
       shouldAutoRestoreInterruptedSpotHost(nextHost)
     ) {
-      await enqueueCloudVmWorkOnce({
-        vm_id: host.id,
-        action: "start",
-        payload: {
-          source: "refresh_runtime",
-          reason: network?.provider_status
-            ? `provider-status:${network.provider_status}`
-            : "provider-offline",
-        },
+      // Automatic restore: refused if the host is wanted stopped by now.
+      await recoverHostToRunning({
+        host_id: host.id,
+        enqueue: async (client, intent_generation) =>
+          await enqueueCloudVmWorkOnce(
+            {
+              vm_id: host.id,
+              action: "start",
+              payload: {
+                source: "refresh_runtime",
+                reason: network?.provider_status
+                  ? `provider-status:${network.provider_status}`
+                  : "provider-offline",
+                intent_generation,
+              },
+            },
+            { inTransaction: client },
+          ),
       });
       await bumpReconcile(providerId, 1000);
     } else if (providerId) {
@@ -4020,26 +4048,42 @@ async function handleProbeSpot(row: any) {
     effective_pricing_model: currentEffectivePricing,
     spot_recovery_state: successState,
   });
-  await updateHostRow(host.id, {
-    metadata: successMetadata,
-    status: "starting",
-    last_seen: null,
+  // Returning to Spot restarts the host: never on top of a stop recorded
+  // since this probe read the host.
+  const returning = await transitionAndQueueRecoveryStart({
+    host_id: host.id,
+    updates: {
+      metadata: successMetadata,
+      status: "starting",
+      last_seen: null,
+    },
+    enqueue: async (client, intent_generation) =>
+      await enqueueCloudVmWorkOnce(
+        {
+          vm_id: host.id,
+          action: "start",
+          payload: {
+            provider: providerId,
+            source: "spot_probe_success",
+            reason: "spot_probe_succeeded",
+            intent_generation,
+          },
+        },
+        { inTransaction: client },
+      ),
   });
+  if (!returning) {
+    logger.info("spot probe: host is wanted stopped; not returning to Spot", {
+      host_id: host.id,
+    });
+    return;
+  }
   await logCloudVmEvent({
     vm_id: host.id,
     action: "spot_probe_succeeded",
     status: "success",
     provider: providerId,
     runtime: { return_reason: timing.reason },
-  });
-  await enqueueCloudVmWorkOnce({
-    vm_id: host.id,
-    action: "start",
-    payload: {
-      provider: providerId,
-      source: "spot_probe_success",
-      reason: "spot_probe_succeeded",
-    },
   });
 }
 

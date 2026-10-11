@@ -678,17 +678,25 @@ export async function updateHostFromProviderSnapshot(
       expected_instance_id: expectedInstanceId,
     });
   }
-  const { rows } = await db.query(
+  // Inside a caller's transaction the row may still roll back: the caller
+  // records availability once it has committed.
+  if (!opts.db) {
+    await recordCommittedHostAvailability(row.id);
+  }
+  return updated;
+}
+
+async function recordCommittedHostAvailability(host_id: string) {
+  const { rows } = await pool().query(
     `SELECT id, status, deleted, last_seen, metadata
        FROM project_hosts
       WHERE id=$1
       LIMIT 1`,
-    [row.id],
+    [host_id],
   );
   if (rows[0]) {
     await recordHostAvailabilityFromSnapshot(rows[0], "cloud_reconcile");
   }
-  return updated;
 }
 
 const updateHost = updateHostFromProviderSnapshot;
@@ -782,6 +790,7 @@ async function enqueueSpotRestore(
     });
     return false;
   }
+  await recordCommittedHostAvailability(row.id);
   logger.warn("cloud reconcile: auto-restoring interrupted spot host", {
     provider,
     host_id: row.id,

@@ -251,15 +251,36 @@ async function withQueuedWorkLock<T>(
   }
 }
 
+// Lifecycle work may carry the host intent generation it was queued under
+// (payload.intent_generation). Work without one is legacy: queued by code
+// that predates generations, or not intent-driven. Deduplication must never
+// let older (or legacy) work replace newer generated work.
+function intentGenerationOf(payload: any): number | undefined {
+  const value = payload?.intent_generation;
+  if (value == null || value === "") return undefined;
+  const generation = Number(value);
+  return Number.isFinite(generation) ? generation : undefined;
+}
+
+// Whether incoming work belongs to a strictly newer intent than existing
+// work: generated work is newer than legacy work and than lower generations;
+// legacy work is never newer.
+function isNewerIntent(incoming: any, existing: any): boolean {
+  const next = intentGenerationOf(incoming);
+  if (next == null) return false;
+  const current = intentGenerationOf(existing);
+  return current == null || next > current;
+}
+
 async function lockQueuedWork(
   client: PoolClient,
   vm_id: string,
   action: string,
   states: string[],
-): Promise<{ id: string; state: string } | undefined> {
+): Promise<{ id: string; state: string; payload: any } | undefined> {
   const { rows } = await client.query(
     `
-      SELECT id, state
+      SELECT id, state, payload
       FROM cloud_vm_work
       WHERE vm_id=$1
         AND action=$2
@@ -313,6 +334,25 @@ export async function enqueueCloudVmWorkOnce(
         await insertQueuedWork(client, id, row, notBefore);
         return id;
       }
+      if (isNewerIntent(row.payload, existing.payload)) {
+        if (existing.state === "queued") {
+          // The queued item stands for an older intent: carry the newer one.
+          await client.query(
+            `
+            UPDATE cloud_vm_work
+            SET payload = $2,
+                not_before = $3,
+                updated_at = NOW()
+            WHERE id=$1
+          `,
+            [existing.id, row.payload ?? {}, notBefore],
+          );
+          return undefined;
+        }
+        // Only older work is running: queue the newer intent behind it.
+        await insertQueuedWork(client, id, row, notBefore);
+        return id;
+      }
       if (existing.state === "queued" && notBefore) {
         await client.query(
           `
@@ -356,6 +396,11 @@ export async function enqueueCloudVmFollowUpWork(
       if (!existing) {
         await insertQueuedWork(client, id, row, notBefore);
         return id;
+      }
+      if (isNewerIntent(existing.payload, row.payload)) {
+        // A newer intent is already queued (e.g. a start requested while
+        // an older one schedules its retry): keep it.
+        return undefined;
       }
       await client.query(
         `

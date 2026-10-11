@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { upsertProjectHost } from "@cocalc/database/postgres/project-hosts";
+import { desiredStateGuardFunctionSql } from "@cocalc/database/postgres/schema/project-host-desired-state";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud/db";
 import { before, after, getPool } from "@cocalc/server/test";
 import {
@@ -35,39 +36,83 @@ async function hostRow(id: string) {
 }
 
 describe("desired state guard", () => {
-  it("reverts a desired_state change that does not bump the generation", async () => {
+  const stale = (desired_state: string) => ({
+    owner: "acct-owner",
+    machine: { cloud: "gcp" },
+    desired_state,
+    billing: { note: "kept" },
+  });
+
+  it("phase 1 records a desired_state change that does not bump the generation", async () => {
     const id = await newHost({ desired_state: "running" });
     const generation = await setHostDesiredState({
       host_id: id,
       state: "stopped",
     });
-    expect(generation).toBeGreaterThan(0);
-
     // A writer saving back the whole metadata object it read earlier.
-    const stale = {
-      owner: "acct-owner",
-      machine: { cloud: "gcp" },
-      desired_state: "running",
-      billing: { note: "kept" },
-    };
     await getPool().query("UPDATE project_hosts SET metadata=$2 WHERE id=$1", [
       id,
-      stale,
+      stale("running"),
     ]);
-    let row = await hostRow(id);
-    expect(row.metadata.desired_state).toBe("stopped");
-    // Its other changes still apply.
-    expect(row.metadata.billing).toEqual({ note: "kept" });
-    expect(Number(row.desired_state_generation)).toBe(generation);
+    // Not reverted yet (older hub workers may still be running) ...
+    expect((await hostRow(id)).metadata.desired_state).toBe("running");
+    // ... but recorded, naming the change, for the phase 2 gate.
+    const { rows } = await getPool().query(
+      `SELECT status, runtime FROM cloud_vm_log
+        WHERE vm_id=$1 AND action='desired_state_unversioned_change'`,
+      [id],
+    );
+    expect(rows).toEqual([
+      {
+        status: "warning",
+        runtime: { from: "stopped", to: "running", generation },
+      },
+    ]);
+    // Intentional changes are not recorded.
+    await setHostDesiredState({ host_id: id, state: "running" });
+    const after = await getPool().query(
+      `SELECT count(*)::int AS n FROM cloud_vm_log
+        WHERE vm_id=$1 AND action='desired_state_unversioned_change'`,
+      [id],
+    );
+    expect(after.rows[0].n).toBe(1);
+  });
 
-    // An intentional change goes through.
-    const next = await setHostDesiredState({ host_id: id, state: "running" });
-    row = await hostRow(id);
-    expect(row.metadata.desired_state).toBe("running");
-    expect(next).toBe(generation! + 1);
-    expect(intentSuperseded(row, { intent_generation: generation })).toBe(true);
-    expect(intentSuperseded(row, { intent_generation: next })).toBe(false);
-    expect(intentSuperseded(row, {})).toBe(false);
+  it("phase 2 reverts a desired_state change that does not bump the generation", async () => {
+    await getPool().query(desiredStateGuardFunctionSql(true));
+    try {
+      const id = await newHost({ desired_state: "running" });
+      const generation = await setHostDesiredState({
+        host_id: id,
+        state: "stopped",
+      });
+      expect(generation).toBeGreaterThan(0);
+      await getPool().query(
+        "UPDATE project_hosts SET metadata=$2 WHERE id=$1",
+        [id, stale("running")],
+      );
+      let row = await hostRow(id);
+      expect(row.metadata.desired_state).toBe("stopped");
+      // Its other changes still apply.
+      expect(row.metadata.billing).toEqual({ note: "kept" });
+      expect(Number(row.desired_state_generation)).toBe(generation);
+
+      // An intentional change goes through.
+      const next = await setHostDesiredState({
+        host_id: id,
+        state: "running",
+      });
+      row = await hostRow(id);
+      expect(row.metadata.desired_state).toBe("running");
+      expect(next).toBe(generation! + 1);
+      expect(intentSuperseded(row, { intent_generation: generation })).toBe(
+        true,
+      );
+      expect(intentSuperseded(row, { intent_generation: next })).toBe(false);
+      expect(intentSuperseded(row, {})).toBe(false);
+    } finally {
+      await getPool().query(desiredStateGuardFunctionSql(false));
+    }
   });
 });
 

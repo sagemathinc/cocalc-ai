@@ -439,3 +439,130 @@ describe("claim fairness and intent-aware supersession", () => {
     ]);
   });
 });
+
+describe("deduplication never loses a newer intent", () => {
+  const items = async (vm_id: string) =>
+    (
+      await getPool().query(
+        `SELECT state, payload->>'intent_generation' AS generation,
+                not_before IS NOT NULL AS delayed
+           FROM cloud_vm_work WHERE vm_id=$1 ORDER BY created_at`,
+        [vm_id],
+      )
+    ).rows;
+  const later = () => new Date(Date.now() + 600_000);
+
+  it("a newer start advances an older queued one", async () => {
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-1",
+      action: "start",
+      payload: { intent_generation: 4 },
+      not_before: later(),
+    });
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-1",
+      action: "start",
+      payload: { intent_generation: 5 },
+    });
+    expect(await items("vm-1")).toEqual([
+      { state: "queued", generation: "5", delayed: false },
+    ]);
+    // An older or unversioned request does not take it back.
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-1",
+      action: "start",
+      payload: { intent_generation: 4 },
+    });
+    await enqueueCloudVmWorkOnce({ vm_id: "vm-1", action: "start" });
+    expect(await items("vm-1")).toEqual([
+      { state: "queued", generation: "5", delayed: false },
+    ]);
+  });
+
+  it("a newer start queues behind an older or unversioned one already running", async () => {
+    for (const running of [{ intent_generation: 4 }, {}]) {
+      await getPool().query("DELETE FROM cloud_vm_work");
+      await enqueueCloudVmWork({
+        vm_id: "vm-2",
+        action: "start",
+        payload: running,
+      });
+      await claimCloudVmWork({ worker_id: "w", limit: 1 });
+      await enqueueCloudVmWorkOnce({
+        vm_id: "vm-2",
+        action: "start",
+        payload: { intent_generation: 5 },
+      });
+      expect((await items("vm-2")).map((row) => row.state)).toEqual([
+        "in_progress",
+        "queued",
+      ]);
+      // The same or an older intent is still a duplicate.
+      await enqueueCloudVmWorkOnce({
+        vm_id: "vm-2",
+        action: "start",
+        payload: running,
+      });
+      expect(await items("vm-2")).toHaveLength(2);
+    }
+  });
+
+  it("a versioned start advances an unversioned queued one", async () => {
+    await enqueueCloudVmWorkOnce({ vm_id: "vm-3", action: "start" });
+    await enqueueCloudVmWorkOnce({
+      vm_id: "vm-3",
+      action: "start",
+      payload: { intent_generation: 2 },
+    });
+    expect(await items("vm-3")).toEqual([
+      { state: "queued", generation: "2", delayed: false },
+    ]);
+  });
+
+  it("an older start's retry never overwrites a newer queued start", async () => {
+    await enqueueCloudVmWork({
+      vm_id: "vm-4",
+      action: "start",
+      payload: { intent_generation: 5 },
+    });
+    // An older running start schedules its retry; so does legacy code.
+    await enqueueCloudVmFollowUpWork({
+      vm_id: "vm-4",
+      action: "start",
+      not_before: later(),
+      payload: { intent_generation: 4, source: "fallback_ladder_retry" },
+    });
+    await enqueueCloudVmFollowUpWork({
+      vm_id: "vm-4",
+      action: "start",
+      not_before: later(),
+      payload: { source: "fallback_ladder_retry" },
+    });
+    expect(await items("vm-4")).toEqual([
+      { state: "queued", generation: "5", delayed: false },
+    ]);
+    // The same intent's own retry still moves it, as before.
+    await enqueueCloudVmFollowUpWork({
+      vm_id: "vm-4",
+      action: "start",
+      not_before: later(),
+      payload: { intent_generation: 5 },
+    });
+    expect(await items("vm-4")).toEqual([
+      { state: "queued", generation: "5", delayed: true },
+    ]);
+  });
+
+  it("a versioned retry advances an unversioned queued start", async () => {
+    await enqueueCloudVmWork({ vm_id: "vm-5", action: "start" });
+    await enqueueCloudVmFollowUpWork({
+      vm_id: "vm-5",
+      action: "start",
+      not_before: later(),
+      payload: { intent_generation: 3 },
+    });
+    expect(await items("vm-5")).toEqual([
+      { state: "queued", generation: "3", delayed: true },
+    ]);
+  });
+});
