@@ -24,6 +24,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { CdpClient, type CdpEvent } from "./cdp-client";
+import { FramePacer } from "./frame-pacer";
 import {
   MAX_CLIPBOARD_TEXT,
   pickSelectExpression,
@@ -206,6 +207,8 @@ export class SharedBrowserServer {
   private newTabFor: ViewerChannel | null = null;
   private switching: Promise<void> = Promise.resolve();
   private titleTimer: NodeJS.Timeout | null = null;
+  // Renders tabs only as often as someone needs (see frame-pacer.ts).
+  private pacer: FramePacer | null = null;
   private log: (message: string) => void;
 
   constructor(private readonly options: SharedBrowserServerOptions) {
@@ -234,6 +237,11 @@ export class SharedBrowserServer {
 
   get attached(): boolean {
     return this.devtools != null;
+  }
+
+  // Whether this browser renders only when asked (null: not known yet).
+  get framesPaced(): boolean | null {
+    return this.pacer?.supported ?? null;
   }
 
   // A browser on the user's computer is theirs: we only stream a small
@@ -281,9 +289,20 @@ export class SharedBrowserServer {
         this.detachChrome();
       }
     });
+    // Not a browser on the user's computer: its tabs are theirs.
+    if (!this.lightTouch)
+      this.pacer = new FramePacer({
+        send: (method, params, sessionId) =>
+          cdp.send(method, params, sessionId),
+        watched: (targetId) => this.watchersOf(targetId).length > 0,
+        log: this.log,
+      });
     await cdp.send("Target.setDiscoverTargets", { discover: true });
     const { targetInfos } = await cdp.send("Target.getTargets");
-    for (const info of targetInfos) this.addTab(info);
+    for (const info of targetInfos) {
+      this.addTab(info);
+      if (info.type === "page") this.pacer?.add(info.targetId);
+    }
     this.state.connection = "connected";
     if (this.state.tabs.length === 0) {
       await cdp.send("Target.createTarget", { url: "about:blank" });
@@ -298,6 +317,8 @@ export class SharedBrowserServer {
     if (!this.attached) return;
     const cdp = this.cdp;
     this.devtools = null;
+    this.pacer?.close();
+    this.pacer = null;
     this.state.connection = "waiting";
     this.state.tabs = [];
     this.state.active = null;
@@ -666,6 +687,7 @@ export class SharedBrowserServer {
     if (want === page.casting) return;
     page.casting = want;
     page.lastFrame = null;
+    this.pacer?.update(targetId);
     if (want) {
       const { width, height } = this.lightTouch
         ? { width: 960, height: 960 } // a preview of the real window
@@ -728,6 +750,7 @@ export class SharedBrowserServer {
       this.addTab(params.targetInfo);
       if (this.state.tabs.length === before) return;
       const id = params.targetInfo.targetId;
+      this.pacer?.add(id);
       const opener = params.targetInfo.openerId;
       const requester = this.newTabFor;
       if (requester && this.views.has(requester)) {
@@ -762,6 +785,7 @@ export class SharedBrowserServer {
       if (index < 0) return;
       this.state.tabs.splice(index, 1);
       this.pages.delete(params.targetId);
+      this.pacer?.remove(params.targetId);
       const next =
         this.state.tabs[Math.min(index, this.state.tabs.length - 1)] ?? null;
       for (const view of this.views.values())
@@ -1400,6 +1424,10 @@ export class SharedBrowserServer {
     let open = false;
     // Screenshots of part of the page, by message id (see below).
     const clipShots = new Set<number>();
+    // The tab of each of this agent's sessions, so the tab it uses renders
+    // at the watched rate (see frame-pacer.ts), and its attach requests.
+    const sessionTabs = new Map<string, string>();
+    const attaching = new Map<number, string>();
     this.agentSockets.add(client);
     this.state.agents = this.agentSockets.size;
     this.broadcastState();
@@ -1425,6 +1453,14 @@ export class SharedBrowserServer {
         return;
       }
       this.followAgent(msg);
+      if (msg?.sessionId) this.pacer?.busy(sessionTabs.get(msg.sessionId));
+      if (
+        msg?.method === "Target.attachToTarget" &&
+        typeof msg.params?.targetId === "string"
+      ) {
+        attaching.set(msg.id, msg.params.targetId);
+        this.pacer?.busy(msg.params.targetId);
+      }
       if (msg?.method === "Page.captureScreenshot" && msg.params?.clip)
         clipShots.add(msg.id);
       void this.zoomFix.then(() => {
@@ -1438,6 +1474,21 @@ export class SharedBrowserServer {
     });
     upstream.on("message", (data) => {
       const text = data.toString();
+      if (text.startsWith('{"method":"Target.attachedToTarget"')) {
+        const { sessionId, targetInfo } = parseMessage(text)?.params ?? {};
+        if (sessionId && targetInfo?.targetId)
+          sessionTabs.set(sessionId, targetInfo.targetId);
+      }
+      const replyTo =
+        clipShots.size > 0 || attaching.size > 0
+          ? Number(text.match(/^\{"id":(\d+)/)?.[1])
+          : NaN;
+      const attached = attaching.get(replyTo);
+      if (attached) {
+        attaching.delete(replyTo);
+        const sessionId = parseMessage(text)?.result?.sessionId;
+        if (sessionId) sessionTabs.set(sessionId, attached);
+      }
       // A clipped screenshot (Playwright's) leaves a zoomed page at pixel
       // ratio 1, its input scaled twice: zoom it again before the agent's
       // next command (or a viewer's click) reaches it.  Replies start with
@@ -1446,21 +1497,18 @@ export class SharedBrowserServer {
       // (25 ms) were not enough in tests, 100 ms always was.  Not for long,
       // whatever happens (a page's alert() may hold Chromium's answer, and
       // the agent's command to close it would wait).
-      if (clipShots.size > 0) {
-        const id = Number(text.match(/^\{"id":(\d+)/)?.[1]);
-        if (clipShots.delete(id))
-          this.zoomFix = this.zoomFix
-            .then(() =>
-              Promise.race([
-                this.reapplyZoom().then(
-                  (zoomed) => zoomed && new Promise((r) => setTimeout(r, 250)),
-                ),
-                new Promise((r) => setTimeout(r, 2000)),
-              ]),
-            )
-            .then(() => {})
-            .catch(() => {});
-      }
+      if (clipShots.delete(replyTo))
+        this.zoomFix = this.zoomFix
+          .then(() =>
+            Promise.race([
+              this.reapplyZoom().then(
+                (zoomed) => zoomed && new Promise((r) => setTimeout(r, 250)),
+              ),
+              new Promise((r) => setTimeout(r, 2000)),
+            ]),
+          )
+          .then(() => {})
+          .catch(() => {});
       if (client.readyState === WebSocket.OPEN) client.send(text);
     });
     client.on("message", (data) => {

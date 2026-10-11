@@ -205,6 +205,10 @@ export function sharedBrowserChromeArgs(
     "--disk-cache-size=67108864",
     "--window-size=1280,800",
     ...NO_THROTTLING,
+    // Render only when the service asks (frame-pacer.ts); full Chrome
+    // ignores these.
+    "--enable-begin-frame-control",
+    "--run-all-compositor-stages-before-draw",
     ...urls,
   ];
 }

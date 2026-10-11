@@ -95,6 +95,8 @@ test("chromium runs headless, unthrottled and container-friendly", () => {
     "--disable-renderer-backgrounding",
     "--disable-backgrounding-occluded-windows",
     "--disable-background-timer-throttling",
+    "--enable-begin-frame-control",
+    "--run-all-compositor-stages-before-draw",
   ])
     assert.ok(args.includes(flag), flag);
   assert.equal(args.at(-1), "about:blank");

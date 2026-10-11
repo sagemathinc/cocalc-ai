@@ -22,6 +22,7 @@ import {
 } from "../local-browser";
 import { SharedBrowserPage } from "./agent-page";
 import { CdpClient } from "./cdp-client";
+import { BUSY_MS, WATCHED_FPS } from "./frame-pacer";
 import { profileSecret, startBrowserKeyring } from "./keyring";
 import {
   SharedBrowserServer,
@@ -479,6 +480,86 @@ test(
         () => viewer.state?.zoom,
         (z) => z === 5,
         "clamped",
+      );
+    } finally {
+      await agent.close().catch(() => {});
+      await shared.close();
+    }
+  },
+);
+
+test(
+  "frames are paced: a tab nobody watches renders a few times a second, a watched one about 30 times; agents' screenshots stay quick",
+  needsChrome,
+  async (t) => {
+    const { chromium } = require("playwright-core");
+    // Each animation frame's time, as the page saw it.
+    const RAF_PAGE =
+      "data:text/html," +
+      encodeURIComponent(
+        `<title>raf</title><script>window.frames_=[];(function f(t){window.frames_.push(t);requestAnimationFrame(f)})()</script>`,
+      );
+    const framesIn = (page: any, from: number, to: number) =>
+      page.evaluate(
+        ([a, b]: number[]) =>
+          (window as any).frames_.filter((t: number) => t >= a && t < b).length,
+        [from, to],
+      );
+    const shared = await sharedBrowser();
+    const agent = await chromium.connectOverCDP(
+      `http://127.0.0.1:${shared.cdpPort}`,
+    );
+    try {
+      const paced = await until(
+        () => shared.server.framesPaced,
+        (value) => value !== null,
+        "the first frame",
+      );
+      if (!paced) {
+        t.skip("this Chromium renders by itself (not chrome-headless-shell)");
+        return;
+      }
+      const page = agent.contexts()[0].pages()[0];
+      await page.goto(RAF_PAGE);
+      // Nobody watches, and the agent waits (its commands keep the tab at
+      // the watched rate for a while).
+      const start = await page.evaluate(() => performance.now());
+      await sleep(BUSY_MS + 2500);
+      const idle = await framesIn(
+        page,
+        start + BUSY_MS + 300,
+        start + BUSY_MS + 2300,
+      );
+      assert.ok(
+        idle >= 3 && idle <= 16,
+        `frames in 2 s nobody watched: ${idle}`,
+      );
+
+      // Someone watches: about WATCHED_FPS, and their frames come no faster.
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(800, 500);
+      await sleep(BUSY_MS + 500);
+      const before = viewer.frames.length;
+      const from = await page.evaluate(() => performance.now());
+      await sleep(2000);
+      const watched = await framesIn(page, from, from + 2000);
+      assert.ok(
+        watched >= WATCHED_FPS && watched <= 2.5 * WATCHED_FPS,
+        `frames in 2 s watched: ${watched}`,
+      );
+      assert.ok(
+        viewer.frames.length - before <= 2.5 * WATCHED_FPS,
+        `screencast frames in 2 s: ${viewer.frames.length - before}`,
+      );
+
+      // The viewer leaves; an agent's screenshot of the tab is still quick.
+      viewer.close();
+      await sleep(BUSY_MS + 500);
+      const shotAt = Date.now();
+      assert.ok((await page.screenshot()).length > 0);
+      assert.ok(
+        Date.now() - shotAt < 2000,
+        `screenshot: ${Date.now() - shotAt} ms`,
       );
     } finally {
       await agent.close().catch(() => {});
@@ -1207,12 +1288,17 @@ test(
       },
     });
     const { cdpPort } = await server.start();
-    // The "computer": its own Chrome.
+    // The "computer": its own Chrome, which renders by itself (frames are
+    // not paced there).
     const profile = await createProfileDir("disk", sys);
     const laptop = await launchBrowser({
       executable: executable!,
       profileDir: profile.path,
-      args: sharedBrowserChromeArgs(profile.path),
+      args: sharedBrowserChromeArgs(profile.path).filter(
+        (arg) =>
+          arg !== "--enable-begin-frame-control" &&
+          arg !== "--run-all-compositor-stages-before-draw",
+      ),
     });
     let tunnel: Awaited<ReturnType<typeof tcpForward>> | null = null;
     try {
