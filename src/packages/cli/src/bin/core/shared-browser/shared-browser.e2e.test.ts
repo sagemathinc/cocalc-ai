@@ -1887,12 +1887,18 @@ test(
       await look(true);
 
       // A new key (the "forget sign-ins" button): signed out, same pages.
+      // (Wait for the new browser's start line: the old one is still
+      // connected when the change is noticed.)
+      const starts = () =>
+        log.match(/sign-ins encrypted with the project's browser key/g)
+          ?.length ?? 0;
+      const before = starts();
       writeFileSync(keyFile, "project browser key B, long enough\n");
       await until(
-        () => /key changed: restarting/.test(log),
-        "noticed the new key",
+        () => /key changed: restarting/.test(log) && starts() > before,
+        "restarted with the new key",
       );
-      await until(connected, "restarted with the new key");
+      await until(connected, "connected with the new key");
       let seen = await look();
       assert.deepEqual(seen.cookies, []);
       assert.ok(seen.pages.includes(url), JSON.stringify(seen.pages));
@@ -1974,6 +1980,99 @@ test("nothing outside the project reaches the CLI's API or agents' CDP: proxied 
     );
   } finally {
     await server.close();
+  }
+});
+
+test("a viewer keeps working after conat goes away and comes back (a hub restart)", async () => {
+  const { init: createConatServer } = require("@cocalc/conat/core/server");
+  const getPort = require("@cocalc/backend/get-port").default;
+  const { once } = require("node:events");
+  const { serveViewers } = require("./viewer-socket");
+  const {
+    FRAME_HEADER,
+    sharedBrowserSubject,
+  } = require("@cocalc/util/shared-browser-protocol");
+  const port = await getPort();
+  let conat = createConatServer({ port, path: "/conat" });
+  if (conat.state !== "ready") await once(conat, "ready");
+  const projectClient = conat.client({ noCache: true, path: "/" });
+  const userClient = conat.client({ noCache: true, path: "/" });
+  const events: string[] = [];
+  const channels: ViewerChannel[] = [];
+  const fake: any = {
+    addViewer: (c: ViewerChannel) => {
+      if (!channels.includes(c)) channels.push(c);
+      events.push("hello");
+      c.send({ type: "state", state: { driver: "agent" } as any });
+    },
+    viewerMessage: async (_c: ViewerChannel, msg: any) => {
+      events.push(msg.type);
+    },
+    viewerRequest: async () => null,
+    removeViewer: (c: ViewerChannel) => {
+      events.push("bye");
+      channels.splice(channels.indexOf(c), 1);
+    },
+  };
+  const project_id = "00000000-1000-4000-8000-000000000000";
+  const viewers = serveViewers({
+    client: projectClient,
+    server: fake,
+    projectId: project_id,
+    appId: "cocalc-browser",
+  });
+  // As the frontend connects (viewer/connection.ts).
+  const socket = userClient.socket.connect(
+    sharedBrowserSubject(project_id, "cocalc-browser"),
+    { reconnection: true, desc: "shared browser viewer" },
+  );
+  const received: { data: any; seq?: number }[] = [];
+  socket.on("data", (data: any, headers: any) => {
+    const seq = headers?.[FRAME_HEADER];
+    received.push({ data, seq });
+    if (seq != null) socket.write({ type: "ack", seq });
+  });
+  socket.on("ready", () => socket.write({ type: "hello", view: "card:1" }));
+  try {
+    await socket.waitUntilReady(10_000);
+    if (!events.includes("hello"))
+      socket.write({ type: "hello", view: "card:1" });
+    await until(
+      () => events,
+      (e) => e.includes("hello"),
+      "hello",
+    );
+    const frames = () => received.filter((m) => m.seq != null).length;
+    channels.at(-1)!.sendFrame(Buffer.from([1]));
+    await until(frames, (n) => n === 1, "a frame");
+
+    // The hub restarts: conat goes away, and comes back on the same port.
+    await conat.close();
+    await sleep(1500);
+    conat = createConatServer({ port, path: "/conat" });
+    if (conat.state !== "ready") await once(conat, "ready");
+
+    // Frames reach the viewer again, and its input the browser.
+    const deadline = Date.now() + 30_000;
+    let before = frames();
+    while (Date.now() < deadline) {
+      for (const c of channels) c.sendFrame(Buffer.from([2]));
+      socket.write({ type: "visible", visible: true });
+      await sleep(500);
+      if (frames() > before && events.includes("visible")) break;
+    }
+    assert.ok(frames() > before, `frames after the restart: ${frames()}`);
+    assert.ok(events.includes("visible"), `events: ${events.join(", ")}`);
+    // And stays live: more frames, more input.
+    before = frames();
+    for (const c of channels) c.sendFrame(Buffer.from([3]));
+    await until(frames, (n) => n > before, "frames keep coming");
+  } finally {
+    socket.close();
+    viewers.close();
+    projectClient.close();
+    userClient.close();
+    await conat.close();
   }
 });
 
