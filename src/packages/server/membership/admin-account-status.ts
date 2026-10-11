@@ -139,7 +139,7 @@ export async function getAdminAccountMembershipStatusMap(
     return statuses;
   }
 
-  const pool = getPool("medium");
+  const pool = getPool();
   const tierRows = await pool.query<{
     id: string;
     label?: string | null;

@@ -519,6 +519,7 @@ async function searchDirectoryAccounts({
     return [];
   }
   await ensureClusterAccountDirectorySchema();
+  // query-cache-ok: display: directory search results
   const pool = getPool("medium");
 
   if (isValidUUID(normalizedQuery)) {
@@ -682,7 +683,7 @@ export async function searchClusterAccountsByVerifiedEmailDomainsDirect({
     ${identityFields},
     email_address_verified
   `;
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       WITH candidates AS (
         SELECT ${identityFields}, TRUE AS email_address_verified,
@@ -818,7 +819,7 @@ export async function getClusterAccountsByIdsDirect(
   if (normalized.length === 0) {
     return [];
   }
-  const pool = getPool("medium");
+  const pool = getPool();
   const [localRowsResult, directoryRowsResult] = await Promise.all([
     pool.query(
       `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
@@ -971,7 +972,7 @@ export async function getClusterBanEquivalentEmailAccountsDirect({
     ${separatorClause}
   `;
   const params = [equivalence.local_part, equivalence.domains, cappedLimit];
-  const pool = getPool("medium");
+  const pool = getPool();
   const [localRowsResult, directoryRowsResult] = await Promise.all([
     pool.query(
       `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
@@ -1007,6 +1008,7 @@ export async function getClusterAccountHomeBayCountsDirect(): Promise<
   Record<string, number>
 > {
   await ensureClusterAccountDirectorySchema();
+  // query-cache-ok: admin statistics
   const { rows } = await getPool("medium").query<{
     home_bay_id: string;
     count: string;

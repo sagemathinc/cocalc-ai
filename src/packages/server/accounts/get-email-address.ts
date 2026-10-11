@@ -11,6 +11,7 @@ export default async function getEmailAddress(
   if (cluster?.email_address) {
     return cluster.email_address;
   }
+  // query-cache-ok: display: email shown or used as a contact address
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT email_address FROM accounts WHERE account_id=$1",

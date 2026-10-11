@@ -24,7 +24,7 @@ function normalizeDateLike(value: DateLike): Date | null {
 export async function getAdminAssignedMembershipLocal(
   account_id: string,
 ): Promise<AdminAssignedMembershipRow | undefined> {
-  const { rows } = await getPool("medium").query<AdminAssignedMembershipRow>(
+  const { rows } = await getPool().query<AdminAssignedMembershipRow>(
     `SELECT account_id, membership_class, assigned_by, assigned_at, expires_at, notes
        FROM admin_assigned_memberships
       WHERE account_id=$1`,
@@ -48,7 +48,7 @@ export async function setAdminAssignedMembershipLocal({
   expires_at?: DateLike;
   notes?: string | null;
 }): Promise<void> {
-  await getPool("medium").query(
+  await getPool().query(
     `INSERT INTO admin_assigned_memberships
        (account_id, membership_class, assigned_by, assigned_at, expires_at, notes)
      VALUES ($1,$2,$3,$4,$5,$6)
@@ -75,7 +75,7 @@ export async function clearAdminAssignedMembershipLocal({
 }: {
   account_id: string;
 }): Promise<void> {
-  await getPool("medium").query(
+  await getPool().query(
     "DELETE FROM admin_assigned_memberships WHERE account_id=$1",
     [account_id],
   );

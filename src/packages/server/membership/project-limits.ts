@@ -59,7 +59,7 @@ export async function getOwnedProjectCountForAccount(
 async function getProjectStorageQuotaFallbackBytes(
   project_id: string,
 ): Promise<number | undefined> {
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getPool().query<{
     run_quota: { disk_quota?: number | string } | null;
   }>(
     `
@@ -312,7 +312,7 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
   project_id: string,
 ): Promise<number> {
   await ensureProjectCollabInviteRoleSchema();
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<{
     collaborators: string | number;
     pending_invites: string | number;
@@ -349,7 +349,7 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
 export async function getCourseStudentsAndPendingInviteCount(
   course_project_id: string,
 ): Promise<number> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<{
     students: string | number;
     pending_invites: string | number;

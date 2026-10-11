@@ -274,7 +274,7 @@ export async function recordManagedProjectCpuUsage(opts: {
       windows: usageWindows,
     });
   }
-  await getPool("medium").query(
+  await getPool().query(
     `
       INSERT INTO ${TABLE}
         (
@@ -374,7 +374,7 @@ export async function getManagedCpuUsageForAccount(opts: {
       limit7d: opts.limit7d,
     });
   }
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getPool().query<{
     seconds_5h: string | number;
     seconds_7d: string | number;
   }>(
@@ -520,7 +520,7 @@ export async function getRecentManagedCpuEventsForAccount(opts: {
     where.push(`events.project_id = $${params.length}`);
   }
   params.push(limit);
-  const { rows } = await getPool("medium").query<RawManagedCpuEventRow>(
+  const { rows } = await getPool().query<RawManagedCpuEventRow>(
     `
       SELECT
         events.account_id,
@@ -589,7 +589,7 @@ async function getManagedCpuAdminOverviewBaseUncached(
     projectRowsResult,
     recentEventsResult,
   ] = await Promise.all([
-    getPool("medium").query<{
+    getPool().query<{
       cpu_seconds: string | number;
     }>(
       `
@@ -599,7 +599,7 @@ async function getManagedCpuAdminOverviewBaseUncached(
         `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -632,7 +632,7 @@ async function getManagedCpuAdminOverviewBaseUncached(
         `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -675,7 +675,7 @@ async function getManagedCpuAdminOverviewBaseUncached(
         `,
       params,
     ),
-    getPool("medium").query<RawManagedCpuEventRow>(
+    getPool().query<RawManagedCpuEventRow>(
       `
           SELECT
             events.account_id,
@@ -815,7 +815,7 @@ export async function getManagedCpuAdminHistory(opts: {
     projectRowsResult,
     recentEventsResult,
   ] = await Promise.all([
-    getPool("medium").query<{ cpu_seconds: string | number }>(
+    getPool().query<{ cpu_seconds: string | number }>(
       `
         SELECT COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
         FROM ${TABLE} AS events
@@ -823,7 +823,7 @@ export async function getManagedCpuAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       bucket_start: Date | string;
       cpu_seconds: string | number;
     }>(
@@ -838,7 +838,7 @@ export async function getManagedCpuAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -871,7 +871,7 @@ export async function getManagedCpuAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -914,7 +914,7 @@ export async function getManagedCpuAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<RawManagedCpuEventRow>(
+    getPool().query<RawManagedCpuEventRow>(
       `
         SELECT
           events.account_id,

@@ -43,7 +43,7 @@ function isStarInviteCustomize(customize: unknown): boolean {
 }
 
 async function findBootstrapToken(
-  client: QueryClient = getPool("long"),
+  client: QueryClient = getPool(),
 ): Promise<BootstrapToken | undefined> {
   await client.query(
     `DELETE FROM registration_tokens
@@ -92,7 +92,7 @@ async function findBootstrapToken(
 }
 
 async function findStarInviteToken(
-  client: QueryClient = getPool("long"),
+  client: QueryClient = getPool(),
 ): Promise<BootstrapToken | undefined> {
   await client.query(
     `DELETE FROM registration_tokens
@@ -256,7 +256,7 @@ export async function ensureBootstrapAdminToken(
   if (isRocketProduct()) {
     return;
   }
-  const pool = getPool("long");
+  const pool = getPool();
   const { rows } = await pool.query(
     "SELECT COUNT(*)::int AS count FROM accounts WHERE coalesce(deleted,false)=false AND 'admin' = ANY(groups)",
   );

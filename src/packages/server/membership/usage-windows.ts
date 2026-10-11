@@ -139,7 +139,7 @@ async function loadAccountUsageEpoch({
   client?: PoolClient;
 }): Promise<AccountUsageEpoch> {
   await ensureAccountUsageWindowSchema();
-  await (client ?? getPool("medium")).query(
+  await (client ?? getPool()).query(
     `
       INSERT INTO ${EPOCHS_TABLE}
         (family, "window", epoch, reason)
@@ -149,7 +149,7 @@ async function loadAccountUsageEpoch({
     `,
     [MEMBERSHIP_USAGE_SCOPE, window],
   );
-  const { rows } = await (client ?? getPool("short")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     family: AccountUsageWindowScope;
     window: AccountUsageWindowName;
     epoch: string | number;
@@ -226,7 +226,7 @@ export async function getActiveAccountUsageWindow({
 
   const startsAt = time;
   const resetsAt = new Date(startsAt.getTime() + WINDOW_MS[window]);
-  const { rows } = await (client ?? getPool("medium")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string;
     account_id: string;
     family: AccountUsageWindowScope;
@@ -260,7 +260,7 @@ async function selectActiveAccountUsageWindow({
   at: Date;
   client?: PoolClient;
 }): Promise<AccountUsageWindow | undefined> {
-  const { rows } = await (client ?? getPool("short")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string;
     account_id: string;
     family: AccountUsageWindowScope;
@@ -297,7 +297,7 @@ async function selectActiveAccountUsageWindows({
   at: Date;
   client?: PoolClient;
 }): Promise<Partial<Record<AccountUsageWindowName, AccountUsageWindow>>> {
-  const { rows } = await (client ?? getPool("short")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string;
     account_id: string;
     family: AccountUsageWindowScope;
@@ -407,7 +407,7 @@ export async function resetAccountUsageEpoch({
   }
   const current = await getAccountUsageEpoch({ window });
   const newEpoch = current.epoch + 1;
-  await getPool("medium").query(
+  await getPool().query(
     `
       UPDATE ${EPOCHS_TABLE}
       SET epoch = $3,
@@ -418,7 +418,7 @@ export async function resetAccountUsageEpoch({
     `,
     [MEMBERSHIP_USAGE_SCOPE, window, newEpoch, reset_by ?? null, trimmedReason],
   );
-  await getPool("medium").query(
+  await getPool().query(
     `
       INSERT INTO ${RESET_TABLE}
         (id, family, "window", previous_epoch, new_epoch, reset_by, reason)

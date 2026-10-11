@@ -566,7 +566,7 @@ async function requestHostStopForOwnerSpendLimit({
 }
 
 async function countProjectsAssignedToHost(host_id: string): Promise<number> {
-  const { rows } = await getPool("medium").query<{ count: string }>(
+  const { rows } = await getPool().query<{ count: string }>(
     `
       SELECT COUNT(*)::text AS count
       FROM projects

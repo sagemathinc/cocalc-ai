@@ -302,7 +302,7 @@ export async function getActiveMembershipSubscription({
   client?: PoolClient;
   tierMap?: Record<string, MembershipTierRecord>;
 }): Promise<ActiveMembershipSubscription | undefined> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     `SELECT s.id, s.metadata, s.cost, s.current_period_start,
             s.current_period_end, s.latest_purchase_id, s.status,
@@ -443,7 +443,7 @@ export async function computeMembershipPricing({
 }): Promise<MembershipPricingResult> {
   await assertNoDueMembershipRenewal({
     account_id,
-    client: client ?? getPool("medium"),
+    client: client ?? getPool(),
   });
   const tiers =
     tierMap ??
@@ -529,7 +529,7 @@ export async function computeMembershipChange({
 }): Promise<MembershipChangeResult> {
   await assertNoDueMembershipRenewal({
     account_id,
-    client: client ?? getPool("medium"),
+    client: client ?? getPool(),
   });
   const tiers =
     tierMap ??
