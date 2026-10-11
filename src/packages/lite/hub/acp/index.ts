@@ -536,7 +536,7 @@ const MODEL_CAPACITY_NOTICE =
 const RESOURCE_KILLED_NOTICE =
   "**Codex was killed, usually because the project temporarily ran out of RAM.**";
 const TERMINAL_STALE_TURN_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because CoCalc lost the final Codex turn update.**";
+  "**Conversation interrupted: CoCalc could not confirm that this turn finished saving. The reply above may be incomplete; ask the agent to continue if anything is missing.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SCHEMA_VERSION = 2;
@@ -2277,6 +2277,7 @@ export class ChatStreamWriter {
   private saveChain: Promise<void> = Promise.resolve();
   private sessionKey?: string;
   private logStore?: AKV<AcpStreamMessage[]>;
+  private ownsLogStore = false;
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
@@ -2604,11 +2605,19 @@ export class ChatStreamWriter {
     }
   }
 
-  private noteProjectStorageFailure(err: unknown, phase: string): boolean {
+  private noteProjectStorageFailure(
+    err: unknown,
+    phase: string,
+    { chatStore = true }: { chatStore?: boolean } = {},
+  ): boolean {
     if (!isProjectAcpStorageError(err)) {
       return false;
     }
-    this.syncdbError ??= err;
+    // syncdbError stops all further chat document writes, so only failures of
+    // the chat document itself may set it.
+    if (chatStore) {
+      this.syncdbError ??= err;
+    }
     logger.warn("ACP turn project storage failure", {
       chatKey: this.chatKey,
       project_id: this.metadata.project_id,
@@ -2717,7 +2726,29 @@ export class ChatStreamWriter {
       promise: (async () => {
         await this.waitForLiveLogFlush();
         await this.waitForLivePreviewFlush();
-        await this.persistLog();
+        let activityLogDurable = true;
+        try {
+          await this.persistLog();
+        } catch (err) {
+          // The activity log is a separate store from the chat document.  If
+          // it cannot be saved, still save the reply and complete the turn;
+          // the queued payloads below let a replay rebuild the log later.
+          if (source !== "summary" || !isProjectAcpStorageError(err)) {
+            throw err;
+          }
+          activityLogDurable = false;
+          logger.warn(
+            "ACP activity log not saved; completing turn and scheduling replay",
+            {
+              chatKey: this.chatKey,
+              project_id: this.metadata.project_id,
+              path: this.metadata.path,
+              message_id: this.metadata.message_id,
+              thread_id: this.metadata.thread_id,
+              code: acpStorageFailureCode(err),
+            },
+          );
+        }
         // Live turn output is rendered from the ACP log/DKV path. Reserve
         // durable .chat writes for terminal state so patchflow history stays
         // bounded regardless of streamed word count.
@@ -2726,6 +2757,17 @@ export class ChatStreamWriter {
           throwOnProjectStorageFailure: true,
         });
         this.throwProjectStorageFailureIfPresent(`terminal-${source}:complete`);
+        if (!activityLogDurable) {
+          scheduleCompletedAcpRepairRetry({
+            client: this.client,
+            turn: {
+              ...this.metadata,
+              account_id: this.approverAccountId,
+              session_id: this.threadId ?? this.sessionKey,
+            },
+          });
+          return;
+        }
         // Keep the queue until both the activity log and terminal chat row are
         // durable. Recovery can reconstruct either side after a worker or
         // connectivity failure as long as these payloads remain available.
@@ -4091,6 +4133,15 @@ export class ChatStreamWriter {
       } catch {
         // ignore
       }
+      if (this.ownsLogStore) {
+        // akv() takes a reference on a cached persist stream client; release
+        // it, or that client lives as long as this worker process.
+        try {
+          this.logStore?.close();
+        } catch (err) {
+          logger.warn("failed to close acp log store", err);
+        }
+      }
       try {
         this.liveLogStream?.close();
       } catch (err) {
@@ -4349,6 +4400,7 @@ export class ChatStreamWriter {
 
   private getLogStore(): AKV<AcpStreamMessage[]> {
     if (this.logStore) return this.logStore;
+    this.ownsLogStore = true;
     this.logStore = akv<AcpStreamMessage[]>({
       project_id: this.metadata.project_id,
       name: this.logStoreName,
@@ -4771,7 +4823,9 @@ export class ChatStreamWriter {
           attempts: ACP_LOG_PERSIST_RETRY_DELAYS_MS.length,
           err,
         });
-        this.noteProjectStorageFailure(err, "activity-log-persist");
+        this.noteProjectStorageFailure(err, "activity-log-persist", {
+          chatStore: false,
+        });
       }
     }
     throw lastError ?? new Error("failed to persist ACP activity log");
@@ -5475,11 +5529,20 @@ async function persistQueuedAcpPayloadsAsActivityLog({
       thread_id,
       message_id,
     });
-    await akv<AcpStreamMessage[]>({
+    const store = akv<AcpStreamMessage[]>({
       project_id,
       name: refs.store,
       client,
-    }).set(refs.key, payloads);
+    });
+    try {
+      await store.set(refs.key, payloads);
+    } finally {
+      try {
+        store.close();
+      } catch (err) {
+        logger.debug("failed to close recovery activity log store", err);
+      }
+    }
     logger.warn("persisted queued acp payloads as recovery activity log", {
       project_id,
       path,
@@ -6828,8 +6891,6 @@ export async function recoverTerminalStaleAcpTurns(
 ): Promise<number> {
   const recoveryReason =
     opts.recoveryReason ?? "terminal ACP turn state recovery";
-  const interruptedNotice =
-    opts.interruptedNotice ?? TERMINAL_STALE_TURN_INTERRUPTED_NOTICE;
   let terminalTurns: AcpTurnLeaseRow[];
   try {
     terminalTurns = listRecentTerminalAcpTurnLeases({
@@ -6900,7 +6961,12 @@ export async function recoverTerminalStaleAcpTurns(
         await repairInterruptedAcpTurn({
           client,
           turn,
-          interruptedNotice,
+          // Prefer the explanation recorded when the turn failed, e.g., which
+          // storage problem stopped it, over a generic notice.
+          interruptedNotice:
+            opts.interruptedNotice ??
+            storageFailureNoticeForReason(turn.reason) ??
+            TERMINAL_STALE_TURN_INTERRUPTED_NOTICE,
           interruptedReasonId: "backend_error",
           recoveryReason: turn.reason ?? recoveryReason,
         })
@@ -6933,13 +6999,25 @@ function terminalTurnNeedsPeriodicRepair(turn: AcpTurnLeaseRow): boolean {
   if (turn.state === "completed") {
     return hasQueuedCompletedAcpPayloads(turn);
   }
-  const reason = `${turn.reason ?? ""}`.toLowerCase();
+  return isStorageFailureReason(turn.reason);
+}
+
+// Reasons recorded by projectStorageFailureMessage.
+function isStorageFailureReason(reason: string | null | undefined): boolean {
+  const text = `${reason ?? ""}`.toLowerCase();
   return (
-    reason.includes("ran out of storage") ||
-    reason.includes("storage became read-only") ||
-    reason.includes("synchronization database is damaged") ||
-    reason.includes("storage was temporarily unavailable")
+    text.includes("ran out of storage") ||
+    text.includes("storage became read-only") ||
+    text.includes("synchronization database is damaged") ||
+    text.includes("storage was temporarily unavailable")
   );
+}
+
+function storageFailureNoticeForReason(
+  reason: string | null | undefined,
+): string | undefined {
+  if (!isStorageFailureReason(reason)) return undefined;
+  return `**Conversation interrupted: ${`${reason}`.trim()}**`;
 }
 
 let acpTerminalRecoveryPollerStarted = false;
