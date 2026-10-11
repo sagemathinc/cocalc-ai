@@ -116,3 +116,11 @@ export interface PublishedSigningKey {
   /** By the bay's previous key; null for its first. */
   endorsement: SignedEnvelope<SigningKeyEndorsement> | null;
 }
+
+/** A key in the cluster's directory: which bay holds it, until when. */
+export interface DirectorySigningKey {
+  kid: string;
+  bay_id: string;
+  public_key: string;
+  not_after: number;
+}

@@ -9,6 +9,7 @@
 // P0) holds, field by field. Plan: src/.agents/computers-plan-2026-10-11.md
 // ("Policy and time", decisions 20-25).
 
+import { UNSAFE_LINE_CHARS } from "./canonical";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export const COMPUTER_POLICY_VERSION = 1;
@@ -320,7 +321,7 @@ export function canonicalAbsolutePath(value: unknown, where = "path"): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new PolicyError(`${where} must be a non-empty string`);
   }
-  if (value.length > MAX_PATH_LENGTH || value.includes("\u0000")) {
+  if (value.length > MAX_PATH_LENGTH || UNSAFE_LINE_CHARS.test(value)) {
     throw new PolicyError(`${where} is not a valid path`);
   }
   if (!value.startsWith("/") || value === "/" || value.endsWith("/")) {

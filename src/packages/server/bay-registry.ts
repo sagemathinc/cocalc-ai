@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { PublishedSigningKey } from "@cocalc/util/computers/api";
 import {
   acceptDirectoryKeys,
   getBaySigningKey,
@@ -228,16 +227,23 @@ export async function registerBayPresenceLocal(
   if (!bay_id) {
     throw new Error("bay_id is required");
   }
-  if (request.computer_signing_keys != null) {
-    // Keys are recorded for the bay that registers, whatever they claim.
-    await acceptDirectoryKeys(bay_id, request.computer_signing_keys).catch(
-      (err) => {
+  const published = request.computer_signing_keys;
+  if (published != null) {
+    // The typed inter-bay service has already checked that source_bay_id is
+    // the authenticated calling bay (its bay credential); the keys must be
+    // that same bay's, so a bay can publish keys only for itself.
+    if (trim(published.source_bay_id) !== bay_id) {
+      logger.warn("computer signing keys for another bay ignored", {
+        bay_id,
+        source_bay_id: published.source_bay_id,
+      });
+    } else
+      await acceptDirectoryKeys(bay_id, published.keys).catch((err) => {
         logger.warn("computer signing keys not recorded", {
           bay_id,
           err: `${err}`,
         });
-      },
-    );
+      });
   }
   const existing = await getEntryLocal(bay_id);
   const managedTunnel = await getManagedTunnelLocal(bay_id);
@@ -479,11 +485,14 @@ export async function buildLocalBayRegistration(): Promise<BayRegistryRegisterRe
  * the heartbeat.
  */
 async function computerSigningKeysForRegistration(): Promise<
-  PublishedSigningKey[] | undefined
+  BayRegistryRegisterRequest["computer_signing_keys"]
 > {
   try {
     await getBaySigningKey();
-    return await localPublishedSigningKeys();
+    return {
+      source_bay_id: getConfiguredBayId(),
+      keys: await localPublishedSigningKeys(),
+    };
   } catch (err) {
     logger.warn("computer signing keys unavailable for registration", {
       err: `${err}`,

@@ -56,6 +56,7 @@ import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import { getBaySigningKey } from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority } from "./authority";
+import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
 
 export const REQUEST_LIFETIME_MS = 15 * 60 * 1000;
 export const MAX_OPEN_REQUESTS_PER_ACCOUNT = 10;
@@ -117,6 +118,11 @@ export async function createComputerRequest({
   const policy = parseRequestedPolicy(requested_policy);
   if (typeof why !== "string" || why.length > MAX_WHY_LENGTH) {
     throw new ComputerRequestError("why must be at most 1000 characters");
+  }
+  if (UNSAFE_TEXT_CHARS.test(why)) {
+    throw new ComputerRequestError(
+      "why must not contain control characters or bidi overrides",
+    );
   }
   if (requested_by) {
     requireUuid(requested_by.agent_id, "agent_id");
@@ -303,6 +309,15 @@ export async function submitPairing({
       throw new ComputerRequestError(
         "this computer request expired; make a new one",
       );
+    }
+    if (row.state === "paired" && row.transcript_hash === transcriptHash(t)) {
+      // The same claim again (a lost answer): byte-for-byte the same signed
+      // transcript, so the same key and nonces. Answer as before.
+      await client.query("COMMIT");
+      return {
+        pairing_phrase: row.pairing_phrase,
+        transcript_hash: row.transcript_hash,
+      };
     }
     if (row.state === "paired") {
       // Someone else already paired: never replace the first key. The owner

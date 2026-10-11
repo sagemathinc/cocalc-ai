@@ -135,6 +135,28 @@ So:
   with a broker on the project host that authenticates the actual run. Then the
   per-agent switch becomes a real boundary.
 
+## Revision 7: what the implementation review changed (Oct 11)
+
+These override older text below wherever they differ:
+- **No grants.** Decision 22 replaced per-agent grants with membership in
+  the computer's agent network. Wherever older text says "grant", "grant
+  epoch" or `agent_computer_grants`, read: active membership in that network,
+  checked in the ticket transaction. The authoritative epoch is the
+  **computer epoch**, bumped on every narrowing (member removed, network
+  paused or closed, account messaging paused or revoked, computer revoked).
+- **Eligibility is decision 23**, not "never shared": exactly one
+  collaborator (the owner), and nothing shared publicly. The "never shared"
+  text is the revision-5 record. A formerly shared project is eligible by
+  design; the history warning is still to build.
+- **Adding a member, or resuming a network, that a computer or open request
+  serves needs fresh auth**, and approval binds the network generation the
+  owner saw.
+- **Every computers transaction takes the account-rehome fence first**,
+  then controls, network and computer, the same order as agent-network
+  changes.
+- **The relay exception** to "the data path never goes through the hub" is
+  stated in rule 14 below.
+
 ## Decisions (William, Oct 11)
 
 1. **Name: "computer"** (`cocalc computer`, Settings → Computers).
@@ -1028,9 +1050,9 @@ the daemon (see "Files").
 
 | Threat | Mitigation |
 |---|---|
-| A collaborator uses my computer | Only eligible projects (never shared, not public). The account check on every ticket. |
-| Another agent, process or untrusted dependency in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. A process holding the identity of a granted turn gets its own tickets, because PoP doesn't stop that. Never-shared eligibility keeps people out, and the docs say every process in that project can use it during such a turn. Later: per-agent runtime principals. |
-| A former collaborator's leftover process steals a later credential | Never-shared eligibility: removing a collaborator doesn't restore it. |
+| A collaborator uses my computer | Only eligible projects: the owner is the only collaborator and nothing is shared publicly (decision 23), attested by the project's current bay for at most 30 s per ticket. The account check on every ticket. |
+| Another agent, process or untrusted dependency in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. A process holding the identity of a granted turn gets its own tickets, because PoP doesn't stop that. Eligibility keeps other people out of the project, and the docs say every process in that project can use it during such a turn. Later: per-agent runtime principals. |
+| A former collaborator's leftover process steals a later credential | Accepted residual of decision 23 (a formerly shared project becomes eligible again once its owner is the only collaborator). The card warns when the project's history shows other collaborators (to build), and "create a private project" gives a clean one. |
 | A collaborator is added while tickets are being issued (two bays) | Attestations signed by the project's bay with not-after, verified by the daemon; start-by ≤ not-after. Interactive leases expire on their own. Detached jobs continue until the invalidation arrives (documented). |
 | A revoke races a ticket | One transaction with `FOR SHARE`/`FOR UPDATE`, the audit row committed before release, epochs and floors on the daemon. |
 | A copied ticket | Audience-bound (computer and key), proof of possession, one-time, start-by. |
@@ -1098,13 +1120,19 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
 - **The bay-key directory** (`cluster_computer_signing_keys`, on the seed):
   - Standalone and seed bays write their own keys; attached bays send theirs
     with the registration heartbeat (which also creates the first key).
-  - A bay's **first** key is trusted on first use over the authenticated
-    inter-bay fabric. The fabric has no per-bay identity, so any fabric
-    member could register the first key of a bay that has none yet; the
-    fabric is already the root of inter-bay trust.
-  - Every **later** key needs an endorsement signed by a trusted key of the
-    same bay (the outgoing key signs its successor at rotation), and a kid
-    never moves to another bay.
+  - Keys are published as `{source_bay_id, keys}`, and typed inter-bay
+    services check `source_bay_id` against the caller's **bay credential**,
+    so a bay can publish keys only for itself, its first key included.
+    *(rev 7, after review: no trust on first use over the fabric)*
+  - Every **later** key needs an endorsement by the bay's **newest** trusted
+    key (the outgoing key signs its successor at rotation). Older keys still
+    verify what they signed but can't authorize successors. Lifetimes are
+    capped at a year. A kid never moves to another bay.
+  - Every bay verifies against the **seed's** directory: attached bays read
+    it from the seed (cached 30 s; the last answer for at most 10 minutes if
+    the seed is unreachable).
+  - A ticket's attestation must come from the project's **current** owning
+    bay (the cluster directory), not just any bay that names itself.
   - A bay that loses its keys (a database restore) cannot publish a new
     chain until an operator revokes its old directory keys or they expire.
     *(implementation, Oct 11)*
@@ -1140,7 +1168,7 @@ built, and reviewed by a security reviewer before release.
     - Within that project, **every process and any untrusted code or
       dependency** can use it while such a turn runs, including starting
       detached jobs.
-    - "Never shared" keeps people out; it doesn't make the project's code,
+    - Eligibility keeps other people out; it doesn't make the project's code,
       or imported files, trustworthy.
     - Detached jobs continue after the turn, until their own or the session's
       deadline.
@@ -1208,7 +1236,8 @@ Each stage ships with tests and a live check on real machines:
   `put`, `get`;
 - safe manifest transfers with CoCalc-side metering and egress reservation;
 - per-agent grants in the Connectors menu, with fresh auth;
-- eligibility (never shared) and "create a private project";
+- eligibility (the owner is the only collaborator, nothing public;
+  decision 23) with a history warning, and "create a private project";
 - time limits (initial and max) and no-limit with `--service`;
 - `--exclusive`, `nice`;
 - aliases and mentions;
@@ -1392,8 +1421,11 @@ Each is a new operation kind in the same ticket protocol.
 13. **The policy is one typed, hashed object,** used by requests, cards, the
     CLI, the daemon and the hub alike. Isolated-mode fields exist from the
     start.
-14. **The data path never goes through the hub.** Byte counting is by CoCalc
-    on the trusted side.
+14. **The data path never goes through the hub, with one bounded exception:**
+    command output (at most 1 MB per operation) comes back through the home
+    bay's relay, so run identities stay sealed (part 4b). Transfers and
+    other bulk streams get their own flow-controlled path. Byte counting is
+    by CoCalc on the trusted side.
 15. **Output, logs and notes are data, not instructions,** in every
     agent-facing surface.
 16. **Project-bay attestations have an expiry the daemon checks.** Start-by,

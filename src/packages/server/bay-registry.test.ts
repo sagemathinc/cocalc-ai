@@ -206,9 +206,17 @@ describe("bay-registry", () => {
     ];
     await registerBayPresenceLocal({
       bay_id: " bay-2 ",
-      computer_signing_keys: keys,
+      computer_signing_keys: { source_bay_id: "bay-2", keys },
     });
     expect(acceptDirectoryKeysMock).toHaveBeenCalledWith("bay-2", keys);
+
+    // Keys claimed for another bay than the registering one: ignored.
+    acceptDirectoryKeysMock.mockClear();
+    await registerBayPresenceLocal({
+      bay_id: "bay-2",
+      computer_signing_keys: { source_bay_id: "bay-7", keys },
+    });
+    expect(acceptDirectoryKeysMock).not.toHaveBeenCalled();
 
     acceptDirectoryKeysMock.mockClear();
     await registerBayPresenceLocal({ bay_id: "bay-3" });
@@ -218,7 +226,7 @@ describe("bay-registry", () => {
     await expect(
       registerBayPresenceLocal({
         bay_id: "bay-2",
-        computer_signing_keys: keys,
+        computer_signing_keys: { source_bay_id: "bay-2", keys },
       }),
     ).resolves.toMatchObject({ bay_id: "bay-2" });
   });
@@ -231,7 +239,7 @@ describe("bay-registry", () => {
     localPublishedSigningKeysMock.mockResolvedValueOnce(keys);
     expect(await buildLocalBayRegistration()).toMatchObject({
       bay_id: "bay-0",
-      computer_signing_keys: keys,
+      computer_signing_keys: { source_bay_id: "bay-0", keys },
     });
     expect(getBaySigningKeyMock).toHaveBeenCalled();
 

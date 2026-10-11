@@ -13,6 +13,7 @@
 // Every parser fails closed: an unknown type, version or field is an error,
 // so a daemon never acts on something newer than it understands.
 
+import { UNSAFE_LINE_CHARS } from "./canonical";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export const COMPUTER_PROTOCOL_VERSION = 1;
@@ -677,15 +678,18 @@ function requestId(value: unknown): string {
 }
 
 /** A cluster id is a label ("standalone" for single-bay sites). */
+// Cluster and bay ids are configured labels (e.g. "ci-mb-fe5Y7t", "bay-0").
+const LABEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 function clusterId(value: unknown): string {
-  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) {
+  if (typeof value !== "string" || !LABEL_ID.test(value)) {
     throw new ProtocolError("cluster id is malformed");
   }
   return value;
 }
 
 function bayId(value: unknown): string {
-  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) {
+  if (typeof value !== "string" || !LABEL_ID.test(value)) {
     throw new ProtocolError("bay id is malformed");
   }
   return value;
@@ -696,7 +700,7 @@ function label(value: unknown, where: string): string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > 255 ||
-    /[\u0000-\u001f\u007f]/.test(value)
+    UNSAFE_LINE_CHARS.test(value)
   ) {
     throw new ProtocolError(`${where} must be a short printable string`);
   }

@@ -33,6 +33,22 @@ jest.mock("@cocalc/database/settings/secret-settings", () => ({
   }),
 }));
 
+let role = "standalone";
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  getConfiguredClusterRole: () => role,
+}));
+const seedKeys = jest.fn();
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  ...jest.requireActual("@cocalc/conat/inter-bay/api"),
+  createInterBayBayRegistryClient: () => ({
+    computerSigningKeys: (...args: any[]) => seedKeys(...args),
+  }),
+}));
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => ({}),
+}));
+
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
@@ -57,7 +73,7 @@ describeDb("computer signing keys", () => {
     key: KeyPair,
     bay_id: string,
     endorser?: KeyPair,
-    not_after = Date.now() + 365 * DAY,
+    not_after = Date.now() + 300 * DAY,
   ): PublishedSigningKey {
     return {
       kid: key.fingerprint,
@@ -186,6 +202,59 @@ describeDb("computer signing keys", () => {
       { kid: a.fingerprint, endorsed_by: null },
       { kid: b.fingerprint, endorsed_by: a.fingerprint },
     ]);
+  });
+
+  it("only the bay's newest key may endorse a successor, and lifetimes are capped", async () => {
+    const { acceptDirectoryKeys, SIGNING_KEY_LIFETIME_MS } =
+      await import("./signing-keys");
+    const a = generateSigningKey();
+    const b = generateSigningKey();
+    const c = generateSigningKey();
+    await acceptDirectoryKeys("bay-5", [published(a, "bay-5")]);
+    await acceptDirectoryKeys("bay-5", [published(b, "bay-5", a)]);
+    // a still verifies what it signed, but b is now the newest.
+    const byOld = await acceptDirectoryKeys("bay-5", [
+      published(c, "bay-5", a),
+    ]);
+    expect(byOld.refused[0].reason).toBe(
+      "not endorsed by a trusted key of this bay",
+    );
+    const tooLong = await acceptDirectoryKeys("bay-5", [
+      published(
+        c,
+        "bay-5",
+        b,
+        Date.now() + SIGNING_KEY_LIFETIME_MS + 3_600_000,
+      ),
+    ]);
+    expect(tooLong.refused[0].reason).toBe("key lifetime is too long");
+    expect(
+      (await acceptDirectoryKeys("bay-5", [published(c, "bay-5", b)])).added,
+    ).toEqual([c.fingerprint]);
+  });
+
+  it("an attached bay reads the directory from the seed, not its own table", async () => {
+    const { listSigningKeyDirectory, resetSigningKeyCacheForTesting } =
+      await import("./signing-keys");
+    const key = generateSigningKey();
+    const entry = {
+      kid: key.fingerprint,
+      bay_id: "bay-0",
+      public_key: key.publicDer,
+      not_after: Date.now() + DAY,
+    };
+    seedKeys.mockResolvedValue([entry]);
+    role = "attached";
+    try {
+      resetSigningKeyCacheForTesting();
+      expect(await listSigningKeyDirectory()).toEqual([entry]);
+      // Cached briefly: a second read doesn't ask the seed again.
+      expect(await listSigningKeyDirectory()).toEqual([entry]);
+      expect(seedKeys).toHaveBeenCalledTimes(1);
+    } finally {
+      role = "standalone";
+      resetSigningKeyCacheForTesting();
+    }
   });
 
   it("accepts a whole chain in one heartbeat, oldest first", async () => {

@@ -40,9 +40,15 @@ import {
   SIGNED_KINDS,
   type SignedEnvelope,
 } from "@cocalc/util/computers/protocol";
-import type { PublishedSigningKey } from "@cocalc/util/computers/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import type {
+  DirectorySigningKey,
+  PublishedSigningKey,
+} from "@cocalc/util/computers/api";
+import { createInterBayBayRegistryClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { lastKnownSeedRead } from "@cocalc/server/inter-bay/last-known-seed-read";
 
 const logger = getLogger("server:computers:signing-keys");
 
@@ -50,12 +56,10 @@ const logger = getLogger("server:computers:signing-keys");
 export const SIGNING_KEY_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 export const SIGNING_KEY_ROTATE_AFTER_MS = 300 * 24 * 60 * 60 * 1000;
 
-export interface DirectoryKey {
-  kid: string;
-  bay_id: string;
-  public_key: string;
-  not_after: number;
-}
+export type DirectoryKey = DirectorySigningKey;
+
+/** Attached bays re-read the seed's directory at most this often. */
+const DIRECTORY_CACHE_MS = 30_000;
 
 let cached: { key: KeyPair; created: number } | undefined;
 
@@ -264,6 +268,7 @@ export async function acceptDirectoryKeys(
 }
 
 const MAX_PUBLISHED_KEYS = 8;
+const KEY_SKEW_MS = 5 * 60 * 1000;
 
 async function acceptOne(
   bay_id: string,
@@ -288,16 +293,23 @@ async function acceptOne(
         ? "known"
         : "kid belongs to another bay";
     }
+    if (key.not_after > Date.now() + SIGNING_KEY_LIFETIME_MS + KEY_SKEW_MS) {
+      await client.query("ROLLBACK");
+      return "key lifetime is too long";
+    }
+    // Older keys still verify what they signed, but only the bay's newest
+    // trusted key may authorize a successor.
     const trusted = (
       await client.query(
         `SELECT kid, public_key FROM cluster_computer_signing_keys
-          WHERE bay_id=$1 AND revoked_at IS NULL AND not_after > now()`,
+          WHERE bay_id=$1 AND revoked_at IS NULL AND not_after > now()
+          ORDER BY created_at DESC, not_after DESC`,
         [bay_id],
       )
     ).rows;
     if (trusted.length > 0) {
       const e = key.endorsement;
-      const endorser = trusted.find((t) => t.kid === e?.kid);
+      const endorser = trusted[0].kid === e?.kid ? trusted[0] : undefined;
       if (e == null || endorser == null) {
         await client.query("ROLLBACK");
         return "not endorsed by a trusted key of this bay";
@@ -368,8 +380,38 @@ function parsePublishedSigningKey(input: any): PublishedSigningKey {
   };
 }
 
-/** The directory daemons trust: every unrevoked, unexpired key. */
+/**
+ * The directory of trusted bay keys. It is seed-global: the seed (or a
+ * standalone bay) reads its own table; an attached bay asks the seed, caching
+ * the answer briefly and using the last answer for at most 10 minutes while
+ * the seed is unreachable.
+ */
 export async function listSigningKeyDirectory(): Promise<DirectoryKey[]> {
+  if (publishesLocally()) return await listSigningKeyDirectoryLocal();
+  const now = Date.now();
+  if (directoryCache != null && now - directoryCache.at < DIRECTORY_CACHE_MS) {
+    return directoryCache.keys;
+  }
+  const keys = await seedDirectoryRead(
+    "directory",
+    async (timeout) =>
+      await createInterBayBayRegistryClient({
+        client: getInterBayFabricClient(),
+        timeout,
+      }).computerSigningKeys({}),
+    { allowStale: true },
+  );
+  directoryCache = { keys, at: now };
+  return keys;
+}
+
+let directoryCache: { keys: DirectoryKey[]; at: number } | undefined;
+const seedDirectoryRead = lastKnownSeedRead<DirectoryKey[]>(
+  "computer signing key directory",
+);
+
+/** The seed's own table (or a standalone bay's). */
+export async function listSigningKeyDirectoryLocal(): Promise<DirectoryKey[]> {
   const { rows } = await getPool().query<{
     kid: string;
     bay_id: string;
@@ -409,4 +451,5 @@ export async function signAsBay<T>(
 /** For tests: forget the cached key. */
 export function resetSigningKeyCacheForTesting(): void {
   cached = undefined;
+  directoryCache = undefined;
 }

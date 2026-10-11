@@ -407,6 +407,30 @@ describeDb("computer tickets", () => {
     );
   });
 
+  it("refuses an attestation from a bay that no longer owns the project, or dated in the future", async () => {
+    const genuine = await attestation();
+    await db().query(
+      "UPDATE projects SET owning_bay_id='bay-7' WHERE project_id=$1",
+      [project],
+    );
+    await expect(issue({ attestation: genuine })).rejects.toThrow(
+      /not from the project's current bay/,
+    );
+    await db().query(
+      "UPDATE projects SET owning_bay_id=NULL WHERE project_id=$1",
+      [project],
+    );
+    const { signAsBay } = await import("./signing-keys");
+    const future = await signAsBay(SIGNED_KINDS.attestation, {
+      ...genuine.payload,
+      issued_at: Date.now() + 20_000,
+      not_after: Date.now() + 40_000,
+    });
+    await expect(issue({ attestation: future })).rejects.toThrow(
+      /dated in the future/,
+    );
+  });
+
   it("refuses a revoked computer, an ended session, a paused network, a removed member, paused agent messaging", async () => {
     const { revokeComputer } = await import("./computers");
     await db().query("UPDATE account_computers SET deadline=$1", [

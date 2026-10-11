@@ -48,6 +48,22 @@ export function projectEligibleForComputers(
   return id === account_id && group === "owner";
 }
 
+/** Any share of the project that isn't disabled (listed, unlisted or private). */
+async function hasActivePublicShare(project_id: string): Promise<boolean> {
+  const pool = getPool();
+  const exists = await pool.query(
+    "SELECT to_regclass('public.public_project_paths') AS t",
+  );
+  if (exists.rows[0]?.t == null) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM public_project_paths
+      WHERE project_id=$1 AND disabled IS NOT TRUE AND visibility <> 'disabled'
+      LIMIT 1`,
+    [project_id],
+  );
+  return rows.length > 0;
+}
+
 /**
  * Attest a project owned by THIS bay. The caller routes to the project's
  * owning bay; this function must only run there.
@@ -77,8 +93,12 @@ export async function attestProjectLocal({
   );
   const row = rows[0];
   if (row == null) throw new Error("no such project on this bay");
+  // Decision 23: exactly one collaborator, the owner, and nothing of it
+  // shared publicly.
   const eligible =
-    !row.deleted && projectEligibleForComputers(row.users, account_id);
+    !row.deleted &&
+    projectEligibleForComputers(row.users, account_id) &&
+    !(await hasActivePublicShare(project_id));
   const payload: ProjectAttestation = parseProjectAttestation({
     type: "cocalc-project-attestation",
     version: 1,

@@ -49,6 +49,7 @@ import {
 } from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority, lockAgentControls } from "./authority";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 
 /** Tickets start within this long of issue (and never after the attestation). */
 export const TICKET_START_WINDOW_MS = 60 * 1000;
@@ -60,6 +61,8 @@ export const MAX_TICKETS_PER_COMPUTER_PER_MINUTE = 600;
 // ticketed again ("we never guess").
 const TERMINAL_STATES = new Set(["done", "failed", "refused", "unknown"]);
 const TICKET_LOG_RETENTION_MS = 60 * 60 * 1000;
+/** How far ahead of the hub's clock an attestation may be dated. */
+const ATTESTATION_SKEW_MS = 5_000;
 
 export class TicketError extends Error {}
 
@@ -458,6 +461,17 @@ async function checkAttestation(
   }
   if (a.not_after <= now)
     throw new TicketError("the project attestation expired");
+  if (a.issued_at > now + ATTESTATION_SKEW_MS) {
+    throw new TicketError("the project attestation is dated in the future");
+  }
+  // The attesting bay must be the project's owner right now: after a
+  // project moves, its old bay's word no longer counts.
+  const owner = await resolveProjectBay(a.project_id);
+  if (owner?.bay_id !== a.project_bay_id) {
+    throw new TicketError(
+      "the project attestation is not from the project's current bay",
+    );
+  }
   return { envelope };
 }
 

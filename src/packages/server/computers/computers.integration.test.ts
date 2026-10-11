@@ -197,6 +197,39 @@ describeDb("computers store", () => {
       expect(env.payload.eligible).toBe(false);
     });
 
+    it("is not eligible while anything in it is shared publicly", async () => {
+      const { attestProjectLocal } = await import("./attestation");
+      const project_id = await project({ [account]: { group: "owner" } });
+      await db().query(
+        `CREATE TABLE IF NOT EXISTS public_project_paths
+           (project_id UUID, disabled BOOLEAN, visibility TEXT)`,
+      );
+      try {
+        await db().query(
+          "INSERT INTO public_project_paths VALUES ($1, false, 'unlisted')",
+          [project_id],
+        );
+        const shared = await attestProjectLocal({
+          project_id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
+        expect(shared.payload.eligible).toBe(false);
+        await db().query(
+          "UPDATE public_project_paths SET visibility='disabled' WHERE project_id=$1",
+          [project_id],
+        );
+        const unshared = await attestProjectLocal({
+          project_id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
+        expect(unshared.payload.eligible).toBe(true);
+      } finally {
+        await db().query("DROP TABLE public_project_paths");
+      }
+    });
+
     it("is not eligible for an account that isn't the owner", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } });
@@ -273,13 +306,14 @@ describeDb("computers store", () => {
           user: "w",
         },
       });
-      const result = await submitPairing({
+      const args = {
         request_id,
         transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, signing),
         signing_public_key: signing.publicDer,
         resolved_policy: resolved,
-      });
-      return { ...result, signing, transcript };
+      };
+      const result = await submitPairing(args);
+      return { ...result, signing, transcript, args };
     }
 
     async function newRequest(name = "laptop") {
@@ -332,6 +366,54 @@ describeDb("computers store", () => {
         "/Users/w/datasets",
       );
       expect(computer.max_deadline! - computer.deadline!).toBe(7 * 3600 * 1000);
+    });
+
+    it("the same claim sent again (a lost answer) is answered again, not invalidated", async () => {
+      const { submitPairing } = await import("./requests");
+      const { request_id } = await newRequest();
+      const first = await machinePairs(request_id);
+      expect(await submitPairing(first.args)).toEqual({
+        pairing_phrase: first.pairing_phrase,
+        transcript_hash: first.transcript_hash,
+      });
+      const { rows } = await db().query(
+        "SELECT state FROM account_computer_requests WHERE request_id=$1",
+        [request_id],
+      );
+      expect(rows[0].state).toBe("paired");
+    });
+
+    it("refuses control characters and bidi overrides in what the owner reads", async () => {
+      const { createComputerRequest } = await import("./requests");
+      for (const why of ["\u001b[2Jclear", "rm \u202eexe.txt", "a\u0007b"]) {
+        await expect(
+          createComputerRequest({
+            account_id: account,
+            name: "x",
+            requested_policy: requested,
+            why,
+          }),
+        ).rejects.toThrow(/control characters/);
+      }
+      await expect(
+        createComputerRequest({
+          account_id: account,
+          name: "x",
+          requested_policy: {
+            ...requested,
+            mounts: [{ path: "~/data\u202e", access: "ro" }],
+          },
+        }),
+      ).rejects.toThrow(/not a valid path/);
+      // Newlines and tabs in the reason are fine.
+      await expect(
+        createComputerRequest({
+          account_id: account,
+          name: "x",
+          requested_policy: requested,
+          why: "line one\n\tline two",
+        }),
+      ).resolves.toHaveProperty("request_id");
     });
 
     it("a second claimant invalidates the request and never replaces the first key", async () => {
