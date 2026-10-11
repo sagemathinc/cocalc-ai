@@ -451,6 +451,7 @@ export const TABLE_OWNERSHIP = {
       "account_computer_requests",
       "account_computer_operations",
       "account_computer_jobs",
+      "account_computer_ticket_log",
     ],
     {
       ownership: "account-home",

@@ -57,6 +57,14 @@ describeDb("computer pairing endpoints", () => {
   const db = () => getPool();
   const account = randomUUID();
   const network = randomUUID();
+
+  async function networkGeneration(): Promise<string> {
+    const { rows } = await getPool().query(
+      "SELECT generation FROM agent_networks WHERE agent_network_id=$1",
+      [network],
+    );
+    return rows[0].generation;
+  }
   const requested = {
     version: 1,
     mode: "direct",
@@ -76,7 +84,8 @@ describeDb("computer pairing endpoints", () => {
   });
 
   beforeEach(async () => {
-    for (const t of tables) await db().query(`DELETE FROM ${t}`);
+    for (const t of tables.slice().reverse())
+      await db().query(`DELETE FROM ${t}`);
     const { resetSigningKeyCacheForTesting } = await import("./signing-keys");
     resetSigningKeyCacheForTesting();
     const { resetPairingRateLimitForTesting } = await import("./pairing-http");
@@ -163,6 +172,7 @@ describeDb("computer pairing endpoints", () => {
     });
 
     const { computer_id } = await approveComputerRequest({
+      agent_network_generation: await networkGeneration(),
       account_id: account,
       request_id,
       transcript_hash,

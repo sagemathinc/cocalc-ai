@@ -38,6 +38,8 @@ export interface ComputersApi {
     session_hash?: string;
     request_id: string;
     transcript_hash: string;
+    /** The agent network generation the owner was shown. */
+    agent_network_generation: string;
   }): Promise<{ computer_id: string; policy: ComputerPolicy }>;
   declineComputerRequest(opts: {
     account_id?: string;

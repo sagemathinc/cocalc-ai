@@ -73,6 +73,7 @@ describeDb("account-home Agent Networks", () => {
     "agent_personal_names",
     "agent_networks",
     "account_computers",
+    "account_computer_requests",
     "agent_network_members",
     "agent_network_mutations",
     "agent_network_activity",
@@ -898,7 +899,7 @@ describeDb("account-home Agent Networks", () => {
           )
         ).rows[0].epoch,
       );
-    const update = async (options: any) =>
+    const update = async (options: any, fresh = false) =>
       await store.updateNetwork(
         account,
         {
@@ -907,13 +908,17 @@ describeDb("account-home Agent Networks", () => {
           ...options,
         },
         8,
+        fresh,
       );
 
     await update({ action: "set-title", title: "Lab 2" });
-    await update({
+    // A computer serves this network: adding a member needs fresh auth.
+    const add = {
       action: "add-member",
       member: { kind: "registered", endpoint: secondPeer },
-    });
+    };
+    await expect(update(add)).rejects.toThrow("fresh_auth_required");
+    await update(add, true);
     expect(await epoch(labComputer)).toBe(0);
 
     await update({
@@ -923,7 +928,10 @@ describeDb("account-home Agent Networks", () => {
     expect(await epoch(labComputer)).toBe(1);
     await update({ action: "pause" });
     expect(await epoch(labComputer)).toBe(2);
-    await update({ action: "resume" });
+    await expect(update({ action: "resume" })).rejects.toThrow(
+      "fresh_auth_required",
+    );
+    await update({ action: "resume" }, true);
     expect(await epoch(labComputer)).toBe(2);
     await update({ action: "close" });
     expect(await epoch(labComputer)).toBe(3);

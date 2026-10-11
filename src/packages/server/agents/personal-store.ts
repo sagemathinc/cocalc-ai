@@ -39,6 +39,7 @@ import { assertPersonalAccountAuthority } from "./personal-rehome";
 import {
   bumpComputersForAccount,
   bumpComputersForNetwork,
+  networkHasComputerAccess,
 } from "@cocalc/server/computers/computers";
 
 const MAX_ACTIVE_NETWORKS = 100;
@@ -1299,6 +1300,14 @@ export class PersonalAgentStore {
             .map((x) => x.project_id),
         );
         if (options.action === "resume" && projectSet.size > 1 && !fresh)
+          throw new Error("fresh_auth_required");
+        // Adding a member or resuming a network that a computer serves gives
+        // agents access to that computer.
+        if (
+          (options.action === "add-member" || options.action === "resume") &&
+          !fresh &&
+          (await networkHasComputerAccess(db, account, row.agent_network_id))
+        )
           throw new Error("fresh_auth_required");
         if (
           options.action === "set-delivery" &&

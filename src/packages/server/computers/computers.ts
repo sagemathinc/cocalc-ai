@@ -22,6 +22,7 @@ import {
 } from "@cocalc/util/computers/policy";
 import type { ComputerSummary } from "@cocalc/util/computers/api";
 import { computerName } from "./requests";
+import { assertComputersAuthority, lockAgentControls } from "./authority";
 
 export type { ComputerSummary };
 
@@ -143,17 +144,59 @@ export async function getComputerByRef(
   return summary(rows[0]);
 }
 
-/** Run fn on the computer's row under FOR UPDATE, in one transaction. */
+/** An agent acting on a computer: it must be an active member of its network. */
+export interface ActingAgent {
+  agent_id: string;
+  project_id: string;
+}
+
+/**
+ * Run fn on the computer's row under FOR UPDATE, in one transaction, behind
+ * the account-rehome fence. For an agent, the transaction also locks agent
+ * messaging controls and the network (the same order as ticket issuance and
+ * every narrowing path) and rechecks active membership, so removing the agent
+ * or pausing can't race the change.
+ */
 async function withComputerForUpdate<T>(
   account_id: string,
   computer_id: string,
   fn: (client: PoolClient, row: any) => Promise<T>,
+  agent?: ActingAgent,
 ): Promise<T> {
   requireUuid(account_id, "account_id");
   requireUuid(computer_id, "computer_id");
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertComputersAuthority(client, account_id, "change a computer");
+    if (agent != null) {
+      requireUuid(agent.agent_id, "agent_id");
+      requireUuid(agent.project_id, "project_id");
+      const network = (
+        await client.query(
+          `SELECT agent_network_id FROM account_computers
+            WHERE account_id=$1 AND computer_id=$2 AND tombstoned_at IS NULL`,
+          [account_id, computer_id],
+        )
+      ).rows[0]?.agent_network_id;
+      if (network == null) throw new ComputerError("no such computer");
+      const { paused } = await lockAgentControls(client, account_id);
+      if (paused) {
+        throw new ComputerError("agent messaging is paused for this account");
+      }
+      const member = await client.query(
+        `SELECT 1 FROM agent_networks n
+           JOIN agent_network_members m ON m.agent_network_id = n.agent_network_id
+          WHERE n.agent_network_id=$1 AND n.account_id=$2 AND n.state='active'
+            AND m.member_kind='registered' AND m.removed_at IS NULL
+            AND m.registered_agent_id=$3 AND m.project_id=$4
+          FOR SHARE OF n`,
+        [network, account_id, agent.agent_id, agent.project_id],
+      );
+      if (member.rows.length === 0) {
+        throw new ComputerError("no such computer for this agent");
+      }
+    }
     const { rows } = await client.query(
       `SELECT * FROM account_computers
         WHERE account_id=$1 AND computer_id=$2 AND tombstoned_at IS NULL
@@ -227,7 +270,7 @@ export async function renameComputer({
 
 export type NotesAuthor =
   | { kind: "owner"; account_id: string }
-  | { kind: "agent"; agent_id: string };
+  | { kind: "agent"; agent_id: string; project_id: string };
 
 /**
  * Edit the notes. Agents can't edit locked notes; every edit is attributed
@@ -290,6 +333,9 @@ export async function setComputerNotes({
       );
       return { notes_revision: Number(rows[0].notes_revision) };
     },
+    author.kind === "agent"
+      ? { agent_id: author.agent_id, project_id: author.project_id }
+      : undefined,
   );
 }
 
@@ -396,6 +442,31 @@ export async function bumpComputersForNetwork(
     [account_id, agent_network_id],
   );
   return rows.map((r) => r.computer_id);
+}
+
+/**
+ * Does any computer (not revoked) or open pairing request serve this
+ * network? Then adding a member or resuming the network gives agents access
+ * to that computer, so it needs fresh auth (plan decision 22). Call with the
+ * network row locked FOR UPDATE: approval and request creation lock it too.
+ */
+export async function networkHasComputerAccess(
+  client: Queryable,
+  account_id: string,
+  agent_network_id: string,
+): Promise<boolean> {
+  const { rows } = await client.query(
+    `SELECT 1 FROM account_computers
+      WHERE account_id=$1 AND agent_network_id=$2
+        AND revoked_at IS NULL AND tombstoned_at IS NULL
+     UNION ALL
+     SELECT 1 FROM account_computer_requests
+      WHERE account_id=$1 AND agent_network_id=$2
+        AND state IN ('pending','paired') AND expires_at > now()
+     LIMIT 1`,
+    [account_id, agent_network_id],
+  );
+  return rows.length > 0;
 }
 
 /** Agent messaging was paused or every network closed: all of them. */

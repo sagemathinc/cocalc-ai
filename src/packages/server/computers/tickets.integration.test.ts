@@ -49,6 +49,7 @@ const tables = [
   "account_computer_requests",
   "account_computer_operations",
   "account_computer_jobs",
+  "account_computer_ticket_log",
   "cluster_computer_signing_keys",
   "bay_computer_signing_keys",
   "agent_personal_controls",
@@ -62,6 +63,14 @@ describeDb("computer tickets", () => {
   const db = () => getPool();
   const account = randomUUID();
   const network = randomUUID();
+
+  async function networkGeneration(): Promise<string> {
+    const { rows } = await getPool().query(
+      "SELECT generation FROM agent_networks WHERE agent_network_id=$1",
+      [network],
+    );
+    return rows[0].generation;
+  }
   const agent = randomUUID();
   const project = randomUUID();
   const run = randomUUID();
@@ -78,6 +87,10 @@ describeDb("computer tickets", () => {
     for (const t of tables.slice().reverse())
       await db().query(`DELETE FROM ${t}`);
     (await import("./signing-keys")).resetSigningKeyCacheForTesting();
+    await db().query(
+      "INSERT INTO accounts (account_id, email_address, created) VALUES ($1,'a@example.org',now())",
+      [account],
+    );
     await db().query(
       `INSERT INTO agent_networks (agent_network_id, account_id, title, state, delivery_mode, generation, created_by)
        VALUES ($1,$2,'lab','active','queued',$3,$2)`,
@@ -142,6 +155,7 @@ describeDb("computer tickets", () => {
       resolved_policy: resolved,
     });
     ({ computer_id } = await approveComputerRequest({
+      agent_network_generation: await networkGeneration(),
       account_id: account,
       request_id,
       transcript_hash,
@@ -228,8 +242,9 @@ describeDb("computer tickets", () => {
 
   it("a retry with the same operation_id gets a new ticket for the same operation", async () => {
     const operation_id = randomUUID();
-    const first: any = await issue({ operation_id });
-    const second: any = await issue({ operation_id });
+    const pop_key = generateSigningKey().publicDer;
+    const first: any = await issue({ operation_id, pop_key });
+    const second: any = await issue({ operation_id, pop_key });
     expect(second.ticket.payload.ticket_id).not.toBe(
       first.ticket.payload.ticket_id,
     );
@@ -241,20 +256,97 @@ describeDb("computer tickets", () => {
     );
     expect(rows[0].n).toBe(1);
     await expect(
-      issue({ operation_id, request: { command: "rm -rf /" } }),
+      issue({ operation_id, pop_key, request: { command: "rm -rf /" } }),
     ).rejects.toThrow(/different request/);
   });
 
-  it("a finished operation returns its outcome instead of a ticket", async () => {
-    const operation_id = randomUUID();
-    await issue({ operation_id });
+  it("a finished operation, or one whose outcome is unknown, is never ticketed again", async () => {
+    for (const state of ["done", "unknown"]) {
+      const operation_id = randomUUID();
+      const pop_key = generateSigningKey().publicDer;
+      await issue({ operation_id, pop_key });
+      await db().query(
+        "UPDATE account_computer_operations SET state=$2, exit_code=$3 WHERE operation_id=$1",
+        [operation_id, state, state === "done" ? 0 : null],
+      );
+      expect(await issue({ operation_id, pop_key })).toEqual({
+        finished: { state, exit_code: state === "done" ? 0 : null },
+      });
+    }
+  });
+
+  it("a retry must come from the same agent, run, project, thread and PoP key", async () => {
+    // Another member of the network, in another eligible project.
+    const other = randomUUID();
+    const otherProject = randomUUID();
     await db().query(
-      "UPDATE account_computer_operations SET state='done', exit_code=0 WHERE operation_id=$1",
-      [operation_id],
+      `INSERT INTO agent_network_members
+         (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by)
+       VALUES ($1,'registered',$2,$2,$3,$4)`,
+      [network, other, otherProject, account],
     );
-    expect(await issue({ operation_id })).toEqual({
-      finished: { state: "done", exit_code: 0 },
+    await db().query(
+      `INSERT INTO projects (project_id, users, runtime_authority_revision) VALUES ($1,$2,5)`,
+      [otherProject, JSON.stringify({ [account]: { group: "owner" } })],
+    );
+    const operation_id = randomUUID();
+    const pop_key = generateSigningKey().publicDer;
+    await issue({ operation_id, pop_key, thread_id: "t1" });
+    for (const overrides of [
+      {
+        agent_id: other,
+        source_project_id: otherProject,
+        attestation: await attestation({ project_id: otherProject }),
+      },
+      { run_id: randomUUID() },
+      { thread_id: "t2" },
+      { thread_id: null },
+      { pop_key: generateSigningKey().publicDer },
+    ]) {
+      await expect(
+        issue({ operation_id, pop_key, thread_id: "t1", ...overrides }),
+      ).rejects.toThrow(/different request/);
+    }
+    await expect(
+      issue({ operation_id, pop_key, thread_id: "t1" }),
+    ).resolves.toHaveProperty("ticket");
+  });
+
+  it("logs and kill only for the agent's own job, ops only for its own operations here", async () => {
+    const other = randomUUID();
+    await db().query(
+      `INSERT INTO agent_network_members
+         (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by)
+       VALUES ($1,'registered',$2,$2,$3,$4)`,
+      [network, other, project, account],
+    );
+    const job_id = randomUUID();
+    await issue({
+      operation_id: job_id,
+      operation: "run",
+      request: { command: "sleep 100", description: "a job" },
     });
+    for (const [operation, request] of [
+      ["logs", { job_id }],
+      ["kill", { job_id }],
+      ["ops", { operation_id: job_id }],
+    ] as const) {
+      await expect(
+        issue({ agent_id: other, operation, request }),
+      ).rejects.toThrow(/no such (job|operation) of yours/);
+      await expect(issue({ operation, request })).resolves.toHaveProperty(
+        "ticket",
+      );
+    }
+    // An exec is not a job.
+    const exec_id = randomUUID();
+    await issue({ operation_id: exec_id });
+    await expect(
+      issue({ operation: "kill", request: { job_id: exec_id } }),
+    ).rejects.toThrow(/no such job of yours/);
+    await expect(
+      issue({ operation: "logs", request: { job_id: randomUUID() } }),
+    ).rejects.toThrow(/no such job of yours/);
   });
 
   it.each<[string, () => Promise<Record<string, unknown>>, RegExp]>([
@@ -331,7 +423,8 @@ describeDb("computer tickets", () => {
     await expect(issue()).rejects.toThrow(/not in the agent network/);
     await db().query("UPDATE agent_network_members SET removed_at=NULL");
     await db().query(
-      "INSERT INTO agent_personal_controls(account_id, paused) VALUES ($1, true)",
+      `INSERT INTO agent_personal_controls(account_id, paused) VALUES ($1, true)
+       ON CONFLICT (account_id) DO UPDATE SET paused=true`,
       [account],
     );
     await expect(issue()).rejects.toThrow(/agent messaging is paused/);
@@ -341,25 +434,51 @@ describeDb("computer tickets", () => {
     await expect(issue()).rejects.toThrow(/disconnected/);
   });
 
-  it("rate-limits an agent run", async () => {
+  it("rate-limits an agent run, counting every ticket, retries included", async () => {
     const { MAX_TICKETS_PER_RUN_PER_MINUTE } = await import("./tickets");
+    const operation_id = randomUUID();
+    const pop_key = generateSigningKey().publicDer;
+    await issue({ operation_id, pop_key });
     await db().query(
-      `INSERT INTO account_computer_operations
-         (computer_id, operation_id, account_id, agent_id, run_id, source_project_id, operation,
-          request_hash, ticket_id, state, issued_at)
-       SELECT $1, gen_random_uuid(), $2, $3, $4, $5, 'info', 'sha256:x', gen_random_uuid(), 'done', now()
-         FROM generate_series(1, $6)`,
-      [
-        computer_id,
-        account,
-        agent,
-        run,
-        project,
-        MAX_TICKETS_PER_RUN_PER_MINUTE,
-      ],
+      `INSERT INTO account_computer_ticket_log (ticket_id, account_id, computer_id, run_id, issued_at)
+       SELECT gen_random_uuid(), $1, $2, $3, now() FROM generate_series(1, $4)`,
+      [account, computer_id, run, MAX_TICKETS_PER_RUN_PER_MINUTE - 2],
+    );
+    // One more retry of the same operation is still a ticket...
+    await expect(issue({ operation_id, pop_key })).resolves.toHaveProperty(
+      "ticket",
+    );
+    // ...and then the run is out of tickets, retries too.
+    await expect(issue({ operation_id, pop_key })).rejects.toThrow(
+      /too many operations from this agent run/,
     );
     await expect(issue()).rejects.toThrow(
       /too many operations from this agent run/,
     );
+  });
+
+  it("refuses everything while the account is being rehomed", async () => {
+    await db().query(
+      `CREATE TABLE IF NOT EXISTS account_rehome_operations
+         (op_id TEXT, account_id UUID, source_bay_id TEXT, dest_bay_id TEXT,
+          stage TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now())`,
+    );
+    try {
+      await db().query(
+        `INSERT INTO account_rehome_operations VALUES ('op1',$1,'bay-0','bay-1','copy','running',now())`,
+        [account],
+      );
+      await expect(issue()).rejects.toThrow(/account rehome op1 is running/);
+    } finally {
+      await db().query("DROP TABLE account_rehome_operations");
+    }
+  });
+
+  it("refuses at a bay that is not the account's home", async () => {
+    await db().query(
+      "UPDATE accounts SET home_bay_id='bay-9' WHERE account_id=$1",
+      [account],
+    );
+    await expect(issue()).rejects.toThrow(/account is homed on bay-9/);
   });
 });

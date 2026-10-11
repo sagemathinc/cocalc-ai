@@ -64,6 +64,7 @@ export async function approveComputerRequest(
     session_hash: opts.session_hash,
     request_id: opts.request_id,
     transcript_hash: opts.transcript_hash,
+    agent_network_generation: opts.agent_network_generation,
   });
   return { computer_id, policy };
 }

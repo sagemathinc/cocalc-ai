@@ -173,6 +173,10 @@ Table({
         name: "account_computer_requests_expiry",
         query: "(expires_at) WHERE state IN ('pending','paired')",
       },
+      {
+        name: "account_computer_requests_network",
+        query: "(account_id,agent_network_id) WHERE state IN ('pending','paired')",
+      },
     ],
   },
   fields: {
@@ -184,6 +188,10 @@ Table({
     thread_id: optional("string", "Chat thread of the request card."),
     name: required("string", "Requested alias."),
     requested_policy: json("Requested policy, before local resolution."),
+    agent_network_id: required(
+      "uuid",
+      "Agent network the computer would serve (from the requested policy).",
+    ),
     why: {
       type: "string",
       pg_type: "TEXT",
@@ -205,6 +213,10 @@ Table({
     ),
     computer_id: optional("uuid", "Computer created by approval."),
     approved_by: optional("uuid", "Account that approved."),
+    approved_network_generation: optional(
+      "string",
+      "Agent network generation (membership) the owner reviewed at approval.",
+    ),
     approved_at: timestamp("Approval time."),
     expires_at: { ...timestamp("Request expiry."), not_null: true },
     created_at: created("Request time."),
@@ -256,6 +268,10 @@ Table({
     },
     description: optional("string", "Short description (required for jobs)."),
     ticket_id: required("uuid", "Last ticket issued for this operation."),
+    pop_key: required(
+      "string",
+      "Proof-of-possession key of the requester; a retry must present the same.",
+    ),
     state: required(
       "string",
       "issued, admitted, running, done, failed, unknown, refused.",
@@ -324,6 +340,29 @@ Table({
     started_at: timestamp("Start time."),
     finished_at: timestamp("End time."),
     updated_at: created("Last report."),
+  },
+});
+
+// Account home: every ticket issued, for hard per-run and per-computer rate
+// limits (a retry of one operation still counts). Pruned after an hour.
+Table({
+  name: "account_computer_ticket_log",
+  rules: {
+    primary_key: "ticket_id",
+    pg_custom_indexes: [
+      {
+        name: "account_computer_ticket_log_computer",
+        query: "(computer_id,issued_at)",
+      },
+      { name: "account_computer_ticket_log_run", query: "(run_id,issued_at)" },
+    ],
+  },
+  fields: {
+    ticket_id: required("uuid", "Ticket."),
+    account_id: required("uuid", "Owning account."),
+    computer_id: required("uuid", "Computer."),
+    run_id: required("uuid", "Agent run that asked."),
+    issued_at: created("Issue time."),
   },
 });
 

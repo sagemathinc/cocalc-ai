@@ -30,6 +30,7 @@ export const COMPUTER_STATE_TABLES = [
   "account_computer_requests",
   "account_computer_operations",
   "account_computer_jobs",
+  "account_computer_ticket_log",
 ] as const;
 
 export type PersonalAuthorityDb = {

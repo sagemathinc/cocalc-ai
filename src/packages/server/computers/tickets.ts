@@ -48,6 +48,7 @@ import {
   trustedSigningKeys,
 } from "./signing-keys";
 import { computersSite } from "./site";
+import { assertComputersAuthority, lockAgentControls } from "./authority";
 
 /** Tickets start within this long of issue (and never after the attestation). */
 export const TICKET_START_WINDOW_MS = 60 * 1000;
@@ -55,7 +56,10 @@ export const TICKET_START_WINDOW_MS = 60 * 1000;
 export const MAX_TICKETS_PER_RUN_PER_MINUTE = 120;
 export const MAX_TICKETS_PER_COMPUTER_PER_MINUTE = 600;
 
-const TERMINAL_STATES = new Set(["done", "failed", "refused"]);
+// "unknown" is an outcome too: the operation may have run, so it is never
+// ticketed again ("we never guess").
+const TERMINAL_STATES = new Set(["done", "failed", "refused", "unknown"]);
+const TICKET_LOG_RETENTION_MS = 60 * 60 * 1000;
 
 export class TicketError extends Error {}
 
@@ -122,10 +126,11 @@ export async function issueComputerTicket(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    // Lock order matches every narrowing path (agent messaging controls,
-    // then the network, then the computer), so they serialize instead of
-    // deadlocking: a narrowing either sees this operation recorded or this
-    // issue sees the narrowing.
+    // Lock order matches every narrowing path: the account-rehome fence,
+    // then agent messaging controls, the network, and the computer. So a
+    // narrowing either sees this operation recorded, or this issue sees the
+    // narrowing.
+    await assertComputersAuthority(client, input.account_id, "issue a ticket");
     const byId = isValidUUID(input.computer);
     const found = (
       await client.query(
@@ -140,11 +145,9 @@ export async function issueComputerTicket(
     ).rows[0];
     if (found == null) throw new TicketError(`no computer '${input.computer}'`);
 
-    const controls = await client.query(
-      `SELECT paused FROM agent_personal_controls WHERE account_id=$1 FOR SHARE`,
-      [input.account_id],
-    );
-    if (controls.rows[0]?.paused) {
+    // The row is created if missing, so a first-ever pause can't slip past.
+    const { paused } = await lockAgentControls(client, input.account_id);
+    if (paused) {
       throw new TicketError("agent messaging is paused for this account");
     }
 
@@ -192,13 +195,29 @@ export async function issueComputerTicket(
       );
     }
 
+    await assertTargetIsTheAgents(
+      client,
+      computer.computer_id,
+      input,
+      operation,
+    );
+
+    // Hard rate limits: every ticket counts (a retry too), serialized per
+    // run and per computer.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `computer-tickets-run:${input.run_id}`,
+    ]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `computer-tickets-computer:${computer.computer_id}`,
+    ]);
+    const windowStart = new Date(now - 60_000);
     const limits = await client.query(
       `SELECT
-         (SELECT count(*)::int FROM account_computer_operations
+         (SELECT count(*)::int FROM account_computer_ticket_log
            WHERE run_id=$1 AND issued_at > $3) AS per_run,
-         (SELECT count(*)::int FROM account_computer_operations
+         (SELECT count(*)::int FROM account_computer_ticket_log
            WHERE computer_id=$2 AND issued_at > $3) AS per_computer`,
-      [input.run_id, computer.computer_id, new Date(now - 60_000)],
+      [input.run_id, computer.computer_id, windowStart],
     );
     if (limits.rows[0].per_run >= MAX_TICKETS_PER_RUN_PER_MINUTE) {
       throw new TicketError(
@@ -213,13 +232,25 @@ export async function issueComputerTicket(
 
     const ticket_id = randomUUID();
     const existing = await client.query(
-      `SELECT request_hash, state, exit_code FROM account_computer_operations
+      `SELECT * FROM account_computer_operations
         WHERE computer_id=$1 AND operation_id=$2 FOR UPDATE`,
       [computer.computer_id, input.operation_id],
     );
     const prior = existing.rows[0];
     if (prior != null) {
-      if (prior.request_hash !== request_hash) {
+      // A retry is the same operation from the same requester: same agent,
+      // run, project, thread, operation, request and PoP key. Anything else
+      // is refused with one message, so it reveals nothing.
+      if (
+        prior.account_id !== input.account_id ||
+        prior.agent_id !== input.agent_id ||
+        prior.run_id !== input.run_id ||
+        prior.source_project_id !== input.source_project_id ||
+        (prior.thread_id ?? null) !== (input.thread_id ?? null) ||
+        prior.operation !== operation.operation ||
+        prior.request_hash !== request_hash ||
+        prior.pop_key !== input.pop_key
+      ) {
         throw new TicketError(
           "that operation_id was used for a different request",
         );
@@ -243,8 +274,8 @@ export async function issueComputerTicket(
         `INSERT INTO account_computer_operations
            (computer_id, operation_id, account_id, agent_id, run_id,
             source_project_id, thread_id, operation, request_hash, command,
-            description, ticket_id, state, issued_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'issued',$13)`,
+            description, ticket_id, pop_key, state, issued_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'issued',$14)`,
         [
           computer.computer_id,
           input.operation_id,
@@ -258,10 +289,28 @@ export async function issueComputerTicket(
           auditCommand(operation),
           operation.operation === "run" ? operation.request.description : null,
           ticket_id,
+          input.pop_key,
           new Date(now),
         ],
       );
     }
+    await client.query(
+      `INSERT INTO account_computer_ticket_log
+         (ticket_id, account_id, computer_id, run_id, issued_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [
+        ticket_id,
+        input.account_id,
+        computer.computer_id,
+        input.run_id,
+        new Date(now),
+      ],
+    );
+    await client.query(
+      `DELETE FROM account_computer_ticket_log
+        WHERE computer_id=$1 AND issued_at < $2`,
+      [computer.computer_id, new Date(now - TICKET_LOG_RETENTION_MS)],
+    );
 
     const start_by = Math.min(
       now + TICKET_START_WINDOW_MS,
@@ -314,6 +363,47 @@ export async function issueComputerTicket(
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * The access matrix at the home bay (the daemon checks again): only the agent
+ * that started a job reads its log or kills it (a job's id is its run
+ * operation's id), and `ops` shows only the agent's own operations from this
+ * project.
+ */
+async function assertTargetIsTheAgents(
+  client: {
+    query: (sql: string, values?: unknown[]) => Promise<{ rows: any[] }>;
+  },
+  computer_id: string,
+  input: TicketRequest,
+  operation: OperationRequest,
+): Promise<void> {
+  let target: string | null = null;
+  let kind: string | null = null;
+  if (operation.operation === "logs" || operation.operation === "kill") {
+    target = operation.request.job_id;
+    kind = "run";
+  } else if (operation.operation === "ops") {
+    target = operation.request.operation_id;
+  }
+  if (target == null) return;
+  const { rows } = await client.query(
+    `SELECT agent_id, source_project_id, operation FROM account_computer_operations
+      WHERE computer_id=$1 AND operation_id=$2`,
+    [computer_id, target],
+  );
+  const row = rows[0];
+  if (
+    row == null ||
+    row.agent_id !== input.agent_id ||
+    (kind != null && row.operation !== kind) ||
+    (kind == null && row.source_project_id !== input.source_project_id)
+  ) {
+    throw new TicketError(
+      kind === "run" ? "no such job of yours" : "no such operation of yours",
+    );
   }
 }
 

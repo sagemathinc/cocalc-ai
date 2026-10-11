@@ -87,6 +87,17 @@ export interface ComputerRequestSummary {
   transcript_hash: string | null;
   machine: { hostname: string; os: string; arch: string; user: string } | null;
   requested_by_agent_id: string | null;
+  /**
+   * The agent network the computer would serve, as it is now. Approval must
+   * send back this generation: it changes with every membership change.
+   */
+  agent_network: {
+    agent_network_id: string;
+    title: string;
+    state: string;
+    generation: string;
+    members: { agent_id: string; project_id: string }[];
+  } | null;
   computer_id: string | null;
   expires_at: number;
   created_at: number;
