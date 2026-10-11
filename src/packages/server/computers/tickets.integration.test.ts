@@ -1,0 +1,356 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// Ticket issuance against real SQL (in-memory PGlite). Run with
+// COCALC_TEST_USE_PGLITE=1 and NODE_OPTIONS=--experimental-vm-modules.
+
+import { randomUUID } from "node:crypto";
+import getPool from "@cocalc/database/pool";
+import { syncSchema } from "@cocalc/database/postgres/schema/sync";
+import { SCHEMA } from "@cocalc/util/db-schema";
+import { parseComputerPolicy } from "@cocalc/util/computers/policy";
+import {
+  SIGNED_KINDS,
+  ticketRefusals,
+  type DaemonState,
+} from "@cocalc/util/computers/protocol";
+import {
+  generateAgreementKey,
+  generateSigningKey,
+  policyHash,
+  randomNonce,
+  signEnvelope,
+  verifyEnvelope,
+} from "@cocalc/backend/computers/crypto";
+
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  encryptSecretStorageValue: async (name: string, value: string) =>
+    `test-enc:${name}:${Buffer.from(value).toString("base64")}`,
+  decryptSecretStorageValue: async (name: string, value: string) => ({
+    value: Buffer.from(
+      value.slice(`test-enc:${name}:`.length),
+      "base64",
+    ).toString(),
+    needsMigration: false,
+  }),
+}));
+jest.mock("@cocalc/database/settings/site-url", () => ({
+  __esModule: true,
+  default: async () => "https://cocalc.ai",
+}));
+
+const describeDb =
+  process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
+
+const tables = [
+  "account_computers",
+  "account_computer_requests",
+  "account_computer_operations",
+  "account_computer_jobs",
+  "cluster_computer_signing_keys",
+  "bay_computer_signing_keys",
+  "agent_networks",
+  "agent_network_members",
+  "projects",
+];
+
+describeDb("computer tickets", () => {
+  const db = () => getPool();
+  const account = randomUUID();
+  const network = randomUUID();
+  const agent = randomUUID();
+  const project = randomUUID();
+  const run = randomUUID();
+  let computer_id: string;
+  let machineKey: string;
+  let ceiling_hash: string;
+
+  beforeAll(async () => {
+    await syncSchema(Object.fromEntries(tables.map((t) => [t, SCHEMA[t]])));
+  });
+
+  beforeEach(async () => {
+    // Members reference networks: delete in reverse order.
+    for (const t of tables.slice().reverse())
+      await db().query(`DELETE FROM ${t}`);
+    (await import("./signing-keys")).resetSigningKeyCacheForTesting();
+    await db().query(
+      `INSERT INTO agent_networks (agent_network_id, account_id, title, state, delivery_mode, generation, created_by)
+       VALUES ($1,$2,'lab','active','queued',$3,$2)`,
+      [network, account, randomUUID()],
+    );
+    await db().query(
+      `INSERT INTO agent_network_members
+         (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by)
+       VALUES ($1,'registered',$2,$2,$3,$4)`,
+      [network, agent, project, account],
+    );
+    await db().query(
+      `INSERT INTO projects (project_id, users, runtime_authority_revision) VALUES ($1,$2,5)`,
+      [project, JSON.stringify({ [account]: { group: "owner" } })],
+    );
+    // Pair and approve a computer.
+    const {
+      createComputerRequest,
+      getPairingView,
+      submitPairing,
+      approveComputerRequest,
+    } = await import("./requests");
+    const resolved = parseComputerPolicy({
+      version: 1,
+      mode: "direct",
+      duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+      agent_network_id: network,
+      network: "on",
+      gpu: true,
+      mounts: [],
+      images: { kind: "any" },
+      scratch_bytes: null,
+      limits: { cpu_millis: null, memory_bytes: null, pids: null },
+    });
+    ceiling_hash = policyHash(resolved);
+    const { request_id } = await createComputerRequest({
+      account_id: account,
+      name: "mac",
+      requested_policy: resolved,
+    });
+    const view = await getPairingView(request_id);
+    const signing = generateSigningKey();
+    machineKey = signing.fingerprint;
+    const transcript = {
+      type: "cocalc-computer-pairing",
+      version: 1,
+      site: view.site,
+      cluster_id: view.cluster_id,
+      request_id,
+      account_id: account,
+      policy_hash: ceiling_hash,
+      signing_key: signing.fingerprint,
+      agreement_key: generateAgreementKey().fingerprint,
+      client_nonce: randomNonce(),
+      server_nonce: view.server_nonce,
+      machine: { hostname: "mac", os: "darwin", arch: "arm64", user: "w" },
+    };
+    const { transcript_hash } = await submitPairing({
+      request_id,
+      transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, signing),
+      signing_public_key: signing.publicDer,
+      resolved_policy: resolved,
+    });
+    ({ computer_id } = await approveComputerRequest({
+      account_id: account,
+      request_id,
+      transcript_hash,
+    }));
+  });
+
+  async function attestation(
+    overrides: { project_id?: string; now?: number } = {},
+  ) {
+    const { attestProjectLocal } = await import("./attestation");
+    return await attestProjectLocal({
+      project_id: overrides.project_id ?? project,
+      account_id: account,
+      home_bay_id: "bay-0",
+      now: overrides.now,
+    });
+  }
+
+  async function issue(overrides: Record<string, unknown> = {}) {
+    const { issueComputerTicket } = await import("./tickets");
+    return await issueComputerTicket({
+      account_id: account,
+      agent_id: agent,
+      run_id: run,
+      source_project_id: project,
+      run_expires_at: Date.now() + 3_600_000,
+      computer: "mac",
+      operation: "exec",
+      request: { command: "docker ps" },
+      operation_id: randomUUID(),
+      pop_key: generateSigningKey().publicDer,
+      attestation: await attestation(),
+      ...overrides,
+    } as any);
+  }
+
+  it("issues a signed ticket the daemon admits, and records the operation first", async () => {
+    const operation_id = randomUUID();
+    const result: any = await issue({ operation_id });
+    const ticket = result.ticket;
+    const { trustedSigningKeys } = await import("./signing-keys");
+    const keys = await trustedSigningKeys();
+    expect(
+      verifyEnvelope(SIGNED_KINDS.ticket, ticket, (kid) => keys.get(kid)),
+    ).toBe(true);
+    expect(
+      verifyEnvelope(
+        SIGNED_KINDS.attestation,
+        ticket.payload.attestation,
+        (kid) => keys.get(kid),
+      ),
+    ).toBe(true);
+    const state: DaemonState = {
+      site: "https://cocalc.ai",
+      cluster_id: "standalone",
+      computer_id,
+      computer_key: machineKey,
+      account_id: account,
+      home_bay_id: "bay-0",
+      agent_network_id: network,
+      ceiling_hash,
+      policy_epoch: 0,
+      floors: { home_epoch: 0, computer_epoch: 1, projects: { [project]: 5 } },
+    };
+    expect(
+      ticketRefusals(ticket.payload, state, {
+        hub_now: Date.now(),
+        since_receipt_ms: 5,
+      }),
+    ).toEqual([]);
+    expect(ticket.payload.start_by).toBeLessThanOrEqual(
+      ticket.payload.attestation.payload.not_after,
+    );
+    const { rows } = await db().query(
+      "SELECT state, command, request_hash FROM account_computer_operations WHERE operation_id=$1",
+      [operation_id],
+    );
+    expect(rows[0]).toMatchObject({
+      state: "issued",
+      command: "docker ps",
+      request_hash: ticket.payload.request_hash,
+    });
+  });
+
+  it("a retry with the same operation_id gets a new ticket for the same operation", async () => {
+    const operation_id = randomUUID();
+    const first: any = await issue({ operation_id });
+    const second: any = await issue({ operation_id });
+    expect(second.ticket.payload.ticket_id).not.toBe(
+      first.ticket.payload.ticket_id,
+    );
+    expect(second.ticket.payload.request_hash).toBe(
+      first.ticket.payload.request_hash,
+    );
+    const { rows } = await db().query(
+      "SELECT count(*)::int AS n FROM account_computer_operations",
+    );
+    expect(rows[0].n).toBe(1);
+    await expect(
+      issue({ operation_id, request: { command: "rm -rf /" } }),
+    ).rejects.toThrow(/different request/);
+  });
+
+  it("a finished operation returns its outcome instead of a ticket", async () => {
+    const operation_id = randomUUID();
+    await issue({ operation_id });
+    await db().query(
+      "UPDATE account_computer_operations SET state='done', exit_code=0 WHERE operation_id=$1",
+      [operation_id],
+    );
+    expect(await issue({ operation_id })).toEqual({
+      finished: { state: "done", exit_code: 0 },
+    });
+  });
+
+  it.each<[string, () => Promise<Record<string, unknown>>, RegExp]>([
+    ["an unknown computer", async () => ({ computer: "nope" }), /no computer/],
+    [
+      "an agent outside the network",
+      async () => ({ agent_id: randomUUID() }),
+      /not in the agent network/,
+    ],
+    [
+      "the agent from another project",
+      async () => ({ source_project_id: randomUUID() }),
+      /another project/,
+    ],
+    [
+      "an expired run",
+      async () => ({ run_expires_at: Date.now() - 1 }),
+      /run has expired/,
+    ],
+    [
+      "a bad PoP key",
+      async () => ({ pop_key: generateAgreementKey().publicDer }),
+      /Ed25519/,
+    ],
+    [
+      "a request with unknown fields",
+      async () => ({ request: { command: "ls", sudo: true } }),
+      /unknown field/,
+    ],
+    [
+      "a job without a description",
+      async () => ({ operation: "run", request: { command: "make" } }),
+      /description/,
+    ],
+  ])("refuses %s", async (_label, overrides, reason) => {
+    await expect(issue(await overrides())).rejects.toThrow(reason);
+  });
+
+  it("refuses an attestation that is expired, forged, or for an ineligible project", async () => {
+    const old = await attestation({ now: Date.now() - 60_000 });
+    await expect(issue({ attestation: old })).rejects.toThrow(/expired/);
+    const genuine = await attestation();
+    const forged = signEnvelope(
+      SIGNED_KINDS.attestation,
+      genuine.payload,
+      generateSigningKey(),
+    );
+    await expect(issue({ attestation: forged })).rejects.toThrow(/trusted bay/);
+    await db().query("UPDATE projects SET users=$2 WHERE project_id=$1", [
+      project,
+      JSON.stringify({
+        [account]: { group: "owner" },
+        [randomUUID()]: { group: "collaborator" },
+      }),
+    ]);
+    await expect(issue({ attestation: await attestation() })).rejects.toThrow(
+      /only collaborator is you/,
+    );
+  });
+
+  it("refuses a revoked computer, an ended session, a paused network, a removed member", async () => {
+    const { revokeComputer } = await import("./computers");
+    await db().query("UPDATE account_computers SET deadline=$1", [
+      new Date(Date.now() - 1),
+    ]);
+    await expect(issue()).rejects.toThrow(/session on mac has ended/);
+    await db().query("UPDATE account_computers SET deadline=$1", [
+      new Date(Date.now() + 3_600_000),
+    ]);
+    await db().query("UPDATE agent_networks SET state='paused'");
+    await expect(issue()).rejects.toThrow(/not in the agent network/);
+    await db().query("UPDATE agent_networks SET state='active'");
+    await db().query("UPDATE agent_network_members SET removed_at=now()");
+    await expect(issue()).rejects.toThrow(/not in the agent network/);
+    await db().query("UPDATE agent_network_members SET removed_at=NULL");
+    await revokeComputer({ account_id: account, computer_id });
+    await expect(issue()).rejects.toThrow(/disconnected/);
+  });
+
+  it("rate-limits an agent run", async () => {
+    const { MAX_TICKETS_PER_RUN_PER_MINUTE } = await import("./tickets");
+    await db().query(
+      `INSERT INTO account_computer_operations
+         (computer_id, operation_id, account_id, agent_id, run_id, source_project_id, operation,
+          request_hash, ticket_id, state, issued_at)
+       SELECT $1, gen_random_uuid(), $2, $3, $4, $5, 'info', 'sha256:x', gen_random_uuid(), 'done', now()
+         FROM generate_series(1, $6)`,
+      [
+        computer_id,
+        account,
+        agent,
+        run,
+        project,
+        MAX_TICKETS_PER_RUN_PER_MINUTE,
+      ],
+    );
+    await expect(issue()).rejects.toThrow(
+      /too many operations from this agent run/,
+    );
+  });
+});
