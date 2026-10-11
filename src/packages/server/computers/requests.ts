@@ -669,7 +669,14 @@ export async function declineComputerRequest({
   }
 }
 
-/** Mark open requests past their expiry; returns how many. */
+/**
+ * Mark open requests past their expiry; returns how many.
+ *
+ * The one write without the account-rehome fence (it would need a per-account
+ * lock for a global sweep). It only narrows (open -> expired), and every
+ * expired row still blocks rehome, so it can't race a rehome into losing
+ * state.
+ */
 export async function expireComputerRequests(
   now = Date.now(),
 ): Promise<number> {

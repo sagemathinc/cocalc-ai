@@ -559,6 +559,12 @@ Table({
       pg_default: "0",
       desc: "Monotonic owning-bay revision of the project collaborator authority map.",
     },
+    computers_privacy_revision: {
+      type: "integer",
+      pg_type: "BIGINT",
+      pg_default: "0",
+      desc: "Monotonic owning-bay revision of the project's public shares (bumped by a trigger on public_project_paths). With runtime_authority_revision it forms the privacy epoch that computer attestations carry.",
+    },
     api_key_membership_revocations: {
       type: "map",
       desc: "Owning-bay API delegation loss barriers by account. Retained through membership re-addition and project migration; sequence values are decimal strings.",

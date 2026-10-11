@@ -59,6 +59,7 @@ const tables = [
   "agent_networks",
   "agent_network_members",
   "projects",
+  "public_project_paths",
   "accounts",
 ];
 
@@ -197,37 +198,96 @@ describeDb("computers store", () => {
       expect(env.payload.eligible).toBe(false);
     });
 
-    it("is not eligible while anything in it is shared publicly", async () => {
+    it("a public share makes it ineligible and advances the privacy epoch, every way it changes", async () => {
+      const { attestProjectLocal } = await import("./attestation");
+      const project_id = await project({ [account]: { group: "owner" } }, 7);
+      const attest = async () =>
+        (
+          await attestProjectLocal({
+            project_id,
+            account_id: account,
+            home_bay_id: "bay-0",
+          })
+        ).payload;
+      const epochs: number[] = [];
+      const step = async (
+        sql: string,
+        values: unknown[],
+        eligible: boolean,
+      ) => {
+        if (sql) await db().query(sql, values);
+        const a = await attest();
+        expect(a.eligible).toBe(eligible);
+        epochs.push(a.privacy_epoch);
+      };
+      const share = randomUUID();
+      await step("", [], true);
+      await step(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','unlisted',false)",
+        [share, project_id],
+        false,
+      );
+      await step(
+        "UPDATE public_project_paths SET disabled=true WHERE id=$1",
+        [share],
+        true,
+      );
+      await step(
+        "UPDATE public_project_paths SET disabled=false WHERE id=$1",
+        [share],
+        false,
+      );
+      await step(
+        "UPDATE public_project_paths SET visibility='disabled' WHERE id=$1",
+        [share],
+        true,
+      );
+      await step(
+        "UPDATE public_project_paths SET visibility='listed' WHERE id=$1",
+        [share],
+        false,
+      );
+      await step("DELETE FROM public_project_paths WHERE id=$1", [share], true);
+      // Strictly increasing: every change is visible to a floor.
+      for (let i = 1; i < epochs.length; i++) {
+        expect(epochs[i]).toBeGreaterThan(epochs[i - 1]);
+      }
+      expect(epochs[0]).toBe(7);
+    });
+
+    it("only the owning bay attests, and never while the project is being rehomed", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } });
+      const attest = () =>
+        attestProjectLocal({
+          project_id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
       await db().query(
-        `CREATE TABLE IF NOT EXISTS public_project_paths
-           (project_id UUID, disabled BOOLEAN, visibility TEXT)`,
+        "UPDATE projects SET owning_bay_id='bay-3' WHERE project_id=$1",
+        [project_id],
+      );
+      await expect(attest()).rejects.toThrow(/no longer owns the project/);
+      await db().query(
+        "UPDATE projects SET owning_bay_id='bay-0' WHERE project_id=$1",
+        [project_id],
+      );
+      await db().query(
+        `CREATE TABLE IF NOT EXISTS project_rehome_operations
+           (op_id TEXT, project_id UUID, source_bay_id TEXT, dest_bay_id TEXT,
+            stage TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now())`,
       );
       try {
         await db().query(
-          "INSERT INTO public_project_paths VALUES ($1, false, 'unlisted')",
+          "INSERT INTO project_rehome_operations VALUES ('p1',$1,'bay-0','bay-3','requested','running',now())",
           [project_id],
         );
-        const shared = await attestProjectLocal({
-          project_id,
-          account_id: account,
-          home_bay_id: "bay-0",
-        });
-        expect(shared.payload.eligible).toBe(false);
-        await db().query(
-          "UPDATE public_project_paths SET visibility='disabled' WHERE project_id=$1",
-          [project_id],
-        );
-        const unshared = await attestProjectLocal({
-          project_id,
-          account_id: account,
-          home_bay_id: "bay-0",
-        });
-        expect(unshared.payload.eligible).toBe(true);
+        await expect(attest()).rejects.toThrow(/project rehome p1 is running/);
       } finally {
-        await db().query("DROP TABLE public_project_paths");
+        await db().query("DROP TABLE project_rehome_operations");
       }
+      await expect(attest()).resolves.toHaveProperty("payload.eligible", true);
     });
 
     it("is not eligible for an account that isn't the owner", async () => {
