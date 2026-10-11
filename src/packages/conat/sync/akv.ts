@@ -5,7 +5,9 @@ This provides access to the same data as dkv, except it doesn't download any
 data to the client until you actually call get.   The calls to get and
 set are thus async.
 
-There is no need to close this because it is stateless.
+An AKV holds no data, but it does hold a reference on a cached persist stream
+client, so close it when you are done.  Otherwise that client, including a
+connection whose stream failed to open, lives as long as the process.
 
 [ ] TODO: efficiently get or set many values at once in a single call. This will be
 very useful, e.g., for jupyter notebook timetravel browsing.

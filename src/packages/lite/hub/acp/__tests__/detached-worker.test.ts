@@ -1604,7 +1604,90 @@ describe("recoverDetachedWorkerStartupState", () => {
     );
     expect(repaired?.message_id).toBe("assistant-terminal");
     expect(repaired?.acp_interrupted_text).toContain(
-      "lost the final Codex turn update",
+      "could not confirm that this turn finished saving",
+    );
+    expect(repaired?.acp_interrupted_reason).toBe("backend_error");
+  });
+
+  it("explains a terminal storage failure with the reason recorded for the turn", async () => {
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: "2026-04-03T14:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        message_id: "assistant-terminal",
+        thread_id: "thread-terminal",
+        generating: true,
+        history: [
+          {
+            author_id: "openai-codex-agent",
+            content: "partial answer",
+            date: "2026-04-03T14:00:00.000Z",
+          },
+        ],
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRecentTerminalAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: "/tmp/detached-worker.chat",
+        message_date: "2026-04-03T14:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        message_id: "assistant-terminal",
+        thread_id: "thread-terminal",
+        state: "error",
+        owner_instance_id: "worker-old",
+        started_at: Date.now() - 65_000,
+        heartbeat_at: Date.now() - 61_000,
+        ended_at: Date.now() - 1_000,
+        reason:
+          "Project storage was temporarily unavailable while saving this Codex turn. CoCalc retained local recovery data and will retry automatically.",
+      },
+    ]);
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      restartReason: "worker restart",
+    });
+
+    const repaired = sets.find(
+      (row: any) => row.event === "chat" && row.generating === false,
+    );
+    expect(repaired?.message_id).toBe("assistant-terminal");
+    expect(repaired?.acp_interrupted_text).toContain(
+      "Project storage was temporarily unavailable while saving this Codex turn",
+    );
+    expect(repaired?.acp_interrupted_text).not.toContain(
+      "could not confirm that this turn finished saving",
     );
     expect(repaired?.acp_interrupted_reason).toBe("backend_error");
   });
