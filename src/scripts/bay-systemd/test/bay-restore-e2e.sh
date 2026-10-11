@@ -135,6 +135,13 @@ cat > /etc/systemd/system/cocalc-bay.target <<'EOF'
 [Unit]
 Wants=cocalc-bay-postgres.service
 EOF
+# The cutover starts a full backup on the new timeline through this unit.
+cat > /etc/systemd/system/cocalc-bay-pgbackrest-backup@.service <<'EOF'
+[Service]
+Type=oneshot
+User=cocalc-bay
+ExecStart=/usr/local/bin/pgbackrest --stanza=cocalc-bay-0 --type=%i backup
+EOF
 systemctl daemon-reload
 systemctl start cocalc-bay.target
 for _ in $(seq 30); do bay psql -X -h /mnt/cocalc/bays/bay-0/run -d postgres -tAc "select 1" >/dev/null 2>&1 && break; sleep 1; done
@@ -210,6 +217,13 @@ log "2. cutover"
 [[ "$(psql_bay "select pg_is_in_recovery()")" == "f" ]] || fail "restored cluster in recovery"
 [[ "$(psql_bay "show archive_mode")" == "on" ]] || fail "archive_mode not on after cutover"
 [[ -d $WORK/restore-pitr/pre-restore/postgres ]] || fail "previous data not kept"
+grep -q "A new full pgBackRest backup was started" /var/lib/e2e/cutover.log || fail "no full backup after the cutover"
+for _ in $(seq 300); do
+  [[ "$(systemctl show -p ActiveState --value cocalc-bay-pgbackrest-backup@full.service)" == activating ]] || break
+  sleep 1
+done
+[[ "$(systemctl show -p Result --value cocalc-bay-pgbackrest-backup@full.service)" == success ]] ||
+  { journalctl -u cocalc-bay-pgbackrest-backup@full.service --no-pager | tail -20; fail "the full backup after the cutover failed"; }
 [[ "$(sqlite3 /mnt/cocalc/bays/bay-0/sync/projects/a.db 'select count(*) from t')" == 1 ]] || fail "sync not swapped"
 psql_bay "insert into marks(phase) values ('post-cutover')" >/dev/null
 psql_bay "select pg_switch_wal()" >/dev/null
