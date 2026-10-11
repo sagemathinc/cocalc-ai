@@ -768,76 +768,170 @@ the daemon (see "Files").
   - In direct mode, commands can read the key file, and the docs say so.
 - **Never in a project's home.**
 
-### The computer principal and the data path (part 4b design, Oct 11)
+### The computer principal and the data path (part 4b design, revision 2, Oct 11)
 
-*Proposed for review before any code; it refines "Control path" and
-"Enrollment".*
+*Revision 2 answers @lite1-review's review of revision 1 (c9af293389).
+Nothing here is built yet.*
 
-**Agents never talk to a computer directly; the hub relays.**
-- Agent identities stay sealed. Today a run identity may publish only to
-  `agent-messaging.<agent>.<run>` and subscribe only to
-  `_INBOX.agent-identity.<agent>.<run>.*`, and no other principal may publish
-  into `_INBOX.agent-identity.*`. That stays exactly as it is.
-- The agent's CLI makes two agent-messaging calls (action `computer`):
-  1. `ticket`: as today (part 3). The hub returns the signed ticket.
-  2. `send`: the ticket, the PoP proof and the request. The home bay sends
-     them to `computer.<id>.op` **as the hub**, and returns the daemon's answer.
-     It does not sign anything here; the daemon checks the ticket and PoP as
-     before.
-- **Long operations:** the relay waits at most about 60 s. An `exec` still
-  running then answers `running` with its `operation_id`. It keeps running,
-  and `ops` returns its recorded outcome and output once it's done (the
-  daemon keeps the output on the machine).
-- **Consequences:**
-  - Output passes through CoCalc (≤ 1 MB per operation), which is where
-    metering belongs anyway.
-  - Transfers (part 6) need their own streaming design, not this relay.
-  - The router change is confined to the new principal.
+**Agents never talk to a computer directly; the home bay relays. Run
+identities stay sealed.** Today a run identity publishes only to
+`agent-messaging.<agent>.<run>` and subscribes only to
+`_INBOX.agent-identity.<agent>.<run>.*`, and no other principal may
+publish there. That doesn't change.
 
-**The principal.** A new user type `computer`, with `computer_id`, handled
-first in `isAllowed`, and **default deny**:
-- **sub:** `computer.<id>.>` (requests from the hub) and its own inbox
-  `_INBOX.computer-<id>.>`.
+**The relay is checked, not blind.** The CLI makes two agent-messaging
+calls (action `computer`): `ticket`, as now, then `send`, carrying the
+ticket, the PoP proof and the request. Before sending anything to a
+computer, the home bay checks all of this under the usual lock order (fence,
+controls, network, computer):
+1. It verifies the ticket's envelope against its own current home key.
+2. It loads the **committed audit row** for `(computer_id, operation_id)`.
+   - The row must name this ticket id.
+   - Its agent, run, project and thread must equal the authenticated run's.
+3. It recomputes the request hash from the request, and checks the PoP
+   proof against the row's PoP key.
+4. The destination comes **only from the row**; the client never names a
+   subject.
+5. It rechecks current state:
+   - agent messaging is not paused;
+   - the agent is an active member of the network;
+   - the computer is not revoked and its deadline hasn't passed;
+   - **the computer's epoch equals the ticket's**, so a ticket issued
+     before a narrowing is never relayed after it.
+
+The daemon still checks everything itself; the relay is not a confused
+deputy.
+
+**Idempotence and bounds:**
+- At most one relay is in flight per `(computer_id, operation_id,
+  request_hash)`; a second `send` waits on the first.
+- **Waiting:** about 60 s at most. Then the answer is `running` with the
+  operation id; the operation keeps going, and `ops` returns its outcome
+  and output later.
+- **Hard caps:** concurrent waiters per computer (8), per account (32), per
+  run (4) and in total, plus a per-run request rate. A waiter is released
+  when it times out or its caller disconnects.
+- **Answers:** at most 1 MiB of output plus a small envelope, enforced by
+  size before parsing.
+
+**Replies use a dedicated namespace, not `_INBOX`.** The computer may not
+publish into `_INBOX.*` at all.
+- **To relay**, a hub process publishes `{correlation, ticket, proof,
+  request}` to `computer.<id>.op.v1`. The correlation is random and
+  server-made, and is recorded with `(computer_id, ticket_id, operation_id,
+  request_hash)` and the process's own reply subject.
+- **The daemon answers** on
+  `hub.computer.<id>.reply.v1.<hub-process>.<correlation>`.
+- **That process accepts an answer only if** the subject's computer id (the
+  router lets only computer `<id>` publish under `hub.computer.<id>.`)
+  matches an outstanding correlation for that computer and session, with the
+  same ticket, operation and request hash. It accepts at most one terminal
+  answer, and discards anything else.
+
+**The principal** is a new user type, `computer`, carrying `computer_id`,
+`account_id`, `session_id` (the login challenge id), `computer_epoch` at
+login, and `auth_lease_exp_s`. Its subjects are an **explicit, versioned
+allowlist**, with no wildcards beyond its own namespace:
+- **sub:**
+  - `computer.<id>.op.v1` (relays);
+  - `computer.<id>.control.v1` (floors, extend, end of session, minimum
+    version);
+  - its own inbox `_INBOX.computer-<id>.<session>.>`, for answers to its own
+    requests.
 - **pub:**
-  - `_INBOX.*` for replies, except the reserved agent inboxes. Conat replies
-    go to a fresh random subject per request, so a computer can answer only
-    requests it received.
-  - `hub.computer.<id>.api` for reports: job and operation outcomes, and
-    heartbeats carrying hub time.
-- Nothing else. Every other code path that switches on the user type treats
-  `computer` as unknown, which means denied.
-- The home bay's `computers` service is the only consumer of
-  `hub.computer.<id>.api`, and it takes the computer id from the
-  authenticated principal, never from the message.
+  - `hub.computer.<id>.reply.v1.>`;
+  - `hub.computer.<id>.api.v1` (reports).
+- Nothing else.
 
-**Session tokens by challenge and response** (`/api/v2/computers/session`,
-at the home bay):
-1. `challenge {computer_id}` returns a challenge **signed by the bay key**:
-   computer id, nonce, and an expiry 60 s ahead. Being stateless, it works
-   behind any hub process.
-2. `token {challenge, signature}`: the signature must be by the computer's
-   certified key over (site, computer id, challenge). The computer must not
-   be revoked or tombstoned, and the certificate must not have expired. The
-   answer is a bay-signed session token: computer id, account, key
-   fingerprint, the computer epoch, issued at, and not_after 15 minutes ahead.
-3. **The bearer** `cocalc-computer.<base64url envelope>`: `getUser` verifies
-   the signature (a directory key of this bay), the expiry, and that the
-   computer's **current epoch equals the token's**.
-   - Revoking, or narrowing its network, bumps the epoch, so the next
-     revalidation drops the connection.
-   - The home bay also closes the computer's live connections at once on
-     revoke, as for project-hosts.
-- **The hub time offset** comes from the challenge's issue time, bounded as
-  in "The daemon's checks".
+**The principal audit, before code.** `computer` is added explicitly to
+every discriminator: the `CoCalcUser` union, `getCoCalcUserType` and
+`getCoCalcUserId`, `inboxPrefix`/`jsName`, `ServerInfo.User`,
+`inboundIdentityKey`, and usage accounting and metrics. Every unrelated
+helper rejects it rather than falling through. A **deny-matrix test** runs
+the principal against every existing namespace and wildcard form: accounts,
+projects, hosts, hubs, agent identity and external, inter-bay, project-host,
+file-server, browser sessions, ACP, admin and `_INBOX`.
+
+**Login: no bearer token. The computer's own key, with a single-use
+challenge.**
+1. `POST /api/v2/computers/session/challenge {computer_id}`, at the home
+   bay, returns a challenge.
+   - **The challenge is a DB row**: random id, the computer, an expiry 60 s
+     ahead, and `used_at`.
+   - Its answer: the challenge id, nonce, hub time, and the bay's current
+     key id.
+   - Capped per address, per computer and globally; errors are
+     indistinguishable.
+2. **The conat handshake** carries `{computer_id, challenge_id, signature}`.
+   The signature is by the computer's certified signing key over a canonical,
+   domain-separated transcript:
+   - the kind `computer-login`, the protocol version;
+   - the normalized site and cluster;
+   - the home bay and home epoch;
+   - the computer and account ids;
+   - the certificate hash and the key fingerprint;
+   - audience `conat`, the nonce, issued-at and expiry.
+3. **`getUser` at the home bay** checks, in one transaction:
+   - the challenge is unused and not expired, and **consumes it**;
+   - the signature verifies;
+   - the certificate is the computer's current one and not expired;
+   - the computer is not revoked or tombstoned, and within its deadline;
+   - it records the epoch.
+
+   It sets `auth_lease_exp_s` to the minimum of 15 minutes, the certificate's
+   expiry and the computer's deadline. The router closes the socket at that
+   time, and refuses every publication after it.
+- **What it rules out:**
+  - A captured handshake can't be replayed: its challenge is consumed.
+  - Nothing reusable is ever issued.
+  - The daemon reconnects with a fresh challenge before the lease ends.
+- **Concurrent connections:** at most 2 per computer (keyed by session).
+  More are refused.
+
+**Home pinning.** A computer connects only to its home bay's conat; `getUser`
+refuses a computer whose home is another bay. So every check reads the
+authoritative home database.
+
+**Revocation, on every epoch bump, cluster-wide:**
+- **Revalidation:** the router revalidates computer sockets every 15 s, like
+  API-key sockets. It rechecks the epoch recorded at login, status, deadline
+  and lease against the home database. A timeout or unavailable authority
+  **closes** the socket.
+- **Every computer-epoch bump** schedules a post-commit close: revoke,
+  tombstone, member removal, network pause or close, account pause or
+  revoke-all. It is an outbox row, retried until every router process of the
+  home bay confirms. The 15 s revalidation is the backstop if a close is
+  lost.
+- **Every relay dispatch and every report** rechecks the current epoch and
+  status, so a stale socket can't act in the meantime. It can only sit idle
+  until it is closed.
+
+**Reports are untrusted assertions.** `hub.computer.<id>.api.v1` has strict
+method schemas, payload and response caps, and idempotent state transitions.
+- Every report must correlate to an existing audit row of that computer.
+- The hub derives the account, computer and operation context itself.
+- It never takes a byte count for billing, or any authority, from a report.
+- **Hub time** comes in the hub's *answer*, not a daemon field.
+
+**Tests before shipping:**
+- the deny matrix;
+- a lost close notification (closed by revalidation);
+- a socket on another router process of the home bay;
+- a token lease expiring while idle;
+- a revoke racing admission;
+- narrowing other than revoke;
+- a stale parallel connection trying to answer another session's
+  correlation;
+- a replayed handshake;
+- relay caps, and a caller disconnecting while waiting.
 
 **Questions for the reviewer:**
-- (a) Is relaying through the hub acceptable, rather than opening a direct
-  agent-to-computer path, given that it keeps run identities sealed?
-- (b) Is the stateless bay-signed challenge fine, given that replaying one
-  within 60 s only yields another token for whoever holds the computer's
-  private key?
-- (c) Is epoch equality at revalidation, plus an immediate close on revoke,
+- (a) Login by key with a consumed challenge, rather than a bearer token:
   enough?
+- (b) The 15 s revalidation as the backstop, plus a best-effort outbox close
+  with retries: acceptable, given that dispatch and reports recheck the epoch?
+- (c) The reply namespace with server-made correlations, instead of
+  router-tracked one-shot reply subjects?
 
 ### Supply chain
 
