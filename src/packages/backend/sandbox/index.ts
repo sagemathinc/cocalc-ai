@@ -2766,7 +2766,6 @@ export class SandboxedFilesystem {
       }
       return;
     }
-    const v = await this.resolveWritableSandboxPaths(paths);
     const recursive = !!(
       options != null &&
       typeof options === "object" &&
@@ -2777,6 +2776,16 @@ export class SandboxedFilesystem {
       typeof options === "object" &&
       options.force
     );
+    if (!recursive) {
+      for (const inputPath of paths) {
+        this.assertWritable(inputPath);
+      }
+      await Promise.all(
+        paths.map((inputPath) => this.removeEntry(inputPath, options, force)),
+      );
+      return;
+    }
+    const v = await this.resolveWritableSandboxPaths(paths);
     const f = async (inputPath: string, absPath: string) => {
       if (
         recursive &&
@@ -2799,8 +2808,8 @@ export class SandboxedFilesystem {
         openAt2Target != null &&
         typeof openAt2Target.root.rm === "function"
       ) {
-        // Keep non-recursive rm semantics from Node fs (including directory
-        // error behavior) while using openat2 hardening for recursive removal.
+        // Recursive removal with openat2 hardening (a single entry is
+        // removed by removeEntry).
         try {
           await runNativeFsTask(() =>
             Promise.resolve(
@@ -2818,29 +2827,47 @@ export class SandboxedFilesystem {
           this.throwOpenAt2PathError(inputPath, err);
         }
       }
-      if (!recursive && openAt2Target != null) {
-        // Remove the entry itself: the parent is opened beneath the sandbox
-        // root and the entry is never opened, so a FIFO, socket or device can
-        // be removed (the checked path below opens it to pin its inode, and
-        // refuses special files). A symlink in the parent path (ELOOP) or a
-        // directory (EISDIR) keeps the checked path and its errors.
-        try {
-          openAt2Target.root.unlink(openAt2Target.rel);
-          void this.notifySyncFsLocalDelete(inputPath);
-          return;
-        } catch (err) {
-          const code = this.parseOpenAt2Error(err).code;
-          if (code === "ENOENT" && force) return;
-          if (code !== "ELOOP" && code !== "EISDIR") {
-            this.throwOpenAt2PathError(inputPath, err);
-          }
-        }
-      }
       await this.preflightExistingSource(inputPath, absPath);
       await rm(absPath, options);
       void this.notifySyncFsLocalDelete(inputPath);
     };
     await Promise.all(v.map((absPath, i) => f(paths[i], absPath)));
+  };
+
+  // Remove one entry that is not a directory (a file, FIFO, socket, device or
+  // symlink) the way unlink(2) does: the parent is opened beneath the sandbox
+  // root with no symlinks, and the entry itself is never opened or followed.
+  // So a special file can be removed (the checked path below opens the entry to
+  // pin its inode, and refuses special files), and so can a symlink whose
+  // target is outside the sandbox, without touching that target. A symlink in
+  // the parent path (ELOOP), a directory (EISDIR) or no openat2 keeps the
+  // checked path, which refuses anything that resolves outside the sandbox.
+  private removeEntry = async (
+    path: string,
+    options: RemoveOptions | undefined,
+    force: boolean,
+  ): Promise<void> => {
+    if (typeof path != "string") {
+      throw Error(`path must be a string but is of type ${typeof path}`);
+    }
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
+    if (openAt2Target != null) {
+      try {
+        openAt2Target.root.unlink(openAt2Target.rel);
+        void this.notifySyncFsLocalDelete(path);
+        return;
+      } catch (err) {
+        const code = this.parseOpenAt2Error(err).code;
+        if (code === "ENOENT" && force) return;
+        if (code !== "ELOOP" && code !== "EISDIR") {
+          this.throwOpenAt2PathError(path, err);
+        }
+      }
+    }
+    const absPath = await this.safeAbsPath(path);
+    await this.preflightExistingSource(path, absPath);
+    await rm(absPath, options);
+    void this.notifySyncFsLocalDelete(path);
   };
 
   rmdir = async (path: string, options?: RemoveDirOptions) => {
@@ -2931,7 +2958,10 @@ export class SandboxedFilesystem {
   };
 
   unlink = async (path: string) => {
-    const abs = await this.resolveWritableSandboxPath(path);
+    this.assertWritable(path);
+    // Like removeEntry: unlinkat never follows the entry, so a symlink whose
+    // target is outside the sandbox can be removed. Without openat2 the
+    // checked path below still refuses it.
     const openAt2Target = await this.getOpenAt2PathTarget(path);
     if (openAt2Target != null) {
       try {
@@ -2942,6 +2972,7 @@ export class SandboxedFilesystem {
         this.throwOpenAt2PathError(path, err);
       }
     }
+    const abs = await this.resolveWritableSandboxPath(path);
     await this.preflightExistingSource(path, abs);
     await unlink(abs);
     void this.notifySyncFsLocalDelete(path);

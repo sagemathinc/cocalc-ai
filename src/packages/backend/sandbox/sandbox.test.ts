@@ -1076,11 +1076,33 @@ describeIfLinux("safe mode mutator escape checks", () => {
     );
   });
 
-  it("blocks unlink/rm on symlink that resolves outside sandbox", async () => {
-    await expect(fs.unlink("escape-link")).rejects.toThrow(
+  it("unlink/rm remove a symlink that resolves outside sandbox, not its target", async () => {
+    const root = join(tempDir, "test-safe-mutator-escapes");
+    await symlink(outsideFile(), join(root, "remove-link-1"));
+    await symlink(outsideFile(), join(root, "remove-link-2"));
+    await symlink(outsideDir(), join(root, "remove-dir-link"));
+    await fs.unlink("remove-link-1");
+    await fs.rm("remove-link-2");
+    await fs.rm("remove-dir-link");
+    expect(await readdir(root)).not.toEqual(
+      expect.arrayContaining(["remove-link-1", "remove-link-2"]),
+    );
+    expect(await readdir(root)).not.toContain("remove-dir-link");
+    expect(await readFile(outsideFile(), "utf8")).toBe("s3cr3t");
+    expect((await stat(outsideDir())).isDirectory()).toBe(true);
+  });
+
+  it("refuses unlink/rm of an entry beneath a symlink to outside the sandbox", async () => {
+    await writeFile(join(outsideDir(), "victim.txt"), "keep");
+    await expect(fs.unlink("escape-dir/victim.txt")).rejects.toThrow(
       "outside of sandbox",
     );
-    await expect(fs.rm("escape-link")).rejects.toThrow("outside of sandbox");
+    await expect(fs.rm("escape-dir/victim.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(join(outsideDir(), "victim.txt"), "utf8")).toBe(
+      "keep",
+    );
   });
 
   it("blocks rename/move/copyFile when source resolves outside sandbox", async () => {
