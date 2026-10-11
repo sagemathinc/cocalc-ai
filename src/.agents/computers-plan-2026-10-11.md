@@ -212,18 +212,21 @@ So:
 22. **A computer serves the agents of one agent network.** This replaces
     per-agent switches. *(rev 6)*
     - At pairing, the owner picks one of their **agent networks**
-      (`agent_networks`, account-owned, with a monotonic `generation`). The
+      (`agent_networks`, account-owned). The
       computer serves exactly that network's members, in eligible projects.
     - That network is the agent ceiling. It is deliberately dynamic, like a
       wildcard: adding an agent to the network adds it to every computer
       attached to that network.
     - So adding a member to a network that has computers needs **fresh
       auth**, and the card names the computers affected.
-    - Removing a member is a narrowing: the generation is bumped and a floor
-      pushed.
+    - Removing a member, or pausing or closing the network, is a narrowing:
+      it bumps the **computer epoch** of every computer attached to that
+      network, and the floor is pushed. (`agent_networks.generation` is a
+      uuid, not a counter, so it can't be a floor itself.)
     - Networks and computers are both account-home rows, so membership is
-      checked in the same transaction as the ticket, and tickets carry the
-      network's generation.
+      checked in the same transaction as the ticket.
+    - Only registered members count; external agents don't run in CoCalc
+      projects.
 23. **Eligible projects:** an existing project qualifies while it has **exactly
     one collaborator** (the owner) and isn't public. *(rev 6; replaces "never
     shared")*
@@ -525,10 +528,11 @@ transaction**:
    disconnect, grant-off, policy narrowing and re-pairing take `FOR UPDATE`
    and bump their epoch.
 2. **Checks:**
-   - the run is active and verified (`verifyActiveAgentRun`), at its current
-     **lease generation**;
+   - the run is active and verified (`verifyActiveAgentRun`, which returns
+     the run's `expires_at`);
    - the turn's **account** owns the computer;
-   - the grant is on;
+   - the agent is a registered member of the computer's agent network, and
+     the network is active;
    - the project is **eligible** at a current privacy epoch (see "Privacy
      fence");
    - the computer is connected, not revoked, and within its local deadline
@@ -555,7 +559,7 @@ fields:
     (eligibility, epoch, not-after);
   - `grant_id` and its epoch;
   - the computer's epoch;
-  - `run_id` and its lease generation;
+  - `run_id` and the run's `expires_at` (start-by can't be later);
   - the **policy ceiling hash** and the effective `policy_epoch`.
 - **Proof of possession:** the request's public key.
 - **Time:** issued-at, **start-by** (about 60 s, and never later than the

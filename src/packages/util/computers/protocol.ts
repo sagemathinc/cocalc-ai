@@ -138,15 +138,21 @@ export interface ComputerTicket {
   computer_key: string;
   account_id: string;
   agent_id: string;
+  /**
+   * The agent network this computer serves. Membership is checked by the
+   * home bay when it issues the ticket; removing a member, or pausing or
+   * closing the network, bumps the computer's epoch (agent_networks.generation
+   * is a uuid, not a counter, so it can't be a floor).
+   */
   agent_network_id: string;
-  network_generation: number;
   source_project_id: string;
   attestation: SignedEnvelope<ProjectAttestation>;
   computer_epoch: number;
   policy_epoch: number;
   ceiling_hash: string;
   run_id: string;
-  run_lease_generation: number;
+  /** When the agent run expires; the ticket can't be started after it. */
+  run_expires_at: number;
   /** base64url DER (SPKI) of the requester's per-request proof-of-possession key. */
   pop_key: string;
   issued_at: number;
@@ -341,14 +347,13 @@ export function parseComputerTicket(input: unknown): ComputerTicket {
       "account_id",
       "agent_id",
       "agent_network_id",
-      "network_generation",
       "source_project_id",
       "attestation",
       "computer_epoch",
       "policy_epoch",
       "ceiling_hash",
       "run_id",
-      "run_lease_generation",
+      "run_expires_at",
       "pop_key",
       "issued_at",
       "start_by",
@@ -397,7 +402,6 @@ export function parseComputerTicket(input: unknown): ComputerTicket {
     account_id: uuid(o.account_id, "account_id"),
     agent_id: uuid(o.agent_id, "agent_id"),
     agent_network_id: uuid(o.agent_network_id, "agent_network_id"),
-    network_generation: epoch(o.network_generation, "network_generation"),
     source_project_id: uuid(o.source_project_id, "source_project_id"),
     attestation: parseSignedEnvelope(
       o.attestation,
@@ -408,7 +412,7 @@ export function parseComputerTicket(input: unknown): ComputerTicket {
     policy_epoch: epoch(o.policy_epoch, "policy_epoch"),
     ceiling_hash: hash(o.ceiling_hash, "ceiling_hash"),
     run_id: uuid(o.run_id, "run_id"),
-    run_lease_generation: epoch(o.run_lease_generation, "run_lease_generation"),
+    run_expires_at: time(o.run_expires_at, "run_expires_at"),
     pop_key: base64url(o.pop_key, "pop_key", 4, 200),
     issued_at,
     start_by,
@@ -433,7 +437,6 @@ export interface DaemonState {
   floors: {
     home_epoch: number;
     computer_epoch: number;
-    network_generation: number;
     /** privacy epoch floor per project id */
     projects: Record<string, number>;
   };
@@ -489,9 +492,6 @@ export function ticketRefusals(
   if (ticket.home_epoch < f.home_epoch) refuse("home bay epoch is stale");
   if (ticket.computer_epoch < f.computer_epoch)
     refuse("computer epoch is stale");
-  if (ticket.network_generation < f.network_generation) {
-    refuse("agent network generation is stale");
-  }
 
   // The project's bay says the project is eligible, until not_after.
   const a = ticket.attestation.payload;
@@ -516,6 +516,9 @@ export function ticketRefusals(
   if (timing.hub_now > a.not_after) refuse("project attestation expired");
 
   // Time.
+  if (ticket.start_by > ticket.run_expires_at) {
+    refuse("ticket outlives the agent run");
+  }
   if (ticket.issued_at > timing.hub_now + MAX_FUTURE_SKEW_MS) {
     refuse("ticket is dated in the future");
   }

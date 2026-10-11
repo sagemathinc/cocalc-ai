@@ -56,14 +56,13 @@ function ticketInput(overrides: Record<string, unknown> = {}) {
     account_id: ACCOUNT,
     agent_id: "dddddddd-1111-4222-8333-444444444444",
     agent_network_id: NETWORK,
-    network_generation: 12,
     source_project_id: PROJECT,
     attestation: { kid: FP("p"), payload: attestation(), sig: SIG },
     computer_epoch: 5,
     policy_epoch: 2,
     ceiling_hash: FP("c"),
     run_id: "eeeeeeee-1111-4222-8333-444444444444",
-    run_lease_generation: 1,
+    run_expires_at: T + 3_600_000,
     pop_key: "MCowBQYDK2VwAyEA" + "x".repeat(43),
     issued_at: T + 1_000,
     start_by: T + 20_000,
@@ -87,7 +86,6 @@ function state(overrides: Partial<DaemonState> = {}): DaemonState {
     floors: {
       home_epoch: 3,
       computer_epoch: 5,
-      network_generation: 12,
       projects: { [PROJECT]: 7 },
     },
     ...overrides,
@@ -176,9 +174,9 @@ describe("ticketRefusals", () => {
       /computer epoch/,
     ],
     [
-      "a stale network generation (agent removed)",
-      { network_generation: 11 },
-      /network generation/,
+      "a ticket outliving the agent run",
+      { run_expires_at: T + 10_000 },
+      /outlives the agent run/,
     ],
   ])("refuses %s", (_label, overrides, reason) => {
     expect(ticketRefusals(ticket(overrides), state(), now).join("; ")).toMatch(
