@@ -23,6 +23,7 @@ import {
 } from "../../core/shared-browser/service";
 import {
   normalizeUrl,
+  NOT_SEEN,
   type SharedBrowserState,
 } from "../../core/shared-browser/server";
 import type { ProjectCommandDeps } from "../project";
@@ -463,6 +464,30 @@ export function registerSharedBrowserCommands(
       );
     });
 
+  // While the human drives, agents read the page through the service, and
+  // only if the human lets them see it ("Let the agent see"); otherwise this
+  // says so at once (reading waits for nobody).  null: the agent drives.
+  const lookWhileHumanDrives = async (
+    ctx: any,
+    project: string | undefined,
+    browser: string | undefined,
+    query: string,
+  ): Promise<any | null> => {
+    const { status } = await running(ctx, project, browser);
+    const state =
+      status.state === "running" ? await serviceState(status.port) : null;
+    if (state?.driver !== "human" || state.runsOn === "computer") return null;
+    if (!state.agentCanSee) throw Error(NOT_SEEN);
+    const res = await fetch(
+      `http://127.0.0.1:${status.port}/api/look?${query}`,
+    );
+    const body: any = await res.json().catch(() => ({}));
+    // Handed back meanwhile: read as usual.
+    if (res.status === 409) return null;
+    if (!res.ok) throw Error(body?.error ?? `HTTP ${res.status}`);
+    return body;
+  };
+
   pageCommand("text", "print the current tab's URL, title and visible text")
     .option(
       "--max <chars>",
@@ -470,11 +495,18 @@ export function registerSharedBrowserCommands(
       "20000",
     )
     .action(async (opts: any, command: Command) => {
-      await withContext(command, "project browser text", (ctx: any) =>
-        onPage(ctx, opts.project, opts.browser, (page) =>
+      await withContext(command, "project browser text", async (ctx: any) => {
+        const seen = await lookWhileHumanDrives(
+          ctx,
+          opts.project,
+          opts.browser,
+          `what=text&max=${Number(opts.max) || 20000}`,
+        );
+        if (seen) return seen;
+        return await onPage(ctx, opts.project, opts.browser, (page) =>
           page.text(Number(opts.max)),
-        ),
-      );
+        );
+      });
     });
 
   pageCommand(
@@ -549,6 +581,16 @@ export function registerSharedBrowserCommands(
           const out = resolve(
             opts.out ?? join(tmpdir(), `cocalc-browser-${Date.now()}.png`),
           );
+          const seen = await lookWhileHumanDrives(
+            ctx,
+            opts.project,
+            opts.browser,
+            `what=screenshot${opts.fullPage ? "&full=1" : ""}`,
+          );
+          if (seen) {
+            await writeFile(out, Buffer.from(seen.png, "base64"));
+            return { path: out, url: seen.url, title: seen.title };
+          }
           return await onPage(ctx, opts.project, opts.browser, async (page) => {
             await writeFile(out, await page.screenshot(!!opts.fullPage));
             return { path: out, ...(await page.location()) };

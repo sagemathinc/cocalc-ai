@@ -98,6 +98,7 @@ function browserState(
     zoom: 1,
     network: null,
     downloads: [],
+    agentCanSee: false,
     ...overrides,
   };
 }
@@ -149,7 +150,9 @@ describe("SharedBrowserViewer", () => {
     ).toBeTruthy();
     show(browserState({ driver: "human" }));
     expect(
-      screen.getByText("You are driving. The agent waits until you hand back."),
+      screen.getByText(
+        "You are driving. The agent cannot see the page, and waits until you hand back.",
+      ),
     ).toBeTruthy();
     fireEvent.click(screen.getByText("Hand back to agent"));
     expect(connection.sent).toContainEqual({ type: "handback" });
@@ -311,5 +314,28 @@ describe("SharedBrowserViewer", () => {
       path: "/home/user/Downloads/paper.pdf",
       foreground: true,
     });
+  });
+
+  it("lets the human let the agent see while driving, and says so", () => {
+    const { connection, show } = open();
+    // Not driving: no such switch.
+    show(browserState());
+    expect(screen.queryByText("Let the agent see")).toBeNull();
+    show(browserState({ driver: "human" }));
+    expect(
+      screen.getByText(
+        "You are driving. The agent cannot see the page, and waits until you hand back.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByText("Let the agent see"));
+    expect(connection.sent).toContainEqual({ type: "agentSee", value: true });
+    show(browserState({ driver: "human", agentCanSee: true }));
+    expect(
+      screen.getByText(
+        "You are driving. The agent can see the page, and waits to act until you hand back.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByText("Hide from the agent"));
+    expect(connection.sent).toContainEqual({ type: "agentSee", value: false });
   });
 });

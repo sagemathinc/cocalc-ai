@@ -51,6 +51,9 @@ export interface SharedBrowserState {
   agents: number;
   // Agent commands are waiting for the human to hand back.
   agentWaiting: boolean;
+  // While the human drives: whether they let agents see the page (read it,
+  // take screenshots), never act on it.  Off at every change of driver.
+  agentCanSee: boolean;
   cdp: string;
   viewers: number;
   // Whether a browser is attached; "waiting" while a .browser file's
@@ -118,6 +121,8 @@ export type ViewerMessage =
   | { type: "zoom"; zoom: number }
   | { type: "takeover" }
   | { type: "handback" }
+  // While driving: let agents see the page (read only), or stop.
+  | { type: "agentSee"; value: boolean }
   | { type: "runsOn"; value: SharedBrowserRunsOn }
   | { type: "network"; value: SharedBrowserNetwork }
   // The rest act on the page, and only while the human drives.

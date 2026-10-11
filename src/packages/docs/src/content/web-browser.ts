@@ -67,7 +67,13 @@ The bar under the address bar shows who is driving:
 - **The agent is driving**: your clicks and typing are ignored, and the
   browser says so if you try. Click **Take over** to drive.
 - **You are driving**: the agent's actions wait until you click **Hand back to
-  agent**. If the agent is waiting for you, the bar tells you.
+  agent**. If the agent is waiting for you, the bar tells you. The agent
+  cannot see the page while you drive (you may be entering a password or a
+  code), unless you click **Let the agent see**: then it can read the page
+  and take screenshots, for example to answer a question about what you are
+  looking at, but still cannot click or type. Click **Hide from the agent**
+  to stop; handing back ends it too, and the next time you take over the
+  agent cannot see until you say so again.
 - An agent can ask you to take over, for example to sign in. Its request
   appears in the bar; when you hand back, the agent continues.
 

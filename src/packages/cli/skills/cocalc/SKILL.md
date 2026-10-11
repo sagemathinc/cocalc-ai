@@ -697,6 +697,10 @@ the browser or its last page.
   protocol housekeeping, e.g. attaching to a tab). Do not treat the wait as a
   hang, and never work around it, e.g. through another connection to the
   browser: take-over is a cooperation rule, not a barrier.
+- While the human drives you cannot see the page unless they click "Let the
+  agent see": then `text` and `screenshot` work (read only; you still cannot
+  act). Otherwise those two fail at once and say so: ask the human to click
+  "Let the agent see" or to hand back; do not retry in a loop.
 - For logins, CAPTCHAs, payments or anything needing the human's judgment or
   credentials, ask them to take over:
   `cocalc project browser ask-human --message "Please log in" --wait`.

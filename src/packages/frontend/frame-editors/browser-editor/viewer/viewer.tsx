@@ -374,10 +374,14 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
       driverButton =
         state.driver === "human" ? "Hand back to agent" : "Pause the agent";
     } else if (driving) {
-      driverMessage = state.agentWaiting
-        ? "You are driving. The agent is waiting to use the browser."
-        : "You are driving." +
-          (state.agents ? " The agent waits until you hand back." : "");
+      driverMessage = state.agentCanSee
+        ? "You are driving. The agent can see the page, and waits to act until you hand back."
+        : state.agentWaiting
+          ? "You are driving. The agent is waiting to use the browser."
+          : "You are driving." +
+            (state.agents
+              ? " The agent cannot see the page, and waits until you hand back."
+              : "");
       driverButton = "Hand back to agent";
     } else {
       driverMessage = state.ask
@@ -576,6 +580,22 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
       </div>
       <div className={`cc-sbv-driver ${driverClass}`}>
         <span className="cc-sbv-msg">{driverMessage}</span>
+        {state && driving && !isPreview && (
+          <button
+            className="cc-sbv-see"
+            aria-pressed={state.agentCanSee}
+            title={
+              state.agentCanSee
+                ? "Stop letting agents read this page"
+                : "Let agents read this page and take screenshots while you drive (they cannot click or type); until you hand back"
+            }
+            onClick={() =>
+              send({ type: "agentSee", value: !state.agentCanSee })
+            }
+          >
+            {state.agentCanSee ? "Hide from the agent" : "Let the agent see"}
+          </button>
+        )}
         {state && (
           <button
             onClick={() =>

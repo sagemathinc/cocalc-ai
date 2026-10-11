@@ -175,8 +175,43 @@ export const PASSES_WHILE_HUMAN_DRIVES: ReadonlySet<string> = new Set([
   "Page.setLifecycleEventsEnabled",
 ]);
 
-export function heldWhileHumanDrives(method: unknown): boolean {
-  return typeof method !== "string" || !PASSES_WHILE_HUMAN_DRIVES.has(method);
+// What else passes while the human drives once they let agents see the page
+// ("Let the agent see"): reading it, never acting on it.  No scripts
+// (Runtime.evaluate can do anything), no input, no navigation.  Fail closed
+// as above.
+export const READS_WHEN_AGENTS_MAY_SEE: ReadonlySet<string> = new Set([
+  "Page.captureScreenshot",
+  "Page.getLayoutMetrics",
+  "Page.getNavigationHistory",
+  "Accessibility.enable",
+  "Accessibility.disable",
+  "Accessibility.getFullAXTree",
+  "Accessibility.getPartialAXTree",
+  "Accessibility.getRootAXNode",
+  "Accessibility.getChildAXNodes",
+  "Accessibility.queryAXTree",
+  "DOM.enable",
+  "DOM.disable",
+  "DOM.getDocument",
+  "DOM.querySelector",
+  "DOM.querySelectorAll",
+  "DOM.describeNode",
+  "DOM.getOuterHTML",
+  "DOM.getBoxModel",
+  "DOM.getAttributes",
+  "DOMSnapshot.captureSnapshot",
+]);
+
+export const NOT_SEEN =
+  'the human is driving this browser and has not let agents see it: ask them to click "Let the agent see" (read only), or wait until they hand it back';
+
+export function heldWhileHumanDrives(
+  method: unknown,
+  agentsMaySee = false,
+): boolean {
+  if (typeof method !== "string") return true;
+  if (PASSES_WHILE_HUMAN_DRIVES.has(method)) return false;
+  return !(agentsMaySee && READS_WHEN_AGENTS_MAY_SEE.has(method));
 }
 
 export class SharedBrowserServer {
@@ -200,7 +235,11 @@ export class SharedBrowserServer {
   // that reloads comes back to its own tab.
   private viewTabs = new Map<string, string>();
   private agentSockets = new Set<WebSocket>();
-  private held: Array<{ client: WebSocket; deliver: () => void }> = [];
+  private held: Array<{
+    client: WebSocket;
+    method: unknown;
+    deliver: () => void;
+  }> = [];
   // A clipped screenshot (Playwright's) leaves a zoomed page with its input
   // scaled twice until reapplyZoom is done: clicks wait for it, in order.
   private zoomFix: Promise<void> = Promise.resolve();
@@ -234,6 +273,7 @@ export class SharedBrowserServer {
       fileChooser: null,
       agents: 0,
       agentWaiting: false,
+      agentCanSee: false,
       cdp: "",
       viewers: 0,
       connection: "waiting",
@@ -461,6 +501,8 @@ export class SharedBrowserServer {
   setDriver(driver: Driver): void {
     if (this.state.driver === driver) return;
     this.state.driver = driver;
+    // The human lets agents see for one take-over at a time.
+    this.state.agentCanSee = false;
     if (driver === "agent") {
       this.state.ask = null;
       for (const page of this.pages.values()) {
@@ -474,6 +516,79 @@ export class SharedBrowserServer {
     }
     for (const page of this.pages.values()) void this.applyDriverToPage(page);
     this.broadcastState();
+  }
+
+  /**
+   * The page the human is on, read for an agent while the human drives, if
+   * they let agents see it ("Let the agent see"): its text, or a screenshot.
+   * Never an action.  (While the agent drives, it reads over CDP.)
+   */
+  async look(
+    what: "text" | "screenshot",
+    {
+      max = 20_000,
+      fullPage = false,
+    }: { max?: number; fullPage?: boolean } = {},
+  ): Promise<{
+    url: string;
+    title: string;
+    text?: string;
+    truncated?: boolean;
+    length?: number;
+    png?: string;
+  }> {
+    const refuse = (status: number, message: string) =>
+      Object.assign(Error(message), { status });
+    if (this.state.driver !== "human")
+      throw refuse(409, "the agent drives: read the page as usual");
+    if (!this.state.agentCanSee) throw refuse(403, NOT_SEEN);
+    const tab = this.state.active;
+    if (!this.hasTab(tab) || !this.attached) throw refuse(409, "no page");
+    const page = this.pageFor(tab);
+    await this.attach(page);
+    const session = page.session!;
+    const { result } = await this.cdp.send(
+      "Runtime.evaluate",
+      {
+        expression:
+          "({url: location.href, title: document.title, text: document.body ? document.body.innerText : ''})",
+        returnByValue: true,
+      },
+      session,
+    );
+    const { url = "", title = "", text = "" } = result?.value ?? {};
+    if (what === "text") {
+      const truncated = text.length > max;
+      return {
+        url,
+        title,
+        text: truncated ? text.slice(0, max) : text,
+        ...(truncated ? { truncated: true, length: text.length } : {}),
+      };
+    }
+    let clip: object | undefined;
+    if (fullPage) {
+      const { cssContentSize } = await this.cdp.send(
+        "Page.getLayoutMetrics",
+        {},
+        session,
+      );
+      clip = {
+        x: 0,
+        y: 0,
+        width: Math.ceil(cssContentSize.width),
+        height: Math.min(Math.ceil(cssContentSize.height), 16_384),
+        scale: 1,
+      };
+    }
+    const { data } = await this.cdp.send(
+      "Page.captureScreenshot",
+      { format: "png", ...(clip ? { clip, captureBeyondViewport: true } : {}) },
+      session,
+    );
+    // A clipped screenshot leaves a zoomed page at pixel ratio 1.
+    if (clip && page.zoom !== 1) await this.reapplyZoom();
+    return { url, title, png: data };
   }
 
   ask(message: string): void {
@@ -1159,6 +1274,21 @@ export class SharedBrowserServer {
         return this.setDriver("human");
       case "handback":
         return this.setDriver("agent");
+      case "agentSee": {
+        if (this.state.driver !== "human") return;
+        this.state.agentCanSee = msg.value === true;
+        // Reads that waited go through now; the rest waits for hand-back.
+        if (this.state.agentCanSee) {
+          const reads = this.held.filter(
+            ({ method }) => !heldWhileHumanDrives(method, true),
+          );
+          this.held = this.held.filter((entry) => !reads.includes(entry));
+          this.state.agentWaiting = this.held.length > 0;
+          for (const { deliver } of reads) deliver();
+        }
+        this.broadcastState();
+        return;
+      }
       case "runsOn":
         if (
           this.state.runsOn &&
@@ -1376,6 +1506,19 @@ export class SharedBrowserServer {
     // Paths are matched by suffix: proxies may or may not strip their prefix.
     if (path.endsWith("/api/state") && req.method === "GET") {
       return json(res, 200, this.getState());
+    }
+    // The CLI's text and screenshot while the human drives (see look).
+    if (path.endsWith("/api/look") && req.method === "GET") {
+      const params = new URL(req.url ?? "/", "http://x").searchParams;
+      this.look(params.get("what") === "screenshot" ? "screenshot" : "text", {
+        max: Number(params.get("max")) || undefined,
+        fullPage: params.get("full") === "1",
+      })
+        .then((result) => json(res, 200, result))
+        .catch((err) =>
+          json(res, err?.status ?? 400, { error: `${err?.message ?? err}` }),
+        );
+      return;
     }
     if (
       req.method === "POST" &&
@@ -1634,8 +1777,11 @@ export class SharedBrowserServer {
     client: WebSocket,
   ): void {
     const method = parseMessage(data.toString())?.method;
-    if (this.state.driver === "human" && heldWhileHumanDrives(method)) {
-      this.held.push({ client, deliver: () => deliver(data) });
+    if (
+      this.state.driver === "human" &&
+      heldWhileHumanDrives(method, this.state.agentCanSee)
+    ) {
+      this.held.push({ client, method, deliver: () => deliver(data) });
       if (!this.state.agentWaiting) {
         this.state.agentWaiting = true;
         this.broadcastState();

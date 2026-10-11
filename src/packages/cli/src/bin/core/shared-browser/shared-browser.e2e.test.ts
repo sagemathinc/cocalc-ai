@@ -741,6 +741,113 @@ test(
 );
 
 test(
+  "the human lets the agent see while driving: reads work, actions still wait; hand-back ends it",
+  needsChrome,
+  async () => {
+    const WebSocket = require("ws");
+    const shared = await sharedBrowser();
+    const look = async (what: string) => {
+      const res = await fetch(
+        `http://127.0.0.1:${shared.port}/api/look?what=${what}`,
+      );
+      return { status: res.status, body: (await res.json()) as any };
+    };
+    // The agent's own CDP connection (as Playwright's would be).
+    const version = await (
+      await fetch(`http://127.0.0.1:${shared.cdpPort}/json/version`)
+    ).json();
+    const ws = new WebSocket(version.webSocketDebuggerUrl);
+    await new Promise((r) => ws.once("open", r));
+    let id = 0;
+    const replies = new Map<number, any>();
+    ws.on("message", (data: any) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.id) replies.set(msg.id, msg);
+    });
+    const send = (method: string, params: object = {}, sessionId?: string) => {
+      const i = ++id;
+      ws.send(JSON.stringify({ id: i, method, params, sessionId }));
+      return i;
+    };
+    try {
+      const viewer = new TestViewer(shared.server);
+      await viewer.resize(800, 500);
+      const tab = viewer.state!.active!;
+      const attach = send("Target.attachToTarget", {
+        targetId: tab,
+        flatten: true,
+      });
+      await until(() => replies.get(attach), Boolean, "attached");
+      const session = replies.get(attach).result.sessionId;
+      const go = send(
+        "Page.navigate",
+        { url: "data:text/html,<title>seen</title><p>the page text</p>" },
+        session,
+      );
+      await until(() => replies.get(go), Boolean, "navigated");
+      await sleep(500);
+
+      // The agent drives: the service leaves reading to CDP.
+      assert.equal((await look("text")).status, 409);
+
+      // The human drives and has not let agents see: refused at once.
+      await viewer.takeOver();
+      const refused = await look("text");
+      assert.equal(refused.status, 403);
+      assert.match(refused.body.error, /Let the agent see/);
+      assert.equal(viewer.state!.agentCanSee, false);
+      const heldShot = send("Page.captureScreenshot", {}, session);
+      await sleep(500);
+      assert.equal(replies.has(heldShot), false, "a screenshot waits");
+
+      // Let the agent see: the page's text and a screenshot.
+      await viewer.say({ type: "agentSee", value: true });
+      await until(
+        () => viewer.state?.agentCanSee,
+        (v) => v === true,
+        "the agent can see",
+      );
+      const seen = await look("text");
+      assert.equal(seen.status, 200);
+      assert.equal(seen.body.title, "seen");
+      assert.match(seen.body.text, /the page text/);
+      const shot = await look("screenshot");
+      assert.equal(shot.status, 200);
+      assert.equal(
+        Buffer.from(shot.body.png, "base64").subarray(1, 4).toString(),
+        "PNG",
+      );
+      // The screenshot that waited went through.
+      await until(() => replies.get(heldShot), Boolean, "the held screenshot");
+      // The agent's own CDP: a screenshot passes, a script still waits.
+      const passedShot = send("Page.captureScreenshot", {}, session);
+      await until(() => replies.get(passedShot), Boolean, "the screenshot");
+      assert.ok(replies.get(passedShot).result?.data);
+      const script = send(
+        "Runtime.evaluate",
+        { expression: "document.title = 'changed'" },
+        session,
+      );
+      await sleep(500);
+      assert.equal(replies.has(script), false, "a script waits");
+
+      // Hand back: seeing ends, and what waited goes through.
+      await viewer.handBack();
+      assert.equal(viewer.state!.agentCanSee, false);
+      await until(() => replies.get(script), Boolean, "the script ran");
+      await viewer.takeOver();
+      assert.equal(viewer.state!.agentCanSee, false, "off again next time");
+      assert.equal((await look("text")).status, 403);
+      await viewer.handBack();
+      viewer.close();
+    } finally {
+      ws.close();
+      await shared.close();
+    }
+  },
+);
+
+test(
   "take-over is fail closed: tunneled, cookie, DOM and script commands and tab HTTP endpoints wait while the human drives",
   {
     skip: executable ? false : "no Chrome/Chromium installed",

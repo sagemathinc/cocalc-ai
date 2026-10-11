@@ -70,6 +70,35 @@ test("while the human drives, everything waits but housekeeping that acts on no 
     assert.ok(!heldWhileHumanDrives(method), method);
 });
 
+test("when the human lets agents see, reads pass and everything else still waits", () => {
+  for (const method of [
+    "Page.captureScreenshot",
+    "Accessibility.getFullAXTree",
+    "DOM.getDocument",
+    "DOM.getOuterHTML",
+    "DOMSnapshot.captureSnapshot",
+  ]) {
+    assert.ok(heldWhileHumanDrives(method), `${method} without leave`);
+    assert.ok(!heldWhileHumanDrives(method, true), method);
+  }
+  for (const method of [
+    "Runtime.evaluate",
+    "Runtime.callFunctionOn",
+    "Input.dispatchMouseEvent",
+    "Input.insertText",
+    "Page.navigate",
+    "DOM.setOuterHTML",
+    "DOM.setAttributeValue",
+    "DOM.focus",
+    "Network.getCookies",
+    "Storage.getCookies",
+    "Target.sendMessageToTarget",
+    "Some.futureMethod",
+    undefined,
+  ])
+    assert.ok(heldWhileHumanDrives(method, true), String(method));
+});
+
 test("the address bar accepts URLs, hosts and searches but not other schemes", () => {
   assert.equal(normalizeUrl("https://cocalc.ai/x"), "https://cocalc.ai/x");
   assert.equal(normalizeUrl(" cocalc.ai "), "https://cocalc.ai");

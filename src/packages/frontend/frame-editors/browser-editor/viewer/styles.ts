@@ -37,6 +37,8 @@ const CSS = `
 .cc-sbv-driver.cc-sbv-agent button { background:#fff; color:var(--accent); }
 .cc-sbv-driver .cc-sbv-msg { flex:1; min-width:0; }
 .cc-sbv-driver button { border:none; border-radius:4px; padding:4px 12px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
+.cc-sbv-driver button.cc-sbv-see { background:transparent; color:inherit; border:1px solid var(--line); font-weight:500; }
+.cc-sbv-driver button.cc-sbv-see[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
 .cc-sbv-stage { position:relative; flex:1; min-height:0; background:var(--bg); }
 .cc-sbv-screen { position:absolute; inset:0; width:100%; height:100%; outline:none; opacity:0; transition:opacity .3s ease; }
 .cc-sbv-screen.cc-sbv-shown { opacity:1; }
