@@ -6,6 +6,15 @@ and sensors) and a survey of similar products (at the end). "Decisions" records
 William's answers. Stage 1 must be designed so that later stages build on it
 without redoing it; see "Rules stage 1 must get right".
 
+Revision 2 (same day) folds in @cocalc-lite4's review of revision 1:
+- shared projects (open question 1);
+- atomic tickets, revision floors, persisted nonces, clock offset and key
+  rotation;
+- a grant table of its own;
+- one-shot exit watchers instead of a per-computer watcher;
+- job-scoped credential leases;
+- multi-bay routing, rehoming and account deletion.
+
 ## The idea
 
 Run one line on any Mac or Linux machine, approve a card in CoCalc, and the
@@ -105,6 +114,15 @@ run containers.** A connected computer can.
     `assertLiveTurn`/`assertTrustedSource` (`cocalc-connector-turn.ts`).
   - The records live at the account's home bay (`assertAccountHome`), and
     connections are stored in `server/external-credentials/store`.
+  - **The unique key is `(account_id, agent_id, source_project_id,
+    connector)`** (`util/db-schema/agent-messaging.ts`), with one
+    `connection_id` that must be an external credential. A
+    `connector = "computer"` row would allow only *one* computer per agent,
+    and the save path (`saveCliConnectorGrant`, `isCliConnector`) rejects it,
+    so computers get their own grant table (below).
+  - `table-ownership.ts` marks these tables account-home and "requires
+    explicit migration before these tables are portable". The new tables are
+    in the same position.
 - **Sensors** (`conat/agents/sensors.ts`, `server/agents/sensor-*.ts`,
   `project-host/sensors.ts`, docs `ai/codex-automation`, `cli/scheduled-agents`).
   - Watchers are typed (`SensorWatch`: `ci | file | at | exit`) and run
@@ -160,8 +178,15 @@ run containers.** A connected computer can.
 - **Request:** an agent's (or the owner's) proposal to connect a computer with
   given options, shown as a card. Once approved, it yields a single-use
   **enrollment code** and the line to paste.
-- **Grant:** a per-agent switch, in `agent_connector_grants` with
-  `connector = "computer"` and `connection_id = computer id`.
+- **Grant:** a per-agent switch for one computer, in its own table
+  `agent_computer_grants`.
+  - Unique on `(account_id, agent_id, source_project_id, computer_id)`, so an
+    agent can use several computers.
+  - Its own save path and cap. It doesn't count against the connector-grant
+    limit.
+  - **Fresh auth for every enable,** as connectors (`authorizeConfigChange`);
+    disabling needs none.
+  - The Connectors menu shows connector and computer grants together.
 - **Ticket:** a hub-signed, short-lived permission for *one* operation (one
   exec, one job, one transfer). The daemon checks it. See "Architecture".
 - **Job:** a detached command (`run`) the daemon owns.
@@ -267,7 +292,7 @@ cocalc computer request --name … [--hours N | --no-limit] [--container IMAGE] 
   - Output is capped (1 MB returned); the full output stays in a file on the
     machine, whose path is returned.
 - **`run`:** starts a job and returns at once.
-  - `--wake` sets the computer watcher (see Sensors).
+  - `--wake` sets a one-shot exit watcher for that job (see Sensors).
   - `--exclusive` queues until no other CoCalc job runs there; other `run`s
     then queue behind it. Short `exec`s still run.
 - **Working directory:** each computer has a default one: `~/cocalc` on the
@@ -297,28 +322,55 @@ cocalc computer request --name … [--hours N | --no-limit] [--container IMAGE] 
 
 ### Control path: the hub authorizes, the daemon verifies
 
-The agent's CLI asks the hub for each operation, with its runtime identity (as
-`cocalc sensor` and `cocalc agent send` do). The hub (the **account's home
-bay**, like connectors) checks, in one statement with the revision:
-- the run is active and verified (`verifyActiveAgentRun`);
-- the turn's **account** owns the computer, so a collaborator who starts your
-  agent in a shared project gets nothing;
+**The hub's check.** The agent's CLI asks the hub for each operation, with its
+runtime identity (as `cocalc sensor` and `cocalc agent send` do). The hub (the
+**account's home bay**, like connectors) checks, in **one transaction that also
+inserts the audit row**, holding `FOR SHARE` on the grant and computer rows:
+- the run is active and verified (`verifyActiveAgentRun`), and the request is
+  bound to the run's **lease**, not just the bearer;
+- the turn's **account** owns the computer;
+- the project still meets the shared-project rule (open question 1). The
+  collaborator set is rechecked on every ticket, since collaborators can be
+  added later;
 - the agent's grant is on;
-- the request hasn't expired and the computer isn't revoked;
-- the operation is within the options (mounts, GPU, sizes).
+- the time limit hasn't passed and the computer isn't revoked;
+- the operation is within the options (mounts, GPU, sizes);
+- the run and the computer are within their **ticket rate limits**, since
+  agents can loop.
 
-Then the hub writes the audit row and returns a **ticket**:
-- the operation, computer, agent, run and thread;
+Revoking, disconnecting and turning a grant off take `FOR UPDATE` and bump the
+**revision**, so a revoke can never commit between a check and its signature.
+This is the lesson of the sensor fix #1027: the condition has to be part of the
+write.
+
+**The ticket** (versioned schema) carries:
+- the operation kind and typed parameters;
+- the computer, agent, run and thread;
+- the **grant and computer revisions**;
 - limits (max bytes, timeout);
-- an expiry of a minute or so;
-- a hub signature.
+- a nonce;
+- the hub's issue time and an expiry of about a minute;
+- the **signing key id** and the hub's signature.
 
 The CLI sends the ticket straight to the daemon through the conat router.
 
-The daemon verifies the signature with the hub key it received at enrollment,
-checks the ticket's expiry and its own time limit, performs the operation, and
-reports the outcome to the hub (exit code, duration, bytes), which completes
-the audit row.
+**The daemon's checks:**
+- **Signature:** against the hub's current key set, which is pushed signed and
+  can be rotated, so tickets carry a key id.
+- **Expiry against hub time:** it measures its clock offset from the hub when
+  it connects and keeps it current, because laptop clocks drift.
+- **Revisions:** it rejects tickets older than the **revision floor**. When
+  something is revoked or turned off, the hub pushes a signed new floor, which
+  closes the one-minute window whenever the daemon is online.
+- **Nonces:**
+  - Kept on disk until their ticket expires, or else the daemon rejects any
+    ticket issued before it started.
+  - It rate-limits cheaply *before* verifying signatures, because any
+    authenticated principal can send to `computer.<id>.>`.
+- **Its own time limit.**
+
+Then it performs the operation and reports the outcome to the hub (exit code,
+duration, bytes), which completes the audit row.
 
 **Why tickets rather than routing everything through the hub:**
 - **Hub memory and throughput stay flat.** Transfers and output never pass
@@ -326,8 +378,21 @@ the audit row.
 - **The same mechanism covers later stages:** kernels, port forwarding and
   provider-created machines. The hub stays the only place that decides.
 
-The router only requires an authenticated connection. The daemon rejects
-anything without a valid ticket.
+### Multi-bay
+
+- **Where things live:** the daemon connects to the **account's home bay**,
+  where the computer, grants, jobs mirror and audit live. The agent's runtime
+  and project may be on another bay. Routing `computer.*` across bays is new.
+  - Requests from the agent's CLI go to the home bay the way connector calls
+    do (`cocalc-connector-routing.ts`).
+  - The daemon's subjects need inter-bay routing.
+  - The existing tests that assert the old inter-bay forwarding must be
+    updated together (see the edge-routing checklist).
+- **Rehoming an account:** the `account_computer*` and `agent_computer_grants`
+  tables need an explicit migration (as `agent_connector_grants` does).
+  Until that exists, rehoming is **blocked while the account has computers**.
+- **Account deletion:** revokes every computer (pushing the revocation to
+  online daemons) and purges grants, requests, the job mirror and audit rows.
 
 ### The daemon's identity and credentials
 
@@ -343,9 +408,13 @@ anything without a valid ticket.
   CoCalc.
 - **Never in a project's home,** where snapshots, backups and copies would
   include it.
-- **conat:** the daemon authenticates as a new principal type, "computer". It
-  may serve only `computer.<id>.>` and publish its reports to the hub's
-  computer service.
+- **conat:** the daemon authenticates as a new principal type, "computer".
+  - conat authenticates with bearer tokens today, so the daemon gets a
+    **short-lived conat token through challenge and response** with its key
+    pair.
+  - It may serve only `computer.<id>.>`, reply into requesters' `_INBOX` (the
+    precedent is project-hosts replying to accounts), and publish its reports
+    to the hub's computer service.
 
 ### Time limits fail closed
 
@@ -429,17 +498,29 @@ anything without a valid ticket.
 
 ### Sensors
 
-- **A new watcher type** `{type: "computer", computer_id, job_ids?}`: "wake me
-  when any (or these) of my jobs on this computer ends".
-  - It is **one watcher per computer**, not per job, because of the limit of 5
-    watchers. Sensors already merge wakes, so one wake can say "3 jobs
-    finished" with each job's exit code and the end of its log.
-- **Push, poll as fallback:** when a job ends, the daemon reports to the hub,
-  which marks the watcher due and calls `kickSensorScheduler()`. The usual
-  poll stays as a fallback.
-- **Other watchers:**
-  - "wake me when this computer is back online" (laptops);
-  - "the time limit ended", which wakes once.
+Watchers stay **one-shot**: since #1027 a watcher with nothing scheduled is
+`done`, and pause and resume are refused. So instead of a watcher per computer
+that fires for every job, the existing exit watcher learns about computers:
+
+- **The command:** `cocalc sensor watch exit --computer @research-1 -- python
+  sweep.py` starts the job on the computer and wakes the agent **once**, when
+  it ends, with the exit code and the end of its log. `cocalc computer run
+  --wake …` is the same thing.
+- **The limit:** `maxWatchersPerAccount` (5 today) goes up for these. With push
+  (below), an idle watcher costs almost nothing.
+- **Push, poll as fallback.** Sensors live on the **project's** bay;
+  computers live on the **account's home** bay, so `kickSensorScheduler()`
+  can't reach across.
+  - When a job ends, the daemon reports to the home bay.
+  - The home bay makes an inter-bay call that sets the watcher's
+    `next_run_at = now()` on the project's bay and kicks the scheduler there.
+  - The watcher's check reads the job mirror back from the home bay.
+  - If the push is lost, the normal poll still fires it.
+- **Cost:** wakes count against the account's daily wake budget (100–500 by
+  membership since #1005), and wakes held while one is pending are combined,
+  so a burst of jobs ending costs little.
+- **Other one-shot watchers:** "this computer is back online" (laptops) and
+  "the time limit ended".
 - **Scripts** may list `computer` in `uses`, for example "wake me when the GPU
   is free".
 
@@ -447,14 +528,21 @@ anything without a valid ticket.
 
 - **`--with github` / `--with cloudflare`** on `exec`/`run` (only connectors
   the agent has).
-- **Token issue:** the hub issues the same short-lived tokens it issues for a
-  turn (`issueCliConnectorTurnTokens`), bound to that job.
-- **Delivery:** the daemon passes them to the process in its environment
-  (`GH_TOKEN`, …) or through git's credential helper for that job only. It
-  never writes them to disk.
-- **Expiry:** they expire with the job or the turn, whichever ends first.
-  Long jobs get a renewing lease, as sensor runs do
-  (`sensor-credentials.ts`).
+- **Token issue:** for a job, the hub issues tokens under a **job lease**
+  modeled on sensor runs (`sensor-credentials.ts`: renew and release).
+  - It renews only while the daemon reports the job alive, the grant is on and
+    the computer isn't revoked, up to a cap (24 h).
+  - An `exec` within a turn uses the turn's tokens.
+  - **One token per job or turn,** not one per command, so a looping agent
+    can't exhaust the provider request budget (`admitProviderRequest`).
+- **What "expires" really means:** the token is *revoked* when the job ends.
+  If that revocation is lost (for example while the daemon is offline), the
+  token lives until the provider's own expiry, which we can't shorten (GitHub
+  App user tokens: 8 h). The docs say so.
+- **Delivery:** git's credential helper or a file descriptor for that job, in
+  preference to environment variables. A same-user process can read another
+  process's environment through `/proc`, which matters for direct (not
+  container) jobs on a shared server account. Never written to disk.
 - **Output masking:** token values are replaced with `***` in the output the
   agent sees.
 
@@ -487,6 +575,12 @@ anything without a valid ticket.
 | Threat | Mitigation |
 |---|---|
 | A collaborator, or a collaborator's turn of my agent, uses my computer | The hub checks the turn's account against the owner on every ticket. No project-level access exists. |
+| **A collaborator in a shared project acts *as* my agent during my turn** (same Linux user, so they can read the runtime bearer from `/proc/<pid>/environ` and the lease directory) | The account check passes, because it *is* my turn. Shared-project rule (open question 1), the collaborator set rechecked on every ticket, tickets bound to the run's lease. |
+| A revoke commits between a check and the signature | Check and audit insert in one transaction under `FOR SHARE`; revoke and turn-off take `FOR UPDATE` and bump the revision; tickets carry revisions and the daemon enforces the pushed floor. |
+| A ticket is replayed after the daemon restarts | Nonces persisted until expiry, or tickets issued before the daemon started are rejected. |
+| A laptop's clock is wrong | Expiry is checked against a hub-relative offset measured at connect. |
+| The hub's signing key must change | Key ids in tickets; signed key sets pushed to the daemon. |
+| Someone floods `computer.<id>.>` | A cheap rate limit before signature checks; ticket issuance rate-limited per run and per computer. |
 | A less trusted agent gets a more powerful one to act (confused deputy) | Per-agent grants; nobody gets more access than the agent that asked. Machine output is marked untrusted. |
 | An enrollment code is stolen | Single use, expires in 15 minutes, useless until the owner approves (approval precedes redemption). It binds to the approved options. |
 | A ticket is replayed | A one-time nonce per ticket, kept by the daemon until the ticket expires. Tickets name one operation and one computer. |
@@ -523,7 +617,12 @@ New hub RPCs and their fresh-auth decisions go in `dangerous-rpc-registry.ts`:
   agent, thread, command (truncated), image, exclusive, state, exit code,
   start and end.
 - **`account_computer_audit`:** one row per operation (above).
-- **Grants:** rows in `agent_connector_grants` with `connector = "computer"`.
+- **`agent_computer_grants`:** `grant_id`, `account_id`, `agent_id`,
+  `source_project_id`, `computer_id` (unique together), `enabled`,
+  `revision`, `created_at`, `updated_at`.
+- **Bay ownership:** all of these are account-home tables. Rehoming is blocked
+  while computers exist, until a migration is written. Account deletion purges
+  them.
 
 ## Stages
 
@@ -563,6 +662,13 @@ Each stage ships with tests and a live check on real machines:
   each sees the other's jobs; the machine reboots and comes back with
   `--service`.
 - The audit and the local log agree.
+- Tests:
+  - a revoke racing a ticket issue never yields a usable ticket;
+  - a ticket from before a revocation is refused by an online daemon;
+  - a replayed ticket is refused, also after a daemon restart;
+  - a skewed laptop clock still enforces the time limit;
+  - a collaborator added to the agent's project stops new tickets (under the
+    rule chosen for open question 1).
 
 ### Stage 2: containers
 
@@ -584,11 +690,11 @@ Each stage ships with tests and a live check on real machines:
 ### Stage 3: sensors and credentials
 
 **Builds:**
-- the `computer` watcher, with push plus kick;
+- exit watchers on computers (`sensor watch exit --computer`, `run --wake`), with an inter-bay push plus kick;
 - "back online" and "time limit ended" watchers;
 - `--wake`;
 - connector passthrough (`--with github`) with output masking;
-- leases for long jobs.
+- job leases for credentials (renewed while the job runs, capped at 24 h).
 
 **Done when:**
 - A 2-hour job wakes the agent within seconds of ending, including when it
@@ -663,13 +769,29 @@ this training job, bring back the checkpoint, and destroy the machine".
 4. **The data path never goes through the hub.** Transfers and output streams
    go through the router to the daemon, so kernels and port forwarding inherit
    the same flow control.
-5. **Grants reuse `agent_connector_grants`,** so the Connectors menu, sensors
-   (`uses`) and revocation work without a parallel system.
+5. **One grant per agent per computer** (`agent_computer_grants`), not one per
+   agent. Fresh auth for every enable. Shown in the Connectors menu with the
+   connector grants, and usable by sensors' `uses`.
 6. **Names and mentions** use the shared pattern, and the CLI resolves
    `@alias` everywhere.
 7. **Jobs are durable on the machine and mirrored at the hub.** Sensors in
    stage 3 and provider idle-detection in stage 4 read the mirror.
-8. **The daemon is small, self-contained and tidy:**
+8. **The ticket protocol is complete from the start:**
+   - a schema version and signing-key ids, with key rotation;
+   - grant and computer revisions, with a revision floor pushed on
+     revocation;
+   - persisted nonces, or "not before the daemon started";
+   - a hub-relative clock;
+   - a binding to the run's lease;
+   - rate limits per run and per computer;
+   - check, sign and audit in one transaction.
+9. **The shared-project rule** (open question 1) is enforced at the hub on
+   every ticket.
+10. **Cross-bay routing, rehoming (blocked until migrated) and account
+    deletion** are handled for the new tables from the start.
+11. **Output and job logs are data, not instructions,** and the agent-facing
+    CLI output says so.
+12. **The daemon is small, self-contained and tidy:**
    - one directory;
    - one daemon per user per machine;
    - old versions removed;
@@ -678,15 +800,32 @@ this training job, bring back the checkpoint, and destroy the machine".
 
 ## Open questions
 
-1. **Time limit and containers.** Decision 7 offers containers only without a
+1. **Shared projects** (from @cocalc-lite4's review; it changes the security
+   model).
+   - **The problem:** every process in a project runs as the same Linux user.
+     While your agent's turn runs, a collaborator's terminal or agent in that
+     project can read the turn's runtime bearer (`/proc/<pid>/environ`) and
+     act *as your agent*. The hub's "is this the owner's turn" check passes,
+     because it is. Connectors have the same exposure today; a shell on your
+     laptop raises the stakes.
+   - **The options:**
+     - (a) **Computers only for agents in projects where you are the only
+       collaborator,** enforced at the hub and rechecked on every ticket
+       (adding a collaborator stops new tickets). This matches your Oct 3 rule
+       for admin connectors ("only in projects with exactly one user").
+     - (b) Allowed in shared projects with an explicit warning when granting.
+     - (c) (a) for time-limited computers (your laptop), (b) for computers
+       without a limit.
+   - **I recommend (a),** perhaps relaxed to (c) later.
+2. **Time limit and containers.** Decision 7 offers containers only without a
    time limit, but "a help session that mounts ~/datasets" implies a container
    (a mount means nothing without one). Allow containers, and therefore
    mounts, with a time limit too?
-2. **`nice` by default** for jobs on a computer without a time limit, so a
+3. **`nice` by default** for jobs on a computer without a time limit, so a
    forgotten sweep doesn't starve the owner's own work on that machine?
-3. **Exec output cap** (1 MB) and **job log retention** (7 days or 1 GB): are
+4. **Exec output cap** (1 MB) and **job log retention** (7 days or 1 GB): are
    these right?
-4. **Provider credentials (stage 4):** some providers offer only long-lived API
+5. **Provider credentials (stage 4):** some providers offer only long-lived API
    keys. Is the hub holding them in the external-credentials store, never
    giving them to agents, acceptable as an exception to "expiring tokens only"
    (`cli-connectors` decision 3)?
