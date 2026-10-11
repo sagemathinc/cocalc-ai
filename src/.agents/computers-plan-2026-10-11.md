@@ -244,9 +244,11 @@ So:
     useless"), with metadata addresses blocked where possible. *(rev 6)*
 26. **Detached jobs continue** after a project stops qualifying, until the
     computer hears about it (documented). *(rev 6)*
-27. **Updates** (pending, explained to William): verified automatic updates
-    signed by an offline release key are recommended. This is needed before
-    release, not before coding. *(rev 6)*
+27. **Updates only by hand:** the daemon is updated only when the owner runs
+    `cocalc computer update` on that machine. There are no automatic updates.
+    Releases are still signed by an offline key, verified, and protected
+    against downgrades. A hub "minimum version" message only stops the
+    daemon. *(William, Oct 11)*
 
 ## What exists to build on (traced, origin/main 25f42495b2)
 
@@ -748,9 +750,8 @@ the daemon (see "Files").
 - **Updates:**
   - The daemon verifies every update against that root and refuses
     downgrades.
-  - Updating is **started locally** (`cocalc computer update`), or
-    automatically only if the owner enabled verified auto-update when
-    pairing.
+  - Updating is **started locally** (`cocalc computer update`) and nothing
+    else (decision 27).
   - The hub can never cause an update by itself.
 - **Minimum version:** when the hub says "minimum version N", a daemon below N
   **stops serving** (fail closed) and tells the owner to update. It is not
@@ -1043,7 +1044,7 @@ the daemon (see "Files").
 | Deletion while a machine is offline | Tombstone, router revocation, outbox; documented as taking effect on reconnect (except local deadlines). |
 | A compromised CoCalc online service | **Isolated:** within the policy ceiling, until the deadline or Ctrl-C, given an installed verified daemon and the offline release root. It can't widen the ceiling, exceed the chosen agent ceiling, or push an
 update. A wildcard ceiling ("any of my agents") is intentionally broad. **Direct:** full control of that OS user. Both are documented. |
-| A hub-forced update turns into code execution | Releases are signed by the offline root. Updating is local or opt-in auto-update of verified releases only. A minimum-version message only stops the daemon. |
+| A hub-forced update turns into code execution | Releases are signed by the offline root. Updating is only by hand on the machine (`cocalc computer update`), verified against the offline root. A minimum-version message only stops the daemon. |
 | The daemon looks like a hidden backdoor (the VS Code tunnel abuse) | Always visible: banner, `status`, `uninstall`. No start at boot without `--service`. Signed releases. |
 
 **Fresh auth** (`dangerous-rpc-registry.ts`) is required for:
@@ -1180,7 +1181,7 @@ Each stage ships with tests and a live check on real machines:
 - the policy ceiling, its partial order, and `policy_epoch`;
 - the signed pairing transcript with its short authentication phrase, and the
   computer certificate with challenge and response;
-- the offline release root, verified local or opt-in updates, and
+- the offline release root, verified updates only by hand, and
   fail-closed minimum versions;
 - the operation ledger;
 - `list`, `info`, `notes`, `exec`, `run`, `jobs`, `logs`, `kill`, `ops`,
@@ -1395,9 +1396,7 @@ Each is a new operation kind in the same ticket protocol.
 
 ## Open questions
 
-1. **Updates** (decision 27): verified automatic updates, signed by an
-   offline release key, or updates started by hand on each computer? This is
-   needed before release, not for stage 1's code.
+None right now.
 
 ## Stage 1 implementation order (PRs)
 
