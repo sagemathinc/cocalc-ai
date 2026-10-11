@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Computers attest a project's privacy epoch: runtime_authority_revision
+// Computers attest a project's privacy (and its share state). The epoch:
+// runtime_authority_revision
 // (bumped by a trigger on every change to projects.users) plus
 // computers_privacy_revision, bumped here by a trigger on every change to the
 // project's public shares, whatever code path makes it (including legacy
@@ -17,26 +18,55 @@ import type { Client } from "@cocalc/database/pool";
 
 const TRIGGER = "public_project_paths_bump_computers_privacy_trigger";
 const FUNCTION = "public_project_paths_bump_computers_privacy";
-const CONTRACT = "computers-privacy-contract-v1";
+const CONTRACT = "computers-privacy-contract-v2";
 
+// For each project the change touches:
+// - take the project-rehome fence and refuse while a rehome of it runs, so
+//   the project row a rehome copies can't miss a share change;
+// - advance computers_privacy_revision (the epoch);
+// - recount computers_public_shares (the state, which moves with the row).
 const FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${FUNCTION}()
    RETURNS TRIGGER AS $$
    -- ${CONTRACT}
+   DECLARE
+     pid uuid;
+     running text;
    BEGIN
-     IF TG_OP <> 'INSERT' THEN
+     FOR pid IN
+       SELECT DISTINCT x FROM unnest(ARRAY[
+         CASE WHEN TG_OP <> 'INSERT' THEN OLD.project_id END,
+         CASE WHEN TG_OP <> 'DELETE' THEN NEW.project_id END]) AS x
+        WHERE x IS NOT NULL
+     LOOP
+       PERFORM pg_advisory_xact_lock(hashtext('project-rehome'), hashtext(pid::text));
+       IF to_regclass('public.project_rehome_operations') IS NOT NULL THEN
+         EXECUTE 'SELECT op_id::text FROM project_rehome_operations
+                   WHERE project_id = $1 AND status = ''running'' LIMIT 1'
+           INTO running USING pid;
+         IF running IS NOT NULL THEN
+           RAISE EXCEPTION 'cannot change public shares of project % while project rehome % is running', pid, running;
+         END IF;
+       END IF;
        UPDATE projects
-          SET computers_privacy_revision = COALESCE(computers_privacy_revision, 0) + 1
-        WHERE project_id = OLD.project_id;
-     END IF;
-     IF TG_OP <> 'DELETE' AND
-        (TG_OP = 'INSERT' OR NEW.project_id IS DISTINCT FROM OLD.project_id) THEN
-       UPDATE projects
-          SET computers_privacy_revision = COALESCE(computers_privacy_revision, 0) + 1
-        WHERE project_id = NEW.project_id;
-     END IF;
+          SET computers_privacy_revision = COALESCE(computers_privacy_revision, 0) + 1,
+              computers_public_shares = (
+                SELECT count(*) FROM public_project_paths s
+                 WHERE s.project_id = pid AND s.disabled IS NOT TRUE
+                   AND s.visibility IS DISTINCT FROM 'disabled')
+        WHERE project_id = pid;
+     END LOOP;
      RETURN NULL;
    END;
    $$ LANGUAGE plpgsql`;
+
+/** Shares that existed before the trigger: count them once. */
+const BACKFILL_SQL = `UPDATE projects p
+    SET computers_public_shares = c.n
+   FROM (SELECT project_id, count(*) AS n FROM public_project_paths
+          WHERE disabled IS NOT TRUE AND visibility IS DISTINCT FROM 'disabled'
+          GROUP BY project_id) c
+  WHERE p.project_id = c.project_id
+    AND p.computers_public_shares IS DISTINCT FROM c.n`;
 
 async function triggerExists(db: Client): Promise<boolean> {
   const { rows } = await db.query<{ trigger_exists: boolean }>(
@@ -54,7 +84,21 @@ export async function ensureProjectComputersPrivacySchema(
   db: Client,
 ): Promise<void> {
   if (await triggerExists(db)) {
-    await db.query(FUNCTION_SQL);
+    if (await functionIsCurrent(db)) return;
+    // Upgrading the function (e.g. v1 had no share count): replace it and
+    // count existing shares, with share writers blocked so none is missed.
+    await db.query("BEGIN");
+    try {
+      await db.query(
+        "LOCK TABLE public_project_paths IN SHARE ROW EXCLUSIVE MODE",
+      );
+      await db.query(FUNCTION_SQL);
+      await db.query(BACKFILL_SQL);
+      await db.query("COMMIT");
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    }
     return;
   }
   await db.query("BEGIN");
@@ -73,6 +117,7 @@ export async function ensureProjectComputersPrivacySchema(
            EXECUTE FUNCTION ${FUNCTION}()`,
       );
     }
+    await db.query(BACKFILL_SQL);
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");
@@ -80,13 +125,17 @@ export async function ensureProjectComputersPrivacySchema(
   }
 }
 
-export async function projectComputersPrivacySchemaNeedsSync(
-  db: Client,
-): Promise<boolean> {
-  if (!(await triggerExists(db))) return true;
+async function functionIsCurrent(db: Client): Promise<boolean> {
   const { rows } = await db.query<{ current: boolean }>(
     `SELECT position($1 IN pg_get_functiondef('${FUNCTION}()'::regprocedure)) > 0 AS current`,
     [CONTRACT],
   );
-  return rows[0]?.current !== true;
+  return rows[0]?.current === true;
+}
+
+export async function projectComputersPrivacySchemaNeedsSync(
+  db: Client,
+): Promise<boolean> {
+  if (!(await triggerExists(db))) return true;
+  return !(await functionIsCurrent(db));
 }

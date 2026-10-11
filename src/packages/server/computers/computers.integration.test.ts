@@ -255,6 +255,70 @@ describeDb("computers store", () => {
       expect(epochs[0]).toBe(7);
     });
 
+    it("the share count moves with the project: a moved project that had shares is not private", async () => {
+      const { attestProjectLocal } = await import("./attestation");
+      const project_id = await project({ [account]: { group: "owner" } });
+      const share = randomUUID();
+      await db().query(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [share, project_id],
+      );
+      const count = async (id: string) =>
+        Number(
+          (
+            await db().query(
+              "SELECT computers_public_shares AS n FROM projects WHERE project_id=$1",
+              [id],
+            )
+          ).rows[0].n,
+        );
+      expect(await count(project_id)).toBe(1);
+      // The destination of a rehome gets the row (count included), not the
+      // share rows.
+      const moved = randomUUID();
+      await db().query(
+        `INSERT INTO projects (project_id, users, runtime_authority_revision, computers_public_shares)
+         VALUES ($1,$2,9,1)`,
+        [moved, JSON.stringify({ [account]: { group: "owner" } })],
+      );
+      const attest = (id: string) =>
+        attestProjectLocal({
+          project_id: id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
+      expect((await attest(moved)).payload.eligible).toBe(false);
+      await db().query(
+        "UPDATE public_project_paths SET disabled=true WHERE id=$1",
+        [share],
+      );
+      expect(await count(project_id)).toBe(0);
+      expect((await attest(project_id)).payload.eligible).toBe(true);
+    });
+
+    it("refuses share changes while the project is being rehomed", async () => {
+      const project_id = await project({ [account]: { group: "owner" } });
+      await db().query(
+        `CREATE TABLE IF NOT EXISTS project_rehome_operations
+           (op_id TEXT, project_id UUID, source_bay_id TEXT, dest_bay_id TEXT,
+            stage TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now())`,
+      );
+      try {
+        await db().query(
+          "INSERT INTO project_rehome_operations VALUES ('p9',$1,'bay-0','bay-3','requested','running',now())",
+          [project_id],
+        );
+        await expect(
+          db().query(
+            "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+            [randomUUID(), project_id],
+          ),
+        ).rejects.toThrow(/project rehome p9 is running/);
+      } finally {
+        await db().query("DROP TABLE project_rehome_operations");
+      }
+    });
+
     it("only the owning bay attests, and never while the project is being rehomed", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } });

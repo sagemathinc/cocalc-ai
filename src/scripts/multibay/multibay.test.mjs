@@ -1183,15 +1183,71 @@ describe("computers across bays", () => {
     await issue(await attest());
   });
 
+  it("a project rehomed with an active public share is not private at its new bay", async () => {
+    const share = randomUUID();
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+         [${JSON.stringify(share)}, ${JSON.stringify(project)}]);`,
+    );
+    assert.equal((await attest(SEED)).payload.eligible, false);
+    // An admin moves the project to the attached bay.
+    const admin = await createAccount(cluster, { home_bay_id: SEED, name: "dave" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query("UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);
+       const { rehomeProject } = server("projects/rehome.js");
+       return await rehomeProject(${JSON.stringify({
+         account_id: admin.account_id,
+         project_id: project,
+         dest_bay_id: ATTACHED,
+         reason: "computers test",
+       })});`,
+      { timeoutMs: 180_000 },
+    );
+    await eventually(async () => (await owningBay(project)) === ATTACHED, {
+      timeoutMs: 120_000,
+      what: "the project to move",
+    });
+    // The new owner has the share count but not the share rows: not private.
+    const moved = await eventually(async () => {
+      try {
+        return await attest(ATTACHED);
+      } catch {
+        return false;
+      }
+    }, { timeoutMs: 60_000, what: "an attestation from the new owner" });
+    assert.equal(moved.payload.project_bay_id, ATTACHED);
+    assert.equal(moved.payload.eligible, false);
+    // Disabling the share where its row still lives doesn't make it private
+    // at the new owner either (fail closed until share state moves).
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query("UPDATE public_project_paths SET disabled=true WHERE id=$1",
+         [${JSON.stringify(share)}]);`,
+    );
+    assert.equal((await attest(ATTACHED)).payload.eligible, false);
+    // The old bay no longer attests at all.
+    await assert.rejects(attest(SEED), /no longer owns the project|project rehome/);
+  });
+
   // Both go through the hubs over the fabric, as the agent path does: the
   // attached bay asks the seed's hub to attest, and the seed asks the
   // attached hub (the account's home) for the ticket.
-  async function attest() {
+  async function attest(owner = SEED) {
     return await runInBay(
       cluster,
-      ATTACHED,
+      owner === SEED ? ATTACHED : SEED,
       `const { computersAtBay } = server("computers/routing.js");
-       return await computersAtBay(${JSON.stringify(SEED)}).attestProject(${JSON.stringify(
+       return await computersAtBay(${JSON.stringify(owner)}).attestProject(${JSON.stringify(
          {
            project_id: project,
            account_id: carol.account_id,

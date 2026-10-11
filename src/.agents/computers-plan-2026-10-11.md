@@ -165,6 +165,14 @@ These override older text below wherever they differ:
     a later statement, so it never pairs a new epoch with old shares.
     (Measured: a single locking statement under READ COMMITTED does exactly
     that.)
+- **Public-share state moves with the project:**
+  - The same trigger keeps `computers_public_shares` (active shares) on the
+    project row.
+  - It takes the project-rehome fence, and refuses share changes while a
+    rehome of the project runs.
+  - Rehome copies the row, not the share rows, so a moved project that had
+    shares is never attested private at its new bay (it fails closed) until
+    share state itself is portable.
 - **Only the owning bay attests**, under the project-rehome fence:
   - never while a rehome runs;
   - never once its own row names another owner.
