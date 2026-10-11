@@ -3965,6 +3965,104 @@ test("software deploy container-runtime publishes an arch catalog without rollin
   assert.equal(runs.length, 1);
 });
 
+test("software build container-runtime --from-directory records and publishes both architectures", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-runtime-release-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "release-assets");
+  mkdirSync(source);
+  for (const arch of ["amd64", "arm64"]) {
+    writeFileSync(
+      join(source, `container-runtime-linux-${arch}.tar.xz`),
+      `runtime ${arch}`,
+    );
+  }
+  const artifactId = "20260614T235912Z-e882d124-runtime-release";
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, cwd: dir, env: r2Env, r2Client: r2.client }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = "software";
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "container-runtime:runtime-release",
+      "--from-directory",
+      source,
+      "--artifact-id",
+      artifactId,
+    ]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "deploy",
+      "container-runtime",
+      "runtime-release",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    process.argv[1] = originalArgv1;
+  }
+
+  // Recording a prebuilt release never runs the builder.
+  assert.equal(
+    runs.some((run) => run.args.includes("build:container-runtime")),
+    false,
+  );
+  for (const arch of ["amd64", "arm64"]) {
+    const fileName = `container-runtime-linux-${arch}.tar.xz`;
+    assert.equal(
+      r2.objects
+        .get(`software/container-runtime/${artifactId}/${fileName}`)
+        ?.toString("utf8"),
+      `runtime ${arch}`,
+    );
+    const latest = JSON.parse(
+      r2.objects
+        .get(`software/container-runtime/latest-linux-${arch}.json`)!
+        .toString("utf8"),
+    );
+    assert.equal(latest.version, artifactId);
+    assert.equal(latest.arch, arch);
+    assert.equal(
+      latest.url,
+      `https://software.example.test/software/container-runtime/${artifactId}/${fileName}`,
+    );
+  }
+});
+
+test("software build container-runtime --from-directory requires both architectures", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-runtime-release-partial-"));
+  const source = join(dir, "release-assets");
+  mkdirSync(source);
+  writeFileSync(join(source, "container-runtime-linux-amd64.tar.xz"), "amd64");
+  const program = createProgram(makeDeps({ localStore: join(dir, "store") }));
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "build",
+      "container-runtime:runtime-release",
+      "--from-directory",
+      source,
+      "--artifact-id",
+      "20260614T235912Z-e882d124-runtime-release",
+    ]),
+    /container-runtime-linux-arm64\.tar\.xz/,
+  );
+});
+
 test("software deploy bay-conat-router uses bay artifact and one-service Rocket flag", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-deploy-bay-router-"));
   const localStore = join(dir, "store");

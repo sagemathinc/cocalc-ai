@@ -7,13 +7,11 @@ name: Release container runtime
 # download the published bundle from the software store; nobody builds it on a
 # host.
 #
-# A manual run with publish enabled records the tested amd64 bundle as a
-# container-runtime artifact and pushes it to the software store. Hosts never
-# pick a container runtime up automatically: roll it out explicitly with
+# A manual run with publish enabled records both tested bundles as one
+# container-runtime artifact (a host downloads the file for its architecture)
+# and pushes it to the software store. Hosts never pick a container runtime up
+# automatically: roll it out explicitly with
 # `cocalc host upgrade --artifact container-runtime --artifact-version <id>`.
-# The arm64 bundle is built and checked, and kept as a workflow artifact; the
-# store holds one file per container-runtime artifact, and no arm64 project
-# hosts run yet.
 #
 # The R2 credentials exist only in the protected GitHub environment
 # `cocalc-cli-release` (the same software store the CLI release publishes to),
@@ -32,7 +30,7 @@ on:
         required: false
         type: string
       publish:
-        description: "Push the tested amd64 bundle to the software store (needs approval of the cocalc-cli-release environment)"
+        description: "Push the tested amd64 and arm64 bundles to the software store (needs approval of the cocalc-cli-release environment)"
         required: true
         default: false
         type: boolean
@@ -141,10 +139,11 @@ jobs:
 
       - uses: actions/download-artifact@v7
         with:
-          name: container-runtime-linux-amd64
+          pattern: container-runtime-linux-*
           path: release-assets
+          merge-multiple: true
 
-      - name: Record and push the tested amd64 bundle
+      - name: Record and push the tested bundles
         env:
           RELEASE_ID: ${{ needs.plan.outputs.release_id }}
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
@@ -159,19 +158,22 @@ jobs:
           cli=(node src/packages/cli/dist/bin/cocalc.js)
           "${cli[@]}" software build "container-runtime:${RELEASE_TAG}" \
             --artifact-id "$RELEASE_ID" \
-            --from-file release-assets/container-runtime-linux-amd64.tar.xz
+            --from-directory release-assets
           "${cli[@]}" software push "container-runtime:${RELEASE_ID}" --env-file /dev/null
 
-      - name: Check the published bundle downloads intact
+      - name: Check the published bundles download intact
         env:
           RELEASE_ID: ${{ needs.plan.outputs.release_id }}
           COCALC_R2_PUBLIC_BASE_URL: ${{ secrets.COCALC_R2_PUBLIC_BASE_URL }}
         run: |
           set -Eeuo pipefail
-          url="${COCALC_R2_PUBLIC_BASE_URL}/software/container-runtime/${RELEASE_ID}/container-runtime-linux-amd64.tar.xz"
-          curl -fsSL "$url" -o published.tar.xz
-          cmp published.tar.xz release-assets/container-runtime-linux-amd64.tar.xz
-          echo "published: $url"
+          for arch in amd64 arm64; do
+            name="container-runtime-linux-${arch}.tar.xz"
+            url="${COCALC_R2_PUBLIC_BASE_URL}/software/container-runtime/${RELEASE_ID}/${name}"
+            curl -fsSL "$url" -o "$RUNNER_TEMP/published-${name}"
+            cmp "$RUNNER_TEMP/published-${name}" "release-assets/${name}"
+            echo "published: $url"
+          done
 
       - name: Release summary
         env:
@@ -180,6 +182,6 @@ jobs:
           {
             echo "### Container runtime release"
             echo ""
-            echo "- Artifact: \`$RELEASE_ID\` (linux amd64)"
+            echo "- Artifact: \`$RELEASE_ID\` (linux amd64 and arm64)"
             echo "- Roll out: \`cocalc host upgrade <host> --artifact container-runtime --artifact-version $RELEASE_ID\`"
           } >> "$GITHUB_STEP_SUMMARY"
