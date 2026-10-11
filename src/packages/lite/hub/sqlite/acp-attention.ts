@@ -596,6 +596,45 @@ export function resolveAcpAttention(opts: {
   return getAcpAttention(opts.attention_id);
 }
 
+/**
+ * The person closes an unanswered async question: no answer and no new turn.
+ * It stops counting toward the pending limits and is closed on every device.
+ * Only the owner's own pending, unanswered async question can be dismissed.
+ */
+export function dismissAcpAsyncAttention(opts: {
+  attention_id: string;
+  account_id: string;
+  project_id: string;
+}): AcpAttentionStoredRecord | undefined {
+  ensureInit();
+  const now = Date.now();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'canceled', resolution_reason = ?, resolved_at = ?,
+           updated_at = ?
+       WHERE attention_id = ? AND account_id = ? AND project_id = ?
+         AND state = 'pending' AND source_kind = 'codex_async_question'
+         AND response_id IS NULL`,
+    )
+    .run(
+      "Dismissed without an answer.",
+      now,
+      now,
+      opts.attention_id,
+      opts.account_id,
+      opts.project_id,
+    );
+  const row = getRow(opts.attention_id);
+  if (
+    !row ||
+    row.account_id !== opts.account_id ||
+    row.project_id !== opts.project_id
+  )
+    return undefined;
+  return toStoredRecord(row);
+}
+
 export function resolveAcpAttentionBySource(opts: {
   project_id: string;
   source_kind: AcpAttentionSourceKind;

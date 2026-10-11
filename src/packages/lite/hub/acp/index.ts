@@ -295,6 +295,7 @@ import {
   markAllPendingAcpSyncAttentionStale,
   resolveAcpAttention,
   submitAcpAttentionResponse,
+  dismissAcpAsyncAttention,
   updateAcpAttentionDelivery,
   type AcpAttentionStoredRecord,
 } from "../sqlite/acp-attention";
@@ -12305,6 +12306,26 @@ async function handleAcpAttentionRequest(
             record: publicAttentionRecord(record),
           }
         : { ok: false, state: "missing" };
+    }
+    case "dismiss": {
+      const record = dismissAcpAsyncAttention({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+      });
+      if (!record) return { ok: false, state: "missing" };
+      if (record.state === "canceled" && conatClient) {
+        void publishStoredAttentionNoticeBestEffort({
+          client: conatClient,
+          record,
+        });
+      }
+      // Answered meanwhile (or not an async question): nothing dismissed.
+      return {
+        ok: record.state === "canceled",
+        state: record.state,
+        record: publicAttentionRecord(record),
+      };
     }
     case "continue":
       return await continueStaleAttentionAnswer(request);

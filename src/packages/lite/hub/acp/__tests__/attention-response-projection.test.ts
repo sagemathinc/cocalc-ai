@@ -155,6 +155,61 @@ afterEach(async () => {
   await disposeAcpAgents();
 });
 
+/** An unanswered async question from an earlier turn of the same thread. */
+function openAsyncQuestion() {
+  return upsertAcpAttention({
+    project_id: projectId,
+    account_id: accountId,
+    path: "agent.chat",
+    thread_id: "thread-1",
+    turn_id: "turn-0",
+    source_kind: "codex_async_question",
+    source_id: "thread-1:turn-0:async-1",
+    attention_kind: "question",
+    is_blocking: false,
+    title: "Which dataset?",
+    questions: [{ id: "data", header: "Data", question: "Which dataset?" }],
+    chat: {
+      project_id: projectId,
+      path: "agent.chat",
+      thread_id: "thread-1",
+      message_id: "assistant-1",
+      message_date: ownerDate,
+      sender_id: "gpt-6-astra",
+    },
+  });
+}
+
+it("dismissing an async question closes it without starting a turn", async () => {
+  const open = openAsyncQuestion();
+  const dismissed = await acpTestInternals.handleAcpAttentionRequest({
+    action: "dismiss",
+    project_id: projectId,
+    account_id: accountId,
+    attention_id: open.attention_id,
+  });
+  expect(dismissed).toMatchObject({ ok: true, state: "canceled" });
+  expect(listQueuedAcpJobs()).toHaveLength(0);
+  // Another account cannot dismiss (or see) it.
+  expect(
+    await acpTestInternals.handleAcpAttentionRequest({
+      action: "dismiss",
+      project_id: projectId,
+      account_id: "33333333-3333-4333-8333-333333333333",
+      attention_id: record.attention_id,
+    }),
+  ).toEqual({ ok: false, state: "missing" });
+  // A blocking (sync) question is not dismissed this way.
+  expect(
+    await acpTestInternals.handleAcpAttentionRequest({
+      action: "dismiss",
+      project_id: projectId,
+      account_id: accountId,
+      attention_id: record.attention_id,
+    }),
+  ).toMatchObject({ ok: false, state: "pending" });
+});
+
 function respond(responseId = "response-1", answer = "EU") {
   return acpTestInternals.handleAcpAttentionRequest({
     action: "respond",
@@ -250,6 +305,7 @@ it("promotes a saved sync answer to a dispatchable queued continuation without r
       reason: "Codex runtime closed before the request was resolved",
     });
     expect(getAcpAttention(record.attention_id)?.state).toBe("stale");
+    const open = openAsyncQuestion();
 
     const continued = await acpTestInternals.handleAcpAttentionRequest({
       action: "continue",
@@ -261,6 +317,8 @@ it("promotes a saved sync answer to a dispatchable queued continuation without r
     expect(continued).toMatchObject({ ok: true, state: "answered" });
     expect(listQueuedAcpJobs()).toHaveLength(1);
     expect(listQueuedAcpJobs()[0].user_message_id).toBe(original.message_id);
+    // Starting that turn leaves the thread's other open questions answerable.
+    expect(getAcpAttention(open.attention_id)?.state).toBe("pending");
     const answer = saved.find((row) => row.message_id === original.message_id);
     expect(answer).toMatchObject({
       ...original,
