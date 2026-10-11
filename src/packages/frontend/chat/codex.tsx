@@ -522,6 +522,9 @@ export function CodexConfigButton(
   );
 }
 
+// Compact wherever it goes, like the native button: a summary and a button
+// that opens the settings.  The full form inline (HarnessRuntimeControl
+// without compact) filled half of an agents flyout's header.
 function HarnessConfigButton(props: CodexConfigButtonProps) {
   const metadata = props.actions!.getThreadMetadata(props.threadKey);
   const projectTitle = useProjectMapField<string>(props.projectId, ["title"]);
@@ -529,12 +532,12 @@ function HarnessConfigButton(props: CodexConfigButtonProps) {
   try {
     runtime = parseAcpHarnessRuntime(metadata.agent_runtime);
   } catch {
-    return <HarnessRuntimeControl runtime={metadata.agent_runtime} />;
+    return <HarnessRuntimeControl compact runtime={metadata.agent_runtime} />;
   }
   return (
     <HarnessRuntimeControl
       key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
-      compact={!!props.compact}
+      compact
       summary={props.compact === "mobile-composer"}
       runtime={runtime}
       projectId={props.projectId}
