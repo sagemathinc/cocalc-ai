@@ -107,9 +107,14 @@ async function pauseReason(row: ClaimedSensor): Promise<string | undefined> {
     return "The person who approved this sensor can no longer use the project. A current collaborator must resume it.";
   }
   const limits = await sensorLimits(row.approved_by);
-  if (limits.maxActive === 0)
-    return "The approver's membership no longer includes sensors.";
   const kind = sensorKind(row.spec);
+  // Watchers come with any membership that allows wakes; approved scripts
+  // and scheduled prompts with ones that include sensors.
+  if (
+    limits.maxWakesPerDay === 0 ||
+    (kind !== "watch" && limits.maxActive === 0)
+  )
+    return "The approver's membership no longer includes sensors.";
   if (kind !== "watch") {
     try {
       // Memberships change: the approved schedule must still fit them.

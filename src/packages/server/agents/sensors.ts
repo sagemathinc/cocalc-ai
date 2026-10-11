@@ -291,8 +291,9 @@ async function createWatcher(
   request: Extract<AgentSensorRequest, { op: "watch" }>,
 ) {
   const limits = await sensorLimits(run.account_id);
-  if (limits.maxActive === 0 || limits.maxWakesPerDay === 0)
-    throw new Error(NO_SENSORS);
+  // Watchers replace polling: any membership that allows wakes has them,
+  // limited by maxWatchersPerAccount and the wake budget, not maxActive.
+  if (limits.maxWakesPerDay === 0) throw new Error(NO_SENSORS);
   const spec = validateSensorWatch(request.watch, { hours: request.hours });
   if (!(await projectHasInternet(agent.project_id)))
     throw new Error(NO_INTERNET);

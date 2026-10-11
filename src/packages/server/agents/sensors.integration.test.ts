@@ -240,6 +240,34 @@ describeDb("agent sensors", () => {
     await expect(propose()).rejects.toThrow(/membership/);
   });
 
+  test("a membership without sensors still has watchers, unless it allows no wakes", async () => {
+    // Like the free tier: no approved sensors, but wakes.
+    limits.acp_max_active_automations_per_project = 0;
+    await expect(propose()).rejects.toThrow(/membership/);
+    const watch = async () =>
+      (await agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: {
+          type: "at",
+          at: new Date(Date.now() + 3_600_000).toISOString(),
+          note: "check CI",
+        },
+      })) as any;
+    const { sensor } = await watch();
+    expect(sensor).toMatchObject({ status: "active" });
+    // It runs, rather than pausing for the membership.
+    await makeDue(sensor.sensor_id);
+    await runDue();
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason FROM agent_sensors WHERE sensor_id=$1",
+      [sensor.sensor_id],
+    );
+    expect(rows[0]).toEqual({ status: "active", pause_reason: null });
+    limits.sensor_max_wakes_per_day = 0;
+    await expect(watch()).rejects.toThrow(/membership/);
+  });
+
   test("a change keeps the approved version running until approved", async () => {
     const { sensor } = await propose();
     const active = (await approve(sensor)).sensor;

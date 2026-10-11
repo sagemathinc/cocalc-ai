@@ -165,8 +165,9 @@ export async function reserveSensorWatcherAtHome(
   )
     throw new Error("invalid watcher expiry");
   const limits = await sensorLimits(opts.account_id);
-  if (limits.maxActive === 0 || limits.maxWakesPerDay === 0)
-    throw new Error(NO_SENSORS);
+  // Watchers replace polling: any membership that allows wakes has them,
+  // limited by maxWatchersPerAccount and the wake budget, not maxActive.
+  if (limits.maxWakesPerDay === 0) throw new Error(NO_SENSORS);
   await agentStore().transaction(async (client) => {
     await lockAccountSensors(client, opts.account_id);
     const { rows: counts } = await client.query<{
