@@ -5,12 +5,13 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
 import {
-  decryptSecretSettingValue,
-  encryptSecretSettingValue,
-  isEncryptedSecretSettingValue,
-} from "@cocalc/util/secret-settings-crypto";
+  decryptSecretStorageValueWithKey,
+  encryptSecretStorageValue,
+  getSecretSettingsKey,
+  secretSettingsHmacCandidates,
+} from "@cocalc/database/settings/secret-settings";
+import { isEncryptedSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 
 const REGISTRATION_TOKEN_AAD = "registration_tokens.token";
 const HASH_PREFIX = "cocalc-registration-token-hash:v1:";
@@ -28,11 +29,7 @@ export function isHashedRegistrationTokenValue(value?: string | null): boolean {
 export async function encryptRegistrationTokenValue(
   token: string,
 ): Promise<string> {
-  return encryptSecretSettingValue(
-    REGISTRATION_TOKEN_AAD,
-    token,
-    await getSecretSettingsKey(),
-  );
+  return await encryptSecretStorageValue(REGISTRATION_TOKEN_AAD, token);
 }
 
 export async function decryptRegistrationTokenValue(
@@ -41,11 +38,10 @@ export async function decryptRegistrationTokenValue(
   if (isHashedRegistrationTokenValue(storedToken)) {
     throw new Error("registration token is hash-only");
   }
-  return decryptSecretSettingValue(
-    REGISTRATION_TOKEN_AAD,
-    storedToken,
-    await getSecretSettingsKey(),
-  );
+  if (!isEncryptedSecretSettingValue(storedToken)) return storedToken;
+  return (
+    await decryptSecretStorageValueWithKey(REGISTRATION_TOKEN_AAD, storedToken)
+  ).value;
 }
 
 export async function canReadRegistrationTokenValue(
@@ -62,15 +58,20 @@ export async function canReadRegistrationTokenValue(
   }
 }
 
-export async function hashRegistrationTokenValue(
-  token: string,
-): Promise<string> {
-  const digest = createHmac("sha256", await getSecretSettingsKey())
+function registrationTokenHash(key: Buffer, token: string): string {
+  const digest = createHmac("sha256", key)
     .update(REGISTRATION_TOKEN_AAD)
     .update("\0")
     .update(token)
     .digest("base64url");
   return `${HASH_PREFIX}${digest}`;
+}
+
+/** The stored form of a hash-only token, under the active key. */
+export async function hashRegistrationTokenValue(
+  token: string,
+): Promise<string> {
+  return registrationTokenHash(await getSecretSettingsKey(), token);
 }
 
 function timingSafeStringEqual(a: string, b: string): boolean {
@@ -87,10 +88,15 @@ export async function storedRegistrationTokenMatches(
   token: string,
 ): Promise<boolean> {
   if (isHashedRegistrationTokenValue(storedToken)) {
-    return timingSafeStringEqual(
-      storedToken,
-      await hashRegistrationTokenValue(token),
-    );
+    // A hash made under a key that has since been rotated still matches
+    // while that key is in the keyring.
+    let matches = false;
+    for (const candidate of await secretSettingsHmacCandidates((key) =>
+      registrationTokenHash(key, token),
+    )) {
+      matches = timingSafeStringEqual(storedToken, candidate) || matches;
+    }
+    return matches;
   }
   try {
     return timingSafeStringEqual(

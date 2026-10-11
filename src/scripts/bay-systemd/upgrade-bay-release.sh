@@ -614,6 +614,12 @@ trap cleanup EXIT
 install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
 install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
   /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+# Migrations get the same credentials as the services, including the
+# rotation keyring (retired keys still decrypt data during a key rotation).
+[[ -e /etc/cocalc/site-master-key.keyring ]] ||
+  install -o root -g root -m 0600 /dev/null /etc/cocalc/site-master-key.keyring
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key.keyring "$credential_dir/site-master-key.keyring"
 runuser -u "$BAY_USER" -- env \
   CREDENTIALS_DIRECTORY="$credential_dir" \
   COCALC_REQUIRE_SITE_MASTER_KEY=1 \
@@ -678,6 +684,12 @@ trap cleanup EXIT
 install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
 install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
   /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+# Migrations get the same credentials as the services, including the
+# rotation keyring (retired keys still decrypt data during a key rotation).
+[[ -e /etc/cocalc/site-master-key.keyring ]] ||
+  install -o root -g root -m 0600 /dev/null /etc/cocalc/site-master-key.keyring
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key.keyring "$credential_dir/site-master-key.keyring"
 runuser -u "$BAY_USER" -- env \
   CREDENTIALS_DIRECTORY="$credential_dir" \
   COCALC_REQUIRE_SITE_MASTER_KEY=1 \
@@ -730,6 +742,12 @@ trap cleanup EXIT
 install -o "$BAY_USER" -g "$BAY_USER" -m 0700 -d "$credential_dir"
 install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
   /etc/cocalc/site-master-key "$credential_dir/site-master-key"
+# Migrations get the same credentials as the services, including the
+# rotation keyring (retired keys still decrypt data during a key rotation).
+[[ -e /etc/cocalc/site-master-key.keyring ]] ||
+  install -o root -g root -m 0600 /dev/null /etc/cocalc/site-master-key.keyring
+install -o "$BAY_USER" -g "$BAY_USER" -m 0400 \
+  /etc/cocalc/site-master-key.keyring "$credential_dir/site-master-key.keyring"
 runuser -u "$BAY_USER" -- env \
   CREDENTIALS_DIRECTORY="$credential_dir" \
   COCALC_REQUIRE_SITE_MASTER_KEY=1 \
