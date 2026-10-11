@@ -138,6 +138,15 @@ Some sites (X, for example) refuse to sign in to a browser that tools can
 control. Add \`--sign-in\`: Chrome first opens without any automation so you
 can sign in; close it, and it reopens connected, still signed in.
 
+## Downloads
+
+What the browser downloads lands in your project's \`~/Downloads\`, as in a
+normal browser, whether you clicked or an agent did. The browser says so and
+offers **Open**. If a file of that name is already there, the new one gets a
+number, e.g. \`paper (1).pdf\`. A single download is limited to 1 GB.
+
+Agents list recent downloads with \`cocalc project browser downloads\`.
+
 ## Zoom
 
 Zoom a tab with **-** and **+** next to the address bar, Ctrl and + or -
@@ -189,7 +198,8 @@ It also has a network of its own: it reaches the internet, but not the
 servers running in the project. To open a development server on
 \`localhost\`, click **Connect to this project's network** on a new tab's
 start page; the browser starts over on the project's network with the same
-pages open. The browser remembers the choice.
+pages open. The browser remembers the choice. Agents switch with
+\`cocalc project browser start --network project\`.
 
 ## Projects without internet access
 

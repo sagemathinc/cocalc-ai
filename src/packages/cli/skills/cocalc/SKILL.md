@@ -708,9 +708,12 @@ the browser or its last page.
   delete that secret: it signs every browser out.
 - Pages on the project's own servers are reachable as `http://localhost:<port>`
   once the browser is on the project's network: a browser in its own
-  container starts on its own (`goto` says so). Run
-  `cocalc project browser network project` first; it restarts the browser
-  there, keeping its pages.
+  container starts on its own (`goto` says so). Start it with
+  `--network project` (or run `cocalc project browser network project`, which
+  restarts it there, keeping its pages). The choice is remembered.
+- Downloads land in the project's `~/Downloads`, whoever clicked (you, or the
+  human driving). `cocalc project browser downloads --wait 60` lists recent
+  ones with their paths. Playwright's own download API works as usual.
 - User documentation: `cocalc docs show projects/web-browser`.
 - A `.browser` file is a browser of its own (`--browser <file>` on every
   command; it has its own sign-ins). It can run on the user's computer instead
