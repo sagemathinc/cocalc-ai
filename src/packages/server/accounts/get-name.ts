@@ -22,6 +22,7 @@ export default async function getName(
   if (cluster?.account_id) {
     return rowsToName([cluster]);
   }
+  // query-cache-ok: display: account names
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name FROM accounts WHERE account_id=$1",
@@ -37,6 +38,7 @@ export async function getNameByEmail(
   if (cluster?.account_id) {
     return rowsToName([cluster]);
   }
+  // query-cache-ok: display: account names
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name FROM accounts WHERE email_address=$1",
@@ -131,6 +133,7 @@ export async function getNames(account_ids: string[]): Promise<Names> {
   if (cluster.length > 0) {
     return rowsToNames(cluster, account_ids);
   }
+  // query-cache-ok: display: account names
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT account_id, display_name, first_name, last_name, profile FROM accounts WHERE account_id=ANY($1::UUID[]) AND (deleted IS NULL OR deleted = false)",

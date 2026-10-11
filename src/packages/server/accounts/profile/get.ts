@@ -13,6 +13,7 @@ export default async function getProfile(
   account_id: string,
   noCache: boolean = false,
 ): Promise<Profile> {
+  // query-cache-ok: display: public profile
   const pool = getPool(noCache ? undefined : "long");
   // Do not put anything private in this query!!!!
   const { rows } = await pool.query(
