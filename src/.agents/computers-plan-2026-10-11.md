@@ -603,7 +603,11 @@ the daemon (see "Files").
 - **Interactive work holds renewable leases** that stop when they expire,
   even if the invalidation never arrives: streams, transfers, credential
   leases, and later kernels and ports. That is a renewable
-  project-authorization lease at the daemon (e.g. 60 s).
+  project-authorization lease at the daemon.
+  - **Invariant:** `lease.not_after <= attestation.not_after`.
+  - Renewing means first getting a fresh attestation, then deriving the new
+    lease from it, so a lease is never longer than the attestation's
+    remaining lifetime (at most 30 s).
 - **Detached jobs** (`run`) admitted before an invalidation **keep running
   until the invalidation (or a reconnect) arrives**. This is a deliberate
   choice: jobs survive network loss.
@@ -659,7 +663,10 @@ the daemon (see "Files").
 - **The pairing phrase** (a short authentication string) is derived from the
   transcript hash, and the approval row stores that hash, not loose fields.
 - **The result is a certificate, not a secret.** The home bay signs a
-  **computer certificate** for the signing key, binding:
+  **computer certificate** binding:
+  - **both** public keys' fingerprints (signing and key-agreement) and the
+    transcript hash, so later HPKE use can't substitute a different
+    key-agreement key;
   - computer id, account and home-bay epoch;
   - the ceiling hash;
   - validity.
@@ -939,8 +946,10 @@ the daemon (see "Files").
   - Start, end, exit code, CoCalc-counted bytes.
   - Kept 90 days, visible only to the owner.
 - **On the machine:** the daemon's local log.
-  - Evidence in isolated mode.
-  - A convenience in direct mode.
+  - **Isolated mode:** evidence about what the containerized jobs did. It is
+    not evidence against the machine's owner or admin, a compromised host or
+    daemon, or a compromised release.
+  - **Direct mode:** a convenience.
 
 ### Limits, caps and cleanup
 
@@ -985,7 +994,8 @@ the daemon (see "Files").
 | Floods and loops | Rate limits before signature checks, non-waiting admission, hard caps. |
 | A stale former home bay issues tickets after a rehome | Home-bay ownership epoch in tickets and credentials; rehoming blocked while computers exist. |
 | Deletion while a machine is offline | Tombstone, router revocation, outbox; documented as taking effect on reconnect (except local deadlines). |
-| A compromised CoCalc online service | **Isolated:** within the policy ceiling, until the deadline or Ctrl-C, given an installed verified daemon and the offline release root. It can't widen the ceiling, add agents, or push an update. **Direct:** full control of that OS user. Both are documented. |
+| A compromised CoCalc online service | **Isolated:** within the policy ceiling, until the deadline or Ctrl-C, given an installed verified daemon and the offline release root. It can't widen the ceiling, exceed the chosen agent ceiling, or push an
+update. A wildcard ceiling ("any of my agents") is intentionally broad. **Direct:** full control of that OS user. Both are documented. |
 | A hub-forced update turns into code execution | Releases are signed by the offline root. Updating is local or opt-in auto-update of verified releases only. A minimum-version message only stops the daemon. |
 | The daemon looks like a hidden backdoor (the VS Code tunnel abuse) | Always visible: banner, `status`, `uninstall`. No start at boot without `--service`. Signed releases. |
 
@@ -1319,7 +1329,8 @@ Each is a new operation kind in the same ticket protocol.
 15. **Output, logs and notes are data, not instructions,** in every
     agent-facing surface.
 16. **Project-bay attestations have an expiry the daemon checks.** Start-by,
-    stream leases and credential leases never outlive them.
+    stream leases and credential leases never outlive them
+    (`lease.not_after <= attestation.not_after`).
 17. **The approved policy is a local ceiling** with a fully defined partial
     order. Adding an agent is widening.
 18. **Pairing approval binds a signed transcript and a locally resolved
@@ -1447,6 +1458,16 @@ Each is a new operation kind in the same ticket protocol.
   - **6–8 (wording):** PoP's meaning, sticky eligibility, and the scope of the
     local log as evidence.
   - Its verdict: "With those changes, I would approve stage 1's architecture."
+- **@lite1-review, revision 5:** "**Approved: stage 1's architecture is now
+  approvable.**" No remaining blocker or high finding. Four specification
+  corrections, applied in revision 5.1:
+  - the lease invariant (`lease.not_after <= attestation.not_after`);
+  - both keys bound in the certificate;
+  - the audit's local-log wording;
+  - the wildcard agent ceiling.
+
+  This approves the plan's architecture, not an implementation: the
+  blocker tests and a fresh implementation review remain required.
 
 ## Prior art and lessons
 
