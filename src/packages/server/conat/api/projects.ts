@@ -136,6 +136,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
+import { cancel as cancelLro } from "./lro";
 import {
   workspaceChatStoreDelete,
   workspaceChatStoreListSegments,
@@ -761,6 +762,66 @@ export async function collectAssignment({
   return courseCollectLroResponse(op);
 }
 
+function assertCourseCollectionOperation(
+  op: LroSummary,
+  course_project_id: string,
+): void {
+  if (
+    op.kind !== COURSE_COLLECT_ASSIGNMENT_LRO_KIND ||
+    op.scope_type !== "project" ||
+    op.scope_id !== course_project_id
+  ) {
+    throw new Error("not a collection operation of this course");
+  }
+}
+
+// Collections (collectAssignment) are created, read and canceled on the
+// course project's owning bay; these calls are routed there (see
+// @cocalc/conat/hub/api/routes, #1001).
+export async function getCourseCollectionOperation({
+  account_id,
+  course_project_id,
+  op_id,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  op_id: string;
+}): Promise<LroSummary | undefined> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!isValidUUID(op_id)) {
+    throw new Error("invalid op_id");
+  }
+  await assertCollabAllowRemoteProjectAccess({
+    account_id,
+    project_id: course_project_id,
+  });
+  const op = await getLro(op_id);
+  if (!op) return;
+  assertCourseCollectionOperation(op, course_project_id);
+  return op;
+}
+
+export async function cancelCourseCollectionOperation({
+  account_id,
+  course_project_id,
+  op_id,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  op_id: string;
+}): Promise<{ found: boolean }> {
+  const op = await getCourseCollectionOperation({
+    account_id,
+    course_project_id,
+    op_id,
+  });
+  if (!op) return { found: false };
+  await cancelLro({ account_id, op_id });
+  return { found: true };
+}
+
 // Students who receive an assignment after its collection was scheduled are
 // added to that still-queued collection (support #20954). Same checks as
 // collectAssignment; the change itself is one conditional update.
@@ -885,7 +946,7 @@ async function latestCourseReconfigureInput({
   return rows[0]?.input;
 }
 
-export async function reconfigureCourseProjectsLocal({
+async function reconfigureCourseProjectsLocal({
   account_id,
   course_project_id,
   course_path,
@@ -1183,29 +1244,11 @@ export async function reconfigureCourseProjectsLocal({
   };
 }
 
-async function resolveCourseReconfigureBay(course_project_id: string) {
-  if (!isValidUUID(course_project_id)) {
-    throw new Error("invalid course_project_id");
-  }
-  const ownership = await resolveProjectBay(course_project_id);
-  if (!ownership) {
-    throw new Error(`course project ${course_project_id} not found`);
-  }
-  return ownership.bay_id;
-}
-
 export async function reconfigureCourseProjects(
   opts: CourseReconfigureRequest,
 ): Promise<CourseReconfigureResult> {
-  if (!opts.account_id) {
-    throw new Error("user must be signed in");
-  }
-  const bayId = await resolveCourseReconfigureBay(opts.course_project_id);
-  if (bayId !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectCollabInvite(bayId, { timeout_ms: 30_000 })
-      .reconfigureCourseProjects({ ...opts, account_id: opts.account_id });
-  }
+  // Routed to the course project's owning bay (see
+  // @cocalc/conat/hub/api/routes), which holds the reconfigure operation.
   return await reconfigureCourseProjectsLocal(opts);
 }
 
@@ -1222,7 +1265,7 @@ function assertCourseReconfigureOperation(
   }
 }
 
-export async function getCourseReconfigureOperationLocal({
+async function getCourseReconfigureOperationLocal({
   account_id,
   course_project_id,
   op_id,
@@ -1249,22 +1292,11 @@ export async function getCourseReconfigureOperation(opts: {
   course_project_id: string;
   op_id: string;
 }): Promise<LroSummary | undefined> {
-  if (!opts.account_id) {
-    throw new Error("user must be signed in");
-  }
-  const bayId = await resolveCourseReconfigureBay(opts.course_project_id);
-  if (bayId !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectCollabInvite(bayId)
-      .getCourseReconfigureOperation({
-        ...opts,
-        account_id: opts.account_id,
-      });
-  }
+  // Routed to the course project's owning bay (see routes).
   return await getCourseReconfigureOperationLocal(opts);
 }
 
-export async function cancelCourseReconfigureOperationLocal(opts: {
+async function cancelCourseReconfigureOperationLocal(opts: {
   account_id?: string;
   course_project_id: string;
   op_id: string;
@@ -1296,19 +1328,7 @@ export async function cancelCourseReconfigureOperation(opts: {
   course_project_id: string;
   op_id: string;
 }): Promise<void> {
-  if (!opts.account_id) {
-    throw new Error("user must be signed in");
-  }
-  const bayId = await resolveCourseReconfigureBay(opts.course_project_id);
-  if (bayId !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .projectCollabInvite(bayId)
-      .cancelCourseReconfigureOperation({
-        ...opts,
-        account_id: opts.account_id,
-      });
-    return;
-  }
+  // Routed to the course project's owning bay (see routes).
   await cancelCourseReconfigureOperationLocal(opts);
 }
 
@@ -5324,6 +5344,12 @@ async function waitForJoinedProjectStart({
   }
 }
 
+// Loaded on use, as elsewhere in this file: project-control imports much of
+// the server.
+async function projectControlHandlers() {
+  return await import("@cocalc/server/inter-bay/project-control");
+}
+
 export async function stop({
   account_id,
   project_id,
@@ -5331,16 +5357,12 @@ export async function stop({
   account_id: string;
   project_id: string;
 }): Promise<void> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   log.debug("stop", { project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  await getInterBayBridge().projectControl(ownership.bay_id).stop({
-    project_id,
-    epoch: ownership.epoch,
-  });
+  await (
+    await projectControlHandlers()
+  ).handleProjectControlStop({ project_id });
 }
 
 export async function archiveProject({
@@ -5373,15 +5395,11 @@ export async function getProjectState({
   account_id: string;
   project_id: string;
 }) {
+  // Routed to the project's owning bay (see routes).
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge().projectControl(ownership.bay_id).state({
-    project_id,
-    epoch: ownership.epoch,
-  });
+  return await (
+    await projectControlHandlers()
+  ).handleProjectControlState({ project_id });
 }
 
 export async function status({
@@ -5420,16 +5438,11 @@ export async function getProjectAddress({
   account_id: string;
   project_id: string;
 }): Promise<ProjectAddress> {
+  // Routed to the project's owning bay (see routes).
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge().projectControl(ownership.bay_id).address({
-    project_id,
-    account_id,
-    epoch: ownership.epoch,
-  });
+  return await (
+    await projectControlHandlers()
+  ).handleProjectControlAddress({ project_id, account_id });
 }
 
 export async function ensureProjectScratchVolume({
@@ -5454,15 +5467,11 @@ export async function getProjectActiveOperation({
   account_id: string;
   project_id: string;
 }): Promise<ProjectActiveOperationSummary | null> {
+  // Routed to the project's owning bay (see routes).
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  return await getInterBayBridge().projectControl(ownership.bay_id).activeOp({
-    project_id,
-    epoch: ownership.epoch,
-  });
+  return await (
+    await projectControlHandlers()
+  ).handleProjectControlActiveOperation({ project_id });
 }
 
 export async function hardDeleteProject({

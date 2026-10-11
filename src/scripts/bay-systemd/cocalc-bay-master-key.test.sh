@@ -101,6 +101,7 @@ printf '{"tables":[{"table":"t","encrypted_column":"c","by_key":{"%s":0}}]}' "$i
 # Not before its retirement window has passed (sign-in challenges may need it).
 out="$(bash "$TOOL" retire "$id1" 2>&1)" && fail "retired a key just after activation"
 [[ "$out" == *"wait until"* ]] || fail "window message: $out"
+[[ "$out" != *"    at "* ]] || fail "refusal printed a stack trace: $out"
 COCALC_SITE_MASTER_KEY_RETIRE_MIN_AGE_HOURS=0 bash "$TOOL" retire "$id1" >/dev/null 2>&1 ||
   fail "retire an unused key after its window"
 bash "$TOOL" retire "$id2" >/dev/null 2>&1 && fail "retired the active key"

@@ -1,9 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  combineSensorWakes,
   parseSensorWake,
+  SENSOR_LIMITS,
+  sensorExitPaths,
   reminderText,
   scheduledPromptText,
   sensorInterpreterArgv,
@@ -323,7 +326,12 @@ describe("watchers", () => {
       match: "DONE (",
     })!;
     const run = (cwd = dir) =>
-      execFileSync("python3", ["-c", script], { cwd, encoding: "utf8" });
+      execFileSync("python3", ["-c", script], {
+        cwd,
+        encoding: "utf8",
+        // Relative paths are relative to the home directory.
+        env: { ...process.env, HOME: dir },
+      });
     expect(run()).toBe("");
     writeFileSync(join(dir, "out.log"), "working\n");
     expect(run()).toBe("");
@@ -347,7 +355,12 @@ describe("watchers", () => {
             ...(match ? { match } : {}),
           })!,
         ],
-        { cwd: dir, encoding: "utf8", timeout: 10_000 },
+        {
+          cwd: dir,
+          encoding: "utf8",
+          timeout: 10_000,
+          env: { ...process.env, HOME: dir },
+        },
       );
     // Devices and directories never count, so /dev/zero is never read.
     expect(run("/dev/zero", "x")).toBe("");
@@ -383,6 +396,110 @@ describe("watchers", () => {
         ),
       )?.summary,
     ).toBe("CI finished on a/b#7: 1 of 2 checks failed: test");
+  });
+});
+
+describe("exit watchers", () => {
+  const now = Date.parse("2026-10-10T12:00:00Z");
+  const id = "6f1c8a52-3b1e-4c43-9d2a-1f0e5b7c9a10";
+
+  it("watch a command by its id, with a fixed title and no connectors", () => {
+    const spec = validateSensorWatch(
+      { type: "exit", id, command: "make test" },
+      { now, hours: 6 },
+    );
+    expect(spec).toMatchObject({
+      title: "Exit of make test",
+      watch: { type: "exit", id, command: "make test" },
+      expires_at: "2026-10-10T18:00:00.000Z",
+    });
+    expect(sensorUses(spec)).toEqual([]);
+    expect(sensorExitPaths(id)).toEqual({
+      dir: "~/.local/share/cocalc/sensors/exits",
+      status: `~/.local/share/cocalc/sensors/exits/${id}.json`,
+      log: `~/.local/share/cocalc/sensors/exits/${id}.log`,
+    });
+    for (const watch of [
+      { type: "exit", id: "../../etc/passwd", command: "x" },
+      { type: "exit", id, command: "x", path: "/etc/passwd" },
+      { type: "exit", id, command: "a\nb" },
+    ])
+      expect(() => validateSensorWatch(watch, { now })).toThrow();
+  });
+
+  it("its script wakes once the command has exited, with the end of the output", () => {
+    const home = mkdtempSync(join(tmpdir(), "watch-exit-"));
+    const dir = join(home, ".local/share/cocalc/sensors/exits");
+    mkdirSync(dir, { recursive: true });
+    const script = sensorWatchScript({ type: "exit", id, command: "make" })!;
+    const run = () =>
+      execFileSync("python3", ["-c", script], {
+        cwd: home,
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+      });
+    writeFileSync(
+      join(dir, `${id}.log`),
+      "x".repeat(10_000) + "\nerror: 2 tests failed\n",
+    );
+    expect(run()).toBe("");
+    writeFileSync(join(dir, `${id}.json`), '{"exit_code": 2}\n');
+    const wake = parseSensorWake(run())!;
+    expect(wake.summary).toBe('"make" exited with code 2');
+    const data = wake.data as any;
+    expect(data.exit_code).toBe(2);
+    expect(data.output_tail.length).toBe(SENSOR_LIMITS.maxExitLogBytes);
+    expect(data.output_tail.endsWith("error: 2 tests failed\n")).toBe(true);
+  });
+});
+
+describe("combineSensorWakes", () => {
+  const at = (minute: number) =>
+    `2026-10-10T12:${`${minute}`.padStart(2, "0")}:00.000Z`;
+
+  it("returns a single wake unchanged", () => {
+    const wake = { summary: "1 new issue", data: { n: 1 } };
+    expect(combineSensorWakes([{ ran_at: at(0), wake }])).toBe(wake);
+  });
+
+  it("keeps every summary and the newest data that fits", () => {
+    // Two of these do not fit together.
+    const big = "y".repeat(Math.floor(SENSOR_LIMITS.maxDataBytes * 0.55));
+    const combined = combineSensorWakes([
+      { ran_at: at(0), wake: { summary: "first", data: { big } } },
+      { ran_at: at(15), wake: { summary: "second", data: { n: 2 } } },
+      { ran_at: at(30), wake: { summary: "third", data: { big } } },
+    ]);
+    expect(combined.summary).toBe("3 events: first | second | third");
+    const events = (combined.data as any).events;
+    expect(events.map((e: any) => e.summary)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+    expect(events[2].data?.big?.length).toBe(big.length);
+    expect(events[1].data).toEqual({ n: 2 });
+    // The oldest large payload no longer fits.
+    expect(events[0].data).toBeUndefined();
+    expect(
+      new TextEncoder().encode(JSON.stringify(combined.data)).length,
+    ).toBeLessThanOrEqual(SENSOR_LIMITS.maxDataBytes);
+  });
+
+  it("bounds the number of events and the summary", () => {
+    const wakes = Array.from({ length: 30 }, (_, i) => ({
+      ran_at: at(i),
+      wake: { summary: `event ${i} `.repeat(20) },
+    }));
+    const combined = combineSensorWakes(wakes);
+    expect(combined.summary.startsWith("30 events: ")).toBe(true);
+    expect(combined.summary.length).toBeLessThanOrEqual(
+      SENSOR_LIMITS.maxSummaryChars,
+    );
+    expect((combined.data as any).events).toHaveLength(
+      SENSOR_LIMITS.maxCoalescedWakes,
+    );
+    expect((combined.data as any).earlier_events_not_shown).toBe(10);
   });
 });
 

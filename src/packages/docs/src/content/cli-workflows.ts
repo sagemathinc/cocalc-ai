@@ -406,7 +406,12 @@ gave the agent. People approve, resume and run sensors in the agent's
 cocalc sensor watch ci --repo sagemathinc/cocalc-ai --pr 992
 cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check that PR 992 merged"
+cocalc sensor watch exit -- make test
 ~~~
+
+\`watch exit\` starts the command in a project terminal, which keeps running
+after the turn ends, and the wake brings its exit code and the end of its
+output.
 
 Watchers are CoCalc's own one-shot checks, so they need no approval. The agent
 ends its turn and gets exactly one turn when it happens, or when the watcher

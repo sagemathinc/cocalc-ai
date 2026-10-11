@@ -29,10 +29,25 @@ import { isAccountBannedCached } from "@cocalc/server/accounts/security-state";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  forwardedCallHash,
+  OUTCOME_UNKNOWN,
+  runForwardedCallOnce,
+} from "@cocalc/server/inter-bay/forwarded-calls";
+import { randomUUID } from "node:crypto";
 
 const logger = getLogger("server:conat:api:edge-routing");
 
-export type HubApiCall = Omit<ForwardedHubApiCall, "source_bay_id">;
+export type HubApiCall = Omit<ForwardedHubApiCall, "source_bay_id" | "call_id">;
+
+// A forwarded call gets two attempts with the same call id, within the
+// caller's own 30 s hub call timeout, so the caller hears the outcome (or that
+// it is unknown) from this bay rather than timing out itself.
+const FORWARD_ATTEMPTS = 2;
+const FORWARD_ATTEMPT_TIMEOUT_MS = 12_000;
+// How long the owning bay lets a repeat wait for the first attempt to finish;
+// shorter than an attempt, so the answer arrives before the attempt times out.
+const REPEAT_WAIT_MS = 9_000;
 
 type Executor = (call: HubApiCall) => Promise<any>;
 
@@ -112,27 +127,87 @@ export async function executeHubApiCall(call: HubApiCall): Promise<any> {
 
 /**
  * Forward an authenticated, authorized hub API call to the bay that owns its
- * data, which re-checks the route and runs it there.
+ * data, which re-checks the route and runs it there exactly once. If that bay
+ * does not answer, send the call again with the same call id: it returns the
+ * first attempt's outcome rather than running it twice. If there is still no
+ * answer, the call may or may not have run: say so (code OUTCOME_UNKNOWN)
+ * rather than report a failure.
  */
 export async function forwardHubApiCall(
   bay_id: string,
   call: HubApiCall,
 ): Promise<any> {
-  const response: ForwardedResult = await createInterBayHubApiClient({
-    client: getInterBayFabricClient(),
-    bay_id,
-  }).call({ ...call, source_bay_id: getConfiguredBayId() });
-  if (response.ok) return response.result;
-  // The same error the owning bay raised, as if the call had run here.
-  throw Object.assign(new Error(response.error), response.attrs);
+  const forwarded: ForwardedHubApiCall = {
+    ...call,
+    source_bay_id: getConfiguredBayId(),
+    call_id: randomUUID(),
+  };
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= FORWARD_ATTEMPTS; attempt++) {
+    let response: ForwardedResult;
+    try {
+      response = await createInterBayHubApiClient({
+        client: getInterBayFabricClient(),
+        bay_id,
+        timeout: FORWARD_ATTEMPT_TIMEOUT_MS,
+      }).call(forwarded);
+    } catch (err) {
+      // No answer. Even "no responders" (503) does not prove the call was not
+      // delivered: the transport retries an unacknowledged fast request over
+      // its fallback path, which then reports 503. The call id makes the next
+      // attempt safe either way.
+      lastError = err;
+      logger.debug("forwarded hub API call got no answer", {
+        name: call.name,
+        bay_id,
+        attempt,
+        err: `${err}`,
+      });
+      continue;
+    }
+    if (response.ok) return response.result;
+    // The same error the owning bay raised, as if the call had run here.
+    throw Object.assign(new Error(response.error), response.attrs);
+  }
+  throw Object.assign(
+    new Error(
+      `outcome unknown: ${bay_id} did not answer '${call.name}' (${lastError}); it may or may not have been applied`,
+    ),
+    { code: OUTCOME_UNKNOWN },
+  );
 }
 
 /** The owning bay's side of a forwarded call. */
 export async function handleForwardedHubApiCall(
   call: ForwardedHubApiCall,
 ): Promise<ForwardedResult> {
+  const { call_id } = call;
+  if (call_id == null) return await runForwardedHubApiCall(call);
   try {
-    const { source_bay_id, ...rest } = call;
+    return await runForwardedCallOnce({
+      call_id,
+      name: call.name,
+      account_id: call.account_id,
+      source_bay_id: call.source_bay_id,
+      call_hash: forwardedCallHash(call),
+      wait_ms: REPEAT_WAIT_MS,
+      run: async () => await runForwardedHubApiCall(call),
+    });
+  } catch (err) {
+    // The call id could not be recorded, so the call did not run.
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : `${err}`,
+      attrs: hubApiErrorAttrs(err),
+    };
+  }
+}
+
+async function runForwardedHubApiCall(
+  call: ForwardedHubApiCall,
+): Promise<ForwardedResult> {
+  try {
+    const { source_bay_id, call_id: _call_id, ...rest } = call;
     const route = getHubApiRoute(rest.name);
     // Only routed methods cross bays this way.
     if (route == null) {

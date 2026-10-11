@@ -250,9 +250,9 @@ import {
   listPendingAcpAttentionResponseDispatches,
   listPendingAcpActions,
   markAllPendingAcpSyncAttentionStale,
-  markAcpAsyncAttentionSuperseded,
   resolveAcpAttention,
   submitAcpAttentionResponse,
+  dismissAcpAsyncAttention,
   updateAcpAttentionDelivery,
   type AcpAttentionStoredRecord,
 } from "../sqlite/acp-attention";
@@ -10202,20 +10202,9 @@ async function enqueueChatAcpTurn({
     `${request.chat.project_id ?? request.project_id ?? ""}`.trim();
   const chatPath = `${request.chat.path ?? ""}`.trim();
   const threadId = `${request.chat.thread_id ?? ""}`.trim();
-  if (projectId && chatPath && threadId) {
-    const superseded = markAcpAsyncAttentionSuperseded({
-      project_id: projectId,
-      path: chatPath,
-      thread_id: threadId,
-      reason: "A newer user message superseded this question",
-    });
-    for (const record of superseded) {
-      void publishStoredAttentionNoticeBestEffort({
-        client: conatClient,
-        record,
-      });
-    }
-  }
+  // Unanswered questions stay answerable when another turn starts (an
+  // answer to a sibling question, a new message, a wake): people answer
+  // them, or dismiss them, in their own time.
   const { job: row, canceled } = enqueueAcpJobCancelingQueuedRecoveries(
     request,
     {
@@ -10961,6 +10950,26 @@ async function handleAcpAttentionRequest(
             record: publicAttentionRecord(record),
           }
         : { ok: false, state: "missing" };
+    }
+    case "dismiss": {
+      const record = dismissAcpAsyncAttention({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+      });
+      if (!record) return { ok: false, state: "missing" };
+      if (record.state === "canceled" && conatClient) {
+        void publishStoredAttentionNoticeBestEffort({
+          client: conatClient,
+          record,
+        });
+      }
+      // Answered meanwhile (or not an async question): nothing dismissed.
+      return {
+        ok: record.state === "canceled",
+        state: record.state,
+        record: publicAttentionRecord(record),
+      };
     }
     case "continue":
       return await continueStaleAttentionAnswer(request);

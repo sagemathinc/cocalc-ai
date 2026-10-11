@@ -9,7 +9,7 @@
 // - Scheduled prompts are turns you schedule (or approve).
 // - Watchers are CoCalc's own one-shot checks the agent sets itself.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -37,8 +37,10 @@ import {
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components";
+import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi } from "./api";
+import { SensorReviewPanel } from "./sensor-review-panel";
 
 const LANGUAGE: Record<ScriptSensorSpec["language"], string> = {
   sh: "Shell (bash)",
@@ -58,6 +60,7 @@ const OUTCOME: Record<string, string> = {
   wake: "Woke the agent",
   "wake-limited": "Wanted to wake; daily limit reached",
   "wake-failed": "Wake failed",
+  "wake-coalesced": "Held while an earlier wake waited; goes with the next",
   failed: "Failed",
   timeout: "Timed out",
   skipped: "Skipped",
@@ -84,7 +87,36 @@ export function sensorAccessText(spec: SensorSpec): string {
     : "This project's files and software only";
 }
 
-function CodeBlock({ label, children }: { label: string; children: string }) {
+const CODEMIRROR_MODE: Record<string, string> = {
+  sh: "shell",
+  python: "python",
+  node: "javascript",
+};
+
+function CodeBlock({
+  label,
+  children,
+  language,
+}: {
+  label: string;
+  children: string;
+  language?: string;
+}) {
+  const mode = language ? CODEMIRROR_MODE[language] : undefined;
+  if (mode)
+    return (
+      <div
+        aria-label={label}
+        tabIndex={0}
+        style={{ maxHeight: 320, overflow: "auto", fontSize: 12 }}
+      >
+        <CodeMirrorStatic
+          value={children}
+          options={{ mode, lineNumbers: false, lineWrapping: true }}
+          font_size={12}
+        />
+      </div>
+    );
   return (
     <pre
       aria-label={label}
@@ -109,11 +141,14 @@ function watchText(spec: Extract<SensorSpec, { kind: "watch" }>): string {
   const w = spec.watch;
   if (w.type === "ci") return `CI checks on ${w.repo}#${w.pr} finish`;
   if (w.type === "file")
-    return w.match ? `${w.path} matches /${w.match}/` : `${w.path} exists`;
+    return w.match ? `${w.path} contains "${w.match}"` : `${w.path} exists`;
+  if (w.type === "exit") return `${w.command} exits`;
   return `${new Date(w.at).toLocaleString()}: ${w.note}`;
 }
 
 function SpecDetails({ spec }: { spec: SensorSpec }) {
+  // Few people read the code; the review summarizes it.
+  const [showScript, setShowScript] = useState(false);
   const kind = kindOf(spec);
   if (kind === "watch") {
     const watch = spec as Extract<SensorSpec, { kind: "watch" }>;
@@ -152,6 +187,8 @@ function SpecDetails({ spec }: { spec: SensorSpec }) {
     );
   }
   const script = spec as ScriptSensorSpec;
+  const access = sensorAccessText(script);
+  const lines = script.script.trimEnd().split("\n").length;
   return (
     <>
       <Descriptions
@@ -160,67 +197,151 @@ function SpecDetails({ spec }: { spec: SensorSpec }) {
         items={[
           { key: "purpose", label: "Purpose", children: script.purpose },
           {
-            key: "schedule",
-            label: "Schedule",
-            children: describeSensorSchedule(script.schedule),
+            key: "runs",
+            label: "Runs",
+            children: `${describeSensorSchedule(script.schedule)}, up to ${script.timeout_seconds} s each`,
           },
           {
             key: "access",
             label: "Access",
-            children: sensorAccessText(script),
+            children: `As you, with ${access[0].toLowerCase()}${access.slice(1)}`,
           },
           {
-            key: "limits",
-            label: "Limits",
-            children: `${script.timeout_seconds} s per run, at most ${script.max_wakes_per_day} wakes per day`,
+            key: "wakes",
+            label: "Wakes",
+            children: `At most ${script.max_wakes_per_day} times a day, each a turn on your account`,
+          },
+          {
+            key: "script",
+            label: "Script",
+            children: (
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, height: "auto" }}
+                aria-expanded={showScript}
+                onClick={() => setShowScript(!showScript)}
+              >
+                {showScript ? "Hide" : "Show"} {LANGUAGE[script.language]},{" "}
+                {lines} {lines === 1 ? "line" : "lines"}
+              </Button>
+            ),
           },
         ]}
       />
-      <CodeBlock label={`${LANGUAGE[script.language]} script`}>
-        {script.script}
-      </CodeBlock>
+      {showScript && (
+        <CodeBlock
+          label={`${LANGUAGE[script.language]} script`}
+          language={script.language}
+        >
+          {script.script}
+        </CodeBlock>
+      )}
     </>
   );
 }
 
-function Runs({ sensor }: { sensor: AgentSensor }) {
+/** How long the log watches for a requested run before it gives up. */
+const RUN_WATCH_MS = 3 * 60_000;
+const RUN_POLL_MS = 2_000;
+
+function Runs({
+  sensor,
+  requested,
+  onSettled,
+}: {
+  sensor: AgentSensor;
+  /** Run now was pressed: when the server took the request. */
+  requested?: { at: string };
+  /** The requested run finished (or never showed up in time). */
+  onSettled?: () => void;
+}) {
   const [runs, setRuns] = useState<AgentSensorRun[]>();
   const [error, setError] = useState("");
-  const [open, setOpen] = useState(false);
   const load = async () => {
-    setOpen(true);
+    setError("");
     try {
       const result = await personalAgentApi().listSensors({
         project_id: sensor.project_id,
         sensor_id: sensor.sensor_id,
       });
       setRuns(result.runs ?? []);
+      return result.runs ?? [];
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
     }
   };
-  if (!open)
-    return (
-      <Button size="small" onClick={() => void load()}>
-        Run log
-      </Button>
-    );
+  // A run that finishes while the log is open shows up in it (while a
+  // requested run is followed, that loop loads).
+  useEffect(() => {
+    if (!requested) void load();
+  }, [sensor.last_run_at]);
+  // After Run now, open the log and follow the run until it is done.
+  // The run it asked for: a manual run started after the request, not one
+  // that was already running when Run now was pressed.
+  const isNew = (run: AgentSensorRun) =>
+    requested != null &&
+    run.manual &&
+    new Date(run.started_at).valueOf() >= new Date(requested.at).valueOf();
+  useEffect(() => {
+    if (!requested) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const until = Date.now() + RUN_WATCH_MS;
+    const look = async () => {
+      const latest = await load();
+      if (stopped) return;
+      const run = latest?.find(isNew);
+      if ((run && run.outcome) || Date.now() > until) onSettled?.();
+      else timer = setTimeout(() => void look(), RUN_POLL_MS);
+    };
+    void look();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [requested]);
+  const starting = requested != null && !runs?.some(isNew);
   if (error) return <Alert type="error" title={error} />;
-  if (!runs) return <Spin aria-label="Loading runs" />;
-  if (runs.length === 0) return <Empty description="No runs yet" />;
+  if (!runs)
+    return starting ? <StartingRun /> : <Spin aria-label="Loading runs" />;
+  if (runs.length === 0 && !starting)
+    return (
+      <Empty
+        description={
+          sensor.next_run_at &&
+          new Date(sensor.next_run_at).valueOf() <= Date.now()
+            ? "No runs yet; one is starting now"
+            : "No runs yet"
+        }
+      />
+    );
   return (
     <div style={{ width: "100%" }}>
+      {starting && <StartingRun />}
       {runs.map((run) => (
         <details key={run.run_id} style={{ marginBottom: 4 }}>
           <summary>
             <TimeAgo date={run.started_at} />
             {" · "}
-            {run.outcome ? (OUTCOME[run.outcome] ?? run.outcome) : "Running"}
+            {run.outcome ? (
+              (OUTCOME[run.outcome] ?? run.outcome)
+            ) : (
+              <>
+                <Spin size="small" /> Running
+              </>
+            )}
             {run.manual ? " · run by hand" : ""}
             {run.summary ? ` · ${run.summary}` : ""}
           </summary>
           {run.error && (
             <div style={{ color: UI_COLORS.danger }}>{run.error}</div>
+          )}
+          {run.connectors?.length > 0 && (
+            <div>
+              Used{" "}
+              {run.connectors.map((c) => SENSOR_CONNECTOR_LABELS[c]).join(", ")}
+            </div>
           )}
           {run.output && (
             <pre style={{ maxHeight: 240, overflow: "auto", fontSize: 12 }}>
@@ -229,6 +350,14 @@ function Runs({ sensor }: { sensor: AgentSensor }) {
           )}
         </details>
       ))}
+    </div>
+  );
+}
+
+function StartingRun() {
+  return (
+    <div role="status" style={{ marginBottom: 4 }}>
+      <Spin size="small" /> Starting the run…
     </div>
   );
 }
@@ -245,6 +374,8 @@ function SensorCard({
   const [busy, setBusy] = useState<SensorManageOp>();
   const [error, setError] = useState("");
   const [showCurrent, setShowCurrent] = useState(false);
+  const [requested, setRequested] = useState<{ at: string }>();
+  const [logOpen, setLogOpen] = useState(false);
   const spec = sensor.spec ?? sensor.pending_spec!;
   const kind = kindOf(spec);
   const done =
@@ -253,12 +384,20 @@ function SensorCard({
     setBusy(op);
     setError("");
     try {
-      await personalAgentApi().manageSensor({
+      const result = await personalAgentApi().manageSensor({
         project_id: sensor.project_id,
         sensor_id: sensor.sensor_id,
         op,
         revision: sensor.revision,
       });
+      // The run log opens and follows the run it asked for. The request's
+      // time is the database's, like the run's start.
+      if (op === "run") {
+        setRequested({
+          at: result?.sensor?.updated ?? new Date().toISOString(),
+        });
+        setLogOpen(true);
+      }
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
@@ -279,6 +418,17 @@ function SensorCard({
     </Button>
   );
   const pending = sensor.pending_spec;
+  const deleteButton = (
+    <Popconfirm
+      title="Delete this sensor and its run log?"
+      okText="Delete"
+      onConfirm={() => void act("delete")}
+    >
+      <Button size="small" danger type="text" disabled={busy != null}>
+        Delete
+      </Button>
+    </Popconfirm>
+  );
   return (
     <section
       aria-label={`Sensor ${spec.title}`}
@@ -318,20 +468,30 @@ function SensorCard({
             }
             description={
               kindOf(pending) === "script"
-                ? `It runs like a command of @${agent.name}: in this project's software, as you, with: ${sensorAccessText(pending)}. Each wake starts a turn paid by your account. Read the script before approving.`
+                ? undefined
                 : `It starts a turn of @${agent.name} with this prompt on this schedule, paid by your account.`
             }
           />
           <SpecDetails spec={pending} />
-          <Space>
+          {kindOf(pending) === "script" && sensor.pending_hash && (
+            <SensorReviewPanel
+              agent={agent}
+              sensor={sensor}
+              spec={pending as ScriptSensorSpec}
+              hash={sensor.pending_hash}
+            />
+          )}
+          <Space wrap>
             {button("approve", "Approve and run", true)}
             {button("reject", "Reject")}
-            {sensor.spec && (
+            {sensor.spec ? (
               <Button size="small" onClick={() => setShowCurrent(!showCurrent)}>
                 {showCurrent
                   ? "Hide approved version"
                   : "Show approved version"}
               </Button>
+            ) : (
+              deleteButton
             )}
           </Space>
         </div>
@@ -355,7 +515,13 @@ function SensorCard({
           )}
           {sensor.next_run_at && (
             <div>
-              Next run <TimeAgo date={sensor.next_run_at} />
+              {new Date(sensor.next_run_at).valueOf() <= Date.now() ? (
+                "Next run: starting now"
+              ) : (
+                <>
+                  Next run <TimeAgo date={sensor.next_run_at} />
+                </>
+              )}
             </div>
           )}
           {kind !== "watch" && (
@@ -366,24 +532,39 @@ function SensorCard({
           )}
         </div>
       )}
-      <Space wrap>
-        {sensor.status === "active" && !done && button("run", "Run now")}
-        {sensor.status === "active" && !done && button("pause", "Pause")}
-        {sensor.status === "paused" &&
-          sensor.spec &&
-          kind !== "watch" &&
-          button("resume", "Resume")}
-        <Popconfirm
-          title="Delete this sensor and its run log?"
-          okText="Delete"
-          onConfirm={() => void act("delete")}
-        >
-          <Button size="small" danger disabled={busy != null}>
-            Delete
-          </Button>
-        </Popconfirm>
-        {sensor.spec && <Runs sensor={sensor} />}
-      </Space>
+      {/* A proposal that never ran has only its own buttons. */}
+      {!(pending && !sensor.spec) && (
+        <Space wrap>
+          {sensor.status === "active" && !done && button("run", "Run now")}
+          {sensor.status === "active" && !done && button("pause", "Pause")}
+          {sensor.status === "paused" &&
+            sensor.spec &&
+            kind !== "watch" &&
+            button("resume", "Resume")}
+          {deleteButton}
+          {sensor.spec && (
+            <Button
+              size="small"
+              aria-expanded={logOpen}
+              onClick={() => setLogOpen(!logOpen)}
+            >
+              {logOpen ? "Hide run log" : "Run log"}
+            </Button>
+          )}
+        </Space>
+      )}
+      {sensor.spec && logOpen && (
+        <div style={{ marginTop: 8 }}>
+          <Runs
+            sensor={sensor}
+            requested={requested}
+            onSettled={() => {
+              setRequested(undefined);
+              onChanged();
+            }}
+          />
+        </div>
+      )}
     </section>
   );
 }

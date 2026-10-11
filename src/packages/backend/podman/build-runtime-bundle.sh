@@ -12,6 +12,11 @@ GO_VERSION="${GO_VERSION:-1.25.14}"
 RUST_VERSION="${RUST_VERSION:-1.83.0}"
 NETAVARK_VERSION="${NETAVARK_VERSION:-1.16.1}"
 AARDVARK_VERSION="${AARDVARK_VERSION:-1.16.0}"
+# pasta (from passt) carries every project's network traffic. Ubuntu 24.04's
+# 2024-02 build leaves Nagle on for its host-side sockets, which delays the
+# second of two quick small writes by the peer's delayed ACK (~40 ms).
+PASST_VERSION="${PASST_VERSION:-2026_10_02.cba3570}"
+PASST_COMMIT="${PASST_COMMIT:-cba357068dc586e7540971eb40bb56c5e62c4de1}"
 BUILD_IMAGE="${COCALC_CONTAINER_RUNTIME_BUILD_IMAGE:-ubuntu:24.04}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +48,7 @@ PODMAN_SHA256="107eb5b04fa1133a309204b6d888bc21c7750c53d9f714dcca28b81ed38a45eb"
 CONMON_SHA256="814fb5979a3a4b8576b1f901e606b482bebb41cb7e57926e6d5765ee786b96d3"
 NETAVARK_SHA256="e655fcd882fe891bcc8328ddcfff3745831c8b1013ae59f012d37ce87175b0b3"
 AARDVARK_SHA256="6c84a3371087d6af95407b0d3de26cdc1e720ae8cd983a9bdaec8883e2216959"
+PASST_SHA256="2bd6f52562a201e8960c17d6ae459a10bb18dc7ef2e7fa617ec82a872db9e403"
 
 if [[ "${1:-}" != "--inner" ]]; then
   ENGINE="${COCALC_CONTAINER_BUILD_ENGINE:-}"
@@ -88,11 +94,14 @@ if [[ "${1:-}" != "--inner" ]]; then
     -e RUST_SHA256="$RUST_SHA256" \
     -e NETAVARK_VERSION="$NETAVARK_VERSION" \
     -e AARDVARK_VERSION="$AARDVARK_VERSION" \
+    -e PASST_VERSION="$PASST_VERSION" \
+    -e PASST_COMMIT="$PASST_COMMIT" \
     -e PODMAN_SHA256="$PODMAN_SHA256" \
     -e CONMON_SHA256="$CONMON_SHA256" \
     -e CRUN_SHA256="$CRUN_SHA256" \
     -e NETAVARK_SHA256="$NETAVARK_SHA256" \
     -e AARDVARK_SHA256="$AARDVARK_SHA256" \
+    -e PASST_SHA256="$PASST_SHA256" \
     -e ARCH="$ARCH" \
     -v "$TMP:/work" \
     "$BUILD_IMAGE" bash /work/build.sh --inner
@@ -152,15 +161,18 @@ CONMON_ARCHIVE="$SRC/conmon.tar.gz"
 CRUN_BINARY="$SRC/crun"
 NETAVARK_ARCHIVE="$SRC/netavark.tar.gz"
 AARDVARK_ARCHIVE="$SRC/aardvark.tar.gz"
+PASST_ARCHIVE="$SRC/passt.tar.xz"
 fetch "https://github.com/podman-container-tools/podman/archive/refs/tags/v${PODMAN_VERSION}.tar.gz" "$PODMAN_SHA256" "$PODMAN_ARCHIVE"
 fetch "https://github.com/containers/conmon/archive/refs/tags/v${CONMON_VERSION}.tar.gz" "$CONMON_SHA256" "$CONMON_ARCHIVE"
 fetch "https://github.com/containers/crun/releases/download/${CRUN_VERSION}/crun-${CRUN_VERSION}-linux-${ARCH}" "$CRUN_SHA256" "$CRUN_BINARY"
 fetch "https://github.com/containers/netavark/archive/refs/tags/v${NETAVARK_VERSION}.tar.gz" "$NETAVARK_SHA256" "$NETAVARK_ARCHIVE"
 fetch "https://github.com/containers/aardvark-dns/archive/refs/tags/v${AARDVARK_VERSION}.tar.gz" "$AARDVARK_SHA256" "$AARDVARK_ARCHIVE"
+fetch "https://passt.top/passt/snapshot/passt-${PASST_COMMIT}.tar.xz" "$PASST_SHA256" "$PASST_ARCHIVE"
 tar -xzf "$PODMAN_ARCHIVE" -C "$SRC"
 tar -xzf "$CONMON_ARCHIVE" -C "$SRC"
 tar -xzf "$NETAVARK_ARCHIVE" -C "$SRC"
 tar -xzf "$AARDVARK_ARCHIVE" -C "$SRC"
+tar -xJf "$PASST_ARCHIVE" -C "$SRC"
 
 RUST_ARCHIVE="$SRC/rust.tar.gz"
 fetch "https://static.rust-lang.org/dist/2024-11-28/rust-${RUST_VERSION}-${RUST_TARGET}.tar.gz" "$RUST_SHA256" "$RUST_ARCHIVE"
@@ -182,6 +194,21 @@ install -m 0755 "$SRC/netavark-$NETAVARK_VERSION/target/release/netavark" "$STAG
 cargo build --locked --release --manifest-path "$SRC/aardvark-dns-$AARDVARK_VERSION/Cargo.toml"
 install -m 0755 "$SRC/aardvark-dns-$AARDVARK_VERSION/target/release/aardvark-dns" "$STAGE/bin/aardvark-dns"
 
+# Podman finds pasta through helper_binaries_dir below, ahead of the distro
+# copy. pasta is the passt binary, which picks its mode from argv[0]; on x86_64
+# it re-executes its own path plus .avx2 when the CPU supports it. Copies, not
+# links: the runtime archive holds only directories and regular files.
+PASST_BINARIES=(passt)
+if [[ "$ARCH" == amd64 ]]; then
+  PASST_BINARIES+=(passt.avx2)
+fi
+make -C "$SRC/passt-$PASST_COMMIT" -j"$(nproc)" VERSION="$PASST_VERSION" \
+  "${PASST_BINARIES[@]}"
+install -m 0755 "$SRC/passt-$PASST_COMMIT/passt" "$STAGE/bin/pasta"
+if [[ "$ARCH" == amd64 ]]; then
+  install -m 0755 "$SRC/passt-$PASST_COMMIT/passt.avx2" "$STAGE/bin/pasta.avx2"
+fi
+
 cat > "$STAGE/etc/containers/containers.conf" <<'EOF'
 [engine]
 conmon_path = ["/opt/cocalc/container-runtime/current/bin/conmon"]
@@ -192,7 +219,7 @@ runtime = "/opt/cocalc/container-runtime/current/bin/crun"
 network_backend = "netavark"
 EOF
 
-for binary in podman conmon crun netavark aardvark-dns; do
+for binary in podman conmon crun netavark aardvark-dns pasta; do
   ldd "$STAGE/bin/$binary" > "$STAGE/share/cocalc/ldd-$binary.txt" || true
 done
 
@@ -202,15 +229,18 @@ jq -n \
   --arg crun "$CRUN_VERSION" \
   --arg netavark "$NETAVARK_VERSION" \
   --arg aardvark "$AARDVARK_VERSION" \
+  --arg passt "$PASST_VERSION" \
+  --arg passt_commit "$PASST_COMMIT" \
+  --arg passt_sha256 "$PASST_SHA256" \
   --arg go "$GO_VERSION" \
   --arg arch "$ARCH" \
   --arg podman_sha256 "$PODMAN_SHA256" \
   --arg conmon_sha256 "$CONMON_SHA256" \
   --arg crun_sha256 "$CRUN_SHA256" \
-  '{schema:"cocalc-container-runtime-v1",os:"linux",arch:$arch,build_userspace:"ubuntu:24.04",components:{podman:{version:$podman,source_sha256:$podman_sha256},conmon:{version:$conmon,source_sha256:$conmon_sha256},crun:{version:$crun,binary_sha256:$crun_sha256},netavark:{version:$netavark},aardvark_dns:{version:$aardvark},go:{version:$go}},host_contract:{database_backend:"sqlite",cgroup_manager:"cgroupfs",network_backend:"netavark",required_commands:["catatonit","fuse-overlayfs","iptables","nft","pasta","slirp4netns"]}}' \
+  '{schema:"cocalc-container-runtime-v1",os:"linux",arch:$arch,build_userspace:"ubuntu:24.04",components:{podman:{version:$podman,source_sha256:$podman_sha256},conmon:{version:$conmon,source_sha256:$conmon_sha256},crun:{version:$crun,binary_sha256:$crun_sha256},netavark:{version:$netavark},aardvark_dns:{version:$aardvark},passt:{version:$passt,commit:$passt_commit,source_sha256:$passt_sha256},go:{version:$go}},host_contract:{database_backend:"sqlite",cgroup_manager:"cgroupfs",network_backend:"netavark",required_commands:["catatonit","fuse-overlayfs","iptables","nft","pasta","slirp4netns"]}}' \
   > "$STAGE/share/cocalc/runtime-manifest.json"
 
-for binary in podman conmon crun netavark aardvark-dns; do
+for binary in podman conmon crun netavark aardvark-dns pasta; do
   "$STAGE/bin/$binary" --version > "$STAGE/share/cocalc/version-$binary.txt" 2>&1
 done
 

@@ -22,6 +22,7 @@ import {
   deriveSiteMasterKeyring,
   getOrCreateSiteMasterKey,
   getSiteMasterKeyring,
+  hasStrictCredentialPermissions,
   parseSiteMasterKeyring,
   retireSiteMasterKey,
   siteMasterKeyId,
@@ -138,6 +139,17 @@ describe("master-key-lifecycle", () => {
     const status = await getSiteMasterKeyStatus({ secretsDir });
     expect(status.site_master_key.source).toBe("systemd-credential");
     expect(status.site_master_key.read_only).toBe(true);
+  });
+
+  it("accepts systemd's root-group credential files but nothing wider", () => {
+    // systemd 255 creates them root:root 0440 with an ACL for the unit's user.
+    const file = (mode: number, gid = 0) => ({ mode: 0o100000 | mode, gid });
+    expect(hasStrictCredentialPermissions(file(0o440), true)).toBe(true);
+    expect(hasStrictCredentialPermissions(file(0o400, 1000), true)).toBe(true);
+    expect(hasStrictCredentialPermissions(file(0o440, 1000), true)).toBe(false);
+    expect(hasStrictCredentialPermissions(file(0o444), true)).toBe(false);
+    expect(hasStrictCredentialPermissions(file(0o460), true)).toBe(false);
+    expect(hasStrictCredentialPermissions(file(0o440), false)).toBe(false);
   });
 
   describe("keyring and rotation", () => {

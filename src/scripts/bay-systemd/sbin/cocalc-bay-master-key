@@ -295,6 +295,11 @@ try {
   } else {
     throw new Error(`unknown key-file command ${command}`);
   }
+} catch (err) {
+  // A refusal (wrong key id, too early to retire, ...) is a message for the
+  // operator, not a stack trace.
+  console.error(`cocalc-bay-master-key: ${err.message}`);
+  process.exitCode = 1;
 } finally {
   unlock();
 }

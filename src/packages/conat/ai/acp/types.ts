@@ -331,6 +331,13 @@ export type AcpAttentionRequest =
       snoozed_until: number;
     }
   | {
+      /** Close an unanswered async question for good: no answer, no turn. */
+      action: "dismiss";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+    }
+  | {
       action: "continue";
       codex_credential_id?: string;
       project_id: string;

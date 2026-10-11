@@ -422,9 +422,10 @@ copies still contain (they persist for up to 30 days):
 - the Cloudflare tunnel credentials.
 
 Then run the escrow job so the current copy holds the new values. The site
-master key also protects database secret settings and project secrets, and
-CoCalc has no tooling yet to rotate it. Keep any retired master key for as
-long as escrow copies or backups sealed with it are retained.
+master key also protects database secret settings and project secrets; rotate
+it as described in [Site Master Key Rotation](#site-master-key-rotation). Keep
+any retired master key for as long as escrow copies or backups sealed with it
+are retained.
 
 Tests: `bash src/scripts/bay-systemd/libexec/bay-config-escrow.test.sh`. With
 passwordless sudo it also checks `--chown` and the symlink defences as root.

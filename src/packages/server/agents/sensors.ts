@@ -30,6 +30,7 @@ import { assertActor, assertAgent } from "./access";
 import { agentStore, type AgentRun } from "./store";
 import { sensorBudget } from "./cocalc-connector-routing";
 import { NO_SENSORS, sensorLimits } from "./sensor-budget";
+import { kickSensorScheduler } from "./sensor-kick";
 import type { PoolClient } from "@cocalc/database/pool";
 
 /** People may start a sensor by hand at most this often. */
@@ -98,6 +99,7 @@ export function toSensorRun(row: any): AgentSensorRun {
     output: row.output ?? null,
     error: row.error ?? null,
     manual: !!row.manual,
+    connectors: Array.isArray(row.connectors) ? row.connectors : [],
   };
 }
 
@@ -289,8 +291,9 @@ async function createWatcher(
   request: Extract<AgentSensorRequest, { op: "watch" }>,
 ) {
   const limits = await sensorLimits(run.account_id);
-  if (limits.maxActive === 0 || limits.maxWakesPerDay === 0)
-    throw new Error(NO_SENSORS);
+  // Watchers replace polling: any membership that allows wakes has them,
+  // limited by maxWatchersPerAccount and the wake budget, not maxActive.
+  if (limits.maxWakesPerDay === 0) throw new Error(NO_SENSORS);
   const spec = validateSensorWatch(request.watch, { hours: request.hours });
   if (!(await projectHasInternet(agent.project_id)))
     throw new Error(NO_INTERNET);
@@ -516,6 +519,8 @@ export async function sensorControlLocal(
     sql: string,
     values: unknown[],
     activateWithin?: number,
+    /** Approve or resume: wakes from the earlier approval never run. */
+    newApproval = false,
   ) => {
     const { rows } = await db.transaction(async (client) => {
       if (activateWithin !== undefined) {
@@ -528,11 +533,20 @@ export async function sensorControlLocal(
             `This project already has ${activateWithin} active sensors, the most your membership allows. Pause or delete one first.`,
           );
       }
-      return await client.query(
+      const updated = await client.query(
         `UPDATE agent_sensors SET ${sql}, revision=revision+1, updated=now()
          WHERE sensor_id=$1 AND revision=$2 RETURNING *`,
         [row.sensor_id, row.revision, ...values],
       );
+      if (newApproval && updated.rows[0])
+        await client.query(
+          `UPDATE agent_sensor_runs SET wake_state='superseded',
+             wake_permit_hash=NULL, wake_data=NULL
+           WHERE sensor_id=$1
+             AND wake_state IN ('issued', 'deferred', 'combining')`,
+          [row.sensor_id],
+        );
+      return updated;
     });
     if (!rows[0])
       throw new Error(
@@ -562,6 +576,7 @@ export async function sensorControlLocal(
           await projectImage(project_id),
         ],
         maxActive,
+        true,
       );
     }
     case "reject":
@@ -600,6 +615,7 @@ export async function sensorControlLocal(
           await projectImage(project_id),
         ],
         maxActive,
+        true,
       );
     }
     case "run": {
@@ -611,9 +627,11 @@ export async function sensorControlLocal(
         Date.now() - new Date(row.last_run_at).valueOf() < MANUAL_RUN_MIN_GAP_MS
       )
         throw new Error("this sensor ran less than a minute ago");
-      return await update("run_requested_by=$3, next_run_at=now()", [
+      const requested = await update("run_requested_by=$3, next_run_at=now()", [
         account_id,
       ]);
+      kickSensorScheduler();
+      return requested;
     }
     case "delete": {
       await db.query(

@@ -595,6 +595,48 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("dismisses an open async question on the server, for every device", async () => {
+    const user = userEvent.setup();
+    const open = {
+      ...questionRecord,
+      source_kind: "codex_async_question" as const,
+      is_blocking: false,
+    };
+    const dismissed = {
+      ...open,
+      state: "canceled" as const,
+      resolution_reason: "Dismissed without an answer.",
+      updated_at: open.updated_at + 1,
+    };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        ...(request.action === "list"
+          ? { records: [open] }
+          : request.action === "dismiss"
+            ? { state: "canceled", record: dismissed }
+            : { record: open }),
+      }));
+    const view = render(<CodexAttentionCard initialRecord={open} />);
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "dismiss",
+          attention_id: open.attention_id,
+        }),
+      ),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Show question" }),
+    ).toBeTruthy();
+    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "respond" }),
+    );
+    view.unmount();
+  });
+
   it.each(["codex_sync_question", "codex_async_question"] as const)(
     "keeps keyboard recovery and selected subscription for a saved %s",
     async (source_kind) => {

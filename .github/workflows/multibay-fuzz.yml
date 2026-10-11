@@ -35,9 +35,7 @@ on:
       allow:
         description: "Invariants to report as warnings (comma-separated; none = strict)"
         required: false
-        # honest-errors: committed changes answered with 408 while a peer is
-        # frozen, fixed by #909. Remove once it is merged.
-        default: "honest-errors"
+        default: "none"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -83,7 +81,7 @@ jobs:
           FUZZ_SEED: ${{ inputs.seed || github.run_number }}
           FUZZ_RUNS: ${{ inputs.runs || (github.event_name == 'pull_request' && '2') || '3' }}
           FUZZ_STEPS: ${{ inputs.steps || (github.event_name == 'pull_request' && '20') || '30' }}
-          FUZZ_ALLOW: ${{ inputs.allow || 'honest-errors' }}
+          FUZZ_ALLOW: ${{ inputs.allow || 'none' }}
         run: |
           mkdir -p "$MULTIBAY_DIR"
           echo "FUZZ_SEED=$FUZZ_SEED FUZZ_RUNS=$FUZZ_RUNS FUZZ_STEPS=$FUZZ_STEPS FUZZ_ALLOW=$FUZZ_ALLOW"
