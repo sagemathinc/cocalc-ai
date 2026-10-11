@@ -15,6 +15,7 @@ import "./emoji";
 import "./generic";
 import "./guidance";
 import "./agent-message";
+import "./sensor-wake";
 import "./hashtag";
 import "./heading";
 import "./html";

@@ -34,6 +34,8 @@ import type { Guidance } from "./guidance";
 import "./guidance";
 import type { AgentMessage } from "./agent-message";
 import "./agent-message";
+import type { SensorWake } from "./sensor-wake";
+import "./sensor-wake";
 import type { Hashtag } from "./hashtag";
 import "./hashtag/editable";
 import type { Heading } from "./heading";
@@ -81,6 +83,7 @@ declare module "slate" {
   export interface CustomTypes {
     Element:
       | AgentMessage
+      | SensorWake
       | Meta
       | References
       | Checkbox

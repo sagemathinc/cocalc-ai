@@ -154,7 +154,7 @@ Table({
     finished_at: timestamp("Run end."),
     outcome: {
       type: "string",
-      desc: "quiet, wake, wake-limited, wake-failed, failed, timeout or skipped.",
+      desc: "quiet, wake, wake-limited, wake-failed, wake-coalesced (held while an earlier wake was queued), failed, timeout or skipped.",
     },
     exit_code: { type: "integer", desc: "Script exit code." },
     summary: { type: "string", desc: "Wake summary, when the script woke." },
@@ -183,7 +183,19 @@ Table({
     },
     wake_state: {
       type: "string",
-      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void).",
+      desc: "issued, then consumed when the turn starts executing, or not-sent when the host certainly wrote nothing (the permit is then void); deferred while an earlier wake of the sensor was queued, combining while a later wake that carries it is sent, then combined; superseded when the sensor is approved or resumed again (the permit is then void).",
+    },
+    wake_data: json(
+      "A deferred wake (summary and data), until a later wake includes it.",
+    ),
+    combined_into: {
+      type: "uuid",
+      desc: "The run whose wake included this deferred one.",
+    },
+    connectors: {
+      type: "array",
+      pg_type: "TEXT[]",
+      desc: "Connectors whose credentials this run was given (cocalc, github, cloudflare).",
     },
   },
 });

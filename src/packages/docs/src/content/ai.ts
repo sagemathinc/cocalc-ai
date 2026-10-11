@@ -614,8 +614,9 @@ There are three kinds:
 - **Scheduled prompts**: a prompt sent to the agent on a schedule, such as a
   weekday 07:00 briefing. You set these up yourself.
 - **Watchers**: CoCalc's own one-shot checks that an agent sets for itself
-  (for example "wake me when the CI checks on this pull request finish").
-  They need no approval; they wake the agent once, or give up after a day.
+  (for example "wake me when the CI checks on this pull request finish", or
+  "run this build in a terminal and wake me when it exits"). They need no
+  approval; they wake the agent once, or give up after a day.
 - **Scripts**: a small program the agent writes to watch something over time,
   such as new GitHub issues. You approve the exact script first.
 
@@ -654,6 +655,11 @@ complete script.
 A script's data comes from outside sources, so its wakes say that they are
 not from a person and that the data is information, not instructions.
 
+If the agent has not started on a sensor's wake yet (it may be busy with
+another turn), the sensor holds its later wakes and sends them together in
+the next one: one turn with everything, not a queue of turns. A scheduled
+prompt is skipped while the previous one still waits.
+
 ## Watch and control sensors
 
 The same dialog shows each sensor's status, last run and outcome, the next
@@ -664,13 +670,15 @@ run, and how many times it woke the agent today (UTC).
   resumes a sensor takes over its approval, so its runs and wakes are then
   theirs. Watchers run once and can't be resumed; ask the agent to set a new
   one.
-- **Run log** lists recent runs with their output and errors. The agent can
-  read its own sensors' logs too.
+- **Run log** lists recent runs with their output and errors, and which
+  connectors each run was given. The agent can read its own sensors' logs
+  too.
 - **Delete** removes the sensor and its log.
 
 A sensor pauses itself after five failed runs in a row, when its approver
 loses access to the project, when a connector it uses is turned off, or when
-the project loses internet access. The dialog shows the reason.
+the project loses internet access. The dialog shows the reason, and the
+person it runs as gets a notification.
 
 ## Scheduled thread automations
 

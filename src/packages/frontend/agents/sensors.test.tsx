@@ -66,7 +66,7 @@ beforeEach(() => {
   mockApi.manageSensor.mockReset().mockResolvedValue({});
 });
 
-test("a proposal shows the full script and approves the revision reviewed", async () => {
+test("a proposal shows its facts and script and approves the revision reviewed", async () => {
   const refresh = jest.fn();
   render(
     <AgentSensorsModal
@@ -87,13 +87,31 @@ test("a proposal shows the full script and approves the revision reviewed", asyn
   // The access it gets is the agent's, narrowed to what it uses.
   expect(
     within(card).getByText(
-      /in this project's software, as you, with: This project's files and software, and GitHub/,
+      "As you, with this project's files and software, and GitHub",
     ),
   ).toBeTruthy();
-  expect(within(card).getByText("Every 30 minutes")).toBeTruthy();
-  expect(within(card).getByLabelText("Python 3 script").textContent).toBe(
-    "print('checking')",
+  expect(
+    within(card).getByText("Every 30 minutes, up to 60 s each"),
+  ).toBeTruthy();
+  expect(
+    within(card).getByText(
+      "At most 24 times a day, each a turn on your account",
+    ),
+  ).toBeTruthy();
+  // The script is folded away (an agent reviews it); shown highlighted.
+  expect(within(card).queryByLabelText("Python 3 script")).toBeNull();
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Show Python 3, 1 line" }),
   );
+  expect(
+    within(card).getByLabelText("Python 3 script").textContent?.trim(),
+  ).toBe("print('checking')");
+  // Its only buttons: approve, reject or delete the proposal.
+  expect(within(card).getByRole("button", { name: "Reject" })).toBeTruthy();
+  expect(within(card).getAllByRole("button", { name: "Delete" })).toHaveLength(
+    1,
+  );
+  expect(within(card).queryByRole("button", { name: "Run log" })).toBeNull();
   await userEvent.click(
     within(card).getByRole("button", { name: "Approve and run" }),
   );
@@ -124,6 +142,20 @@ test("an active sensor offers run, pause and its log, and shows errors", async (
         output: "stdout:\nok",
         error: null,
         manual: false,
+        connectors: ["github"],
+      },
+      {
+        run_id: "r0",
+        sensor_id: "s",
+        started_at: "2026-10-10T11:30:00.000Z",
+        finished_at: "2026-10-10T11:30:01.000Z",
+        outcome: "wake-coalesced",
+        exit_code: 0,
+        summary: "2 new issues",
+        output: null,
+        error: null,
+        manual: false,
+        connectors: [],
       },
     ],
   });
@@ -156,6 +188,10 @@ test("an active sensor offers run, pause and its log, and shows errors", async (
   expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: "Run log" }));
   expect(await screen.findByText(/Woke the agent · 1 new issue/)).toBeTruthy();
+  expect(screen.getByText("Used GitHub")).toBeTruthy();
+  expect(
+    screen.getByText(/Held while an earlier wake waited.*2 new issues/),
+  ).toBeTruthy();
 });
 
 test("sensorsSummary names what needs attention", () => {

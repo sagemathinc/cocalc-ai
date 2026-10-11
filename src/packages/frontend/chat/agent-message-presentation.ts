@@ -134,3 +134,36 @@ export function agentRpcMessageMarkdown(
       typeof source?.project_id === "string" ? source.project_id : undefined,
   });
 }
+
+/**
+ * How a turn a sensor started is shown: one line naming the sensor and what
+ * happened. Only text in the shape CoCalc writes is recognized; anything
+ * else (e.g. an edited message) is shown as it is.
+ */
+export function sensorWakePresentation(
+  value: string,
+  title: string,
+):
+  | { kind: "wake" | "prompt" | "reminder"; title: string; summary: string }
+  | undefined {
+  const text = value.trimStart();
+  if (text.startsWith("[Sensor wake]")) {
+    const summary = text.match(/^Summary: (.*)$/m)?.[1]?.trim() ?? "";
+    return { kind: "wake", title, summary };
+  }
+  if (text.startsWith("[Scheduled prompt]")) {
+    const lines = text.split("\n").slice(1);
+    const summary = lines.find((line) => line.trim())?.trim() ?? "";
+    return { kind: "prompt", title, summary };
+  }
+  if (text.startsWith("[Reminder]")) {
+    const firstLine = text.split("\n", 1)[0];
+    const at = firstLine.indexOf("): ");
+    return {
+      kind: "reminder",
+      title,
+      summary: at >= 0 ? firstLine.slice(at + 3).trim() : "",
+    };
+  }
+  return undefined;
+}

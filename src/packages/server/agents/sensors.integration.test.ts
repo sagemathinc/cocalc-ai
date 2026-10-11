@@ -47,6 +47,7 @@ jest.mock("./sensor-credentials", () => ({
         bearer: "bearer",
       },
       missing: lease.missing,
+      given: opts.uses.filter((c: string) => !lease.missing.includes(c)),
       renew: async () => {},
       release: async () => {
         lease.released++;
@@ -76,6 +77,13 @@ jest.mock("./cocalc-connector-routing", () => {
     },
   };
 });
+
+const paused: any[] = [];
+jest.mock("./sensor-notify", () => ({
+  notifySensorPausedBestEffort: async (opts: any) => {
+    paused.push(opts);
+  },
+}));
 
 import {
   agentSensorRequest,
@@ -128,6 +136,7 @@ describeDb("agent sensors", () => {
     lease.released = 0;
     budget.calls = [];
     budget.failRelease = false;
+    paused.length = 0;
     host.runAgentSensor.mockReset().mockResolvedValue({
       exit_code: 0,
       timed_out: false,
@@ -184,6 +193,12 @@ describeDb("agent sensors", () => {
     for (const row of due) await runClaimedSensor(row);
     return due.length;
   };
+
+  // The agent's queued wake turns start (otherwise later wakes are held).
+  const startTurns = async () =>
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_state='consumed' WHERE wake_state='issued'",
+    );
 
   test("a proposal waits for a person, who approves the exact revision", async () => {
     const { sensor } = await propose();
@@ -247,6 +262,7 @@ describeDb("agent sensors", () => {
     for (let i = 0; i < 3; i++) {
       await makeDue(active.sensor_id);
       expect(await runDue()).toBe(1);
+      await startTurns();
     }
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
     const delivery = host.deliverAgentSensorWake.mock.calls[0][0];
@@ -546,6 +562,213 @@ describeDb("agent sensors", () => {
     })) as any;
     expect(sensors[0].status).toBe("paused");
     expect(sensors[0].pause_reason).toMatch(/uses GitHub/);
+    // The person it runs as is told, once.
+    expect(paused).toEqual([
+      expect.objectContaining({
+        account_id: owner,
+        project_id,
+        sensor_id: active.sensor_id,
+        title: spec.title,
+        reason: expect.stringMatching(/uses GitHub/),
+      }),
+    ]);
+  });
+
+  test("the run log records the connectors each run was given", async () => {
+    const active = (
+      await approve((await propose({ ...spec, uses: ["github"] })).sensor)
+    ).sensor;
+    await makeDue(active.sensor_id);
+    await runDue();
+    const { runs } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: active.sensor_id,
+    })) as any;
+    expect(runs[0].connectors).toEqual(["github"]);
+    const shown = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "show",
+      sensor_id: active.sensor_id,
+    })) as any;
+    expect(shown.runs[0].connectors).toEqual(["github"]);
+    expect(paused).toEqual([]);
+  });
+
+  test("a new approval starts fresh: earlier wakes neither block, ride along nor run", async () => {
+    const first = (
+      await approve((await propose({ ...spec, max_wakes_per_day: 10 })).sensor)
+    ).sensor;
+    const woke = (summary: string) => ({
+      exit_code: 0,
+      timed_out: false,
+      stdout: `${JSON.stringify({ wake: true, summary })}\n`,
+      stderr: "",
+    });
+    host.runAgentSensor
+      .mockResolvedValueOnce(woke("old one"))
+      .mockResolvedValueOnce(woke("old two"))
+      .mockResolvedValueOnce(woke("new one"));
+    await makeDue(first.sensor_id);
+    await runDue();
+    await makeDue(first.sensor_id);
+    await runDue();
+    // "old one" is queued and "old two" held, under the first approval.
+    const old = host.deliverAgentSensorWake.mock.calls[0][0];
+    const revised = (
+      await propose(
+        { ...spec, title: "Revised", max_wakes_per_day: 10 },
+        first.sensor_id,
+      )
+    ).sensor;
+    await approve(revised);
+    await makeDue(first.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    const fresh = host.deliverAgentSensorWake.mock.calls[1][0].prompt;
+    expect(fresh).toContain("Summary: new one");
+    expect(fresh).not.toContain("old two");
+    const { rows } = await getPool().query(
+      `SELECT summary, wake_state, wake_permit_hash IS NULL AS void
+       FROM agent_sensor_runs WHERE sensor_id=$1 ORDER BY started_at`,
+      [first.sensor_id],
+    );
+    expect(rows).toEqual([
+      { summary: "old one", wake_state: "superseded", void: true },
+      { summary: "old two", wake_state: "superseded", void: true },
+      { summary: "new one", wake_state: "issued", void: false },
+    ]);
+    await expect(
+      authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        old.authorization,
+        {
+          prompt_sha256: sha(old.prompt),
+          path: old.path,
+          thread_id: old.thread_id,
+        },
+      ),
+    ).rejects.toThrow();
+  });
+
+  test("held wakes are marked before they are sent, and held again only if nothing was sent", async () => {
+    const active = (
+      await approve((await propose({ ...spec, max_wakes_per_day: 10 })).sensor)
+    ).sensor;
+    const quiet = { exit_code: 0, timed_out: false, stdout: "", stderr: "" };
+    host.runAgentSensor
+      .mockResolvedValueOnce({
+        ...quiet,
+        stdout: '{"wake": true, "summary": "first"}\n',
+      })
+      .mockResolvedValueOnce({
+        ...quiet,
+        stdout: '{"wake": true, "summary": "held"}\n',
+      })
+      .mockResolvedValue(quiet);
+    await makeDue(active.sensor_id);
+    await runDue();
+    await makeDue(active.sensor_id);
+    await runDue();
+    await startTurns();
+    const heldState = async () =>
+      (
+        await getPool().query(
+          "SELECT wake_state FROM agent_sensor_runs WHERE sensor_id=$1 AND summary='held'",
+          [active.sensor_id],
+        )
+      ).rows[0].wake_state;
+    // Durably taken before the host is asked, so even if recording the
+    // outcome failed, no later run could choose it again.
+    let during: string | undefined;
+    host.deliverAgentSensorWake.mockImplementationOnce(async () => {
+      during = await heldState();
+      return { not_sent: "the agent's thread is unavailable" };
+    });
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(during).toBe("combining");
+    // Certainly not sent: held for the next wake.
+    expect(await heldState()).toBe("deferred");
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake.mock.calls.at(-1)[0].prompt).toContain(
+      "Summary: held",
+    );
+    expect(await heldState()).toBe("combined");
+  });
+
+  test("wakes held while an earlier one waits arrive together in the next", async () => {
+    const active = (
+      await approve((await propose({ ...spec, max_wakes_per_day: 10 })).sensor)
+    ).sensor;
+    const woke = (summary: string, n: number) => ({
+      exit_code: 0,
+      timed_out: false,
+      stdout: `${JSON.stringify({ wake: true, summary, data: { n } })}\n`,
+      stderr: "",
+    });
+    host.runAgentSensor
+      .mockResolvedValueOnce(woke("issue 1", 1))
+      .mockResolvedValueOnce(woke("issue 2", 2))
+      .mockResolvedValueOnce(woke("issue 3", 3))
+      .mockResolvedValueOnce({
+        exit_code: 0,
+        timed_out: false,
+        stdout: "",
+        stderr: "",
+      });
+    const outcomes = async () =>
+      (
+        (await sensorControlLocal(owner, project_id, {
+          op: "list",
+          sensor_id: active.sensor_id,
+        })) as any
+      ).runs.map((r: any) => r.outcome);
+    for (let i = 0; i < 3; i++) {
+      await makeDue(active.sensor_id);
+      await runDue();
+    }
+    // The first wake's turn has not started yet, so the next two are held.
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    expect(await outcomes()).toEqual([
+      "wake-coalesced",
+      "wake-coalesced",
+      "wake",
+    ]);
+    // The agent's turn starts; even a quiet run then delivers what was held.
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_state='consumed' WHERE sensor_id=$1 AND wake_state='issued'",
+      [active.sensor_id],
+    );
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
+    const prompt = host.deliverAgentSensorWake.mock.calls[1][0].prompt;
+    expect(prompt).toContain("Summary: 2 events: issue 2 | issue 3");
+    expect(prompt).toContain('"n": 3');
+    const { rows } = await getPool().query(
+      `SELECT wake_state, count(*)::int AS n FROM agent_sensor_runs
+       WHERE sensor_id=$1 GROUP BY wake_state ORDER BY wake_state`,
+      [active.sensor_id],
+    );
+    expect(rows).toEqual([
+      { wake_state: "combined", n: 2 },
+      { wake_state: "consumed", n: 1 },
+      { wake_state: "issued", n: 1 },
+    ]);
+    // Nothing is delivered twice.
+    await getPool().query(
+      "UPDATE agent_sensor_runs SET wake_state='consumed' WHERE sensor_id=$1 AND wake_state='issued'",
+      [active.sensor_id],
+    );
+    await makeDue(active.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(3);
+    expect(host.deliverAgentSensorWake.mock.calls[2][0].prompt).toContain(
+      "Summary: 1 new issue",
+    );
   });
 
   test("a script sensor pauses when the project's software changes", async () => {
@@ -617,6 +840,18 @@ describeDb("agent sensors", () => {
     const delivery = host.deliverAgentSensorWake.mock.calls[0][0];
     expect(delivery.prompt).toMatch(/^\[Scheduled prompt\] "Morning briefing"/);
     expect(delivery.prompt).toContain("Summarize today's calendar");
+    // While that turn waits, the next scheduled one is skipped, not stacked.
+    await makeDue(created.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    const { runs } = (await sensorControlLocal(owner, project_id, {
+      op: "list",
+      sensor_id: created.sensor.sensor_id,
+    })) as any;
+    expect(runs[0]).toMatchObject({
+      outcome: "wake-coalesced",
+      summary: expect.stringMatching(/previous scheduled turn/),
+    });
     // Agents propose prompts like scripts; people create them directly.
     await expect(
       sensorControlLocal(owner, project_id, {
@@ -839,6 +1074,7 @@ describeDb("agent sensors", () => {
     });
     await makeDue(b.sensor_id);
     await runDue();
+    await startTurns();
     await makeDue(b.sensor_id);
     await runDue();
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
@@ -888,7 +1124,12 @@ describeDb("agent sensors", () => {
     host.deliverAgentSensorWake.mockRejectedValueOnce(new Error("lost"));
     await makeDue(active.sensor_id);
     await runDue();
-    // A script keeps its schedule; its next wake finds the budget used up.
+    // A script keeps its schedule; its next wake is held behind the one
+    // that may be queued, and once that turn has started, it finds the
+    // budget used up.
+    await makeDue(active.sensor_id);
+    await runDue();
+    await startTurns();
     await makeDue(active.sensor_id);
     await runDue();
     const { runs } = (await sensorControlLocal(owner, project_id, {
@@ -897,6 +1138,7 @@ describeDb("agent sensors", () => {
     })) as any;
     expect(runs.map((r: any) => r.outcome)).toEqual([
       "wake-limited",
+      "wake-coalesced",
       "wake-failed",
     ]);
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(2);
