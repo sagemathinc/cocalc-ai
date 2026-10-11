@@ -155,26 +155,8 @@ star_installed() {
     [ "$(cat "$CONTAINER_MARKER" 2>/dev/null || true)" = "$IMAGE_RELEASE_ID" ]
 }
 
-# `docker rm -f` can kill Podman while it creates a layer, leaving a temporary
-# directory with files owned by the Star user's subordinate ids. The Star
-# user's Podman then fails on every command ("error removing stale temp dir
-# ... permission denied"), including the install's checks. Nothing runs
-# Podman before the install in a new container, so remove them as root.
-remove_stale_podman_tempdirs() {
-  local user="${COCALC_STAR_USER:-cocalc-star}" home dir
-  home="$(getent passwd "$user" | cut -d: -f6)"
-  [ -n "$home" ] || return 0
-  dir="${home}/.local/share/containers/storage/overlay/tempdirs"
-  [ -d "$dir" ] || return 0
-  if [ -n "$(find "$dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-    log "removing stale Podman temporary layer directories"
-    find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  fi
-}
-
 run_install() {
   [ -f "$RELEASE_ARTIFACT" ] || die "missing embedded Star release artifact: $RELEASE_ARTIFACT"
-  remove_stale_podman_tempdirs
 
   local previous=""
   previous="$(cat "$INSTALL_MARKER" 2>/dev/null || true)"

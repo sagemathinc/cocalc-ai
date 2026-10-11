@@ -48,6 +48,18 @@ if ! mountpoint -q "$runtime_dir"; then
   fi
 fi
 
+# Killing the container (`docker rm -f`, a forced restart, OOM) can interrupt
+# Podman while it creates a layer, leaving a temporary directory with files
+# owned by the Star user's subordinate ids. The Star user's Podman then fails
+# on every command ("error removing stale temp dir ... permission denied").
+# Before systemd starts nothing can be using the Star user's Podman storage
+# (kept in the volume, see cocalc-star-docker-init), so remove them as root.
+tempdirs="${COCALC_STAR_DOCKER_STATE_DIR:-/var/lib/cocalc/star-docker}/containers/storage/overlay/tempdirs"
+if [ -d "$tempdirs" ] && [ -n "$(find "$tempdirs" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "[star-docker-entrypoint] removing stale Podman temporary layer directories" | tee -a "$LOG_FILE" >&2
+  find "$tempdirs" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || true
+fi
+
 export COCALC_STAR_DOCKER_TEE_STDOUT="${COCALC_STAR_DOCKER_TEE_STDOUT:-0}"
 # Only forward new lines: Docker already kept the output of earlier boots.
 tail -n 0 -F "$LOG_FILE" &
