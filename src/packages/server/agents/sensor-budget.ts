@@ -11,7 +11,7 @@
 
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import {
-  SENSOR_DEFAULT_MAX_WAKES_PER_DAY,
+  SENSOR_DEFAULT_ACCOUNT_WAKES_PER_DAY,
   SENSOR_DEFAULT_MIN_INTERVAL_MINUTES,
   SENSOR_LIMITS,
 } from "@cocalc/conat/agents/sensors";
@@ -69,7 +69,7 @@ export async function sensorLimits(account_id: string): Promise<SensorLimits> {
     ),
     maxWakesPerDay: count(
       limits.sensor_max_wakes_per_day,
-      SENSOR_DEFAULT_MAX_WAKES_PER_DAY,
+      SENSOR_DEFAULT_ACCOUNT_WAKES_PER_DAY,
     ),
   };
 }

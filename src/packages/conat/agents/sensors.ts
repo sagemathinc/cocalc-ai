@@ -60,6 +60,13 @@ export const SENSOR_LIMITS = {
 
 /** Tier defaults; admins override them per membership tier. */
 export const SENSOR_DEFAULT_MIN_INTERVAL_MINUTES = 15;
+/**
+ * An account's wakes in a rolling day, across all its sensors. Each wake is
+ * a normal turn (admitted and paid like a message), so this guards against
+ * runaway loops rather than cost; agents use watchers freely.
+ */
+export const SENSOR_DEFAULT_ACCOUNT_WAKES_PER_DAY = 100;
+/** One sensor's wakes per day when its spec does not say. */
 export const SENSOR_DEFAULT_MAX_WAKES_PER_DAY = 24;
 
 export const SENSOR_LANGUAGES = ["sh", "python", "node"] as const;

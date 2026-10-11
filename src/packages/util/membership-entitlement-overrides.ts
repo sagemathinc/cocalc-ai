@@ -274,7 +274,7 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       label: "Sensor wakes per day",
       unit: "wakes",
       adminDescription:
-        "Most agent turns all of one account's sensors and watchers may start in any 24 hours; each wake starts a paid agent turn, and each sensor may set a lower limit of its own. Unset: 24.",
+        "Most agent turns all of one account's sensors and watchers may start in any 24 hours; each wake starts a paid agent turn, and each sensor may set a lower limit of its own. Unset: 100.",
       userDescription:
         "Most agent turns your sensors and watchers may start in any 24 hours.",
     },
