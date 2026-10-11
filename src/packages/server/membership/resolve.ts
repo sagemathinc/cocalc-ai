@@ -55,7 +55,7 @@ async function buildMembershipCandidates(
   tiers: Record<string, MembershipTierRecord>,
   client?: PoolClient,
 ): Promise<MembershipCandidate[]> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const [subResult, adminResult, adminGroupResult, grants] = await Promise.all([
     pool.query(
       `SELECT s.id, s.metadata, s.cost, s.interval,
@@ -261,7 +261,7 @@ async function getMembershipPackageMetadataForGrants(
   if (packageIds.length === 0) {
     return new Map();
   }
-  const { rows } = await (client ?? getPool("medium")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string;
     metadata: Record<string, unknown> | null;
   }>(
@@ -289,7 +289,7 @@ async function getCurrentTeamLicenseInfoForPackageMetadata(
   if (teamLicenseIds.length === 0) {
     return new Map();
   }
-  const { rows } = await (client ?? getPool("medium")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string;
     status?: string | null;
     current_period_end?: Date | string | null;
@@ -324,7 +324,7 @@ async function getCurrentSiteLicenseDisplayNamesForGrants(
   if (siteLicenseIds.length === 0) {
     return new Map();
   }
-  const { rows } = await (client ?? getPool("medium")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string;
     name?: string | null;
     organization_name?: string | null;

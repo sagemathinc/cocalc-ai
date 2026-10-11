@@ -380,7 +380,7 @@ async function getExistingMembershipPackagePurchase({
   if (!invoice_id) {
     return undefined;
   }
-  const { rows } = await (client ?? getPool("medium")).query(
+  const { rows } = await (client ?? getPool()).query(
     `SELECT id, description
        FROM purchases
       WHERE account_id=$1

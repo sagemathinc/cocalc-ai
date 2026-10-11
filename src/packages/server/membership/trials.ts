@@ -35,7 +35,7 @@ export function membershipTrialEmailKey(email: unknown): string | undefined {
 async function ensureMembershipTrialClaimsTable(
   client?: PoolClient,
 ): Promise<void> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   if (!client) {
     ensureMembershipTrialClaimsTablePromise ??=
       ensureMembershipTrialClaimsTableWithClient(pool).catch((err) => {
@@ -86,7 +86,7 @@ export async function getMembershipTrialEmails({
   account_id: string;
   client?: PoolClient;
 }): Promise<string[]> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     `SELECT email_address, email_address_verified
        FROM accounts
@@ -139,7 +139,7 @@ export async function getMembershipTrialCandidate({
     };
   }
   await ensureMembershipTrialClaimsTable(client);
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const emailKeys = Array.from(
     new Set(
       emails.map((email) => membershipTrialEmailKey(email)).filter(Boolean),

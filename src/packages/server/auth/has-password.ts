@@ -11,7 +11,7 @@ import getPool from "@cocalc/database/pool";
 export default async function hasPassword(
   account_id: string,
 ): Promise<boolean> {
-  const pool = getPool("short");
+  const pool = getPool();
   const { rows } = await pool.query(
     "SELECT password_hash FROM accounts WHERE account_id=$1::UUID",
     [account_id],

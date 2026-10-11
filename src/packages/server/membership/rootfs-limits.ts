@@ -144,7 +144,7 @@ export async function getRootfsUsageForAccount({
   account_id: string;
   client?: PoolClient;
 }): Promise<RootfsUsageSummary> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const { rows } = await pool.query<{
     count: string | number;
     total_storage_bytes: string | number | null;
@@ -175,7 +175,7 @@ async function loadExistingRootfs({
 }): Promise<ExistingRootfsSummary | undefined> {
   const id = `${image_id ?? ""}`.trim();
   if (!id) return undefined;
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const { rows } = await pool.query<{
     image_id: string;
     owner_id: string | null;
@@ -212,7 +212,7 @@ async function catalogImageIsTrusted({
   if (isManagedRootfsImageName(image)) {
     return true;
   }
-  const pool = getPool("medium");
+  const pool = getPool();
   const params: string[] = [];
   const clauses: string[] = [];
   const id = `${image_id ?? ""}`.trim();
@@ -256,7 +256,7 @@ async function assertRootfsScanSelectionAllowed({
   image_id?: string;
   operation: RootfsQuotaOperation;
 }) {
-  const pool = getPool("medium");
+  const pool = getPool();
   const params: string[] = [];
   const clauses: string[] = [];
   const id = `${image_id ?? ""}`.trim();

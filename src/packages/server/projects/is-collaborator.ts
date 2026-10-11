@@ -23,7 +23,7 @@ export default async function isCollaborator({
     // but that is highly unlikely (and mostly useless).
     return true;
   }
-  const pool = getPool("long"); // fine to cache "yes, you're a collab" for a while
+  const pool = getPool(); // uncached: membership changes must apply at once
   const { rows } = await pool.query(
     `SELECT users#>'{${account_id},group}' AS group FROM projects WHERE project_id=$1`,
     [project_id],
@@ -48,7 +48,7 @@ export async function isCollaboratorMulti({
       throw Error("all project_id's must be valid uuids");
     }
   }
-  const pool = getPool("long");
+  const pool = getPool();
   const { rows } = await pool.query(
     `SELECT users#>'{${account_id},group}' AS group FROM projects WHERE project_id=ANY($1)`,
     [project_ids],
@@ -77,7 +77,7 @@ export async function subsetCollaboratorMulti({
       throw Error("all project_id's must be valid uuids");
     }
   }
-  const pool = getPool("long");
+  const pool = getPool();
   const { rows } = await pool.query(
     `SELECT project_id, users#>'{${account_id},group}' AS group FROM projects WHERE project_id=ANY($1)`,
     [project_ids],

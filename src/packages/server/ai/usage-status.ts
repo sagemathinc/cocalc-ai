@@ -267,7 +267,7 @@ async function getWindowResetAt({
   account_id?: string;
   analytics_cookie?: string;
 }): Promise<Date | undefined> {
-  const pool = getPool("short");
+  const pool = getPool();
   let query;
   let args: string[] = [];
   if (account_id) {

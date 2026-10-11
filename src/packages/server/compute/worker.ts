@@ -185,7 +185,7 @@ const COMPUTE_PROVIDER_OBSERVATION_CONCURRENCY = 8;
 const COMPUTE_ORPHAN_GRACE_MS = 24 * 60 * 60_000;
 const COMPUTE_ORPHAN_BOOT_DISK_GRACE_MS = 7 * COMPUTE_ORPHAN_GRACE_MS;
 const execFileAsync = promisify(execFile);
-const pool = () => getPool("medium");
+const pool = () => getPool();
 
 async function observeVmPhase<T>(
   vm: ComputeVmRow,
