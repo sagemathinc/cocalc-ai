@@ -3,27 +3,37 @@ set -euo pipefail
 
 SERVICE="cocalc-bay-cloudflared.service"
 SYSTEMCTL="/usr/bin/systemctl"
+JOURNALCTL="/usr/bin/journalctl"
 
 if [[ ! -x "$SYSTEMCTL" ]]; then
   SYSTEMCTL="/bin/systemctl"
 fi
-
-usage() {
-  cat >&2 <<'EOF'
-Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active>
-
-Narrow root helper for the CoCalc bay Cloudflare tunnel service.
-EOF
-}
-
-if [[ $# -ne 1 ]]; then
-  usage
-  exit 2
+if [[ ! -x "$JOURNALCTL" ]]; then
+  JOURNALCTL="/bin/journalctl"
 fi
 
-case "$1" in
-  start|restart|status|is-active)
+usage() {
+  cat >&2 <<'USAGE'
+Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active>
+       cocalc-bay-cloudflared-ctl journal-since <unix-seconds>
+
+Narrow root helper for the CoCalc bay Cloudflare tunnel service, used by the
+bay user (the cloudflared watchdog runs as cocalc-bay).
+USAGE
+}
+
+case "${1:-}/$#" in
+  start/1|status/1|is-active/1)
     exec "$SYSTEMCTL" --no-pager "$1" "$SERVICE"
+    ;;
+  restart/1)
+    # A unit in the failed state must be reset before it can be restarted.
+    "$SYSTEMCTL" reset-failed "$SERVICE" >/dev/null 2>&1 || true
+    exec "$SYSTEMCTL" --no-pager restart "$SERVICE"
+    ;;
+  journal-since/2)
+    [[ "$2" =~ ^[0-9]{1,12}$ ]] || { usage; exit 2; }
+    exec "$JOURNALCTL" --unit "$SERVICE" --since "@$2" --output short-unix --no-pager
     ;;
   *)
     usage

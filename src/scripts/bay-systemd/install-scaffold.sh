@@ -11,6 +11,7 @@ SUDOERS_DIR="/etc/sudoers.d"
 NEEDRESTART_DIR="/etc/needrestart/conf.d"
 OVERLAY_MODE="none"
 DAEMON_RELOAD=0
+BIN_USER=""
 
 usage() {
   cat <<'EOF'
@@ -28,6 +29,8 @@ Options:
   --overlay current-cocalc  install the current CoCalc overlay as bay-overlay.env
   --overlay rocket-bundle   install the Rocket bay bundle overlay as bay-overlay.env
   --daemon-reload           run systemctl daemon-reload after install (only when --root=/)
+  --bin-user <user>         write the release's bin/ as this user (the bay
+                            account owns the release, so root does not write there)
   -h, --help                show this help
 EOF
 }
@@ -66,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       DAEMON_RELOAD=1
       shift
       ;;
+    --bin-user)
+      BIN_USER="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -100,10 +107,17 @@ TARGET_SBIN_DIR="$(prefix_path "$SBIN_DIR")"
 TARGET_SUDOERS_DIR="$(prefix_path "$SUDOERS_DIR")"
 TARGET_NEEDRESTART_DIR="$(prefix_path "$NEEDRESTART_DIR")"
 
-mkdir -p "$TARGET_BIN_DIR" "$TARGET_ENV_DIR" "$TARGET_SYSTEMD_DIR" \
+mkdir -p "$TARGET_ENV_DIR" "$TARGET_SYSTEMD_DIR" \
   "$TARGET_SBIN_DIR" "$TARGET_SUDOERS_DIR" "$TARGET_NEEDRESTART_DIR"
 
-install -m 0755 "${SCRIPT_DIR}/bin/"* "$TARGET_BIN_DIR/"
+# The release (and so its bin/) belongs to the bay account: when root installs
+# for that account, the account writes it, so root never follows a link there.
+as_bin_user=()
+if [[ -n "$BIN_USER" && "$(id -u)" == 0 ]]; then
+  as_bin_user=(runuser -u "$BIN_USER" --)
+fi
+"${as_bin_user[@]}" mkdir -p "$TARGET_BIN_DIR"
+"${as_bin_user[@]}" install -m 0755 "${SCRIPT_DIR}/bin/"* "$TARGET_BIN_DIR/"
 install -m 0644 "${SCRIPT_DIR}/systemd/"* "$TARGET_SYSTEMD_DIR/"
 install -m 0755 "${SCRIPT_DIR}/sbin/"* "$TARGET_SBIN_DIR/"
 install -m 0440 "${SCRIPT_DIR}/sudoers/"* "$TARGET_SUDOERS_DIR/"
@@ -111,7 +125,9 @@ install -m 0644 "${SCRIPT_DIR}/needrestart/cocalc-bay.conf" \
   "${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf"
 
 if command -v visudo >/dev/null 2>&1; then
-  visudo -cf "${TARGET_SUDOERS_DIR}/cocalc-bay-cloudflared" >/dev/null
+  for sudoers_file in "${SCRIPT_DIR}/sudoers/"*; do
+    visudo -cf "${TARGET_SUDOERS_DIR}/$(basename "$sudoers_file")" >/dev/null
+  done
 fi
 
 install -m 0644 "${SCRIPT_DIR}/env/bay.env.example" \

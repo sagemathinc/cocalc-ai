@@ -9,10 +9,17 @@ source "${SCRIPT_DIR}/lib.sh"
 : "${COCALC_BAY_HUB_WATCHDOG_RESTART_TIMEOUT_S:=90}"
 : "${COCALC_BAY_HUB_WATCHDOG_RESTART_COOLDOWN_S:=300}"
 : "${COCALC_BAY_HUB_DIAGNOSTIC_TIMEOUT_S:=8}"
+: "${COCALC_BAY_HUB_CTL:=/usr/local/sbin/cocalc-bay-hub-ctl}"
 
-STATE_DIR="${COCALC_BAY_RUN_DIR}/hub-watchdog"
+# The unit runs this as the bay user, with a systemd state directory; root
+# privileges (restarting a hub worker) go through the root-owned hub-ctl.
+STATE_DIR="${STATE_DIRECTORY:-${COCALC_BAY_RUN_DIR}/hub-watchdog}"
 mkdir -p "$STATE_DIR"
-chmod 0750 "$STATE_DIR"
+chmod 0700 "$STATE_DIR"
+hub_ctl=("$COCALC_BAY_HUB_CTL")
+if [[ "$(id -u)" != 0 ]]; then
+  hub_ctl=(sudo -n "$COCALC_BAY_HUB_CTL")
+fi
 
 exec 9>"${STATE_DIR}/watchdog.lock"
 if ! flock -n 9; then
@@ -117,9 +124,8 @@ while IFS=$'\t' read -r worker_id healthy drained; do
   # Record the attempt before entering systemctl. A failed or timed-out restart
   # must also respect the cooldown instead of retrying every timer tick.
   printf '%s\n' "$now" > "$restart_file"
-  systemctl reset-failed "$unit" >/dev/null 2>&1 || true
   if timeout "${COCALC_BAY_HUB_WATCHDOG_RESTART_TIMEOUT_S}" \
-      systemctl restart "$unit" && \
+      "${hub_ctl[@]}" restart "$worker_id" && \
       "${COCALC_BAY_CURRENT_LINK}/bin/bay-worker-health" "$worker_id"; then
     rm -f "$failure_file"
     "${COCALC_BAY_CURRENT_LINK}/bin/bay-frontdoor-undrain" "$worker_id"

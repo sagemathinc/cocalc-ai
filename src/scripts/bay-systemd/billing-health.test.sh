@@ -115,8 +115,8 @@ done
 # Both hub-only and full release branches must gate immediately after restart.
 awk '
   /systemctl restart cocalc-bay-billing.service/ {
-    if (previous != "billing_generation=\"$(/opt/cocalc/bay/current/bin/bay-billing-health --generation)\"") exit 1
-    if (getline <= 0 || $0 != "/opt/cocalc/bay/current/bin/bay-billing-health --wait --after-generation \"$billing_generation\"") exit 1
+    if (previous != "billing_generation=\"$(bay_run bay-billing-health --generation)\"") exit 1
+    if (getline <= 0 || $0 != "bay_run bay-billing-health --wait --after-generation \"$billing_generation\"") exit 1
     found++
   }
   { previous = $0 }

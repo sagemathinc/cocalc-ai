@@ -68,6 +68,25 @@ for spec in ${FAKE_FAILURES:-}; do
 done
 EOF
 
+# The watchdog runs as the bay user: the journal and restarts go through the
+# root helper with sudo. Stand-ins that forward to the fakes above.
+cat > "${FAKE_BIN}/sudo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "-n" ]] && shift
+exec "$@"
+EOF
+cat > "${FAKE_BIN}/cocalc-bay-cloudflared-ctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  restart) exec systemctl restart cocalc-bay-cloudflared.service ;;
+  journal-since) exec journalctl --unit cocalc-bay-cloudflared.service --since "@$2" --output short-unix --no-pager ;;
+  *) exit 2 ;;
+esac
+EOF
+export COCALC_BAY_CLOUDFLARED_CTL="${FAKE_BIN}/cocalc-bay-cloudflared-ctl"
+
 cat > "${FAKE_BIN}/timeout" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -112,6 +131,12 @@ fail() {
   cat "$STDERR_LOG" >&2
   exit 1
 }
+
+# Root-only operations go through the helper, never directly.
+if grep -En '^[^#]*(systemctl (restart|reset-failed)|journalctl)' "${SCRIPT_DIR}/bay-cloudflared-watchdog"; then
+  echo "the watchdog calls systemctl restart or journalctl directly" >&2
+  exit 1
+fi
 
 # One connection failing every stream while the others work: restart after the
 # threshold, include the edge locations, then respect the cooldown.

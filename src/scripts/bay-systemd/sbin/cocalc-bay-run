@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run one command from the bay's current release as the bay user, with the
+# environment the bay services get, for root's deploy and maintenance
+# scripts. The release tree belongs to the bay account, so root never
+# executes code from it; this runs it as that account in a transient unit.
+# Installed root-owned in /usr/local/sbin.
+#
+#   cocalc-bay-run <bay-command> [args...]   e.g. cocalc-bay-run bay-health
+
+: "${COCALC_BAY_USER:=cocalc-bay}"
+: "${COCALC_BAY_GROUP:=$COCALC_BAY_USER}"
+: "${COCALC_BAY_CONFIG_DIR:=/etc/cocalc}"
+: "${COCALC_BAY_CURRENT_LINK:=/opt/cocalc/bay/current}"
+: "${SYSTEMD_RUN:=systemd-run}"
+
+usage() {
+  echo "usage: cocalc-bay-run <bay-command> [args...]" >&2
+  exit 2
+}
+
+command="${1:-}"
+[[ "$command" =~ ^bay-[a-z0-9-]{1,64}$ ]] || usage
+shift
+
+properties=(
+  -p "User=${COCALC_BAY_USER}"
+  -p "Group=${COCALC_BAY_GROUP}"
+  -p "WorkingDirectory=${COCALC_BAY_CURRENT_LINK}"
+)
+for file in bay.env bay-workers.env bay-overlay.env bay-topology.env bay-secrets.env bay-local.env; do
+  properties+=(-p "EnvironmentFile=-${COCALC_BAY_CONFIG_DIR}/${file}")
+done
+exec "$SYSTEMD_RUN" --quiet --wait --pipe --collect "${properties[@]}" \
+  "${COCALC_BAY_CURRENT_LINK}/bin/${command}" "$@"
