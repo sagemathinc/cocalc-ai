@@ -1,4 +1,7 @@
 import {
+  MAX_PROJECT_FLOORS,
+  mergeFloors,
+  parseComputerFloors,
   leaseNotAfter,
   LOCAL_START_MAX_MS,
   parseComputerCertificate,
@@ -375,5 +378,65 @@ describe("site", () => {
     "cocalc.ai",
   ])("refuses %s", (input) => {
     expect(() => site(input)).toThrow(ProtocolError);
+  });
+});
+
+describe("computer floors", () => {
+  const project = "4f8d2a3e-1b6c-4c1e-9a7d-2e5f6a7b8c9d";
+  const floors = {
+    type: "cocalc-computer-floors",
+    version: 1,
+    computer_id: "0b9d6e2a-5c4f-4a3b-8e7d-1f2a3b4c5d6e",
+    home_epoch: 0,
+    computer_epoch: 3,
+    projects: { [project]: 7 },
+    issued_at: 1_790_000_000_000,
+  };
+
+  it("parses a push and refuses anything else", () => {
+    expect(parseComputerFloors(floors)).toEqual(floors);
+    expect(() => parseComputerFloors({ ...floors, extra: 1 })).toThrow(/extra/);
+    expect(() =>
+      parseComputerFloors({ ...floors, projects: { "not-a-uuid": 1 } }),
+    ).toThrow(ProtocolError);
+    expect(() =>
+      parseComputerFloors({ ...floors, computer_epoch: -1 }),
+    ).toThrow(ProtocolError);
+    expect(() => parseComputerFloors({ ...floors, version: 2 })).toThrow(
+      ProtocolError,
+    );
+  });
+
+  it("refuses an oversized project map", () => {
+    const projects: Record<string, number> = {};
+    for (let i = 0; i <= MAX_PROJECT_FLOORS; i++) {
+      projects[`00000000-0000-4000-8000-${i.toString().padStart(12, "0")}`] = 1;
+    }
+    expect(() => parseComputerFloors({ ...floors, projects })).toThrow(
+      /more than/,
+    );
+  });
+
+  it("only ever raises floors, so an old push replayed changes nothing", () => {
+    const current = {
+      home_epoch: 1,
+      computer_epoch: 5,
+      projects: { [project]: 9, other: 2 },
+    };
+    const old = mergeFloors(current, floors);
+    expect(old).toEqual({ floors: current, raised: false });
+    const newer = mergeFloors(current, {
+      home_epoch: 1,
+      computer_epoch: 6,
+      projects: { [project]: 10 },
+    });
+    expect(newer).toEqual({
+      floors: {
+        home_epoch: 1,
+        computer_epoch: 6,
+        projects: { [project]: 10, other: 2 },
+      },
+      raised: true,
+    });
   });
 });

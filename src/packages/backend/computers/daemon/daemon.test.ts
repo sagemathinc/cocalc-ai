@@ -1,0 +1,744 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// The daemon core end to end, against a fake hub that signs real
+// certificates, attestations, tickets and floors, running real processes.
+
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  directPolicyDefaults,
+  parseComputerPolicy,
+} from "@cocalc/util/computers/policy";
+import {
+  parseComputerCertificate,
+  parseComputerFloors,
+  parseComputerTicket,
+  parseProjectAttestation,
+  SIGNED_KINDS,
+  type ComputerTicket,
+} from "@cocalc/util/computers/protocol";
+import {
+  parseOperationRequest,
+  type OperationRequest,
+} from "@cocalc/util/computers/operations";
+import {
+  canonicalHash,
+  generateSigningKey,
+  policyHash,
+  requestHash,
+  signEnvelope,
+  signProofOfPossession,
+  type KeyPair,
+} from "../crypto";
+import { HubClock, SessionClock, systemClocks, type Clocks } from "./clock";
+import { ComputerDaemon, type OperationReply } from "./daemon";
+import { DaemonStore, type TrustedKey } from "./state";
+
+const SITE = "https://cocalc.ai";
+const CLUSTER = "standalone";
+const HOME = "bay-0";
+const PROJECT_BAY = "bay-1";
+
+function waitFor(check: () => boolean, ms = 10_000): Promise<void> {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      if (check()) return resolve();
+      if (Date.now() - start > ms) return reject(new Error("timed out"));
+      setTimeout(poll, 25);
+    };
+    poll();
+  });
+}
+
+describe("the computer daemon (direct mode)", () => {
+  let dir: string;
+  let workdir: string;
+  const homeKey = generateSigningKey();
+  const projectBayKey = generateSigningKey();
+  const strangerKey = generateSigningKey();
+  const computerKey = generateSigningKey();
+  const account_id = randomUUID();
+  const computer_id = randomUUID();
+  const agent_network_id = randomUUID();
+  const agent = randomUUID();
+  const otherAgent = randomUUID();
+  const project_id = randomUUID();
+  const ceiling = parseComputerPolicy({
+    version: 1,
+    mode: "direct",
+    duration: null,
+    agent_network_id,
+    ...directPolicyDefaults(),
+  });
+  const directory: TrustedKey[] = [
+    {
+      kid: homeKey.fingerprint,
+      bay_id: HOME,
+      public_key: homeKey.publicDer,
+      not_after: Date.now() + 86_400_000,
+    },
+    {
+      kid: projectBayKey.fingerprint,
+      bay_id: PROJECT_BAY,
+      public_key: projectBayKey.publicDer,
+      not_after: Date.now() + 86_400_000,
+    },
+  ];
+
+  function certificate(
+    overrides: Record<string, unknown> = {},
+    signer = homeKey,
+  ) {
+    const now = Date.now();
+    return signEnvelope(
+      SIGNED_KINDS.certificate,
+      parseComputerCertificate({
+        type: "cocalc-computer-certificate",
+        version: 1,
+        site: SITE,
+        cluster_id: CLUSTER,
+        computer_id,
+        account_id,
+        home_bay_id: HOME,
+        home_epoch: 0,
+        signing_key: computerKey.fingerprint,
+        signing_public_key: computerKey.publicDer,
+        agreement_key: generateSigningKey().fingerprint,
+        transcript_hash: canonicalHash({ transcript: 1 }),
+        ceiling_hash: policyHash(ceiling),
+        not_before: now,
+        not_after: now + 86_400_000,
+        ...overrides,
+      }),
+      signer,
+    );
+  }
+
+  let store: DaemonStore;
+  let daemon: ComputerDaemon;
+  let clocks: Clocks;
+  let session: SessionClock;
+
+  function makeDaemon(
+    limits = {
+      deadline_ms: null as number | null,
+      max_ms: null as number | null,
+    },
+  ) {
+    const hubClock = new HubClock(clocks);
+    hubClock.observe(0);
+    session = new SessionClock(clocks, limits);
+    return new ComputerDaemon({
+      stateDir: dir,
+      store,
+      clocks,
+      hubClock,
+      session,
+      workdir,
+      shell: "/bin/bash",
+      killGraceMs: 200,
+    });
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "computer-daemon-"));
+    workdir = join(dir, "work");
+    mkdirSync(workdir);
+    clocks = systemClocks;
+    store = DaemonStore.create(join(dir, "state"), {
+      certificate: certificate(),
+      ceiling,
+      directory,
+      computer_key: computerKey.fingerprint,
+      agent_network_id,
+    });
+    daemon = makeDaemon();
+  });
+
+  afterEach(() => {
+    daemon.endSession("test over");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** What the agent's CLI sends after the hub issued a ticket. */
+  function message(
+    operation: OperationRequest["operation"],
+    request: unknown,
+    opts: {
+      operation_id?: string;
+      agent_id?: string;
+      ticket?: Partial<ComputerTicket>;
+      attestation?: Record<string, unknown>;
+      attestationSigner?: KeyPair;
+      ticketSigner?: KeyPair;
+      pop?: KeyPair;
+      proofKey?: KeyPair;
+      sendRequest?: unknown;
+    } = {},
+  ) {
+    const now = Date.now();
+    const op = parseOperationRequest(operation, request);
+    const pop = opts.pop ?? generateSigningKey();
+    const attestation = signEnvelope(
+      SIGNED_KINDS.attestation,
+      parseProjectAttestation({
+        type: "cocalc-project-attestation",
+        version: 1,
+        site: SITE,
+        cluster_id: CLUSTER,
+        project_id,
+        project_bay_id: PROJECT_BAY,
+        eligible: true,
+        privacy_epoch: 1,
+        account_id,
+        home_bay_id: HOME,
+        issued_at: now,
+        not_after: now + 30_000,
+        ...opts.attestation,
+      }),
+      opts.attestationSigner ?? projectBayKey,
+    );
+    const ticket = parseComputerTicket({
+      type: "cocalc-computer-ticket",
+      version: 1,
+      ticket_id: randomUUID(),
+      operation_id: opts.operation_id ?? randomUUID(),
+      operation,
+      request_hash: requestHash(op),
+      site: SITE,
+      cluster_id: CLUSTER,
+      issuer_bay_id: HOME,
+      home_epoch: 0,
+      computer_id,
+      computer_key: computerKey.fingerprint,
+      account_id,
+      agent_id: opts.agent_id ?? agent,
+      agent_network_id,
+      source_project_id: project_id,
+      attestation,
+      computer_epoch: 0,
+      policy_epoch: 0,
+      ceiling_hash: policyHash(ceiling),
+      run_id: randomUUID(),
+      run_expires_at: now + 3600_000,
+      pop_key: pop.publicDer,
+      issued_at: now,
+      start_by: now + 30_000,
+      max_runtime_ms: 600_000,
+      limits: { max_bytes: null, concurrency: 1 },
+      ...opts.ticket,
+    });
+    return {
+      ticket: signEnvelope(
+        SIGNED_KINDS.ticket,
+        ticket,
+        opts.ticketSigner ?? homeKey,
+      ),
+      proof: signProofOfPossession(
+        opts.proofKey ?? pop,
+        ticket.ticket_id,
+        ticket.request_hash,
+      ),
+      request: opts.sendRequest ?? request,
+      received_at: clocks.continuous(),
+    };
+  }
+
+  const exec = (command: string, extra: Record<string, unknown> = {}) => ({
+    command,
+    cwd: null,
+    timeout_ms: 10_000,
+    stdin: null,
+    ...extra,
+  });
+
+  function ok(reply: OperationReply) {
+    if (!reply.ok) throw new Error(`refused: ${reply.refused.join("; ")}`);
+    return reply;
+  }
+
+  describe("admission", () => {
+    it("runs a valid exec and answers with its output", async () => {
+      const reply = ok(
+        await daemon.handle(
+          message("exec", exec("echo hi; echo oops >&2; exit 3")),
+        ),
+      );
+      expect(reply).toMatchObject({ state: "done", replayed: false });
+      expect(reply.result).toMatchObject({
+        exit_code: 3,
+        stdout: "hi\n",
+        stderr: "oops\n",
+        timed_out: false,
+        truncated: false,
+      });
+    });
+
+    it.each([
+      [
+        "a ticket signed by a key that isn't the home bay's",
+        { ticketSigner: projectBayKey },
+        /not signed by this computer's home bay/,
+      ],
+      [
+        "a ticket signed by a stranger",
+        { ticketSigner: strangerKey },
+        /not signed by this computer's home bay/,
+      ],
+      [
+        "an attestation signed by the home bay instead of the project's bay",
+        { attestationSigner: homeKey },
+        /not signed by the project's bay/,
+      ],
+      [
+        "a proof by another key (a copied ticket)",
+        { proofKey: generateSigningKey() },
+        /proof of possession/,
+      ],
+      [
+        "a request changed after the ticket",
+        { sendRequest: exec("rm -rf ~") },
+        /does not match the ticket/,
+      ],
+      [
+        "another computer's ticket",
+        { ticket: { computer_id: randomUUID() } },
+        /another computer/,
+      ],
+      [
+        "a ticket for another key of this computer",
+        { ticket: { computer_key: strangerKey.fingerprint } },
+        /another key/,
+      ],
+      [
+        "an expired start window",
+        {
+          ticket: {
+            issued_at: Date.now() - 60_000,
+            start_by: Date.now() - 1000,
+          },
+        },
+        /start window passed/,
+      ],
+      [
+        "an ineligible project",
+        { attestation: { eligible: false } },
+        /not eligible/,
+      ],
+      [
+        "another effective policy",
+        { ticket: { policy_epoch: 1 } },
+        /another effective policy/,
+      ],
+    ])("refuses %s", async (_label, opts, reason) => {
+      const marker = join(dir, "ran");
+      const reply = await daemon.handle(
+        message("exec", exec(`touch ${marker}`), opts as any),
+      );
+      expect(reply.ok).toBe(false);
+      expect((reply as any).refused.join("; ")).toMatch(reason);
+      expect(existsSync(marker)).toBe(false);
+      expect(daemon.ledger.list()).toEqual([]);
+    });
+
+    it("refuses garbage without throwing", async () => {
+      for (const garbage of [
+        null,
+        "x",
+        { kid: 1 },
+        { payload: {}, kid: "a", sig: "b" },
+      ]) {
+        const reply = await daemon.handle({
+          ticket: garbage,
+          proof: "x",
+          request: {},
+          received_at: clocks.continuous(),
+        });
+        expect(reply.ok).toBe(false);
+      }
+    });
+
+    it("refuses tickets below the floors the hub pushed, and only raises floors", async () => {
+      const floors = (computer_epoch: number, signer = homeKey) =>
+        signEnvelope(
+          SIGNED_KINDS.floors,
+          parseComputerFloors({
+            type: "cocalc-computer-floors",
+            version: 1,
+            computer_id,
+            home_epoch: 0,
+            computer_epoch,
+            projects: { [project_id]: 2 },
+            issued_at: Date.now(),
+          }),
+          signer,
+        );
+      expect(() => daemon.applyFloors(floors(5, strangerKey))).toThrow(
+        /not signed by the home bay/,
+      );
+      expect(daemon.applyFloors(floors(5)).raised).toBe(true);
+      // Replaying an older push changes nothing.
+      expect(daemon.applyFloors(floors(1)).raised).toBe(false);
+      const stale = await daemon.handle(
+        message("exec", exec("true"), { ticket: { computer_epoch: 4 } }),
+      );
+      expect((stale as any).refused).toEqual(
+        expect.arrayContaining([
+          "computer epoch is stale",
+          "project privacy epoch is stale",
+        ]),
+      );
+      ok(
+        await daemon.handle(
+          message("exec", exec("true"), {
+            ticket: { computer_epoch: 5 },
+            attestation: { privacy_epoch: 2 },
+          }),
+        ),
+      );
+      // The floors survive a restart.
+      expect(DaemonStore.open(join(dir, "state"))!.state.floors).toMatchObject({
+        computer_epoch: 5,
+        projects: { [project_id]: 2 },
+      });
+    });
+
+    it("refuses everything once the session has ended", async () => {
+      const t = { wall: Date.now(), continuous: 0 };
+      clocks = { wall: () => t.wall, continuous: () => t.continuous };
+      daemon = makeDaemon({ deadline_ms: 60_000, max_ms: 60_000 });
+      ok(await daemon.handle(message("exec", exec("true"))));
+      t.wall += 60_000;
+      t.continuous += 60_000;
+      const reply = await daemon.handle(message("exec", exec("true")));
+      expect((reply as any).refused).toEqual([
+        "the session on this computer has ended",
+      ]);
+    });
+  });
+
+  describe("retries never repeat a side effect", () => {
+    it("a lost answer plus a new ticket returns the recorded exec, output included", async () => {
+      const operation_id = randomUUID();
+      const counter = join(dir, "count");
+      const cmd = exec(`echo x >> ${counter}; echo ran`);
+      const first = ok(
+        await daemon.handle(message("exec", cmd, { operation_id })),
+      );
+      const second = ok(
+        await daemon.handle(message("exec", cmd, { operation_id })),
+      );
+      expect(second).toMatchObject({ replayed: true, state: "done" });
+      expect(second.result).toMatchObject({ exit_code: 0, stdout: "ran\n" });
+      expect(first.result).toMatchObject({ stdout: "ran\n" });
+      expect(readFileSync(counter, "utf8")).toBe("x\n");
+    });
+
+    it("the same operation_id with another request is refused", async () => {
+      const operation_id = randomUUID();
+      ok(await daemon.handle(message("exec", exec("true"), { operation_id })));
+      const reply = await daemon.handle(
+        message("exec", exec("false"), { operation_id }),
+      );
+      expect((reply as any).refused).toEqual([
+        "that operation_id was used for a different request",
+      ]);
+    });
+
+    it("a run retried never starts a second job", async () => {
+      const operation_id = randomUUID();
+      const run = {
+        command: "sleep 0.1",
+        cwd: null,
+        description: "a short job",
+        name: "short",
+        exclusive: false,
+        nice: false,
+      };
+      const a = ok(await daemon.handle(message("run", run, { operation_id })));
+      const b = ok(await daemon.handle(message("run", run, { operation_id })));
+      expect((b.result as any).job_id).toBe((a.result as any).job_id);
+      expect(daemon.jobs.list()).toHaveLength(1);
+    });
+
+    it("an exec in flight when the daemon stopped is unknown afterwards", async () => {
+      const operation_id = randomUUID();
+      daemon.ledger.begin({
+        operation_id,
+        operation: "exec",
+        request_hash: requestHash(parseOperationRequest("exec", exec("true"))),
+        ticket_id: randomUUID(),
+        agent_id: agent,
+        source_project_id: project_id,
+      });
+      daemon = makeDaemon(); // a restart
+      const reply = ok(
+        await daemon.handle(message("exec", exec("true"), { operation_id })),
+      );
+      expect(reply).toMatchObject({ replayed: true, state: "unknown" });
+      expect(reply.error).toMatch(/stopped before/);
+    });
+  });
+
+  describe("jobs", () => {
+    const run = (command: string, extra: Record<string, unknown> = {}) => ({
+      command,
+      cwd: null,
+      description: "test job",
+      name: null,
+      exclusive: false,
+      nice: true,
+      ...extra,
+    });
+
+    it("runs a job to its exit code, with logs and kill only for its own agent", async () => {
+      const started = ok(
+        await daemon.handle(message("run", run("echo one; echo two; exit 7"))),
+      );
+      const job_id = (started.result as any).job_id;
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "exited";
+      });
+      expect(daemon.jobs.get(job_id)!.exit_code).toBe(7);
+
+      const logs = ok(
+        await daemon.handle(message("logs", { job_id, tail_lines: 1 })),
+      );
+      expect(logs.result).toEqual({ log: "two" });
+      const theirs = ok(
+        await daemon.handle(
+          message("logs", { job_id, tail_lines: 10 }, { agent_id: otherAgent }),
+        ),
+      );
+      expect(theirs).toMatchObject({
+        state: "failed",
+        error: "no such job of yours",
+      });
+
+      // Others see the command and description, but it isn't theirs.
+      const listing = ok(
+        await daemon.handle(message("jobs", {}, { agent_id: otherAgent })),
+      );
+      expect((listing.result as any).jobs).toEqual([
+        expect.objectContaining({
+          job_id,
+          command: "echo one; echo two; exit 7",
+          description: "test job",
+          own: false,
+        }),
+      ]);
+    });
+
+    it("kills a job's whole process group", async () => {
+      const started = ok(
+        await daemon.handle(message("run", run("sleep 30 & sleep 30; wait"))),
+      );
+      const job_id = (started.result as any).job_id;
+      const theirs = ok(
+        await daemon.handle(
+          message("kill", { job_id }, { agent_id: otherAgent }),
+        ),
+      );
+      expect(theirs.state).toBe("failed");
+      ok(await daemon.handle(message("kill", { job_id })));
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      const pid = daemon.jobs.get(job_id)!.pid!;
+      let groupAlive = true;
+      await waitFor(() => {
+        try {
+          process.kill(-pid, 0);
+        } catch {
+          groupAlive = false;
+        }
+        return !groupAlive;
+      });
+      expect(groupAlive).toBe(false);
+    });
+
+    it("an exclusive job waits for running jobs, and later jobs wait for it", async () => {
+      const gate = join(dir, "gate");
+      const first = ok(
+        await daemon.handle(
+          message("run", run(`while [ ! -e ${gate} ]; do sleep 0.05; done`)),
+        ),
+      );
+      const exclusive = ok(
+        await daemon.handle(
+          message("run", run("sleep 0.2", { exclusive: true })),
+        ),
+      );
+      const later = ok(await daemon.handle(message("run", run("true"))));
+      expect((exclusive.result as any).state).toBe("queued");
+      expect((later.result as any).state).toBe("queued");
+      const ids = [first, exclusive, later].map(
+        (r) => (r.result as any).job_id,
+      );
+      require("node:fs").writeFileSync(gate, "");
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(ids[1])?.state === "running";
+      });
+      expect(daemon.jobs.get(ids[2])!.state).toBe("queued");
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(ids[2])?.state === "exited";
+      });
+    });
+
+    it("a raised floor cancels queued jobs before they start", async () => {
+      const gate = join(dir, "gate");
+      ok(
+        await daemon.handle(
+          message("run", run(`while [ ! -e ${gate} ]; do sleep 0.05; done`)),
+        ),
+      );
+      const queued = ok(
+        await daemon.handle(
+          message(
+            "run",
+            run(`touch ${join(dir, "started")}`, { exclusive: true }),
+          ),
+        ),
+      );
+      const { cancelled } = daemon.applyFloors(
+        signEnvelope(
+          SIGNED_KINDS.floors,
+          parseComputerFloors({
+            type: "cocalc-computer-floors",
+            version: 1,
+            computer_id,
+            home_epoch: 0,
+            computer_epoch: 1,
+            projects: {},
+            issued_at: Date.now(),
+          }),
+          homeKey,
+        ),
+      );
+      expect(cancelled).toEqual([(queued.result as any).job_id]);
+      require("node:fs").writeFileSync(gate, "");
+      await new Promise((r) => setTimeout(r, 300));
+      daemon.jobs.refresh();
+      expect(existsSync(join(dir, "started"))).toBe(false);
+    });
+
+    it("a job that ends while the daemon is down keeps its exit code", async () => {
+      const started = ok(
+        await daemon.handle(message("run", run("sleep 0.3; exit 4"))),
+      );
+      const job_id = (started.result as any).job_id;
+      await new Promise((r) => setTimeout(r, 800));
+      daemon = makeDaemon(); // the daemon comes back
+      expect(daemon.jobs.get(job_id)).toMatchObject({
+        state: "exited",
+        exit_code: 4,
+      });
+    });
+
+    it("ending the session kills running jobs and cancels the queue", async () => {
+      const started = ok(await daemon.handle(message("run", run("sleep 30"))));
+      const job_id = (started.result as any).job_id;
+      daemon.endSession("time limit reached");
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+    });
+  });
+
+  describe("exec limits", () => {
+    it("times out and kills the command's process group", async () => {
+      const reply = ok(
+        await daemon.handle(
+          message(
+            "exec",
+            exec("sleep 30 & echo started; wait", { timeout_ms: 1000 }),
+          ),
+        ),
+      );
+      expect(reply.result).toMatchObject({
+        timed_out: true,
+        stdout: "started\n",
+      });
+    });
+
+    it("keeps stdin closed unless given", async () => {
+      const closed = ok(
+        await daemon.handle(message("exec", exec("cat; echo end"))),
+      );
+      expect((closed.result as any).stdout).toBe("end\n");
+      const given = ok(
+        await daemon.handle(
+          message(
+            "exec",
+            exec("cat", { stdin: Buffer.from("in\n").toString("base64") }),
+          ),
+        ),
+      );
+      expect((given.result as any).stdout).toBe("in\n");
+    });
+
+    it("refuses a working directory that doesn't exist", async () => {
+      const reply = ok(
+        await daemon.handle(message("exec", exec("true", { cwd: "nope" }))),
+      );
+      expect(reply).toMatchObject({ state: "failed" });
+      expect(reply.error).toMatch(/no such directory/);
+    });
+  });
+
+  describe("pairing state", () => {
+    it("refuses a certificate not signed by the home bay, or for another key or policy", () => {
+      const create =
+        (cert: unknown, extra: Record<string, unknown> = {}) =>
+        () =>
+          DaemonStore.create(join(dir, `s-${randomUUID()}`), {
+            certificate: cert,
+            ceiling,
+            directory,
+            computer_key: computerKey.fingerprint,
+            agent_network_id,
+            ...extra,
+          });
+      expect(create(certificate({}, projectBayKey))).toThrow(/home bay/);
+      expect(create(certificate({}, strangerKey))).toThrow(/home bay/);
+      expect(
+        create(certificate(), { computer_key: strangerKey.fingerprint }),
+      ).toThrow(/another key/);
+      expect(
+        create(certificate({ ceiling_hash: canonicalHash({ other: 1 }) })),
+      ).toThrow(/another policy/);
+      expect(
+        create(certificate(), {
+          directory: [{ ...directory[0], kid: strangerKey.fingerprint }],
+        }),
+      ).toThrow(/does not match its kid/);
+    });
+
+    it("never goes back to an older key directory", () => {
+      expect(store.applyDirectory(2, directory)).toBe(true);
+      expect(store.applyDirectory(1, directory.slice(0, 1))).toBe(false);
+      expect(store.applyDirectory(2, directory.slice(0, 1))).toBe(false);
+      const reopened = DaemonStore.open(join(dir, "state"))!;
+      expect(
+        reopened.trustedKey(projectBayKey.fingerprint, PROJECT_BAY, Date.now()),
+      ).toBeDefined();
+    });
+  });
+});
