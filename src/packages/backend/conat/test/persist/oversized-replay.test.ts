@@ -21,7 +21,11 @@ import { initContext, syncFiles } from "@cocalc/conat/persist/context";
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { stream } from "@cocalc/conat/persist/client";
 import { dstream } from "@cocalc/backend/conat/sync";
-import { messageData } from "@cocalc/conat/core/client";
+import { messageData, DataEncoding } from "@cocalc/conat/core/client";
+import { pstream } from "@cocalc/backend/conat/persist";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 beforeAll(before);
 afterAll(after);
@@ -178,5 +182,40 @@ describe("opening a sync stream that holds a message over the limit", () => {
       dstream<string>({ name, noCache: true }),
     ).rejects.toMatchObject({ code: 413 });
     expect(Date.now() - t0).toBeLessThan(5000);
+  });
+});
+
+describe("reading one message over the limit", () => {
+  afterEach(() => {
+    delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
+  });
+
+  it("refuses before reading its data", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "persist-oversized-get-"));
+    try {
+      const s = pstream({ path: join(dir, "stream") });
+      s.set({
+        key: "big",
+        encoding: DataEncoding.JsonCodec,
+        raw: Buffer.from("x".repeat(500_000)),
+      });
+      process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES = "100000";
+      const db = (s as any).db;
+      const prepare = db.prepare.bind(db);
+      const queries: string[] = [];
+      db.prepare = (sql: string) => {
+        queries.push(sql);
+        return prepare(sql);
+      };
+      expect(() => s.get({ key: "big", seq: undefined })).toThrow(
+        expect.objectContaining({ code: 413 }),
+      );
+      expect(queries.length).toBeGreaterThan(0);
+      expect(queries.some((q) => /\braw\b/.test(q))).toBe(false);
+      db.prepare = prepare;
+      s.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1123,33 +1123,36 @@ export class PersistentStream extends EventEmitter {
   }: { seq: number; key: undefined } | { seq: undefined; key: string }):
     | StoredMessage
     | undefined => {
-    let x;
     const ttl = this.conf.allow_msg_ttl ? ", ttl" : "";
+    // Check the size before reading the (possibly huge) data.
+    let meta: { seq: number; size: number } | undefined;
     if (seq) {
-      x = this.db
-        .prepare(
-          `SELECT seq, key, time, compress, encoding, raw, headers, size${ttl} FROM messages WHERE seq=?`,
-        )
-        .get(seq);
+      meta = this.db
+        .prepare("SELECT seq, size FROM messages WHERE seq=?")
+        .get(seq) as any;
     } else if (key != null) {
       // NOTE: we guarantee when doing set above that there is at most one
       // row with a given key.  Also there's a unique constraint.
-      x = this.db
-        .prepare(
-          `SELECT seq, key, time, compress, encoding, raw, headers, size${ttl} FROM messages WHERE key=?`,
-        )
-        .get(key);
-    } else {
-      x = undefined;
+      meta = this.db
+        .prepare("SELECT seq, size FROM messages WHERE key=?")
+        .get(key) as any;
+    }
+    if (meta == null) {
+      return undefined;
     }
     const sizeLimit = maxPersistMessageBytes();
-    if (x != null && Number(x.size) > sizeLimit) {
+    if (Number(meta.size) > sizeLimit) {
       throw persistMessageTooLargeError({
-        size: Number(x.size),
+        size: Number(meta.size),
         limit: sizeLimit,
-        seq: Number(x.seq),
+        seq: Number(meta.seq),
       });
     }
+    const x = this.db
+      .prepare(
+        `SELECT seq, key, time, compress, encoding, raw, headers${ttl} FROM messages WHERE seq=?`,
+      )
+      .get(meta.seq);
     return dbToMessage(x as any);
   };
 

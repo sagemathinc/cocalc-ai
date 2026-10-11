@@ -508,41 +508,46 @@ export function replayKeepaliveMs(requestTimeout?: number): number {
 // retrying; the excess is refused with a retryable error.
 const MAX_REPLAYS_PER_SOCKET = 8;
 
-// A replay page holding a message of ASYNC_DECOMPRESS_MIN_BYTES or more is
-// "heavy".  Heavy pages are admitted process-wide before their data is read,
-// so at most MAX_HEAVY_REPLAY_PAGES are in memory and being decompressed at
-// once (decompression shares the libuv threadpool with filesystem I/O),
-// waiting replays hold no message data, and at most
-// MAX_QUEUED_HEAVY_REPLAY_PAGES wait; the excess is refused with a retryable
-// error.
-const MAX_HEAVY_REPLAY_PAGES = 2;
-const MAX_QUEUED_HEAVY_REPLAY_PAGES = 32;
+// Every replay page is admitted process-wide before its data is read, weighted
+// by its planned (uncompressed) bytes against REPLAY_BUDGET_BYTES, and is sent
+// before its admission is released.  So the budget bounds the message data that
+// replays hold across all connections, and waiting replays hold none.  A page
+// with a message of ASYNC_DECOMPRESS_MIN_BYTES or more weighs at least half the
+// budget, so at most two large decompressions run at once (they share the libuv
+// threadpool with filesystem I/O); a page over the budget (one huge message)
+// weighs the whole budget and runs alone.  At most MAX_WAITING_REPLAY_PAGES
+// wait; the excess is refused with a retryable error.
+const REPLAY_BUDGET_BYTES = 64_000_000;
+const MAX_WAITING_REPLAY_PAGES = 256;
 
 export class ReplayAdmission {
-  private active = 0;
-  private waiting: { admit: () => void }[] = [];
+  private used = 0;
+  private waiting: { weight: number; admit: () => void }[] = [];
 
   constructor(
-    private readonly max: number,
+    readonly budget: number,
     private readonly maxWaiting: number,
   ) {}
 
   // Resolves to a release function, or rejects if the signal aborts first or
-  // too many are already waiting.
-  acquire = async (signal: AbortSignal): Promise<() => void> => {
+  // too many are already waiting.  First come, first served, so a stream of
+  // small pages cannot starve a large one.
+  acquire = async (bytes: number, signal: AbortSignal): Promise<() => void> => {
     signal.throwIfAborted();
-    if (this.active < this.max) {
-      this.active += 1;
-      return this.releaser();
+    const weight = Math.min(Math.max(1, Math.ceil(bytes)), this.budget);
+    if (this.waiting.length == 0 && this.used + weight <= this.budget) {
+      this.used += weight;
+      return this.releaser(weight);
     }
     if (this.waiting.length >= this.maxWaiting) {
       throw new ConatError(
-        "persist server is busy replaying large streams; try again",
+        "persist server is busy replaying streams; try again",
         { code: 503 },
       );
     }
     await new Promise<void>((resolve, reject) => {
       const entry = {
+        weight,
         admit: () => {
           signal.removeEventListener("abort", onAbort);
           resolve();
@@ -551,44 +556,53 @@ export class ReplayAdmission {
       const onAbort = () => {
         const i = this.waiting.indexOf(entry);
         if (i >= 0) this.waiting.splice(i, 1);
+        // a large page leaving the head of the queue may let others in
+        this.drain();
         reject(signal.reason ?? new Error("aborted"));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       this.waiting.push(entry);
     });
-    // the releasing replay handed its slot over directly
-    return this.releaser();
+    // drain() already counted this weight as used
+    return this.releaser(weight);
   };
 
-  stats = () => ({ active: this.active, waiting: this.waiting.length });
+  stats = () => ({ used: this.used, waiting: this.waiting.length });
 
-  private releaser = (): (() => void) => {
+  private drain = () => {
+    while (
+      this.waiting.length > 0 &&
+      this.used + this.waiting[0].weight <= this.budget
+    ) {
+      const next = this.waiting.shift()!;
+      this.used += next.weight;
+      next.admit();
+    }
+  };
+
+  private releaser = (weight: number): (() => void) => {
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      const next = this.waiting.shift();
-      if (next != null) {
-        next.admit();
-      } else {
-        this.active -= 1;
-      }
+      this.used -= weight;
+      this.drain();
     };
   };
 }
 
-let heavyReplayPages = new ReplayAdmission(
-  MAX_HEAVY_REPLAY_PAGES,
-  MAX_QUEUED_HEAVY_REPLAY_PAGES,
+let replayAdmission = new ReplayAdmission(
+  REPLAY_BUDGET_BYTES,
+  MAX_WAITING_REPLAY_PAGES,
 );
 
 // for unit tests
 export function resetReplayAdmission(
-  max = MAX_HEAVY_REPLAY_PAGES,
-  maxWaiting = MAX_QUEUED_HEAVY_REPLAY_PAGES,
+  budget = REPLAY_BUDGET_BYTES,
+  maxWaiting = MAX_WAITING_REPLAY_PAGES,
 ): ReplayAdmission {
-  heavyReplayPages = new ReplayAdmission(max, maxWaiting);
-  return heavyReplayPages;
+  replayAdmission = new ReplayAdmission(budget, maxWaiting);
+  return replayAdmission;
 }
 
 // Replay a stream for a getAll request.  Errors propagate to the request
@@ -725,15 +739,17 @@ export async function replay({
         });
       }
       const last_seq = plan[plan.length - 1].seq;
+      const pageBytes = plan.reduce((total, row) => total + row.size, 0);
       const heavy = plan.some((row) => row.size >= ASYNC_DECOMPRESS_MIN_BYTES);
-      let release: (() => void) | undefined;
-      if (heavy) {
-        try {
-          release = await heavyReplayPages.acquire(signal);
-        } catch (err) {
-          if (signal.aborted) return;
-          throw err;
-        }
+      let release: () => void;
+      try {
+        release = await replayAdmission.acquire(
+          heavy ? Math.max(pageBytes, replayAdmission.budget / 2) : pageBytes,
+          signal,
+        );
+      } catch (err) {
+        if (signal.aborted) return;
+        throw err;
       }
       try {
         if (signal.aborted) return;
@@ -748,14 +764,15 @@ export async function replay({
             size = 0;
           }
         }
-        if (heavy && messages.length > 0) {
-          // do not hold large decompressed data past the admission
+        // send the page before releasing its admission, so the budget bounds
+        // what replays hold
+        if (messages.length > 0) {
           respond(messages);
           messages.length = 0;
           size = 0;
         }
       } finally {
-        release?.();
+        release();
       }
       after_seq = last_seq;
       await new Promise((resolve) => setImmediate(resolve));

@@ -8,7 +8,7 @@
 // persist daemon for 7-8 s out of every 8 s while one browser kept retrying.
 
 import { initContext } from "./context";
-import { replay, resetReplayAdmission } from "./server";
+import { replay, ReplayAdmission, resetReplayAdmission } from "./server";
 import type { StoredRow } from "./storage";
 
 const pending: { buf: Buffer; resolve: (b: Buffer) => void }[] = [];
@@ -311,13 +311,13 @@ describe("where a replay ends", () => {
   });
 });
 
-describe("admission of pages with large messages", () => {
+describe("process-wide admission of replay pages", () => {
   beforeEach(() => {
     pending.length = 0;
   });
 
-  it("reads and decompresses at most two such pages at once, process-wide", async () => {
-    resetReplayAdmission(2, 32);
+  it("reads and decompresses at most two pages with large messages at once", async () => {
+    resetReplayAdmission();
     const streams = [1, 2, 3].map(() => fakeStream([row(1, BIG)]));
     const replays = streams.map(({ stream }) =>
       replay({
@@ -340,11 +340,53 @@ describe("admission of pages with large messages", () => {
     await Promise.all(replays);
   });
 
+  it("counts pages of messages just under 1 MB by their total size", async () => {
+    // A page of eight 900 KB messages is "light" message by message, but
+    // still 7.2 MB that must fit the budget before it is read.
+    resetReplayAdmission(10_000_000, 32);
+    const a = fakeStream([row(1, 2_000_000)]); // weighs half the budget
+    const b = fakeStream(
+      Array.from({ length: 8 }, (_, i) => row(i + 1, 900_000, 0)),
+    );
+    const ra = replay({
+      stream: a.stream,
+      mesg: fakeMesg().mesg,
+      request: {},
+      messagesThresh: 1e9,
+    });
+    await flush();
+    const { mesg, frames } = fakeMesg();
+    const rb = replay({
+      stream: b.stream,
+      mesg,
+      request: {},
+      messagesThresh: 1e9,
+    });
+    await flush();
+    await flush();
+    expect(b.readCalls).toHaveLength(0);
+    await releaseAll();
+    await Promise.all([ra, rb]);
+    expect(replayedSeqs(frames)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("sends each page before releasing its admission", async () => {
+    resetReplayAdmission();
+    const rows = Array.from({ length: 2500 }, (_, i) => row(i + 1, 10, 0));
+    const { stream } = fakeStream(rows);
+    const { mesg, frames } = fakeMesg();
+    await replay({ stream, mesg, request: {}, messagesThresh: 1e9 });
+    expect(frames.map((f) => f.data?.length ?? null)).toEqual([
+      1000,
+      1000,
+      500,
+      null,
+    ]);
+  });
+
   it("refuses with a retryable error when too many are waiting", async () => {
-    resetReplayAdmission(1, 1);
-    const a = fakeStream([row(1, BIG)]);
-    const b = fakeStream([row(1, BIG)]);
-    const c = fakeStream([row(1, BIG)]);
+    resetReplayAdmission(8_000_000, 1);
+    const [a, b, c] = [1, 2, 3].map(() => fakeStream([row(1, BIG)]));
     const ra = replay({
       stream: a.stream,
       mesg: fakeMesg().mesg,
@@ -372,7 +414,7 @@ describe("admission of pages with large messages", () => {
   });
 
   it("drops a waiting replay whose socket closed, without reading its data", async () => {
-    const admission = resetReplayAdmission(1, 32);
+    const admission = resetReplayAdmission(8_000_000, 32);
     const a = fakeStream([row(1, BIG)]);
     const b = fakeStream([row(1, BIG)]);
     const ra = replay({
@@ -392,14 +434,68 @@ describe("admission of pages with large messages", () => {
       signal: abort.signal,
     });
     await flush();
-    expect(admission.stats()).toEqual({ active: 1, waiting: 1 });
+    expect(admission.stats()).toEqual({ used: BIG, waiting: 1 });
     abort.abort();
     await rb;
-    expect(admission.stats()).toEqual({ active: 1, waiting: 0 });
+    expect(admission.stats()).toEqual({ used: BIG, waiting: 0 });
     await releaseAll();
     await ra;
     expect(b.readCalls).toHaveLength(0);
     expect(frames).toHaveLength(0);
-    expect(admission.stats()).toEqual({ active: 0, waiting: 0 });
+    expect(admission.stats()).toEqual({ used: 0, waiting: 0 });
+  });
+});
+
+describe("ReplayAdmission", () => {
+  const never = new AbortController().signal;
+
+  it("admits first come, first served, so small requests cannot starve a large one", async () => {
+    const admission = new ReplayAdmission(10, 10);
+    const order: string[] = [];
+    const r1 = await admission.acquire(6, never);
+    const big = admission.acquire(10, never).then((r) => {
+      order.push("big");
+      return r;
+    });
+    // fits the remaining budget, but must wait behind the large request
+    const small = admission.acquire(1, never).then((r) => {
+      order.push("small");
+      return r;
+    });
+    await flush();
+    expect(order).toEqual([]);
+    r1();
+    const rBig = await big;
+    await flush();
+    expect(order).toEqual(["big"]);
+    rBig();
+    (await small)();
+    expect(order).toEqual(["big", "small"]);
+    expect(admission.stats()).toEqual({ used: 0, waiting: 0 });
+  });
+
+  it("lets the next waiter in when an aborted request leaves the head of the queue", async () => {
+    const admission = new ReplayAdmission(10, 10);
+    const r1 = await admission.acquire(6, never);
+    const abort = new AbortController();
+    const big = admission.acquire(10, abort.signal);
+    const small = admission.acquire(2, never);
+    await flush();
+    abort.abort();
+    await expect(big).rejects.toBeDefined();
+    const rSmall = await small;
+    expect(admission.stats()).toEqual({ used: 8, waiting: 0 });
+    r1();
+    rSmall();
+    expect(admission.stats()).toEqual({ used: 0, waiting: 0 });
+  });
+
+  it("caps a request at the whole budget, so one huge page runs alone", async () => {
+    const admission = new ReplayAdmission(10, 10);
+    const r = await admission.acquire(1_000, never);
+    expect(admission.stats()).toEqual({ used: 10, waiting: 0 });
+    r();
+    r(); // releasing twice is harmless
+    expect(admission.stats()).toEqual({ used: 0, waiting: 0 });
   });
 });
