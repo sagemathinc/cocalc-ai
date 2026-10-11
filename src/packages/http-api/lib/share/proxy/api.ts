@@ -79,7 +79,7 @@ async function credentials(): Promise<{
   github_token?: string;
   github_block?: string;
 }> {
-  const pool = getCachedReadPool("long");
+  const pool = getCachedReadPool("long", { label: "share-proxy-api" });
   const { rows } = await pool.query(
     "SELECT name, value FROM server_settings WHERE name='github_username' OR name='github_token' OR name='github_block'",
   );

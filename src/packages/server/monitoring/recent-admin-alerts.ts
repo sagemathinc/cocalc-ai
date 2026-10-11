@@ -34,7 +34,9 @@ export async function getRecentAdminAlertSummary({
     Math.max(1, Math.round(Number(limit) || 0)),
     MAX_RECENT_ADMIN_ALERT_DETAILS,
   );
-  const { rows } = await getCachedReadPool("medium").query(
+  const { rows } = await getCachedReadPool("medium", {
+    label: "recent-admin-alerts",
+  }).query(
     `
     SELECT subject, sent, COUNT(*) OVER()::int AS total_count
       FROM messages

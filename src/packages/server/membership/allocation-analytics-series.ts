@@ -95,10 +95,12 @@ export async function getMembershipAllocationSeriesLocal({
   addArrayFilter(filters, params, "billing_interval", query.billing_intervals);
   addArrayFilter(filters, params, "lifecycle", query.lifecycles);
 
-  const { rows } =
-    await // query-cache-ok: admin analytics: allocation time series
-    (client ?? getCachedReadPool("medium")).query<DailyRowResult>(
-      `SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day,
+  // query-cache-ok: admin analytics: allocation time series
+  const cached = getCachedReadPool("medium", {
+    label: "allocation-analytics-series",
+  });
+  const { rows } = await (client ?? cached).query<DailyRowResult>(
+    `SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day,
             channel, membership_class, billing_interval, lifecycle,
             NULLIF(previous_membership_class, '') AS previous_membership_class,
             NULLIF(previous_billing_interval, '') AS previous_billing_interval,
@@ -116,8 +118,8 @@ export async function getMembershipAllocationSeriesLocal({
          OR SUM(revenue_cents) <> 0
       ORDER BY day, channel, membership_class, billing_interval, lifecycle,
                previous_membership_class, previous_billing_interval, tier_change`,
-      params,
-    );
+    params,
+  );
   return {
     start: start.toISOString(),
     end: end.toISOString(),
