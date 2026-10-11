@@ -174,11 +174,19 @@ check
 
 log "new container on the same volume keeps the container runtime"
 runtime_before="$(current_runtime)"
+# `docker rm -f` can interrupt Podman mid-layer; leave such a stale temporary
+# directory, unreadable by the Star user, for the new container to handle.
+$DOCKER exec "$NAME" sh -c '
+  d=/home/cocalc-star/.local/share/containers/storage/overlay/tempdirs/temp-dir-ci/1-stale/diff/home/x
+  mkdir -p "$d" && chown -R 100999:100999 /home/cocalc-star/.local/share/containers/storage/overlay/tempdirs/temp-dir-ci &&
+    chmod 0700 "$d"'
 $DOCKER rm -f "$NAME" >/dev/null
 run_container "$IMAGE"
 wait_ready 1
 check_runtime_persisted
 [ "$(current_runtime)" = "$runtime_before" ]
+$DOCKER exec "$NAME" grep -q 'removing stale Podman temporary layer directories' \
+  /var/log/cocalc-star-docker-init.log
 check
 
 log "ok"
