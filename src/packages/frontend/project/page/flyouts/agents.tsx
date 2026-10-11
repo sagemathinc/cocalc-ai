@@ -68,8 +68,6 @@ import {
 import { ChatFontSizeControls } from "@cocalc/frontend/chat/chat-font-size-controls";
 import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
 import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
-import CodexConfigButton from "@cocalc/frontend/chat/codex";
-import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { agentSessionTitle } from "@cocalc/frontend/chat/recent-agent-sessions";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
@@ -557,14 +555,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       null
     );
   }, [inlineSessionId, openedSelection, sessionsWithExistingChat]);
-  const {
-    paymentSource: codexPaymentSource,
-    loading: codexPaymentSourceLoading,
-    refresh: refreshCodexPaymentSource,
-  } = useCodexPaymentSource({
-    projectId: project_id,
-    enabled: inlineSession != null,
-  });
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
@@ -2054,18 +2044,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   if (inlineSession) {
     const inlineTitle = normalizedTitle(inlineSession);
-    const inlineThreadModel =
-      inlineThreadMetadata?.agent_model?.trim() ||
-      inlineThreadMetadata?.acp_config?.model?.trim() ||
-      inlineSession.model?.trim();
-    const showInlineCodexConfig = Boolean(
-      inlineActions &&
-      inlineThreadKey &&
-      (inlineThreadMetadata?.agent_kind === "acp" ||
-        inlineThreadMetadata?.acp_config != null ||
-        inlineActions.getCodexConfig?.(inlineThreadKey) != null ||
-        isCodexModelName(`${inlineThreadModel ?? ""}`)),
-    );
     return (
       <div
         ref={panelRef}
@@ -2143,7 +2121,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               {renderInlineSessionMenu(inlineSession)}
             </div>
           </div>
-          {showInlineCodexConfig || inlineActions ? (
+          {/* The agent's settings are in the composer below, as on the
+              Agents page; a second copy here raced it for model discovery. */}
+          {inlineActions ? (
             <div
               style={{
                 display: "flex",
@@ -2155,22 +2135,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 flexWrap: "wrap",
               }}
             >
-              {showInlineCodexConfig ? (
-                <div style={{ minWidth: 0, flex: "1 1 320px" }}>
-                  <CodexConfigButton
-                    threadKey={inlineThreadKey}
-                    chatPath={inlineSession.chat_path}
-                    projectId={project_id}
-                    actions={inlineActions ?? undefined}
-                    threadConfig={inlineThreadMetadata?.acp_config ?? null}
-                    paymentSource={codexPaymentSource}
-                    paymentSourceLoading={codexPaymentSourceLoading}
-                    refreshPaymentSource={refreshCodexPaymentSource}
-                  />
-                </div>
-              ) : (
-                <span style={{ flex: "1 1 auto" }} />
-              )}
+              <span style={{ flex: "1 1 auto" }} />
               <div
                 ref={setInlineToolbarPortal}
                 style={{
