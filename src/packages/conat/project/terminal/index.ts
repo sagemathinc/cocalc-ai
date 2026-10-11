@@ -182,6 +182,29 @@ const sessionPaths: { [id: string]: string | undefined } = {};
 const history: { [id: string]: string } = {};
 const sizes: { [id: string]: { rows: number; cols: number }[] } = {};
 
+// Sessions whose process ended, oldest first.  What they printed stays
+// readable (an agent reads the output of a command it spawned), but only for
+// the most recent ones, so ended sessions cannot pile up in memory or the list.
+const ended = new Set<string>();
+const MAX_ENDED_SESSIONS = MAX_SESSIONS;
+
+// Forget a session once its process is gone, whether or not anyone is
+// connected: a CLI spawn disconnects at once, and its session must not stay
+// "running" and count against the session limit after the command exits.
+function endSession(id: string, pty: any) {
+  if (sessions[id] !== pty) return;
+  delete sessions[id];
+  delete sessionPaths[id];
+  delete sizes[id];
+  ended.delete(id);
+  ended.add(id);
+  for (const old of ended) {
+    if (ended.size <= MAX_ENDED_SESSIONS) break;
+    ended.delete(old);
+    if (sessions[old] == null) delete history[old];
+  }
+}
+
 export function boundedTerminalHistory(
   value: string | undefined,
   requestedLimit?: number,
@@ -583,11 +606,11 @@ export function terminalServer({
         outputThrottle?.write(data);
       };
       onTerminalExit = async () => {
+        const exited = pty;
         removeListeners();
         setPty(null);
         if (sessionId) {
-          delete sessions[sessionId];
-          delete sessionPaths[sessionId];
+          endSession(sessionId, exited);
         }
         updateSessionId(null);
         try {
@@ -607,8 +630,7 @@ export function terminalServer({
           removeListeners();
           pty?.destroy();
           if (sessionId) {
-            delete sessions[sessionId];
-            delete sessionPaths[sessionId];
+            endSession(sessionId, pty);
           }
           updateSessionId(null);
           setPty(null);
@@ -768,11 +790,17 @@ export function terminalServer({
             });
             setPty(spawn(command, args, options));
             if (id) {
-              sessions[id] = pty;
+              const spawned = pty;
+              sessions[id] = spawned;
               sessionPaths[id] = options?.path;
               history[id] = "";
+              ended.delete(id);
+              spawned.once("exit", () => endSession(id, spawned));
               const maxLen = options?.maxHistoryLength ?? MAX_HISTORY_LENGTH;
-              pty.on("data", (data) => {
+              spawned.on("data", (data) => {
+                // Output a destroyed process still flushes must not land in
+                // the history of a new session with the same id.
+                if (sessions[id] !== spawned) return;
                 history[id] += data;
                 if (history[id].length > maxLen + 1000) {
                   history[id] = history[id].slice(-maxLen);

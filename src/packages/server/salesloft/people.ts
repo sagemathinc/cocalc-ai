@@ -15,7 +15,7 @@ export async function create(newPerson: object) {
 }
 
 export async function destroy(personId: string) {
-  const db = getPool("long");
+  const db = getPool();
   // this would likely be slow, due to no index.
   await db.query(
     "UPDATE accounts SET salesloft_id=NULL WHERE salesloft_id=$1",

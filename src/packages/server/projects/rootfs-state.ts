@@ -88,7 +88,7 @@ async function resolveManagedBinding({
   image: string;
   image_id?: string;
 }): Promise<ProjectRootfsBinding> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const runtimeImage = assertValidRootfsImageName(image);
   if (!runtimeImage) {
     throw new Error("rootfs image is required");
@@ -161,7 +161,7 @@ async function resolveManagedBinding({
 async function loadProjectRootfsStateRows(
   project_id: string,
 ): Promise<RootfsStateRow[]> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<RootfsStateRow>(
     `SELECT
       project_id,
@@ -183,7 +183,8 @@ async function loadProjectRootfsStateRows(
 async function loadProjectRootfsStateEntries(
   project_id: string,
 ): Promise<ProjectRootfsStateEntry[]> {
-  const rows = await loadProjectRootfsStateRows(project_id);
+  // A copy: the rows may be a cached result that other callers share.
+  const rows = [...(await loadProjectRootfsStateRows(project_id))];
   const hasCurrent = rows.some((row) => row.state_role === "current");
   if (!hasCurrent) {
     const projectRow = await loadProjectRow(project_id);
@@ -226,7 +227,7 @@ async function loadProjectRootfsStateEntries(
 async function loadProjectRow(
   project_id: string,
 ): Promise<ProjectRow | undefined> {
-  const { rows } = await getPool("medium").query<ProjectRow>(
+  const { rows } = await getPool().query<ProjectRow>(
     `SELECT rootfs_image, rootfs_image_id
      FROM projects
      WHERE project_id=$1`,
@@ -386,7 +387,7 @@ export async function initializeProjectRootfsStates({
     image: runtimeImage,
     image_id: trimString(image_id),
   });
-  const pool = getPool("medium");
+  const pool = getPool();
   await pool.query(
     `INSERT INTO project_rootfs_states
      (project_id, state_role, runtime_image, release_id, image_id, set_by_account_id, created, updated)
@@ -415,7 +416,7 @@ export async function cloneProjectRootfsStates({
   project_id: string;
   src_project_id: string;
 }): Promise<ProjectRootfsStateEntry[]> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const result = await pool.query(
     `INSERT INTO project_rootfs_states
      (project_id, state_role, runtime_image, release_id, image_id, set_by_account_id, created, updated)

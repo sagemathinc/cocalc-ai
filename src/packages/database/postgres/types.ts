@@ -420,7 +420,7 @@ export interface PostgreSQLMethods extends EventEmitter {
   remove_collaborator_from_project(opts: {
     account_id: string;
     project_id: string;
-    cb: CB;
+    cb: CB<boolean>;
   }): void;
 
   remove_user_from_project(opts: {
@@ -476,6 +476,13 @@ export interface PostgreSQLMethods extends EventEmitter {
     project_id: string;
     to: string;
     cb: (err, result?: Date | number) => void;
+  }): void;
+
+  claim_project_invite_send(opts: {
+    project_id: string;
+    to: string;
+    cutoff: Date;
+    cb: (err, result?: boolean) => void;
   }): void;
 
   sent_project_invite(opts: {
@@ -747,6 +754,13 @@ export interface PostgreSQLMethods extends EventEmitter {
   archivePatches(opts: ArchivePatchesOpts);
 
   when_sent_project_invite(opts: { project_id: string; to: string; cb?: CB });
+
+  claim_project_invite_send(opts: {
+    project_id: string;
+    to: string;
+    cutoff: Date;
+    cb?: CB;
+  });
 
   sent_project_invite(opts: {
     project_id: string;

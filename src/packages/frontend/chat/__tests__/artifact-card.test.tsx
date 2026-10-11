@@ -163,3 +163,32 @@ test("compact attachment bounds its width and keeps metadata on one line", () =>
     screen.queryByText("A description that belongs in the workbench."),
   ).toBeNull();
 });
+
+test("live app cards say what they are and open like other artifacts", async () => {
+  const user = userEvent.setup();
+  const open = jest.fn();
+  render(
+    <ArtifactCard
+      publication={
+        {
+          thread_id: "thread",
+          artifact_id: "browser",
+          operation_id: "version",
+          snapshot: {
+            title: "Shared browser",
+            markdown: "The agent drives; take over any time.",
+            app: { id: "cocalc-browser" },
+          },
+        } as any
+      }
+      open={open}
+    />,
+  );
+  expect(
+    screen.getByRole("article", { name: "Live app: Shared browser" }),
+  ).toHaveTextContent("The agent drives; take over any time.");
+  await user.click(
+    screen.getByRole("button", { name: "Open artifact: Shared browser" }),
+  );
+  expect(open).toHaveBeenCalled();
+});

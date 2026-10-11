@@ -26,11 +26,8 @@ import {
 import { Syntax } from "@cocalc/util/code-formatter";
 import { startswith } from "@cocalc/util/misc";
 import { Store } from "@cocalc/util/redux/Store";
+import { getCellClipboard, setCellClipboard } from "./cell-clipboard";
 import type { ImmutableUsageInfo } from "@cocalc/util/types/project-usage-info";
-
-// Used for copy/paste.  We make a single global clipboard, so that
-// copy/paste between different notebooks works.
-let global_clipboard: any = undefined;
 
 export type show_kernel_selector_reasons = "bad kernel" | "user request";
 
@@ -310,12 +307,14 @@ export class JupyterStore extends Store<JupyterStoreState> {
     return cell_list.get(i);
   }
 
+  // One clipboard for all notebooks, shared between browser tabs; see
+  // cell-clipboard.ts.
   set_global_clipboard = (clipboard: any) => {
-    global_clipboard = clipboard;
+    setCellClipboard(clipboard);
   };
 
   get_global_clipboard = () => {
-    return global_clipboard;
+    return getCellClipboard();
   };
 
   get_kernel_info = (

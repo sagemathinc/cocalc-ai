@@ -19,7 +19,7 @@ type BannedAccountProjectRow = {
 async function listBannedAccountRunningProjects(
   account_id: string,
 ): Promise<BannedAccountProjectRow[]> {
-  const { rows } = await getPool("medium").query<BannedAccountProjectRow>(
+  const { rows } = await getPool().query<BannedAccountProjectRow>(
     `
       SELECT project_id, state
         FROM projects

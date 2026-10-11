@@ -2,7 +2,7 @@
 Get the *PUBLIC* profile of a user.
 */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import {
   displayNameFromAccount,
   legacyNamePartsFromDisplayName,
@@ -13,7 +13,8 @@ export default async function getProfile(
   account_id: string,
   noCache: boolean = false,
 ): Promise<Profile> {
-  const pool = getPool(noCache ? undefined : "long");
+  // query-cache-ok: display: public profile
+  const pool = noCache ? getPool() : getCachedReadPool("long");
   // Do not put anything private in this query!!!!
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name, profile FROM accounts WHERE account_id=$1",

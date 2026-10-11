@@ -27,6 +27,7 @@ import {
   beginProjectRuntimeMaintenance,
   endProjectRuntimeMaintenance,
 } from "./runtime-maintenance";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:upgrade");
 
@@ -76,7 +77,7 @@ function normalizeBaseUrl(baseUrl?: string): string {
     baseUrl ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     DEFAULT_BASE_URL;
-  return raw.replace(/\/+$/, "");
+  return trimTrailingSlashes(raw);
 }
 
 function canonicalizeArtifact(artifact: SoftwareArtifact): CanonicalArtifact {
@@ -624,12 +625,20 @@ async function validateContainerRuntimeVersion(
       { timeoutMs: 15_000 },
     );
   }
+  // Runtimes built before pasta was bundled use the distro copy.
+  const pastaVersion = manifest?.components?.passt
+    ? `${manifest.components.passt.version ?? ""}`.trim()
+    : undefined;
+  if (pastaVersion === "") {
+    throw new Error("container runtime manifest has no passt version");
+  }
   for (const binary of [
     "podman",
     "conmon",
     "crun",
     "netavark",
     "aardvark-dns",
+    ...(pastaVersion ? ["pasta"] : []),
   ]) {
     const binaryPath = path.join(versionDir, "bin", binary);
     await fs.promises.access(binaryPath, fs.constants.X_OK);
@@ -662,6 +671,18 @@ async function validateContainerRuntimeVersion(
     throw new Error(
       `container runtime Podman version mismatch: expected ${expectedVersion || "manifest version"}, got ${stdout.trim()}`,
     );
+  }
+  if (pastaVersion) {
+    const pasta = await runCommandCapture(
+      path.join(versionDir, "bin", "pasta"),
+      ["--version"],
+      { timeoutMs: 15_000 },
+    );
+    if (!pasta.stdout.includes(pastaVersion)) {
+      throw new Error(
+        `container runtime pasta version mismatch: expected ${pastaVersion}, got ${pasta.stdout.trim()}`,
+      );
+    }
   }
   return contract;
 }
@@ -725,7 +746,7 @@ function escapeRegExp(value: string): string {
 }
 
 function normalizeRootPath(root: string): string {
-  return `${root ?? ""}`.replace(/\/+$/, "");
+  return trimTrailingSlashes(`${root ?? ""}`);
 }
 
 function isArtifactVersionName(name: string): boolean {

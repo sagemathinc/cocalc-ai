@@ -4,7 +4,15 @@ After=cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service
 
 [Service]
 Type=oneshot
+# Runs as the bay user: everything it executes lives in the bay's release
+# tree, which that user can write. Reading the tunnel's journal and
+# restarting it go through the root-owned
+# /usr/local/sbin/cocalc-bay-cloudflared-ctl.
+User=cocalc-bay
+Group=cocalc-bay
 UMask=0077
+StateDirectory=cocalc-bay-cloudflared-watchdog
+StateDirectoryMode=0700
 ExecStart=/opt/cocalc/bay/current/bin/bay-cloudflared-watchdog
 TimeoutStartSec=150
 StandardOutput=journal

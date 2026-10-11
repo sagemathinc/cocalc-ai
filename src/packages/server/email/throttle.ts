@@ -24,7 +24,7 @@ export default async function sendEmailThrottle(
   if (!id) return; // not associated to a particular user
   const day = startOfToday();
   // get current count
-  const pool = getPool("short"); // a few seconds old is ok...
+  const pool = getPool(); // uncached: a stale count would let sends through
   const { rows } = await pool.query(
     "SELECT count FROM email_counter WHERE time=$1 AND id=$2",
     [day, id],

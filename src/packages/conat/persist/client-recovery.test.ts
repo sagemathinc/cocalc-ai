@@ -86,3 +86,96 @@ describe("persist socket-ready recovery", () => {
     persist.close();
   });
 });
+
+describe("persist stream open errors", () => {
+  beforeAll(() => {
+    process.env.COCALC_TEST_MODE = "true";
+    disablePermissionCheck();
+  });
+
+  it("reconnects after a storage error instead of closing the shared client", () => {
+    const { persist, socket } = createClient();
+    persist.on("error", () => {});
+
+    socket.emit("data", null, {
+      error: "Error: disk I/O error",
+      code: "SQLITE_IOERR",
+    });
+
+    expect(socket.close).toHaveBeenCalledTimes(1);
+    expect(persist.isClosed()).toBe(false);
+    persist.close();
+  });
+
+  it("shuts down a cached client denied permission without stealing references", () => {
+    const sockets: FakeSocket[] = [];
+    const client: any = {
+      id: `client-${Math.random()}`,
+      state: "connected",
+      socket: {
+        connect: jest.fn(() => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        }),
+      },
+      recoveryScheduler: {
+        registerResource: jest.fn(() => ({
+          requestRecovery: jest.fn(),
+          close: jest.fn(),
+        })),
+      },
+    };
+    const options = {
+      client,
+      user: { hub_id: "test" },
+      storage: { path: `test/${Math.random()}` },
+    };
+    // Two holders share one cached client.
+    const first: any = stream(options);
+    const second: any = stream(options);
+    expect(second).toBe(first);
+    first.on("error", () => {});
+
+    sockets[0].emit("data", null, { error: "permission denied", code: 403 });
+
+    expect(first.isClosed()).toBe(true);
+    // The denied client is no longer handed out...
+    const third: any = stream(options);
+    expect(third).not.toBe(first);
+    expect(third.isClosed()).toBe(false);
+    // ...and releasing the old holders does not touch the replacement.
+    first.close();
+    second.close();
+    expect(third.isClosed()).toBe(false);
+    expect(Object.values(stream.info().count)).toEqual([1]);
+    third.close();
+    expect(third.isClosed()).toBe(true);
+  });
+});
+
+describe("persist recovery of a stream that cannot be replayed", () => {
+  beforeAll(() => {
+    process.env.COCALC_TEST_MODE = "true";
+    disablePermissionCheck();
+  });
+
+  it("stops after a 413 instead of repeating the replay", async () => {
+    const { persist, socket } = createClient();
+    (socket as any).waitUntilReady = jest.fn(async () => {});
+    const tooLarge = Object.assign(new Error("message too large"), {
+      code: 413,
+    });
+    persist.getAll = jest.fn(async () => {
+      throw tooLarge;
+    });
+    const errors: any[] = [];
+    persist.on("error", (err) => errors.push(err));
+
+    await persist.getMissed0({ priority: "foreground" });
+
+    expect(persist.getAll).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([tooLarge]);
+    persist.close();
+  });
+});

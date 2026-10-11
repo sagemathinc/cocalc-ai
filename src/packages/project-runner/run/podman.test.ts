@@ -129,6 +129,7 @@ import {
   cleanupProjectSecretsHostPath,
   cleanupStaleProjectContainers,
   cleanupStaleProjectSecretsHostPaths,
+  containerConatHostArgs,
   getAll,
   projectSecretsHostPath,
   PROJECT_SECRETS_HOST_ROOT,
@@ -190,6 +191,30 @@ describe("project-runner Podman host alias resolution", () => {
       resolveHostContainersInternalAddress("--network=none"),
     ).resolves.toBeUndefined();
   });
+  it("points an ephemeral container's conat at the host, like the project container", async () => {
+    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR = "10.206.0.1";
+    const env: Record<string, string> = {
+      CONAT_SERVER: "http://host.containers.internal:9102",
+    };
+    await expect(
+      containerConatHostArgs("--network=pasta:--map-gw", env),
+    ).resolves.toEqual(["--add-host", "host.containers.internal:10.206.0.1"]);
+    expect(env.CONAT_SERVER).toBe("http://10.206.0.1:9102/");
+    const slirp: Record<string, string> = {
+      CONAT_SERVER: "http://host.containers.internal:9102",
+    };
+    await expect(
+      containerConatHostArgs("--network=slirp4netns", slirp),
+    ).resolves.toEqual([]);
+    expect(slirp.CONAT_SERVER).toBe("http://10.0.2.2:9102/");
+    const other: Record<string, string> = {
+      CONAT_SERVER: "http://conat.example:9102",
+    };
+    await expect(
+      containerConatHostArgs("--network=pasta:--map-gw", other),
+    ).resolves.toEqual([]);
+    expect(other.CONAT_SERVER).toBe("http://conat.example:9102");
+  });
 });
 
 function mockProjectStartPodman(project_id: string) {
@@ -220,6 +245,12 @@ function mockProjectStartPodman(project_id: string) {
     }
     return { stdout: "" };
   });
+}
+
+// A project stops its browser containers first (podman refuses to remove a
+// project's container while a browser shares its network): none here.
+function noBrowserContainers() {
+  mockPodman.mockResolvedValueOnce({ stdout: "" });
 }
 
 describe("project-runner podman orphan fallback", () => {
@@ -385,6 +416,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills an orphaned live project when podman metadata is missing", async () => {
+    noBrowserContainers();
     mockPodman
       .mockRejectedValueOnce(new Error("no such container"))
       .mockRejectedValueOnce(new Error("no such container"));
@@ -436,6 +468,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills a live project when podman rm reports success but conmon is still alive", async () => {
+    noBrowserContainers();
     mockPodman
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ stdout: "" });
@@ -484,18 +517,30 @@ describe("project-runner podman orphan fallback", () => {
 
     await stop({ project_id: project1 });
 
-    expect(mockPodman).toHaveBeenNthCalledWith(1, [
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      1,
+      [
+        "ps",
+        "-a",
+        "--format",
+        "{{.Names}}",
+        "--filter",
+        `name=^cocalc-browser-${project1}`,
+      ],
+      { timeout: 30 },
+    );
+    expect(mockPodman).toHaveBeenNthCalledWith(2, [
       "container",
       "exists",
       `project-${project1}`,
     ]);
     expect(mockPodman).toHaveBeenNthCalledWith(
-      2,
+      3,
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
     expect(mockPodman).toHaveBeenNthCalledWith(
-      3,
+      4,
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
@@ -516,6 +561,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills a live project when podman rm times out and the retry still leaves conmon alive", async () => {
+    noBrowserContainers();
     mockPodman
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("timeout"))
@@ -552,16 +598,11 @@ describe("project-runner podman orphan fallback", () => {
 
     await stop({ project_id: project1 });
 
-    expect(mockPodman).toHaveBeenNthCalledWith(1, [
+    expect(mockPodman).toHaveBeenNthCalledWith(2, [
       "container",
       "exists",
       `project-${project1}`,
     ]);
-    expect(mockPodman).toHaveBeenNthCalledWith(
-      2,
-      ["rm", "-f", "-t", "5", `project-${project1}`],
-      { timeout: 10 },
-    );
     expect(mockPodman).toHaveBeenNthCalledWith(
       3,
       ["rm", "-f", "-t", "5", `project-${project1}`],
@@ -569,6 +610,11 @@ describe("project-runner podman orphan fallback", () => {
     );
     expect(mockPodman).toHaveBeenNthCalledWith(
       4,
+      ["rm", "-f", "-t", "5", `project-${project1}`],
+      { timeout: 10 },
+    );
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      5,
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
@@ -582,6 +628,7 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   it("force-kills every duplicate main conmon tree for one project", async () => {
+    noBrowserContainers();
     mockPodman
       .mockRejectedValueOnce(new Error("no such container"))
       .mockRejectedValueOnce(new Error("no such container"));

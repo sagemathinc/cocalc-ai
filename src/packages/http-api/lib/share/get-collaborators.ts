@@ -18,7 +18,9 @@ export default async function getCollaborators(
   if (!isUUID(project_id)) {
     throw Error("project_id must be a uuid");
   }
-  const pool = getPool("medium");
+  // Uncached: the membership condition below is also the collaborator check
+  // for /api/v2/projects/collaborators/list.
+  const pool = getPool();
   let subQuery = `SELECT jsonb_object_keys(users) AS account_id FROM projects WHERE project_id=$1`;
 
   const queryParams = [project_id];

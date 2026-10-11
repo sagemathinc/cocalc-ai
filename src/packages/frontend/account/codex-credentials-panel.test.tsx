@@ -30,6 +30,7 @@ const listExternalCredentials = jest.fn();
 const updateCodexSubscriptionLabel = jest.fn();
 const revokeExternalCredential = jest.fn();
 const codexUploadAuthFileV2 = jest.fn();
+const ensureProjectRunningForCodex = jest.fn();
 
 describe("Codex subscription credential ordering", () => {
   const older = {
@@ -192,7 +193,13 @@ jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
   Panel: ({ children }: any) => <div>{children}</div>,
 }));
 
+jest.mock("@cocalc/frontend/chat/codex-submit-preflight", () => ({
+  ensureProjectRunningForCodex: (...args: any[]) =>
+    ensureProjectRunningForCodex(...args),
+}));
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: {},
   useAsyncEffect: (fn: any, deps: any[]) => {
     const React = require("react");
     React.useEffect(() => {
@@ -285,6 +292,7 @@ describe("CodexCredentialsPanel", () => {
       version: 2,
       credentialLifecycle: true,
     });
+    ensureProjectRunningForCodex.mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: mockClipboardWriteText },
@@ -663,6 +671,49 @@ describe("CodexCredentialsPanel", () => {
     await screen.findByText((text) =>
       text.includes("must be updated before ChatGPT subscriptions"),
     );
+    expect(codexDeviceAuthStart).not.toHaveBeenCalled();
+  });
+
+  it("starts the project before ChatGPT sign-in", async () => {
+    // Sign-in runs Codex in the project's root filesystem, which a project
+    // that has never started does not have yet.
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      paymentSource: { source: "subscription" },
+      reason: "authentication required",
+    });
+    codexDeviceAuthStart.mockResolvedValue({ id: "auth-1", state: "pending" });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    fireEvent.click(await screen.findByText("Sign in again with ChatGPT"));
+
+    await waitFor(() => expect(codexDeviceAuthStart).toHaveBeenCalled());
+    expect(ensureProjectRunningForCodex).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "project-1" }),
+    );
+    expect(
+      ensureProjectRunningForCodex.mock.invocationCallOrder[0],
+    ).toBeLessThan(codexDeviceAuthStart.mock.invocationCallOrder[0]);
+  });
+
+  it("explains a project that cannot start instead of starting sign-in", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      paymentSource: { source: "subscription" },
+      reason: "authentication required",
+    });
+    ensureProjectRunningForCodex.mockRejectedValue(
+      new Error("project did not start"),
+    );
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    fireEvent.click(await screen.findByText("Sign in again with ChatGPT"));
+
+    await screen.findByText((text) => text.includes("project did not start"));
     expect(codexDeviceAuthStart).not.toHaveBeenCalled();
   });
 

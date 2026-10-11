@@ -8,12 +8,12 @@ import {
   claimAcpAttentionResponseDispatch,
   claimStaleAcpAttentionContinue,
   deferAcpAttentionResponseDispatch,
+  dismissAcpAsyncAttention,
   getAcpAttention,
   listAcpAttention,
   listPendingAcpActions,
   listPendingAcpAttentionResponseDispatches,
   markAllPendingAcpSyncAttentionStale,
-  markAcpAsyncAttentionSuperseded,
   markAcpSyncAttentionStale,
   submitAcpAttentionResponse,
   resolveAcpAttention,
@@ -330,6 +330,73 @@ describe("ACP attention storage", () => {
     ).toMatchObject({ seen_at, acknowledged_at, snoozed_until });
   });
 
+  it("dismisses only the owner's unanswered async question, freeing its pending slot", () => {
+    const owner = { account_id: ACCOUNT_ID, project_id: PROJECT_ID };
+    const sync = createAttention({
+      source_kind: "codex_sync_question",
+      source_id: "sync-1",
+    });
+    const questions = Array.from({ length: 9 }, (_, i) =>
+      createAttention({
+        source_kind: "codex_async_question",
+        source_id: `async-${i}`,
+      }),
+    );
+    // The turn's pending limit is reached...
+    expect(() =>
+      createAttention({
+        source_kind: "codex_async_question",
+        source_id: "one-more",
+      }),
+    ).toThrow(/Too many pending/);
+    // ...and another account or project cannot dismiss one.
+    expect(
+      dismissAcpAsyncAttention({
+        ...owner,
+        account_id: "other-account",
+        attention_id: questions[0].attention_id,
+      }),
+    ).toBeUndefined();
+    expect(getAcpAttention(questions[0].attention_id)?.state).toBe("pending");
+    const dismissed = dismissAcpAsyncAttention({
+      ...owner,
+      attention_id: questions[0].attention_id,
+    });
+    expect(dismissed).toMatchObject({
+      state: "canceled",
+      resolution_reason: "Dismissed without an answer.",
+    });
+    expect(dismissed?.response_id).toBeFalsy();
+    // Dismissed questions leave the pending quota.
+    expect(() =>
+      createAttention({
+        source_kind: "codex_async_question",
+        source_id: "one-more",
+      }),
+    ).not.toThrow();
+
+    // An answered question, or a blocking (sync) one, is not dismissed.
+    submitAcpAttentionResponse({
+      ...owner,
+      attention_id: questions[1].attention_id,
+      response_id: "r1",
+      answers: { choice: ["Yes"] },
+    });
+    expect(
+      dismissAcpAsyncAttention({
+        ...owner,
+        attention_id: questions[1].attention_id,
+      })?.response_id,
+    ).toBe("r1");
+    expect(getAcpAttention(questions[1].attention_id)?.state).not.toBe(
+      "canceled",
+    );
+    expect(
+      dismissAcpAsyncAttention({ ...owner, attention_id: sync.attention_id })
+        ?.state,
+    ).toBe("pending");
+  });
+
   it("rate limits repeated resolved requests in one thread", () => {
     for (let i = 0; i < 30; i += 1) {
       const record = createAttention({ source_id: `resolved-${i}` });
@@ -464,39 +531,6 @@ describe("ACP attention storage", () => {
       }),
     ]);
     expect(getAcpAttention(live.attention_id)?.state).toBe("pending");
-  });
-
-  it("supersedes unanswered async questions but preserves submitted ones", () => {
-    const unanswered = createAttention({
-      source_kind: "codex_async_question",
-      source_id: "async-1",
-    });
-    const answered = createAttention({
-      source_kind: "codex_async_question",
-      source_id: "async-2",
-    });
-    submitAcpAttentionResponse({
-      attention_id: answered.attention_id,
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      response_id: "response-1",
-      answers: { choice: ["Yes"] },
-    });
-
-    expect(
-      markAcpAsyncAttentionSuperseded({
-        project_id: PROJECT_ID,
-        path: "agent.chat",
-        thread_id: "thread-1",
-        reason: "newer user message",
-      }),
-    ).toEqual([
-      expect.objectContaining({
-        attention_id: unanswered.attention_id,
-        state: "superseded",
-      }),
-    ]);
-    expect(getAcpAttention(answered.attention_id)?.state).toBe("pending");
   });
 
   it("allows one deliberate retry of a stale asynchronous answer", () => {

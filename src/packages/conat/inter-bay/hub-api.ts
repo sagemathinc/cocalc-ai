@@ -28,6 +28,11 @@ export interface ForwardedHubApiCall {
   auth_exp_s?: number;
   /** The bay that received the call and resolved this bay as its owner. */
   source_bay_id: string;
+  /**
+   * Set by the receiving bay; the same for a repeat of the call. The owning
+   * bay runs each call id at most once (server/inter-bay/forwarded-calls).
+   */
+  call_id?: string;
 }
 
 export interface InterBayHubApi {

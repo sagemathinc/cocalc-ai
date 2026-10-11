@@ -9,14 +9,15 @@ import type {
   SiteLicenseRevenueAnalyticsRow,
   SiteLicenseRevenueMeasure,
 } from "@cocalc/conat/hub/api/commercial-orders";
-import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { getCachedReadPool, type CachedReadPool } from "@cocalc/database/pool";
 import { moneyRoundToCents } from "@cocalc/util/money";
 import { allocateIntegerByWeights } from "../purchases/compute-revenue-analytics";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DAYS = 365;
 
-type Queryable = Pick<PoolClient, "query">;
+// Reads only: a pool, a client or a cached read pool.
+type Queryable = CachedReadPool;
 
 interface ContractRow {
   item_id: string;
@@ -199,7 +200,7 @@ async function listPayments(
 
 export async function getSiteLicenseRevenueAnalytics({
   request = { reason: "site license revenue analytics" },
-  client = getPool("medium"),
+  client = getCachedReadPool("medium"),
   now = new Date(),
 }: {
   request?: SiteLicenseRevenueAnalyticsRequest;

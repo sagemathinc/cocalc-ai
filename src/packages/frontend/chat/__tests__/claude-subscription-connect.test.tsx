@@ -434,3 +434,47 @@ test("pasting a complete code connects at once; a partial code gets a hint", asy
     submit.mockRestore();
   }
 });
+
+test("a sign-in request waits until enabled, then starts once", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "requested-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const handled = jest.fn();
+  try {
+    const { rerender } = render(
+      <ClaudeSubscriptionConnect
+        modal
+        disabled
+        openRequested
+        onOpenRequestHandled={handled}
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    expect(handled).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    rerender(
+      <ClaudeSubscriptionConnect
+        modal
+        openRequested
+        onOpenRequestHandled={handled}
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("link", { name: "Open Claude sign-in" }),
+    ).toBeTruthy();
+    expect(handled).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(1);
+  } finally {
+    start.mockRestore();
+  }
+});

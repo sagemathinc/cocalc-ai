@@ -238,18 +238,17 @@ const mockedProduct = jest.mocked(getCocalcProduct);
 beforeEach(() => mockedProduct.mockReturnValue("launchpad"));
 
 describe("research compute sitemap availability", () => {
-  it("omits only the new feature on Plus", async () => {
+  it("omits only the features Plus does not have on Plus", async () => {
+    const notOnPlus = ["/features/research-compute", "/features/web-browser"];
     const request = requestFor("cocalc.ai");
     const full = await publicSitemapPaths(request);
-    expect(full).toContain("/features/research-compute");
+    for (const path of notOnPlus) expect(full).toContain(path);
     mockedProduct.mockReturnValue("plus");
     const plus = await publicSitemapPaths(request);
-    expect(plus).toEqual(
-      full.filter((path) => path !== "/features/research-compute"),
-    );
+    expect(plus).toEqual(full.filter((path) => !notOnPlus.includes(path)));
     const { renderSitemapXml } = await import("./sitemap");
     const xml = await renderSitemapXml(request);
-    expect(xml).not.toContain("/features/research-compute");
+    for (const path of notOnPlus) expect(xml).not.toContain(path);
     expect(xml).toContain("/features/jupyter-notebook");
     expect(PUBLIC_SITEMAP_PATHS).toContain("/features/research-compute");
   });

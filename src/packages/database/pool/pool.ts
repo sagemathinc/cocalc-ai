@@ -13,7 +13,6 @@ import {
 } from "@cocalc/backend/data";
 import { getLogger } from "@cocalc/backend/logger";
 import { STATEMENT_TIMEOUT_MS } from "../consts";
-import getCachedPool, { CacheTime } from "./cached";
 import dbPassword from "./password";
 import { types } from "pg";
 export * from "./util";
@@ -37,11 +36,12 @@ let ensureSchemaPromise: Promise<void> | undefined = undefined;
 types.setTypeParser(1114, (str: string) => new Date(str + " UTC"));
 
 export type PoolOptions = {
-  cacheTime?: CacheTime;
   ensureExists?: boolean;
 };
 
-export type PoolOptionInput = CacheTime | PoolOptions | undefined;
+// Query-result caching is opt-in through getCachedReadPool (see cached.ts),
+// never an option of the pool itself.
+export type PoolOptionInput = PoolOptions | undefined;
 
 export function shouldSkipEnsureExists(): boolean {
   const value = process.env.COCALC_DB_SKIP_ENSURE_EXISTS;
@@ -53,9 +53,6 @@ export function shouldSkipEnsureExists(): boolean {
 }
 
 function normalizePoolOptions(opts?: PoolOptionInput): PoolOptions {
-  if (typeof opts === "string") {
-    return { cacheTime: opts };
-  }
   return opts ?? {};
 }
 
@@ -155,11 +152,8 @@ async function ensureDatabaseExists(): Promise<void> {
 }
 
 export default function getPool(options?: PoolOptionInput): Pool {
-  const { cacheTime, ensureExists = !shouldSkipEnsureExists() } =
+  const { ensureExists = !shouldSkipEnsureExists() } =
     normalizePoolOptions(options);
-  if (cacheTime != null) {
-    return getCachedPool({ cacheTime, ensureExists });
-  }
   if (isPgliteEnabled()) {
     if (pglitePool == null) {
       //console.log("creating pglite pool");
@@ -270,27 +264,15 @@ export type IsolationLevel =
 
 export type TransactionOptions =
   | (PoolOptions & { isolationLevel?: IsolationLevel })
-  | CacheTime
   | undefined;
 
 export async function getTransactionClient(
   options: TransactionOptions = {},
 ): Promise<PoolClient> {
   let isolationLevel: IsolationLevel | undefined = undefined;
-  let poolOptions: PoolOptionInput = {};
-  if (typeof options === "string") {
-    // Cached pools only implement query(), not connect(), and transactions need
-    // a real client.  Treat cache-time strings as "use the default write pool".
-    poolOptions = {};
-  } else {
-    isolationLevel = options?.isolationLevel;
-    const {
-      isolationLevel: _unusedIsolationLevel,
-      cacheTime: _unusedCacheTime,
-      ...rest
-    } = options ?? {};
-    poolOptions = rest;
-  }
+  isolationLevel = options?.isolationLevel;
+  const { isolationLevel: _unusedIsolationLevel, ...poolOptions } =
+    options ?? {};
   const client = await getPoolClient(poolOptions);
   const beginSql = isolationLevel
     ? `BEGIN ISOLATION LEVEL ${isolationLevel}`
@@ -308,16 +290,7 @@ export async function getTransactionClient(
 export async function getPoolClient(
   options?: PoolOptionInput,
 ): Promise<PoolClient> {
-  // Cached pools only expose query(); session-bound work must always use the
-  // underlying write pool so callers can safely hold transactions and locks.
-  const poolOptions =
-    typeof options === "string"
-      ? {}
-      : (() => {
-          const { cacheTime: _unusedCacheTime, ...rest } = options ?? {};
-          return rest;
-        })();
-  const pool = getPool(poolOptions);
+  const pool = getPool(options);
   return await pool.connect();
 }
 

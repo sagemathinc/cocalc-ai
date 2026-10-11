@@ -17,6 +17,8 @@ import { assertAgent, assertRun } from "./access";
 import { startAgentMessagingMaintenance } from "./maintenance";
 import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
 import { agentMemory } from "./memory";
+import { agentSensorRequest } from "./sensors";
+import { startSensorScheduler } from "./sensor-scheduler";
 
 const logger = getLogger("agents:messaging");
 export function acceptAgentMessage(
@@ -39,6 +41,15 @@ export async function acceptAgentMessage(
     // authenticated run, never from the request.
     return await agentMemory().agent(run.account_id, request);
   }
+  if (request.action === "sensor") {
+    // Sensors belong to this identity; proposals use the run's account
+    // limits, and nothing runs until a person approves it.
+    return (await agentSensorRequest(
+      run,
+      source,
+      request,
+    )) as AgentInspectionResult;
+  }
   return {
     identity: source,
     run_id,
@@ -47,6 +58,7 @@ export async function acceptAgentMessage(
     capabilities: [
       "whoami",
       "memory",
+      "sensor",
       "destinations",
       "send",
       "broadcast",
@@ -70,6 +82,7 @@ export async function startAgentMessaging(
   const stopMaintenance = !external
     ? startAgentMessagingMaintenance()
     : undefined;
+  const stopSensors = !external ? startSensorScheduler() : undefined;
   const subscription = await client.subscribe(
     external ? "agent-external.*.*" : "agent-messaging.*.*",
     {
@@ -163,6 +176,7 @@ export async function startAgentMessaging(
   return async () => {
     closed = true;
     stopMaintenance?.();
+    stopSensors?.();
     subscription.close();
     await requests;
     await Promise.allSettled(activeRpc);

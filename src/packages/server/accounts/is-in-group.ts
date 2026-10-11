@@ -7,7 +7,7 @@ export default async function userIsInGroup(
   group: Group,
   client?: PoolClient,
 ): Promise<boolean> {
-  const pool = client ?? getPool("long");
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     "SELECT groups FROM accounts WHERE account_id=$1",
     [account_id],

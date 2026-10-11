@@ -1205,6 +1205,7 @@ export async function issueCliConnectorTurnTokens({
   source_project_id,
   run_id,
   turn_ref,
+  connectors,
 }: {
   account_id?: string;
   host_id?: string;
@@ -1216,7 +1217,10 @@ export async function issueCliConnectorTurnTokens({
     message_date: string;
     message_id: string;
     thread_id: string;
+    sensor_run_id?: string;
   };
+  /** Only these connectors are minted or returned (a sensor's `uses`). */
+  connectors?: CliConnector[];
 }): Promise<CliConnectorTurnToken[]> {
   // Server time only: never a value from the request.
   const now = Date.now();
@@ -1230,13 +1234,19 @@ export async function issueCliConnectorTurnTokens({
     host_id: host,
     source_project_id,
   });
+  if (connectors != null && !Array.isArray(connectors))
+    throw Error("invalid connector list");
+  const wanted = (connector: string) =>
+    connectors == null || connectors.includes(connector as CliConnector);
   const grants = (
     await listCliConnectorGrants({
       account_id: owner,
       agent_id,
       source_project_id,
     })
-  ).filter((grant) => grant.enabled && grant.connection_id);
+  ).filter(
+    (grant) => grant.enabled && grant.connection_id && wanted(grant.connector),
+  );
   if (grants.length === 0) return [];
   await verifyActiveAgentRun({
     account_id: owner,
@@ -1267,7 +1277,8 @@ export async function issueCliConnectorTurnTokens({
     );
     const tokens: CliConnectorTurnToken[] = [];
     for (const grant of locked) {
-      if (!isCliConnector(grant.connector)) continue;
+      if (!isCliConnector(grant.connector) || !wanted(grant.connector))
+        continue;
       const token = await connectorTurnToken({
         connector: grant.connector,
         owner,

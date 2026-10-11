@@ -1,7 +1,7 @@
 // If no such account or no name set, returns "Unknown User".
 // Answers are cached for a while.
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 import {
   getClusterAccountByEmail,
   getClusterAccountById,
@@ -22,7 +22,8 @@ export default async function getName(
   if (cluster?.account_id) {
     return rowsToName([cluster]);
   }
-  const pool = getPool("long");
+  // query-cache-ok: display: account names
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name FROM accounts WHERE account_id=$1",
     [account_id],
@@ -37,7 +38,8 @@ export async function getNameByEmail(
   if (cluster?.account_id) {
     return rowsToName([cluster]);
   }
-  const pool = getPool("long");
+  // query-cache-ok: display: account names
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name FROM accounts WHERE email_address=$1",
     [email_address],
@@ -131,7 +133,8 @@ export async function getNames(account_ids: string[]): Promise<Names> {
   if (cluster.length > 0) {
     return rowsToNames(cluster, account_ids);
   }
-  const pool = getPool("long");
+  // query-cache-ok: display: account names
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT account_id, display_name, first_name, last_name, profile FROM accounts WHERE account_id=ANY($1::UUID[]) AND (deleted IS NULL OR deleted = false)",
     [account_ids],

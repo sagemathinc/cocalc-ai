@@ -5,7 +5,10 @@
 
 import type { AppSpec, ManagedAppStatus } from "@cocalc/conat/project/api/apps";
 import type { ProjectAppPrivateHostnameRecord } from "@cocalc/conat/hub/api/system";
+import { message } from "antd";
+import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { SHARED_BROWSER_APP_ID } from "@cocalc/util/shared-browser";
 import { withProjectHostBase } from "./host-url";
 
 function ensureTrailingSlash(value: string): string {
@@ -150,6 +153,21 @@ export async function openProjectAppStatus(opts: {
   spec?: AppSpec;
   status: ManagedAppStatus;
 }): Promise<void> {
+  // A shared browser is shown by CoCalc's own viewer, not as a web page.
+  if (opts.status.id.startsWith(SHARED_BROWSER_APP_ID)) {
+    const spec = opts.spec ?? (await opts.getSpec?.(opts.status.id));
+    const args = spec?.kind === "service" ? spec.command.args : [];
+    const file = args[args.indexOf("--browser") + 1];
+    if (args.includes("--browser") && file)
+      redux
+        .getProjectActions(opts.project_id)
+        ?.open_file({ path: file, foreground: true });
+    else
+      void message.info(
+        "This web browser shows in chat: ask an agent to use it, and its card opens it.",
+      );
+    return;
+  }
   const url = await getProjectAppOpenUrl(opts);
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");

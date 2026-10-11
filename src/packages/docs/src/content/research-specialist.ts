@@ -180,9 +180,13 @@ after preserving newer research work.
   checkpoint, retained history expired, or the project moved hosts. Check
   backup dates and the exact path; host-local snapshots do not follow a move.
 - Storage usage includes retained history as well as live files. Deleting a
-  live file may not immediately reduce usage retained by snapshots. Inspect
-  storage and recovery points before cleanup; deleting a snapshot removes that
-  recovery option. If quota prevents cleanup, preserve the error and ask support
+  live file may not immediately reduce usage retained by snapshots. Use
+  \`cocalc project snapshot list -w <project> --json\` to inspect retained
+  snapshots. Preview removal of one selected snapshot with
+  \`cocalc project snapshot delete -w <project> --name <snapshot> --dry-run --json\`.
+  Removing \`--dry-run\` deletes that recovery point and requires fresh
+  authentication. Keep the checkpoint needed for recovery; other snapshots may
+  still retain the same files. If quota prevents cleanup, preserve the error and ask support
   for the appropriate recovery path rather than running internal quota commands.
 - A full restore can rewind chatrooms and Codex conversations stored in the
   restored filesystem. Keep the incident note and checkpoint identifiers

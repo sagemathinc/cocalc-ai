@@ -12,6 +12,9 @@ import {
   hostPriceBreakdownForBillingState,
   isSupportedCatalogGcpMachineType,
   type GcpCatalogPrices,
+  gcpCpuCountForMachineType,
+  gcpMemoryGiBForMachineType,
+  gcpPricingFamilyForMachineType,
 } from "./project-host-pricing";
 
 describe("project host pricing", () => {
@@ -671,5 +674,25 @@ describe("project host pricing", () => {
     expect(breakdown?.items.map((item) => item.key)).toEqual(["gpu", "disk"]);
     expect(breakdown?.items[0]?.label).toBe("GPU instance");
     expect(breakdown?.total_usd_per_hour).toBeCloseTo(1.8161111, 9);
+  });
+});
+
+describe("GCP machine shapes beyond the user catalog", () => {
+  it("prices Spot recovery alternates and relocation targets", () => {
+    const shape = (name: string) => [
+      gcpPricingFamilyForMachineType(name),
+      gcpCpuCountForMachineType(name),
+      gcpMemoryGiBForMachineType(name),
+    ];
+    expect(shape("n2-standard-32")).toEqual(["n2", 32, 128]);
+    expect(shape("n2-highmem-32")).toEqual(["n2", 32, 256]);
+    expect(shape("n2-highcpu-32")).toEqual(["n2", 32, 32]);
+    expect(shape("n2d-highcpu-32")).toEqual(["n2d", 32, 32]);
+    expect(shape("c2d-highcpu-32")).toEqual(["c2d", 32, 64]);
+    expect(shape("c2d-standard-32")).toEqual(["c2d", 32, 128]);
+    expect(shape("c3d-standard-30")).toEqual(["c3d", 30, 120]);
+    expect(shape("n2d-custom-32-65536")).toEqual(["n2d", 32, 64]);
+    expect(shape("t2d-standard-16")).toEqual(["t2d", 16, 64]);
+    expect(gcpPricingFamilyForMachineType("m3-ultramem-32")).toBeUndefined();
   });
 });

@@ -40,7 +40,7 @@ export type ProjectRootfsBuildRecord = Omit<
 export async function ensureProjectRootfsBuildsSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = (async () => {
-      const pool = getPool("medium");
+      const pool = getPool();
       await pool.query(`
         CREATE TABLE IF NOT EXISTS project_rootfs_builds (
           build_id TEXT PRIMARY KEY,
@@ -193,7 +193,7 @@ export async function upsertProjectRootfsBuildStatus({
   status: HostRootfsBuildStatusResponse;
 }): Promise<ProjectRootfsBuildRecord> {
   await ensureProjectRootfsBuildsSchema();
-  const pool = getPool("medium");
+  const pool = getPool();
   const created_at = dateOrNull(status.created_at) ?? new Date();
   const values = [
     status.build_id,
@@ -293,7 +293,7 @@ export async function getProjectRootfsBuildRecord({
   build_id: string;
 }): Promise<ProjectRootfsBuildRecord | undefined> {
   await ensureProjectRootfsBuildsSchema();
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT *
       FROM project_rootfs_builds
@@ -313,7 +313,7 @@ export async function listProjectRootfsBuildRecords({
   limit?: number;
 }): Promise<ProjectRootfsBuildRecord[]> {
   await ensureProjectRootfsBuildsSchema();
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT *
       FROM project_rootfs_builds
@@ -346,7 +346,7 @@ export async function recordProjectRootfsBuildPublish({
   publish_finished_at?: string | Date | null;
 }): Promise<ProjectRootfsBuildRecord | undefined> {
   await ensureProjectRootfsBuildsSchema();
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       UPDATE project_rootfs_builds
       SET publish_op_id=$3,

@@ -123,6 +123,20 @@ check() {
   curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/"
 }
 
+# The managed container runtime lives in the volume (see the entrypoint), and
+# only the one in use is kept.
+check_runtime_persisted() {
+  log "managed container runtime is in the volume"
+  $DOCKER exec "$NAME" sh -c '
+    mountpoint -q /opt/cocalc/container-runtime &&
+      [ -x /opt/cocalc/container-runtime/current/bin/podman ] &&
+      [ "$(ls -d /opt/cocalc/container-runtime/podman-* | wc -l)" = 1 ]'
+}
+
+current_runtime() {
+  $DOCKER exec "$NAME" readlink -f /opt/cocalc/container-runtime/current
+}
+
 $DOCKER volume rm "$VOLUME" >/dev/null 2>&1 || true
 
 if [ -n "$FROM_IMAGE" ]; then
@@ -135,6 +149,7 @@ if [ -n "$FROM_IMAGE" ]; then
   wait_ready 1
   $DOCKER exec "$NAME" grep -q 'upgrading CoCalc Star from' \
     /var/log/cocalc-star-docker-init.log
+  check_runtime_persisted
   check
   log "upgrade from $FROM_IMAGE ok"
   exit 0
@@ -154,6 +169,16 @@ $DOCKER exec "$NAME" "$STAR_SH" admin-link | grep -q 'registrationToken='
 log "restart"
 $DOCKER restart "$NAME" >/dev/null
 wait_ready 2
+check_runtime_persisted
+check
+
+log "new container on the same volume keeps the container runtime"
+runtime_before="$(current_runtime)"
+$DOCKER rm -f "$NAME" >/dev/null
+run_container "$IMAGE"
+wait_ready 1
+check_runtime_persisted
+[ "$(current_runtime)" = "$runtime_before" ]
 check
 
 log "ok"

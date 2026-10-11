@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import {
   GROWTH_METRIC_VERSION,
   type GrowthActivitySignal,
@@ -99,7 +99,7 @@ async function readSeries({
   metricNames: string[];
   range: Range;
 }): Promise<GrowthMetricSeries[]> {
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getCachedReadPool("medium").query<{
     metric_name: string;
     period_start: string;
     value: string | number | null;
@@ -259,7 +259,7 @@ export async function getRetentionMatrix(
 ): Promise<GrowthRetentionMatrix> {
   const range = normalizeRange(opts);
   const cohortGrain = opts.cohort_grain === "week" ? "week" : "day";
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getCachedReadPool("medium").query<{
     cohort_start: string;
     period_index: number | string;
     cohort_size: number | string;
@@ -324,7 +324,7 @@ export async function getWeeklyGrowthAccounting(
   opts: GrowthRangeQuery = {},
 ): Promise<GrowthWeeklyAccounting> {
   const range = normalizeRange(opts);
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getCachedReadPool("medium").query<{
     week_start: string;
     new_accounts: number | string;
     retained_accounts: number | string;

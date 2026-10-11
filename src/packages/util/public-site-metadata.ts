@@ -19,6 +19,7 @@ import {
   isCanonicalPublicSiteHost,
   isCocalcAiOnlyPublicSection,
 } from "./public-site-policy";
+import { trimTrailingSlashes } from "./linear-text";
 
 // Rspack renders this exact element into public.html. The hub replaces it
 // with the route-specific head block when serving a public page.
@@ -175,6 +176,10 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
     height: 400,
     width: 800,
   },
+  "/public/landing/project-web-browser-20261011.jpg": {
+    height: 800,
+    width: 1600,
+  },
 };
 
 export const PUBLIC_SITE_DESCRIPTION =
@@ -248,7 +253,7 @@ function hasConfiguredText(value?: string): boolean {
 function normalizeBasePath(basePath?: string): string {
   const trimmed = `${basePath ?? ""}`.trim();
   if (!trimmed || trimmed === "/") return "";
-  return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  return `/${trimTrailingSlashes(trimmed.replace(/^\/+/, ""))}`;
 }
 
 function publicPath(

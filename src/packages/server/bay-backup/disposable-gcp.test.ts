@@ -9,6 +9,7 @@ import {
   disposableRestoreInstanceName,
   isRetryableDisposablePitrWalFailure,
   runDisposableGcpRestoreWorker,
+  workerStageSeconds,
   type DisposableRestoreWorkerConfig,
   type DisposableRestoreWorkerResult,
 } from "./disposable-gcp";
@@ -177,11 +178,18 @@ test("startup script supports checkpoint-only snapshot recovery", () => {
     "utf8",
   );
   expect(workerSource).toContain(
-    'STAGE = "postgres-" + CONFIG["restore_mode"]',
+    'STAGE = enter_stage("postgres-" + CONFIG["restore_mode"])',
   );
   expect(workerSource).toContain('"recovery.signal", "standby.signal"');
   expect(workerSource).toContain('"-c", "fsync=off"');
-  expect(workerSource).toContain('STAGE = "postgres-snapshot-recovery"');
+  // The result must say so for PITR runs as well as snapshot runs; only a
+  // production restore keeps fsync on.
+  expect(workerSource).toContain(
+    '"durability": "normal" if LOCAL else "fsync-disabled-disposable-validation"',
+  );
+  expect(workerSource).toContain(
+    'STAGE = enter_stage("postgres-snapshot-recovery")',
+  );
   expect(workerSource).toContain('input_text="SELECT 1;\\n"');
   expect(workerSource).toContain('"--user", "999:999"');
   expect(workerSource).toContain("postgres_diagnostics(container)");
@@ -208,7 +216,23 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
     snapshot_id: "sqlite-snapshot-1",
     target_time: "2026-07-19 12:00:00.000+00",
   });
-  expect(workerSource).toContain('STAGE = "build-pgbackrest"');
+  expect(workerSource).toContain('STAGE = enter_stage("build-pgbackrest")');
+  // WAL is prefetched in parallel instead of one R2 request per segment.
+  expect(workerSource).toContain('"archive-async=y"');
+  expect(workerSource).toContain('"spool-path=" + str(spool_path)');
+  expect(workerSource).toContain('spool_path="/var/spool/pgbackrest"');
+  expect(workerSource).toContain(
+    "mkdir -p /var/spool/pgbackrest && chown 999:999 /var/spool/pgbackrest",
+  );
+  expect(workerSource).toContain(
+    '"process-max=" + str(PGBACKREST_PROCESS_MAX)',
+  );
+  expect(workerSource).not.toContain('"process-max=2"');
+  // Replay settings apply to the disposable PITR server only.
+  expect(workerSource).toContain('if CONFIG["restore_mode"] == "pitr":');
+  expect(workerSource).toContain(
+    '"-c", "shared_buffers=" + str(POSTGRES_SHARED_BUFFERS_MB) + "MB"',
+  );
   expect(workerSource).toContain('"--type=time"');
   expect(workerSource).toContain('"--target-action=promote"');
   expect(workerSource).toContain('if REPOSITORY_TYPE != "pgbackrest"');
@@ -228,7 +252,7 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
   );
   expect(workerSource).toContain("archive_get_state(container)");
   const wrapper = workerSource.match(
-    /pgbackrest_archive_get_script\.write_text\(r'''([\s\S]*?)''', encoding="utf-8"\)/,
+    /ARCHIVE_GET_WRAPPER = r'''([\s\S]*?)'''/,
   )?.[1];
   expect(wrapper).toBeTruthy();
   const checkedWrapper = spawnSync("bash", ["-n"], {
@@ -243,9 +267,7 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
   expect(workerSource).toContain(
     "--no-install-recommends ca-certificates coreutils libbz2-1.0",
   );
-  expect(workerSource).toContain(
-    '"PostgreSQL container exited before readiness: "',
-  );
+  expect(workerSource).toContain('"PostgreSQL exited before readiness: "');
   expect(workerSource).toContain(
     '["podman", "logs", "--tail", "80", container]',
   );
@@ -263,7 +285,7 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
   expect(workerSource).toContain(
     'sql_quote(CONFIG["pitr_run_id"]), log=False)',
   );
-  expect(workerSource).toContain('"pg_is_in_recovery()::text "');
+  expect(workerSource).toContain('"pg_catalog.pg_is_in_recovery()::text "');
   expect(workerSource).toContain(
     'if counts == (1, 0) and recovery_text == "false"',
   );
@@ -546,4 +568,276 @@ test("GCP worker deletes the VM when the serial result is invalid", async () => 
     }),
   ).rejects.toThrow("serial API failed");
   expect(deleteInstance).toHaveBeenCalledTimes(1);
+});
+
+function workerFunctions(workerSource: string, names: string[]): string {
+  // The generated module runs the drill at import; extract only definitions.
+  const extract = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import ast, sys
+names = set(sys.argv[1:])
+source = sys.stdin.read()
+tree = ast.parse(source)
+for node in tree.body:
+    if isinstance(node, (ast.FunctionDef, ast.Assign)) and (
+        getattr(node, "name", None) in names or any(
+            isinstance(t, ast.Name) and t.id in names
+            for t in getattr(node, "targets", [])
+        )
+    ):
+        print(ast.get_source_segment(source, node))
+`,
+      ...names,
+    ],
+    { input: workerSource, encoding: "utf8" },
+  );
+  expect(extract.stderr).toBe("");
+  return extract.stdout;
+}
+
+test("Conat SQLite checks run in-process and report corrupt or missing databases", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  expect(workerSource).not.toContain('["sqlite3", "-readonly", str(path)');
+  const functions = workerFunctions(workerSource, [
+    "bounded",
+    "sqlite_quick_check",
+    "QUICK_CHECK_WORKERS",
+  ]);
+  const checked = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import os, pathlib, sqlite3, sys, tempfile, time
+from concurrent.futures import ThreadPoolExecutor
+exec(sys.stdin.read())
+root = pathlib.Path(tempfile.mkdtemp())
+good = root / "with space?#.db"
+connection = sqlite3.connect(good)
+connection.execute("create table t(x)")
+connection.executemany("insert into t values (?)", [(i,) for i in range(1000)])
+connection.commit()
+connection.close()
+corrupt = root / "corrupt.db"
+data = bytearray(good.read_bytes())
+data[4096:8192] = b"\\xff" * 4096
+corrupt.write_bytes(bytes(data))
+with ThreadPoolExecutor(max_workers=QUICK_CHECK_WORKERS) as pool:
+    results = list(pool.map(sqlite_quick_check, [good, corrupt, root / "missing.db"]))
+print(results[0])
+print("corrupt-ok" if results[1] == "ok" else "corrupt-detected")
+print("missing-ok" if results[2] == "ok" else "missing-detected")
+print(QUICK_CHECK_WORKERS >= 2)
+# A read-only check never creates or changes files.
+print(sorted(path.name for path in root.iterdir()))
+`,
+    ],
+    { input: functions, encoding: "utf8" },
+  );
+  expect(checked.stderr).toBe("");
+  expect(checked.stdout.trim().split("\n")).toEqual([
+    "ok",
+    "corrupt-detected",
+    "missing-detected",
+    "True",
+    "['corrupt.db', 'with space?#.db']",
+  ]);
+});
+
+test("the worker result records the time spent in each stage", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  expect(workerSource).toContain('"stage_seconds": stage_seconds()');
+  const functions = workerFunctions(workerSource, [
+    "STAGE",
+    "STAGE_SECONDS",
+    "enter_stage",
+    "stage_seconds",
+  ]);
+  const checked = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import json, sys, time
+class Clock:
+    now = 100.0
+    def time(self):
+        return self.now
+time = Clock()
+_STAGE_ENTERED = time.time()
+exec(sys.stdin.read())
+time.now = 103.0
+STAGE = enter_stage("restore-rustic")
+time.now = 110.0
+STAGE = enter_stage("validate-conat")
+time.now = 111.5
+print(json.dumps(stage_seconds(), sort_keys=True))
+`,
+    ],
+    { input: functions, encoding: "utf8" },
+  );
+  expect(checked.stderr).toBe("");
+  expect(JSON.parse(checked.stdout.trim().split("\n").at(-1)!)).toEqual({
+    bootstrap: 3,
+    "restore-rustic": 7,
+    "validate-conat": 1.5,
+  });
+});
+
+test("stage timings from a worker result are bounded and numeric", () => {
+  expect(workerStageSeconds(undefined)).toBeNull();
+  expect(workerStageSeconds({})).toBeNull();
+  expect(
+    workerStageSeconds({
+      stage_seconds: {
+        "validate-conat": 241.26,
+        "postgres-pitr": 1534,
+        "Bad Stage": 1,
+        "restore-pgbackrest": Number.NaN,
+        complete: -3,
+      } as any,
+    }),
+  ).toEqual({ "validate-conat": 241.3, "postgres-pitr": 1534, complete: 0 });
+});
+
+test("a production restore picks the Conat snapshot at or before its target", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  const functions = workerFunctions(workerSource, [
+    "parse_time",
+    "choose_sqlite_snapshot",
+    "strip_recovery_settings",
+  ]);
+  const checked = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import datetime, json, re, sys
+exec(sys.stdin.read())
+groups = [
+  {"snapshots": [
+    {"id": "a", "time": "2026-10-07T20:00:00.123456789+00:00"},
+    {"id": "c", "time": "2026-10-07T23:30:00-07:00"},
+  ]},
+  {"snapshots": [{"id": "b", "time": "2026-10-08T01:00:00Z"}]},
+]
+out = {
+  "latest": choose_sqlite_snapshot(groups)[0],
+  "before": choose_sqlite_snapshot(groups, "2026-10-08 02:00:00+00")[0],
+  "exact": choose_sqlite_snapshot(groups, "2026-10-08T01:00:00+00:00")[0],
+  "early": choose_sqlite_snapshot(groups, "2026-10-07 21:00:00+00")[0],
+}
+try:
+  choose_sqlite_snapshot(groups, "2026-10-07 19:00:00+00")
+except RuntimeError as err:
+  out["none"] = str(err)
+try:
+  parse_time("2026-10-07 19:00:00")
+except ValueError as err:
+  out["naive"] = "rejected"
+conf = """# Do not edit this file manually!
+shared_buffers = '4GB'
+
+# Recovery settings generated by pgBackRest restore on 2026-10-08 03:00:00
+restore_command = 'pgbackrest --stanza=cocalc-bay-0 archive-get %f "%p"'
+recovery_target_time = '2026-10-08 02:00:00+00'
+recovery_target_action = 'promote'
+
+# cocalc bay restore
+archive_mode = 'off'
+archive_command = '/bin/false'
+restore_command = '/mnt/x/cocalc-pgbackrest-archive-get %f %p'
+"""
+out["conf"] = strip_recovery_settings(conf)
+print(json.dumps(out))
+`,
+    ],
+    { input: functions, encoding: "utf8" },
+  );
+  expect(checked.stderr).toBe("");
+  const out = JSON.parse(checked.stdout);
+  // 23:30 -07:00 is 06:30 UTC on the 8th: the newest overall.
+  expect(out.latest).toBe("c");
+  expect(out.before).toBe("b");
+  expect(out.exact).toBe("b");
+  expect(out.early).toBe("a");
+  expect(out.none).toContain("no Conat SQLite snapshot exists at or before");
+  expect(out.naive).toBe("rejected");
+  expect(out.conf).toBe(
+    "# Do not edit this file manually!\nshared_buffers = '4GB'\n",
+  );
+});
+
+test("the production engine runs host binaries as the bay user and never on the live socket", () => {
+  const [, workerSource] = decodedStartupBlocks(
+    buildDisposableRestoreStartupScript(pgBackRestConfig()),
+  );
+  // Same pgBackRest settings and archive-get wrapper as the drill.
+  expect(workerSource).toContain(
+    'write_pgbackrest_config(\n        ROOT / "pgbackrest.conf", pg1_path=ROOT / "postgres", spool_path=ROOT / "spool",',
+  );
+  expect(workerSource).toContain(
+    'lines.append("restore_command = " + sql_quote(str(pgbackrest_archive_get_script) + " %f %p") + "\\n")',
+  );
+  expect(workerSource).toContain('"setpriv", "--reuid", CONFIG["bay_user"]');
+  expect(workerSource).toContain(
+    '"-k", LOCAL_RUN_DIR, "-p", str(CONFIG["local_port"])',
+  );
+  // Production data keeps fsync on; only the disposable drill turns it off.
+  const local = workerSource.slice(
+    workerSource.indexOf("def start_local_postgres"),
+    workerSource.indexOf("def stop_local_postgres"),
+  );
+  expect(local).not.toContain("fsync=off");
+  expect(local).toContain('"-c", "archive_mode=off"');
+  // The restored configuration (from the bay's backups) runs no command and
+  // loads no library while root works beside it.
+  for (const setting of [
+    "archive_cleanup_command=",
+    "recovery_end_command=",
+    "session_preload_libraries=",
+    "local_preload_libraries=",
+    "dynamic_library_path=$libdir",
+  ]) {
+    expect(local).toContain(`"-c", "${setting}"`);
+  }
+  // pgBackRest restores as the bay account, and root touches the restored
+  // files only without following links, once no bay process is left.
+  expect(workerSource).toContain(
+    'run((as_bay_user(restore_args) if LOCAL else restore_args) + ["restore"]',
+  );
+  expect(workerSource).toContain("os.O_NOFOLLOW");
+  // The Conat tree stays root's until it is handed over, the checks cannot
+  // be redirected to functions the restored database defines, and nothing
+  // the restored PostgreSQL started outlives a failed restore.
+  expect(workerSource).toContain('"--no-ownership"');
+  expect(workerSource).toContain('PSQL_OPTIONS = "-c search_path=pg_catalog"');
+  expect(workerSource).toContain(
+    '"SELECT (pg_catalog.to_regclass(\'public." + table + "\') IS NOT NULL)::text"',
+  );
+  const cleanup = workerSource.slice(workerSource.lastIndexOf("finally:"));
+  expect(cleanup).toContain("assert_no_bay_processes()");
+  expect(workerSource).toContain("major.isdigit()");
+  // It stops cleanly and hands back an unmodified hba and auto.conf.
+  expect(workerSource).toContain(
+    "stop_local_postgres()\n        assert_no_bay_processes()\n        write_no_follow(hba, original_hba)",
+  );
+  expect(workerSource).toContain(
+    "strip_recovery_settings(read_no_follow(auto_conf))",
+  );
+  expect(workerSource).toContain(
+    'as_bay_user([LOCAL_PG_BIN / "pg_controldata", pgdata])',
+  );
+  expect(workerSource).toContain(
+    '"Database cluster state:               shut down"',
+  );
 });

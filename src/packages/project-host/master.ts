@@ -34,7 +34,6 @@ import type {
   HostPressureZone,
 } from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
-import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { account_id, data } from "@cocalc/backend/data";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { setMasterStatusClient } from "./master-status";
@@ -1436,6 +1435,27 @@ export async function startMasterRegistration({
         opts.account_id,
       );
     },
+    async runAgentSensor(opts) {
+      await awaitReadyForControl("runAgentSensor", waitUntilReady);
+      const { runSensor } = await import("./sensors");
+      return await runSensor(opts);
+    },
+    async deliverAgentSensorWake(opts) {
+      await awaitReadyForControl("deliverAgentSensorWake", waitUntilReady);
+      if (!controlClient)
+        return { not_sent: "host messaging transport unavailable" };
+      const { deliverSensorWake } =
+        await import("@cocalc/lite/hub/acp/sensor-wake");
+      const { ensureProjectContainerRunning } =
+        await import("./codex/codex-project");
+      return await deliverSensorWake(controlClient, opts, () =>
+        ensureProjectContainerRunning({
+          projectId: opts.authorization.project_id,
+          accountId: opts.account_id,
+          timeout: 120_000,
+        }),
+      );
+    },
     async applyExamRun(opts) {
       await awaitReadyForControl("applyExamRun", waitUntilReady);
       return await applyExamRunLocal(opts);
@@ -1750,7 +1770,6 @@ export async function startMasterRegistration({
     async deleteProjectData({ project_id }) {
       await awaitReadyForControl("deleteProjectData", waitUntilReady);
       await deleteVolume(project_id);
-      clearLocalAcpAutomationsForProject(project_id);
       deleteProjectLocal(project_id);
     },
     async deleteProjectDataAfterBackup({
@@ -1766,7 +1785,6 @@ export async function startMasterRegistration({
         expected_archive_backup_id: expected_backup_id,
         expected_archive_generation: expected_generation,
       });
-      clearLocalAcpAutomationsForProject(project_id);
       deleteProjectLocal(project_id);
     },
     async releaseProjectDataArchiveFreeze({ project_id, expected_generation }) {

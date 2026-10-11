@@ -684,7 +684,7 @@ async function checkApiKeyRows({
 
     // Yes, caller definitely has a valid key.
     if (recordActivity) {
-      await getPool("medium").query(
+      await getPool().query(
         "UPDATE api_keys SET last_active=NOW() WHERE id=$1",
         [rows[0].id],
       );

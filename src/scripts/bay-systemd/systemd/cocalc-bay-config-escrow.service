@@ -1,0 +1,31 @@
+[Unit]
+Description=Seal the CoCalc Bay configuration with the site master key and keep it in R2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root: it reads /etc/cocalc/bay-secrets.env and the site master key, both 0600
+# root. It therefore runs the root-owned copy that install-scaffold.sh puts in
+# /usr/local/libexec/cocalc-bay, never the release tree under
+# /opt/cocalc/bay/current, which the bay account can write.
+User=root
+WorkingDirectory=/
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-topology.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+EnvironmentFile=-/etc/cocalc/bay-local.env
+ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run
+# Status for the hub's backup health check: /var/lib/cocalc-bay-config-escrow,
+# root-owned and world-readable; the status contains no secrets.
+StateDirectory=cocalc-bay-config-escrow
+StateDirectoryMode=0755
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+TimeoutStartSec=10min
+Nice=10

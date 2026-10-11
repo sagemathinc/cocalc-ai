@@ -6,7 +6,10 @@ import { installLiteCodexSpawner } from "../codex-runtime";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import { authorizeAgentDeliveryExecution } from "./agent-delivery-authorization";
+import {
+  authorizeAgentDeliveryExecution,
+  redactChatForLog,
+} from "./agent-delivery-authorization";
 import { promises as fs, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -40,12 +43,8 @@ import {
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
 import type {
-  AcpAutomationRequest,
-  AcpAutomationResponse,
   AcpAttentionRequest,
   AcpAttentionResponse,
-  AcpCommandRequest,
-  AcpAutomationRecord,
   AcpControlRequest,
   AcpControlResponse,
   AcpJobRequest,
@@ -77,26 +76,9 @@ import type {
 } from "@cocalc/ai/acp/adapters";
 import { type AcpExecutor, ContainerExecutor, LocalExecutor } from "./executor";
 import {
-  DEFAULT_AUTOMATION_CHAT_SENDER_ID,
-  resolveAutomationChatSenderId,
-} from "./automation-chat-sender";
-import { buildAutomationAcpConfig } from "./automation-request-config";
-import {
-  automationHasActiveBackendRun,
-  finishedAutomationRunFromJob,
-} from "./active-automation-run";
-import {
-  computeNextAutomationRunAt,
-  computeSkippedAutomationRunAt,
-  normalizeAcpAutomationConfig,
-  AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
-  AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
-} from "./automation-schedule";
-import {
-  captureCommandAutomationOutput,
-  formatCommandAutomationMarkdown,
-  resolveAutomationCommandCwd,
-} from "./command-automation";
+  DEFAULT_AGENT_CHAT_SENDER_ID,
+  resolveAgentChatSenderId,
+} from "./agent-chat-sender";
 import {
   preferContainerExecutor,
   resolveWorkspaceRoot,
@@ -120,8 +102,6 @@ import {
   deriveAcpLogRefs,
   threadStateRecordKey,
   threadConfigRecordKey,
-  type ChatThreadAutomationConfig,
-  type ChatThreadAutomationState,
   type MessageHistory,
 } from "@cocalc/chat";
 import { prepareChatSend } from "@cocalc/chat/send";
@@ -147,12 +127,8 @@ import {
 } from "./queued-user-message";
 import {
   admitAcpJobCreation,
-  admitAcpJobCreationIdentity,
   admitAcpJobExecution,
-  admitActiveAcpAutomationForProject,
   acpAdmissionLimitsFromEffectiveLimits,
-  formatAcpAdmissionDenial,
-  isAcpAdmissionDeniedError,
   recordAcpAdmissionDenial,
   resolveAcpAdmissionLimits,
   setAcpAdmissionDenialRecorder,
@@ -235,25 +211,6 @@ import {
   type AcpSessionRow,
   type AcpSessionState,
 } from "../sqlite/acp-sessions";
-import {
-  deleteAcpAutomationsForProject,
-  deleteAcpAutomationByThread,
-  getAcpAutomationById,
-  getAcpAutomationByThread,
-  listAllAcpAutomations,
-  listDueAcpAutomations,
-  toAutomationConfig,
-  toAutomationState,
-  toAutomationRecord,
-  upsertAcpAutomation,
-  type AcpAutomationRow,
-} from "../sqlite/acp-automations";
-import {
-  assertAutomationRequestCurrent,
-  automationSettingsRevision,
-  humanAutomationSettings,
-  withCurrentAutomationSettings,
-} from "./automation-settings";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   resolveHumanTurnMentions,
@@ -293,9 +250,9 @@ import {
   listPendingAcpAttentionResponseDispatches,
   listPendingAcpActions,
   markAllPendingAcpSyncAttentionStale,
-  markAcpAsyncAttentionSuperseded,
   resolveAcpAttention,
   submitAcpAttentionResponse,
+  dismissAcpAsyncAttention,
   updateAcpAttentionDelivery,
   type AcpAttentionStoredRecord,
 } from "../sqlite/acp-attention";
@@ -325,7 +282,6 @@ import type { AcpTurnLeaseRow } from "../sqlite/acp-turns";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { astream, type AStream } from "@cocalc/conat/sync/astream";
-import type { DKV } from "@cocalc/conat/sync/dkv";
 import {
   rotateChatStore,
   type RotateChatStoreApplyHeadChangesContext,
@@ -337,7 +293,6 @@ import {
   startAcpWorkerSupervisor,
 } from "./worker-manager";
 import { buildCodexRuntimeEnv } from "./runtime-env";
-import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
 import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
 import {
@@ -351,6 +306,7 @@ import {
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
+import { replaceAngleTags } from "@cocalc/util/linear-text";
 export {
   setHarnessAuthorityValidator,
   setHarnessLauncher,
@@ -382,13 +338,6 @@ const CHAT_OFFLOAD_AUTOROTATE_COOLDOWN_MS = 60_000;
 const CHAT_OFFLOAD_AUTOROTATE_KEEP_MESSAGES = 500;
 const CHAT_OFFLOAD_AUTOROTATE_MAX_BYTES = 2 * 1024 * 1024;
 const CHAT_OFFLOAD_AUTOROTATE_MAX_MESSAGES = 500;
-const ACP_AUTOMATION_STORE = "cocalc-thread-automations-v1";
-const ACP_AUTOMATION_POLL_MS = 30_000;
-const AUTOMATION_DEFAULT_UNACK_LIMIT = 7;
-const ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS = envNumber(
-  "COCALC_ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS",
-  10_000,
-);
 const ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS = envNumber(
   "COCALC_ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS",
   10_000,
@@ -517,9 +466,6 @@ let acpInterruptPollerStarted = false;
 let acpInterruptPollInFlight = false;
 let acpSteerPollerStarted = false;
 let acpSteerPollInFlight = false;
-let acpAutomationPollerStarted = false;
-let acpAutomationPollInFlight = false;
-const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -535,7 +481,7 @@ const MODEL_CAPACITY_NOTICE =
 const RESOURCE_KILLED_NOTICE =
   "**Codex was killed, usually because the project temporarily ran out of RAM.**";
 const TERMINAL_STALE_TURN_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because CoCalc lost the final Codex turn update.**";
+  "**Conversation interrupted: CoCalc could not confirm that this turn finished saving. The reply above may be incomplete; ask the agent to continue if anything is missing.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SCHEMA_VERSION = 2;
@@ -717,7 +663,7 @@ const ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS = envNumber(
 );
 const WORKER_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
-const ACP_RECOVERY_CHAT_SENDER_ID = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+const ACP_RECOVERY_CHAT_SENDER_ID = DEFAULT_AGENT_CHAT_SENDER_ID;
 const ACP_RECOVERY_VISIBLE_LABEL = "System recovery";
 
 function interruptedNoticeForRecoveryReason(recoveryReason: string): string {
@@ -1560,17 +1506,6 @@ function threadConfigMetadataPatch(opts: {
   };
 }
 
-function clampInteger(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(n)));
-}
-
 async function maybeAutoRotateChatStore({
   client,
   chatPath,
@@ -2276,6 +2211,7 @@ export class ChatStreamWriter {
   private saveChain: Promise<void> = Promise.resolve();
   private sessionKey?: string;
   private logStore?: AKV<AcpStreamMessage[]>;
+  private ownsLogStore = false;
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
@@ -2603,11 +2539,19 @@ export class ChatStreamWriter {
     }
   }
 
-  private noteProjectStorageFailure(err: unknown, phase: string): boolean {
+  private noteProjectStorageFailure(
+    err: unknown,
+    phase: string,
+    { chatStore = true }: { chatStore?: boolean } = {},
+  ): boolean {
     if (!isProjectAcpStorageError(err)) {
       return false;
     }
-    this.syncdbError ??= err;
+    // syncdbError stops all further chat document writes, so only failures of
+    // the chat document itself may set it.
+    if (chatStore) {
+      this.syncdbError ??= err;
+    }
     logger.warn("ACP turn project storage failure", {
       chatKey: this.chatKey,
       project_id: this.metadata.project_id,
@@ -2716,7 +2660,29 @@ export class ChatStreamWriter {
       promise: (async () => {
         await this.waitForLiveLogFlush();
         await this.waitForLivePreviewFlush();
-        await this.persistLog();
+        let activityLogDurable = true;
+        try {
+          await this.persistLog();
+        } catch (err) {
+          // The activity log is a separate store from the chat document.  If
+          // it cannot be saved, still save the reply and complete the turn;
+          // the queued payloads below let a replay rebuild the log later.
+          if (source !== "summary" || !isProjectAcpStorageError(err)) {
+            throw err;
+          }
+          activityLogDurable = false;
+          logger.warn(
+            "ACP activity log not saved; completing turn and scheduling replay",
+            {
+              chatKey: this.chatKey,
+              project_id: this.metadata.project_id,
+              path: this.metadata.path,
+              message_id: this.metadata.message_id,
+              thread_id: this.metadata.thread_id,
+              code: acpStorageFailureCode(err),
+            },
+          );
+        }
         // Live turn output is rendered from the ACP log/DKV path. Reserve
         // durable .chat writes for terminal state so patchflow history stays
         // bounded regardless of streamed word count.
@@ -2725,6 +2691,17 @@ export class ChatStreamWriter {
           throwOnProjectStorageFailure: true,
         });
         this.throwProjectStorageFailureIfPresent(`terminal-${source}:complete`);
+        if (!activityLogDurable) {
+          scheduleCompletedAcpRepairRetry({
+            client: this.client,
+            turn: {
+              ...this.metadata,
+              account_id: this.approverAccountId,
+              session_id: this.threadId ?? this.sessionKey,
+            },
+          });
+          return;
+        }
         // Keep the queue until both the activity log and terminal chat row are
         // durable. Recovery can reconstruct either side after a worker or
         // connectivity failure as long as these payloads remain available.
@@ -2756,11 +2733,10 @@ export class ChatStreamWriter {
       payment_source_kind: "unknown",
       model: undefined,
       agent_kind: this.runtimeKind,
-      run_kind: this.metadata.automation_id ? "automation" : "interactive",
-      title: this.metadata.thread_title || this.metadata.automation_title,
+      run_kind: "interactive",
+      title: this.metadata.thread_title,
       prompt_snippet: this.metadata.user_message_content,
       metadata: {
-        automation_id: this.metadata.automation_id,
         send_mode: this.metadata.send_mode,
       },
       ...extra,
@@ -3065,7 +3041,6 @@ export class ChatStreamWriter {
         acp_log_subject: this.logSubject,
         acp_live_log_stream: this.liveLogStreamName,
         acp_live_preview_stream: this.livePreviewStreamName,
-        acp_automation_id: this.metadata.automation_id,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
         parent_message_id: (this.metadata as any).parent_message_id,
@@ -3152,11 +3127,7 @@ export class ChatStreamWriter {
         agent_runtime_controls: payload.event.data,
       });
     }
-    if (
-      payload.type === "event" &&
-      payload.event.type === "goal" &&
-      !this.metadata.automation_id
-    ) {
+    if (payload.type === "event" && payload.event.type === "goal") {
       const { snapshot, ack } = payload.event;
       await this.patchThreadConfig(
         {
@@ -3306,14 +3277,11 @@ export class ChatStreamWriter {
             site_funded_reservation_id: event.siteFundedReservationId,
             model: event.model,
             agent_kind: "codex",
-            run_kind: this.metadata.automation_id
-              ? "automation"
-              : "interactive",
-            title: this.metadata.thread_title || this.metadata.automation_title,
+            run_kind: "interactive",
+            title: this.metadata.thread_title,
             prompt_snippet: this.metadata.user_message_content,
             last_heartbeat_at: Date.now(),
             metadata: {
-              automation_id: this.metadata.automation_id,
               send_mode: this.metadata.send_mode,
               auth_source: event.authSource,
               reasoning: event.reasoning,
@@ -3489,7 +3457,6 @@ export class ChatStreamWriter {
       acp_live_log_stream: generating ? this.liveLogStreamName : null,
       acp_live_preview_stream: generating ? this.livePreviewStreamName : null,
       acp_thread_id: this.threadId,
-      acp_automation_id: this.metadata.automation_id,
       acp_started_at_ms:
         Number(this.metadata.started_at_ms) > 0
           ? Number(this.metadata.started_at_ms)
@@ -4012,7 +3979,7 @@ export class ChatStreamWriter {
       contentLength: content.length,
       contentPreview: content.slice(0, 160),
       events: this.events.length,
-      metadata: this.metadata,
+      metadata: redactChatForLog(this.metadata),
     });
     this.commitNow(generating, "throttled");
   }, COMMIT_INTERVAL);
@@ -4089,6 +4056,15 @@ export class ChatStreamWriter {
         await this.persistLog();
       } catch {
         // ignore
+      }
+      if (this.ownsLogStore) {
+        // akv() takes a reference on a cached persist stream client; release
+        // it, or that client lives as long as this worker process.
+        try {
+          this.logStore?.close();
+        } catch (err) {
+          logger.warn("failed to close acp log store", err);
+        }
       }
       try {
         this.liveLogStream?.close();
@@ -4348,6 +4324,7 @@ export class ChatStreamWriter {
 
   private getLogStore(): AKV<AcpStreamMessage[]> {
     if (this.logStore) return this.logStore;
+    this.ownsLogStore = true;
     this.logStore = akv<AcpStreamMessage[]>({
       project_id: this.metadata.project_id,
       name: this.logStoreName,
@@ -4770,7 +4747,9 @@ export class ChatStreamWriter {
           attempts: ACP_LOG_PERSIST_RETRY_DELAYS_MS.length,
           err,
         });
-        this.noteProjectStorageFailure(err, "activity-log-persist");
+        this.noteProjectStorageFailure(err, "activity-log-persist", {
+          chatStore: false,
+        });
       }
     }
     throw lastError ?? new Error("failed to persist ACP activity log");
@@ -4824,16 +4803,6 @@ export class ChatStreamWriter {
   public async persistSessionId(sessionId: string): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
-    if (this.metadata.automation_id) {
-      // Automation runs deliberately get their own Codex session --
-      // buildAutomationAcpConfig strips the interactive sessionId so scheduled
-      // runs cannot contaminate later human turns.  Writing the automation's
-      // session id back into the shared thread config would undo that on the
-      // way out: the thread would be re-bound to the automation's session, and
-      // the next interactive turn would resume it instead of the user's own.
-      // The run is still tracked via upsertSessionRegistry.
-      return;
-    }
     const threadId = this.resolvedThreadId();
     if (!threadId) return;
     const currentRow = preferredThreadConfigRow(this.syncdb, threadId);
@@ -4857,7 +4826,7 @@ export class ChatStreamWriter {
   }
 
   public readPendingGoal = (): CodexGoalCommand | undefined => {
-    if (this.closed || !this.syncdb || this.metadata.automation_id) return;
+    if (this.closed || !this.syncdb) return;
     const threadId = this.resolvedThreadId();
     if (!threadId) return;
     const row = preferredThreadConfigRow(this.syncdb, threadId);
@@ -4900,11 +4869,7 @@ export class ChatStreamWriter {
 
 function normalizeSummaryText(text: string | null | undefined): string {
   if (typeof text !== "string") return "";
-  return text
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return replaceAngleTags(text, " ").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function looksLikeErrorEcho(
@@ -5478,11 +5443,20 @@ async function persistQueuedAcpPayloadsAsActivityLog({
       thread_id,
       message_id,
     });
-    await akv<AcpStreamMessage[]>({
+    const store = akv<AcpStreamMessage[]>({
       project_id,
       name: refs.store,
       client,
-    }).set(refs.key, payloads);
+    });
+    try {
+      await store.set(refs.key, payloads);
+    } finally {
+      try {
+        store.close();
+      } catch (err) {
+        logger.debug("failed to close recovery activity log store", err);
+      }
+    }
     logger.warn("persisted queued acp payloads as recovery activity log", {
       project_id,
       path,
@@ -6346,9 +6320,7 @@ export async function recoverOrphanedAcpTurns(
     // a prompt to check what already completed, as for Codex. Only one that
     // is not resumed is left with an unknown outcome for the user to decide.
     const outcomeUnknown =
-      !shouldAutoResume &&
-      request?.request_kind !== "command" &&
-      request?.runtime?.kind === "acp";
+      !shouldAutoResume && request?.runtime?.kind === "acp";
     const turnNotice = outcomeUnknown
       ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
       : interruptedNotice;
@@ -6674,10 +6646,7 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
       continue;
     }
     const orphanedRequest = decodeAcpJobRequest(job);
-    if (
-      orphanedRequest.request_kind !== "command" &&
-      orphanedRequest.runtime !== undefined
-    ) {
+    if (orphanedRequest.runtime !== undefined) {
       setAcpJobState({
         op_id: job.op_id,
         state: "error",
@@ -6831,8 +6800,6 @@ export async function recoverTerminalStaleAcpTurns(
 ): Promise<number> {
   const recoveryReason =
     opts.recoveryReason ?? "terminal ACP turn state recovery";
-  const interruptedNotice =
-    opts.interruptedNotice ?? TERMINAL_STALE_TURN_INTERRUPTED_NOTICE;
   let terminalTurns: AcpTurnLeaseRow[];
   try {
     terminalTurns = listRecentTerminalAcpTurnLeases({
@@ -6870,11 +6837,7 @@ export async function recoverTerminalStaleAcpTurns(
           message_id: turn.message_id,
           thread_id: turn.thread_id,
           account_id: request?.account_id ?? job?.account_id,
-          session_id:
-            turn.session_id ??
-            (request?.request_kind === "command"
-              ? undefined
-              : request?.session_id),
+          session_id: turn.session_id ?? request?.session_id,
         };
         if (hasQueuedCompletedAcpPayloads(completedTurn)) {
           if (
@@ -6903,7 +6866,12 @@ export async function recoverTerminalStaleAcpTurns(
         await repairInterruptedAcpTurn({
           client,
           turn,
-          interruptedNotice,
+          // Prefer the explanation recorded when the turn failed, e.g., which
+          // storage problem stopped it, over a generic notice.
+          interruptedNotice:
+            opts.interruptedNotice ??
+            storageFailureNoticeForReason(turn.reason) ??
+            TERMINAL_STALE_TURN_INTERRUPTED_NOTICE,
           interruptedReasonId: "backend_error",
           recoveryReason: turn.reason ?? recoveryReason,
         })
@@ -6936,13 +6904,25 @@ function terminalTurnNeedsPeriodicRepair(turn: AcpTurnLeaseRow): boolean {
   if (turn.state === "completed") {
     return hasQueuedCompletedAcpPayloads(turn);
   }
-  const reason = `${turn.reason ?? ""}`.toLowerCase();
+  return isStorageFailureReason(turn.reason);
+}
+
+// Reasons recorded by projectStorageFailureMessage.
+function isStorageFailureReason(reason: string | null | undefined): boolean {
+  const text = `${reason ?? ""}`.toLowerCase();
   return (
-    reason.includes("ran out of storage") ||
-    reason.includes("storage became read-only") ||
-    reason.includes("synchronization database is damaged") ||
-    reason.includes("storage was temporarily unavailable")
+    text.includes("ran out of storage") ||
+    text.includes("storage became read-only") ||
+    text.includes("synchronization database is damaged") ||
+    text.includes("storage was temporarily unavailable")
   );
+}
+
+function storageFailureNoticeForReason(
+  reason: string | null | undefined,
+): string | undefined {
+  if (!isStorageFailureReason(reason)) return undefined;
+  return `**Conversation interrupted: ${`${reason}`.trim()}**`;
 }
 
 let acpTerminalRecoveryPollerStarted = false;
@@ -7867,7 +7847,7 @@ async function ensureAgent(
           parent_message_id: chat.parent_message_id,
           state: outstanding > 0 ? "possibly_active" : managerState,
           agent_kind: "codex",
-          run_kind: chat.automation_id ? "automation" : "interactive",
+          run_kind: "interactive",
           finished_at: outstanding > 0 ? null : Date.now(),
           last_heartbeat_at: Date.now(),
           metadata: {
@@ -8036,7 +8016,7 @@ async function executeAcpRequest({
   logger.debug("evaluate: start", {
     reqId,
     session_id: request.session_id,
-    chat: request.chat,
+    chat: redactChatForLog(request.chat),
     projectId,
     config,
     sessionMode,
@@ -8339,7 +8319,6 @@ async function executeAcpRequest({
           path: request.chat?.path,
           thread_id: request.chat?.thread_id,
           message_id: request.chat?.message_id,
-          automation_id: request.chat?.automation_id,
           timeout_ms: ACP_CHAT_WRITER_DISPOSE_TIMEOUT_MS,
         });
       }
@@ -8614,1142 +8593,6 @@ async function persistQueuedUserMessageProjection({
   });
 }
 
-function automationMessageLabel(
-  row: AcpAutomationRow,
-  manual: boolean,
-): string {
-  const base = `${row.title ?? ""}`.trim() || "Automation";
-  const kind = row.run_kind === "command" ? "command run" : "run";
-  return manual ? `Manual ${kind}: ${base}` : `Scheduled ${kind}: ${base}`;
-}
-
-async function enqueueAutomationRun(
-  row: AcpAutomationRow,
-  opts: { manual: boolean; syncdbReadyTimeoutMs?: number },
-): Promise<AcpAutomationRow> {
-  if (!conatClient) {
-    throw new Error("conat client must be initialized");
-  }
-  if (row.run_kind === "command") {
-    if (!row.command?.trim()) {
-      throw new Error("automation is missing a command");
-    }
-  } else if (!row.prompt?.trim()) {
-    throw new Error("automation is missing a prompt");
-  }
-  if (row.status === "running" || automationHasActiveBackendRun(row)) {
-    return row;
-  }
-  const now = Date.now();
-  const admissionLimits = await resolveAcpAdmissionLimits({
-    account_id: row.account_id,
-    project_id: row.project_id,
-    path: row.path,
-    thread_id: row.thread_id,
-  });
-  try {
-    throwIfAcpAdmissionDenied(
-      admitAcpJobCreationIdentity(
-        {
-          account_id: row.account_id,
-          project_id: row.project_id,
-          path: row.path,
-          thread_id: row.thread_id,
-        },
-        admissionLimits,
-        now,
-      ),
-      "automation",
-    );
-  } catch (err) {
-    if (isAcpAdmissionDeniedError(err)) {
-      const updated = upsertAcpAutomation({
-        ...row,
-        status: "paused",
-        paused_reason: "acp_admission_denied",
-        last_error: err.message,
-        updated_at: now,
-      });
-      await patchThreadAutomationProjection({
-        project_id: updated.project_id,
-        path: updated.path,
-        thread_id: updated.thread_id,
-        updated_by: updated.account_id,
-        automation_config: toAutomationConfig(
-          updated,
-        ) as ChatThreadAutomationConfig,
-        automation_state: toAutomationState(
-          updated,
-        ) as ChatThreadAutomationState,
-      });
-      await publishAutomationRecordToProjectIndex(updated);
-    }
-    throw err;
-  }
-  const user_message_id = randomUUID();
-  const assistant_message_id = randomUUID();
-  const userDate = new Date(now).toISOString();
-  const assistantDate = new Date(now + 1).toISOString();
-  const userMessageContent = automationMessageLabel(row, opts.manual);
-  let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
-  let automationConfig = buildAutomationAcpConfig({ chatPath: row.path });
-
-  await withChatSyncDB({
-    client: conatClient,
-    project_id: row.project_id,
-    path: row.path,
-    readyTimeoutMs: opts.syncdbReadyTimeoutMs,
-    fn: async (syncdb) => {
-      const threadConfig = preferredThreadConfigRow(syncdb, row.thread_id);
-      automationSenderId = resolveAutomationChatSenderId(
-        syncdbField<string>(threadConfig, "agent_model"),
-      );
-      automationConfig = buildAutomationAcpConfig({
-        chatPath: row.path,
-        config: syncdbField(threadConfig, "acp_config"),
-      });
-      const parent_message_id = latestThreadMessageIdInSyncDB({
-        syncdb,
-        threadId: row.thread_id,
-      });
-      syncdb.set(
-        buildChatMessage({
-          sender_id: automationSenderId,
-          date: userDate,
-          prevHistory: [],
-          content: userMessageContent,
-          generating: false,
-          message_id: user_message_id,
-          thread_id: row.thread_id,
-          parent_message_id,
-        }),
-      );
-      syncdb.commit();
-      await syncdb.save();
-    },
-  });
-
-  const chat: AcpChatContext = {
-    project_id: row.project_id,
-    path: row.path,
-    sender_id: automationSenderId,
-    thread_id: row.thread_id,
-    parent_message_id: user_message_id,
-    message_id: assistant_message_id,
-    message_date: assistantDate,
-    automation_id: row.automation_id,
-    automation_title: row.title ?? undefined,
-    automation_revision: automationSettingsRevision(row),
-    user_message_content: userMessageContent,
-  };
-  let request: AcpJobRequest =
-    row.run_kind === "command"
-      ? {
-          request_kind: "command",
-          project_id: row.project_id,
-          account_id: row.account_id,
-          command: `${row.command ?? ""}`.trim(),
-          cwd: row.command_cwd ?? undefined,
-          timeout_ms:
-            row.command_timeout_ms ?? AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
-          max_output_bytes:
-            row.command_max_output_bytes ??
-            AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
-          chat,
-        }
-      : {
-          project_id: row.project_id,
-          account_id: row.account_id,
-          prompt: row.prompt ?? "",
-          config: automationConfig,
-          chat,
-        };
-
-  await assertThreadRuntimeAtAdmission(request);
-  request = await pinCodexCredentialAtAdmission(request);
-
-  throwIfAcpAdmissionDenied(
-    admitAcpJobCreation(request, admissionLimits),
-    "automation",
-  );
-  const updated = withCurrentAutomationSettings(request, () => {
-    const job = enqueueAcpJob(request, {
-      preferred_worker_id: preferredWorkerForRetainedSession(
-        row.project_id,
-        request.request_kind === "command" ? undefined : request.session_id,
-      ),
-    });
-    return upsertAcpAutomation({
-      ...row,
-      status: "running",
-      last_run_started_at: now,
-      last_error: null,
-      last_job_op_id: job.op_id,
-      last_message_id: assistant_message_id,
-      updated_at: now,
-    });
-  });
-  await persistQueuedUserMessageProjection({
-    client: conatClient,
-    project_id: row.project_id,
-    path: row.path,
-    thread_id: row.thread_id,
-    user_message_id,
-    queued: true,
-    readyTimeoutMs: opts.syncdbReadyTimeoutMs,
-  });
-  await patchThreadAutomationProjection({
-    project_id: updated.project_id,
-    path: updated.path,
-    thread_id: updated.thread_id,
-    updated_by: row.account_id,
-    automation_config: toAutomationConfig(
-      updated,
-    ) as ChatThreadAutomationConfig,
-    automation_state: toAutomationState(updated) as ChatThreadAutomationState,
-  });
-  await publishAutomationRecordToProjectIndex(updated);
-  if (liteUseDetachedAcpWorker()) {
-    await ensureDetachedWorkerRunning({ force: true });
-  } else {
-    kickAllQueuedAcpJobs();
-  }
-  return updated;
-}
-
-async function finalizeAutomationRun(opts: {
-  automation_id?: string;
-  terminalState: "completed" | "error" | "interrupted";
-  last_job_op_id?: string;
-  last_message_id?: string;
-  error?: string;
-}): Promise<void> {
-  const automation_id = `${opts.automation_id ?? ""}`.trim();
-  if (!automation_id) return;
-  const current = getAcpAutomationById(automation_id);
-  if (!current) return;
-  const currentJobOpId = `${current.last_job_op_id ?? ""}`.trim();
-  const finishingJobOpId = `${opts.last_job_op_id ?? ""}`.trim();
-  if (
-    currentJobOpId &&
-    finishingJobOpId &&
-    currentJobOpId !== finishingJobOpId
-  ) {
-    logger.warn("ignoring stale automation finalization", {
-      automation_id,
-      current_job_op_id: currentJobOpId,
-      finishing_job_op_id: finishingJobOpId,
-      terminal_state: opts.terminalState,
-    });
-    return;
-  }
-  const now = Date.now();
-  const nextUnacknowledgedRuns = (current.unacknowledged_runs ?? 0) + 1;
-  const unattendedLimit =
-    current.pause_after_unacknowledged_runs ?? AUTOMATION_DEFAULT_UNACK_LIMIT;
-  let status: AcpAutomationRow["status"];
-  let paused_reason: string | null = null;
-  if (nextUnacknowledgedRuns >= unattendedLimit) {
-    status = "paused";
-    paused_reason = "unacknowledged_runs_limit";
-  } else if (opts.terminalState === "error") {
-    status = "error";
-  } else {
-    status = current.enabled ? "active" : "paused";
-  }
-  const next_run_at =
-    current.enabled && status !== "paused"
-      ? (computeNextAutomationRunAt(current, {
-          nowMs: now,
-          defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-        }) ??
-        current.next_run_at ??
-        null)
-      : (current.next_run_at ?? null);
-  const updated = upsertAcpAutomation({
-    ...current,
-    status,
-    next_run_at,
-    last_run_finished_at: now,
-    unacknowledged_runs: nextUnacknowledgedRuns,
-    paused_reason,
-    last_error:
-      opts.error ??
-      (opts.terminalState === "error" ? "automation run failed" : null),
-    last_job_op_id: opts.last_job_op_id ?? current.last_job_op_id ?? null,
-    last_message_id: opts.last_message_id ?? current.last_message_id ?? null,
-    updated_at: now,
-  });
-  await patchThreadAutomationProjection({
-    project_id: updated.project_id,
-    path: updated.path,
-    thread_id: updated.thread_id,
-    updated_by: updated.account_id,
-    automation_config: toAutomationConfig(
-      updated,
-    ) as ChatThreadAutomationConfig,
-    automation_state: toAutomationState(updated) as ChatThreadAutomationState,
-  });
-  await publishAutomationRecordToProjectIndex(updated);
-}
-
-async function reconcileFinishedAutomationRuns(): Promise<void> {
-  for (const row of listAllAcpAutomations()) {
-    if (row.status !== "running") {
-      continue;
-    }
-    try {
-      if (automationHasActiveBackendRun(row)) {
-        continue;
-      }
-      const jobOpId = `${row.last_job_op_id ?? ""}`.trim();
-      const job = jobOpId ? getAcpJobByOpId(jobOpId) : undefined;
-      const finished = finishedAutomationRunFromJob(job);
-      if (!finished) {
-        continue;
-      }
-      logger.warn("reconciling automation left running after job completion", {
-        automation_id: row.automation_id,
-        job_op_id: jobOpId,
-        job_state: job?.state,
-      });
-      await finalizeAutomationRun({
-        automation_id: row.automation_id,
-        terminalState: finished.terminalState,
-        last_job_op_id: jobOpId,
-        last_message_id: row.last_message_id ?? undefined,
-        error: finished.error,
-      });
-    } catch (err) {
-      logger.warn("failed to reconcile completed automation run", {
-        automation_id: row.automation_id,
-        job_op_id: row.last_job_op_id,
-        err,
-      });
-    }
-  }
-}
-
-async function acknowledgeAutomationFromHumanTurn(
-  request: Pick<AcpRequest, "project_id" | "account_id" | "chat">,
-): Promise<void> {
-  const project_id =
-    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
-  const path = `${request.chat?.path ?? ""}`.trim();
-  const thread_id = `${request.chat?.thread_id ?? ""}`.trim();
-  if (!project_id || !path || !thread_id) return;
-  if (`${request.chat?.automation_id ?? ""}`.trim()) return;
-  const current = getAcpAutomationByThread({ project_id, path, thread_id });
-  if (!current) return;
-  const now = Date.now();
-  const updated = upsertAcpAutomation({
-    ...current,
-    last_acknowledged_at: now,
-    unacknowledged_runs: 0,
-    updated_at: now,
-  });
-  await patchThreadAutomationProjection({
-    project_id: updated.project_id,
-    path: updated.path,
-    thread_id: updated.thread_id,
-    updated_by: request.account_id || updated.account_id,
-    automation_config: toAutomationConfig(
-      updated,
-    ) as ChatThreadAutomationConfig,
-    automation_state: toAutomationState(updated) as ChatThreadAutomationState,
-  });
-  await publishAutomationRecordToProjectIndex(updated);
-}
-
-async function pollDueAcpAutomations(): Promise<void> {
-  if (acpAutomationPollInFlight) return;
-  if (!conatClient) return;
-  acpAutomationPollInFlight = true;
-  try {
-    await reconcileFinishedAutomationRuns();
-    const due = listDueAcpAutomations(Date.now());
-    for (const row of due) {
-      try {
-        await enqueueAutomationRun(row, {
-          manual: false,
-          syncdbReadyTimeoutMs: ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS,
-        });
-      } catch (err) {
-        logger.warn("failed to enqueue due automation", {
-          automation_id: row.automation_id,
-          err,
-        });
-        await recordScheduledAutomationEnqueueFailure(row, err);
-      }
-    }
-  } finally {
-    acpAutomationPollInFlight = false;
-  }
-}
-
-async function recordScheduledAutomationEnqueueFailure(
-  dueRow: AcpAutomationRow,
-  error: unknown,
-): Promise<void> {
-  const current = getAcpAutomationById(dueRow.automation_id);
-  if (
-    !current ||
-    !current.enabled ||
-    current.status === "paused" ||
-    current.status === "running" ||
-    automationHasActiveBackendRun(current) ||
-    current.next_run_at !== dueRow.next_run_at
-  ) {
-    return;
-  }
-  const updated = upsertAcpAutomation(
-    automationAfterScheduledEnqueueFailure({
-      row: current,
-      error,
-      nowMs: Date.now(),
-      defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-    }),
-  );
-  await publishAutomationRecordToProjectIndex(updated);
-  try {
-    await patchThreadAutomationProjection({
-      project_id: updated.project_id,
-      path: updated.path,
-      thread_id: updated.thread_id,
-      updated_by: updated.account_id,
-      automation_config: toAutomationConfig(
-        updated,
-      ) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(updated) as ChatThreadAutomationState,
-      syncdbReadyTimeoutMs: ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS,
-    });
-  } catch (projectionError) {
-    logger.warn("failed to publish automation enqueue failure to chat", {
-      automation_id: updated.automation_id,
-      err: projectionError,
-    });
-  }
-}
-
-function startAcpAutomationPoller(): void {
-  if (acpAutomationPollerStarted) return;
-  acpAutomationPollerStarted = true;
-  void pollDueAcpAutomations();
-  const handle = setInterval(() => {
-    void pollDueAcpAutomations();
-  }, ACP_AUTOMATION_POLL_MS);
-  if (typeof handle?.unref === "function") {
-    handle.unref();
-  }
-}
-
-async function republishAcpAutomationProjectIndexes(): Promise<void> {
-  for (const row of listAllAcpAutomations()) {
-    await publishAutomationRecordToProjectIndex(row);
-  }
-}
-
-async function admitActiveAcpAutomationResponse({
-  account_id,
-  project_id,
-  path,
-  thread_id,
-  automation_id,
-}: {
-  account_id?: string;
-  project_id: string;
-  path: string;
-  thread_id: string;
-  automation_id: string;
-}): Promise<AcpAutomationResponse | undefined> {
-  const decision = admitActiveAcpAutomationForProject(
-    { account_id, project_id, path, thread_id, automation_id },
-    await resolveAcpAdmissionLimits({
-      account_id,
-      project_id,
-      path,
-      thread_id,
-    }),
-  );
-  if (decision.ok) return undefined;
-  recordAcpAdmissionDenial(decision, "automation");
-  return {
-    ok: false,
-    error: formatAcpAdmissionDenial(decision),
-    code: "active_automation_limit",
-    limit: decision.limit,
-    current: decision.current,
-    maximum: decision.maximum,
-    project_id,
-  };
-}
-
-async function handleAcpAutomationRequest(
-  request: AcpAutomationRequest,
-): Promise<AcpAutomationResponse> {
-  const project_id = `${request.project_id ?? ""}`.trim();
-  const path = `${request.path ?? ""}`.trim();
-  const thread_id = `${request.thread_id ?? ""}`.trim();
-  if (!project_id || !path || !thread_id) {
-    throw new Error("ACP automation request is missing required fields");
-  }
-  let existing = getAcpAutomationByThread({ project_id, path, thread_id });
-  if (request.action === "delete") {
-    deleteAcpAutomationByThread({ project_id, path, thread_id });
-    await patchThreadAutomationProjection({
-      project_id,
-      path,
-      thread_id,
-      updated_by: request.account_id,
-      automation_config: null,
-      automation_state: null,
-    });
-    await deleteAutomationRecordFromProjectIndex({
-      project_id,
-      path,
-      thread_id,
-    });
-    return { ok: true, config: null, state: null, record: null };
-  }
-  if (request.action === "upsert") {
-    const config = normalizeAcpAutomationConfig(request.config, {
-      defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-    });
-    if (!config) {
-      throw new Error("invalid automation config");
-    }
-    const automation_id =
-      existing?.automation_id ??
-      (`${config.automation_id ?? ""}`.trim() || undefined) ??
-      randomUUID();
-    const enabled = config.enabled !== false;
-    if (enabled) {
-      const denial = await admitActiveAcpAutomationResponse({
-        account_id: request.account_id,
-        project_id,
-        path,
-        thread_id,
-        automation_id,
-      });
-      if (denial) return denial;
-    }
-    const now = Date.now();
-    const row = upsertAcpAutomation({
-      automation_id,
-      project_id,
-      path,
-      thread_id,
-      ...humanAutomationSettings(request.account_id),
-      enabled,
-      title: config.title ?? null,
-      run_kind: config.run_kind ?? "codex",
-      prompt: config.prompt ?? null,
-      command: config.command ?? null,
-      command_cwd: config.command_cwd ?? null,
-      command_timeout_ms: config.command_timeout_ms ?? null,
-      command_max_output_bytes: config.command_max_output_bytes ?? null,
-      schedule_type: config.schedule_type ?? "daily",
-      days_of_week: config.days_of_week ?? null,
-      local_time: config.local_time ?? null,
-      interval_minutes: config.interval_minutes ?? null,
-      window_start_local_time: config.window_start_local_time ?? null,
-      window_end_local_time: config.window_end_local_time ?? null,
-      timezone: config.timezone ?? null,
-      pause_after_unacknowledged_runs:
-        config.pause_after_unacknowledged_runs ??
-        AUTOMATION_DEFAULT_UNACK_LIMIT,
-      status: enabled ? "active" : "paused",
-      next_run_at: enabled
-        ? (computeNextAutomationRunAt(config, {
-            defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-          }) ?? null)
-        : null,
-      last_run_started_at: existing?.last_run_started_at ?? null,
-      last_run_finished_at: existing?.last_run_finished_at ?? null,
-      last_acknowledged_at: existing?.last_acknowledged_at ?? null,
-      unacknowledged_runs: existing?.unacknowledged_runs ?? 0,
-      paused_reason: enabled ? null : "disabled",
-      last_error: existing?.last_error ?? null,
-      last_job_op_id: existing?.last_job_op_id ?? null,
-      last_message_id: existing?.last_message_id ?? null,
-      created_at: existing?.created_at ?? now,
-      updated_at: now,
-    });
-    await patchThreadAutomationProjection({
-      project_id,
-      path,
-      thread_id,
-      updated_by: request.account_id,
-      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(row) as ChatThreadAutomationState,
-    });
-    await publishAutomationRecordToProjectIndex(row);
-    return {
-      ok: true,
-      config: toAutomationConfig(row) ?? null,
-      state: toAutomationState(row) ?? null,
-      record: toAutomationRecord(row) ?? null,
-    };
-  }
-  if (!existing) {
-    try {
-      await rehydrateAcpAutomationsForProject(project_id);
-    } catch (err) {
-      resetAutomationStoreCache(project_id);
-      logger.warn("failed to rehydrate ACP automation before recovery", {
-        project_id,
-        path,
-        thread_id,
-        err,
-      });
-    }
-    existing = getAcpAutomationByThread({ project_id, path, thread_id });
-  }
-  if (!existing) {
-    existing = await recoverAcpAutomationFromThreadProjection({
-      project_id,
-      path,
-      thread_id,
-      account_id: request.account_id,
-    });
-  }
-  if (!existing) {
-    throw new Error("automation not found");
-  }
-  if (request.action === "pause") {
-    const row = upsertAcpAutomation({
-      ...existing,
-      ...humanAutomationSettings(request.account_id),
-      enabled: false,
-      status: "paused",
-      paused_reason: "user_paused",
-      updated_at: Date.now(),
-    });
-    await patchThreadAutomationProjection({
-      project_id,
-      path,
-      thread_id,
-      updated_by: request.account_id,
-      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(row) as ChatThreadAutomationState,
-    });
-    await publishAutomationRecordToProjectIndex(row);
-    return {
-      ok: true,
-      config: toAutomationConfig(row) ?? null,
-      state: toAutomationState(row) ?? null,
-      record: toAutomationRecord(row) ?? null,
-    };
-  }
-  if (request.action === "resume") {
-    const denial = await admitActiveAcpAutomationResponse({
-      account_id: request.account_id,
-      project_id,
-      path,
-      thread_id,
-      automation_id: existing.automation_id,
-    });
-    if (denial) return denial;
-    const row = upsertAcpAutomation({
-      ...existing,
-      ...humanAutomationSettings(request.account_id),
-      enabled: true,
-      status: "active",
-      paused_reason: null,
-      next_run_at:
-        computeNextAutomationRunAt(existing, {
-          defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-        }) ??
-        existing.next_run_at ??
-        null,
-      updated_at: Date.now(),
-    });
-    await patchThreadAutomationProjection({
-      project_id,
-      path,
-      thread_id,
-      updated_by: request.account_id,
-      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(row) as ChatThreadAutomationState,
-    });
-    await publishAutomationRecordToProjectIndex(row);
-    return {
-      ok: true,
-      config: toAutomationConfig(row) ?? null,
-      state: toAutomationState(row) ?? null,
-      record: toAutomationRecord(row) ?? null,
-    };
-  }
-  if (request.action === "acknowledge") {
-    const row = upsertAcpAutomation({
-      ...existing,
-      last_acknowledged_at: Date.now(),
-      unacknowledged_runs: 0,
-      updated_at: Date.now(),
-    });
-    await patchThreadAutomationProjection({
-      project_id,
-      path,
-      thread_id,
-      updated_by: request.account_id,
-      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(row) as ChatThreadAutomationState,
-    });
-    await publishAutomationRecordToProjectIndex(row);
-    return {
-      ok: true,
-      config: toAutomationConfig(row) ?? null,
-      state: toAutomationState(row) ?? null,
-      record: toAutomationRecord(row) ?? null,
-    };
-  }
-  if (request.action === "skip_next") {
-    const row = upsertAcpAutomation({
-      ...existing,
-      ...humanAutomationSettings(request.account_id),
-      next_run_at:
-        computeSkippedAutomationRunAt(existing, {
-          nextRunAtMs: existing.next_run_at,
-          defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-        }) ??
-        existing.next_run_at ??
-        null,
-      updated_at: Date.now(),
-    });
-    await patchThreadAutomationProjection({
-      project_id,
-      path,
-      thread_id,
-      updated_by: request.account_id,
-      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
-      automation_state: toAutomationState(row) as ChatThreadAutomationState,
-    });
-    await publishAutomationRecordToProjectIndex(row);
-    return {
-      ok: true,
-      config: toAutomationConfig(row) ?? null,
-      state: toAutomationState(row) ?? null,
-      record: toAutomationRecord(row) ?? null,
-    };
-  }
-  if (request.action === "run_now") {
-    const row = await enqueueAutomationRun(existing, { manual: true });
-    return {
-      ok: true,
-      config: toAutomationConfig(row) ?? null,
-      state: toAutomationState(row) ?? null,
-      record: toAutomationRecord(row) ?? null,
-    };
-  }
-  throw new Error(`unsupported ACP automation action: ${request.action}`);
-}
-
-function automationRecordKey(opts: {
-  path: string;
-  thread_id: string;
-}): string {
-  return `${opts.path}::${opts.thread_id}`;
-}
-
-async function getAutomationStore(
-  project_id: string,
-): Promise<DKV<AcpAutomationRecord>> {
-  const existing = automationStores.get(project_id);
-  if (existing) {
-    try {
-      const store = await existing;
-      if (!store.isClosed()) return store;
-    } catch {
-      // Replace a rejected initialization promise below.
-    }
-    automationStores.delete(project_id);
-  }
-  if (!conatClient) {
-    throw new Error("conat client must be initialized");
-  }
-  const promise = conatClient.sync.dkv<AcpAutomationRecord>({
-    project_id,
-    name: ACP_AUTOMATION_STORE,
-  });
-  automationStores.set(project_id, promise);
-  return await promise;
-}
-
-function resetAutomationStoreCache(project_id: string): void {
-  automationStores.delete(project_id);
-}
-
-export function normalizeAcpAutomationRecord(
-  record?: AcpAutomationRecord,
-): AcpAutomationRow | undefined {
-  if (!record) return undefined;
-  const automation_id = `${record.automation_id ?? ""}`.trim();
-  const project_id = `${record.project_id ?? ""}`.trim();
-  const path = `${record.path ?? ""}`.trim();
-  const thread_id = `${record.thread_id ?? ""}`.trim();
-  const account_id = `${record.account_id ?? ""}`.trim();
-  if (!automation_id || !project_id || !path || !thread_id || !account_id) {
-    return undefined;
-  }
-  const config = normalizeAcpAutomationConfig(
-    {
-      enabled: record.enabled,
-      automation_id,
-      title: record.title,
-      run_kind: record.run_kind,
-      prompt: record.prompt,
-      command: record.command,
-      command_cwd: record.command_cwd,
-      command_timeout_ms: record.command_timeout_ms,
-      command_max_output_bytes: record.command_max_output_bytes,
-      schedule_type: record.schedule_type,
-      days_of_week: record.days_of_week,
-      local_time: record.local_time,
-      interval_minutes: record.interval_minutes,
-      window_start_local_time: record.window_start_local_time,
-      window_end_local_time: record.window_end_local_time,
-      timezone: record.timezone,
-      pause_after_unacknowledged_runs:
-        record.pause_after_unacknowledged_runs ?? undefined,
-    },
-    {
-      defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-    },
-  );
-  if (!config) {
-    return undefined;
-  }
-  const parseMs = (value?: number | string): number | undefined => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return Math.floor(value);
-    }
-    if (typeof value === "string") {
-      const parsed = Date.parse(value);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-    return undefined;
-  };
-  const enabled = record.enabled !== false && config.enabled !== false;
-  const normalizedStatus =
-    record.status === "running"
-      ? enabled
-        ? "active"
-        : "paused"
-      : record.status === "active" ||
-          record.status === "paused" ||
-          record.status === "error"
-        ? record.status
-        : enabled
-          ? "active"
-          : "paused";
-  const next_run_at = enabled
-    ? (parseMs(record.next_run_at_ms) ??
-      computeNextAutomationRunAt(config, {
-        defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
-      }))
-    : null;
-  return {
-    automation_id,
-    project_id,
-    path,
-    thread_id,
-    account_id,
-    settings_revision: record.settings_revision,
-    enabled,
-    title: config.title ?? null,
-    run_kind: config.run_kind ?? "codex",
-    prompt: config.prompt ?? null,
-    command: config.command ?? null,
-    command_cwd: config.command_cwd ?? null,
-    command_timeout_ms: config.command_timeout_ms ?? null,
-    command_max_output_bytes: config.command_max_output_bytes ?? null,
-    schedule_type: config.schedule_type ?? "daily",
-    days_of_week: config.days_of_week ?? null,
-    local_time: config.local_time ?? null,
-    interval_minutes: config.interval_minutes ?? null,
-    window_start_local_time: config.window_start_local_time ?? null,
-    window_end_local_time: config.window_end_local_time ?? null,
-    timezone: config.timezone ?? null,
-    pause_after_unacknowledged_runs:
-      config.pause_after_unacknowledged_runs ?? AUTOMATION_DEFAULT_UNACK_LIMIT,
-    status: normalizedStatus,
-    next_run_at,
-    last_run_started_at: parseMs(record.last_run_started_at_ms) ?? null,
-    last_run_finished_at: parseMs(record.last_run_finished_at_ms) ?? null,
-    last_acknowledged_at: parseMs(record.last_acknowledged_at_ms) ?? null,
-    unacknowledged_runs: clampInteger(record.unacknowledged_runs, 0, 0, 365),
-    paused_reason: `${record.paused_reason ?? ""}`.trim() || null,
-    last_error: `${record.last_error ?? ""}`.trim() || null,
-    last_job_op_id: `${record.last_job_op_id ?? ""}`.trim() || null,
-    last_message_id: `${record.last_message_id ?? ""}`.trim() || null,
-    created_at:
-      parseMs(record.created_at) ?? parseMs(record.updated_at) ?? Date.now(),
-    updated_at: parseMs(record.updated_at) ?? Date.now(),
-  };
-}
-
-export function automationRecordFromThreadProjection({
-  project_id,
-  path,
-  thread_id,
-  account_id,
-  settings_revision,
-  automation_config,
-  automation_state,
-  updated_at,
-}: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-  account_id: string;
-  settings_revision: string;
-  automation_config?: ChatThreadAutomationConfig | null;
-  automation_state?: ChatThreadAutomationState | null;
-  updated_at?: string;
-}): AcpAutomationRecord | undefined {
-  const config = automation_config;
-  const state = automation_state;
-  const automation_id = `${
-    config?.automation_id ?? state?.automation_id ?? ""
-  }`.trim();
-  if (!automation_id || !config || !account_id || !settings_revision) return;
-  return {
-    automation_id,
-    project_id,
-    path,
-    thread_id,
-    account_id,
-    settings_revision,
-    enabled: config.enabled,
-    title: config.title,
-    run_kind: config.run_kind,
-    prompt: config.prompt,
-    command: config.command,
-    command_cwd: config.command_cwd,
-    command_timeout_ms: config.command_timeout_ms,
-    command_max_output_bytes: config.command_max_output_bytes,
-    schedule_type: config.schedule_type,
-    days_of_week: config.days_of_week,
-    local_time: config.local_time,
-    interval_minutes: config.interval_minutes,
-    window_start_local_time: config.window_start_local_time,
-    window_end_local_time: config.window_end_local_time,
-    timezone: config.timezone,
-    pause_after_unacknowledged_runs: config.pause_after_unacknowledged_runs,
-    status: state?.status,
-    next_run_at_ms: state?.next_run_at_ms,
-    last_run_started_at_ms: state?.last_run_started_at_ms,
-    last_run_finished_at_ms: state?.last_run_finished_at_ms,
-    last_acknowledged_at_ms: state?.last_acknowledged_at_ms,
-    unacknowledged_runs: state?.unacknowledged_runs,
-    paused_reason: state?.paused_reason,
-    last_error: state?.last_error,
-    last_job_op_id: state?.last_job_op_id,
-    last_message_id: state?.last_message_id,
-    updated_at,
-  };
-}
-
-export function recoveredAutomationRequiresActiveAdmission(
-  row: AcpAutomationRow,
-): boolean {
-  return (
-    row.enabled &&
-    (row.status === "active" ||
-      row.status === "running" ||
-      row.status === "error")
-  );
-}
-
-async function recoverAcpAutomationFromThreadProjection({
-  project_id,
-  path,
-  thread_id,
-  account_id,
-}: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-  account_id: string;
-}): Promise<AcpAutomationRow | undefined> {
-  if (!conatClient) return;
-  // The projection is collaborator-editable, so it cannot restore historical
-  // authority. Recovery is a new authenticated settings responsibility claim.
-  const responsibility = humanAutomationSettings(account_id);
-  const record = await withChatSyncDB({
-    client: conatClient,
-    project_id,
-    path,
-    readyTimeoutMs: ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS,
-    fn: async (syncdb) => {
-      const threadConfig = preferredThreadConfigRow(syncdb, thread_id);
-      const toPlain = <T>(value: T): T =>
-        value && typeof (value as any).toJS === "function"
-          ? (value as any).toJS()
-          : value;
-      return automationRecordFromThreadProjection({
-        project_id,
-        path,
-        thread_id,
-        ...responsibility,
-        automation_config: toPlain(
-          syncdbField<ChatThreadAutomationConfig>(
-            threadConfig,
-            "automation_config",
-          ),
-        ),
-        automation_state: toPlain(
-          syncdbField<ChatThreadAutomationState>(
-            threadConfig,
-            "automation_state",
-          ),
-        ),
-        updated_at: syncdbField<string>(threadConfig, "updated_at"),
-      });
-    },
-  });
-  const row = normalizeAcpAutomationRecord(record);
-  if (!row) return;
-  if (recoveredAutomationRequiresActiveAdmission(row)) {
-    throwIfAcpAdmissionDenied(
-      admitActiveAcpAutomationForProject(
-        {
-          account_id: row.account_id,
-          project_id: row.project_id,
-          path: row.path,
-          thread_id: row.thread_id,
-          automation_id: row.automation_id,
-        },
-        await resolveAcpAdmissionLimits({
-          account_id: row.account_id,
-          project_id: row.project_id,
-          path: row.path,
-          thread_id: row.thread_id,
-        }),
-      ),
-      "automation",
-    );
-  }
-  const restored = upsertAcpAutomation(row);
-  await publishAutomationRecordToProjectIndex(restored);
-  logger.warn("recovered ACP automation from thread projection", {
-    automation_id: restored.automation_id,
-    project_id,
-    path,
-    thread_id,
-    account_id: restored.account_id,
-    responsibility_reassigned: true,
-  });
-  return restored;
-}
-
-export async function rehydrateAcpAutomationsForProject(
-  project_id: string,
-): Promise<number> {
-  const normalizedProjectId = `${project_id ?? ""}`.trim();
-  if (!normalizedProjectId) {
-    return 0;
-  }
-  const store = await getAutomationStore(normalizedProjectId);
-  const records = Object.values(store.getAll());
-  let restored = 0;
-  for (const record of records) {
-    const row = normalizeAcpAutomationRecord(record);
-    if (!row || row.project_id !== normalizedProjectId) {
-      continue;
-    }
-    upsertAcpAutomation(row);
-    restored += 1;
-  }
-  if (restored > 0) {
-    logger.debug("rehydrated ACP automations for project", {
-      project_id: normalizedProjectId,
-      restored,
-    });
-  }
-  return restored;
-}
-
-export function clearLocalAcpAutomationsForProject(project_id: string): void {
-  const normalizedProjectId = `${project_id ?? ""}`.trim();
-  if (!normalizedProjectId) {
-    return;
-  }
-  deleteAcpAutomationsForProject(normalizedProjectId);
-  resetAutomationStoreCache(normalizedProjectId);
-}
-
-async function publishAutomationRecordToProjectIndex(
-  row?: AcpAutomationRow,
-): Promise<void> {
-  if (!row) return;
-  try {
-    const store = await getAutomationStore(row.project_id);
-    store.set(
-      automationRecordKey({ path: row.path, thread_id: row.thread_id }),
-      toAutomationRecord(row)!,
-    );
-  } catch (err) {
-    resetAutomationStoreCache(row.project_id);
-    logger.warn("failed to publish automation record", {
-      automation_id: row.automation_id,
-      err,
-    });
-  }
-}
-
-async function deleteAutomationRecordFromProjectIndex(opts: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-}): Promise<void> {
-  try {
-    const store = await getAutomationStore(opts.project_id);
-    store.delete(
-      automationRecordKey({ path: opts.path, thread_id: opts.thread_id }),
-    );
-  } catch (err) {
-    resetAutomationStoreCache(opts.project_id);
-    logger.warn("failed to delete automation record", { ...opts, err });
-  }
-}
-
-async function patchThreadAutomationProjection(opts: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-  updated_by: string;
-  automation_config?: ChatThreadAutomationConfig | null;
-  automation_state?: ChatThreadAutomationState | null;
-  syncdbReadyTimeoutMs?: number;
-}): Promise<void> {
-  if (!conatClient) {
-    throw new Error("conat client must be initialized");
-  }
-  await withChatSyncDB({
-    client: conatClient,
-    project_id: opts.project_id,
-    path: opts.path,
-    readyTimeoutMs: opts.syncdbReadyTimeoutMs,
-    fn: async (syncdb) => {
-      const current = preferredThreadConfigRow(syncdb, opts.thread_id);
-      const base = current && typeof current === "object" ? { ...current } : {};
-      replaceThreadScopedRow(syncdb, THREAD_CONFIG_EVENT, opts.thread_id, {
-        ...base,
-        ...threadConfigMetadataPatch({
-          thread_id: opts.thread_id,
-          updated_at: new Date().toISOString(),
-          updated_by: opts.updated_by,
-        }),
-        automation_config: opts.automation_config ?? null,
-        automation_state: opts.automation_state ?? null,
-      });
-      syncdb.commit();
-      await syncdb.save();
-    },
-  });
-}
-
 async function persistAcpGuidanceDeliveryProjection({
   client,
   request,
@@ -9909,8 +8752,9 @@ async function prepareQueuedUserMessageForExecution({
       const current = findChatRowByMessageId(syncdb, user_message_id);
       if (
         request &&
-        request.request_kind !== "command" &&
-        (request.runtime || request.chat?.agent_rpc_execution)
+        (request.runtime ||
+          request.chat?.agent_rpc_execution ||
+          request.chat?.sensor_wake)
       ) {
         const queued = queuedConversationSession(syncdb, request);
         currentAgentConfig = queued.config;
@@ -10051,9 +8895,6 @@ async function enqueueRecoveryContinuationForJob({
   const sourceJob = current ?? job;
   if (sourceJob.error === ACP_PROJECT_RESTART_FENCE_REASON) return undefined;
   const request = decodeAcpJobRequest(sourceJob);
-  if (request.request_kind === "command") {
-    return undefined;
-  }
   // A harness job (Claude) takes the thread's current session and settings
   // when it starts, so it resumes the interrupted session even when this
   // request predates it.
@@ -10224,8 +9065,7 @@ async function enqueueFailureRecoveryContinuation({
   if (!directive) return undefined;
   // Codex error codes apply to Codex jobs; a harness only has its own.
   const failed = decodeAcpJobRequest(job);
-  const harnessJob =
-    failed.request_kind !== "command" && failed.runtime !== undefined;
+  const harnessJob = failed.runtime !== undefined;
   if (
     harnessJob !==
     (directive.code === CODEX_ACP_RECOVERY_ERROR_CODE.harnessKilled)
@@ -10380,7 +9220,7 @@ async function writeQueuedJobFailureToChat({
     await writer.handle(null);
   } catch (writerErr) {
     logger.warn("failed to write queued acp job failure to chat", {
-      chat: request.chat,
+      chat: redactChatForLog(request.chat),
       error,
       writerErr,
     });
@@ -10411,189 +9251,8 @@ function resolveHostRoots({
   };
 }
 
-async function writeQueuedCommandResultToChat({
-  request,
-  content,
-}: {
-  request: AcpCommandRequest;
-  content: string;
-}): Promise<void> {
-  if (!request.chat || !conatClient) return;
-  const sender_id =
-    `${request.chat.sender_id ?? DEFAULT_AUTOMATION_CHAT_SENDER_ID}`.trim() ||
-    DEFAULT_AUTOMATION_CHAT_SENDER_ID;
-  await withChatSyncDB({
-    client: conatClient,
-    project_id: request.chat.project_id,
-    path: request.chat.path,
-    fn: async (syncdb) => {
-      syncdb.set(
-        buildChatMessage({
-          sender_id,
-          date: request.chat?.message_date ?? new Date().toISOString(),
-          prevHistory: [],
-          content,
-          generating: false,
-          message_id: request.chat?.message_id,
-          thread_id: request.chat?.thread_id,
-          parent_message_id: request.chat?.parent_message_id,
-        }),
-      );
-      syncdb.commit();
-      await syncdb.save();
-    },
-  });
-}
-
-async function runQueuedCommandJob({
-  job,
-  request,
-}: {
-  job: AcpJobRow;
-  request: AcpCommandRequest;
-}): Promise<void> {
-  if (!conatClient) {
-    throw new Error("conat client must be initialized");
-  }
-  const projectId =
-    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
-  if (!projectId) {
-    throw new Error("command automation is missing project id");
-  }
-  const command = `${request.command ?? ""}`.trim();
-  if (!command) {
-    throw new Error("command automation is missing command");
-  }
-  const cwd = resolveAutomationCommandCwd({
-    chatPath: `${request.chat?.path ?? job.path ?? ""}`.trim(),
-    commandCwd: request.cwd,
-  });
-  const workspaceRoot = path.isAbsolute(cwd)
-    ? cwd
-    : resolveWorkspaceRoot(undefined);
-  const executor: AcpExecutor = preferContainerExecutor()
-    ? new ContainerExecutor({
-        projectId,
-        workspaceRoot,
-        conatClient,
-      })
-    : new LocalExecutor(workspaceRoot);
-  const timeoutMs = Math.max(
-    1_000,
-    Number(request.timeout_ms ?? AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS),
-  );
-  const maxOutputBytes = Math.max(
-    1_024,
-    Number(
-      request.max_output_bytes ?? AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
-    ),
-  );
-
-  try {
-    const result = await executor.exec(command, {
-      cwd,
-      timeoutMs,
-      maxOutputBytes,
-    });
-    const captured = captureCommandAutomationOutput({
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      maxOutputBytes,
-      preferStderr: (result.exitCode ?? 0) !== 0 || !!result.signal,
-    });
-    await writeQueuedCommandResultToChat({
-      request,
-      content: formatCommandAutomationMarkdown({
-        command,
-        cwd,
-        timeoutMs,
-        exitCode: result.exitCode,
-        signal: result.signal,
-        stdout: captured.stdout,
-        stderr: captured.stderr,
-        truncated: captured.truncated,
-        maxOutputBytes,
-      }),
-    });
-    const terminalState =
-      (result.exitCode ?? 0) === 0 && !result.signal ? "completed" : "error";
-    await finalizeAutomationRun({
-      automation_id: request.chat?.automation_id,
-      terminalState,
-      last_job_op_id: job.op_id,
-      last_message_id: request.chat?.message_id,
-      error:
-        terminalState === "error"
-          ? `command exited with ${
-              result.signal
-                ? `signal ${result.signal}`
-                : `code ${result.exitCode ?? "unknown"}`
-            }`
-          : undefined,
-    });
-    setAcpJobState({
-      op_id: job.op_id,
-      state: terminalState,
-      error:
-        terminalState === "error"
-          ? `command exited with ${
-              result.signal
-                ? `signal ${result.signal}`
-                : `code ${result.exitCode ?? "unknown"}`
-            }`
-          : undefined,
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
-  } catch (err) {
-    const error = `Command automation failed: ${(err as Error)?.message ?? err}`;
-    logger.warn("queued command automation failed", {
-      op_id: job.op_id,
-      err,
-    });
-    await writeQueuedCommandResultToChat({
-      request,
-      content: formatCommandAutomationMarkdown({
-        command,
-        cwd,
-        timeoutMs,
-        stderr: error,
-        maxOutputBytes,
-      }),
-    });
-    await finalizeAutomationRun({
-      automation_id: request.chat?.automation_id,
-      terminalState: "error",
-      last_job_op_id: job.op_id,
-      last_message_id: request.chat?.message_id,
-      error,
-    });
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "error",
-      error,
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
-  }
-}
-
 async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const request = decodeAcpJobRequest(job);
-  try {
-    assertAutomationRequestCurrent(
-      request,
-      request.chat?.automation_id
-        ? getAcpAutomationById(request.chat.automation_id)
-        : undefined,
-    );
-  } catch (err) {
-    setAcpJobState({
-      op_id: job.op_id,
-      state: "canceled",
-      error: `${err}`,
-      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-    });
-    return;
-  }
   const project_id = `${job.project_id}`.trim();
   const path = `${job.path}`.trim();
   const thread_id = `${job.thread_id}`.trim();
@@ -10642,9 +9301,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     if (
       request.chat?.agent_rpc_execution ||
-      (request.request_kind !== "command" && request.runtime)
+      request.chat?.sensor_wake ||
+      request.runtime
     ) {
-      if (request.request_kind !== "command" && request.runtime)
+      if (request.runtime)
         await writeQueuedJobFailureToChat({ request, error: `${err}` });
       setAcpJobState({
         op_id: job.op_id,
@@ -10656,16 +9316,15 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     }
   }
 
-  if (request.request_kind === "command") {
-    await runQueuedCommandJob({ job, request });
-    return;
-  }
-
   const refreshedRequest = applyQueuedUserMessageEditToRequest({
     request,
     latestContent: latestQueuedMessageContent,
   });
-  if (request.runtime || request.chat?.agent_rpc_execution) {
+  if (
+    request.runtime ||
+    request.chat?.agent_rpc_execution ||
+    request.chat?.sensor_wake
+  ) {
     refreshedRequest.config = currentAgentConfig;
     refreshedRequest.session_id = currentAgentSessionId;
   }
@@ -10679,16 +9338,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       ...refreshedRequest,
       stream: async () => {},
     });
-    // The live-turn lease is released before automation finalization. Record
-    // progress now so the host watchdog cannot mistake that gap for a stall.
+    // The live-turn lease is released before the job state is recorded.
+    // Record progress now so the host watchdog cannot mistake that gap for a
+    // stall.
     noteDetachedWorkerExecutionSettled(job.op_id);
-    await finalizeAutomationRun({
-      automation_id: refreshedRequest.chat?.automation_id,
-      terminalState: result.terminalState,
-      last_job_op_id: job.op_id,
-      last_message_id: refreshedRequest.chat?.message_id,
-      error: result.error,
-    });
     setAcpJobState({
       op_id: job.op_id,
       state: result.terminalState,
@@ -10725,13 +9378,6 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     await writeQueuedJobFailureToChat({
       request,
-      error: message,
-    });
-    await finalizeAutomationRun({
-      automation_id: request.chat?.automation_id,
-      terminalState: "error",
-      last_job_op_id: job.op_id,
-      last_message_id: request.chat?.message_id,
       error: message,
     });
     setAcpJobState({
@@ -11523,10 +10169,7 @@ async function assertThreadRuntimeAtAdmission(
     fn: async (syncdb) => {
       const row = preferredThreadConfigRow(syncdb, request.chat!.thread_id!);
       const value: any = syncdbField(row, "agent_runtime");
-      assertConfiguredHarnessRuntime(
-        request.request_kind === "command" ? {} : request,
-        value?.toJS?.() ?? value,
-      );
+      assertConfiguredHarnessRuntime(request, value?.toJS?.() ?? value);
     },
   });
 }
@@ -11555,25 +10198,13 @@ async function enqueueChatAcpTurn({
     ),
     "chat",
   );
-  await acknowledgeAutomationFromHumanTurn(request);
   const projectId =
     `${request.chat.project_id ?? request.project_id ?? ""}`.trim();
   const chatPath = `${request.chat.path ?? ""}`.trim();
   const threadId = `${request.chat.thread_id ?? ""}`.trim();
-  if (projectId && chatPath && threadId) {
-    const superseded = markAcpAsyncAttentionSuperseded({
-      project_id: projectId,
-      path: chatPath,
-      thread_id: threadId,
-      reason: "A newer user message superseded this question",
-    });
-    for (const record of superseded) {
-      void publishStoredAttentionNoticeBestEffort({
-        client: conatClient,
-        record,
-      });
-    }
-  }
+  // Unanswered questions stay answerable when another turn starts (an
+  // answer to a sibling question, a new message, a wake): people answer
+  // them, or dismiss them, in their own time.
   const { job: row, canceled } = enqueueAcpJobCancelingQueuedRecoveries(
     request,
     {
@@ -11786,7 +10417,7 @@ async function deliverAsyncAttentionAnswer(
     | Pick<AcpSteerRequest, "runtime" | "harness_credential" | "session_id">
     | undefined;
   const senderId = record.account_id;
-  let assistantSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+  let assistantSenderId = DEFAULT_AGENT_CHAT_SENDER_ID;
   let alreadyDelivered = false;
   await withChatSyncDB({
     client: conatClient,
@@ -11807,7 +10438,6 @@ async function deliverAsyncAttentionAnswer(
         if (
           runtime == null ||
           !source ||
-          source.request_kind === "command" ||
           !source.runtime ||
           source.account_id !== record.account_id ||
           source.chat?.thread_id !== record.thread_id
@@ -11843,7 +10473,7 @@ async function deliverAsyncAttentionAnswer(
       }
       assistantSenderId = harnessExecution
         ? "acp-harness"
-        : resolveAutomationChatSenderId(
+        : resolveAgentChatSenderId(
             syncdbField<string>(threadConfig, "agent_model") ?? config.model,
           );
       const existingAnswer = findChatRowByMessageId(syncdb, userMessageId);
@@ -11918,7 +10548,7 @@ async function deliverAsyncAttentionAnswer(
       job.account_id === record.account_id,
   );
   const activeRequest = activeJob ? decodeAcpJobRequest(activeJob) : undefined;
-  if (activeRequest && activeRequest.request_kind !== "command") {
+  if (activeRequest) {
     // An answer is guidance, not a request to change the active turn's funding.
     // Thread preferences are for the next turn and lack its admission-time pin.
     const activeConfig = activeRequest.config;
@@ -12321,6 +10951,26 @@ async function handleAcpAttentionRequest(
           }
         : { ok: false, state: "missing" };
     }
+    case "dismiss": {
+      const record = dismissAcpAsyncAttention({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+      });
+      if (!record) return { ok: false, state: "missing" };
+      if (record.state === "canceled" && conatClient) {
+        void publishStoredAttentionNoticeBestEffort({
+          client: conatClient,
+          record,
+        });
+      }
+      // Answered meanwhile (or not an async question): nothing dismissed.
+      return {
+        ok: record.state === "canceled",
+        state: record.state,
+        record: publicAttentionRecord(record),
+      };
+    }
     case "continue":
       return await continueStaleAttentionAnswer(request);
     case "respond": {
@@ -12497,7 +11147,6 @@ async function attemptAcpSteerRequest(
     if (!session.session_id) return { state: "not_steerable" };
     request = { ...request, session_id: session.session_id };
   }
-  await acknowledgeAutomationFromHumanTurn(request);
 
   const projectId = request.chat.project_id ?? request.project_id;
   if (!projectId) {
@@ -12775,11 +11424,7 @@ async function handleAcpControlRequest(
 
     try {
       const queuedRequest = decodeAcpJobRequest(row);
-      if (
-        queuedRequest.request_kind === "command" ||
-        !queuedRequest.chat ||
-        !("prompt" in queuedRequest)
-      ) {
+      if (!queuedRequest.chat || !("prompt" in queuedRequest)) {
         return await restoreQueuedImmediate();
       }
       const prepared = await prepareQueuedUserMessageForExecution({
@@ -12863,7 +11508,6 @@ async function handleAcpControlRequest(
         current.state !== "error" ||
         current.account_id !== request.account_id ||
         current.thread_id !== thread_id ||
-        currentRequest.request_kind === "command" ||
         ![
           "auto",
           "subscription",
@@ -12977,7 +11621,6 @@ export async function init(
       // obsolete request without mutating a possibly live session file.
       truncateSession: async () => ({ ok: true, truncated: false }),
       control: handleAcpControlRequest,
-      automation: handleAcpAutomationRequest,
       attention: handleAcpAttentionRequest,
     },
     client,
@@ -12985,11 +11628,7 @@ export async function init(
   // Detached workers exit while idle, so terminal chat writes that failed
   // under temporary storage pressure need a project-host-owned retry path.
   startAcpTerminalRecoveryPoller(client);
-  startAcpAutomationPoller();
   startCodexActionReconcilePoller(client);
-  void republishAcpAutomationProjectIndexes().catch((err) => {
-    logger.warn("failed to republish ACP automation project indexes", err);
-  });
   if (options.manageDetachedWorker !== false) {
     if (liteUseDetachedAcpWorker()) {
       acpExecutionOwnedByCurrentProcess = false;

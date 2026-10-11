@@ -13,6 +13,7 @@ import { registerProjectLifecycleCommands } from "./project/lifecycle";
 import { registerProjectOpsCommands } from "./project/ops";
 import { registerProjectBasicCommands } from "./project/basic";
 import { registerProjectAppCommands } from "./project/app";
+import { registerProjectBrowserCommands } from "./project/browser";
 import { registerProjectChatCommands } from "./project/chat";
 import { registerProjectJupyterCommands } from "./project/jupyter";
 import { registerProjectStorageCommands } from "./project/storage";
@@ -83,7 +84,6 @@ export type ProjectCommandDeps = {
   projectChatArtifactData: any;
   projectChatThreadStatusData: any;
   projectChatSendData: any;
-  projectChatAutomationData: any;
   projectChatActivityData: any;
   normalizeUserSearchName: any;
   resolveAccountByIdentifier: any;
@@ -173,6 +173,7 @@ export function registerProjectCommand(
   registerProjectEnvSecretCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);
   registerProjectAppCommands(project, deps);
+  registerProjectBrowserCommands(project, dataDeps);
   registerProjectTerminalCommands(project, dataDeps);
   registerProjectDocumentBuildCommands(project, dataDeps);
   registerProjectBuildSmokeCommand(project, deps);

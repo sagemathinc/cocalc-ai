@@ -26,7 +26,7 @@ export async function checkNotificationEmailSendLimitForAccount(
 ): Promise<NotificationEmailSendLimitResult> {
   const resolution = await resolveMembershipForAccount(account_id);
   const limits = getEffectiveMembershipUsageLimits(resolution);
-  const { rows } = await getPool("short").query<{
+  const { rows } = await getPool().query<{
     sent_5h: number | string;
     sent_7d: number | string;
   }>(

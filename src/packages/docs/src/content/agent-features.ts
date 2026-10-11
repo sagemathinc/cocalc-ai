@@ -140,11 +140,14 @@ recipient's chat and activity show execution results. Human
 [CLI submission to a thread](/docs/ai/codex-conversations) is a different
 operation and is not an agent-identity fallback.
 
-**Claude setup:** the network account must first send a human message in the
-recipient thread with its selected Claude subscription. Subsequent network work
-uses that privately stored selection, including the connectors choice; it does
-not borrow the sender's payment method. A missing selection, changed runtime,
-disconnected subscription, or authorization mismatch rejects delivery.
+**Claude setup:** choose a payment method for the recipient agent, or set an
+account default. Network work uses the network account's stored selection,
+including its claude.ai connector preference; it does not borrow the sender's
+payment method. If no selection is stored, CoCalc falls back to that account's
+most recent human turn in the recipient thread, and rejects delivery when there
+is none or the runtime has changed since, asking you to send one message with
+the selected payment method. A disconnected subscription or an authorization
+mismatch also rejects delivery.
 
 A live check on 2026-09-28 verified a Claude-to-Claude round trip: a busy Claude
 received a network ping during a foreground command and replied to an idle
@@ -158,9 +161,7 @@ that recipient execution completed.
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
 | [Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported | Includes objective editing, usage, pause/resume, stop, and automatic continuations; not a guaranteed provider spending cap. |
-| [Schedule agent prompts](/docs/ai/codex-automation) | Supported | Not supported | Daily/interval schedules, weekdays, timezone, and admission limits apply. |
-| [Schedule Bash commands](/docs/ai/codex-automation) | Supported | Not supported | Available through the Codex automation workflow; not a Claude-native scheduling feature. |
-| [Run now, skip, pause/resume, and acknowledge schedules](/docs/ai/codex-automation) | Supported | Not supported | Overlapping scheduled runs are not queued; unacknowledged runs can pause a schedule. |
+| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified | Scheduled prompts, one-shot watchers (CI, file, time) and approved scripts that run with the agent's own access. Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes need a subscription or site-funded credential, not an account API key. |
 | [Completion/failure/attention notifications](/docs/ai/codex-notifications) | Supported | Unverified | Channels and browser permission matter. Do not assume every Claude event has Codex notification parity. |
 | [Account session inventory and stop controls](/docs/ai/codex-notifications) | Supported | Unverified | The Codex panel is a bounded inventory, not proof that every provider process has stopped. |
 | [Inspect durable chat activity and submission state](/docs/cli/command-reference) | Supported | Preview | Activity can outlive a browser connection. Unknown outcomes require inspection, not automatic retries. |

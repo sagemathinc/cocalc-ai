@@ -26,6 +26,11 @@ import {
   nodePath,
 } from "./mounts";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  SHARED_BROWSER_APP_ID,
+  SHARED_BROWSER_RUN_DIR,
+  sharedBrowserContainerName,
+} from "@cocalc/util/shared-browser";
 import { ensureConfFilesExists, setupDataPath, writeSecretToken } from "./util";
 import { DEFAULT_PROJECT_PROXY_PORT, getEnvironment } from "./env";
 import {
@@ -193,6 +198,66 @@ export const starting = new Set<string>();
 
 export function projectSecretsHostPath(project_id: string): string {
   return join(PROJECT_SECRETS_HOST_ROOT, project_id);
+}
+
+// Shared with the project's browser containers (see
+// project-host/shared-browser-containers.ts): a fresh directory each start.
+export const PROJECT_BROWSER_RUN_HOST_ROOT = join(
+  tmpdir(),
+  "cocalc-browser-run",
+);
+
+export function projectBrowserRunHostPath(project_id: string): string {
+  if (!isValidUUID(project_id)) throw Error("invalid project id");
+  return join(PROJECT_BROWSER_RUN_HOST_ROOT, project_id);
+}
+
+async function prepareProjectBrowserRunHostPath(
+  project_id: string,
+): Promise<string> {
+  const path = projectBrowserRunHostPath(project_id);
+  await mkdir(PROJECT_BROWSER_RUN_HOST_ROOT, { recursive: true, mode: 0o711 });
+  await rm(path, { recursive: true, force: true });
+  await mkdir(path, { mode: 0o700 });
+  return path;
+}
+
+async function cleanupProjectBrowserRunHostPath(project_id: string) {
+  await rm(projectBrowserRunHostPath(project_id), {
+    recursive: true,
+    force: true,
+  });
+}
+
+/** Stop the project's browser containers (they use its rootfs and network). */
+export async function stopProjectBrowserContainers(
+  project_id: string,
+): Promise<void> {
+  const prefix = sharedBrowserContainerName(project_id, SHARED_BROWSER_APP_ID);
+  let names: string[] = [];
+  try {
+    const { stdout } = await podman(
+      ["ps", "-a", "--format", "{{.Names}}", "--filter", `name=^${prefix}`],
+      { timeout: 30 },
+    );
+    names = `${stdout ?? ""}`
+      .split("\n")
+      .map((name) => name.trim())
+      .filter((name) => name === prefix || name.startsWith(`${prefix}-`));
+  } catch (err) {
+    logger.warn("stop: listing browser containers failed", {
+      project_id,
+      err: `${err}`,
+    });
+  }
+  for (const name of names)
+    await podman(["rm", "-f", "-t", "5", name], { timeout: 30 }).catch((err) =>
+      logger.warn("stop: removing browser container failed", {
+        project_id,
+        name,
+        err: `${err}`,
+      }),
+    );
 }
 
 export async function cleanupProjectSecretsHostPath(
@@ -1852,6 +1917,32 @@ export async function resolveHostContainersInternalAddress(
   return undefined;
 }
 
+/**
+ * Make host-local conat (CONAT_SERVER at host.containers.internal) reachable
+ * from a container on this network, as the project container does: point
+ * CONAT_SERVER at a routable address and keep the alias resolving. Mutates
+ * env; returns extra podman arguments.
+ */
+export async function containerConatHostArgs(
+  selectedNetwork: string,
+  env: Record<string, string>,
+): Promise<string[]> {
+  const original = env.CONAT_SERVER;
+  if (!original || getUrlHostname(original) !== "host.containers.internal")
+    return [];
+  if (selectedNetwork.startsWith("--network=pasta")) {
+    const address =
+      pastaConatHost() ??
+      (await resolveHostContainersInternalAddress(selectedNetwork));
+    if (!address) return [];
+    env.CONAT_SERVER = replaceUrlHostname(original, address);
+    return ["--add-host", `host.containers.internal:${address}`];
+  }
+  if (selectedNetwork.startsWith("--network=slirp4netns"))
+    env.CONAT_SERVER = replaceUrlHostname(original, slirpConatHost());
+  return [];
+}
+
 function replaceUrlHostname(value: string, hostname: string): string {
   try {
     const url = new URL(value);
@@ -2221,6 +2312,10 @@ async function startUnlocked({
       "resolve_shared_scratch",
       async () => await resolveSharedScratchMount(),
     );
+    const browserRunPath = await timings.measure(
+      "prepare_browser_run_dir",
+      async () => await prepareProjectBrowserRunHostPath(project_id),
+    );
     const configuredSshPort =
       Number.isInteger(config?.ssh_port) && (config?.ssh_port ?? 0) > 0
         ? Number(config?.ssh_port)
@@ -2400,6 +2495,9 @@ async function startUnlocked({
         readOnly: true,
       }),
     );
+    args.push(
+      mountArg({ source: browserRunPath, target: SHARED_BROWSER_RUN_DIR }),
+    );
 
     for (const key in env) {
       args.push("-e", `${key}=${env[key]}`);
@@ -2570,6 +2668,8 @@ async function stopUnlocked({ project_id }: { project_id: string }) {
   try {
     stopping.add(project_id);
     try {
+      // First its browsers: they use its rootfs, and may share its network.
+      await stopProjectBrowserContainers(project_id);
       const name = projectContainerName(project_id);
       if (await containerExists(name)) {
         try {
@@ -2637,6 +2737,7 @@ async function stopUnlocked({ project_id }: { project_id: string }) {
       // otherwise the lease manager detaches it after its grace period.
       await unmountAllRootFs(project_id, { immediate: false });
       await cleanupProjectSecretsHostPath(project_id);
+      await cleanupProjectBrowserRunHostPath(project_id);
       await cleanupProjectCgroup(project_id);
     } catch (err) {
       logger.debug("stop", { err });

@@ -169,8 +169,10 @@ import {
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
   agentMessageFence,
+  sensorWakePresentation,
   stripAgentRpcPrompt,
 } from "./agent-message-presentation";
+import { sensorWakeFence } from "@cocalc/frontend/editors/slate/elements/sensor-wake";
 import {
   TurnActivityTimeline,
   type TurnTimelineContext,
@@ -427,6 +429,19 @@ export function getFocusMessageButtonStyle(): CSSProperties {
     color: UI_COLORS.muted,
     fontSize: "12px",
   };
+}
+
+/**
+ * The sensor a wake message says it came from. Chat rows are editable, so
+ * this only labels the message; it never replaces the stored sender.
+ */
+function sensorWakeTitle(message: ChatMessageTyped): string | undefined {
+  const raw = field<any>(message, "sensor_wake");
+  const sensor = typeof raw?.toJS === "function" ? raw.toJS() : raw;
+  if (!sensor?.sensor_id) return;
+  return typeof sensor.title === "string" && sensor.title.trim()
+    ? sensor.title.trim().slice(0, 100)
+    : "sensor";
 }
 
 function rpcSourceAttribution(message: ChatMessageTyped):
@@ -1020,7 +1035,13 @@ export default function Message({
     const value = rpcAttribution
       ? stripAgentRpcPrompt(formattedValue, rpc)
       : formattedValue;
-    return rpcAttribution ? agentMessageFence(value, rpcAttribution) : value;
+    if (rpcAttribution) return agentMessageFence(value, rpcAttribution);
+    // A turn a sensor started: one compact line that expands to the prompt.
+    const sensorTitle = sensorWakeTitle(message);
+    const sensorWake = sensorTitle
+      ? sensorWakePresentation(value, sensorTitle)
+      : undefined;
+    return sensorWake ? sensorWakeFence({ ...sensorWake, value }) : value;
   }, [
     is_viewers_message,
     renderedMessageValue,
@@ -1201,13 +1222,16 @@ export default function Message({
     threadMetadata?.agent_runtime?.profile?.id === "claude-code"
       ? "Claude Code"
       : "ACP agent";
+  const sensorTitle = sensorWakeTitle(message);
   const senderName = rpcAttribution
     ? rpcAttribution.label
     : isGenericAgentMessage
       ? acpDisplayName
       : isCodexAgentMessage
         ? codexAgentName(senderId)
-        : get_user_name(senderId);
+        : sensorTitle
+          ? `${get_user_name(senderId)} (sensor wake: ${sensorTitle})`
+          : get_user_name(senderId);
   const messageRuntimeKind =
     (field(message, "acp_runtime_kind") ??
       threadMetadata?.agent_runtime?.kind) === "acp"

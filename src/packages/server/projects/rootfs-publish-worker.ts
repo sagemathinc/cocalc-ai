@@ -43,6 +43,7 @@ import type {
   PublishProjectRootfsArtifact,
   RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:rootfs-publish-worker");
 
@@ -283,9 +284,7 @@ async function loadProjectHostId(project_id: string): Promise<string> {
 async function loadRootfsPublishHostDiagnostics(
   host_id: string,
 ): Promise<RootfsPublishHostDiagnostics> {
-  const { rows } = await getPool(
-    "medium",
-  ).query<RootfsPublishHostDiagnosticsRow>(
+  const { rows } = await getPool().query<RootfsPublishHostDiagnosticsRow>(
     `
       SELECT id::text AS id, name, region, metadata
       FROM project_hosts
@@ -319,7 +318,7 @@ async function listFreshRunningRootfsPublishTopologyRows({
 }: {
   lease_ms: number;
 }): Promise<RootfsPublishTopologyRow[]> {
-  const { rows } = await getPool("medium").query<RootfsPublishTopologyRow>(
+  const { rows } = await getPool().query<RootfsPublishTopologyRow>(
     `
       SELECT
         CASE
@@ -559,6 +558,10 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({
+      project_ids: [project_id],
+      host_ids: [input.project_host_id],
+    });
     const runningOp = await updateLro({
       op_id,
       status: "running",

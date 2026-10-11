@@ -70,7 +70,7 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
     "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview",
     "Agent-to-agent messaging across projects | Supported | Unverified",
     "Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported",
-    "Schedule agent prompts](/docs/ai/codex-automation) | Supported | Not supported",
+    "Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified",
     "Accepted means admitted, not completed",
     "live-verified",
     "not a copy of project files",
@@ -79,7 +79,9 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
     assert.ok(body.includes(phrase), phrase);
   const claude = full.getDocsEntry("ai/claude-code").body;
   assert.match(claude, /still need live qualification/);
-  assert.match(claude, /privately stored selection and connectors choice/);
+  assert.match(claude, /stored payment selection/);
+  assert.match(claude, /including its claude\.ai connector preference/);
+  assert.match(claude, /most recent human turn in the recipient/);
   assert.match(claude, /request_user_input_async/);
   assert.match(claude, /if that turn has already finished/);
   assert.doesNotMatch(claude, /recipient path rejects ACP guidance/);

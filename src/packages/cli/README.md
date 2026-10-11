@@ -280,6 +280,25 @@ context rather than consuming another cache slot. This is a local daemon limit,
 not a substitute for server-side account and API-key resource limits.
 These file commands do not require the project to be running.
 `project sync forward ...` uses `reflect-sync` for SSH forward sessions.
+`project browser connect` launches Chrome/Chromium on this computer with a
+throwaway profile and makes its DevTools endpoint reachable at
+`127.0.0.1:9222` (`--port`) inside the project, so agents there can drive it
+over the Chrome DevTools Protocol. It runs in the foreground; closing the
+browser or Ctrl-C removes the tunnel and the profile. By default the profile
+lives in RAM (tmpfs on Linux, a RAM disk on macOS) and never touches disk; use
+`--profile-storage disk` where no RAM-backed storage exists. The project-side
+port is bound to loopback only, and before reporting ready the command checks,
+over an ssh channel into the project, that the port reaches this browser (it
+fails closed otherwise). The tunnel is a plain `ssh -R` owned by the command
+(no reflect-sync daemon) and reconnects if the connection drops. If the command
+itself dies (crash, `kill -9`), the tunnel goes down with it and a small
+watchdog stops the browser and deletes the profile.
+**Trust boundary:** DevTools is full control of a browser running as your
+local user. Anything in the project (its agents and its collaborators'
+processes) can drive it, including opening `file://` paths on your computer
+and addresses on your local network, and reading what the browser can read.
+The throwaway profile protects your existing cookies and history, not your
+machine. Only connect projects you trust.
 Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
 against the current project context or `--project`.
 Use `project file check --bench --bench-runs <n>` to run repeated checks with
@@ -537,39 +556,20 @@ invoke a model and are not part of CI:
 5. Disconnect during submission. Check that a missing acknowledgement is not
    reported as success; inspect the thread before retrying.
 
-## Create A Daily Chat Automation
+## Schedule Agent Work With Sensors
 
-The `project chat` commands operate on a project `.chat` document. Create the
-thread first; creation alone does not run its agent:
-
-```bash
-cocalc --json project chat thread create --project "$COCALC_PROJECT_ID" \
-  --path checks.chat --name "Daily check" --session-mode read-only
-```
-
-Copy `data.thread.thread_id` from that JSON result into `check_thread_id`. Configure the automation in
-a paused state so its prompt, local time and IANA time zone can be reviewed:
+Scheduled thread automations were replaced by agent sensors. A person
+schedules a prompt (for example a daily check) in the agent's **Sensors**
+dialog, from its chat's Connectors menu. An agent sets one-shot watchers and
+proposes scripts with `cocalc sensor`, using its own runtime identity:
 
 ```bash
-cocalc project chat automation upsert --project "$COCALC_PROJECT_ID" \
-  --path checks.chat --thread-id "$check_thread_id" \
-  --prompt "Read run.log and summarize new failures without editing files." \
-  --local-time 09:00 --timezone Europe/Madrid --disabled
-cocalc project chat automation status --project "$COCALC_PROJECT_ID" \
-  --path checks.chat --thread-id "$check_thread_id"
+cocalc sensor watch ci --repo owner/name --pr 123
+cocalc sensor propose --file sensor.json
+cocalc sensor list
 ```
 
-This CLI form configures a daily local-time schedule. It does not expose every
-schedule or Bash option available elsewhere in the product. Use
-`project chat automation --help` for the installed command surface.
-
-After review, use `resume` with the same project/path/thread flags to enable
-scheduled runs. `pause` disables scheduling; `run-now` requests an immediate run.
-`acknowledge` clears the unacknowledged-run count. The optional
-`--pause-after-unacknowledged-runs` on `upsert` limits unattended repetition.
-Use `thread status` to inspect thread configuration, and `chat activity` with
-the path and thread ID to read the latest persisted Codex activity log once a
-turn has produced one.
+See `cocalc sensor --help` and the docs page "Watch for events with sensors".
 
 ## Auth Commands
 
@@ -649,6 +649,7 @@ messages for the record of what happened and the card notice for current status.
 - `project sync forward create`
 - `project sync forward list`
 - `project sync forward terminate`
+- `project browser connect`
 - `project file list`
 - `project file cat`
 - `project file put`

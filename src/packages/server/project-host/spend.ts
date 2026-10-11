@@ -293,7 +293,7 @@ export async function getDedicatedHostWindowUsageLocal(
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];
-  const { rows } = await (client ?? getPool("medium")).query(
+  const { rows } = await (client ?? getPool()).query(
     `
       SELECT
         COALESCE(
@@ -396,7 +396,7 @@ export async function getDedicatedHostWindowUsageLocal(
       "dedicated-host",
     ],
   );
-  const { rows: egressRows } = await (client ?? getPool("medium")).query(
+  const { rows: egressRows } = await (client ?? getPool()).query(
     `
       SELECT
         COALESCE(SUM(CASE
@@ -448,7 +448,7 @@ export async function getDedicatedHostWindowUsageForHostLocal({
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT
         COALESCE(
@@ -544,7 +544,7 @@ async function hasOpenDedicatedHostSpend({
   host_id?: string;
   client?: PoolClient;
 }): Promise<boolean> {
-  const { rows } = await (client ?? getPool("short")).query(
+  const { rows } = await (client ?? getPool()).query(
     `
       SELECT 1
       FROM purchases
@@ -601,7 +601,7 @@ export async function getDedicatedHostPostpaidUnbilledExposureLocal(
   account_id: string,
   { client }: { client?: PoolClient } = {},
 ): Promise<MoneyValue> {
-  const { rows } = await (client ?? getPool("medium")).query<{
+  const { rows } = await (client ?? getPool()).query<{
     exposure: string | null;
   }>(
     `
@@ -1295,7 +1295,7 @@ export async function recordDedicatedHostMeteredUsageForAccount(
 }
 
 async function loadGcpPriceCatalog(): Promise<GcpCatalogPrices | undefined> {
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT payload
       FROM cloud_catalog_cache
@@ -1428,7 +1428,7 @@ export async function estimateDedicatedHostRateUsdPerHour(
   return (await estimateDedicatedHostRate(input))?.hourly_cost_usd;
 }
 async function loadNebiusPriceItems(): Promise<NebiusCatalogPriceItem[]> {
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       SELECT payload
       FROM cloud_catalog_cache

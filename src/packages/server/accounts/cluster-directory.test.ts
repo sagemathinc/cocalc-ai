@@ -6,6 +6,7 @@ const getAdminAccountMembershipStatusMapMock = jest.fn();
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+  getCachedReadPool: jest.fn(() => ({ query: queryMock })),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({

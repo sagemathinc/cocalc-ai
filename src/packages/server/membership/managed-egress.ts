@@ -325,7 +325,7 @@ export async function initializeManagedEgressCounters({
 async function flushManagedEgressRollupBatch(
   batch: PendingManagedEgressRollup[],
 ): Promise<void> {
-  await getPool("medium").query(
+  await getPool().query(
     `
       WITH input AS (
         SELECT *
@@ -518,7 +518,7 @@ export async function getManagedEgressCategoryUsageForAccount(opts: {
   const end = opts.now ?? new Date();
   const start5h = new Date(end.getTime() - 5 * 60 * 60 * 1000);
   const start7d = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getPool().query<{
     bytes_5h: string | number;
     bytes_7d: string | number;
   }>(
@@ -606,7 +606,7 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
   params.push([...REPORTING_EXCLUDED_CATEGORIES]);
   where.push(`events.category <> ALL($${params.length}::text[])`);
   params.push(limit);
-  const { rows } = await getPool("medium").query<RawManagedEgressEventRow>(
+  const { rows } = await getPool().query<RawManagedEgressEventRow>(
     `
       SELECT
         events.account_id,
@@ -674,7 +674,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
     projectRowsResult,
     recentEventsResult,
   ] = await Promise.all([
-    getPool("medium").query<{
+    getPool().query<{
       category: string;
       bytes: string | number;
     }>(
@@ -687,7 +687,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -720,7 +720,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -760,7 +760,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
       `,
       params,
     ),
-    getPool("medium").query<RawManagedEgressEventRow>(
+    getPool().query<RawManagedEgressEventRow>(
       `
         SELECT
           events.account_id,
@@ -889,7 +889,7 @@ export async function getManagedEgressAdminHistory(opts: {
     projectRowsResult,
     recentEventsResult,
   ] = await Promise.all([
-    getPool("medium").query<{
+    getPool().query<{
       category: string;
       bytes: string | number;
     }>(
@@ -902,7 +902,7 @@ export async function getManagedEgressAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       bucket_start: Date | string;
       category: string;
       bytes: string | number;
@@ -919,7 +919,7 @@ export async function getManagedEgressAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -952,7 +952,7 @@ export async function getManagedEgressAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       account_id: string;
       email_address: string | null;
       display_name: string | null;
@@ -992,7 +992,7 @@ export async function getManagedEgressAdminHistory(opts: {
       `,
       params,
     ),
-    getPool("medium").query<RawManagedEgressEventRow>(
+    getPool().query<RawManagedEgressEventRow>(
       `
         SELECT
           events.account_id,
@@ -1130,7 +1130,7 @@ export async function getManagedEgressHistoryForAccount(opts: {
     projectRowsResult,
     recentEvents,
   ] = await Promise.all([
-    getPool("medium").query<{
+    getPool().query<{
       category: string;
       bytes: string | number;
     }>(
@@ -1143,7 +1143,7 @@ export async function getManagedEgressHistoryForAccount(opts: {
         `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       bucket_start: Date | string;
       category: string;
       bytes: string | number;
@@ -1160,7 +1160,7 @@ export async function getManagedEgressHistoryForAccount(opts: {
         `,
       params,
     ),
-    getPool("medium").query<{
+    getPool().query<{
       project_id: string | null;
       project_title: string | null;
       bytes: string | number;

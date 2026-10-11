@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import searchLocalAccounts from "@cocalc/server/accounts/search";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -519,7 +519,8 @@ async function searchDirectoryAccounts({
     return [];
   }
   await ensureClusterAccountDirectorySchema();
-  const pool = getPool("medium");
+  // query-cache-ok: display: directory search results
+  const pool = getCachedReadPool("medium");
 
   if (isValidUUID(normalizedQuery)) {
     const direct = await getDirectoryAccountById(normalizedQuery);
@@ -682,7 +683,7 @@ export async function searchClusterAccountsByVerifiedEmailDomainsDirect({
     ${identityFields},
     email_address_verified
   `;
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getPool().query(
     `
       WITH candidates AS (
         SELECT ${identityFields}, TRUE AS email_address_verified,
@@ -818,7 +819,7 @@ export async function getClusterAccountsByIdsDirect(
   if (normalized.length === 0) {
     return [];
   }
-  const pool = getPool("medium");
+  const pool = getPool();
   const [localRowsResult, directoryRowsResult] = await Promise.all([
     pool.query(
       `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
@@ -971,7 +972,7 @@ export async function getClusterBanEquivalentEmailAccountsDirect({
     ${separatorClause}
   `;
   const params = [equivalence.local_part, equivalence.domains, cappedLimit];
-  const pool = getPool("medium");
+  const pool = getPool();
   const [localRowsResult, directoryRowsResult] = await Promise.all([
     pool.query(
       `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
@@ -1007,7 +1008,8 @@ export async function getClusterAccountHomeBayCountsDirect(): Promise<
   Record<string, number>
 > {
   await ensureClusterAccountDirectorySchema();
-  const { rows } = await getPool("medium").query<{
+  // Uncached: selectSignupHomeBay places new accounts by these counts.
+  const { rows } = await getPool().query<{
     home_bay_id: string;
     count: string;
   }>(

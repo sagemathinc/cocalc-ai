@@ -29,13 +29,7 @@ import type {
   AcpHarnessCredential,
   AcpHarnessRuntime,
 } from "@cocalc/util/ai/runtime";
-import { humanChatAutomation } from "./chat-automation";
-import type {
-  AcpAutomationConfig,
-  AcpAutomationRequest,
-  AcpAutomationResponse,
-  AcpStreamMessage,
-} from "@cocalc/conat/ai/acp/types";
+import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import { prepareChatSend, submitChatSend } from "./project-chat-send";
 
@@ -55,12 +49,7 @@ type ThreadConfigPatch = Partial<
     | "acp_config"
     | "archived"
   >
-> & {
-  automation_config?: ChatThreadConfigRecord["automation_config"] | null;
-  automation_state?: ChatThreadConfigRecord["automation_state"] | null;
-};
-
-type ProjectChatAutomationAction = AcpAutomationRequest["action"] | "status";
+>;
 
 type ProjectChatOpsDeps<Ctx, Project extends ProjectIdentity> = {
   readAccountSettings: (ctx: Ctx) => Promise<Record<string, unknown>>;
@@ -151,8 +140,6 @@ function summarizeThread(
     agent_model: row.agent_model ?? null,
     agent_mode: row.agent_mode ?? null,
     acp_config: row.acp_config ?? null,
-    automation_config: row.automation_config ?? null,
-    automation_state: row.automation_state ?? null,
     archived: !!row.archived,
     updated_at: row.updated_at ?? null,
     updated_by: row.updated_by ?? null,
@@ -663,69 +650,6 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
-  async function projectChatAutomationData({
-    ctx,
-    projectIdentifier,
-    path,
-    threadId,
-    action,
-    config,
-    cwd,
-  }: {
-    ctx: Ctx;
-    projectIdentifier?: string;
-    path: string;
-    threadId: string;
-    action: ProjectChatAutomationAction;
-    config?: AcpAutomationConfig | null;
-    cwd?: string;
-  }): Promise<Record<string, unknown>> {
-    return await withProjectChatFile({
-      deps,
-      ctx,
-      projectIdentifier,
-      chatPath: path,
-      cwd,
-      fn: async ({ project, client, rows }) => {
-        const row = getThreadConfigRecord(rows, threadId);
-        if (!row) {
-          throw new Error(`thread '${threadId}' not found`);
-        }
-        if (action === "status") {
-          return {
-            project_id: project.project_id,
-            path,
-            thread_id: threadId,
-            ok: true,
-            config: row.automation_config ?? null,
-            state: row.automation_state ?? null,
-            record: null,
-          };
-        }
-        const response = (await humanChatAutomation(
-          {
-            project_id: project.project_id,
-            account_id: (ctx as any).accountId,
-            path,
-            thread_id: threadId,
-            action,
-            ...(config ? { config } : undefined),
-          } as AcpAutomationRequest,
-          client,
-        )) as AcpAutomationResponse;
-        return {
-          project_id: project.project_id,
-          path,
-          thread_id: threadId,
-          ok: !!response.ok,
-          config: response.config ?? null,
-          state: response.state ?? null,
-          record: response.record ?? null,
-        };
-      },
-    });
-  }
-
   async function projectChatActivityData({
     ctx,
     projectIdentifier,
@@ -807,7 +731,6 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     projectChatThreadCreateData,
     projectChatThreadForkData,
     projectChatThreadStatusData,
-    projectChatAutomationData,
     projectChatActivityData,
   };
 }

@@ -216,6 +216,7 @@ import {
   type ProjectCommandDeps,
 } from "./commands/project";
 import { registerAgentCommand } from "./commands/agent";
+import { registerSensorCommand } from "./commands/sensor";
 import { registerShareCommand, type ShareCommandDeps } from "./commands/share";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
 import { registerUrlCommand } from "./commands/personal-urls";
@@ -2640,7 +2641,6 @@ const {
   projectChatThreadForkData,
   projectChatArtifactData,
   projectChatThreadStatusData,
-  projectChatAutomationData,
   projectChatActivityData,
 } = createProjectChatOps<CommandContext, ProjectRow>({
   resolveProjectConatClient,
@@ -3271,7 +3271,6 @@ const projectCommandDeps = {
   projectChatSendData,
   projectChatArtifactData,
   projectChatThreadStatusData,
-  projectChatAutomationData,
   projectChatActivityData,
   projectJupyterCellsData,
   projectJupyterKernelData,
@@ -3330,6 +3329,7 @@ const projectCommandDeps = {
 
 registerProjectCommand(program, projectCommandDeps);
 registerAgentCommand(program, projectCommandDeps);
+registerSensorCommand(program, projectCommandDeps);
 const shareCommandDeps = {
   withContext,
   hubCallByName,

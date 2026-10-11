@@ -240,7 +240,6 @@ interface ChatRoomSidebarContentProps {
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
   confirmResetThread: (threadKey: string, label: string) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
-  openAutomationModal: (threadKey: string) => void;
 }
 
 export function openArchivedThread({
@@ -288,7 +287,6 @@ export function ChatRoomSidebarContent({
   openForkModal,
   confirmResetThread,
   confirmDeleteThread,
-  openAutomationModal,
 }: ChatRoomSidebarContentProps) {
   const [hoveredThread, setHoveredThread] = React.useState<string | null>(null);
   const [openThreadMenuKey, setOpenThreadMenuKey] = React.useState<
@@ -322,7 +320,6 @@ export function ChatRoomSidebarContent({
       hasCustomName,
       unreadCount,
       isAI,
-      isAutomation,
       isPinned,
       threadColor,
       threadAccentColor,
@@ -459,7 +456,6 @@ export function ChatRoomSidebarContent({
               hasCustomName={hasCustomName}
               isPinned={isPinned}
               isAI={isAI}
-              isAutomation={isAutomation}
               isCodexThread={isCodexThread}
               notificationMuted={
                 !!(
@@ -477,7 +473,6 @@ export function ChatRoomSidebarContent({
               openForkModal={openForkModal}
               confirmResetThread={confirmResetThread}
               confirmDeleteThread={confirmDeleteThread}
-              openAutomationModal={openAutomationModal}
               open={openThreadMenuKey === key}
               onOpenChange={(open) => {
                 setOpenThreadMenuKey(open ? key : null);

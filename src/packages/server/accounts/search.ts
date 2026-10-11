@@ -6,7 +6,7 @@ Search for users.
 - by partial match on display_name, first_name and last_name
 */
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 import {
   cmp,
   isValidUUID,
@@ -171,7 +171,8 @@ const FIELDS =
 async function getUserByEmailAddress(
   email_address: string,
 ): Promise<DBUser | undefined> {
-  const pool = getPool("medium");
+  // query-cache-ok: display: account search results
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address=$1`,
     [email_address.toLowerCase()],
@@ -182,7 +183,8 @@ async function getUserByEmailAddress(
 async function getUserByAccountId(
   account_id: string,
 ): Promise<DBUser | undefined> {
-  const pool = getPool("medium");
+  // query-cache-ok: display: account search results
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE account_id=$1`,
     [account_id.toLowerCase()],
@@ -192,7 +194,8 @@ async function getUserByAccountId(
 
 // only for admin search
 async function getCollaborators(project_id: string): Promise<DBUser[]> {
-  const pool = getPool("medium");
+  // query-cache-ok: display: account search results
+  const pool = getCachedReadPool("medium");
   let subQuery = `SELECT jsonb_object_keys(users) AS account_id FROM projects WHERE project_id=$1`;
   const queryParams = [project_id];
   const fields = FIELDS.split(",")
@@ -213,7 +216,8 @@ async function getUsersByEmailAddresses(
   logger.debug("getUsersByEmailAddresses", email_queries);
   if (email_queries.length == 0 || limit <= 0) return [];
 
-  const pool = getPool("medium");
+  // query-cache-ok: display: account search results
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address = ANY($1::TEXT[]) AND deleted IS NULL`,
     [email_queries],
@@ -268,7 +272,8 @@ async function getUsersByStringQueries(
   i += 1;
   params.push(limit);
 
-  const pool = getPool("medium");
+  // query-cache-ok: display: account search results
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(query, params);
   return rows;
 }

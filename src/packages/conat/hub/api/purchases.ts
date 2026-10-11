@@ -77,6 +77,8 @@ export interface MembershipUsageLimits {
   acp_max_running_per_account?: number;
   acp_max_running_per_project?: number;
   acp_max_active_automations_per_project?: number;
+  sensor_min_interval_minutes?: number;
+  sensor_max_wakes_per_day?: number;
   blob_account_total_bytes?: number;
   blob_account_count?: number;
   blob_project_total_bytes?: number;
@@ -171,6 +173,8 @@ export interface AccountUsageLimitOverrides {
   acp_max_running_per_account?: NumericLimitRule;
   acp_max_running_per_project?: NumericLimitRule;
   acp_max_active_automations_per_project?: NumericLimitRule;
+  sensor_min_interval_minutes?: NumericLimitRule;
+  sensor_max_wakes_per_day?: NumericLimitRule;
   blob_account_total_bytes?: NumericLimitRule;
   blob_account_count?: NumericLimitRule;
   blob_project_total_bytes?: NumericLimitRule;

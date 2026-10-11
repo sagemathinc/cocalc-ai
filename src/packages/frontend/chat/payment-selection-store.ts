@@ -525,8 +525,13 @@ export async function copyPaymentSelection(opts: {
   accountId?: string;
   from: AgentPaymentTarget;
   to: AgentPaymentTarget;
+  /** Throw unless the server copied it (for a turn that must pay the same). */
+  strict?: boolean;
 }): Promise<void> {
-  if (!forAccount(opts.accountId)) return;
+  if (!forAccount(opts.accountId)) {
+    if (opts.strict) throw Error("Not signed in as this account");
+    return;
+  }
   const source = entries.get(key(opts.from.project_id, opts.from.thread_id));
   const k = key(opts.to.project_id, opts.to.thread_id);
   if (source) {
@@ -536,8 +541,11 @@ export async function copyPaymentSelection(opts: {
     emit();
   } else loaded.delete(k);
   try {
-    await api()?.copyPaymentSelection({ from: opts.from, to: opts.to });
+    const client = api();
+    if (!client) throw Error("The payment service is unavailable");
+    await client.copyPaymentSelection({ from: opts.from, to: opts.to });
   } catch (err) {
+    if (opts.strict) throw err;
     console.warn("could not copy agent payment selection", err);
   }
 }

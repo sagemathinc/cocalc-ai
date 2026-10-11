@@ -668,9 +668,13 @@ describeDb("account-home Agent Networks", () => {
       },
       8,
     );
-    expect((await store.discover(account, source, run_id)).peers).toHaveLength(
-      2,
-    );
+    const rejoined = (await store.discover(account, source, run_id)).peers;
+    expect(rejoined).toHaveLength(2);
+    // Every endpoint in this suite shares one project.
+    expect(rejoined.map(({ same_project }) => same_project)).toEqual([
+      true,
+      true,
+    ]);
     await expect(
       store.checkNetwork(
         account,
@@ -735,6 +739,9 @@ describeDb("account-home Agent Networks", () => {
       installation_id: installations[0],
     };
     const found = await store.discover(account, external);
+    expect(found.peers.every((peer) => peer.same_project === undefined)).toBe(
+      true,
+    );
     expect(found.peers.map(({ member }) => member.member_id).sort()).toEqual(
       [source.agent_id, peer.agent_id].sort(),
     );

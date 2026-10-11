@@ -5,7 +5,7 @@ that shouldn't be made available to anybody who knows this account_id.
 Only call this for the account_id of the signed in user.
 */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import {
   displayNameFromAccount,
   legacyNamePartsFromDisplayName,
@@ -16,7 +16,8 @@ export default async function getPrivateProfile(
   account_id: string,
   noCache: boolean = false,
 ): Promise<Profile> {
-  const pool = getPool(noCache ? undefined : "medium");
+  // query-cache-ok: display: the signed-in user's own profile (is_admin here is only shown; access checks use isAdmin)
+  const pool = noCache ? getPool() : getCachedReadPool("medium");
   const { rows } = await pool.query(
     "SELECT display_name, first_name, last_name, profile, groups, email_address FROM accounts WHERE account_id=$1",
     [account_id],

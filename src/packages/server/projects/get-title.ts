@@ -1,7 +1,7 @@
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 
 export default async function getTitle(project_id: string): Promise<string> {
-  const pool = getPool("long");
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT title FROM projects WHERE project_id=$1",
     [project_id],

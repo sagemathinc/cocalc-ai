@@ -16,6 +16,7 @@ import {
   VIRTUAL_MACHINES_BODY,
 } from "../content/projects";
 import { OPEN_TERMINAL_BODY } from "../content/terminal";
+import { WEB_BROWSER_BODY } from "../content/web-browser";
 import { RESEARCH_HANDOFF_BODY } from "../content/research";
 import { ROOTFS_BODY } from "../content/jupyter";
 import { TASKS_BODY } from "../content/files";
@@ -117,6 +118,20 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     summary:
       "Use durable collaborative terminals backed by real project Linux processes.",
     title: "Open a terminal",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: WEB_BROWSER_BODY.trim(),
+    category: "Projects",
+    id: "projects.web-browser",
+    lastReviewed: "2026-10-10",
+    searchKeywords:
+      "web browser chromium chrome .browser shared browser agent take over hand back login sign in captcha playwright puppeteer cdp localhost test web app screenshot scrape forms run on my computer laptop connect X twitter membership internet",
+    slug: "projects/web-browser",
+    status: "ready",
+    summary:
+      "A real web browser in your project that agents drive while you watch, take over, and hand back; it can also run on your own computer.",
+    title: "Use a web browser with agents",
   },
   {
     actions: [

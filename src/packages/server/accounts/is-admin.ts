@@ -18,7 +18,7 @@ export default async function isAdmin(
   const home = await resolveAccountHome(account_id, client);
   if (home.kind === "absent") return false;
   if (home.kind === "here") {
-    const { rows } = await (client ?? getPool("long")).query<{
+    const { rows } = await (client ?? getPool()).query<{
       groups: string[] | null;
     }>(
       "SELECT groups FROM accounts WHERE account_id=$1 AND deleted IS NOT TRUE",
@@ -43,7 +43,7 @@ export default async function isAdmin(
 }
 
 export async function getAdmins(): Promise<Set<string>> {
-  const pool = getPool("long");
+  const pool = getPool();
   const { rows } = await pool.query(
     "SELECT account_id FROM accounts WHERE 'admin' = ANY(groups)",
   );

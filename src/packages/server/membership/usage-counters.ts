@@ -311,7 +311,7 @@ export async function flushAccountUsageCounters(): Promise<void> {
   const batch = [...pendingCounters.values()];
   pendingCounters.clear();
   if (batch.length === 0) return;
-  flushPromise = getPool("medium")
+  flushPromise = getPool()
     .query(
       `
         WITH input AS (

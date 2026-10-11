@@ -446,6 +446,29 @@ function RuntimeCodexAttentionCard({
     : staleWithAnswer
       ? `Your response is saved, but could not be delivered. You can retry with this answer.${record.resolution_reason ? ` ${record.resolution_reason}` : ""}`
       : "Your response is saved. Receipt by the agent is not confirmed.";
+  // An unanswered async question stays open across turns until it is
+  // answered or dismissed here, on every device.
+  const dismissable =
+    pending && !hasResponse && record.source_kind === "codex_async_question";
+  const dismiss = async () => {
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      const result = await webapp_client.conat_client.attentionAcp({
+        action: "dismiss",
+        project_id: record.project_id,
+        attention_id: record.attention_id,
+      });
+      if (result.record) acceptRecord(result.record);
+      if (!result.ok)
+        throw new Error(result.error ?? "The question could not be dismissed.");
+      setDismissed(true);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const setDismissed = (value: boolean) => {
     setCollapsed(value);
     try {
@@ -492,7 +515,12 @@ function RuntimeCodexAttentionCard({
           <Button
             type="text"
             aria-expanded={!collapsed}
-            onClick={() => setDismissed(!collapsed)}
+            disabled={submitting}
+            onClick={() =>
+              collapsed || !dismissable
+                ? setDismissed(!collapsed)
+                : void dismiss()
+            }
           >
             {collapsed ? "Show question" : "Dismiss"}
           </Button>

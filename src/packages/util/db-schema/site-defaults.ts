@@ -1850,8 +1850,8 @@ export const site_settings_conf: SiteSettings = {
   },
   launcher_default_quick_create: {
     name: "Launcher: Quick Create",
-    desc: "Comma-separated exact site-wide quick-create ids used when a user has not configured a personal launcher list (e.g. chat,ipynb,md,tex,term).",
-    default: "chat,ipynb,md,tex,term",
+    desc: "Comma-separated exact site-wide quick-create ids used when a user has not configured a personal launcher list (e.g. chat,ipynb,md,tex,term,browser).",
+    default: "chat,ipynb,md,tex,term,browser",
     to_val: split_csv_tokens,
     tags: ["Workspace"],
     group: "Branding & UI",

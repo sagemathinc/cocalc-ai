@@ -11,7 +11,12 @@ additional persist server:
 import "./index";
 import sqlite from "node:sqlite";
 import { initContext } from "@cocalc/conat/persist/context";
-const { zstdCompressSync, zstdDecompressSync } = require("node:zlib");
+const {
+  zstdCompressSync,
+  zstdDecompressSync,
+  zstdDecompress,
+} = require("node:zlib");
+import { promisify } from "node:util";
 import { syncFiles } from "@cocalc/backend/data";
 import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { statSync, copyFileSync } from "node:fs";
@@ -21,6 +26,8 @@ initContext({
   sqlite,
   compress: zstdCompressSync,
   decompress: zstdDecompressSync,
+  // runs in the libuv threadpool
+  decompressAsync: promisify(zstdDecompress),
   syncFiles,
   ensureContainingDirectoryExists,
   statSync,

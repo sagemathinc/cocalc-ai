@@ -1,7 +1,7 @@
 // Get email address of an account. If no such account or email not set, returns undefined...
 // Answers are cached for a while.
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 
 export default async function getEmailAddress(
@@ -11,7 +11,8 @@ export default async function getEmailAddress(
   if (cluster?.email_address) {
     return cluster.email_address;
   }
-  const pool = getPool("long");
+  // query-cache-ok: display: email shown or used as a contact address
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT email_address FROM accounts WHERE account_id=$1",
     [account_id],

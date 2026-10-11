@@ -59,6 +59,8 @@ export type ThreadForkPlan =
       shouldForkAcp: boolean;
     };
 
+// Legacy: replies of the retired scheduled thread automations ran in their
+// own sessions, so they never anchor a fork.
 function isAutomationMessage(msg: Row | undefined): boolean {
   const id = msg?.acp_automation_id;
   return typeof id === "string" && id.trim().length > 0;

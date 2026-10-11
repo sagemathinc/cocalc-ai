@@ -21,3 +21,21 @@ test("runtime selector opens full labels from the keyboard", async () => {
   await user.click(screen.getByRole("option", { name: "Claude" }));
   expect(onChange).toHaveBeenCalledWith("claude-code", expect.anything());
 });
+
+test("the first-run selector offers only Codex and Claude", async () => {
+  const user = userEvent.setup();
+  render(
+    <NewAgentRuntimeSelect
+      value="codex-native"
+      includeCustom={false}
+      onChange={jest.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("combobox", { name: "Agent runtime" }));
+  expect(await screen.findByRole("option", { name: "Claude" })).toBeTruthy();
+  expect(
+    screen.queryByRole("option", {
+      name: "Custom ACP harness (experimental)",
+    }),
+  ).toBeNull();
+});

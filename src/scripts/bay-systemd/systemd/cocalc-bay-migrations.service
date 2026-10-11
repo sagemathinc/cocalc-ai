@@ -16,6 +16,7 @@ EnvironmentFile=-/etc/cocalc/bay-secrets.env
 EnvironmentFile=-/etc/cocalc/bay-local.env
 Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1
 LoadCredential=site-master-key:/etc/cocalc/site-master-key
+LoadCredential=site-master-key.keyring:/etc/cocalc/site-master-key.keyring
 ExecStart=/opt/cocalc/bay/current/bin/bay-migrate
 RemainAfterExit=yes
 StandardOutput=journal

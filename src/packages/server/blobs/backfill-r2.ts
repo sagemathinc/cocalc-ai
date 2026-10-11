@@ -55,7 +55,7 @@ async function nextUuidBatch({
   }
   params.push(batchSize);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-  const { rows } = await getPool("long").query<{ uuid: string }>(
+  const { rows } = await getPool().query<{ uuid: string }>(
     `
       SELECT id::text AS uuid
         FROM blobs

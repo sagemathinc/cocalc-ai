@@ -3,7 +3,6 @@
  *
  * Phase 0 intentionally keeps this JSON-first and deterministic for agent flows.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Command } from "commander";
 
@@ -11,8 +10,9 @@ import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-h
 
 import type { ProjectCommandDeps } from "../project";
 import {
-  buildManagedProjectSshConfigLines,
   cloudflaredProxyCommand,
+  ensureManagedProjectSshConfigEntry,
+  managedProjectSshAlias,
   managedProjectSshOptionArgs,
 } from "./ssh-config";
 
@@ -144,10 +144,6 @@ function sanitizeForwardToken(value: string): string {
   return normalized || "app";
 }
 
-function managedProjectSshAlias(projectId: string): string {
-  return `cocalc-project-${projectId}`;
-}
-
 function managedAppForwardName(
   projectId: string,
   appId: string,
@@ -266,77 +262,6 @@ function printAppTemplateRowsHuman(rows: AppTemplateRow[]): void {
       console.log(`  Path:    ${row.source_path}`);
     }
   }
-}
-
-function ensureManagedProjectSshConfigEntry({
-  configPath,
-  alias,
-  route,
-  keyPath,
-  cloudflaredBinary,
-  removeProjectSshConfigBlock,
-  projectSshConfigBlockMarkers,
-}: {
-  configPath: string;
-  alias: string;
-  route: {
-    ssh_transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
-    ssh_username: string;
-    cloudflare_hostname: string | null;
-    ssh_host: string | null;
-    ssh_port: number | null;
-  };
-  keyPath: string | null;
-  cloudflaredBinary: string | null;
-  removeProjectSshConfigBlock: (
-    content: string,
-    alias: string,
-  ) => { content: string };
-  projectSshConfigBlockMarkers: (alias: string) => {
-    start: string;
-    end: string;
-  };
-}): void {
-  const hostName =
-    route.ssh_transport !== "direct"
-      ? `${route.cloudflare_hostname ?? ""}`.trim()
-      : `${route.ssh_host ?? ""}`.trim();
-  if (!hostName) {
-    throw new Error("project ssh route is missing host endpoint");
-  }
-  let proxyCommand: string | null = null;
-  if (route.ssh_transport !== "direct") {
-    if (!cloudflaredBinary) {
-      throw new Error(
-        "cloudflared is required for managed Cloudflare SSH forwarding",
-      );
-    }
-    proxyCommand = cloudflaredProxyCommand({
-      cloudflared: cloudflaredBinary,
-      hostname: "%h",
-    });
-  }
-  const lines = buildManagedProjectSshConfigLines({
-    alias,
-    hostName,
-    username: route.ssh_username,
-    proxyCommand,
-    port: route.ssh_transport === "direct" ? route.ssh_port : null,
-    identityFile: keyPath,
-  });
-
-  const markers = projectSshConfigBlockMarkers(alias);
-  const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
-  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
-  const existing = existsSync(configPath)
-    ? readFileSync(configPath, "utf8")
-    : "";
-  const stripped = removeProjectSshConfigBlock(
-    existing,
-    alias,
-  ).content.trimEnd();
-  const next = stripped ? `${stripped}\n\n${block}` : block;
-  writeFileSync(configPath, next, { encoding: "utf8", mode: 0o600 });
 }
 
 async function resolveAppForwardCommand(

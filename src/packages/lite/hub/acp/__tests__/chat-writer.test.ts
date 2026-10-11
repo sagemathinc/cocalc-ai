@@ -109,6 +109,7 @@ jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
 jest.mock("@cocalc/conat/sync/akv", () => ({
   akv: jest.fn(() => ({
     set: jest.fn(async () => {}),
+    close: jest.fn(),
   })),
 }));
 jest.mock("@cocalc/conat/hub/call-hub", () => ({
@@ -256,6 +257,7 @@ beforeEach(() => {
   (akv as any)?.mockReset?.();
   (akv as any)?.mockImplementation?.(() => ({
     set: jest.fn(async () => {}),
+    close: jest.fn(),
   }));
   callHubMock.mockReset();
   callHubMock.mockResolvedValue(undefined);
@@ -2748,69 +2750,6 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("does not rebind the thread's session id for automation runs", async () => {
-    const { syncdb, sets } = makeFakeSyncDB();
-    // The thread is already bound to the user's interactive session.
-    const INTERACTIVE_SESSION = "interactive-session-keep-me";
-    syncdb.set({
-      event: "chat-thread-config",
-      thread_id: baseMetadata.thread_id,
-      date: CHAT_THREAD_META_ROW_DATE,
-      sender_id: threadConfigSenderId(baseMetadata.thread_id as string),
-      acp_config: { sessionId: INTERACTIVE_SESSION, model: "gpt-5.3-codex" },
-    });
-    const setsBefore = sets.length;
-    const writer: any = new ChatStreamWriter({
-      metadata: { ...baseMetadata, automation_id: "auto-1" } as any,
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady();
-
-    await (writer as any).handle({
-      type: "status",
-      state: "init",
-      threadId: "automation-session-1",
-      seq: 0,
-    } as AcpStreamMessage);
-    await flush(writer);
-
-    // The automation's own session is still tracked on the message...
-    const metadataUpdate = sets.find(
-      (row: any) =>
-        row.message_id === "msg-0" &&
-        row.acp_thread_id === "automation-session-1",
-    );
-    expect(metadataUpdate).toBeTruthy();
-    expect(
-      syncdb.get_one({ event: "chat", message_id: "msg-0" })?.acp_automation_id,
-    ).toBe("auto-1");
-    // ...but the shared thread config must NOT be re-bound to it, or the next
-    // interactive turn would resume the automation's session instead of the
-    // user's own.
-    const threadCfgWrites = sets
-      .slice(setsBefore)
-      .filter(
-        (row: any) =>
-          row.event === "chat-thread-config" &&
-          row.thread_id === baseMetadata.thread_id &&
-          row.acp_config?.sessionId != null,
-      );
-    expect(threadCfgWrites).toEqual([]);
-    // The pre-existing interactive session id survives verbatim.
-    const storedConfig = syncdb.get_one({
-      event: "chat-thread-config",
-      thread_id: baseMetadata.thread_id,
-    });
-    expect(storedConfig?.acp_config?.sessionId).toBe(INTERACTIVE_SESSION);
-    (writer as any).dispose?.(true);
-  });
-
   it("does not rewrite thread-state for duplicate live running status", async () => {
     const { syncdb, getVersions } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -3654,37 +3593,6 @@ describe("ChatStreamWriter", () => {
         },
       }),
     ).rejects.toThrow("Chat closed");
-  });
-
-  it("does not mirror automation goals onto the interactive thread", async () => {
-    const { syncdb } = makeFakeSyncDB();
-    const writer = new ChatStreamWriter({
-      metadata: { ...baseMetadata, automation_id: "automation" },
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () => ({ set: async () => {} }) as any,
-    });
-    await writer.waitUntilReady();
-    await writer.handle({
-      type: "event",
-      event: {
-        type: "goal",
-        phase: "end",
-        snapshot: {
-          sessionId: "automation-session",
-          observedAt: 10,
-          goal: null,
-        },
-      },
-    });
-    expect(
-      syncdb
-        .get({ event: "chat-thread-config" })
-        .some((row) => row.acp_goal !== undefined),
-    ).toBe(false);
-    expect(writer.readPendingGoal()).toBeUndefined();
-    writer.dispose(true);
   });
 
   it.each(["codex", "acp"] as const)(
@@ -4980,5 +4888,78 @@ describe("terminal storage recovery candidates", () => {
         reason: "model request failed",
       } as any),
     ).toBe(false);
+  });
+});
+
+describe("ChatStreamWriter activity log storage failures", () => {
+  it("completes a turn whose reply was saved even if the activity log cannot be", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const ioError = Object.assign(new Error("Error: disk I/O error"), {
+      code: "ERR_SQLITE_ERROR",
+    });
+    const logSet = jest.fn(async () => {
+      throw ioError;
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () => ({ set: logSet }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "the answer" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "summary",
+      finalResponse: "the answer",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(logSet).toHaveBeenCalled();
+    // The activity log store is separate from the chat document, so its
+    // failure must not stop chat writes or relabel the turn.
+    expect(writer.syncdbError).toBeUndefined();
+    expect(writer.getTerminalState()).toBe("completed");
+    const final = findLastChatSet(sets)!;
+    expect(final.generating).toBe(false);
+    expect(final.acp_interrupted).not.toBe(true);
+    expect(final.history[0].content).toContain("the answer");
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ state: "completed" })],
+      ]),
+    );
+    // Keep the queued payloads so a replay can rebuild the activity log.
+    expect(queue.clearAcpPayloads).not.toHaveBeenCalled();
+    writer.dispose(true);
+  });
+
+  it("releases the activity log store it opened when disposed", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const close = jest.fn();
+    (akv as any).mockImplementationOnce(() => ({
+      set: async () => {},
+      close,
+    }));
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+    });
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+    writer.dispose(true);
+    await writer.waitUntilDisposed();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

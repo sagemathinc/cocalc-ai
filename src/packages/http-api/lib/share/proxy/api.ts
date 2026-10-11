@@ -33,7 +33,7 @@ declare var fetch, Headers;
 
 import { encode } from "base-64";
 import { join } from "path";
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 
 // We don't allow just fetching content that is arbitrarily large, since that could cause
 // the server to just run out of memory.  However, we want this to reasonably big.
@@ -79,7 +79,7 @@ async function credentials(): Promise<{
   github_token?: string;
   github_block?: string;
 }> {
-  const pool = getPool("long");
+  const pool = getCachedReadPool("long");
   const { rows } = await pool.query(
     "SELECT name, value FROM server_settings WHERE name='github_username' OR name='github_token' OR name='github_block'",
   );

@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import centralLog from "@cocalc/database/postgres/central-log";
 import { isDeepStrictEqual } from "node:util";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -196,6 +197,18 @@ function planCourseManagedProjectReconciliation(
         ? requestedCourseAccountId
         : undefined) ?? requestedDesiredAccountId;
     const currentStudentAccountId = `${currentCourse?.account_id ?? ""}`.trim();
+    if (
+      requestedStudentAccountId &&
+      isValidUUID(currentStudentAccountId) &&
+      requestedStudentAccountId !== currentStudentAccountId
+    ) {
+      // The project is already bound to a (possibly just-accepted) student.
+      // A request naming someone else is stale or conflicting; never let it
+      // reassign the project and remove the bound student (support #20986).
+      throw new Error(
+        "student account binding conflict: the project is bound to a different student account",
+      );
+    }
     if (requestedStudentAccountId) {
       resolvedStudentAccountId = requestedStudentAccountId;
       desiredAccountIds.add(requestedStudentAccountId);
@@ -214,6 +227,26 @@ function planCourseManagedProjectReconciliation(
       throw new Error(
         "a course manager cannot also be assigned as a student; use a separate student account",
       );
+    }
+  }
+  if (type === "student" && request.student_deleted === true) {
+    // Deleting a student removes their access (below, subject to the
+    // collaborator policy), but must not rewrite who the project belongs to.
+    // The roster entry may never have learned the account that accepted the
+    // invite; erasing the binding then would leave a restored (undeleted)
+    // student with no way back into their project.
+    const requestedCourseAccountId = `${course.account_id ?? ""}`.trim();
+    const currentStudentAccountId = `${currentCourse?.account_id ?? ""}`.trim();
+    if (isValidUUID(currentStudentAccountId)) {
+      if (
+        isValidUUID(requestedCourseAccountId) &&
+        requestedCourseAccountId !== currentStudentAccountId
+      ) {
+        throw new Error(
+          "student account binding conflict: the project is bound to a different student account",
+        );
+      }
+      course = { ...course, account_id: currentStudentAccountId };
     }
   }
   const nextCourse = preserveStudentCourse ? currentCourse : course;
@@ -338,6 +371,8 @@ export async function reconcileCourseManagedProjectLocal(
   validateCourseManagedProjectRequest(request);
   const client = await getPool().connect();
   let usersChanged = false;
+  let removedAccountIds: string[] = [];
+  let previousCourse: any = null;
   let missingDesiredAccountIds: string[] = [];
   const changedFields = new Set<string>();
   try {
@@ -360,6 +395,10 @@ export async function reconcileCourseManagedProjectLocal(
       throw new Error(`project ${project_id} not found on its owning bay`);
     }
     const plan = planCourseManagedProjectReconciliation(request, row);
+    removedAccountIds = Object.keys(row.users ?? {}).filter(
+      (id) => plan.users[id] == null,
+    );
+    previousCourse = row.course ?? null;
     usersChanged = plan.usersChanged;
     missingDesiredAccountIds = plan.missingDesiredAccountIds;
     for (const field of plan.changedFields) changedFields.add(field);
@@ -398,6 +437,31 @@ export async function reconcileCourseManagedProjectLocal(
       });
     }
     await client.query("COMMIT");
+    if (removedAccountIds.length > 0) {
+      // Membership removals must be traceable (support #20986: a student
+      // vanished from a project after accepting its invite, with no record).
+      await centralLog({
+        event: "project_collaborator_removed",
+        value: {
+          via: "course-reconcile",
+          project_id,
+          actor_account_id: account_id,
+          removed_account_ids: removedAccountIds,
+          course_project_id: request.course_project_id,
+          type: request.type,
+          student_id: request.student_id,
+          student_deleted: request.student_deleted === true,
+          previous_course_type: previousCourse?.type ?? null,
+          previous_course_account_id: previousCourse?.account_id ?? null,
+          requested_course_account_id: request.course?.account_id ?? null,
+          requested_desired_account_ids: request.desired_account_ids ?? [],
+          allow_collabs: request.allow_collabs ?? null,
+          disable_collaborators:
+            request.course?.student_project_functionality
+              ?.disableCollaborators ?? null,
+        },
+      }).catch(() => undefined);
+    }
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

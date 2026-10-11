@@ -61,6 +61,10 @@ import {
   supportsCodexAttentionInput,
 } from "./codex-attention";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
+import {
+  isRegExpWhitespace,
+  trimTrailingChars,
+} from "@cocalc/util/linear-text";
 const logger = getLogger("ai:acp:codex-app-server");
 const REQUEST_TIMEOUT_MS = Math.max(
   5_000,
@@ -1127,7 +1131,10 @@ function getUserFacingStderrTail(lines: string[]): string[] {
     .match(/\brejected:\s*([^"\n]+)/i)?.[1]
     ?.trim();
   if (rejected) {
-    const message = rejected.replace(/[\s)}]+$/, "");
+    const message = trimTrailingChars(
+      rejected,
+      (char) => char === ")" || char === "}" || isRegExpWhitespace(char),
+    );
     return [`Codex blocked a command: ${message}`];
   }
   return filtered;
@@ -2865,7 +2872,7 @@ export class CodexAppServerAgent implements AcpAgent {
       turnEnv[key] = typeof value === "string" ? value : "";
     }
     // Goal lifecycle belongs to Codex and explicit user actions. Starting a
-    // chat or automation turn must not clear this or other threads' goals.
+    // chat or agent-authored turn must not clear this or other threads' goals.
     const errors: string[] = [];
     let lastErrorNotification: any | undefined;
     let lastFailedTurnCompletion: any | undefined;
