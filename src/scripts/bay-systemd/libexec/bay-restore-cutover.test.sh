@@ -62,11 +62,14 @@ cat > "${TMP_ROOT}/fake/sleep" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-# The bay account has processes while "bay-procs" exists; pkill ends them.
+# The bay account has processes while "bay-procs" exists (pkill ends them)
+# and while any of its services in units/ runs: systemd would restart those,
+# so pkill does not end them; only stopping the unit does.
+UNITS="${TMP_ROOT}/units"
 cat > "${TMP_ROOT}/fake/pgrep" <<EOF
 #!/usr/bin/env bash
 echo "pgrep \$*" >> "${LOG}"
-[[ -e "${TMP_ROOT}/bay-procs" ]]
+[[ -e "${TMP_ROOT}/bay-procs" ]] || [[ -n "\$(ls -A "${UNITS}")" ]]
 EOF
 cat > "${TMP_ROOT}/fake/pkill" <<EOF
 #!/usr/bin/env bash
@@ -78,7 +81,10 @@ cat > "${TMP_ROOT}/fake/systemctl" <<EOF
 echo "\$*" >> "${LOG}"
 case "\$1" in
   list-units)
-    if [[ "\$*" == *--type=timer* ]]; then
+    if [[ "\${@: -1}" == "cocalc-bay*" ]]; then
+      # Bay services running outside cocalc-bay.target.
+      for unit in \$(ls "${UNITS}"); do echo "\$unit loaded active running \$unit"; done
+    elif [[ "\$*" == *--type=timer* ]]; then
       echo "cocalc-bay-sqlite-backup.timer loaded active waiting SQLite backup"
       echo "cocalc-bay-pgbackrest-diff.timer loaded active waiting diff"
     else
@@ -87,11 +93,19 @@ case "\$1" in
     fi
     ;;
   is-active) exit 1 ;;
+  stop)
+    shift
+    for unit in "\$@"; do rm -f "${UNITS}/\$unit"; done
+    ;;
   start)
     if [[ "\$*" == *pgbackrest-backup@full* && -e "${TMP_ROOT}/fail-full" ]]; then
       echo "Unit cocalc-bay-pgbackrest-backup@full.service not found." >&2
       exit 5
     fi
+    shift
+    for unit in "\$@"; do
+      case "\$unit" in cocalc-bay-frontdoor.service|cocalc-bay-cloudflared.service) touch "${UNITS}/\$unit" ;; esac
+    done
     ;;
 esac
 exit 0
@@ -106,6 +120,10 @@ setup() {
   echo live > "${TMP_ROOT}/bay/postgres/marker"
   : > "$LOG"
   rm -f "${TMP_ROOT}/fail-engine" "${TMP_ROOT}/fail-full" "${TMP_ROOT}/bay-procs"
+  # The frontdoor and the tunnel run, outside cocalc-bay.target.
+  rm -rf "$UNITS"
+  mkdir -p "$UNITS"
+  touch "${UNITS}/cocalc-bay-frontdoor.service" "${UNITS}/cocalc-bay-cloudflared.service"
   [[ -n "$work" ]] || return 0
   sudo -n rm -rf "$work"
   sudo -n mkdir -m 0711 "$work"
@@ -176,10 +194,16 @@ kill_procs="$(line "pkill -KILL -u $(id -un)")"
 start_target="$(line 'start cocalc-bay.target')"
 start_timers="$(line 'start cocalc-bay-sqlite-backup.timer cocalc-bay-pgbackrest-diff.timer')"
 start_full="$(line 'start --no-block cocalc-bay-pgbackrest-backup@full.service')"
-[[ -n "$stop_timers" && -n "$stop_jobs" && -n "$stop_target" && -n "$kill_procs" && -n "$start_target" && -n "$start_timers" && -n "$start_full" ]] ||
+stop_services="$(line 'stop cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service')"
+start_services="$(line 'start cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service')"
+[[ -n "$stop_timers" && -n "$stop_jobs" && -n "$stop_target" && -n "$stop_services" && -n "$kill_procs" &&
+   -n "$start_target" && -n "$start_services" && -n "$start_timers" && -n "$start_full" ]] ||
   fail "missing calls: $(cat "$LOG")"
-(( stop_timers < stop_jobs && stop_jobs < stop_target && stop_target < kill_procs && kill_procs < start_target && start_target < start_timers )) ||
+(( stop_timers < stop_jobs && stop_jobs < stop_target && stop_target < stop_services && stop_services < kill_procs &&
+   kill_procs < start_target && start_target < start_services && start_services < start_timers )) ||
   fail "wrong order: $(cat "$LOG")"
+[[ -e "${UNITS}/cocalc-bay-frontdoor.service" && -e "${UNITS}/cocalc-bay-cloudflared.service" ]] ||
+  fail "the frontdoor and tunnel were not restarted"
 ! grep -q 'stop cocalc-bay-pgbackrest-status.service' "$LOG" || fail "stopped an inactive job"
 
 # Not healthy: timers stay stopped and are listed for the operator.
@@ -214,8 +238,14 @@ grep -q 'restore failed at stage restore-pgbackrest: fake failure' "${TMP_ROOT}/
 (( $(line 'stop cocalc-bay.target') < $(line "pkill -KILL -u $(id -un)") &&
    $(line "pkill -KILL -u $(id -un)") < $(line engine) &&
    $(line engine) < $(line 'start cocalc-bay.target') &&
-   $(line engine) < $(line 'start cocalc-bay-sqlite-backup.timer cocalc-bay-pgbackrest-diff.timer') )) ||
+   $(line engine) < $(line 'start cocalc-bay-sqlite-backup.timer cocalc-bay-pgbackrest-diff.timer') &&
+   $(line 'stop cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service') < $(line engine) &&
+   $(line engine) < $(line 'start cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service') )) ||
   fail "failed restore: wrong order: $(cat "$LOG")"
+# Before restarting the bay it checked for anything the restore left running.
+last_check="$(grep -n -F "pgrep -u $(id -un)" "$LOG" | tail -1 | cut -d: -f1)"
+(( last_check > $(line engine) && last_check < $(line 'start cocalc-bay.target') )) ||
+  fail "restart_bay did not check for bay processes first: $(cat "$LOG")"
 
 # --no-cutover: the bay runs on its old data again; cutover works later.
 setup ""

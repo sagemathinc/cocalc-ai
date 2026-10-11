@@ -285,7 +285,7 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
   expect(workerSource).toContain(
     'sql_quote(CONFIG["pitr_run_id"]), log=False)',
   );
-  expect(workerSource).toContain('"pg_is_in_recovery()::text "');
+  expect(workerSource).toContain('"pg_catalog.pg_is_in_recovery()::text "');
   expect(workerSource).toContain(
     'if counts == (1, 0) and recovery_text == "false"',
   );
@@ -816,6 +816,16 @@ test("the production engine runs host binaries as the bay user and never on the 
     'run((as_bay_user(restore_args) if LOCAL else restore_args) + ["restore"]',
   );
   expect(workerSource).toContain("os.O_NOFOLLOW");
+  // The Conat tree stays root's until it is handed over, the checks cannot
+  // be redirected to functions the restored database defines, and nothing
+  // the restored PostgreSQL started outlives a failed restore.
+  expect(workerSource).toContain('"--no-ownership"');
+  expect(workerSource).toContain('PSQL_OPTIONS = "-c search_path=pg_catalog"');
+  expect(workerSource).toContain(
+    '"SELECT pg_catalog.to_regclass(\'public." + table + "\')::text"',
+  );
+  const cleanup = workerSource.slice(workerSource.lastIndexOf("finally:"));
+  expect(cleanup).toContain("assert_no_bay_processes()");
   expect(workerSource).toContain("major.isdigit()");
   // It stops cleanly and hands back an unmodified hba and auto.conf.
   expect(workerSource).toContain(

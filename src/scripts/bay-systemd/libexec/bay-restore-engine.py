@@ -250,6 +250,12 @@ def assert_no_bay_processes():
         time.sleep(0.2)
     raise RuntimeError(f"processes of {user} are still running; stop them before restoring")
 
+# The restored database comes from the bay's backups: a role or database
+# setting there could put its own schema before pg_catalog and replace the
+# built-in functions our checks call. A client option overrides those
+# settings, and the checks also name pg_catalog explicitly.
+PSQL_OPTIONS = "-c search_path=pg_catalog"
+
 def psql(container, sql, *, log=True):
     if LOCAL:
         completed = run(as_bay_user([
@@ -257,10 +263,10 @@ def psql(container, sql, *, log=True):
             "-p", str(CONFIG["local_port"]),
             "-U", CONFIG["postgres_user"], "-d", CONFIG["postgres_database"],
             "-tAc", sql,
-        ]), timeout=60, capture=True, log=log)
+        ]), timeout=60, capture=True, log=log, env={**os.environ, "PGOPTIONS": PSQL_OPTIONS})
         return completed.stdout.strip()
     completed = run([
-        "podman", "exec", container, "psql", "-h", "/tmp",
+        "podman", "exec", "--env", "PGOPTIONS=" + PSQL_OPTIONS, container, "psql", "-h", "/tmp",
         "-p", "5432",
         "-U", CONFIG["postgres_user"], "-d", CONFIG["postgres_database"],
         "-tAc", sql,
@@ -689,6 +695,9 @@ try:
     SNAPSHOT.mkdir(parents=True, exist_ok=True)
     run([
         RUSTIC_BIN, "-P", str(profile.with_suffix("")), "restore",
+        # Not the owners recorded in the backup: the tree stays root's, out of
+        # the bay account's reach, until it is handed over after verification.
+        "--no-ownership",
         snapshot_id, str(SNAPSHOT),
     ], timeout=3600)
 
@@ -995,9 +1004,9 @@ curl "${common[@]}" --fail "$base" -o "$destination"
         try:
             if use_sentinels:
                 value = psql(container,
-                    "SELECT count(*) FILTER (WHERE phase='pre')::text || ',' || "
-                    "count(*) FILTER (WHERE phase='post')::text || ',' || "
-                    "pg_is_in_recovery()::text "
+                    "SELECT pg_catalog.count(*) FILTER (WHERE phase='pre')::text || ',' || "
+                    "pg_catalog.count(*) FILTER (WHERE phase='post')::text || ',' || "
+                    "pg_catalog.pg_is_in_recovery()::text "
                     "FROM public.bay_restore_test_pitr_events WHERE run_id = " +
                     sql_quote(CONFIG["pitr_run_id"]), log=False)
                 pre_text, post_text, recovery_text = value.split(",")
@@ -1011,7 +1020,7 @@ curl "${common[@]}" --fail "$base" -o "$destination"
                 if counts == (1, 1):
                     raise RuntimeError("PITR crossed the requested target transaction")
             elif CONFIG["restore_mode"] == "pitr":
-                if psql(container, "SELECT pg_is_in_recovery()::text", log=False) == "false":
+                if psql(container, "SELECT pg_catalog.pg_is_in_recovery()::text", log=False) == "false":
                     postgres_ready = True
                     break
             elif psql(container, "SELECT 1", log=False) == "1":
@@ -1076,10 +1085,10 @@ curl "${common[@]}" --fail "$base" -o "$destination"
 
     tables = ["accounts", "projects", "server_settings"]
     for table in tables:
-        value = psql(container, "SELECT to_regclass('public." + table + "')::text")
+        value = psql(container, "SELECT pg_catalog.to_regclass('public." + table + "')::text")
         if value != table:
             raise RuntimeError(f"missing restored table {table}")
-    if psql(container, "SELECT pg_is_in_recovery()::text") != "false":
+    if psql(container, "SELECT pg_catalog.pg_is_in_recovery()::text") != "false":
         raise RuntimeError("restored PostgreSQL did not promote after PITR target")
     postgres_result = {
         "repository_type": REPOSITORY_TYPE,
@@ -1141,6 +1150,12 @@ finally:
     if LOCAL:
         try:
             stop_local_postgres(timeout=120)
+        except Exception:
+            traceback.print_exc()
+        # Also after a failure: nothing the restored PostgreSQL started may
+        # outlive the restore (bay-restore then restarts the live bay).
+        try:
+            assert_no_bay_processes()
         except Exception:
             traceback.print_exc()
     else:
