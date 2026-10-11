@@ -133,6 +133,22 @@ check_runtime_persisted() {
       [ "$(ls -d /opt/cocalc/container-runtime/podman-* | wc -l)" = 1 ]'
 }
 
+# Killing the container can interrupt Podman mid-layer; leave such a stale
+# temporary directory, unreadable by the Star user, for the next boot.
+plant_stale_podman_tempdir() {
+  $DOCKER exec "$NAME" sh -c '
+    t=/home/cocalc-star/.local/share/containers/storage/overlay/tempdirs/temp-dir-ci
+    mkdir -p "$t/1-stale/diff/home/x" && chown -R 100999:100999 "$t" &&
+      chmod 0700 "$t/1-stale/diff/home/x"'
+}
+
+check_stale_podman_tempdir_removed() {
+  log "stale Podman temporary layer directory was removed"
+  $DOCKER exec "$NAME" sh -c '
+    [ ! -e /home/cocalc-star/.local/share/containers/storage/overlay/tempdirs/temp-dir-ci ] &&
+      grep -q "removing stale Podman temporary layer directories" /var/log/cocalc-star-docker-init.log'
+}
+
 current_runtime() {
   $DOCKER exec "$NAME" readlink -f /opt/cocalc/container-runtime/current
 }
@@ -167,18 +183,22 @@ log "admin-link creates a new admin link"
 $DOCKER exec "$NAME" "$STAR_SH" admin-link | grep -q 'registrationToken='
 
 log "restart"
+plant_stale_podman_tempdir
 $DOCKER restart "$NAME" >/dev/null
 wait_ready 2
+check_stale_podman_tempdir_removed
 check_runtime_persisted
 check
 
 log "new container on the same volume keeps the container runtime"
 runtime_before="$(current_runtime)"
+plant_stale_podman_tempdir
 $DOCKER rm -f "$NAME" >/dev/null
 run_container "$IMAGE"
 wait_ready 1
 check_runtime_persisted
 [ "$(current_runtime)" = "$runtime_before" ]
+check_stale_podman_tempdir_removed
 check
 
 log "ok"
