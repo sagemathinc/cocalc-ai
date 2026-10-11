@@ -19,6 +19,8 @@ sensors), a security review by @lite1-review, and a survey of similar products
   blockers, 7 high, 6 medium). This revision rebuilds the trust model around
   what can honestly be enforced. "Review history" maps every finding to where
   it is addressed.
+- **6:** William's answers to the nine open questions (decisions 20–27).
+  Stage 1 starts.
 - **5:** @lite1-review's re-review of revision 4 ("most resolved; with these
   changes I would approve stage 1's architecture"):
   - project-bay attestations with an expiry the daemon checks, and leases
@@ -101,8 +103,11 @@ The per-agent switch says *which agents are meant to use a computer*, and
 stops accidents, but it is not a wall between agents in one project.
 
 So:
-- **Computers can be used only from an eligible project:** one that **has never
-  had another collaborator** and isn't public.
+- **Computers can be used only from an eligible project:** one whose **only
+  collaborator is the owner** and isn't public (decision 23). The text
+  below is the stricter revision-5 "never shared" design, kept for the
+  record; decision 23 relaxes it, with a warning when the project has had
+  other collaborators.
   - Removing a collaborator doesn't restore eligibility: something they left
     running could steal a later turn's credential.
   - The way back is a new project.
@@ -201,6 +206,44 @@ So:
 19. **Public documentation of the trust model** in `src/packages/docs`:
     exactly how access and credentials work, how far to trust CoCalc and why,
     and how it compares with the alternatives.
+20. **Two ways to run:** direct is full trust, isolated is the default, and
+    connector passthrough is isolated-only. *(rev 6)*
+21. **Pairing:** paste the line, press `y`, approve the phrase. *(rev 6)*
+22. **A computer serves the agents of one agent network.** This replaces
+    per-agent switches. *(rev 6)*
+    - At pairing, the owner picks one of their **agent networks**
+      (`agent_networks`, account-owned, with a monotonic `generation`). The
+      computer serves exactly that network's members, in eligible projects.
+    - That network is the agent ceiling. It is deliberately dynamic, like a
+      wildcard: adding an agent to the network adds it to every computer
+      attached to that network.
+    - So adding a member to a network that has computers needs **fresh
+      auth**, and the card names the computers affected.
+    - Removing a member is a narrowing: the generation is bumped and a floor
+      pushed.
+    - Networks and computers are both account-home rows, so membership is
+      checked in the same transaction as the ticket, and tickets carry the
+      network's generation.
+23. **Eligible projects:** an existing project qualifies while it has **exactly
+    one collaborator** (the owner) and isn't public. *(rev 6; replaces "never
+    shared")*
+    - Adding a collaborator makes it ineligible at once (privacy epoch,
+      attestation, floors, all unchanged).
+    - Removing the extra collaborators makes it eligible again.
+    - **Accepted residual risk:** something a former collaborator left in the
+      project could act during a granted turn. When the project's history
+      shows former collaborators, the UI warns, and the docs say so.
+24. **Other agents' jobs:** they see **command lines** and a required short
+    **description** (`run --desc "…"`), plus state and resources, but not
+    logs. They can't kill each other's jobs; the owner can. *(rev 6)*
+    - The skill tells agents never to put secrets in command lines.
+25. **Network in isolated mode: on by default** ("not having network is
+    useless"), with metadata addresses blocked where possible. *(rev 6)*
+26. **Detached jobs continue** after a project stops qualifying, until the
+    computer hears about it (documented). *(rev 6)*
+27. **Updates** (pending, explained to William): verified automatic updates
+    signed by an offline release key are recommended. This is needed before
+    release, not before coding. *(rev 6)*
 
 ## What exists to build on (traced, origin/main 25f42495b2)
 
@@ -913,8 +956,8 @@ the daemon (see "Files").
 | list, info, policy | ✓ | ✓ | ✓ |
 | Notes: read | ✓ | ✓ | ✓, marked untrusted with each edit's author |
 | Notes: edit | ✓ (can lock to owner-only) | ✓ if not locked | ✓ if not locked |
-| Jobs: metadata (id, name label, agent, state, times, resources, exclusive) | ✓ | ✓ | ✓ |
-| Jobs: command line | ✓ | ✓ | ✗ |
+| Jobs: metadata (id, name, agent, state, times, resources, exclusive) | ✓ | ✓ | ✓ |
+| Jobs: command line and description | ✓ | ✓ | ✓ (decision 24) |
 | Jobs: logs and output | ✓ | ✓ | ✗ |
 | Kill a job | ✓ (any) | ✓ (its own) | ✗ |
 | Audit | ✓ | ✗ | ✗ |
@@ -1346,60 +1389,38 @@ Each is a new operation kind in the same ticket protocol.
     - `uninstall`;
     - no dependency the standalone CLI can't load (#937).
 
-## Open questions (for William, from revision 4)
+## Open questions
 
-1. **Two modes, honestly:**
-   - direct mode documented as full trust in the allowed agents *and in
-     CoCalc* as that OS user;
-   - isolated mode the default whenever rootless podman works;
-   - connector passthrough only in isolated mode.
+1. **Updates** (decision 27): verified automatic updates, signed by an
+   offline release key, or updates started by hand on each computer? This is
+   needed before release, not for stage 1's code.
 
-   Agreed?
-2. **Never-shared projects:**
-   - eligibility only for projects that never had another collaborator;
-   - removing a collaborator doesn't restore it;
-   - "create a private project for this agent" in the Connectors menu.
+## Stage 1 implementation order (PRs)
 
-   Agreed? This also implies documenting that agents in one project can act
-   for each other during a live turn.
-3. **The pairing flow:**
-   - the line carries no secret;
-   - you paste it and confirm on the machine (`y`);
-   - then approve in CoCalc, after checking the phrase.
-
-   Still one paste and one click, plus one key press. Fine?
-4. **Visibility between agents:**
-   - other agents see job metadata (name label, agent, state, resources) but
-     not command lines or logs;
-   - agents can't kill each other's jobs;
-   - you can.
-
-   That still solves the bench-1 problem ("is anyone else running?") without
-   leaking one agent's work to another. Agreed?
-5. **Network in isolated mode:** default *on* (pip, git and downloads need it),
-   shown on the card, with cloud metadata addresses blocked where possible.
-   Or default off?
-6. **The agent ceiling** (revision 5). At pairing, the owner chooses either
-   "these agents" (the requesting one by default) or "any of my agents in an
-   eligible project".
-   - With "these agents", turning on another agent later means confirming on
-     the machine.
-   - For a research server you want to hand to agents freely, "any of my
-     agents" avoids that, and grants still choose.
-   - Default for time-limited computers: "these agents"; without a limit:
-     ask.
-7. **Existing projects start ineligible** (revision 5). Computers would work
-   only from new private projects, which the Connectors menu creates in one
-   click. Acceptable? The alternative, trusting old projects' collaborator
-   history, fails open when that history is incomplete.
-8. **Detached jobs after a project becomes ineligible:** they continue until
-   the computer hears about it, so jobs survive network loss. The
-   alternative stops them when a short lease lapses, which breaks long jobs
-   on flaky networks. I recommend continuing, documented.
-9. **Updates:** updating the daemon is started locally (`cocalc computer
-   update`), with *opt-in* automatic updates of releases signed by the
-   offline root. Fine? It also means CoCalc needs an offline release-signing
-   key and procedure, a one-time setup for you.
+1. **Protocol foundations.** These are pure and fully unit-tested:
+   - the canonical encoding;
+   - the policy type and its partial order;
+   - the schemas for the ticket, attestation, transcript and certificate;
+   - the pairing phrase;
+   - Ed25519 signing and verification helpers.
+2. **Database and hub store:**
+   - the tables;
+   - epochs and floors;
+   - requests, pairing and certificates;
+   - eligibility attestations on the project's bay;
+   - network-membership checks;
+   - fresh-auth registry entries.
+3. **Hub RPCs:** the ticket transaction, floor pushes, routing to the home
+   bay.
+4. **The daemon:** pairing client, key storage, the conat "computer"
+   principal (router auth), the ledger, `exec`/`run`/`jobs`/`kill`/`ops`,
+   and the local clock.
+5. **The agent CLI:** commands, PoP, `operation_id` retries.
+6. **Transfers:** manifests, safe extraction, metering, egress
+   reservation.
+7. **Frontend:** the native request card, Settings → Computers, mentions,
+   network attach.
+8. **Docs, the skill, and e2e on m1, bench-1 and WSL2.**
 
 ## Review history
 
