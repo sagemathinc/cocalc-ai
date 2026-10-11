@@ -786,7 +786,7 @@ test("the production engine runs host binaries as the bay user and never on the 
     'write_pgbackrest_config(\n        ROOT / "pgbackrest.conf", pg1_path=ROOT / "postgres", spool_path=ROOT / "spool",',
   );
   expect(workerSource).toContain(
-    'handle.write("restore_command = " + sql_quote(str(pgbackrest_archive_get_script) + " %f %p") + "\\n")',
+    'lines.append("restore_command = " + sql_quote(str(pgbackrest_archive_get_script) + " %f %p") + "\\n")',
   );
   expect(workerSource).toContain('"setpriv", "--reuid", CONFIG["bay_user"]');
   expect(workerSource).toContain(
@@ -799,11 +799,34 @@ test("the production engine runs host binaries as the bay user and never on the 
   );
   expect(local).not.toContain("fsync=off");
   expect(local).toContain('"-c", "archive_mode=off"');
+  // The restored configuration (from the bay's backups) runs no command and
+  // loads no library while root works beside it.
+  for (const setting of [
+    "archive_cleanup_command=",
+    "recovery_end_command=",
+    "session_preload_libraries=",
+    "local_preload_libraries=",
+    "dynamic_library_path=$libdir",
+  ]) {
+    expect(local).toContain(`"-c", "${setting}"`);
+  }
+  // pgBackRest restores as the bay account, and root touches the restored
+  // files only without following links, once no bay process is left.
+  expect(workerSource).toContain(
+    'run((as_bay_user(restore_args) if LOCAL else restore_args) + ["restore"]',
+  );
+  expect(workerSource).toContain("os.O_NOFOLLOW");
+  expect(workerSource).toContain("major.isdigit()");
   // It stops cleanly and hands back an unmodified hba and auto.conf.
   expect(workerSource).toContain(
-    'hba.write_text(original_hba, encoding="utf-8")',
+    "stop_local_postgres()\n        assert_no_bay_processes()\n        write_no_follow(hba, original_hba)",
   );
-  expect(workerSource).toContain("strip_recovery_settings(auto_conf.read_text");
+  expect(workerSource).toContain(
+    "strip_recovery_settings(read_no_follow(auto_conf))",
+  );
+  expect(workerSource).toContain(
+    'as_bay_user([LOCAL_PG_BIN / "pg_controldata", pgdata])',
+  );
   expect(workerSource).toContain(
     '"Database cluster state:               shut down"',
   );

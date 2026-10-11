@@ -3,28 +3,33 @@
 #
 # One program restores a bay's PostgreSQL (pgBackRest, point in time) and
 # Conat SQLite (rustic) from R2, for both callers, so the weekly drill
-# rehearses exactly what a production restore runs:
+# rehearses the core of a production restore (fetching and verifying the
+# backups, recovery, checks); only the local branches below are production's:
 #
 #   execution "disposable-gcp" (default): the restore drill. The bay starts a
 #     throwaway GCP VM whose startup script runs this file; it installs tools,
 #     restores, proves the PITR target with sentinel rows, reports on the
 #     serial console and the VM is deleted.
 #   execution "local": a production restore on a bay host, run as root by
-#     bay-restore. It restores into a fresh work directory next to the live
-#     data with the host's own binaries, recovers PostgreSQL (to a target time
-#     or the end of the WAL archive), verifies, shuts it down cleanly and
-#     writes a result file. bay-restore then swaps the directories into place.
+#     bay-restore while the bay is stopped. It restores into a fresh
+#     root-owned work directory on the live data's filesystem with the host's
+#     own binaries, recovers PostgreSQL (to a target time or the end of the
+#     WAL archive), verifies, shuts it down cleanly and writes a result file.
+#     bay-restore then swaps the directories into place.
 #
 # Usage: bay-restore-engine.py [--config FILE]
 import base64
 import datetime
 import glob
+import grp
 import json
 import os
 import pathlib
+import pwd
 import re
 import shutil
 import signal
+import stat
 import sqlite3
 import subprocess
 import sys
@@ -212,6 +217,39 @@ def as_bay_user(args):
         "--init-groups", "--", *[str(arg) for arg in args],
     ]
 
+# A production restore runs as root, but the restored PostgreSQL files belong
+# to the bay account (pgBackRest restores them as that user, from backups the
+# bay wrote). Root reads and writes them only through these, which refuse a
+# symbolic link and anything but a regular file. The work directory itself is
+# root-owned, so the bay account cannot replace the directories above them.
+def _open_no_follow(path, flags):
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise RuntimeError(f"{path} is not a regular file")
+    return fd
+
+def read_no_follow(path):
+    with os.fdopen(_open_no_follow(path, os.O_RDONLY), "r", encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
+def write_no_follow(path, text, *, append=False):
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    with os.fdopen(_open_no_follow(path, flags), "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+def assert_no_bay_processes():
+    """bay-restore stopped the bay before the restore. Its only process since
+    has been the temporary PostgreSQL, so once that has exited no process of
+    the bay account may remain while root works on the restored files."""
+    user = CONFIG["bay_user"]
+    for _ in range(50):
+        if subprocess.run(["pgrep", "-u", user], stdout=subprocess.DEVNULL).returncode == 1:
+            return
+        subprocess.run(["pkill", "-KILL", "-u", user], check=False)
+        time.sleep(0.2)
+    raise RuntimeError(f"processes of {user} are still running; stop them before restoring")
+
 def psql(container, sql, *, log=True):
     if LOCAL:
         completed = run(as_bay_user([
@@ -264,8 +302,8 @@ def postgres_diagnostics(container):
 def archive_get_state(container):
     if LOCAL:
         try:
-            text = LOCAL_ARCHIVE_GET_STATE.read_text(encoding="utf-8")
-        except OSError:
+            text = read_no_follow(LOCAL_ARCHIVE_GET_STATE)
+        except (OSError, RuntimeError):
             return None
     else:
         try:
@@ -440,6 +478,11 @@ def start_local_postgres(pgdata):
             "-k", LOCAL_RUN_DIR, "-p", str(CONFIG["local_port"]),
             "-c", "listen_addresses=", "-c", "shared_preload_libraries=",
             "-c", "archive_mode=off", "-c", "archive_command=/bin/false",
+            # The restored configuration came from the bay's backups: it may
+            # run no command and load no library while root works beside it.
+            "-c", "archive_cleanup_command=", "-c", "recovery_end_command=",
+            "-c", "session_preload_libraries=", "-c", "local_preload_libraries=",
+            "-c", "dynamic_library_path=$libdir", "-c", "ssl=off", "-c", "jit=off",
             "-c", "shared_buffers=" + str(POSTGRES_SHARED_BUFFERS_MB) + "MB",
             "-c", "max_wal_size=16GB",
         ]),
@@ -715,6 +758,17 @@ try:
             )
         pgdata.mkdir(parents=True, exist_ok=True)
         os.chmod(pgdata, 0o700)
+        if LOCAL:
+            # pgBackRest restores as the bay account, not root: a backup's
+            # links (tablespaces) name arbitrary paths, and the files belong
+            # to the bay anyway.
+            for path in (LOCAL_RUN_DIR, ROOT / "spool"):
+                path.mkdir(parents=True, exist_ok=True)
+                os.chmod(path, 0o700)
+            uid = pwd.getpwnam(CONFIG["bay_user"]).pw_uid
+            gid = grp.getgrnam(CONFIG["bay_group"]).gr_gid
+            for path in (pgdata, LOCAL_RUN_DIR, ROOT / "spool"):
+                os.chown(path, uid, gid, follow_symlinks=False)
         STAGE = enter_stage("restore-pgbackrest")
         restore_args = [
             PGBACKREST_BIN,
@@ -732,10 +786,14 @@ try:
             ]
         # Without a target, recovery replays every archived WAL segment and
         # then promotes: the latest state the backups hold.
-        run(restore_args + ["restore"], timeout=7200, env=pgbackrest_env())
+        run((as_bay_user(restore_args) if LOCAL else restore_args) + ["restore"], timeout=7200, env=pgbackrest_env())
     if LOCAL:
+        assert_no_bay_processes()
         pgdata = ROOT / "postgres"
-        major = (pgdata / "PG_VERSION").read_text(encoding="utf-8").strip()
+        major = read_no_follow(pgdata / "PG_VERSION").strip()
+        # It names the PostgreSQL binaries root runs, and came from a backup.
+        if not (major.isascii() and major.isdigit() and len(major) <= 3):
+            raise RuntimeError(f"unexpected PG_VERSION {major[:20]!r}")
         LOCAL_PG_BIN = pathlib.Path(CONFIG.get("postgres_bin_dir") or f"/usr/lib/postgresql/{major}/bin")
         if not (LOCAL_PG_BIN / "postgres").exists():
             raise RuntimeError(f"PostgreSQL {major} is not installed at {LOCAL_PG_BIN}")
@@ -761,8 +819,8 @@ try:
             (pgdata / stale).unlink(missing_ok=True)
 
     hba = pgdata / "pg_hba.conf"
-    original_hba = hba.read_text(encoding="utf-8")
-    hba.write_text("local all all trust\n" + original_hba, encoding="utf-8")
+    original_hba = read_no_follow(hba)
+    write_no_follow(hba, "local all all trust\n" + original_hba)
     restore_script = ROOT / "restore-wal.sh"
     restore_script.write_text(r'''#!/bin/bash
 set -euo pipefail
@@ -785,39 +843,35 @@ curl "${common[@]}" --fail "$base" -o "$destination"
     os.chmod(pgbackrest_archive_get_script, 0o755 if LOCAL else 0o700)
     auto_conf = pgdata / "postgresql.auto.conf"
     if REPOSITORY_TYPE == "pgbackrest":
-        auto_conf_text = auto_conf.read_text(encoding="utf-8")
+        auto_conf_text = read_no_follow(auto_conf)
         if "restore_command" not in auto_conf_text:
             raise RuntimeError("pgBackRest restore did not configure restore_command")
-    with auto_conf.open("a", encoding="utf-8") as handle:
-        handle.write("\n# cocalc bay restore\n" if LOCAL else "\n# cocalc disposable restore drill\n")
-        handle.write("archive_mode = 'off'\n")
-        handle.write("archive_command = '/bin/false'\n")
-        if REPOSITORY_TYPE == "pgbackrest":
-            # Override pgBackRest's generated command with a bounded wrapper.
-            # PostgreSQL retries a nonzero restore_command, while the worker's
-            # replay watchdog escalates a repeatedly failing segment.
-            if LOCAL:
-                handle.write("restore_command = " + sql_quote(str(pgbackrest_archive_get_script) + " %f %p") + "\n")
-            else:
-                handle.write("restore_command = '/usr/local/bin/cocalc-pgbackrest-archive-get %f %p'\n")
-        if CONFIG["restore_mode"] == "pitr" and REPOSITORY_TYPE != "pgbackrest":
-            if not CONFIG.get("target_time") or not CONFIG.get("pitr_run_id") or not CONFIG.get("wal_object_prefix"):
-                raise RuntimeError("PITR mode requires target time, sentinel run, and WAL prefix")
-            handle.write("restore_command = '/usr/local/bin/restore-wal.sh %f %p'\n")
-            handle.write("recovery_target_time = " + sql_quote(CONFIG["target_time"]) + "\n")
-            handle.write("recovery_target_inclusive = 'true'\n")
-            handle.write("recovery_target_timeline = 'current'\n")
-            handle.write("recovery_target_action = 'promote'\n")
+    lines = []
+    lines.append("\n# cocalc bay restore\n" if LOCAL else "\n# cocalc disposable restore drill\n")
+    lines.append("archive_mode = 'off'\n")
+    lines.append("archive_command = '/bin/false'\n")
+    if REPOSITORY_TYPE == "pgbackrest":
+        # Override pgBackRest's generated command with a bounded wrapper.
+        # PostgreSQL retries a nonzero restore_command, while the worker's
+        # replay watchdog escalates a repeatedly failing segment.
+        if LOCAL:
+            lines.append("restore_command = " + sql_quote(str(pgbackrest_archive_get_script) + " %f %p") + "\n")
+        else:
+            lines.append("restore_command = '/usr/local/bin/cocalc-pgbackrest-archive-get %f %p'\n")
     if CONFIG["restore_mode"] == "pitr" and REPOSITORY_TYPE != "pgbackrest":
-        (pgdata / "standby.signal").write_text("", encoding="utf-8")
+        if not CONFIG.get("target_time") or not CONFIG.get("pitr_run_id") or not CONFIG.get("wal_object_prefix"):
+            raise RuntimeError("PITR mode requires target time, sentinel run, and WAL prefix")
+        lines.append("restore_command = '/usr/local/bin/restore-wal.sh %f %p'\n")
+        lines.append("recovery_target_time = " + sql_quote(CONFIG["target_time"]) + "\n")
+        lines.append("recovery_target_inclusive = 'true'\n")
+        lines.append("recovery_target_timeline = 'current'\n")
+        lines.append("recovery_target_action = 'promote'\n")
+    write_no_follow(auto_conf, "".join(lines), append=True)
+    if CONFIG["restore_mode"] == "pitr" and REPOSITORY_TYPE != "pgbackrest":
+        write_no_follow(pgdata / "standby.signal", "")
 
-    if LOCAL:
-        owner = f"{CONFIG['bay_user']}:{CONFIG['bay_group']}"
-        for path in (LOCAL_RUN_DIR, ROOT / "spool"):
-            path.mkdir(parents=True, exist_ok=True)
-            os.chmod(path, 0o700)
-        run(["chown", "-R", owner, str(pgdata), str(LOCAL_RUN_DIR), str(ROOT / "spool")], timeout=1800)
-    else:
+    # Locally, pgdata, run and spool already belong to the bay account.
+    if not LOCAL:
         context = ROOT / "postgres-image"
         context.mkdir(parents=True, exist_ok=True)
         shutil.copy2(restore_script, context / "restore-wal.sh")
@@ -1051,14 +1105,17 @@ curl "${common[@]}" --fail "$base" -o "$destination"
         STAGE = enter_stage("finalize")
         psql(container, "CHECKPOINT")
         stop_local_postgres()
-        hba.write_text(original_hba, encoding="utf-8")
-        auto_conf.write_text(strip_recovery_settings(auto_conf.read_text(encoding="utf-8")), encoding="utf-8")
+        assert_no_bay_processes()
+        write_no_follow(hba, original_hba)
+        write_no_follow(auto_conf, strip_recovery_settings(read_no_follow(auto_conf)))
         for stale in ("recovery.signal", "standby.signal"):
             (pgdata / stale).unlink(missing_ok=True)
-        state = run([LOCAL_PG_BIN / "pg_controldata", pgdata], timeout=60, capture=True).stdout
+        state = run(as_bay_user([LOCAL_PG_BIN / "pg_controldata", pgdata]), timeout=60, capture=True).stdout
         if "Database cluster state:               shut down" not in state:
             raise RuntimeError("restored cluster is not cleanly shut down: " + bounded(state, 800))
-        run(["chown", "-R", f"{CONFIG['bay_user']}:{CONFIG['bay_group']}", str(pgdata), str(SNAPSHOT)], timeout=1800)
+        # The Conat tree was restored by root into the root-owned work
+        # directory, out of the bay account's reach; hand it over now.
+        run(["chown", "-R", f"{CONFIG['bay_user']}:{CONFIG['bay_group']}", str(SNAPSHOT)], timeout=1800)
         postgres_result["cluster_state"] = "shut down"
 
     STAGE = enter_stage("complete")

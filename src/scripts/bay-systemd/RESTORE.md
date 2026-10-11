@@ -1,20 +1,45 @@
 # Restoring a CoCalc bay
 
-This is the runbook for bringing a bay back from its backups. It is written so
-that an agent with shell access can carry it out with a human supplying only
-two secrets. Everything else (configuration, other secrets, data) comes from
-the backups in R2.
+This is the runbook for bringing a bay back from its backups: PostgreSQL from
+pgBackRest (to any point in time) and the Conat SQLite data from rustic, both
+stored in R2. It is written so that an agent with shell access can carry it
+out with a human supplying only two secrets. Everything else (configuration,
+other secrets, data) comes from the backups.
 
-The restore is done by `bay-restore`, which runs `bay-restore-engine.py`:
-the same engine the weekly disposable PITR drill runs (`cocalc bay restore-test
-<bay> --disposable-gcp`). A passing drill means this procedure works for the
-backups as they are now.
+## How the restore works
 
-Both are installed root-owned in `/usr/local/libexec/cocalc-bay` by
-`install-scaffold.sh` (the bay bootstrap runs it). Always run that copy: the
-release tree under `/opt/cocalc/bay` belongs to the bay account, and
-`bay-restore` refuses to run as root from anywhere the bay account could
-change.
+`bay-restore` does the restore; it runs as root.
+
+- **The bay is down for the whole restore.** `bay-restore restore` first stops
+  the backup timers, any running backup jobs and the bay's services, then ends
+  every remaining process of the `cocalc-bay` account. Nothing of the bay's
+  runs again until the restore has finished: root must not work on files that
+  a process of the bay account could swap out underneath it.
+- **The live data is not changed until the cutover.** The restore is built in
+  a new work directory and verified there. Only then does the cutover move the
+  live `postgres` and `sync` directories to `<work-dir>/pre-restore/`, move the
+  restored ones into place, and start the bay. If anything fails before that,
+  `bay-restore` restarts the bay on its unchanged data.
+- **The work directory is root's.** By default it is
+  `/mnt/cocalc/bays/.restore-<bay>/restore-<UTC time>`: a new directory,
+  owned by root, in a directory owned by root, on the same filesystem as the
+  live data (so the cutover is a rename). `--work-dir` must meet the same
+  conditions.
+- **Root runs only root-owned code.** `bay-restore` and its engine
+  `bay-restore-engine.py` are installed root-owned in
+  `/usr/local/libexec/cocalc-bay` by `install-scaffold.sh`, which the bay
+  bootstrap runs. Always run that copy. The release tree under
+  `/opt/cocalc/bay` belongs to the bay account, and `bay-restore` refuses to
+  run as root from anywhere the bay account could change. The bay's own code,
+  such as its `bay-health` check, runs as the bay account.
+
+The weekly disposable PITR drill (`cocalc bay restore-test <bay>
+--disposable-gcp`) runs the same engine against the real backups: fetching
+and verifying the backups, the PostgreSQL recovery and the Conat checks. A
+passing drill means the backups restore. The drill does not exercise what
+only a production restore does: running on the bay host as root with fsync
+on, the ownership hand-over and the cutover. Those are covered by the tests
+listed at the end.
 
 ## If you are an agent asked to restore CoCalc, read this first
 
@@ -31,17 +56,19 @@ change.
 2. **Decide which mode applies:**
    - **Mode A, restore in place:** the bay VM and its disks are fine, but the
      data must go back to an earlier time (bad migration, mass deletion,
-     corruption), or PostgreSQL's data directory is damaged. Fastest.
+     corruption), or PostgreSQL's data directory is damaged.
    - **Mode B, new VM:** the bay VM or its data disk is gone. If the old data
      disk survives, attach it to a new VM and use mode A instead.
-3. Never print, copy into chat, or commit any secret. All secrets live in
+3. **Tell the human the site will be down** for the whole restore before you
+   start it, and get their go-ahead.
+4. Never print, copy into chat, or commit any secret. All secrets live in
    `/etc/cocalc/` (root, 0600) and the bay secrets directory.
-4. `bay-restore` never modifies the live data until `cutover`, and cutover keeps
-   the previous data under `<work-dir>/pre-restore/`. If a step fails, stop and
-   report the exact error.
-5. Expect, for a production-sized bay (about 175 GB of PostgreSQL), a restore
-   of roughly an hour plus the WAL replay since the last daily backup. The
-   engine prints the time each stage took.
+5. If a step fails, stop and report the exact error. The previous data is
+   never deleted: until the cutover it is still live, and afterwards it is in
+   `<work-dir>/pre-restore/`.
+6. Expect, for a production-sized bay (about 175 GB of PostgreSQL), roughly an
+   hour plus the WAL replay since the last daily backup. The engine prints the
+   time each stage took.
 
 Paths below assume bay `bay-0`; substitute the real bay id.
 
@@ -50,41 +77,44 @@ Paths below assume bay `bay-0`; substitute the real bay id.
 On the bay host (for prod: `gcloud compute ssh ubuntu@prod-bay-0
 --project=projecthosts --zone=us-south1-a --tunnel-through-iap`):
 
-1. Choose the recovery point:
+1. **Choose the recovery point:**
    - `--target-time "2026-10-08 03:00:00+00"`: the state just before that time
      (UTC). Use this to undo something. PostgreSQL stops before the first
      transaction after the target; Conat uses its newest hourly snapshot at or
      before it.
    - `--latest`: every archived transaction (for a damaged data directory).
-2. Check space: the restore is written next to the live data and needs about
-   the database size plus 10% free on `/mnt/cocalc` (`df -h /mnt/cocalc`).
-   The engine refuses to start without it.
-3. Restore and verify without touching the live bay:
+2. **Check space:** the restore needs about the database size plus 10% free on
+   `/mnt/cocalc` (`df -h /mnt/cocalc`). The engine refuses to start without
+   it.
+3. **Restore.** This stops the bay, restores, verifies, and swaps the result
+   in; it asks before stopping the bay and before the swap (`--yes` skips
+   both questions):
 
    ```sh
    sudo /usr/local/libexec/cocalc-bay/bay-restore restore \
-     --target-time "2026-10-08 03:00:00+00" --no-cutover
+     --target-time "2026-10-08 03:00:00+00"
    ```
 
    It prints the work directory, the backup set, where recovery stopped
    (`recovered to`), the Conat snapshot used, and the time per stage. Details
-   are in `<work-dir>/engine.log` and `<work-dir>/result.json`.
-4. Swap it in (stops the bay, moves the live `postgres` and `sync`
-   directories to `<work-dir>/pre-restore/`, starts the bay, waits for
-   `bay-health`):
+   are in `<work-dir>/engine.log` and `<work-dir>/result.json`. After the swap
+   it starts the bay, waits for `bay-health`, and restarts the backup timers.
+
+   To inspect the result before swapping it in, add `--no-cutover`. The bay is
+   then restarted on its old data once the restore is verified, and the swap
+   is a separate step, which stops the bay again:
 
    ```sh
    sudo /usr/local/libexec/cocalc-bay/bay-restore cutover --work-dir <work-dir>
    ```
 
-   Omit `--no-cutover` in step 3 to do both in one command (it asks first;
-   `--yes` skips the question).
-5. After cutover: check the site, then `cocalc bay backups bay-0` (a fresh full
-   pgBackRest backup was started automatically, because a point-in-time
-   restore starts a new timeline). Delete `<work-dir>` once satisfied.
-   - If the bay did not become healthy, cutover leaves the backup timers
-     stopped (listed in `<work-dir>/stopped-timers`) so nothing backs up a
-     broken bay; start them once it is healthy.
+4. **After the cutover:** check the site, then `cocalc bay backups bay-0`. A
+   fresh full pgBackRest backup was started automatically, because a
+   point-in-time restore starts a new timeline. Delete `<work-dir>` once
+   satisfied.
+   - If the bay did not become healthy, the backup timers are left stopped
+     (listed in `<work-dir>/stopped-timers`), so nothing backs up a broken
+     bay; start them once it is healthy.
    - Exit status 2 means the bay is up but the full backup could not be
      started; start `cocalc-bay-pgbackrest-backup@full.service` by hand.
    - Deletions recorded after the recovery point (accounts, projects,
@@ -93,14 +123,15 @@ On the bay host (for prod: `gcloud compute ssh ubuntu@prod-bay-0
      reapply them before telling users the site is back, as the Data
      Management Policy requires.
 
-To undo a cutover: `sudo systemctl stop cocalc-bay.target`, move
-`/mnt/cocalc/bays/bay-0/{postgres,sync}` aside, move
-`<work-dir>/pre-restore/{postgres,sync}` back, `sudo systemctl start
-cocalc-bay.target`.
+**To undo a cutover:** stop the bay (`sudo systemctl stop cocalc-bay.target`),
+move `/mnt/cocalc/bays/bay-0/{postgres,sync}` aside, move
+`<work-dir>/pre-restore/{postgres,sync}` back, and start it again (`sudo
+systemctl start cocalc-bay.target`).
 
-Project hosts keep running throughout. After a restore to an earlier time,
-the database may not know about projects or files created after the target;
-that state still exists on the hosts and in project backups.
+Project hosts keep running throughout, but users cannot reach the site while
+the bay is down. After a restore to an earlier time, the database may not know
+about projects or files created after the target; that state still exists on
+the hosts and in project backups.
 
 ## Mode B: rebuild the bay on a new VM
 
@@ -177,9 +208,12 @@ that state still exists on the hosts and in project backups.
    under `cocalc-escrow/bay-0/history/` if an older one is needed. A wrong
    master key is reported as such. `open` never follows a symbolic link in a
    destination and refuses to overwrite existing files without `--force`.
+   `/mnt/cocalc/bays` stays root-owned: the restore's work directory goes
+   there.
 
 6. **Install the release** without starting it (the escrowed env files are
-   kept; only missing ones are generated):
+   kept; only missing ones are generated). This also installs `bay-restore`
+   in `/usr/local/libexec/cocalc-bay`:
 
    ```sh
    sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh --source "$PWD/src"
@@ -203,25 +237,35 @@ that state still exists on the hosts and in project backups.
    sudo /usr/local/libexec/cocalc-bay/bay-restore restore --latest --yes
    ```
 
-   This restores PostgreSQL to the newest archived transaction and Conat to its
-   newest snapshot, moves any freshly initialized data aside, and starts the
-   bay. Traffic reaches the new VM through the Cloudflare tunnel, whose
+   This restores PostgreSQL to the newest archived transaction and Conat to
+   its newest snapshot, moves any freshly initialized data aside, and starts
+   the bay. Traffic reaches the new VM through the Cloudflare tunnel, whose
    credentials came from the escrow; DNS does not change.
 
-9. **Afterwards:** confirm the site works; enable the backup timers listed in
-   README.md ("Activation Order") and `cocalc-bay-config-escrow.timer`; stop or
-   delete the old VM if it still exists, so two bays never run the same tunnel
-   or archive into the same repository; run a disposable drill
-   (`cocalc bay restore-test bay-0 --disposable-gcp`); replay deletions as in
-   mode A, step 5.
+9. **Afterwards:**
+   - confirm the site works;
+   - enable the backup timers listed in README.md ("Activation Order") and
+     `cocalc-bay-config-escrow.timer`;
+   - stop or delete the old VM if it still exists, so two bays never run the
+     same tunnel or archive into the same repository;
+   - run a disposable drill (`cocalc bay restore-test bay-0
+     --disposable-gcp`);
+   - replay deletions as in mode A, step 4.
 10. **Rotate the live credentials** the escrow contained, as described under
     "Rotation" in README.md ("Configuration Escrow"): the escrow was opened,
     so treat its contents as exposed.
 
 ## Testing this procedure
 
-- The weekly drill runs the engine against the real backups.
+- The weekly disposable drill runs the engine against the real backups (see
+  "How the restore works" for what it does and does not cover).
+- `libexec/bay-restore-cutover.test.sh` (needs sudo) runs `bay-restore` with a
+  fake systemd and engine. It checks that:
+  - the bay is stopped, and its processes are gone, before the engine runs;
+  - the bay restarts on its old data after a failure or with `--no-cutover`;
+  - the cutover order, the unhealthy case and the backup warning are right;
+  - copies and work directories the bay account could change are refused.
 - `test/bay-restore-e2e.sh` runs `bay-restore` end to end on a disposable
-  Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore,
+  Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore, a
   cutover, and a restore of the latest state.
 - `libexec/bay-config-escrow.test.sh` tests the escrow.

@@ -55,7 +55,8 @@ install -m 0755 "${BAY_SYSTEMD}/libexec/bay-restore" "${BAY_SYSTEMD}/libexec/bay
 install -m 0644 "${BAY_SYSTEMD}/bin/lib.sh" /usr/local/libexec/cocalc-bay/
 cat > /opt/cocalc/bay/current/bin/bay-health <<'EOF'
 #!/bin/bash
-runuser -u cocalc-bay -- psql -X -h /mnt/cocalc/bays/bay-0/run -p 5432 -d cocalc-bay -tAc "select 1" | grep -q 1
+# bay-restore runs it as the bay account.
+psql -X -h /mnt/cocalc/bays/bay-0/run -p 5432 -d cocalc-bay -tAc "select 1" | grep -q 1
 EOF
 chmod 755 /opt/cocalc/bay/current/bin/*
 cat > /etc/cocalc/bay.env <<'EOF'
@@ -109,6 +110,11 @@ DATA=/mnt/cocalc/bays/bay-0/postgres
 bay() { runuser -u cocalc-bay -- "$@"; }
 psql_bay() { bay psql -X -h /mnt/cocalc/bays/bay-0/run -p 5432 -d cocalc-bay -tAc "$1"; }
 marks() { psql_bay "select string_agg(phase, ',' order by at) from marks"; }
+# bay-restore stops the bay for a restore; with --no-cutover it restarts it.
+wait_bay() {
+  for _ in $(seq 60); do psql_bay "select 1" >/dev/null 2>&1 && return 0; sleep 1; done
+  fail "the bay's PostgreSQL did not come back"
+}
 
 log "live cluster with archiving, managed by systemd as on a bay"
 bay "$PG/initdb" -D "$DATA" -U cocalc-bay >/dev/null
@@ -169,13 +175,19 @@ psql_bay "select pg_switch_wal()" >/dev/null
 sleep 20  # archive_timeout + archive-push
 
 RESTORE=/usr/local/libexec/cocalc-bay/bay-restore
+# Work directories go in a root-owned directory the bay account cannot change
+# (the default is this one).
+WORK=/mnt/cocalc/bays/.restore-bay-0
+install -d -m 0711 "$WORK"
 log "1. restore to $TARGET without cutover"
-"$RESTORE" restore --target-time "$TARGET" --no-cutover --work-dir /mnt/cocalc/bays/bay-0/restore-pitr \
+"$RESTORE" restore --target-time "$TARGET" --no-cutover --yes --work-dir "$WORK/restore-pitr" \
   > /var/lib/e2e/pitr.log 2>&1 || { tail -80 /var/lib/e2e/pitr.log; fail "PITR restore failed"; }
 grep -q "verified restore ready" /var/lib/e2e/pitr.log || fail "no ready message"
+grep -q "stopping the bay" /var/lib/e2e/pitr.log || fail "the restore did not stop the bay"
+wait_bay
 python3 - <<'EOF' || fail "PITR result"
 import json
-r = json.load(open("/mnt/cocalc/bays/bay-0/restore-pitr/result.json"))
+r = json.load(open("/mnt/cocalc/bays/.restore-bay-0/restore-pitr/result.json"))
 assert r["status"] == "passed", r
 assert r["postgres"]["cluster_state"] == "shut down", r
 assert r["conat"]["database_count"] == 3 and r["conat"]["quick_check_passed"] == 3, r["conat"]
@@ -184,20 +196,20 @@ print("e2e: pitr recovered_to", r["postgres"]["recovered_to"])
 EOF
 [[ "$(marks)" == "base,before,after" ]] || fail "the live cluster changed: $(marks)"
 grep -q "restore_command\|recovery_target\|cocalc bay restore" \
-  /mnt/cocalc/bays/bay-0/restore-pitr/postgres/postgresql.auto.conf && fail "recovery settings left behind"
-[[ ! -e /mnt/cocalc/bays/bay-0/restore-pitr/postgres/recovery.signal ]] || fail "recovery.signal left behind"
-cmp -s "$DATA/pg_hba.conf" /mnt/cocalc/bays/bay-0/restore-pitr/postgres/pg_hba.conf || fail "pg_hba.conf changed"
+  $WORK/restore-pitr/postgres/postgresql.auto.conf && fail "recovery settings left behind"
+[[ ! -e $WORK/restore-pitr/postgres/recovery.signal ]] || fail "recovery.signal left behind"
+cmp -s "$DATA/pg_hba.conf" $WORK/restore-pitr/postgres/pg_hba.conf || fail "pg_hba.conf changed"
 # Point in time for Conat too: the snapshot before the target.
-[[ "$(sqlite3 /mnt/cocalc/bays/bay-0/restore-pitr/sync/projects/a.db 'select count(*) from t')" == 1 ]] ||
+[[ "$(sqlite3 $WORK/restore-pitr/sync/projects/a.db 'select count(*) from t')" == 1 ]] ||
   fail "PITR used a Conat snapshot after the target"
 
 log "2. cutover"
-"$RESTORE" cutover --work-dir /mnt/cocalc/bays/bay-0/restore-pitr --yes > /var/lib/e2e/cutover.log 2>&1 ||
+"$RESTORE" cutover --work-dir $WORK/restore-pitr --yes > /var/lib/e2e/cutover.log 2>&1 ||
   { tail -40 /var/lib/e2e/cutover.log; fail "cutover failed"; }
 [[ "$(marks)" == "base,before" ]] || fail "after cutover expected base,before; got $(marks)"
 [[ "$(psql_bay "select pg_is_in_recovery()")" == "f" ]] || fail "restored cluster in recovery"
 [[ "$(psql_bay "show archive_mode")" == "on" ]] || fail "archive_mode not on after cutover"
-[[ -d /mnt/cocalc/bays/bay-0/restore-pitr/pre-restore/postgres ]] || fail "previous data not kept"
+[[ -d $WORK/restore-pitr/pre-restore/postgres ]] || fail "previous data not kept"
 [[ "$(sqlite3 /mnt/cocalc/bays/bay-0/sync/projects/a.db 'select count(*) from t')" == 1 ]] || fail "sync not swapped"
 psql_bay "insert into marks(phase) values ('post-cutover')" >/dev/null
 psql_bay "select pg_switch_wal()" >/dev/null
@@ -205,17 +217,18 @@ sleep 20
 bay pgbackrest --stanza=cocalc-bay-0 --type=full backup >/dev/null 2>&1 || fail "backup on the new timeline"
 
 log "3. restore the latest state without cutover"
-"$RESTORE" restore --latest --no-cutover --work-dir /mnt/cocalc/bays/bay-0/restore-latest \
+"$RESTORE" restore --latest --no-cutover --yes --work-dir "$WORK/restore-latest" \
   --skip-sqlite-check > /var/lib/e2e/latest.log 2>&1 || { tail -80 /var/lib/e2e/latest.log; fail "latest restore failed"; }
 python3 - <<'EOF' || fail "latest result"
 import json
-r = json.load(open("/mnt/cocalc/bays/bay-0/restore-latest/result.json"))
+r = json.load(open("/mnt/cocalc/bays/.restore-bay-0/restore-latest/result.json"))
 assert r["status"] == "passed", r
 assert r["conat"]["quick_check_skipped"] is True, r["conat"]
 print("e2e: latest stage_seconds", r["stage_seconds"])
 EOF
+wait_bay
 mkdir -p /mnt/cocalc/bays/bay-0/inspect && chown cocalc-bay /mnt/cocalc/bays/bay-0/inspect
-runuser -u cocalc-bay -- "$PG/postgres" -D /mnt/cocalc/bays/bay-0/restore-latest/postgres \
+runuser -u cocalc-bay -- "$PG/postgres" -D $WORK/restore-latest/postgres \
   -k /mnt/cocalc/bays/bay-0/inspect -p 55999 -c listen_addresses= -c archive_mode=off \
   > /var/lib/e2e/inspect.log 2>&1 &
 inspect=$!
@@ -226,7 +239,7 @@ for _ in $(seq 30); do
 done
 kill -INT "$inspect" 2>/dev/null || true
 [[ "$rows" == "base,before,post-cutover" ]] || fail "latest restore expected base,before,post-cutover; got '$rows'"
-[[ "$(sqlite3 /mnt/cocalc/bays/bay-0/restore-latest/sync/projects/a.db 'select count(*) from t')" == 2 ]] ||
+[[ "$(sqlite3 $WORK/restore-latest/sync/projects/a.db 'select count(*) from t')" == 2 ]] ||
   fail "latest restore did not use the newest Conat snapshot"
 
 echo "E2E PASSED"
