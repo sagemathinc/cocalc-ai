@@ -15,6 +15,17 @@ Revision 2 (same day) folds in @cocalc-lite4's review of revision 1:
 - job-scoped credential leases;
 - multi-bay routing, rehoming and account deletion.
 
+Revision 3 records William's answers to the open questions:
+- private projects only;
+- containers with a time limit;
+- `nice` by default;
+- limits;
+- provider keys;
+- public documentation of the trust model.
+
+It adds "the hub can narrow options but never widen them" and goes to
+@lite1-review for a security review.
+
 ## The idea
 
 Run one line on any Mac or Linux machine, approve a card in CoCalc, and the
@@ -70,7 +81,10 @@ run containers.** A connected computer can.
 6. **File transfer:** 2 GB per transfer, and the egress quota is checked
    *before* a transfer starts. Backpressure must be right end to end (the
    conat file-transfer memory problem must not come back).
-7. **Containers** (rootless podman only, never docker):
+7. **Containers** (rootless podman only, never docker), with or without a
+   time limit:
+   - A time-limited session may use a container too, for example "a help
+     session that mounts ~/datasets", since a mount means nothing without one.
    - Persistent by default; `--fresh` gives a throwaway one.
    - **The agent picks the image.** We control the flags it runs with.
    - Host directories can be mounted read-write or read-only, chosen in the
@@ -100,6 +114,31 @@ run containers.** A connected computer can.
     create joins as a computer without a separate approval for each machine:
     approving the connector and its spending limits covers it. Agents never
     get the provider credentials.
+    - The hub may hold a provider's **long-lived API key**, encrypted
+      (external-credentials store: `encryptSecretStorageValue`, bound to the
+      credential). This is an accepted exception to "expiring tokens only".
+15. **Private projects only.** An agent can use computers only in a project
+    where the owner is the **only collaborator**.
+    - Enforced at the hub and rechecked on every ticket: adding a collaborator
+      stops new tickets at once.
+    - The reason: every process in a project runs as the same Linux user, so a
+      collaborator could act as your agent during your turn.
+    - The long-term direction: private one-person projects, combined with much
+      better tools for sharing and collaboration *between* projects
+      (publishing results, sharing read-only content).
+16. **More exit watchers.** The 5-watcher limit is raised for computer exit
+    watchers. They are event-driven, and the limit exists because polling is
+    inefficient.
+17. **`nice` by default** on computers without a time limit (and `ionice` on
+    Linux). The agent can turn it off per job (`--no-nice`), for example for
+    benchmarks.
+18. **Limits:** `exec` returns at most 1 MB of output (the rest stays in a file
+    on the machine); job logs are kept 7 days or 1 GB per computer.
+19. **Public documentation of the trust model** in `src/packages/docs`:
+    exactly how access and credentials work, what CoCalc can and can't do,
+    how far to trust CoCalc and why, and how it compares with the
+    alternatives (AI Commander, SSH or MCP shell servers, tunnels, a local
+    agent). See "Public documentation".
 
 ## What exists to build on (traced, origin/main 25f42495b2)
 
@@ -329,9 +368,8 @@ inserts the audit row**, holding `FOR SHARE` on the grant and computer rows:
 - the run is active and verified (`verifyActiveAgentRun`), and the request is
   bound to the run's **lease**, not just the bearer;
 - the turn's **account** owns the computer;
-- the project still meets the shared-project rule (open question 1). The
-  collaborator set is rechecked on every ticket, since collaborators can be
-  added later;
+- the project's **only collaborator is the owner** (decision 15). This is
+  rechecked on every ticket, since collaborators can be added later;
 - the agent's grant is on;
 - the time limit hasn't passed and the computer isn't revoked;
 - the operation is within the options (mounts, GPU, sizes);
@@ -416,6 +454,22 @@ duration, bytes), which completes the audit row.
     precedent is project-hosts replying to accounts), and publish its reports
     to the hub's computer service.
 
+### Options are enforced on the machine, from the line
+
+- **Where options live:** the options are in the line the human ran
+  (`--hours`, `--container`, `--mount`, `--gpu`, `--scratch`, `--no-limit`).
+  The daemon enforces them itself, and the hub checks they match the approved
+  request.
+- **The hub can narrow them** (end early, revoke, refuse operations) **but never
+  widen them:**
+  - no mount, GPU, host access or extra time beyond what the line allows;
+  - extensions beyond the line's hours only up to the 8-hour cap the daemon
+    also knows;
+  - widening means a new line.
+- **What this protects against:** a compromised CoCalc service can at most do
+  what the owner pasted, until the time limit or Ctrl-C. The public docs state
+  this.
+
 ### Time limits fail closed
 
 - At connect and at every extension, the hub sends the end time, signed; the
@@ -441,6 +495,9 @@ duration, bytes), which completes the audit row.
 - **Hub mirror:** the hub keeps a mirror of each job's metadata (table
   `account_computer_jobs`), so `jobs`, the Settings page and other agents see
   everything without asking the machine.
+- **Priority:** on computers without a time limit, jobs and execs run under
+  `nice` (and `ionice` on Linux), so a forgotten sweep doesn't starve the
+  owner's own work. `--no-nice` turns it off for one job (benchmarks).
 - **Exclusive:** a small queue in the daemon. An exclusive job starts only when
   no CoCalc job is running; other jobs wait while it runs. The hub shows the
   queue.
@@ -575,7 +632,7 @@ that fires for every job, the existing exit watcher learns about computers:
 | Threat | Mitigation |
 |---|---|
 | A collaborator, or a collaborator's turn of my agent, uses my computer | The hub checks the turn's account against the owner on every ticket. No project-level access exists. |
-| **A collaborator in a shared project acts *as* my agent during my turn** (same Linux user, so they can read the runtime bearer from `/proc/<pid>/environ` and the lease directory) | The account check passes, because it *is* my turn. Shared-project rule (open question 1), the collaborator set rechecked on every ticket, tickets bound to the run's lease. |
+| **A collaborator in a shared project acts *as* my agent during my turn** (same Linux user, so they can read the runtime bearer from `/proc/<pid>/environ` and the lease directory) | The account check passes, because it *is* my turn. So computers work only in projects where the owner is the only collaborator (decision 15), checked on every ticket, and tickets are bound to the run's lease. |
 | A revoke commits between a check and the signature | Check and audit insert in one transaction under `FOR SHARE`; revoke and turn-off take `FOR UPDATE` and bump the revision; tickets carry revisions and the daemon enforces the pushed floor. |
 | A ticket is replayed after the daemon restarts | Nonces persisted until expiry, or tickets issued before the daemon started are rejected. |
 | A laptop's clock is wrong | Expiry is checked against a hub-relative offset measured at connect. |
@@ -590,8 +647,9 @@ that fires for every job, the existing exit watcher learns about computers:
 | Long-lived credentials left on the machine | Passthrough tokens are short-lived and never on disk. Device sign-ins are only documented. |
 | The daemon looks like malware's hidden backdoor (the VS Code tunnel abuse) | Always visible: the banner, `status`, the local log, `uninstall`. No start at boot without `--service`. One install directory. |
 | Slow readers exhaust memory | The conat file-transfer flow with one outstanding chunk, admission limits, and idle timeouts. |
-| A runaway job fills the disk or starves the owner | Scratch quota watched, log retention bounded, `--exclusive` queue, optional `nice` (open question). |
+| A runaway job fills the disk or starves the owner | Scratch quota watched, log retention bounded, `--exclusive` queue, `nice` by default on computers without a time limit. |
 | Prompt injection through output a job prints | Output is marked untrusted. Credentials are narrow and short-lived. The time limit bounds help sessions. |
+| A compromised or malicious CoCalc service | It can sign tickets, so it can run commands within the options the owner pasted, but never widen them. The time limit, Ctrl-C and `uninstall` are local. The local log records what ran. Containers and mounts bound what it reaches. Documented plainly (decision 19). |
 | An agent requests a computer for itself | Only a human can approve a request, with fresh auth. Provider-created computers come only from a connector the human approved with limits. |
 
 New hub RPCs and their fresh-auth decisions go in `dangerous-rpc-registry.ts`:
@@ -624,6 +682,56 @@ New hub RPCs and their fresh-auth decisions go in `dangerous-rpc-registry.ts`:
   while computers exist, until a migration is written. Account deletion purges
   them.
 
+## Public documentation (decision 19)
+
+Written in `src/packages/docs` as each stage ships, describing only what is
+built, and reviewed by the security reviewer.
+
+- **Connect a computer** (how-to):
+  - what it is for;
+  - the request card and the line;
+  - the two options (time limit or none), containers, mounts, scratch;
+  - Settings → Computers;
+  - Disconnect and uninstall;
+  - WSL2 on Windows.
+- **How computers keep you safe** (the trust model), plainly:
+  - **What runs where:** the agent in CoCalc; commands on your computer as the
+    user who ran the line, or in a rootless container.
+  - **Who can use a computer:** only the agents you switched on, only in your
+    own one-person projects, only during your turns.
+  - **What CoCalc stores:**
+    - the audit of operations (metadata, 90 days) and the job list;
+    - notes;
+    - the computer's public key;
+    - provider API keys, encrypted.
+  - **What passes through CoCalc:** command output passes through CoCalc's
+    servers to the agent, and from there to the AI model provider as part of
+    the agent's context.
+  - **Credentials:**
+    - connector tokens are short-lived, per job or turn, and never on disk;
+    - their real lifetime if a revocation is lost (8 h for GitHub);
+    - nothing of yours is copied to the computer otherwise;
+    - the computer's own credential, and where it is kept.
+  - **The limits of trust:**
+    - a compromised CoCalc could run commands within the options you pasted,
+      never beyond them, and the time limit, Ctrl-C and the local log are
+      yours;
+    - an allowed agent can do anything that user can do, which is why
+      containers, dedicated users and short time limits exist;
+    - prompt injection, and why narrow credentials matter more than
+      approvals.
+- **Compared with the alternatives,** as a table:
+  - AI Commander (a machine code pasted into the AI client grants access; no
+    command log at the relay);
+  - giving the agent an SSH key, or an MCP SSH server (standing access, no
+    per-agent scope, often no authentication);
+  - VS Code tunnels;
+  - GitHub self-hosted runners;
+  - running a local agent (Claude Code, Codex) on the machine itself.
+
+  The table covers who can use the machine, for how long, where credentials
+  live, what is logged, and how you stop it.
+
 ## Stages
 
 Each stage ships with tests and a live check on real machines:
@@ -646,7 +754,8 @@ Each stage ships with tests and a live check on real machines:
 - aliases and mentions;
 - the Settings page;
 - audit at the hub and on the machine;
-- the skill section and docs (replacing `self-hosting/reverse-ssh-access`);
+- the skill section and docs (replacing `self-hosting/reverse-ssh-access`),
+  including the trust-model page;
 - the egress reservation;
 - macOS and Linux, plus Windows via WSL2.
 
@@ -667,8 +776,7 @@ Each stage ships with tests and a live check on real machines:
   - a ticket from before a revocation is refused by an online daemon;
   - a replayed ticket is refused, also after a daemon restart;
   - a skewed laptop clock still enforces the time limit;
-  - a collaborator added to the agent's project stops new tickets (under the
-    rule chosen for open question 1).
+  - a collaborator added to the agent's project stops new tickets.
 
 ### Stage 2: containers
 
@@ -785,13 +893,20 @@ this training job, bring back the checkpoint, and destroy the machine".
    - a binding to the run's lease;
    - rate limits per run and per computer;
    - check, sign and audit in one transaction.
-9. **The shared-project rule** (open question 1) is enforced at the hub on
-   every ticket.
+9. **The private-project rule** (decision 15) is enforced at the hub on every
+   ticket.
+   - The Connectors menu shows computers as unavailable in shared projects,
+     with the reason.
+   - Requests from shared projects are refused.
+   - When a collaborator is added, the owner is told that computers stopped
+     working there.
 10. **Cross-bay routing, rehoming (blocked until migrated) and account
     deletion** are handled for the new tables from the start.
-11. **Output and job logs are data, not instructions,** and the agent-facing
+11. **Options come from the line and are enforced by the daemon;** the hub
+    can narrow but never widen them.
+12. **Output and job logs are data, not instructions,** and the agent-facing
     CLI output says so.
-12. **The daemon is small, self-contained and tidy:**
+13. **The daemon is small, self-contained and tidy:**
    - one directory;
    - one daemon per user per machine;
    - old versions removed;
@@ -800,35 +915,8 @@ this training job, bring back the checkpoint, and destroy the machine".
 
 ## Open questions
 
-1. **Shared projects** (from @cocalc-lite4's review; it changes the security
-   model).
-   - **The problem:** every process in a project runs as the same Linux user.
-     While your agent's turn runs, a collaborator's terminal or agent in that
-     project can read the turn's runtime bearer (`/proc/<pid>/environ`) and
-     act *as your agent*. The hub's "is this the owner's turn" check passes,
-     because it is. Connectors have the same exposure today; a shell on your
-     laptop raises the stakes.
-   - **The options:**
-     - (a) **Computers only for agents in projects where you are the only
-       collaborator,** enforced at the hub and rechecked on every ticket
-       (adding a collaborator stops new tickets). This matches your Oct 3 rule
-       for admin connectors ("only in projects with exactly one user").
-     - (b) Allowed in shared projects with an explicit warning when granting.
-     - (c) (a) for time-limited computers (your laptop), (b) for computers
-       without a limit.
-   - **I recommend (a),** perhaps relaxed to (c) later.
-2. **Time limit and containers.** Decision 7 offers containers only without a
-   time limit, but "a help session that mounts ~/datasets" implies a container
-   (a mount means nothing without one). Allow containers, and therefore
-   mounts, with a time limit too?
-3. **`nice` by default** for jobs on a computer without a time limit, so a
-   forgotten sweep doesn't starve the owner's own work on that machine?
-4. **Exec output cap** (1 MB) and **job log retention** (7 days or 1 GB): are
-   these right?
-5. **Provider credentials (stage 4):** some providers offer only long-lived API
-   keys. Is the hub holding them in the external-credentials store, never
-   giving them to agents, acceptable as an exception to "expiring tokens only"
-   (`cli-connectors` decision 3)?
+None right now: William answered revision 2's questions (decisions 7, 14–18).
+The security review may raise new ones.
 
 ## Prior art and lessons
 
