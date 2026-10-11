@@ -136,25 +136,49 @@ export async function purgeHistory({
   }) as Record<string, any>;
 
   const settings = (current.settings ?? {}) as Record<string, any>;
-  const history_epoch =
-    typeof settings.history_epoch === "number" &&
-    Number.isFinite(settings.history_epoch)
-      ? settings.history_epoch + 1
-      : 1;
   const stream = conatClient.sync.astream({
     name,
     project_id,
     noInventory: true,
   });
   try {
+    // Open documents keep their settings, including history_epoch, in the
+    // patch stream's metadata (not in the syncstrings table above), so the
+    // new epoch must be published there too.
+    const metadata = (await stream.getMetadata()) as
+      | { settings?: Record<string, any> }
+      | undefined;
+    const metadataSettings = (
+      metadata != null && typeof metadata === "object" ? metadata.settings : {}
+    ) as Record<string, any>;
+    const epochOf = (x: Record<string, any> | undefined) =>
+      typeof x?.history_epoch === "number" && Number.isFinite(x.history_epoch)
+        ? x.history_epoch
+        : 0;
+    const history_epoch =
+      Math.max(epochOf(settings), epochOf(metadataSettings)) + 1;
+    const history_purged_at = Date.now();
+    // 1. fence: writes still carrying an older epoch are rejected
     await stream.config({
       required_headers: { history_epoch },
     });
+    // 2. publish the new epoch, before deleting anything: open copies of the
+    // document see it, emit "history-reset" and close, rather than react to
+    // their history disappearing; new opens write with the new epoch.
+    await stream.patchMetadata({
+      settings: {
+        ...(metadataSettings ?? {}),
+        history_epoch,
+        history_purged_at,
+        history_purged_by: account_id ?? null,
+      },
+    });
+    // 3. delete the history
     const deleted = await stream.delete({ all: true });
     const nextSettings = {
       ...settings,
       history_epoch,
-      history_purged_at: Date.now(),
+      history_purged_at,
       history_purged_by: account_id ?? null,
     };
     syncstrings.set({

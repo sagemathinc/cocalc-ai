@@ -42,6 +42,7 @@ import {
 } from "@cocalc/conat/core/client";
 import { storagePath, type User } from "./core-stream";
 import { type Configuration } from "@cocalc/conat/persist/storage";
+import type { JSONValue } from "@cocalc/util/types";
 
 export class AStream<T = any> {
   private storage: StorageOptions;
@@ -195,6 +196,15 @@ export class AStream<T = any> {
       return { messageData: messageData(mesg) };
     });
     return await this.stream.setMany(ops);
+  };
+
+  getMetadata = async (): Promise<JSONValue | undefined> => {
+    return await this.stream.getMetadata();
+  };
+
+  // shallow merge into the stream's metadata, atomically on the server
+  patchMetadata = async (delta: JSONValue): Promise<JSONValue | undefined> => {
+    return await this.stream.patchMetadata(delta);
   };
 
   config = async (

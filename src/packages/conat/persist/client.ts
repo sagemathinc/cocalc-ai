@@ -1119,9 +1119,14 @@ class PersistStreamClient extends EventEmitter {
         if (this.isClosed() || this.socket.state === "closed")
           throw Error("closed");
         if (headers?.error) {
-          throw new ConatError(`${headers.error}`, {
+          const err = new ConatError(`${headers.error}`, {
             code: headers.code as string | number,
           });
+          if (typeof headers.archive === "string") {
+            // where the server kept a copy of a history it refused (413)
+            (err as any).archive = headers.archive;
+          }
+          throw err;
         }
         // Completion frames participate in sequencing too. A dropped first or
         // last data frame must not turn into an empty successful bootstrap.

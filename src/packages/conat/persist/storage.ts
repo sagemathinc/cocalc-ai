@@ -68,6 +68,7 @@ import {
   compress,
   decompress,
   decompressAsync,
+  archiveDatabase,
   statSync,
   copyFileSync,
   ensureContainingDirectoryExists,
@@ -759,6 +760,16 @@ export class PersistentStream extends EventEmitter {
   };
 
   isClosing = (): boolean => this.closing;
+
+  // Called when a message too large to read is refused, so the history can
+  // then be reset without losing it for good: keeps a copy of this stream's
+  // database next to it (at most one per database).  Returns its path.
+  archiveForOversized = reuseInFlight(async (): Promise<string | undefined> => {
+    if (this.options.ephemeral || this.dbPath == null || this.closing) {
+      return undefined;
+    }
+    return await archiveDatabase(this.db, this.dbPath);
+  });
 
   close = () => {
     const path = this.options?.path;

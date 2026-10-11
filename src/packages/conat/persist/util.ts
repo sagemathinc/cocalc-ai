@@ -77,6 +77,25 @@ function resolveTemplateBase(base: string, token: string, id: string): string {
   return join(base, id);
 }
 
+// localPath (a file inside a project's persist storage) as the project's user
+// sees it, e.g. "~/.local/share/cocalc/persist/...", or undefined if it is not
+// inside that project's directory.  Never returns a host path.
+export function projectDisplayPath(
+  storagePath: string,
+  localPath: string,
+): string | undefined {
+  if (!storagePath.startsWith("projects/")) return undefined;
+  const projectId = storagePath.slice("projects/".length).split("/")[0];
+  const template = syncFiles.localProjects;
+  if (!projectId || !template || !template.includes("[project_id]")) {
+    return undefined;
+  }
+  const [prefix, suffix] = template.split("[project_id]");
+  const projectRoot = `${prefix}${projectId}${suffix.split("/")[0] ?? ""}`;
+  if (!localPath.startsWith(projectRoot + "/")) return undefined;
+  return "~/" + localPath.slice(projectRoot.length + 1);
+}
+
 export function resolveLocalPath(
   storagePath: string,
   { ephemeral }: { ephemeral?: boolean },

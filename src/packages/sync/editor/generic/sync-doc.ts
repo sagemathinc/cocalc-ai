@@ -545,6 +545,16 @@ export class SyncDoc extends EventEmitter {
           if (this.isClosed()) {
             return true;
           }
+          if (await this.resetOversizedHistory(err)) {
+            // the history was reset, so open again right away
+            try {
+              await this.initAll();
+              this.emitOpenPhase("init_attempt_done", { attempt });
+              return true;
+            } catch (retryErr) {
+              err = retryErr;
+            }
+          }
           const m = `WARNING: problem initializing ${this.path} -- ${err}`;
           log(m);
           if (DEBUG || true) {
@@ -572,6 +582,54 @@ export class SyncDoc extends EventEmitter {
     }
     this.emit_change(); // from nothing to something.
   });
+
+  // A history entry too large to load (e.g., a runaway notebook output saved
+  // as one 500 MB patch) makes every open of this document fail with 413.
+  // Rather than leave the user stuck, reset the history exactly as
+  // TimeTravel's "purge history" does -- other open copies of the document
+  // see the new history epoch and close instead of writing stale state, and
+  // the persist server fences out writes from the old epoch -- and tell the
+  // user.  The persist server kept a copy of the old history first.  Only
+  // clients that can purge (browsers) do this, at most once per document.
+  private oversizedHistoryReset = false;
+  private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
+    if (
+      (err as any)?.code != 413 ||
+      this.oversizedHistoryReset ||
+      typeof this.client.purgeHistory != "function"
+    ) {
+      return false;
+    }
+    this.oversizedHistoryReset = true;
+    let history_epoch: number;
+    try {
+      ({ history_epoch } = await this.client.purgeHistory({
+        project_id: this.project_id,
+        path: this.syncPath,
+      }));
+    } catch (purgeErr) {
+      // e.g., no permission or no connection: keep retrying the open, and
+      // try the reset again next time
+      this.oversizedHistoryReset = false;
+      this.dbg("resetOversizedHistory")(`failed -- ${purgeErr}`);
+      return false;
+    }
+    // Our own reset: adopt the new epoch instead of closing, as this document
+    // would for a reset made elsewhere.
+    this.history_epoch = history_epoch;
+    const archive = (err as any)?.archive;
+    this.client.alert_message?.({
+      type: "info",
+      title: "Edit history reset",
+      message:
+        `The edit history (TimeTravel) of ${this.path} contained an entry too large to load, most likely a huge output, so its edit history was reset and the file opened normally.` +
+        (typeof archive == "string"
+          ? ` A copy of the old history was saved as ${archive}.`
+          : ""),
+      block: true,
+    });
+    return true;
+  };
 
   private resolveCanonicalSyncIdentityPath = async (
     path: string,

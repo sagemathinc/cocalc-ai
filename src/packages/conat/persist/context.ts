@@ -26,6 +26,14 @@ export let decompress: (data: Buffer) => Buffer = () => {
 export let decompressAsync: (data: Buffer) => Promise<Buffer> = async (data) =>
   decompress(data);
 
+// Keep a copy of a stream's database, e.g., before its history is reset
+// because it holds a message too large to read.  Returns the copy's path, or
+// undefined if archiving is not supported here.
+export let archiveDatabase: (
+  db: Database,
+  dbPath: string,
+) => Promise<string | undefined> = async () => undefined;
+
 export let syncFiles = {
   local: "",
   localProjects: "",
@@ -56,6 +64,10 @@ export function initContext(opts: {
   compress: (Buffer) => Buffer;
   decompress: (Buffer) => Buffer;
   decompressAsync?: (Buffer) => Promise<Buffer>;
+  archiveDatabase?: (
+    db: Database,
+    dbPath: string,
+  ) => Promise<string | undefined>;
   syncFiles: {
     local: string;
     localProjects: string;
@@ -75,6 +87,7 @@ export function initContext(opts: {
   decompress = opts.decompress;
   decompressAsync =
     opts.decompressAsync ?? (async (data: Buffer) => opts.decompress(data));
+  archiveDatabase = opts.archiveDatabase ?? (async () => undefined);
   syncFiles = opts.syncFiles;
   ensureContainingDirectoryExists = opts.ensureContainingDirectoryExists;
   statSync = opts.statSync;
