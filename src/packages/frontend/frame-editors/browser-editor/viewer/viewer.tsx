@@ -374,14 +374,13 @@ export function SharedBrowserViewer(props: SharedBrowserViewerProps) {
       driverButton =
         state.driver === "human" ? "Hand back to agent" : "Pause the agent";
     } else if (driving) {
+      // Say what the agent can see every time: agents connect only while a
+      // command runs, so whether one is connected now says little.
       driverMessage = state.agentCanSee
         ? "You are driving. The agent can see the page, and waits to act until you hand back."
         : state.agentWaiting
-          ? "You are driving. The agent is waiting to use the browser."
-          : "You are driving." +
-            (state.agents
-              ? " The agent cannot see the page, and waits until you hand back."
-              : "");
+          ? "You are driving. The agent is waiting to use the browser, and cannot see the page."
+          : "You are driving. The agent cannot see the page, and waits until you hand back.";
       driverButton = "Hand back to agent";
     } else {
       driverMessage = state.ask

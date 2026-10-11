@@ -337,5 +337,18 @@ describe("SharedBrowserViewer", () => {
     ).toBeTruthy();
     fireEvent.click(screen.getByText("Hide from the agent"));
     expect(connection.sent).toContainEqual({ type: "agentSee", value: false });
+    // Said even while no agent command happens to be connected.
+    show(browserState({ driver: "human", agents: 0 }));
+    expect(
+      screen.getByText(
+        "You are driving. The agent cannot see the page, and waits until you hand back.",
+      ),
+    ).toBeTruthy();
+    show(browserState({ driver: "human", agentWaiting: true }));
+    expect(
+      screen.getByText(
+        "You are driving. The agent is waiting to use the browser, and cannot see the page.",
+      ),
+    ).toBeTruthy();
   });
 });
