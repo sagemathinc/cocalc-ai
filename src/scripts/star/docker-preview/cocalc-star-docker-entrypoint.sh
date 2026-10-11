@@ -55,7 +55,8 @@ fi
 # Before systemd starts nothing can be using the Star user's Podman storage
 # (kept in the volume, see cocalc-star-docker-init), so remove them as root.
 tempdirs="${COCALC_STAR_DOCKER_STATE_DIR:-/var/lib/cocalc/star-docker}/containers/storage/overlay/tempdirs"
-if [ -d "$tempdirs" ] && [ -n "$(find "$tempdirs" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+if [ -d "$tempdirs" ] &&
+  [ -n "$(find "$tempdirs" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || echo unknown)" ]; then
   echo "[star-docker-entrypoint] removing stale Podman temporary layer directories" | tee -a "$LOG_FILE" >&2
   find "$tempdirs" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || true
   # Keep the container up for `docker exec`, but say why Podman will fail.
