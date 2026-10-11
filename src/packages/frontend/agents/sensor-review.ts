@@ -394,6 +394,8 @@ export async function startSensorReview({
       accountId: account_id,
       from: { project_id, thread_id: agent.thread_id },
       to: { project_id, thread_id },
+      // Never fall back to another payer than the agent's.
+      strict: true,
     });
   const chatIdentity = actions.reserveChatSendIdentity({
     reply_thread_id: thread_id,

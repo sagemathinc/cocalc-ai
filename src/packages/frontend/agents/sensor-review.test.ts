@@ -211,6 +211,7 @@ describe("starting a review", () => {
     accountId: "me",
     from: { project_id: "p", thread_id: "agent-thread" },
     to: { project_id: "p", thread_id: "review-thread" },
+    strict: true,
   };
 
   test("uses the open agent chat, its own review chat and the agent's payment", async () => {
@@ -243,6 +244,13 @@ describe("starting a review", () => {
     expect(review.sendChat).toHaveBeenCalledWith(
       expect.objectContaining({ acpConfigOverride: codexConfig }),
     );
+  });
+
+  test("a review is not sent if the agent's payment could not be copied", async () => {
+    settings = { acp_config: { model: "gpt-6-luna" } };
+    mockCopyPayment.mockRejectedValue(new Error("hub unavailable"));
+    await expect(start()).rejects.toThrow("hub unavailable");
+    expect(review.sendChat).not.toHaveBeenCalled();
   });
 
   test("a Codex agent's script is never handed to Claude", async () => {
