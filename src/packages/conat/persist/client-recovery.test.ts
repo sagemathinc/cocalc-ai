@@ -153,3 +153,29 @@ describe("persist stream open errors", () => {
     expect(third.isClosed()).toBe(true);
   });
 });
+
+describe("persist recovery of a stream that cannot be replayed", () => {
+  beforeAll(() => {
+    process.env.COCALC_TEST_MODE = "true";
+    disablePermissionCheck();
+  });
+
+  it("stops after a 413 instead of repeating the replay", async () => {
+    const { persist, socket } = createClient();
+    (socket as any).waitUntilReady = jest.fn(async () => {});
+    const tooLarge = Object.assign(new Error("message too large"), {
+      code: 413,
+    });
+    persist.getAll = jest.fn(async () => {
+      throw tooLarge;
+    });
+    const errors: any[] = [];
+    persist.on("error", (err) => errors.push(err));
+
+    await persist.getMissed0({ priority: "foreground" });
+
+    expect(persist.getAll).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([tooLarge]);
+    persist.close();
+  });
+});
