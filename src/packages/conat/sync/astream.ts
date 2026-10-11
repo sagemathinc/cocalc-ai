@@ -41,8 +41,11 @@ import {
   decode,
 } from "@cocalc/conat/core/client";
 import { storagePath, type User } from "./core-stream";
-import { type Configuration } from "@cocalc/conat/persist/storage";
-import type { JSONValue } from "@cocalc/util/types";
+import {
+  type Configuration,
+  type ResetHistoryOptions,
+  type ResetHistoryResult,
+} from "@cocalc/conat/persist/storage";
 
 export class AStream<T = any> {
   private storage: StorageOptions;
@@ -198,13 +201,12 @@ export class AStream<T = any> {
     return await this.stream.setMany(ops);
   };
 
-  getMetadata = async (): Promise<JSONValue | undefined> => {
-    return await this.stream.getMetadata();
-  };
-
-  // shallow merge into the stream's metadata, atomically on the server
-  patchMetadata = async (delta: JSONValue): Promise<JSONValue | undefined> => {
-    return await this.stream.patchMetadata(delta);
+  // atomically reset a sync document's history; see
+  // PersistentStream.resetHistory
+  resetHistory = async (
+    opts: ResetHistoryOptions,
+  ): Promise<ResetHistoryResult> => {
+    return await this.stream.resetHistory(opts);
   };
 
   config = async (

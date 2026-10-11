@@ -110,6 +110,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.startCourseSecretCleanup": courseProjectFromOpts,
   "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
   "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
+  // A document's edit history (TimeTravel) lives with its project.
+  "sync.history": projectFromOpts,
+  "sync.purgeHistory": projectFromOpts,
   // Admin overrides apply where the project is; isAdmin asks the admin's
   // home bay (#904).
   "projects.getAdminProjectEntitlementOverride": projectFromOpts,

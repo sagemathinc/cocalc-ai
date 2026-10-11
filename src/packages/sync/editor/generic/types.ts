@@ -207,7 +207,8 @@ export interface Client extends ProjectClient {
   purgeHistory?: (opts: {
     project_id: string;
     path: string;
-  }) => Promise<{ deleted: number; history_epoch: number }>;
+    oversized_seq?: number;
+  }) => Promise<{ deleted: number; history_epoch: number; reset?: boolean }>;
 }
 
 export interface DocType {

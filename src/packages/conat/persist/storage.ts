@@ -68,7 +68,6 @@ import {
   compress,
   decompress,
   decompressAsync,
-  archiveDatabase,
   statSync,
   copyFileSync,
   ensureContainingDirectoryExists,
@@ -250,10 +249,46 @@ export function persistMessageTooLargeError({
   limit: number;
   seq: number;
 }): ConatError {
-  return new ConatError(
+  const err = new ConatError(
     `stored message ${seq} is ${size} bytes, over the ${limit} byte limit, so it cannot be read; an operator must remove it from the stream`,
     { code: 413 },
   );
+  // which message, so a client can ask for exactly this one to be dealt with
+  // (see resetHistory)
+  (err as any).oversizedSeq = seq;
+  return err;
+}
+
+export interface ResetHistoryOptions {
+  // the new history_epoch is at least this (e.g., an epoch kept elsewhere)
+  minEpoch?: number;
+  // more settings to record in the metadata, e.g., who reset the history
+  settings?: { [key: string]: JSONValue };
+  // Only reset if the message with this seq is still in the history and too
+  // large to load.  Several clients can see the same oversized message at
+  // once; the first reset removes it, so the others change nothing.
+  ifOversizedSeq?: number;
+  // keep the old messages, in a table of their own, instead of deleting them
+  archive?: boolean;
+}
+
+export interface ResetHistoryResult {
+  // false if ifOversizedSeq was given and that message is gone or not too large
+  reset: boolean;
+  // the history epoch now in effect
+  history_epoch: number;
+  // number of messages deleted or archived
+  count: number;
+  // name of the table the old messages were archived in
+  archive?: string;
+}
+
+// tables holding history kept by resetHistory({archive:true})
+const ARCHIVED_MESSAGES_PREFIX = "messages_archived_";
+
+function epochOf(x: { [key: string]: JSONValue }): number {
+  const epoch = x.history_epoch;
+  return typeof epoch === "number" && Number.isFinite(epoch) ? epoch : 0;
 }
 
 // A stored message as read from the database, before decompression.
@@ -646,16 +681,7 @@ export class PersistentStream extends EventEmitter {
       // in a lot  of applications, e.g., if it is just edit history for a file.
       this.db.prepare("PRAGMA synchronous=OFF").run();
     }
-    // time is in *seconds* since the epoch, since that is standard for sqlite.
-    // ttl is in milliseconds.
-    this.db
-      .prepare(
-        `CREATE TABLE IF NOT EXISTS messages (
-          seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER
-          )
-        `,
-      )
-      .run();
+    this.createMessagesTable();
     this.db
       .prepare(
         `
@@ -687,18 +713,31 @@ export class PersistentStream extends EventEmitter {
       )
       .run();
     this.db
-      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)")
-      .run();
-    this.db
-      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
-      .run();
-    this.db
       .prepare(
         "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
       )
       .run();
 
     this.conf = this.config();
+  };
+
+  private createMessagesTable = () => {
+    // time is in *seconds* since the epoch, since that is standard for sqlite.
+    // ttl is in milliseconds.
+    this.db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS messages (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, time INTEGER NOT NULL, headers TEXT, compress NUMBER NOT NULL, encoding NUMBER NOT NULL, raw BLOB NOT NULL, size NUMBER NOT NULL, ttl NUMBER
+          )
+        `,
+      )
+      .run();
+    this.db
+      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)")
+      .run();
+    this.db
+      .prepare("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
+      .run();
   };
 
   private readSqliteCacheKiB = (): number => {
@@ -760,16 +799,6 @@ export class PersistentStream extends EventEmitter {
   };
 
   isClosing = (): boolean => this.closing;
-
-  // Called when a message too large to read is refused, so the history can
-  // then be reset without losing it for good: keeps a copy of this stream's
-  // database next to it (at most one per database).  Returns its path.
-  archiveForOversized = reuseInFlight(async (): Promise<string | undefined> => {
-    if (this.options.ephemeral || this.dbPath == null || this.closing) {
-      return undefined;
-    }
-    return await archiveDatabase(this.db, this.dbPath);
-  });
 
   close = () => {
     const path = this.options?.path;
@@ -1314,6 +1343,141 @@ export class PersistentStream extends EventEmitter {
     this.emit("change", { op: "delete", seqs });
     this.throttledBackup();
     return { seqs };
+  };
+
+  // Reset the history of a sync document -- TimeTravel's "purge history", and
+  // the automatic reset of a history holding a message too large to load --
+  // in one transaction, so concurrent resets and writers cannot interleave:
+  //  - fence: only writes with the new history_epoch header are accepted from
+  //    now on, so copies of the document opened before cannot add to the new
+  //    history;
+  //  - publish the new epoch in the metadata, so those copies close;
+  //  - delete the old messages, or keep them in a table of their own.
+  // A reset that does not archive also drops the history kept by earlier
+  // resets, so purging still means the history is gone.
+  resetHistory = ({
+    minEpoch = 0,
+    settings,
+    ifOversizedSeq,
+    archive,
+  }: ResetHistoryOptions = {}): ResetHistoryResult => {
+    let result: ResetHistoryResult | undefined;
+    let metadata: JSONValue | undefined;
+    let seqs: number[] = [];
+    this.runTransaction(() => {
+      const fence = isPlainRecord(this.conf.required_headers)
+        ? this.conf.required_headers
+        : {};
+      const current = this.getMetadata();
+      const currentRecord = isPlainRecord(current) ? current : {};
+      const currentSettings = isPlainRecord(currentRecord.settings)
+        ? currentRecord.settings
+        : {};
+      const currentEpoch = Math.max(epochOf(currentSettings), epochOf(fence));
+      if (ifOversizedSeq != null) {
+        const row = this.db
+          .prepare("SELECT size FROM messages WHERE seq=?")
+          .get(ifOversizedSeq) as { size: number } | undefined;
+        if (row == null || !(row.size > maxPersistMessageBytes())) {
+          result = { reset: false, history_epoch: currentEpoch, count: 0 };
+          return;
+        }
+      }
+      const history_epoch = Math.max(minEpoch, currentEpoch) + 1;
+      this.db
+        .prepare(
+          `INSERT INTO config (field, value) VALUES('required_headers', ?) ON CONFLICT(field) DO UPDATE SET value=excluded.value`,
+        )
+        .run(JSON.stringify({ ...fence, history_epoch }));
+      metadata = {
+        ...currentRecord,
+        settings: { ...currentSettings, ...settings, history_epoch },
+      };
+      this.db
+        .prepare(
+          `
+          INSERT INTO stream_metadata(id, metadata_json, revision)
+          VALUES (1, ?, 1)
+          ON CONFLICT(id) DO UPDATE SET
+            metadata_json=excluded.metadata_json,
+            revision=stream_metadata.revision + 1
+        `,
+        )
+        .run(JSON.stringify(metadata));
+      // seq is the rowid, so this does not read the (possibly huge) messages
+      seqs = this.db
+        .prepare("SELECT seq FROM messages")
+        .all()
+        .map((row: any) => row.seq);
+      let archiveTable: string | undefined;
+      if (archive) {
+        // Renaming keeps the old messages where they are: nothing is copied,
+        // so this is fast and needs no disk space.  New messages continue
+        // the old sequence numbers.
+        archiveTable = this.unusedArchiveTableName();
+        const last = (
+          this.db
+            .prepare("SELECT seq FROM sqlite_sequence WHERE name='messages'")
+            .get() as { seq?: number } | undefined
+        )?.seq;
+        this.db.exec(`ALTER TABLE messages RENAME TO "${archiveTable}"`);
+        this.db.exec("DROP INDEX IF EXISTS idx_messages_key");
+        this.db.exec("DROP INDEX IF EXISTS idx_messages_time");
+        this.createMessagesTable();
+        if (last != null) {
+          this.db
+            .prepare(
+              "INSERT INTO sqlite_sequence(name, seq) VALUES('messages', ?)",
+            )
+            .run(last);
+        }
+      } else {
+        this.db.prepare("DELETE FROM messages").run();
+        for (const name of this.archivedMessageTables()) {
+          this.db.exec(`DROP TABLE "${name}"`);
+        }
+      }
+      this.db.prepare("DELETE FROM stream_checkpoints").run();
+      result = {
+        reset: true,
+        history_epoch,
+        count: seqs.length,
+        ...(archiveTable != null ? { archive: archiveTable } : {}),
+      };
+    });
+    if (!result!.reset) {
+      return result!;
+    }
+    this.msgIDs.clear();
+    // reload the configuration, so the new fence is enforced
+    this.config();
+    // metadata first: open copies of the document close on the new epoch
+    // rather than react to their history disappearing
+    this.emit("change", { op: "metadata", metadata });
+    this.emit("change", { op: "delete", seqs });
+    this.emit("change", { op: "checkpoints", checkpoints: {} });
+    this.throttledBackup();
+    return result!;
+  };
+
+  private archivedMessageTables = (): string[] => {
+    return (
+      this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all() as { name: string }[]
+    )
+      .map(({ name }) => name)
+      .filter((name) => name.startsWith(ARCHIVED_MESSAGES_PREFIX));
+  };
+
+  private unusedArchiveTableName = (): string => {
+    const existing = new Set(this.archivedMessageTables());
+    const base = `${ARCHIVED_MESSAGES_PREFIX}${Date.now()}`;
+    let name = base;
+    for (let i = 1; existing.has(name); i++) {
+      name = `${base}_${i}`;
+    }
+    return name;
   };
 
   get length(): number {

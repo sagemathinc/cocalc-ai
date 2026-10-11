@@ -70,14 +70,7 @@ import {
   persistMessageTooLargeError,
   storedRowToMessage,
 } from "./storage";
-import {
-  getStream,
-  projectDisplayPath,
-  SERVICE,
-  MAX_PER_USER,
-  MAX_GLOBAL,
-  RESOURCE,
-} from "./util";
+import { getStream, SERVICE, MAX_PER_USER, MAX_GLOBAL, RESOURCE } from "./util";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
 import { once } from "@cocalc/util/async-utils";
@@ -402,6 +395,8 @@ export function server({
           mesg.respondSync(stream.setMetadata(mesg.data));
         } else if (request.cmd == "patchMetadata") {
           mesg.respondSync(stream.patchMetadata(mesg.data));
+        } else if (request.cmd == "resetHistory") {
+          mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
         } else if (request.cmd == "checkpoints") {
           mesg.respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
@@ -476,20 +471,14 @@ export function server({
           });
         }
       } catch (err) {
-        // Where the copy of a refused oversized history is, as a path the
-        // project's user can see (never a host path).
-        const archive =
-          (err as any)?.archivePath != null && storage?.path != null
-            ? projectDisplayPath(storage.path, (err as any).archivePath)
-            : undefined;
+        const oversizedSeq = (err as any)?.oversizedSeq;
         mesg.respondSync(null, {
           headers: {
-            error:
-              archive != null
-                ? `${err} A copy of this history was saved as ${archive}.`
-                : `${err}`,
+            error: `${err}`,
             code: (err as any)?.code ?? classifyPersistStorageErrorCode(err),
-            ...(archive != null ? { archive } : {}),
+            ...(typeof oversizedSeq == "number"
+              ? { oversized_seq: oversizedSeq }
+              : {}),
           },
         });
       }
@@ -752,22 +741,12 @@ export async function replay({
       }
       const oversized = plan.find((row) => row.size > sizeLimit);
       if (oversized != null) {
-        // Refuse before reading or decompressing it.  Keep a copy of the
-        // history first: the client then resets it (see SyncDoc), so the
-        // document opens again.
-        const err: any = persistMessageTooLargeError({
+        // refuse before reading or decompressing it
+        throw persistMessageTooLargeError({
           size: oversized.size,
           limit: sizeLimit,
           seq: oversized.seq,
         });
-        try {
-          err.archivePath = await stream.archiveForOversized();
-        } catch (archiveErr) {
-          logger.warn("failed to archive stream with oversized message", {
-            err: `${archiveErr}`,
-          });
-        }
-        throw err;
       }
       const last_seq = plan[plan.length - 1].seq;
       const pageBytes = plan.reduce(

@@ -13,6 +13,44 @@ jest.mock("@cocalc/backend/conat", () => ({
   conat: (...args: any[]) => conatMock(...args),
 }));
 
+const PROJECT = "00000000-1000-4000-8000-000000000000";
+
+// The patch stream resets itself atomically (fence, epoch in its metadata,
+// history deleted or kept aside; see PersistentStream.resetHistory, tested
+// in @cocalc/conat).  Here: what purgeHistory asks of it, and the legacy
+// syncstrings record it keeps in step.
+function mockClient({
+  resetResult,
+  syncstringsSettings = { history_epoch: 5 },
+}: {
+  resetResult: { reset: boolean; history_epoch: number; count: number };
+  syncstringsSettings?: Record<string, any>;
+}) {
+  const stream = {
+    resetHistory: jest.fn(async () => resetResult),
+    close: jest.fn(),
+  };
+  const syncstrings = {
+    get_one: jest.fn(() => ({
+      string_id: "sid",
+      project_id: PROJECT,
+      path: "a.txt",
+      doctype: JSON.stringify({ type: "string", patch_format: 0 }),
+      settings: syncstringsSettings,
+    })),
+    set: jest.fn(),
+    save: jest.fn(async () => undefined),
+    close: jest.fn(),
+  };
+  conatMock.mockReturnValue({
+    sync: {
+      astream: jest.fn(() => stream),
+      synctable: jest.fn(async () => syncstrings),
+    },
+  });
+  return { stream, syncstrings };
+}
+
 describe("sync.purgeHistory", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -20,171 +58,91 @@ describe("sync.purgeHistory", () => {
     conatMock = jest.fn();
   });
 
-  it("deletes patch stream, fences writes, and bumps history_epoch", async () => {
-    const deleteMock = jest.fn(async () => ({ seqs: [1, 2, 3] }));
-    const configMock = jest.fn(async () => ({ required_headers: {} }));
-    const closeStreamMock = jest.fn();
-    const patchMetadataMock = jest.fn(async (delta) => delta);
-    const stream = {
-      delete: deleteMock,
-      config: configMock,
-      close: closeStreamMock,
-      getMetadata: jest.fn(async () => ({
-        version: 1,
-        settings: { history_epoch: 5, other: "kept" },
-      })),
-      patchMetadata: patchMetadataMock,
-    };
-
-    const setMock = jest.fn();
-    const saveMock = jest.fn(async () => undefined);
-    const closeSyncstringsMock = jest.fn();
-    const syncstrings = {
-      get_one: jest.fn(() => ({
-        string_id: "sid",
-        project_id: "00000000-1000-4000-8000-000000000000",
-        path: "a.txt",
-        doctype: JSON.stringify({ type: "string", patch_format: 0 }),
-        settings: { history_epoch: 5 },
-      })),
-      set: setMock,
-      save: saveMock,
-      close: closeSyncstringsMock,
-    };
-
-    const client = {
-      sync: {
-        astream: jest.fn(() => stream),
-        synctable: jest.fn(async () => syncstrings),
-      },
-    };
-    conatMock.mockReturnValue(client);
-
+  it("resets the patch stream's history and records the new epoch", async () => {
+    const { stream, syncstrings } = mockClient({
+      resetResult: { reset: true, history_epoch: 6, count: 3 },
+    });
     const { purgeHistory } = await import("./sync");
     const result = await purgeHistory({
       account_id: "acct-1",
-      project_id: "00000000-1000-4000-8000-000000000000",
+      project_id: PROJECT,
       path: "a.txt",
     });
 
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
-      project_id: "00000000-1000-4000-8000-000000000000",
+      project_id: PROJECT,
     });
-    expect(configMock).toHaveBeenCalledWith({
-      required_headers: { history_epoch: 6 },
-    });
-    expect(deleteMock).toHaveBeenCalledWith({ all: true });
-    // Open documents read the epoch from the patch stream's metadata, so it
-    // is published there, before the history is deleted.
-    expect(patchMetadataMock).toHaveBeenCalledWith({
-      settings: expect.objectContaining({
-        other: "kept",
-        history_epoch: 6,
+    expect(stream.resetHistory).toHaveBeenCalledTimes(1);
+    expect(stream.resetHistory).toHaveBeenCalledWith({
+      // an epoch recorded only in syncstrings still counts
+      minEpoch: 5,
+      settings: {
+        history_purged_at: expect.any(Number),
         history_purged_by: "acct-1",
-      }),
+      },
     });
-    expect(patchMetadataMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteMock.mock.invocationCallOrder[0],
-    );
-    expect(configMock.mock.invocationCallOrder[0]).toBeLessThan(
-      patchMetadataMock.mock.invocationCallOrder[0],
-    );
-
-    expect(setMock).toHaveBeenCalledTimes(1);
-    const next = setMock.mock.calls[0][0];
+    expect(syncstrings.set).toHaveBeenCalledTimes(1);
+    const next = syncstrings.set.mock.calls[0][0];
     expect(next.last_snapshot).toBeNull();
     expect(next.last_seq).toBeNull();
     expect(next.settings.history_epoch).toBe(6);
     expect(next.settings.history_purged_by).toBe("acct-1");
-    expect(saveMock).toHaveBeenCalled();
-    expect(closeStreamMock).toHaveBeenCalled();
-    expect(closeSyncstringsMock).toHaveBeenCalled();
-
-    expect(result).toEqual({
-      deleted: 3,
-      history_epoch: 6,
-    });
+    expect(syncstrings.save).toHaveBeenCalled();
+    expect(stream.close).toHaveBeenCalled();
+    expect(syncstrings.close).toHaveBeenCalled();
+    expect(result).toEqual({ deleted: 3, history_epoch: 6, reset: true });
   });
 
-  it("works when there is no prior history metadata", async () => {
-    const deleteMock = jest.fn(async () => ({ seqs: [] }));
-    const configMock = jest.fn(async () => ({ required_headers: {} }));
-    const stream = {
-      delete: deleteMock,
-      config: configMock,
-      close: jest.fn(),
-      getMetadata: jest.fn(async () => undefined),
-      patchMetadata: jest.fn(async (delta) => delta),
-    };
-    const syncstrings = {
-      get_one: jest.fn(() => ({
-        string_id: "sid",
-        project_id: "00000000-1000-4000-8000-000000000000",
-        path: "a.txt",
-        doctype: JSON.stringify({ type: "string", patch_format: 0 }),
-        settings: {},
-      })),
-      set: jest.fn(),
-      save: jest.fn(async () => undefined),
-      close: jest.fn(),
-    };
-
-    conatMock.mockReturnValue({
-      sync: {
-        astream: jest.fn(() => stream),
-        synctable: jest.fn(async () => syncstrings),
-      },
+  it("works when there is no prior history epoch", async () => {
+    const { stream } = mockClient({
+      resetResult: { reset: true, history_epoch: 1, count: 0 },
+      syncstringsSettings: {},
     });
-
     const { purgeHistory } = await import("./sync");
     const result = await purgeHistory({
       account_id: "acct-1",
-      project_id: "00000000-1000-4000-8000-000000000000",
+      project_id: PROJECT,
       path: "a.txt",
     });
-
-    expect(configMock).toHaveBeenCalledWith({
-      required_headers: { history_epoch: 1 },
-    });
+    expect(stream.resetHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ minEpoch: 0 }),
+    );
     expect(result.history_epoch).toBe(1);
   });
 
-  it("takes the next epoch after the newer of the metadata and syncstrings epochs", async () => {
-    const configMock = jest.fn(async () => ({ required_headers: {} }));
-    const stream = {
-      delete: jest.fn(async () => ({ seqs: [] })),
-      config: configMock,
-      close: jest.fn(),
-      getMetadata: jest.fn(async () => ({ settings: { history_epoch: 9 } })),
-      patchMetadata: jest.fn(async (delta) => delta),
-    };
-    const syncstrings = {
-      get_one: jest.fn(() => ({
-        string_id: "sid",
-        project_id: "00000000-1000-4000-8000-000000000000",
-        path: "a.txt",
-        settings: { history_epoch: 2 },
-      })),
-      set: jest.fn(),
-      save: jest.fn(async () => undefined),
-      close: jest.fn(),
-    };
-    conatMock.mockReturnValue({
-      sync: {
-        astream: jest.fn(() => stream),
-        synctable: jest.fn(async () => syncstrings),
-      },
+  it("for an oversized patch, resets only if it is still there, keeping the old history", async () => {
+    const { stream, syncstrings } = mockClient({
+      resetResult: { reset: false, history_epoch: 6, count: 0 },
     });
     const { purgeHistory } = await import("./sync");
     const result = await purgeHistory({
       account_id: "acct-1",
-      project_id: "00000000-1000-4000-8000-000000000000",
+      project_id: PROJECT,
       path: "a.txt",
+      oversized_seq: 42,
     });
-    expect(result.history_epoch).toBe(10);
-    expect(configMock).toHaveBeenCalledWith({
-      required_headers: { history_epoch: 10 },
+    expect(stream.resetHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ ifOversizedSeq: 42, archive: true }),
+    );
+    // someone else already reset it: nothing to record
+    expect(syncstrings.set).not.toHaveBeenCalled();
+    expect(result).toEqual({ deleted: 0, history_epoch: 6, reset: false });
+  });
+
+  it("rejects a malformed oversized_seq", async () => {
+    const { stream } = mockClient({
+      resetResult: { reset: true, history_epoch: 6, count: 0 },
     });
+    const { purgeHistory } = await import("./sync");
+    await expect(
+      purgeHistory({
+        account_id: "acct-1",
+        project_id: PROJECT,
+        path: "a.txt",
+        oversized_seq: "1" as any,
+      }),
+    ).rejects.toThrow("oversized_seq");
+    expect(stream.resetHistory).not.toHaveBeenCalled();
   });
 });

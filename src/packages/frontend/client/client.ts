@@ -104,7 +104,8 @@ export interface WebappClient extends EventEmitter {
   purgeHistory: (opts: {
     project_id: string;
     path: string;
-  }) => Promise<{ deleted: number; history_epoch: number }>;
+    oversized_seq?: number;
+  }) => Promise<{ deleted: number; history_epoch: number; reset?: boolean }>;
   set_connected?: Function;
   version: Function;
   alert_message: Function;
@@ -178,7 +179,8 @@ class Client extends EventEmitter implements WebappClient {
   purgeHistory: (opts: {
     project_id: string;
     path: string;
-  }) => Promise<{ deleted: number; history_epoch: number }>;
+    oversized_seq?: number;
+  }) => Promise<{ deleted: number; history_epoch: number; reset?: boolean }>;
 
   idle_reset: Function;
   latency: Function;
