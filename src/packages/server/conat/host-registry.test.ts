@@ -273,25 +273,46 @@ describe("host-registry automatic convergence retry", () => {
           rows: [{ status: currentStatus, metadata: currentMetadata }],
         };
       }
-      if (
-        sql.includes(
-          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1",
-        )
-      ) {
-        currentMetadata = params[1];
-        return { rows: [] };
-      }
-      if (
-        sql.includes(
-          "UPDATE project_hosts SET status='starting', last_seen=NULL, metadata=$2",
-        )
-      ) {
-        currentStatus = "starting";
-        currentMetadata = params[1];
+      if (sql.includes("'{shutdown_notice}'")) {
+        currentMetadata = {
+          ...currentMetadata,
+          shutdown_notice: JSON.parse(params[1]),
+        };
         return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+    // The recovery transaction: refuses while wanted stopped, marks the host
+    // wanted running, writes the recovery state, queues the start.
+    connectMock = jest.fn(async () => ({
+      release: jest.fn(),
+      query: jest.fn(async (sql: string, params: any[]) => {
+        if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql.trim())) return { rows: [] };
+        if (sql.includes("FOR UPDATE")) {
+          return {
+            rows: [
+              {
+                desired_state: currentMetadata.desired_state,
+                desired_state_generation: 4,
+              },
+            ],
+          };
+        }
+        if (sql.includes("'{desired_state}'")) {
+          currentMetadata = { ...currentMetadata, desired_state: params[1] };
+          return { rows: [{ desired_state_generation: 5 }] };
+        }
+        if (sql.includes("'{spot_recovery_state}'")) {
+          currentStatus = "starting";
+          currentMetadata = {
+            ...currentMetadata,
+            spot_recovery_state: JSON.parse(params[1]),
+          };
+          return { rows: [] };
+        }
+        throw new Error(`unexpected transaction query: ${sql}`);
+      }),
+    }));
     shouldAutoRestoreInterruptedSpotHostMock.mockReturnValue(true);
     spotRecoveryPolicyMock.mockReturnValue({});
     recordProviderSpotPreemptionMock.mockReturnValue({
@@ -319,6 +340,15 @@ describe("host-registry automatic convergence retry", () => {
 
     expect(recordProviderSpotPreemptionMock).toHaveBeenCalledTimes(1);
     expect(enqueueCloudVmWorkOnceMock).toHaveBeenCalledTimes(1);
+    // Queued under the recovery's intent generation, inside its transaction.
+    expect(enqueueCloudVmWorkOnceMock.mock.calls[0][0].payload).toMatchObject({
+      source: "shutdown_notice",
+      intent_generation: 5,
+    });
+    expect(
+      enqueueCloudVmWorkOnceMock.mock.calls[0][1]?.inTransaction,
+    ).toBeTruthy();
+    expect(currentMetadata.desired_state).toBe("running");
     expect(currentMetadata.spot_recovery_state).toMatchObject({
       phase: "retrying_spot",
       standard_hold_until: holdUntil,

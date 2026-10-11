@@ -69,6 +69,10 @@ import {
   reconcileDedicatedHostPurchaseSessionForAccount,
 } from "@cocalc/server/project-host/spend";
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
+import {
+  BUMP_DESIRED_STATE_GENERATION,
+  hostIntentGeneration,
+} from "@cocalc/server/hosts/desired-state";
 
 function pool() {
   return getPool();
@@ -688,10 +692,15 @@ export async function startHostInternalHelper({
     };
   }
   logStatusUpdate(id, "starting", "api");
-  await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+  // A start request is a new intent; its work skips itself if a newer one
+  // (a stop) is recorded before it runs.
+  const startIntent = await pool().query(
+    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, ${BUMP_DESIRED_STATE_GENERATION}, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+      RETURNING desired_state_generation`,
     [id, "starting", null, nextMetadata],
   );
+  const startGeneration = hostIntentGeneration(startIntent.rows[0]);
   if (!machineCloud) {
     logStatusUpdate(id, "running", "api");
     await pool().query(
@@ -703,7 +712,7 @@ export async function startHostInternalHelper({
     const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: "start",
-      payload: { provider: machineCloud },
+      payload: { provider: machineCloud, intent_generation: startGeneration },
     });
     onWorkQueued?.(workId);
   }
@@ -736,10 +745,13 @@ export async function stopHostInternalHelper({
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
   logStatusUpdate(id, "stopping", "api");
-  await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+  const stopIntent = await pool().query(
+    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, ${BUMP_DESIRED_STATE_GENERATION}, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+      RETURNING desired_state_generation`,
     [id, "stopping", null, nextMetadata],
   );
+  const stopGeneration = hostIntentGeneration(stopIntent.rows[0]);
   if (!machineCloud) {
     logStatusUpdate(id, "off", "api");
     await pool().query(
@@ -751,7 +763,7 @@ export async function stopHostInternalHelper({
     await enqueueCloudVmWork({
       vm_id: id,
       action: "stop",
-      payload: { provider: machineCloud },
+      payload: { provider: machineCloud, intent_generation: stopGeneration },
     });
   }
   const { rows } = await pool().query(
@@ -815,10 +827,13 @@ export async function restartHostInternalHelper({
     });
   }
   logStatusUpdate(id, "restarting", "api");
-  await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+  const restartIntent = await pool().query(
+    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, ${BUMP_DESIRED_STATE_GENERATION}, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+      RETURNING desired_state_generation`,
     [id, "restarting", null, metadata],
   );
+  const restartGeneration = hostIntentGeneration(restartIntent.rows[0]);
   if (!machineCloud) {
     logStatusUpdate(id, "running", "api");
     await pool().query(
@@ -833,7 +848,7 @@ export async function restartHostInternalHelper({
     const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: mode === "hard" ? "hard_restart" : "restart",
-      payload: { provider: machineCloud },
+      payload: { provider: machineCloud, intent_generation: restartGeneration },
     });
     onWorkQueued?.(workId);
   }

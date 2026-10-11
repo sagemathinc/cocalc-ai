@@ -64,6 +64,10 @@ import {
   releaseRelocationLease,
   setRelocationNotice,
 } from "@cocalc/server/hosts/maintenance";
+import {
+  BUMP_DESIRED_STATE_GENERATION,
+  setHostDesiredState,
+} from "@cocalc/server/hosts/desired-state";
 
 const logger = getLogger("server:hosts:ops-worker");
 
@@ -822,6 +826,7 @@ async function runHostRelocation({
             `UPDATE project_hosts
              SET status='deprovisioning',
                  metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', '"stopped"'),
+                 ${BUMP_DESIRED_STATE_GENERATION},
                  updated=NOW()
            WHERE id=$1 AND deleted IS NULL`,
             [host_id],
@@ -834,13 +839,7 @@ async function runHostRelocation({
           await waitFor(["deprovisioned"], ["error"]);
         },
         setDesiredState: async (state) => {
-          await pool.query(
-            `UPDATE project_hosts
-             SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($2::text)),
-                 updated=NOW()
-           WHERE id=$1`,
-            [host_id, state],
-          );
+          await setHostDesiredState({ db: pool, host_id, state });
         },
         quiesceCloudWork: async () =>
           await quiesceHostActivity({
@@ -1805,7 +1804,7 @@ async function markBillingEnforcementDrainComplete({
   await getPool().query(
     `
       UPDATE project_hosts
-      SET metadata=$2, updated=NOW()
+      SET metadata=$2, ${BUMP_DESIRED_STATE_GENERATION}, updated=NOW()
       WHERE id=$1 AND deleted IS NULL
     `,
     [host_id, billingEnforcementDrainCompleteMetadata(metadata)],
@@ -1833,7 +1832,7 @@ async function markBillingEnforcementDrainFailed({
   await getPool().query(
     `
       UPDATE project_hosts
-      SET metadata=$2, updated=NOW()
+      SET metadata=$2, ${BUMP_DESIRED_STATE_GENERATION}, updated=NOW()
       WHERE id=$1 AND deleted IS NULL
     `,
     [host_id, billingEnforcementDrainFailedMetadata(metadata, error)],

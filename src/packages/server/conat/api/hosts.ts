@@ -1221,6 +1221,7 @@ async function setHostDesiredState(
                 '{desired_state}',
                 to_jsonb($2::text)
               ),
+              ${BUMP_DESIRED_STATE_GENERATION},
               updated = NOW()
           WHERE id=$1 AND deleted IS NULL
         `,
@@ -1250,6 +1251,7 @@ async function markHostDeprovisioned(row: any, action: string) {
                ssh_server=NULL,
                last_seen=$3,
                metadata=$4,
+               ${BUMP_DESIRED_STATE_GENERATION},
                updated=NOW()
         WHERE id=$1 AND deleted IS NULL`,
         [row.id, "deprovisioned", new Date(), nextMetadata],
@@ -10467,6 +10469,7 @@ export async function deleteHostInternal({
         `UPDATE project_hosts
            SET status=$2,
                metadata=(jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)) - 'runtime_deployments'),
+               ${BUMP_DESIRED_STATE_GENERATION},
                updated=NOW()
          WHERE id=$1 AND deleted IS NULL`,
         [id, "deprovisioned", "stopped"],
@@ -10487,6 +10490,7 @@ export {
 } from "./project-api-relay";
 
 import { updateProjectApiRelayUsage as updateProjectApiRelayUsageImpl } from "./project-api-relay";
+import { BUMP_DESIRED_STATE_GENERATION } from "@cocalc/server/hosts/desired-state";
 export async function updateProjectApiRelayUsage(
   opts: Parameters<typeof updateProjectApiRelayUsageImpl>[0],
 ) {

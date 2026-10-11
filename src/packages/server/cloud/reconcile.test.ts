@@ -222,6 +222,49 @@ describe("cloud provider snapshot concurrency", () => {
     );
     expect(rows).toEqual([{ status: "deprovisioned", runtime: null }]);
   });
+
+  it("records no availability from a snapshot write that rolls back", async () => {
+    const id = "6f3c2b1a-0d9e-4c8b-a7f6-5e4d3c2b1a09";
+    await getPool().query(
+      `INSERT INTO project_hosts (id, name, status, metadata, created, updated)
+       VALUES ($1, 'Rolled back restore', 'off', $2, NOW(), NOW())`,
+      [id, { machine: { cloud: "gcp" }, runtime: { instance_id: "i-1" } }],
+    );
+    const before = await getPool().query(
+      "SELECT count(*)::int AS n FROM project_host_availability_events WHERE host_id=$1",
+      [id],
+    );
+    // A Spot restore writes inside its recovery transaction, which then fails.
+    const client = await getPool().connect();
+    try {
+      await client.query("BEGIN");
+      await updateHostFromProviderSnapshot(
+        {
+          id,
+          status: "off",
+          metadata: {
+            machine: { cloud: "gcp" },
+            runtime: { instance_id: "i-1" },
+          },
+        },
+        { status: "starting" },
+        { db: client },
+      );
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+    const after = await getPool().query(
+      "SELECT count(*)::int AS n FROM project_host_availability_events WHERE host_id=$1",
+      [id],
+    );
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+    const { rows } = await getPool().query(
+      "SELECT status FROM project_hosts WHERE id=$1",
+      [id],
+    );
+    expect(rows[0].status).toBe("off");
+  });
 });
 
 describe("stale spot recovery reconciliation", () => {

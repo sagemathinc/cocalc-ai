@@ -161,11 +161,14 @@ export async function listCloudVmLog(opts: {
 
 // A stop or delete makes starts queued before it moot; running them after
 // would undo it.
+// Only starts from an older (or unrecorded) intent are dropped: a start
+// requested after this stop's intent keeps its place and wins.
 async function dropStartsSupersededBy(
-  row: { vm_id: string; action: string },
+  row: { vm_id: string; action: string; payload?: Record<string, any> },
   client: { query: (sql: string, params: any[]) => Promise<any> },
 ): Promise<void> {
   if (row.action !== "stop" && row.action !== "delete") return;
+  const generation = Number(row.payload?.intent_generation);
   await client.query(
     `
       UPDATE cloud_vm_work
@@ -175,8 +178,20 @@ async function dropStartsSupersededBy(
       WHERE vm_id=$1
         AND state='queued'
         AND action = ANY($2::text[])
+        AND (
+          $4::bigint IS NULL
+          OR NULLIF(payload->>'intent_generation', '') IS NULL
+          OR (payload->>'intent_generation')::bigint <= $4::bigint
+        )
     `,
-    [row.vm_id, SUPERSEDED_BY_STOP, `superseded by a later ${row.action}`],
+    [
+      row.vm_id,
+      SUPERSEDED_BY_STOP,
+      `superseded by a later ${row.action}`,
+      Number.isFinite(generation) && row.payload?.intent_generation != null
+        ? generation
+        : null,
+    ],
   );
 }
 
@@ -236,15 +251,36 @@ async function withQueuedWorkLock<T>(
   }
 }
 
+// Lifecycle work may carry the host intent generation it was queued under
+// (payload.intent_generation). Work without one is legacy: queued by code
+// that predates generations, or not intent-driven. Deduplication must never
+// let older (or legacy) work replace newer generated work.
+function intentGenerationOf(payload: any): number | undefined {
+  const value = payload?.intent_generation;
+  if (value == null || value === "") return undefined;
+  const generation = Number(value);
+  return Number.isFinite(generation) ? generation : undefined;
+}
+
+// Whether incoming work belongs to a strictly newer intent than existing
+// work: generated work is newer than legacy work and than lower generations;
+// legacy work is never newer.
+function isNewerIntent(incoming: any, existing: any): boolean {
+  const next = intentGenerationOf(incoming);
+  if (next == null) return false;
+  const current = intentGenerationOf(existing);
+  return current == null || next > current;
+}
+
 async function lockQueuedWork(
   client: PoolClient,
   vm_id: string,
   action: string,
   states: string[],
-): Promise<{ id: string; state: string } | undefined> {
+): Promise<{ id: string; state: string; payload: any } | undefined> {
   const { rows } = await client.query(
     `
-      SELECT id, state
+      SELECT id, state, payload
       FROM cloud_vm_work
       WHERE vm_id=$1
         AND action=$2
@@ -298,6 +334,25 @@ export async function enqueueCloudVmWorkOnce(
         await insertQueuedWork(client, id, row, notBefore);
         return id;
       }
+      if (isNewerIntent(row.payload, existing.payload)) {
+        if (existing.state === "queued") {
+          // The queued item stands for an older intent: carry the newer one.
+          await client.query(
+            `
+            UPDATE cloud_vm_work
+            SET payload = $2,
+                not_before = $3,
+                updated_at = NOW()
+            WHERE id=$1
+          `,
+            [existing.id, row.payload ?? {}, notBefore],
+          );
+          return undefined;
+        }
+        // Only older work is running: queue the newer intent behind it.
+        await insertQueuedWork(client, id, row, notBefore);
+        return id;
+      }
       if (existing.state === "queued" && notBefore) {
         await client.query(
           `
@@ -341,6 +396,11 @@ export async function enqueueCloudVmFollowUpWork(
       if (!existing) {
         await insertQueuedWork(client, id, row, notBefore);
         return id;
+      }
+      if (isNewerIntent(existing.payload, row.payload)) {
+        // A newer intent is already queued (e.g. a start requested while
+        // an older one schedules its retry): keep it.
+        return undefined;
       }
       await client.query(
         `
@@ -443,38 +503,47 @@ export async function claimCloudVmWork(opts: {
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       "cloud_vm_work:claim",
     ]);
-    const { rows: candidates } = await client.query<CloudVmWorkRow>(
+    // At most one lifecycle item per VM, its oldest, chosen before the limit
+    // so one VM's backlog cannot crowd out other VMs' work.
+    const { rows } = await client.query<CloudVmWorkRow>(
       `
-        SELECT *
-        FROM cloud_vm_work w
-        WHERE state='queued'
-          AND (not_before IS NULL OR not_before <= NOW())
-          AND (
-            w.action <> ALL($2::text[])
-            OR NOT EXISTS (
-              SELECT 1 FROM cloud_vm_work busy
-               WHERE busy.vm_id = w.vm_id
-                 AND busy.state = 'in_progress'
-                 AND busy.action = ANY($2::text[])
+        WITH eligible AS (
+          SELECT id,
+                 COALESCE(not_before, created_at) AS due,
+                 created_at,
+                 action = ANY($2::text[]) AS lifecycle,
+                 row_number() OVER (
+                   PARTITION BY vm_id, action = ANY($2::text[])
+                   ORDER BY COALESCE(not_before, created_at), created_at
+                 ) AS vm_rank
+          FROM cloud_vm_work w
+          WHERE state='queued'
+            AND (not_before IS NULL OR not_before <= NOW())
+            AND (
+              w.action <> ALL($2::text[])
+              OR NOT EXISTS (
+                SELECT 1 FROM cloud_vm_work busy
+                 WHERE busy.vm_id = w.vm_id
+                   AND busy.state = 'in_progress'
+                   AND busy.action = ANY($2::text[])
+              )
             )
-          )
-        ORDER BY COALESCE(not_before, created_at), created_at
-        LIMIT $1
-        FOR UPDATE SKIP LOCKED
+        ),
+        picked AS (
+          SELECT id, due, created_at
+          FROM eligible
+          WHERE NOT lifecycle OR vm_rank = 1
+          ORDER BY due, created_at
+          LIMIT $1
+        )
+        SELECT w.*
+        FROM cloud_vm_work w
+        JOIN picked ON picked.id = w.id
+        ORDER BY picked.due, picked.created_at
+        FOR UPDATE OF w SKIP LOCKED
       `,
-      [limit * 4, SERIALIZED_CLOUD_VM_ACTIONS],
+      [limit, SERIALIZED_CLOUD_VM_ACTIONS],
     );
-    // At most one serialized item per VM from this batch, the oldest.
-    const seen = new Set<string>();
-    const rows: CloudVmWorkRow[] = [];
-    for (const row of candidates) {
-      if (rows.length >= limit) break;
-      if (SERIALIZED_CLOUD_VM_ACTIONS.includes(row.action)) {
-        if (seen.has(row.vm_id)) continue;
-        seen.add(row.vm_id);
-      }
-      rows.push(row);
-    }
     if (rows.length) {
       const ids = rows.map((r) => r.id);
       await client.query(
