@@ -8,11 +8,15 @@ type PoolLike = {
 };
 
 type CachedModule = {
-  default: (options?: any) => any;
+  getCachedReadPool: (cacheTime: any, options?: any) => any;
 };
 
-const loadCached = async () => {
+// production: load the module as in production, where a query that is not a
+// plain read runs uncached instead of throwing.
+const loadCached = async ({ production = false } = {}) => {
   jest.resetModules();
+  const nodeEnv = process.env.NODE_ENV;
+  if (production) process.env.NODE_ENV = "production";
   const pool: PoolLike = {
     query: jest.fn(),
   };
@@ -40,15 +44,16 @@ const loadCached = async () => {
   });
 
   const cachedModule = (await import("./cached")) as CachedModule;
-  return { getCachedPool: cachedModule.default, getPool, pool };
+  process.env.NODE_ENV = nodeEnv;
+  return { getCachedReadPool: cachedModule.getCachedReadPool, getPool, pool };
 };
 
-describe("getCachedPool", () => {
+describe("getCachedReadPool", () => {
   it("forwards ensureExists to getPool and caches hits", async () => {
-    const { getCachedPool, getPool, pool } = await loadCached();
+    const { getCachedReadPool, getPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-    const cached = getCachedPool({ cacheTime: "short", ensureExists: false });
+    const cached = getCachedReadPool("short", { ensureExists: false });
     await cached.query("SELECT 1");
 
     expect(getPool).toHaveBeenCalledWith({ ensureExists: false });
@@ -56,10 +61,10 @@ describe("getCachedPool", () => {
   });
 
   it("reuses cached results for identical queries", async () => {
-    const { getCachedPool, pool } = await loadCached();
+    const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-    const cached = getCachedPool("short");
+    const cached = getCachedReadPool("short");
     await cached.query("SELECT 1");
     await cached.query("SELECT 1");
 
@@ -67,21 +72,30 @@ describe("getCachedPool", () => {
   });
 
   it("does not cache empty results", async () => {
-    const { getCachedPool, pool } = await loadCached();
+    const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValue({ rows: [] });
 
-    const cached = getCachedPool("short");
+    const cached = getCachedReadPool("short");
     await cached.query("SELECT 1");
     await cached.query("SELECT 1");
 
     expect(pool.query).toHaveBeenCalledTimes(2);
   });
 
-  it("never caches or merges writes", async () => {
-    const { getCachedPool, pool } = await loadCached();
+  it("refuses a write outside production", async () => {
+    const { getCachedReadPool, pool } = await loadCached();
+    const cached = getCachedReadPool("short");
+    await expect(
+      cached.query("UPDATE t SET n = n + 1 WHERE id=$1 RETURNING n", ["a"]),
+    ).rejects.toThrow("not a plain read");
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it("in production, never caches or merges writes", async () => {
+    const { getCachedReadPool, pool } = await loadCached({ production: true });
     pool.query.mockResolvedValue({ rows: [{ count: 1 }] });
 
-    const cached = getCachedPool("short");
+    const cached = getCachedReadPool("short");
     const write =
       "UPDATE email_counter SET count = count + 1 WHERE id=$1 RETURNING count";
     // Concurrent identical calls each reach the database...
@@ -111,13 +125,19 @@ describe("getCachedPool", () => {
     "SELECT 'oops",
     { text: "UPDATE t SET a=1 WHERE id=$1 RETURNING a" },
   ])("does not cache %p", async (query) => {
-    const { getCachedPool, pool } = await loadCached();
+    // Outside production it is refused...
+    const strict = await loadCached();
+    await expect(
+      strict.getCachedReadPool("medium").query(query, ["x"]),
+    ).rejects.toThrow("not a plain read");
+    expect(strict.pool.query).not.toHaveBeenCalled();
+
+    // ...and in production it runs, uncached.
+    const { getCachedReadPool, pool } = await loadCached({ production: true });
     pool.query.mockResolvedValue({ rows: [{ a: 1 }] });
-
-    const cached = getCachedPool("medium");
+    const cached = getCachedReadPool("medium");
     await cached.query(query, ["x"]);
     await cached.query(query, ["x"]);
-
     expect(pool.query).toHaveBeenCalledTimes(2);
   });
 
@@ -130,10 +150,10 @@ describe("getCachedPool", () => {
     "SELECT e.key FROM jsonb_each($1::jsonb) AS e(key, value)",
     { text: "SELECT 1" },
   ])("caches the read %p", async (query) => {
-    const { getCachedPool, pool } = await loadCached();
+    const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValue({ rows: [{ a: 1 }] });
 
-    const cached = getCachedPool("medium");
+    const cached = getCachedReadPool("medium");
     await cached.query(query, ["x"]);
     await cached.query(query, ["x"]);
 
@@ -141,14 +161,14 @@ describe("getCachedPool", () => {
   });
 
   it("freezes cached rows outside production, since callers share them", async () => {
-    const { getCachedPool, pool } = await loadCached();
+    const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({
       rows: [
         { id: 1, users: { a: { group: "owner" } }, data: Buffer.from("x") },
       ],
     });
 
-    const cached = getCachedPool("short");
+    const cached = getCachedReadPool("short");
     const { rows } = await cached.query("SELECT 1");
 
     expect(Object.isFrozen(rows[0])).toBe(true);
@@ -160,10 +180,10 @@ describe("getCachedPool", () => {
   });
 
   it("gives each caller its own rows array", async () => {
-    const { getCachedPool, pool } = await loadCached();
+    const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-    const cached = getCachedPool("short");
+    const cached = getCachedReadPool("short");
     const first = await cached.query("SELECT 1");
     first.rows.unshift({ id: 0 });
     first.rows.sort((a, b) => b.id - a.id);
@@ -174,24 +194,17 @@ describe("getCachedPool", () => {
   });
 
   it("throws on invalid cache names", async () => {
-    const { getCachedPool } = await loadCached();
-    const cached = getCachedPool("invalid" as any);
-
-    await expect(cached.query("SELECT 1")).rejects.toThrow(
+    const { getCachedReadPool } = await loadCached();
+    expect(() => getCachedReadPool("invalid" as any)).toThrow(
       'invalid cache "invalid"',
     );
+    expect(() => getCachedReadPool("" as any)).toThrow("invalid cache");
   });
 
-  it("returns the underlying pool when cache is disabled", async () => {
-    const { getCachedPool, getPool, pool } = await loadCached();
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
-
-    const cached = getCachedPool({ cacheTime: "short", ensureExists: false });
+  it("offers only query(), not a pool", async () => {
+    const { getCachedReadPool, pool } = await loadCached();
+    const cached = getCachedReadPool("short");
     expect(cached).not.toBe(pool);
-    await cached.query("SELECT 1");
-
-    const direct = getCachedPool();
-    expect(direct).toBe(pool);
-    expect(getPool).toHaveBeenLastCalledWith({ ensureExists: true });
+    expect(Object.keys(cached)).toEqual(["query"]);
   });
 });

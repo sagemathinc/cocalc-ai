@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { ensureUxLatencySchema } from "@cocalc/server/monitoring/ux-latency";
 import type {
@@ -426,7 +426,7 @@ async function getAdminRetentionOverviewUncached(
             )
           )
       `;
-  const { rows } = await getPool("medium").query<RetentionSqlRow>(
+  const { rows } = await getCachedReadPool("medium").query<RetentionSqlRow>(
     `
       WITH cohort_accounts AS (
         SELECT
@@ -553,7 +553,7 @@ async function getAdminActiveUsersOverviewUncached(
             )
           )
       `;
-  const { rows } = await getPool("medium").query<ActiveUsersSqlRow>(
+  const { rows } = await getCachedReadPool("medium").query<ActiveUsersSqlRow>(
     `
       WITH buckets AS (
         SELECT generate_series(

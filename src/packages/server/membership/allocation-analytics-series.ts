@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { getCachedReadPool, type PoolClient } from "@cocalc/database/pool";
 import type {
   MembershipAllocationDailyRow,
   MembershipAllocationSeriesQuery,
@@ -94,7 +94,9 @@ export async function getMembershipAllocationSeriesLocal({
   addArrayFilter(filters, params, "billing_interval", query.billing_intervals);
   addArrayFilter(filters, params, "lifecycle", query.lifecycles);
 
-  const { rows } = await (client ?? getPool("medium")).query<DailyRowResult>(
+  const { rows } = await (
+    client ?? getCachedReadPool("medium")
+  ).query<DailyRowResult>(
     `SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day,
             channel, membership_class, billing_interval, lifecycle,
             NULLIF(previous_membership_class, '') AS previous_membership_class,

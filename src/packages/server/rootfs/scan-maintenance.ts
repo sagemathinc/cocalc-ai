@@ -104,7 +104,7 @@ export async function listDueOfficialRootfsReleasesForScan({
   olderThanDays: number;
   limit: number;
 }): Promise<DueOfficialRootfsRelease[]> {
-  const { rows } = await getPool("medium").query<DueOfficialRootfsRelease>(
+  const { rows } = await getPool().query<DueOfficialRootfsRelease>(
     `WITH visible_official AS (
        SELECT DISTINCT ON (rel.release_id)
               rel.release_id,
@@ -139,7 +139,7 @@ export async function listDueOfficialRootfsReleasesForScan({
 
 async function listRunningLocalScanHosts(): Promise<ProjectHostRow[]> {
   const bayId = getConfiguredBayId();
-  const { rows } = await getPool("medium").query<ProjectHostRow>(
+  const { rows } = await getPool().query<ProjectHostRow>(
     `SELECT id, name, status, last_seen, deleted
        FROM project_hosts
       WHERE deleted IS NULL

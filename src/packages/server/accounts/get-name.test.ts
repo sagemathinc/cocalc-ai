@@ -19,6 +19,9 @@ jest.mock("@cocalc/database/pool", () => ({
   default: jest.fn(() => ({
     query: (...args: any[]) => poolQueryMock(...args),
   })),
+  getCachedReadPool: jest.fn(() => ({
+    query: (...args: any[]) => poolQueryMock(...args),
+  })),
 }));
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";

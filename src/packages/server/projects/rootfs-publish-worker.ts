@@ -284,9 +284,7 @@ async function loadProjectHostId(project_id: string): Promise<string> {
 async function loadRootfsPublishHostDiagnostics(
   host_id: string,
 ): Promise<RootfsPublishHostDiagnostics> {
-  const { rows } = await getPool(
-    "medium",
-  ).query<RootfsPublishHostDiagnosticsRow>(
+  const { rows } = await getPool().query<RootfsPublishHostDiagnosticsRow>(
     `
       SELECT id::text AS id, name, region, metadata
       FROM project_hosts
@@ -320,7 +318,7 @@ async function listFreshRunningRootfsPublishTopologyRows({
 }: {
   lease_ms: number;
 }): Promise<RootfsPublishTopologyRow[]> {
-  const { rows } = await getPool("medium").query<RootfsPublishTopologyRow>(
+  const { rows } = await getPool().query<RootfsPublishTopologyRow>(
     `
       SELECT
         CASE
@@ -526,7 +524,8 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
   let lastProgressKey: string | null = null;
   const timings = createPhaseTimingRecorder();
   let registeredRelease:
-    Awaited<ReturnType<typeof upsertPublishedRootfsRelease>> | undefined;
+    | Awaited<ReturnType<typeof upsertPublishedRootfsRelease>>
+    | undefined;
   let catalogEntrySaved = false;
   const progress = (update: {
     step: string;

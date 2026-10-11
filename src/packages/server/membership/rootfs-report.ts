@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import type {
   RootfsQuotaDenialSummary,
@@ -107,7 +107,7 @@ async function loadUsageRows({
       ? "count DESC, total_storage_bytes DESC"
       : "total_storage_bytes DESC, count DESC";
 
-  const { rows } = await getPool("medium").query(
+  const { rows } = await getCachedReadPool("medium").query(
     `SELECT
         img.owner_id AS account_id,
         COUNT(*)::int AS count,

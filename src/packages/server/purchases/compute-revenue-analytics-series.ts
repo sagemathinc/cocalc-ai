@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { getCachedReadPool, type PoolClient } from "@cocalc/database/pool";
 import type {
   ComputeRevenueDailyRow,
   ComputeRevenueSeriesQuery,
@@ -62,7 +62,7 @@ interface UsageResult extends Omit<
 
 export async function getComputeRevenueSeriesLocal({
   query = {},
-  client = getPool("medium"),
+  client = getCachedReadPool("medium"),
 }: {
   query?: ComputeRevenueSeriesQuery;
   client?: Queryable;

@@ -246,7 +246,7 @@ async function loadRootfsReleaseRowByContentKey(
   content_key: string,
 ): Promise<RootfsReleaseRow | null> {
   await ensureRootfsRusticRepoSchema();
-  const pool = getPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query<RootfsReleaseRow>(
     `SELECT
       release_id,
@@ -279,7 +279,7 @@ async function loadR2BucketForRegion(
 }
 
 async function loadR2BucketById(bucket_id: string): Promise<BucketRow | null> {
-  const { rows } = await getPool("medium").query<BucketRow>(
+  const { rows } = await getPool().query<BucketRow>(
     `SELECT
       id,
       name,
@@ -301,7 +301,7 @@ async function loadR2BucketById(bucket_id: string): Promise<BucketRow | null> {
 }
 
 async function loadR2BucketByName(name: string): Promise<BucketRow | null> {
-  const { rows } = await getPool("medium").query<BucketRow>(
+  const { rows } = await getPool().query<BucketRow>(
     `SELECT
       id,
       name,
@@ -449,7 +449,7 @@ async function loadRootfsRusticRepoById(
   const repoId = `${id ?? ""}`.trim();
   if (!repoId) return null;
   await ensureRootfsRusticRepoSchema();
-  const { rows } = await getPool("medium").query<RootfsRusticRepoRow>(
+  const { rows } = await getPool().query<RootfsRusticRepoRow>(
     `SELECT id, region, bucket_id, root, secret, status, created, updated
      FROM rootfs_rustic_repos
      WHERE id=$1
@@ -594,7 +594,7 @@ async function findPreferredRootfsRusticRepoId({
     filters.push(`rel.runtime_image=$${params.length}`);
   }
   if (!filters.length) return null;
-  const { rows } = await getPool("medium").query<{ repo_id: string }>(
+  const { rows } = await getPool().query<{ repo_id: string }>(
     `SELECT rel.repo_id
      FROM rootfs_releases rel
      JOIN rootfs_rustic_repos repo ON repo.id = rel.repo_id
@@ -717,7 +717,7 @@ async function loadHostStorageContext(host_id: string): Promise<{
   region: string | null;
   machine: HostMachine;
 }> {
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await getPool().query<{
     region: string | null;
     metadata: any;
   }>("SELECT region, metadata FROM project_hosts WHERE id=$1", [host_id]);
@@ -950,9 +950,7 @@ async function listReadyRusticReleaseArtifactReplicas(
   release_id: string,
 ): Promise<RootfsReleaseArtifactReplicaRow[]> {
   await ensureRootfsRusticRepoSchema();
-  const { rows } = await getPool(
-    "medium",
-  ).query<RootfsReleaseArtifactReplicaRow>(
+  const { rows } = await getPool().query<RootfsReleaseArtifactReplicaRow>(
     `SELECT
       artifact_id,
       release_id,
@@ -985,9 +983,7 @@ async function listReleaseArtifactReplicas(
   release_id: string,
 ): Promise<RootfsReleaseArtifactReplicaRow[]> {
   await ensureRootfsRusticRepoSchema();
-  const { rows } = await getPool(
-    "medium",
-  ).query<RootfsReleaseArtifactReplicaRow>(
+  const { rows } = await getPool().query<RootfsReleaseArtifactReplicaRow>(
     `SELECT
       artifact_id,
       release_id,
@@ -1064,9 +1060,7 @@ export async function upsertReleaseArtifactReplica({
 }): Promise<RootfsReleaseArtifactReplicaRow> {
   await ensureRootfsRusticRepoSchema();
   const id = artifact_id ?? uuid();
-  const { rows } = await getPool(
-    "medium",
-  ).query<RootfsReleaseArtifactReplicaRow>(
+  const { rows } = await getPool().query<RootfsReleaseArtifactReplicaRow>(
     `INSERT INTO rootfs_release_artifacts
       (
         artifact_id,
@@ -1155,7 +1149,7 @@ export async function loadRootfsReleaseByImage(
   if (!runtime_image) {
     return null;
   }
-  const { rows } = await getPool("medium").query<RootfsReleaseRow>(
+  const { rows } = await getPool().query<RootfsReleaseRow>(
     `SELECT
       release_id,
       content_key,
@@ -1188,7 +1182,7 @@ async function loadRootfsReleaseById(
   if (!value) {
     return null;
   }
-  const { rows } = await getPool("medium").query<RootfsReleaseRow>(
+  const { rows } = await getPool().query<RootfsReleaseRow>(
     `SELECT
       release_id,
       content_key,
@@ -1216,7 +1210,7 @@ async function loadRootfsReleaseById(
 async function getReleaseDeleteBlockers(
   release: RootfsReleaseRow,
 ): Promise<RootfsDeleteBlockers> {
-  const pool = getPool("medium");
+  const pool = getPool();
   const [projects, catalogEntries, prepullEntries, childReleases] =
     await Promise.all([
       pool.query<{ count: string }>(
@@ -1299,7 +1293,7 @@ export async function upsertPublishedRootfsRelease({
   const artifactSha256 = upload.artifact_sha256 || content_key;
   const artifactBytes = upload.artifact_bytes;
   const depth = 0;
-  const pool = getPool("medium");
+  const pool = getPool();
   const existing = await loadRootfsReleaseRowByContentKey(content_key);
   const release_id = existing?.release_id ?? uuid();
   const { rows } = await pool.query<RootfsReleaseRow>(
@@ -1425,7 +1419,7 @@ export async function requestUnreferencedRootfsReleaseDeletion({
       },
     };
   }
-  const { rows } = await getPool("medium").query<{ release_id: string }>(
+  const { rows } = await getPool().query<{ release_id: string }>(
     `UPDATE rootfs_releases AS rel
      SET gc_status='pending_delete',
          delete_requested_at=NOW(),
@@ -1716,7 +1710,7 @@ async function markReleaseArtifactReplica({
   status: string;
   error?: string | null;
 }): Promise<void> {
-  await getPool("medium").query(
+  await getPool().query(
     `UPDATE rootfs_release_artifacts
      SET status=$2,
          error=$3,
@@ -1761,7 +1755,7 @@ export async function gcRootfsRelease({
   }
   const blockers = await getReleaseDeleteBlockers(release);
   if (blockers.total > 0) {
-    await getPool("medium").query(
+    await getPool().query(
       `UPDATE rootfs_releases
        SET gc_status='blocked',
            updated=NOW()
@@ -1790,7 +1784,7 @@ export async function gcRootfsRelease({
       });
       deletedReplicas += 1;
     }
-    await getPool("medium").query(
+    await getPool().query(
       `UPDATE rootfs_releases
        SET gc_status='deleted',
            updated=NOW()
@@ -1813,7 +1807,7 @@ export async function gcRootfsRelease({
       blockers,
     };
   } catch (err) {
-    await getPool("medium").query(
+    await getPool().query(
       `UPDATE rootfs_releases
        SET gc_status='blocked',
            updated=NOW()
@@ -1845,7 +1839,7 @@ export async function runPendingRootfsReleaseGc({
 }: {
   limit?: number;
 } = {}): Promise<RootfsReleaseGcRunResult> {
-  const { rows } = await getPool("medium").query<{ release_id: string }>(
+  const { rows } = await getPool().query<{ release_id: string }>(
     `SELECT release_id
      FROM rootfs_releases
      WHERE gc_status='pending_delete'
@@ -1892,7 +1886,7 @@ export async function listRootfsRusticReposAdmin({
     params.push(normalizedStatus);
     filters.push(`r.status=$${params.length}`);
   }
-  const { rows } = await getPool("medium").query<
+  const { rows } = await getPool().query<
     RootfsRusticRepoRow & {
       artifact_bytes: number | string | null;
       bucket_name: string | null;
@@ -1931,7 +1925,7 @@ export async function listRootfsRusticReposAdmin({
      ORDER BY r.region ASC, r.status ASC, assigned_artifact_count ASC, r.created ASC, r.id ASC`,
     params,
   );
-  const { rows: legacyRows } = await getPool("medium").query<{
+  const { rows: legacyRows } = await getPool().query<{
     artifact_count: number | string;
     artifact_bytes: number | string | null;
   }>(

@@ -6,7 +6,7 @@ Search for users.
 - by partial match on display_name, first_name and last_name
 */
 
-import getPool from "@cocalc/database/pool";
+import { getCachedReadPool } from "@cocalc/database/pool";
 import {
   cmp,
   isValidUUID,
@@ -172,7 +172,7 @@ async function getUserByEmailAddress(
   email_address: string,
 ): Promise<DBUser | undefined> {
   // query-cache-ok: display: account search results
-  const pool = getPool("medium");
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address=$1`,
     [email_address.toLowerCase()],
@@ -184,7 +184,7 @@ async function getUserByAccountId(
   account_id: string,
 ): Promise<DBUser | undefined> {
   // query-cache-ok: display: account search results
-  const pool = getPool("medium");
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE account_id=$1`,
     [account_id.toLowerCase()],
@@ -195,7 +195,7 @@ async function getUserByAccountId(
 // only for admin search
 async function getCollaborators(project_id: string): Promise<DBUser[]> {
   // query-cache-ok: display: account search results
-  const pool = getPool("medium");
+  const pool = getCachedReadPool("medium");
   let subQuery = `SELECT jsonb_object_keys(users) AS account_id FROM projects WHERE project_id=$1`;
   const queryParams = [project_id];
   const fields = FIELDS.split(",")
@@ -217,7 +217,7 @@ async function getUsersByEmailAddresses(
   if (email_queries.length == 0 || limit <= 0) return [];
 
   // query-cache-ok: display: account search results
-  const pool = getPool("medium");
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address = ANY($1::TEXT[]) AND deleted IS NULL`,
     [email_queries],
@@ -273,7 +273,7 @@ async function getUsersByStringQueries(
   params.push(limit);
 
   // query-cache-ok: display: account search results
-  const pool = getPool("medium");
+  const pool = getCachedReadPool("medium");
   const { rows } = await pool.query(query, params);
   return rows;
 }

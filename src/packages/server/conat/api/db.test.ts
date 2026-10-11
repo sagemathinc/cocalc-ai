@@ -19,6 +19,9 @@ jest.mock("@cocalc/database/pool", () => ({
   default: () => ({
     query: queryMock,
   }),
+  getCachedReadPool: () => ({
+    query: queryMock,
+  }),
 }));
 
 jest.mock("@cocalc/database", () => ({

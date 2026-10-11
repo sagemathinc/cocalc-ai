@@ -14,7 +14,7 @@ import getLogger from "@cocalc/backend/logger";
 const log = getLogger("salesloft:money");
 
 export async function updateMoney(cutoff: string = "2 days") {
-  const pool = getPool("long");
+  const pool = getPool();
   // get most recent daily statement
   const { rows } = await pool.query(
     `SELECT DISTINCT statements.account_id AS account_id, accounts.salesloft_id AS salesloft_id FROM statements, accounts WHERE
@@ -80,7 +80,7 @@ export async function getMoneyData(account_id: string): Promise<{
   cocalc_last_month_spend: number;
   cocalc_last_year_spend: number;
 }> {
-  const pool = getPool("long");
+  const pool = getPool();
   // get most recent daily statement
   const x = await pool.query(
     "SELECT time, balance FROM statements WHERE account_id=$1 AND interval='day' ORDER BY time desc LIMIT 1",
