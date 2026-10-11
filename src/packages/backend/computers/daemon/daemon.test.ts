@@ -741,4 +741,249 @@ describe("the computer daemon (direct mode)", () => {
       ).toBeDefined();
     });
   });
+
+  describe("limits from the ticket and the session (review of #1035)", () => {
+    const run = (command: string, extra: Record<string, unknown> = {}) => ({
+      command,
+      cwd: null,
+      description: "test job",
+      name: null,
+      exclusive: false,
+      nice: false,
+      ...extra,
+    });
+    const floors = (computer_epoch: number, projects: Record<string, number>) =>
+      signEnvelope(
+        SIGNED_KINDS.floors,
+        parseComputerFloors({
+          type: "cocalc-computer-floors",
+          version: 1,
+          computer_id,
+          home_epoch: 0,
+          computer_epoch,
+          projects,
+          issued_at: Date.now(),
+        }),
+        homeKey,
+      );
+
+    it("an exec runs no longer than the ticket allows", async () => {
+      const started = Date.now();
+      const reply = ok(
+        await daemon.handle(
+          message("exec", exec("sleep 5", { timeout_ms: 60_000 }), {
+            ticket: { max_runtime_ms: 400 },
+          }),
+        ),
+      );
+      expect(reply.result).toMatchObject({ timed_out: true });
+      expect(Date.now() - started).toBeLessThan(4000);
+    });
+
+    it("an exec runs no longer than what is left of the session", async () => {
+      daemon = makeDaemon({ deadline_ms: 600, max_ms: 600 });
+      const reply = ok(
+        await daemon.handle(
+          message("exec", exec("sleep 5", { timeout_ms: 60_000 })),
+        ),
+      );
+      expect(reply.result).toMatchObject({ timed_out: true });
+    });
+
+    it("a job's id is its run operation's id, and it stops at the ticket's limit", async () => {
+      const operation_id = randomUUID();
+      const reply = ok(
+        await daemon.handle(
+          message("run", run("sleep 30"), {
+            operation_id,
+            ticket: { max_runtime_ms: 300 },
+          }),
+        ),
+      );
+      expect((reply.result as any).job_id).toBe(operation_id);
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(operation_id)?.state === "killed";
+      });
+      expect(daemon.jobs.get(operation_id)!.error).toMatch(/time limit/);
+    });
+
+    it("a project that stops being private loses its queued and running jobs; others keep theirs", async () => {
+      const gate = join(dir, "gate");
+      const otherProject = randomUUID();
+      const blocker = ok(
+        await daemon.handle(
+          message("run", run(`while [ ! -e ${gate} ]; do sleep 0.05; done`), {
+            attestation: { project_id: otherProject },
+            ticket: { source_project_id: otherProject },
+          }),
+        ),
+      );
+      const mine = ok(await daemon.handle(message("run", run("sleep 30"))));
+      const queued = ok(
+        await daemon.handle(message("run", run("true", { exclusive: true }))),
+      );
+      expect((queued.result as any).state).toBe("queued");
+      const { killed, cancelled } = daemon.applyFloors(
+        floors(0, { [project_id]: 2 }),
+      );
+      expect(killed).toEqual([(mine.result as any).job_id]);
+      expect(cancelled).toEqual([(queued.result as any).job_id]);
+      daemon.jobs.refresh();
+      expect(daemon.jobs.get((blocker.result as any).job_id)!.state).toBe(
+        "running",
+      );
+      require("node:fs").writeFileSync(gate, "");
+    });
+
+    it("a raised computer epoch cancels queued work but lets running jobs finish", async () => {
+      const gate = join(dir, "gate");
+      const running = ok(
+        await daemon.handle(
+          message("run", run(`while [ ! -e ${gate} ]; do sleep 0.05; done`)),
+        ),
+      );
+      const queued = ok(
+        await daemon.handle(message("run", run("true", { exclusive: true }))),
+      );
+      const { cancelled, killed } = daemon.applyFloors(floors(3, {}));
+      expect(cancelled).toEqual([(queued.result as any).job_id]);
+      expect(killed).toEqual([]);
+      require("node:fs").writeFileSync(gate, "");
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return (
+          daemon.jobs.get((running.result as any).job_id)?.state === "exited"
+        );
+      });
+    });
+
+    it("re-checks a queued job's authorization when it would start", async () => {
+      const gate = join(dir, "gate");
+      ok(
+        await daemon.handle(
+          message("run", run(`while [ ! -e ${gate} ]; do sleep 0.05; done`)),
+        ),
+      );
+      const queued = ok(
+        await daemon.handle(
+          message(
+            "run",
+            run(`touch ${join(dir, "started")}`, { exclusive: true }),
+            {
+              ticket: { max_runtime_ms: 200 },
+            },
+          ),
+        ),
+      );
+      // Its time limit passes while it waits.
+      await new Promise((r) => setTimeout(r, 400));
+      require("node:fs").writeFileSync(gate, "");
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return (
+          daemon.jobs.get((queued.result as any).job_id)?.state === "cancelled"
+        );
+      });
+      expect(daemon.jobs.get((queued.result as any).job_id)!.error).toMatch(
+        /time limit passed while it was queued/,
+      );
+      expect(existsSync(join(dir, "started"))).toBe(false);
+    });
+
+    it("caps a job's log on the machine without killing the job", async () => {
+      const { JobManager } = await import("./jobs");
+      const jobs = new JobManager(join(dir, "capped"), { logCapBytes: 100 });
+      const job_id = randomUUID();
+      jobs.submit({
+        job_id,
+        operation_id: job_id,
+        agent_id: agent,
+        source_project_id: project_id,
+        name: null,
+        description: "noisy",
+        command: "head -c 100000 /dev/zero | tr '\\0' x; echo; exit 6",
+        cwd: workdir,
+        nice: false,
+        exclusive: false,
+        auth: {
+          computer_epoch: 0,
+          policy_epoch: 0,
+          privacy_epoch: 1,
+          deadline_at: null,
+        },
+      });
+      await waitFor(() => {
+        jobs.refresh();
+        return jobs.get(job_id)?.state === "exited";
+      });
+      expect(jobs.get(job_id)!.exit_code).toBe(6);
+      const log = readFileSync(
+        join(dir, "capped", "jobs", job_id, "log"),
+        "utf8",
+      );
+      expect(log.startsWith("x".repeat(100))).toBe(true);
+      expect(log).toMatch(/log capped; 99901 more bytes not kept/);
+      expect(log.length).toBeLessThan(200);
+    });
+
+    it("caps an exec's output files on the machine", async () => {
+      const { runExec } = await import("./exec");
+      const logDir = join(dir, "exec-capped");
+      const r = await runExec(
+        {
+          command: "head -c 100000 /dev/zero | tr '\\0' y",
+          cwd: null,
+          timeout_ms: 10_000,
+          stdin: null,
+        },
+        {
+          workdir,
+          logDir,
+          shell: "/bin/bash",
+          fileCapBytes: 1000,
+          maxOutputBytes: 10,
+        },
+      );
+      expect(r.stdout).toBe("y".repeat(10));
+      expect(r.truncated).toBe(true);
+      expect(readFileSync(join(logDir, "stdout"), "utf8")).toBe(
+        "y".repeat(1000),
+      );
+    });
+
+    it("refuses a flood before parsing it, and too many concurrent execs per agent", async () => {
+      const garbage = () =>
+        daemon.handle({
+          ticket: null,
+          proof: "x",
+          request: {},
+          received_at: clocks.continuous(),
+        });
+      const answers = await Promise.all(Array.from({ length: 120 }, garbage));
+      expect(
+        answers.filter(
+          (a: any) => a.refused?.[0] === "this computer is busy; try again",
+        ).length,
+      ).toBeGreaterThan(0);
+      // A fresh daemon (fresh buckets) for the concurrency part.
+      daemon.endSession("next part");
+      daemon = makeDaemon();
+      const slow = Array.from({ length: 4 }, () =>
+        daemon.handle(message("exec", exec("sleep 1"))),
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      const fifth = await daemon.handle(message("exec", exec("true")));
+      expect((fifth as any).refused).toEqual([
+        "too many commands running on this computer; try again",
+      ]);
+      // Another agent still gets one.
+      ok(
+        await daemon.handle(
+          message("exec", exec("true"), { agent_id: otherAgent }),
+        ),
+      );
+      for (const r of await Promise.all(slow)) ok(r);
+    });
+  });
 });

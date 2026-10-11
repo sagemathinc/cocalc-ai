@@ -55,6 +55,17 @@ export interface JobSpec {
   nice: boolean;
   exclusive: boolean;
   created_at: number;
+  /** What admitted it, re-checked before a queued job starts. */
+  auth: JobAuthorization;
+}
+
+export interface JobAuthorization {
+  computer_epoch: number;
+  policy_epoch: number;
+  /** The source project's privacy epoch from its attestation. */
+  privacy_epoch: number;
+  /** Wall-clock time after which the job is stopped (ticket and session). */
+  deadline_at: number | null;
 }
 
 export interface JobStatus {
@@ -92,6 +103,8 @@ export const MAX_QUEUE_AGE_MS = 24 * 60 * 60 * 1000;
 export const JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const JOB_RETENTION_BYTES = 1024 ** 3;
 const LOG_TAIL_READ_BYTES = 4 * 1024 * 1024;
+/** A job's log keeps at most this much; the rest is drained and counted. */
+export const JOB_LOG_CAP_BYTES = 256 * 1024 * 1024;
 
 const WRAPPER = `
 cmd=$COCALC_JOB_COMMAND
@@ -108,10 +121,23 @@ if [ -n "$job_nice" ]; then
 else
   set --
 fi
-"$@" "$job_shell" -lc "$cmd"
-code=$?
-printf '%s\\n' "$code" > "$exit_file.tmp" && mv -f "$exit_file.tmp" "$exit_file"
-exit "$code"
+log_cap=$COCALC_JOB_LOG_CAP
+unset COCALC_JOB_LOG_CAP
+# The log keeps at most log_cap bytes; the rest is read and dropped (so the
+# command never dies of a closed pipe) and counted at the end.
+{
+  "$@" "$job_shell" -lc "$cmd"
+  code=$?
+  printf '%s\\n' "$code" > "$exit_file.tmp" && mv -f "$exit_file.tmp" "$exit_file"
+} 2>&1 | {
+  head -c "$log_cap"
+  rest=$(wc -c | tr -d ' ')
+  if [ "$rest" -gt 0 ]; then
+    printf '\\n[cocalc: log capped; %s more bytes not kept]\\n' "$rest"
+  fi
+}
+code=$(cat "$exit_file" 2>/dev/null)
+exit "\${code:-1}"
 `;
 
 export class JobError extends Error {}
@@ -152,7 +178,13 @@ export class JobManager {
     private readonly opts: {
       shell?: string;
       killGraceMs?: number;
+      logCapBytes?: number;
       onEnded?: (job: Job) => void;
+      /**
+       * Before a queued job starts: why it may no longer run (authorization
+       * changed, session ended), or null to start it.
+       */
+      authorize?: (job: Job) => string | null;
     } = {},
   ) {
     this.dir = join(stateDir, "jobs");
@@ -260,6 +292,7 @@ export class JobManager {
           COCALC_JOB_EXIT_FILE: join(dir, "exit_code"),
           COCALC_JOB_SHELL: this.opts.shell ?? loginShell(),
           COCALC_JOB_NICE: job.nice ? "1" : "",
+          COCALC_JOB_LOG_CAP: `${this.opts.logCapBytes ?? JOB_LOG_CAP_BYTES}`,
         },
       });
       child.on("error", () => {});
@@ -306,6 +339,19 @@ export class JobManager {
    */
   refresh(now = Date.now()): void {
     for (const job of this.list()) {
+      if (
+        job.state === "running" &&
+        !job.kill_requested &&
+        job.auth.deadline_at != null &&
+        now >= job.auth.deadline_at
+      ) {
+        this.setStatus(job.job_id, {
+          kill_requested: true,
+          error: "the job reached its time limit",
+        });
+        if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
+        continue;
+      }
       if (job.state === "running") {
         const code = this.exitCode(job.job_id);
         if (code != null) {
@@ -314,7 +360,7 @@ export class JobManager {
           this.ended(
             job.job_id,
             job.kill_requested
-              ? { state: "killed" }
+              ? { state: "killed", ...(job.error ? { error: job.error } : {}) }
               : { state: "lost", error: "the job ended without an exit code" },
             now,
           );
@@ -343,6 +389,11 @@ export class JobManager {
       const running = this.running();
       if (running.some((j) => j.exclusive)) return;
       if (job.exclusive && running.length > 0) return;
+      const refused = this.opts.authorize?.(job) ?? null;
+      if (refused != null) {
+        this.ended(job.job_id, { state: "cancelled", error: refused }, now);
+        continue;
+      }
       this.start(job.job_id, now);
       if (job.exclusive) return;
     }
@@ -384,6 +435,18 @@ export class JobManager {
     this.setStatus(job_id, { kill_requested: true });
     if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
     return this.get(job_id)!;
+  }
+
+  /** Stop running jobs that match (e.g. one project's, when it changed). */
+  killWhere(filter: (job: Job) => boolean, reason: string): string[] {
+    const killed: string[] = [];
+    for (const job of this.running()) {
+      if (!filter(job)) continue;
+      this.setStatus(job.job_id, { kill_requested: true, error: reason });
+      if (this.alive(job)) killGroup(job.pid!, this.opts.killGraceMs ?? 5000);
+      killed.push(job.job_id);
+    }
+    return killed;
   }
 
   /** At the deadline or on revocation: kill everything (best effort). */

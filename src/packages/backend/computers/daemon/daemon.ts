@@ -34,14 +34,13 @@ import {
   totalmem,
 } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   MAX_EXEC_OUTPUT_BYTES,
   type OperationRequest,
 } from "@cocalc/util/computers/operations";
 import type { ComputerTicket } from "@cocalc/util/computers/protocol";
-import { admit, type AdmissionInput } from "./admission";
+import { admit, RateLimiter, type AdmissionInput } from "./admission";
 import type { Clocks, HubClock, SessionClock } from "./clock";
 import { resolveCwd, runExec, type ExecResult } from "./exec";
 import { JobManager, type Job, type JobSummary } from "./jobs";
@@ -51,6 +50,9 @@ import type { DaemonStore } from "./state";
 const execFileAsync = promisify(execFile);
 
 export const LEDGER_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** At most this many execs at once, and per agent. */
+export const MAX_CONCURRENT_EXECS = 8;
+export const MAX_CONCURRENT_EXECS_PER_AGENT = 4;
 
 export type OperationReply =
   | { ok: false; refused: string[] }
@@ -88,8 +90,15 @@ const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 export class ComputerDaemon {
   readonly ledger: Ledger;
   readonly jobs: JobManager;
-  private running = new Map<string, AbortController>();
+  private running = new Map<
+    string,
+    { controller: AbortController; agent_id: string }
+  >();
   private ended = false;
+  // Before anything else (messages arrive before they are authenticated), a
+  // global bucket; after admission, one per agent.
+  private readonly globalLimiter = new RateLimiter(50, 100);
+  private readonly agentLimiter = new RateLimiter(10, 30);
 
   constructor(private readonly deps: DaemonDeps) {
     this.ledger = new Ledger(deps.stateDir);
@@ -97,6 +106,7 @@ export class ComputerDaemon {
       shell: deps.shell,
       killGraceMs: deps.killGraceMs,
       onEnded: (job) => deps.report?.({ kind: "job", job }),
+      authorize: (job) => this.jobRefusal(job),
     });
     for (const operation_id of this.ledger.markInterrupted()) {
       const entry = this.ledger.get(operation_id);
@@ -107,6 +117,9 @@ export class ComputerDaemon {
 
   /** One message from an agent: ticket, proof and request. */
   async handle(input: AdmissionInput): Promise<OperationReply> {
+    if (!this.globalLimiter.allow("*", Date.now())) {
+      return { ok: false, refused: ["this computer is busy; try again"] };
+    }
     this.tick();
     const admission = admit(input, {
       store: this.deps.store,
@@ -116,6 +129,28 @@ export class ComputerDaemon {
     });
     if (!admission.ok) return { ok: false, refused: admission.refusals };
     const { ticket, operation } = admission;
+    if (!this.agentLimiter.allow(ticket.agent_id, Date.now())) {
+      return { ok: false, refused: ["too many operations; slow down"] };
+    }
+    // A new exec must fit the concurrency limits (a retry of a known
+    // operation always gets its recorded answer).
+    if (
+      operation.operation === "exec" &&
+      this.ledger.get(ticket.operation_id) == null
+    ) {
+      const mine = [...this.running.values()].filter(
+        (r) => r.agent_id === ticket.agent_id,
+      ).length;
+      if (
+        this.running.size >= MAX_CONCURRENT_EXECS ||
+        mine >= MAX_CONCURRENT_EXECS_PER_AGENT
+      ) {
+        return {
+          ok: false,
+          refused: ["too many commands running on this computer; try again"],
+        };
+      }
+    }
 
     let begun;
     try {
@@ -207,8 +242,11 @@ export class ComputerDaemon {
           return done({ job_id: job.job_id, state: job.state });
         }
         case "run": {
+          const remaining = this.deps.session.remainingMs();
           const job = this.jobs.submit({
-            job_id: randomUUID(),
+            // A job's id is its run operation's id, which the hub uses to
+            // check who may read its log or kill it.
+            job_id: id,
             operation_id: id,
             agent_id,
             source_project_id: ticket.source_project_id,
@@ -218,22 +256,43 @@ export class ComputerDaemon {
             cwd: resolveCwd(this.deps.workdir, op.request.cwd),
             nice: op.request.nice,
             exclusive: op.request.exclusive,
+            auth: {
+              computer_epoch: ticket.computer_epoch,
+              policy_epoch: ticket.policy_epoch,
+              privacy_epoch: ticket.attestation.payload.privacy_epoch,
+              deadline_at:
+                Date.now() +
+                Math.min(ticket.max_runtime_ms, remaining ?? Infinity),
+            },
           });
           return done({ job_id: job.job_id, state: job.state });
         }
         case "exec": {
           this.ledger.update(id, { state: "running" });
           const controller = new AbortController();
-          this.running.set(id, controller);
+          this.running.set(id, { controller, agent_id });
+          // The least of what was asked, what the ticket allows, and what is
+          // left of the session.
+          const timeout_ms = Math.max(
+            1,
+            Math.min(
+              op.request.timeout_ms,
+              ticket.max_runtime_ms,
+              this.deps.session.remainingMs() ?? Infinity,
+            ),
+          );
           let r: ExecResult;
           try {
-            r = await runExec(op.request, {
-              workdir: this.deps.workdir,
-              logDir: this.execDir(id),
-              shell: this.deps.shell,
-              killGraceMs: this.deps.killGraceMs,
-              signal: controller.signal,
-            });
+            r = await runExec(
+              { ...op.request, timeout_ms },
+              {
+                workdir: this.deps.workdir,
+                logDir: this.execDir(id),
+                shell: this.deps.shell,
+                killGraceMs: this.deps.killGraceMs,
+                signal: controller.signal,
+              },
+            );
           } finally {
             this.running.delete(id);
           }
@@ -343,15 +402,72 @@ export class ComputerDaemon {
     };
   }
 
-  /** Raise floors from a signed push; queued work is cancelled if they rose. */
-  applyFloors(envelope: unknown): { raised: boolean; cancelled: string[] } {
+  /**
+   * Raise floors from a signed push.
+   * - The computer epoch rose (revoked, or its network narrowed): queued
+   *   work can't be re-authorized here, so it is cancelled; running jobs
+   *   continue until the hub says more (revocation ends the session).
+   * - A project's privacy epoch rose (it is no longer private): that
+   *   project's queued jobs are cancelled and its running jobs stopped.
+   */
+  applyFloors(envelope: unknown): {
+    raised: boolean;
+    cancelled: string[];
+    killed: string[];
+  } {
     const hubNow = this.deps.hubClock.now();
     if (hubNow == null) throw new Error("no hub time yet");
+    const before = this.deps.store.state.floors;
     const { raised } = this.deps.store.applyFloors(envelope, hubNow);
-    const cancelled = raised
-      ? this.jobs.cancelQueued("authorization changed before it started")
-      : [];
-    return { raised, cancelled };
+    const after = this.deps.store.state.floors;
+    const cancelled: string[] = [];
+    const killed: string[] = [];
+    if (!raised) return { raised, cancelled, killed };
+    const changedProjects = new Set(
+      Object.keys(after.projects).filter(
+        (p) => (after.projects[p] ?? 0) > (before.projects[p] ?? 0),
+      ),
+    );
+    if (after.computer_epoch > before.computer_epoch) {
+      cancelled.push(
+        ...this.jobs.cancelQueued("authorization changed before it started"),
+      );
+    }
+    if (changedProjects.size > 0) {
+      const affected = (job: Job) => changedProjects.has(job.source_project_id);
+      cancelled.push(
+        ...this.jobs.cancelQueued(
+          "its project is no longer eligible",
+          affected,
+        ),
+      );
+      killed.push(
+        ...this.jobs.killWhere(affected, "its project is no longer eligible"),
+      );
+    }
+    return { raised, cancelled, killed };
+  }
+
+  /** Why a queued job may no longer start, or null. */
+  private jobRefusal(job: Job): string | null {
+    if (this.ended) return "the session on this computer has ended";
+    const state = this.deps.store.state;
+    if (job.auth.computer_epoch < state.floors.computer_epoch) {
+      return "authorization changed before it started";
+    }
+    if (
+      job.auth.privacy_epoch <
+      (state.floors.projects[job.source_project_id] ?? 0)
+    ) {
+      return "its project is no longer eligible";
+    }
+    if (job.auth.policy_epoch !== state.policy_epoch) {
+      return "the computer's policy changed before it started";
+    }
+    if (job.auth.deadline_at != null && Date.now() >= job.auth.deadline_at) {
+      return "its time limit passed while it was queued";
+    }
+    return null;
   }
 
   /**
@@ -366,7 +482,7 @@ export class ComputerDaemon {
 
   endSession(reason: string): void {
     this.ended = true;
-    for (const controller of this.running.values()) controller.abort();
+    for (const { controller } of this.running.values()) controller.abort();
     this.jobs.killAll(reason);
   }
 

@@ -30,6 +30,9 @@ export interface ExecResult {
   duration_ms: number;
 }
 
+/** Each of stdout and stderr keeps at most this much on the machine. */
+export const EXEC_FILE_CAP_BYTES = 64 * 1024 * 1024;
+
 export interface ExecOptions {
   /** The computer's default working directory. */
   workdir: string;
@@ -37,6 +40,8 @@ export interface ExecOptions {
   logDir: string;
   shell?: string;
   maxOutputBytes?: number;
+  /** Cap on each output file kept on the machine. */
+  fileCapBytes?: number;
   /** Grace between SIGTERM and SIGKILL. */
   killGraceMs?: number;
   signal?: AbortSignal;
@@ -97,9 +102,17 @@ export async function runExec(
   };
   let budget = max;
   let truncated = false;
+  const fileCap = opts.fileCapBytes ?? EXEC_FILE_CAP_BYTES;
+  const written = { stdout: 0, stderr: 0 };
   for (const name of ["stdout", "stderr"] as const) {
     child[name]!.on("data", (chunk: Buffer) => {
-      files[name].write(chunk);
+      // Past the cap the output is still read (so the command never blocks
+      // or dies of a closed pipe) but no longer kept.
+      if (written[name] < fileCap) {
+        const part = chunk.subarray(0, fileCap - written[name]);
+        files[name].write(part);
+        written[name] += part.length;
+      }
       if (budget > 0) {
         const part = chunk.subarray(0, budget);
         kept[name].push(part);
