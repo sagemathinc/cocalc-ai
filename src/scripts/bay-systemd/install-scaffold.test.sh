@@ -36,6 +36,14 @@ NEEDRESTART_CONFIG="${TARGET_ROOT}/etc/needrestart/conf.d/cocalc-bay.conf"
 [[ "$(stat -c '%a' "$NEEDRESTART_CONFIG")" == "644" ]]
 grep -Fqx '$nrconf{override_rc}{qr(^cocalc-bay-.*\.service$)} = 0;' \
   "$NEEDRESTART_CONFIG"
+# Root's escrow job is installed outside the bay-owned release tree, without
+# its test, and the unit runs that copy.
+LIBEXEC="${TARGET_ROOT}/usr/local/libexec/cocalc-bay"
+[[ -x "${LIBEXEC}/bay-config-escrow-run" && -f "${LIBEXEC}/bay-config-escrow.mjs" ]]
+[[ ! -e "${LIBEXEC}/bay-config-escrow.test.sh" ]]
+[[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-config-escrow-run" ]]
+grep -qx 'ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run' \
+  "${TARGET_ROOT}/etc/systemd/system/cocalc-bay-config-escrow.service"
 printf '%s\n' 'COCALC_BAY_FRONTDOOR_HOST=0.0.0.0' > "$LOCAL_ENV"
 
 bash "${SCRIPT_DIR}/install-scaffold.sh" --root "$TARGET_ROOT" >/dev/null
