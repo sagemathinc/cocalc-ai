@@ -3,6 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { PublishedSigningKey } from "@cocalc/util/computers/api";
+import {
+  acceptDirectoryKeys,
+  getBaySigningKey,
+  localPublishedSigningKeys,
+} from "@cocalc/server/computers/signing-keys";
 import { lastKnownSeedRead } from "@cocalc/server/inter-bay/last-known-seed-read";
 import type { BayInfo } from "@cocalc/conat/hub/api/system";
 import type {
@@ -221,6 +227,17 @@ export async function registerBayPresenceLocal(
   const bay_id = trim(request.bay_id);
   if (!bay_id) {
     throw new Error("bay_id is required");
+  }
+  if (request.computer_signing_keys != null) {
+    // Keys are recorded for the bay that registers, whatever they claim.
+    await acceptDirectoryKeys(bay_id, request.computer_signing_keys).catch(
+      (err) => {
+        logger.warn("computer signing keys not recorded", {
+          bay_id,
+          err: `${err}`,
+        });
+      },
+    );
   }
   const existing = await getEntryLocal(bay_id);
   const managedTunnel = await getManagedTunnelLocal(bay_id);
@@ -452,7 +469,27 @@ export async function buildLocalBayRegistration(): Promise<BayRegistryRegisterRe
     public_origin: (await getBayPublicOrigin(bay_id)) ?? null,
     public_target: getCurrentBayPublicTarget() ?? null,
     public_target_kind: getCurrentBayPublicTarget() ? "hostname" : null,
+    computer_signing_keys: await computerSigningKeysForRegistration(),
   };
+}
+
+/**
+ * This bay's public keys for computers, creating the first one if needed so
+ * it is in the seed's directory before this bay signs anything. Never fails
+ * the heartbeat.
+ */
+async function computerSigningKeysForRegistration(): Promise<
+  PublishedSigningKey[] | undefined
+> {
+  try {
+    await getBaySigningKey();
+    return await localPublishedSigningKeys();
+  } catch (err) {
+    logger.warn("computer signing keys unavailable for registration", {
+      err: `${err}`,
+    });
+    return undefined;
+  }
 }
 
 async function heartbeatOnce(): Promise<void> {

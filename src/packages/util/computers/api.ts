@@ -11,6 +11,7 @@ import type {
   ComputerCertificate,
   ComputerTicket,
   SignedEnvelope,
+  SigningKeyEndorsement,
 } from "./protocol";
 
 export interface ComputerSummary {
@@ -95,3 +96,12 @@ export type TicketResult =
   | { ticket: SignedEnvelope<ComputerTicket>; operation: OperationRequest }
   /** The operation already finished; its recorded outcome, no new ticket. */
   | { finished: { state: string; exit_code: number | null } };
+
+/** A bay's public signing key, as it publishes it to the seed's directory. */
+export interface PublishedSigningKey {
+  kid: string;
+  public_key: string;
+  not_after: number;
+  /** By the bay's previous key; null for its first. */
+  endorsement: SignedEnvelope<SigningKeyEndorsement> | null;
+}

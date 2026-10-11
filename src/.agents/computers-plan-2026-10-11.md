@@ -1095,6 +1095,19 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
   `uncertain`), both changed under the membership lock and moved with the
   project when it is rehomed. The bay also has a signing key for
   attestations, published in the cluster's bay-key directory.
+- **The bay-key directory** (`cluster_computer_signing_keys`, on the seed):
+  - Standalone and seed bays write their own keys; attached bays send theirs
+    with the registration heartbeat (which also creates the first key).
+  - A bay's **first** key is trusted on first use over the authenticated
+    inter-bay fabric. The fabric has no per-bay identity, so any fabric
+    member could register the first key of a bay that has none yet; the
+    fabric is already the root of inter-bay trust.
+  - Every **later** key needs an endorsement signed by a trusted key of the
+    same bay (the outgoing key signs its successor at rotation), and a kid
+    never moves to another bay.
+  - A bay that loses its keys (a database restore) cannot publish a new
+    chain until an operator revokes its old directory keys or they expire.
+    *(implementation, Oct 11)*
 - **Bay ownership:** all `account_computer*` and `agent_computer_grants` rows
   are account-home tables. Rehoming is blocked while any exist. Deletion uses
   a tombstone plus an outbox.

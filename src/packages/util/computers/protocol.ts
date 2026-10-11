@@ -24,6 +24,7 @@ export const SIGNED_KINDS = {
   attestation: "project-attestation",
   ticket: "computer-ticket",
   floors: "computer-floors",
+  key_endorsement: "signing-key-endorsement",
 } as const;
 
 export interface SignedEnvelope<T> {
@@ -118,6 +119,20 @@ export interface ProjectAttestation {
   account_id: string;
   home_bay_id: string;
   issued_at: number;
+  not_after: number;
+}
+
+/**
+ * Signed by a bay's previous key: its next key. A bay's first key is
+ * accepted as is; every later key needs this, so the directory follows an
+ * unbroken chain per bay.
+ */
+export interface SigningKeyEndorsement {
+  type: "cocalc-computer-key-endorsement";
+  version: 1;
+  bay_id: string;
+  kid: string;
+  public_key: string;
   not_after: number;
 }
 
@@ -262,6 +277,27 @@ export function parseComputerCertificate(input: unknown): ComputerCertificate {
     ceiling_hash: hash(o.ceiling_hash, "ceiling_hash"),
     not_before,
     not_after,
+  };
+}
+
+export function parseSigningKeyEndorsement(
+  input: unknown,
+): SigningKeyEndorsement {
+  const o = record(input, "endorsement");
+  onlyKeys(
+    o,
+    ["type", "version", "bay_id", "kid", "public_key", "not_after"],
+    "endorsement",
+  );
+  literal(o.type, "cocalc-computer-key-endorsement", "endorsement.type");
+  version(o.version);
+  return {
+    type: "cocalc-computer-key-endorsement",
+    version: 1,
+    bay_id: bayId(o.bay_id),
+    kid: fingerprint(o.kid, "endorsement.kid"),
+    public_key: base64url(o.public_key, "endorsement.public_key", 4, 200),
+    not_after: time(o.not_after, "endorsement.not_after"),
   };
 }
 

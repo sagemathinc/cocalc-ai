@@ -5,6 +5,9 @@ let hasDnsMock: jest.Mock;
 let ensureCloudflareTunnelForBayMock: jest.Mock;
 let getInterBayFabricClientMock: jest.Mock;
 let createInterBayBayRegistryClientMock: jest.Mock;
+let acceptDirectoryKeysMock: jest.Mock;
+let getBaySigningKeyMock: jest.Mock;
+let localPublishedSigningKeysMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -35,6 +38,14 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
   __esModule: true,
   createInterBayBayRegistryClient: (...args: any[]) =>
     createInterBayBayRegistryClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/computers/signing-keys", () => ({
+  __esModule: true,
+  acceptDirectoryKeys: (...args: any[]) => acceptDirectoryKeysMock(...args),
+  getBaySigningKey: (...args: any[]) => getBaySigningKeyMock(...args),
+  localPublishedSigningKeys: (...args: any[]) =>
+    localPublishedSigningKeysMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-public-origin", () => ({
@@ -74,6 +85,9 @@ describe("bay-registry", () => {
     hasDnsMock = jest.fn(async () => true);
     ensureCloudflareTunnelForBayMock = jest.fn(async () => undefined);
     getInterBayFabricClientMock = jest.fn(() => ({ id: "fabric-client" }));
+    acceptDirectoryKeysMock = jest.fn(async () => ({ added: [], refused: [] }));
+    getBaySigningKeyMock = jest.fn(async () => ({}));
+    localPublishedSigningKeysMock = jest.fn(async () => []);
     createInterBayBayRegistryClientMock = jest.fn(() => ({
       register: jest.fn(async () => ({})),
       list: jest.fn(async () => []),
@@ -183,6 +197,50 @@ describe("bay-registry", () => {
       dns_record_id: "dns-record-1",
     });
     expect(ensureCloudflareTunnelForBayMock).not.toHaveBeenCalled();
+  });
+
+  it("records computer signing keys for the bay that registers, and never fails the heartbeat over them", async () => {
+    const { registerBayPresenceLocal } = await import("./bay-registry");
+    const keys = [
+      { kid: "sha256:x", public_key: "k", not_after: 1, endorsement: null },
+    ];
+    await registerBayPresenceLocal({
+      bay_id: " bay-2 ",
+      computer_signing_keys: keys,
+    });
+    expect(acceptDirectoryKeysMock).toHaveBeenCalledWith("bay-2", keys);
+
+    acceptDirectoryKeysMock.mockClear();
+    await registerBayPresenceLocal({ bay_id: "bay-3" });
+    expect(acceptDirectoryKeysMock).not.toHaveBeenCalled();
+
+    acceptDirectoryKeysMock.mockRejectedValueOnce(new Error("db down"));
+    await expect(
+      registerBayPresenceLocal({
+        bay_id: "bay-2",
+        computer_signing_keys: keys,
+      }),
+    ).resolves.toMatchObject({ bay_id: "bay-2" });
+  });
+
+  it("sends this bay's computer signing keys with its registration, if it has them", async () => {
+    const { buildLocalBayRegistration } = await import("./bay-registry");
+    const keys = [
+      { kid: "sha256:y", public_key: "k", not_after: 2, endorsement: null },
+    ];
+    localPublishedSigningKeysMock.mockResolvedValueOnce(keys);
+    expect(await buildLocalBayRegistration()).toMatchObject({
+      bay_id: "bay-0",
+      computer_signing_keys: keys,
+    });
+    expect(getBaySigningKeyMock).toHaveBeenCalled();
+
+    getBaySigningKeyMock.mockRejectedValueOnce(
+      new Error("no secret storage key"),
+    );
+    const without = await buildLocalBayRegistration();
+    expect(without.bay_id).toBe("bay-0");
+    expect(without.computer_signing_keys).toBeUndefined();
   });
 
   it("removes stale bay dns when no public target is advertised", async () => {

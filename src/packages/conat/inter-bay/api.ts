@@ -1,3 +1,4 @@
+import type { PublishedSigningKey } from "@cocalc/util/computers/api";
 import type {
   LiveVoiceRequest,
   LiveVoiceResult,
@@ -2123,6 +2124,8 @@ export interface BayRegistryRegisterRequest {
   public_target_kind?: string | null;
   accepts_project_ownership?: boolean;
   project_ownership_note?: string | null;
+  /** This bay's public keys for computers (see server/computers/signing-keys). */
+  computer_signing_keys?: PublishedSigningKey[];
 }
 
 export interface BayRegistryListRequest {}
