@@ -7,7 +7,11 @@
 
 import type { OperationRequest } from "./operations";
 import type { ComputerPolicy, RequestedPolicy } from "./policy";
-import type { ComputerTicket, SignedEnvelope } from "./protocol";
+import type {
+  ComputerCertificate,
+  ComputerTicket,
+  SignedEnvelope,
+} from "./protocol";
 
 export interface ComputerSummary {
   computer_id: string;
@@ -46,6 +50,29 @@ export interface PairingView {
   server_nonce: string;
   state: string;
   expires_at: number;
+}
+
+/**
+ * What the machine sees while it waits for the owner. Only the claimant, who
+ * knows the transcript hash, gets an answer.
+ */
+export interface PairingStatus {
+  request_id: string;
+  /** pending/paired/approved/declined/expired/invalidated, or revoked. */
+  state: string;
+  pairing_phrase: string;
+  expires_at: number;
+  /** Once approved. */
+  computer_id?: string;
+  name?: string;
+  certificate?: SignedEnvelope<ComputerCertificate>;
+}
+
+/** A new request, and the line the owner runs on the computer. */
+export interface CreatedComputerRequest {
+  request_id: string;
+  expires_at: number;
+  pairing_url: string;
 }
 
 export interface ComputerRequestSummary {

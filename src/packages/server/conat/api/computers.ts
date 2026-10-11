@@ -46,13 +46,13 @@ export async function createComputerRequest(
   opts: In<"createComputerRequest">,
 ): Out<"createComputerRequest"> {
   const { id, api } = await home(opts.account_id);
-  const { request_id, expires_at } = await api.createRequest({
+  const { request_id, expires_at, pairing_url } = await api.createRequest({
     account_id: id,
     name: opts.name,
     requested_policy: opts.policy,
     why: opts.why ?? "",
   });
-  return { request_id, expires_at };
+  return { request_id, expires_at, pairing_url };
 }
 
 export async function approveComputerRequest(

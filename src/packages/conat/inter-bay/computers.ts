@@ -17,6 +17,7 @@ import type { Options } from "@cocalc/conat/service/service";
 import type {
   ComputerRequestSummary,
   ComputerSummary,
+  CreatedComputerRequest,
   PairingView,
   TicketResult,
 } from "@cocalc/util/computers/api";
@@ -45,11 +46,7 @@ export interface InterBayComputersApi {
     name: string;
     requested_policy: unknown;
     why?: string;
-  }): Promise<{
-    request_id: string;
-    expires_at: number;
-    policy: RequestedPolicy;
-  }>;
+  }): Promise<CreatedComputerRequest & { policy: RequestedPolicy }>;
   listRequests(opts: { account_id: string }): Promise<ComputerRequestSummary[]>;
   getPairingView(opts: { request_id: string }): Promise<PairingView>;
   submitPairing(opts: {

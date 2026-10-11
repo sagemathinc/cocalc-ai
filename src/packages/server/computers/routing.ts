@@ -17,6 +17,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
 import { attestProjectLocal } from "./attestation";
 import {
   extendComputer,
@@ -37,6 +38,7 @@ import {
   listComputerRequests,
   submitPairing,
 } from "./requests";
+import { computersSite } from "./site";
 import { issueComputerTicket } from "./tickets";
 
 async function requireFreshAuth(account_id: string, session_hash?: string) {
@@ -49,7 +51,10 @@ async function requireFreshAuth(account_id: string, session_hash?: string) {
 }
 
 export const computersAtThisBay: InterBayComputersApi = {
-  createRequest: async (opts) => await createComputerRequest(opts),
+  createRequest: async (opts) => {
+    const created = await createComputerRequest(opts);
+    return { ...created, pairing_url: await pairingUrl(created.request_id) };
+  },
   listRequests: async ({ account_id }) =>
     await listComputerRequests(account_id),
   getPairingView: async ({ request_id }) => await getPairingView(request_id),
@@ -90,6 +95,17 @@ export const computersAtThisBay: InterBayComputersApi = {
     await issueComputerTicket({ ...opts, operation: opts.operation as any }),
   attestProject: async (opts) => await attestProjectLocal(opts),
 };
+
+/**
+ * The line the owner runs on the computer: this (home) bay's public origin
+ * and the request id. The machine talks to the pairing endpoints there.
+ */
+export async function pairingUrl(request_id: string): Promise<string> {
+  const origin =
+    (await getBayPublicOrigin(getConfiguredBayId()).catch(() => undefined)) ??
+    (await computersSite());
+  return `${origin.replace(/\/+$/, "")}/c/${request_id}`;
+}
 
 /** The computers API at a given bay (this one, or over the fabric). */
 export function computersAtBay(bay_id: string): InterBayComputersApi {

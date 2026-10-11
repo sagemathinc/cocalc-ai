@@ -13,6 +13,7 @@
 import type {
   ComputerRequestSummary,
   ComputerSummary,
+  CreatedComputerRequest,
 } from "@cocalc/util/computers/api";
 import type { ComputerPolicy } from "@cocalc/util/computers/policy";
 import { authFirstRequireAccountWithBoundSession } from "./util";
@@ -31,7 +32,7 @@ export interface ComputersApi {
     name: string;
     policy: unknown;
     why?: string;
-  }): Promise<{ request_id: string; expires_at: number }>;
+  }): Promise<CreatedComputerRequest>;
   approveComputerRequest(opts: {
     account_id?: string;
     session_hash?: string;

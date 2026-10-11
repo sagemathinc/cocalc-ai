@@ -17,7 +17,7 @@
 //    layer). The home bay creates the computer and signs its certificate.
 //    No secret is delivered: the daemon proves possession of its key later.
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -48,6 +48,7 @@ import {
 } from "@cocalc/backend/computers/crypto";
 import type {
   ComputerRequestSummary,
+  PairingStatus,
   PairingView,
 } from "@cocalc/util/computers/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -344,6 +345,68 @@ export async function submitPairing({
   } finally {
     client.release();
   }
+}
+
+/**
+ * The machine polls this after pairing. It must present the transcript hash
+ * it computed; without it the answer is the same as for an unknown request,
+ * so nobody else learns whether the owner approved.
+ */
+export async function getPairingStatus({
+  request_id,
+  transcript_hash,
+  now = Date.now(),
+}: {
+  request_id: string;
+  transcript_hash: string;
+  now?: number;
+}): Promise<PairingStatus> {
+  const row = await loadRequest(request_id);
+  if (
+    row == null ||
+    typeof transcript_hash !== "string" ||
+    row.transcript_hash == null ||
+    !sameText(row.transcript_hash, transcript_hash)
+  ) {
+    throw new ComputerRequestError("no such computer pairing");
+  }
+  const status: PairingStatus = {
+    request_id: row.request_id,
+    state:
+      new Date(row.expires_at).valueOf() <= now && isOpen(row.state)
+        ? "expired"
+        : row.state,
+    pairing_phrase: row.pairing_phrase,
+    expires_at: new Date(row.expires_at).valueOf(),
+  };
+  if (row.state !== "approved" || row.computer_id == null) return status;
+  const computer = (
+    await getPool().query(
+      `SELECT computer_id, name, certificate, revoked_at, tombstoned_at
+         FROM account_computers
+        WHERE computer_id=$1 AND transcript_hash=$2`,
+      [row.computer_id, row.transcript_hash],
+    )
+  ).rows[0];
+  if (
+    computer == null ||
+    computer.revoked_at != null ||
+    computer.tombstoned_at != null
+  ) {
+    return { ...status, state: "revoked" };
+  }
+  return {
+    ...status,
+    computer_id: computer.computer_id,
+    name: computer.name,
+    certificate: computer.certificate,
+  };
+}
+
+function sameText(a: string, b: string): boolean {
+  const x = Buffer.from(a, "utf8");
+  const y = Buffer.from(b, "utf8");
+  return x.length === y.length && timingSafeEqual(x, y);
 }
 
 export interface ApprovedComputer {
