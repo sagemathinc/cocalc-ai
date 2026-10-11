@@ -1190,6 +1190,7 @@ export const projects = {
   createProjectWithBootstrap: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
   collectAssignment: authFirstRequireAccount,
+  addScheduledCollectionStudents: authFirstRequireAccount,
   reconfigureCourseProjects: authFirstRequireAccount,
   getCourseReconfigureOperation: authFirstRequireAccount,
   cancelCourseReconfigureOperation: authFirstRequireAccount,
@@ -1404,6 +1405,16 @@ export interface Projects {
     options?: CopyOptions;
     run_at?: string;
   }) => Promise<CourseCollectAssignmentResult>;
+
+  // Add students to a scheduled collection that has not started yet; a no-op
+  // (updated: false) once it has started, finished or been canceled.
+  addScheduledCollectionStudents: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    assignment_id: string;
+    op_id: string;
+    items: CourseCollectAssignmentItem[];
+  }) => Promise<{ updated: boolean; item_count?: number }>;
 
   reconfigureCourseProjects: (
     opts: CourseReconfigureRequest,

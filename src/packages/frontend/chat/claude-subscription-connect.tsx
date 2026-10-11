@@ -97,8 +97,15 @@ export function ClaudeSubscriptionConnect({
   links = false,
   leadingActions,
   trailingActions,
+  openRequested = false,
+  onOpenRequestHandled,
 }: {
   projectId: string;
+  // Starts sign-in as if "Connect Claude Pro/Max" was clicked (e.g. from a
+  // send button that needs a connection first), once enabled; the caller
+  // clears the request in onOpenRequestHandled.
+  openRequested?: boolean;
+  onOpenRequestHandled?: () => void;
   // Offer only "Reconnect Claude" (e.g. when a turn failed on expired sign-in).
   reconnectOnly?: boolean;
   disabled?: boolean;
@@ -210,6 +217,13 @@ export function ClaudeSubscriptionConnect({
   };
   const signingIn =
     busy || login?.state === "pending" || login?.state === "verifying";
+  useEffect(() => {
+    if (!openRequested || disabled) return;
+    onOpenRequestHandled?.();
+    if (reconnectOnly || signingIn) return;
+    if (modal) setOpen(true);
+    void start();
+  }, [openRequested, disabled]);
   const { token } = theme.useToken();
   const submitCode = async (value: string) => {
     if (!login || submitting || codeSubmitted) return;

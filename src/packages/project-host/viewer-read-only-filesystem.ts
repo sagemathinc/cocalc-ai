@@ -11,6 +11,7 @@ import {
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 function viewerAccessDenied(path: string): NodeJS.ErrnoException {
   const err = new Error(
@@ -87,7 +88,7 @@ function joinViewerPath(parent: string, name: string): string {
   if (!parent || parent === ".") {
     return name;
   }
-  return `${parent.replace(/\/+$/, "")}/${name}`;
+  return `${trimTrailingSlashes(parent)}/${name}`;
 }
 
 function joinCanonicalPath(parent: string, name: string): string {

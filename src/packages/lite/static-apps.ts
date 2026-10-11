@@ -25,6 +25,7 @@ import {
   type PublicViewerManifest,
   type PublicViewerManifestEntry,
 } from "@cocalc/project/app-servers/public-viewer";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("lite:static-apps");
 const STATIC_CACHE_CONTROL_DEFAULT = "private, max-age=60";
@@ -110,7 +111,7 @@ function appsDir(): string {
 
 function normalizePrefix(value: string): string {
   const withLeading = value.startsWith("/") ? value : `/${value}`;
-  return withLeading.replace(/\/+$/, "") || "/";
+  return trimTrailingSlashes(withLeading) || "/";
 }
 
 function escapeHtml(value: string): string {
@@ -133,9 +134,9 @@ function relativeUrlFromDirectory(
   directoryRelativePath: string,
   targetPath: string,
 ): string {
-  const currentDir = directoryRelativePath
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const currentDir = trimTrailingSlashes(
+    directoryRelativePath.replace(/^\/+/, ""),
+  );
   const rel = path.posix.relative(currentDir, targetPath);
   const normalized = rel && rel !== "" ? rel : path.posix.basename(targetPath);
   return encodeUrlPath(normalized);

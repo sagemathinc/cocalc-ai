@@ -16,6 +16,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 STOPSIGNAL SIGRTMIN+3
 
+# netavark: on an upgrade, the new container has no managed runtime yet, so
+# the system Podman checks the existing Podman state, which uses netavark.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     apparmor \
@@ -36,6 +38,7 @@ RUN apt-get update \
     libatomic1 \
     libcap2-bin \
     libpq-dev \
+    netavark \
     nftables \
     openssh-server \
     openssl \

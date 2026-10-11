@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { checkAccountName } from "./db-schema/name-rules";
+import { trimTrailingSlashes } from "./linear-text";
 
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const KINDS = new Set(["agents", "artifacts", "chats", "people", "projects"]);
@@ -85,11 +86,11 @@ export function projectLocation(rest?: string): ProjectLocation | undefined {
   if (head === "files") {
     if (!decoded) return { kind: "directory", path: "/" };
     return decoded.endsWith("/")
-      ? { kind: "directory", path: `/${decoded.replace(/\/+$/, "")}` }
+      ? { kind: "directory", path: `/${trimTrailingSlashes(decoded)}` }
       : { kind: "file", path: `/${decoded}` };
   }
   return decoded
-    ? { kind: "page", page: head, path: `/${decoded.replace(/\/+$/, "")}` }
+    ? { kind: "page", page: head, path: `/${trimTrailingSlashes(decoded)}` }
     : { kind: "page", page: head };
 }
 

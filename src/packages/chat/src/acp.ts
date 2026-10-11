@@ -18,6 +18,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import { nextMarkdownBlockBoundary } from "./markdown-blocks";
+import { isRegExpWhitespace } from "@cocalc/util/linear-text";
 
 // Configuration stored on the chat thread root for Codex/ACP turns.
 // This is persisted as `acp_config` on the root message.
@@ -296,7 +297,7 @@ function joinStreamText(
   if (!separator) {
     return previousText + nextText;
   }
-  const left = previousText.replace(/\s+$/, "");
+  const left = previousText.trimEnd();
   const right = nextText.replace(/^\s+/, "");
   return `${left}${separator}${right}`;
 }
@@ -329,7 +330,7 @@ function needsTextBoundaryParagraph(
   options?: StreamJoinOptions,
 ): boolean {
   if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
-  const left = previousText.replace(/\s+$/, "");
+  const left = previousText.trimEnd();
   const right = nextText.replace(/^\s+/, "");
   if (!left || !right) return false;
   if (!/[.!?]$/.test(left)) return false;
@@ -363,7 +364,7 @@ function needsTextBoundarySpace(
   nextText: string,
 ): boolean {
   if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
-  const left = previousText.replace(/\s+$/, "");
+  const left = previousText.trimEnd();
   const right = nextText.replace(/^\s+/, "");
   if (!left || !right) return false;
   if (left.endsWith("**") && right.startsWith("**")) {
@@ -403,6 +404,19 @@ function endsWithMarkdownEmphasisOpener(text: string): boolean {
   return before === "" || /[\s([{'"`]/.test(before);
 }
 
+// left.match(/([^\s]+)\.$/)?.[1] ?? "": the non-whitespace run before a
+// final ".", found by scanning back once instead of retrying the pattern
+// from every position.
+export function tokenBeforeFinalDot(left: string): string {
+  if (!left.endsWith(".")) return "";
+  const end = left.length - 1;
+  let start = end;
+  while (start > 0 && !isRegExpWhitespace(left[start - 1])) {
+    start -= 1;
+  }
+  return left.slice(start, end);
+}
+
 function shouldPreservePathLikeDotJoin(left: string, right: string): boolean {
   if (!left.endsWith(".") || !/^[A-Za-z0-9_~/-]/.test(right)) {
     return false;
@@ -411,7 +425,7 @@ function shouldPreservePathLikeDotJoin(left: string, right: string): boolean {
   if (beforeDot === "" || /[\s([{/\\'"`]/.test(beforeDot)) {
     return true;
   }
-  const leftToken = left.match(/([^\s]+)\.$/)?.[1] ?? "";
+  const leftToken = tokenBeforeFinalDot(left);
   if (!leftToken || leftToken.includes(".")) {
     return false;
   }

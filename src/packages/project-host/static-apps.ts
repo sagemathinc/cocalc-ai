@@ -30,6 +30,7 @@ import {
 } from "./public-viewer";
 import { getProjectSandboxFilesystem } from "./file-server";
 import type { AppRequestMatch } from "./app-request-match";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:static-apps");
 const STATIC_CACHE_CONTROL_PRIVATE_DEFAULT =
@@ -162,9 +163,9 @@ function relativeUrlFromDirectory(
   directoryRelativePath: string,
   targetPath: string,
 ): string {
-  const currentDir = directoryRelativePath
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const currentDir = trimTrailingSlashes(
+    directoryRelativePath.replace(/^\/+/, ""),
+  );
   const rel = path.posix.relative(currentDir, targetPath);
   const normalized = rel && rel !== "" ? rel : path.posix.basename(targetPath);
   return encodeUrlPath(normalized);

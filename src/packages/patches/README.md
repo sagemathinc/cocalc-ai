@@ -53,3 +53,16 @@ versions through 4.2.0, but the
 Version 4.3.0 fixes a separate Vary-handling issue and falls outside that
 advisory's current range. This update is not evidence that max-stale behavior
 changed or that a customer-facing cross-user cache existed in CoCalc.
+
+## October 9 Handlebars follow-up
+
+Handlebars 4.7.10 fixes
+[unsafe inline precompiled output](https://github.com/advisories/GHSA-xw65-4hp5-5hc7),
+[AST type confusion](https://github.com/advisories/GHSA-8r5x-fm3f-whwj), and
+[prototype own-property check bypass](https://github.com/advisories/GHSA-p8wg-vrv2-v86f).
+Both the static build's direct dependency and the workspace override require
+this release or newer, covering `handlebars-loader` and `ts-jest` too. The
+installed-dependency tests exercise all three fixes alongside valid rendering.
+No local Handlebars patch or release-age exception is needed. Forge and braces
+still have no newer npm releases as of October 9; their patches above remain
+necessary and their version-only audit findings remain visible.

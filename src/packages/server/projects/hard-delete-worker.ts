@@ -14,6 +14,7 @@ import {
   type HardDeleteProjectProgressUpdate,
 } from "@cocalc/server/projects/hard-delete";
 import { markProjectHardDeleteFailed } from "@cocalc/server/projects/hard-delete-state";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:hard-delete-worker");
 
@@ -152,6 +153,7 @@ async function handleHardDeleteOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] });
     const runningSummary = await updateLro({
       op_id: op.op_id,
       status: "running",

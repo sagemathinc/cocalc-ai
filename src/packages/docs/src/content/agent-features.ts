@@ -140,11 +140,14 @@ recipient's chat and activity show execution results. Human
 [CLI submission to a thread](/docs/ai/codex-conversations) is a different
 operation and is not an agent-identity fallback.
 
-**Claude setup:** the network account must first send a human message in the
-recipient thread with its selected Claude subscription. Subsequent network work
-uses that privately stored selection, including the connectors choice; it does
-not borrow the sender's payment method. A missing selection, changed runtime,
-disconnected subscription, or authorization mismatch rejects delivery.
+**Claude setup:** choose a payment method for the recipient agent, or set an
+account default. Network work uses the network account's stored selection,
+including its claude.ai connector preference; it does not borrow the sender's
+payment method. If no selection is stored, CoCalc falls back to that account's
+most recent human turn in the recipient thread, and rejects delivery when there
+is none or the runtime has changed since, asking you to send one message with
+the selected payment method. A disconnected subscription or an authorization
+mismatch also rejects delivery.
 
 A live check on 2026-09-28 verified a Claude-to-Claude round trip: a busy Claude
 received a network ping during a foreground command and replied to an idle

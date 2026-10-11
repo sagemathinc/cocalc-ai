@@ -36,6 +36,7 @@ import {
 import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
 import { isExamMode } from "@cocalc/frontend/customize/exam-mode";
 import { parseAppearancePreference } from "@cocalc/util/appearance";
+import { clearCellClipboard } from "@cocalc/jupyter/redux/cell-clipboard";
 
 export type AccountProjectionRepairRequest = {
   fields?: string[];
@@ -172,6 +173,8 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   private finish_sign_out(sign_in: boolean = false): void {
+    // Copied notebook cells are kept in localStorage; don't leave them behind.
+    clearCellClipboard();
     window.removeEventListener(
       "beforeunload",
       this.redux.getActions("page").check_unload,

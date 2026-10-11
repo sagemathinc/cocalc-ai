@@ -452,7 +452,7 @@ describe("public/docs", () => {
       screen.getByRole("heading", { name: "Install CoCalc Star" }),
     ).not.toBeNull();
     expect(
-      screen.getByText(/complete CoCalc site in one Docker container/),
+      screen.getByText(/CoCalc site in one Docker container/),
     ).not.toBeNull();
     expect(screen.getAllByText(/sagemathinc\/star/).length).toBeGreaterThan(0);
   });

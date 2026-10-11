@@ -54,6 +54,16 @@ import {
   endPlannedProjectHostRuntimeTransition,
 } from "./runtime-transition";
 import { migrateHostPublicRouteInternal } from "@cocalc/server/cloud/public-route";
+import { getProviderContext } from "@cocalc/server/cloud/provider-context";
+import { relocateHost } from "@cocalc/server/hosts/relocate";
+import { enqueueCloudVmWork } from "@cocalc/server/cloud/db";
+import { estimateDedicatedHostRate } from "@cocalc/server/project-host/spend";
+import {
+  hostLifecycleFenced,
+  quiesceHostActivity,
+  releaseRelocationLease,
+  setRelocationNotice,
+} from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:hosts:ops-worker");
 
@@ -86,6 +96,7 @@ const HOST_OP_KINDS = [
   "host-upgrade-software",
   "host-rollout-managed-components",
   "host-public-route",
+  "host-relocate",
   "host-deprovision",
   "host-delete",
   "host-force-deprovision",
@@ -213,7 +224,7 @@ async function updateProgressSummary(
 
 async function loadHostStatus(id: string) {
   const { rows } = await getPool().query(
-    "SELECT id, status, metadata, deleted, last_seen FROM project_hosts WHERE id=$1",
+    "SELECT id, status, metadata, maintenance, deleted, last_seen FROM project_hosts WHERE id=$1",
     [id],
   );
   return rows[0];
@@ -499,6 +510,39 @@ async function loadHostActionCompletion(
   return work.state === "done" ? parseTimestampMs(work.updated_at) : undefined;
 }
 
+// Wait until one cloud work item has finished (it may write back the whole
+// metadata object it read when it started). Throws if it failed.
+async function waitForCloudWorkFinished({
+  host_id,
+  workId,
+  action,
+  shouldStop,
+  query,
+  delayFn = delay,
+  pollMs = POLL_MS,
+}: {
+  host_id: string;
+  workId: string;
+  action: string;
+  shouldStop?: () => Promise<boolean>;
+  query?: (sql: string, params: any[]) => Promise<{ rows: any[] }>;
+  delayFn?: (ms: number) => Promise<unknown>;
+  pollMs?: number;
+}): Promise<void> {
+  for (;;) {
+    const done = await loadHostActionCompletion(
+      host_id,
+      { workId, action } as HostReadinessAttempt,
+      query,
+    );
+    if (done != null) return;
+    if (await shouldStop?.()) {
+      throw new Error(`${action} work ${workId} did not finish in time`);
+    }
+    await delayFn(pollMs);
+  }
+}
+
 function hostApplicationReady(
   row: any,
   attempt: HostReadinessAttempt,
@@ -635,6 +679,245 @@ async function waitForHostHeartbeat({
     await delay(POLL_MS);
   }
   throw new Error("timeout waiting for host heartbeat");
+}
+
+// Override only for staging tests of the rollback path.
+const RELOCATION_START_TIMEOUT_MS =
+  Number(process.env.COCALC_HOST_RELOCATION_START_TIMEOUT_MS) || 20 * 60 * 1000;
+
+async function runHostRelocation({
+  op_id,
+  host_id,
+  account_id,
+  input,
+  progressStep,
+  shouldCancel,
+}: {
+  op_id: string;
+  host_id: string;
+  account_id: string;
+  input: any;
+  progressStep: (
+    step: string,
+    message: string,
+    detail?: any,
+    progress?: number,
+  ) => Promise<void>;
+  shouldCancel: () => Promise<boolean>;
+}) {
+  const pool = getPool();
+  const loadHost = async () => {
+    const { rows } = await pool.query(
+      "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [host_id],
+    );
+    if (!rows[0]) throw new Error("host not found");
+    return rows[0];
+  };
+  const waitFor = async (
+    desired: string[],
+    failOn: string[],
+    timeoutMs?: number,
+  ) => {
+    const deadline = timeoutMs ? Date.now() + timeoutMs : undefined;
+    try {
+      return await waitForHostStatus({
+        host_id,
+        desired,
+        failOn,
+        shouldCancel: async () =>
+          (await shouldCancel()) || (deadline != null && Date.now() > deadline),
+        onUpdate: async () => {},
+      });
+    } catch (err) {
+      if (deadline != null && Date.now() > deadline) {
+        throw new Error(
+          `host did not reach ${desired.join("/")} within ${Math.round(timeoutMs! / 60_000)} minutes`,
+        );
+      }
+      throw err;
+    }
+  };
+  const providerFor = async () => {
+    const row = await loadHost();
+    return await getProviderContext("gcp", { region: row.region });
+  };
+  const lease_id = `${input?.lease_id ?? ""}`.trim();
+  const current = await loadHost();
+  if (!lease_id || current.maintenance?.lease_id !== lease_id) {
+    throw new Error("this relocation does not hold the host's lease");
+  }
+  try {
+    return await relocateHostWithLease();
+  } catch (err) {
+    // Failed before its window (planning, preflight, backups, warm
+    // snapshot): nothing changed, so give the host back.
+    const after = await loadHost().catch(() => undefined);
+    const notice = after?.maintenance;
+    if (notice?.lease_id === lease_id && notice?.state === "preparing") {
+      await releaseRelocationLease({ host_id, lease_id });
+    }
+    throw err;
+  }
+
+  async function relocateHostWithLease() {
+    return await relocateHost({
+      host_id,
+      op_id,
+      input: {
+        zone: input?.zone,
+        machine_type: input?.machine_type,
+        expected_minutes: input?.expected_minutes,
+        message: input?.message,
+        skip_backups: !!input?.skip_backups,
+        keep_snapshot: !!input?.keep_snapshot,
+      },
+      deps: {
+        loadHost,
+        updateHost: async ({ metadata, region }) => {
+          await pool.query(
+            `UPDATE project_hosts
+             SET metadata=$2, region=COALESCE($3, region), updated=NOW()
+           WHERE id=$1 AND deleted IS NULL`,
+            [host_id, metadata, region ?? null],
+          );
+        },
+        setMaintenance: async (notice) =>
+          await setRelocationNotice({ host_id, lease_id, notice }),
+        provider: async () => {
+          const { entry, creds } = await providerFor();
+          return { provider: entry.provider, creds };
+        },
+        machineTypeShape: async (zone, machine_type) => {
+          const { entry, creds } = await providerFor();
+          const types = (await entry.provider.listZoneMachineTypes?.(
+            zone,
+            creds,
+          )) as Array<{ name: string; guestCpus?: number; memoryMb?: number }>;
+          const match = (types ?? []).find(
+            (type) => type.name === machine_type,
+          );
+          if (!match) return undefined;
+          return {
+            cpu: Number(match.guestCpus ?? 0),
+            ram_gb: Math.round(Number(match.memoryMb ?? 0) / 1024),
+          };
+        },
+        backupProjects: async () =>
+          await ensureHostBackups({
+            host_id,
+            account_id,
+            skip_backups: false,
+            progressStep,
+            shouldCancel,
+          }),
+        stopHost: async () => {
+          await stopHostInternal({ account_id, id: host_id });
+          await waitFor(["off"], ["error"]);
+        },
+        // Not deleteHostInternal: on a host without a runtime that deletes
+        // the host row, and a user deprovision may clear project provisioning.
+        deprovisionHost: async () => {
+          await pool.query(
+            `UPDATE project_hosts
+             SET status='deprovisioning',
+                 metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', '"stopped"'),
+                 updated=NOW()
+           WHERE id=$1 AND deleted IS NULL`,
+            [host_id],
+          );
+          await enqueueCloudVmWork({
+            vm_id: host_id,
+            action: "delete",
+            payload: { provider: "gcp", source: "host-relocation" },
+          });
+          await waitFor(["deprovisioned"], ["error"]);
+        },
+        setDesiredState: async (state) => {
+          await pool.query(
+            `UPDATE project_hosts
+             SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($2::text)),
+                 updated=NOW()
+           WHERE id=$1`,
+            [host_id, state],
+          );
+        },
+        quiesceCloudWork: async () =>
+          await quiesceHostActivity({
+            host_id,
+            own_op_id: op_id,
+            onWait: async (activity) =>
+              await progressStep(
+                "fence",
+                "waiting for other work on the host to finish",
+                { host_id, ...activity },
+              ),
+          }),
+        startHost: async (opts) => {
+          const startedAt = Date.now();
+          let workId: string | undefined;
+          await startHostInternal({
+            account_id,
+            id: host_id,
+            onWorkQueued: (id) => {
+              workId = id;
+            },
+          });
+          // Bounded, so a target without capacity rolls back instead of
+          // holding the maintenance window open.
+          const timeoutMs = opts?.rollback
+            ? undefined
+            : RELOCATION_START_TIMEOUT_MS;
+          await waitFor(
+            ["running"],
+            ["error", "off", "stopped", "deprovisioned"],
+            timeoutMs,
+          );
+          await waitForHostHeartbeat({ host_id, since: startedAt });
+          // The start handler can still be finishing (network reconcile)
+          // after the host heartbeats, and then writes back the metadata it
+          // read: relocation's final writes must come after it.
+          if (workId) {
+            const deadline = timeoutMs ? startedAt + timeoutMs : undefined;
+            await waitForCloudWorkFinished({
+              host_id,
+              workId,
+              action: "start",
+              shouldStop: async () =>
+                (await shouldCancel()) ||
+                (deadline != null && Date.now() > deadline),
+            });
+          }
+        },
+        preflight: async (target) => {
+          const row = await loadHost();
+          const machine = row.metadata?.machine ?? {};
+          const rate = await estimateDedicatedHostRate({
+            provider: "gcp",
+            region: target.region,
+            zone: target.zone,
+            machine_type: target.machine_type,
+            disk_gb: machine.disk_gb,
+            disk_type: machine.disk_type,
+            storage_mode: machine.storage_mode,
+            pricing_model: row.metadata?.pricing_model,
+            billing_state: "running",
+          });
+          if (!rate) {
+            throw new Error(
+              `no price for ${target.machine_type} in ${target.region}; the host could not be started there`,
+            );
+          }
+        },
+        progress: async (step, message, detail) =>
+          await progressStep(step, message, { host_id, ...(detail ?? {}) }),
+        shouldCancel,
+        alert: async (subject, body) => {
+          await adminAlert({ subject, body, dedupBySubject: true });
+        },
+      },
+    });
+  }
 }
 
 async function loadHostProjects(host_id: string): Promise<HostProjectRow[]> {
@@ -1394,6 +1677,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return "Upgrade";
     case "host-rollout-managed-components":
       return "Rollout managed components";
+    case "host-relocate":
+      return "Relocate";
     case "host-deprovision":
       return "Deprovision";
     case "host-delete":
@@ -1885,6 +2170,13 @@ async function handleOp(op: LroSummary): Promise<void> {
 
     const actionLabel = opLabel(kind, input);
     const actionLower = actionLabel.toLowerCase();
+
+    if (kind !== "host-relocate" && kind !== "host-force-deprovision") {
+      assertHostOpAllowedDuringMaintenance(
+        kind,
+        (await loadHostStatus(host_id))?.maintenance,
+      );
+    }
 
     if (await shouldCancel()) {
       throw new HostOpCanceledError();
@@ -2483,6 +2775,37 @@ async function handleOp(op: LroSummary): Promise<void> {
       return;
     }
 
+    if (kind === "host-relocate") {
+      const result = await runHostRelocation({
+        op_id,
+        host_id,
+        account_id,
+        input,
+        progressStep,
+        shouldCancel,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          window_ms: result.window_ms,
+          expected_window_ms: result.expected_window_ms,
+        },
+        result: { host_id, ...result },
+        error: null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep("done", "relocation complete", {
+        host_id,
+        ...result,
+      });
+      return;
+    }
+
     if (kind === "host-public-route") {
       await progressStep("waiting", "preparing public route migration", {
         host_id,
@@ -2695,9 +3018,8 @@ async function handleOp(op: LroSummary): Promise<void> {
       progressStep,
     });
     if (readinessAttempt) {
-      readinessAttempt.workId = (
-        actionResult as { cloudWorkId?: string }
-      )?.cloudWorkId;
+      readinessAttempt.workId = (actionResult as { cloudWorkId?: string })
+        ?.cloudWorkId;
     }
 
     const wait = waitConfig(kind);
@@ -2945,7 +3267,23 @@ export function startHostLroWorker({
   };
 }
 
+// A relocation holds the host's lease: everything else that changes the
+// host waits for it (force-deprovision stays available to admins).
+function assertHostOpAllowedDuringMaintenance(kind: string, maintenance: any) {
+  if (kind === "host-relocate" || kind === "host-force-deprovision") return;
+  if (hostLifecycleFenced(maintenance)) {
+    throw Object.assign(
+      new Error(
+        "this host is being relocated or is in a maintenance window; try again when it is over",
+      ),
+      { code: "host_maintenance_in_progress" },
+    );
+  }
+}
+
 export const __test__ = {
+  assertHostOpAllowedDuringMaintenance,
+  waitForCloudWorkFinished,
   loadHostActionCompletion,
   hostReadinessAttempt,
   hostApplicationReady,

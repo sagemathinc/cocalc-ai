@@ -622,12 +622,13 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
 
 export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
   return {
-    peers: directory.peers.map(({ member, networks }) => ({
+    peers: directory.peers.map(({ member, same_project, networks }) => ({
       kind: member.kind,
       name: member.kind === "registered" ? member.name : member.label,
       ...(member.kind === "registered" && member.project_title
         ? { project: member.project_title }
         : {}),
+      ...(typeof same_project === "boolean" ? { same_project } : {}),
       available: member.available,
       networks: networks.map(({ title, delivery_mode }) => ({
         title,

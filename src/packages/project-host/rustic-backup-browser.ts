@@ -16,6 +16,7 @@ import {
   attachBackupBrowserProcessToCgroup,
   removeBackupBrowserProcessCgroup,
 } from "./host-service-cgroup";
+import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:rustic-backup-browser");
 
@@ -248,10 +249,9 @@ export function parseDavEntries(xml: string): DavEntry[] {
 }
 
 function normalizeBackupPath(rawPath?: string): string {
-  const normalized = `${rawPath ?? ""}`
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(
+    `${rawPath ?? ""}`.replace(/\\/g, "/").replace(/^\/+/, ""),
+  );
   const segments = normalized.split("/").filter(Boolean);
   if (
     segments.some(
@@ -269,7 +269,7 @@ function encodePath(segments: string[]): string {
 }
 
 function trimDirectoryPath(pathname: string): string {
-  return pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
+  return pathname === "/" ? "/" : trimTrailingSlashes(pathname);
 }
 
 function childEntries(

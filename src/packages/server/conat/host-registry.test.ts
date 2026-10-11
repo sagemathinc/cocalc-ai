@@ -1411,3 +1411,24 @@ describe("host-registry runtime availability", () => {
     });
   });
 });
+
+describe("authoritativeSshServer", () => {
+  it("uses the provider-observed public IP for GCP hosts", async () => {
+    const { authoritativeSshServer } = await import("./host-registry");
+    const gcp = {
+      machine: { cloud: "gcp" },
+      runtime: { public_ip: "34.0.0.9" },
+    };
+    // The stack started at boot still reports the previous boot's address.
+    expect(authoritativeSshServer(gcp, "34.0.0.1:2222")).toBe("34.0.0.9:2222");
+    expect(
+      authoritativeSshServer({ machine: { cloud: "gcp" } }, "34.0.0.1:2222"),
+    ).toBe("34.0.0.1:2222");
+    expect(
+      authoritativeSshServer(
+        { machine: { cloud: "nebius" }, runtime: { public_ip: "1.2.3.4" } },
+        "10.0.0.5:2222",
+      ),
+    ).toBe("10.0.0.5:2222");
+  });
+});

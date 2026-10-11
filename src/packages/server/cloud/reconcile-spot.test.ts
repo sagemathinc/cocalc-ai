@@ -61,6 +61,35 @@ describe("spot recovery metadata", () => {
     expect(result.state.standard_hold_until).toBeUndefined();
   });
 
+  it("starts each new outage with a fresh retry budget", () => {
+    // Seen on prod: attempt 12 survived from an earlier recovery, so the next
+    // preemption skipped Spot entirely as "retry-window-exhausted".
+    const result = recordProviderSpotPreemption({
+      state: {
+        phase: "idle",
+        attempt: 12,
+        outage_started_at: "2026-10-03T02:33:00.000Z",
+        last_recovered_at: "2026-10-03T03:02:00.000Z",
+        machine_type_attempt_started_at: "2026-10-03T02:59:00.000Z",
+        spot_machine_types_tried: ["t2d-standard-16"],
+        fallback_started_at: "2026-10-03T02:33:00.000Z",
+        active_machine_type: "t2d-standard-16",
+        last_preempted_at: "2026-10-03T02:32:00.000Z",
+        last_probe_result: "success",
+      },
+      policy: {},
+      now: new Date("2026-10-08T12:53:51.985Z"),
+    });
+
+    expect(result.recorded).toBe(true);
+    expect(result.state).toEqual({
+      phase: "idle",
+      active_machine_type: "t2d-standard-16",
+      last_preempted_at: "2026-10-08T12:53:51.985Z",
+      last_probe_result: "success",
+    });
+  });
+
   it("does not count the same active outage twice", () => {
     const state = {
       phase: "retrying_spot" as const,

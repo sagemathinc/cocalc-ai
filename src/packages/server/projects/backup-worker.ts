@@ -43,6 +43,7 @@ import {
   listActiveProjectHosts,
   listHostLocalBackupStatuses,
 } from "./backup-host-status";
+import { assertProjectHostsNotUnderMaintenance } from "@cocalc/server/hosts/maintenance";
 
 const logger = getLogger("server:projects:backup-worker");
 const pool = () => getPool();
@@ -283,6 +284,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
   };
 
   try {
+    await assertProjectHostsNotUnderMaintenance({ project_ids: [project_id] });
     const running = await updateLro({
       op_id,
       status: "running",

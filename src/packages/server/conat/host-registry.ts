@@ -56,6 +56,20 @@ import {
   type PlannedProjectHostRuntimeTransition,
 } from "@cocalc/server/hosts/runtime-transition";
 
+// A GCP Spot VM gets a new ephemeral public IP on every start, and a host
+// stack started at boot reports the previous boot's address until it is
+// restarted. The provider-observed IP is authoritative (as in the provider
+// reconcile), so registrations cannot write a stale SSH endpoint and the
+// boot-time reconcile does not need a restart just to refresh it.
+export function authoritativeSshServer(
+  metadata: any,
+  reported: string | undefined,
+): string | undefined {
+  if (metadata?.machine?.cloud !== "gcp") return reported;
+  const publicIp = `${metadata?.runtime?.public_ip ?? ""}`.trim();
+  return publicIp ? `${publicIp}:2222` : reported;
+}
+
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
 const STOP_POLICY_PRIORITY_CACHE_TTL_MS = 5 * 60_000;
@@ -1436,6 +1450,10 @@ export async function initHostRegistryService() {
         const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
+          ssh_server: authoritativeSshServer(
+            previousRows[0]?.metadata,
+            sanitized.ssh_server,
+          ),
           bay_id: registryBayId,
           status: "running",
           last_seen: new Date(),
@@ -1536,6 +1554,10 @@ export async function initHostRegistryService() {
         const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
+          ssh_server: authoritativeSshServer(
+            previousRows[0]?.metadata,
+            sanitized.ssh_server,
+          ),
           bay_id: registryBayId,
           status: "running",
           last_seen: new Date(),

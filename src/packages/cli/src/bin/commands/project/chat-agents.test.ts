@@ -65,6 +65,7 @@ test("friendly discovery omits internal identifiers", () => {
           available: true,
           added_at: new Date().toISOString(),
         },
+        same_project: false,
         networks: [
           {
             agent_network_id: randomUUID(),
@@ -82,6 +83,7 @@ test("friendly discovery omits internal identifiers", () => {
         kind: "registered",
         name: "reviewer",
         project: "CoCalc",
+        same_project: false,
         available: true,
         networks: [{ title: "Development", delivery_mode: "live" }],
       },

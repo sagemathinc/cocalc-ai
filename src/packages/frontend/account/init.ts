@@ -28,6 +28,10 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { getLogger } from "@cocalc/frontend/logger";
 import { lite } from "@cocalc/frontend/lite";
 import {
+  clearCellClipboard,
+  setCellClipboardAccount,
+} from "@cocalc/jupyter/redux/cell-clipboard";
+import {
   markStartupPhase,
   markStartupPhaseOnce,
 } from "@cocalc/frontend/app/startup-phase";
@@ -138,6 +142,8 @@ export function init(redux) {
   webapp_client.on("signed_in", async (mesg) => {
     markStartupPhaseOnce("signed_in_event_received");
     const sessionRevision = ++authSessionRevision;
+    // Copied notebook cells are only pasted by the account that copied them.
+    setCellClipboardAccount(mesg?.account_id);
     const actions = redux.getActions("account");
     actions.setState({ managed_egress_blocked_error: undefined });
     if (mesg?.api_key) {
@@ -172,7 +178,15 @@ export function init(redux) {
     }
   });
 
+  // Copied notebook cells can hold notebook content; forget them (in every
+  // tab) when the session ends.
+  function endSessionClipboard(): void {
+    clearCellClipboard();
+    setCellClipboardAccount(undefined);
+  }
+
   webapp_client.on("signed_out", () => {
+    endSessionClipboard();
     authSessionRevision++;
     authBootstrapRequestRevision++;
     authBootstrapLoadingFor = undefined;
@@ -209,6 +223,7 @@ export function init(redux) {
       });
       return;
     }
+    endSessionClipboard();
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,

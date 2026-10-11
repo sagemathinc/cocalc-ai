@@ -48,6 +48,7 @@ import {
   retryablePreparation,
   readPreparedFirstAgent,
   writePreparedFirstAgent,
+  type PreparedFirstAgentSettings,
 } from "./retryable-preparation";
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
@@ -202,6 +203,7 @@ import {
 import {
   agentFirstRunStarted,
   completeFirstRunWithAgent,
+  completeFirstRunWithProject,
 } from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid, is_valid_uuid_string } from "@cocalc/util/misc";
@@ -603,7 +605,10 @@ function NewAgentPanel({
     () => getStoredCodexNewChatDefaults() != null,
     [],
   );
-  const modelCustomized = useRef(false);
+  // A restored first-run agent keeps the model it was created with.
+  const modelCustomized = useRef(
+    restoredPreparation?.settings?.codexConfig != null,
+  );
   const [sourceRuntime] = useState(() => {
     if (!sourceAgent) return;
     const raw = redux
@@ -613,6 +618,9 @@ function NewAgentPanel({
     return raw == null ? undefined : raw;
   });
   const [runtimeKind, setRuntimeKind] = useState<NewAgentRuntimeKind>(() => {
+    // A first-run agent prepared before a reload keeps its type.
+    if (restoredPreparation)
+      return restoredPreparation.runtimeKind ?? "codex-native";
     if (sourceRuntime == null) return "codex-native";
     try {
       const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
@@ -625,7 +633,9 @@ function NewAgentPanel({
   });
   // Whether the runtime came from the source agent or the user's choice,
   // rather than the Codex default.
-  const runtimeChosen = useRef(sourceRuntime != null);
+  const runtimeChosen = useRef(
+    sourceRuntime != null || restoredPreparation != null,
+  );
   const [harnessSettings, setHarnessSettings] =
     useState<HarnessSessionSettings>(() => {
       try {
@@ -680,27 +690,47 @@ function NewAgentPanel({
           : ""),
   );
   const [directoryProjectId, setDirectoryProjectId] = useState(projectId);
-  const [config, setConfig] = useState<NewAgentCodexConfig>(() => ({
-    ...(sourceConfig ?? {}),
-    model: sourceConfig?.model || accountDefaults.model,
-    reasoning: sourceConfig?.reasoning ?? accountDefaults.reasoning,
-    serviceTier: sourceConfig?.serviceTier ?? accountDefaults.serviceTier,
-    sessionMode:
-      sourceConfig?.sessionMode ??
-      accountDefaults.sessionMode ??
-      getDefaultCodexSessionMode(),
-    allowWrite:
-      (sourceConfig?.sessionMode ?? accountDefaults.sessionMode) !==
-      "read-only",
-    paymentSource: sourceConfig?.paymentSource ?? "auto",
-    credentialId: sourceAgent
+  // The thread whose payment selections the form starts from: the agent
+  // being copied, or a first-run agent prepared before a reload.
+  const selectionThread = sourceAgent
+    ? {
+        projectId: sourceAgent.endpoint.project_id,
+        threadId: sourceAgent.thread_id,
+      }
+    : restoredPreparation
+      ? {
+          projectId: restoredPreparation.projectId,
+          threadId: restoredPreparation.threadId,
+        }
+      : undefined;
+  const [restoredCredentialId] = useState(() =>
+    selectionThread
       ? readAgentSubscriptionSelection({
           accountId: boundAccount.accountId,
-          projectId: sourceAgent.endpoint.project_id,
-          threadId: sourceAgent.thread_id,
+          ...selectionThread,
         })
       : undefined,
-  }));
+  );
+  const [config, setConfig] = useState<NewAgentCodexConfig>(
+    () =>
+      restoredPreparation?.settings?.codexConfig ?? {
+        ...(sourceConfig ?? {}),
+        model: sourceConfig?.model || accountDefaults.model,
+        reasoning: sourceConfig?.reasoning ?? accountDefaults.reasoning,
+        serviceTier: sourceConfig?.serviceTier ?? accountDefaults.serviceTier,
+        sessionMode:
+          sourceConfig?.sessionMode ??
+          accountDefaults.sessionMode ??
+          getDefaultCodexSessionMode(),
+        allowWrite:
+          (sourceConfig?.sessionMode ?? accountDefaults.sessionMode) !==
+          "read-only",
+        paymentSource:
+          sourceConfig?.paymentSource ??
+          (restoredCredentialId ? "subscription" : "auto"),
+        credentialId: restoredCredentialId,
+      },
+  );
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
   );
@@ -758,12 +788,13 @@ function NewAgentPanel({
   const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
   const claudeCredentialsAccount = useRef<string | undefined>(undefined);
   const initialClaudeCredential = useRef(
-    readHarnessCredentialSelection({
-      accountId: boundAccount.accountId,
-      projectId: sourceAgent?.endpoint.project_id,
-      threadKey: sourceAgent?.thread_id,
-      forNewAgent: true,
-    }),
+    restoredPreparation?.settings?.claudeCredential ??
+      readHarnessCredentialSelection({
+        accountId: boundAccount.accountId,
+        projectId: selectionThread?.projectId,
+        threadKey: selectionThread?.threadId,
+        forNewAgent: true,
+      }),
   );
   // Only a choice made in this form wins over the preferred credential; a
   // remembered one is kept while it still exists.
@@ -784,6 +815,9 @@ function NewAgentPanel({
     restoredPreparation,
   );
   const pendingRef = useRef<PendingAgent | undefined>(restoredPreparation);
+  const preparedSettings = useRef<PreparedFirstAgentSettings | undefined>(
+    restoredPreparation?.settings,
+  );
   const prepareOnce = useRef(retryablePreparation<PendingAgent>());
   const identityOnce = useRef(retryablePreparation<string>());
   const backgroundOnce = useRef(retryablePreparation<void>());
@@ -835,6 +869,9 @@ function NewAgentPanel({
     credentialId?: string;
   });
   const [signInOpen, setSignInOpen] = useState(false);
+  const [claudeNeedsConnection, setClaudeNeedsConnection] = useState(false);
+  // A sign-in requested before the Claude controls could start it.
+  const [claudeConnectRequested, setClaudeConnectRequested] = useState(false);
   const modelOptions = useMemo(
     () => defaultModelOptions(modelCatalog, config.model),
     [config.model, modelCatalog],
@@ -1057,11 +1094,45 @@ function NewAgentPanel({
                 },
         });
         if (!threadId) throw new Error("Unable to create the agent thread");
+        // The thread's payment is chosen once, when it is created: a retry
+        // (possibly after a reload, with the controls disabled) keeps it.
+        writeAgentSubscriptionSelection({
+          accountId: boundAccount.accountId,
+          projectId: targetProjectId,
+          threadId,
+          credentialId:
+            runtimeKind === "codex-native" &&
+            executionConfig.paymentSource === "subscription"
+              ? executionConfig.credentialId
+              : undefined,
+        });
+        if (runtimeKind === "claude-code") {
+          writeHarnessCredentialSelection({
+            accountId: boundAccount.accountId,
+            projectId: targetProjectId,
+            threadKey: threadId,
+            credential: claudeCredential,
+          });
+        }
+        preparedSettings.current =
+          runtimeKind === "codex-native"
+            ? {
+                codexConfig: {
+                  ...executionConfig,
+                  credentialId:
+                    executionConfig.paymentSource === "subscription"
+                      ? executionConfig.credentialId
+                      : undefined,
+                },
+              }
+            : runtimeKind === "claude-code"
+              ? { claudeCredential }
+              : undefined;
         created = { projectId: targetProjectId, path, threadId };
         pendingRef.current = created;
         setPending(created);
       }
-      const { path, threadId } = created;
+      const { path } = created;
       const chatActions = initChat(targetProjectId, path, {
         instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
         workbenchEnabled: true,
@@ -1074,25 +1145,9 @@ function NewAgentPanel({
           ...created,
           name: claimedNameRef.current ?? agentName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
+          runtimeKind,
+          settings: preparedSettings.current,
         });
-      writeAgentSubscriptionSelection({
-        accountId: boundAccount.accountId,
-        projectId: targetProjectId,
-        threadId,
-        credentialId:
-          runtimeKind === "codex-native" &&
-          executionConfig.paymentSource === "subscription"
-            ? executionConfig.credentialId
-            : undefined,
-      });
-      if (runtimeKind === "claude-code") {
-        writeHarnessCredentialSelection({
-          accountId: boundAccount.accountId,
-          projectId: targetProjectId,
-          threadKey: threadId,
-          credential: claudeCredential,
-        });
-      }
       return created;
     });
   }
@@ -1166,6 +1221,7 @@ function NewAgentPanel({
     emailVerificationRequired,
   ]);
 
+  // Creates and starts the first-run workspace while the request is typed.
   function prepareFirstAgent(): Promise<void> {
     return backgroundOnce.current(async () => {
       if (emailVerificationRequired)
@@ -1185,24 +1241,8 @@ function NewAgentPanel({
           "Your workspace could not start. Submit again to retry.",
         );
       }
-      const source = await fetchCodexPaymentSourceForSubmit({
-        projectId: target,
-        preference: paymentPreference,
-        credentialId:
-          paymentPreference === "subscription"
-            ? config.credentialId
-            : undefined,
-      });
-      const executionConfig = newAgentFundingConfig({
-        config,
-        paymentSource: source,
-        useSubscriptionDefault:
-          !sourceAgent && !hasStoredAccountDefaults && !modelCustomized.current,
-      });
-      boundAccount.assertCurrent();
-      setConfig(executionConfig);
-      const created = await prepare(target, executionConfig);
-      await prepareIdentity(created);
+      // Only the workspace is prepared ahead of time: the agent's thread and
+      // name are created on submit with the agent type chosen then.
       progress("ready", target);
     });
   }
@@ -1254,6 +1294,8 @@ function NewAgentPanel({
           ...created,
           name: claimedName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
+          runtimeKind,
+          settings: preparedSettings.current,
         });
       }
       return identity.agent_id;
@@ -1268,6 +1310,12 @@ function NewAgentPanel({
 
   async function create(requestValue?: string, withoutTask = false) {
     if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
+    // Without a way to pay for the chosen agent, sending starts sign-in; the
+    // request stays in the box.
+    if (signInRequired && !withoutTask) {
+      requestSignIn();
+      return;
+    }
     const request = (
       requestValue ??
       inputControlRef.current?.getValue?.() ??
@@ -1297,7 +1345,10 @@ function NewAgentPanel({
       boundAccount.assertCurrent();
       if (isFirstRun) {
         await prepareFirstAgent();
-        targetProjectId = pendingRef.current?.projectId ?? targetProjectId;
+        targetProjectId =
+          pendingRef.current?.projectId ??
+          targetProjectId ??
+          automaticProjectCreated.current?.projectId;
       }
       let createdProjectTitle: string | undefined;
       let executionConfig = config;
@@ -1329,6 +1380,15 @@ function NewAgentPanel({
         }
         createdProjectTitle = automaticProjectCreated.current.title;
       }
+      if (
+        !withoutTask &&
+        runtimeKind === "claude-code" &&
+        (await claudeConnectionMissing(targetProjectId))
+      ) {
+        attemptRef.current?.finish("failed", "sign_in_required");
+        requestSignIn();
+        return;
+      }
       if (!withoutTask && runtimeKind === "codex-native") {
         progress("funding", targetProjectId);
         const source = await fetchCodexPaymentSourceForSubmit({
@@ -1339,6 +1399,18 @@ function NewAgentPanel({
               ? config.credentialId
               : undefined,
         });
+        // Checked again now that the project is known: the form's payment
+        // source may not have loaded when this was sent.
+        if (
+          !lite &&
+          source.source === "none" &&
+          !source.hasSubscription &&
+          subscriptions.length === 0
+        ) {
+          attemptRef.current?.finish("failed", "sign_in_required");
+          requestSignIn();
+          return;
+        }
         executionConfig = newAgentFundingConfig({
           config,
           paymentSource: source,
@@ -1394,6 +1466,54 @@ function NewAgentPanel({
     }
   }
 
+  // "Or just use your project directly": the first run ends in the project's
+  // files rather than with an agent.
+  async function openProjectDirectly() {
+    if (submitting.current || busy) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      boundAccount.assertCurrent();
+      const target =
+        projectId ??
+        automaticProjectCreated.current?.projectId ??
+        (await ensureAutomaticProject(firstRequest, false)).projectId;
+      boundAccount.assertCurrent();
+      await completeFirstRunWithProject(boundAccount.accountId, target);
+      writePreparedFirstAgent(boundAccount.accountId);
+      await redux.getActions("projects").open_project({
+        project_id: target,
+        target: "files/",
+        switch_to: true,
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+
+  // Whether Claude would run with no way to pay: no connected subscription and
+  // no ANTHROPIC_API_KEY secret in the project (read from the server, since
+  // the form's copy may still be loading).
+  async function claudeConnectionMissing(target: string): Promise<boolean> {
+    if (claudeCredential.mode !== "project-secret") return false;
+    if (
+      anthropicCredentials.some(
+        (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
+      )
+    )
+      return false;
+    const secrets =
+      await webapp_client.conat_client.hub.projects.listProjectSecrets({
+        project_id: target,
+      });
+    boundAccount.assertCurrent();
+    return !secrets.some(({ name }) => name === "ANTHROPIC_API_KEY");
+  }
+
   async function submitNewAgentRequest(
     request?: string,
     targetProjectId?: string,
@@ -1413,16 +1533,6 @@ function NewAgentPanel({
       await waitForChatReady(actions);
       if (runtimeKind === "codex-native")
         actions.setCodexConfig(created.threadId, executionConfig);
-      writeAgentSubscriptionSelection({
-        accountId: boundAccount.accountId,
-        projectId: created.projectId,
-        threadId: created.threadId,
-        credentialId:
-          runtimeKind === "codex-native" &&
-          executionConfig.paymentSource === "subscription"
-            ? executionConfig.credentialId
-            : undefined,
-      });
       progress("sending", created.projectId);
       const chatIdentity = actions.reserveChatSendIdentity({
         reply_thread_id: created.threadId,
@@ -1630,6 +1740,20 @@ function NewAgentPanel({
     !paymentSource.hasSubscription;
   const paymentUnconfigured =
     chatGPTSignInAvailable && paymentSource?.source === "none";
+  const signInRequired =
+    (runtimeKind === "codex-native" && paymentUnconfigured) ||
+    (runtimeKind === "claude-code" && claudeNeedsConnection);
+  const signInLabel =
+    runtimeKind === "claude-code"
+      ? "Connect Claude to start"
+      : "Sign in with ChatGPT to start";
+  function requestSignIn() {
+    if (runtimeKind === "claude-code") {
+      setClaudeConnectRequested(true);
+    } else {
+      setSignInOpen(true);
+    }
+  }
   useEffect(() => {
     const candidate = (claudeConnected: boolean) =>
       runtimeKind === "codex-native" &&
@@ -1667,6 +1791,7 @@ function NewAgentPanel({
 
   function chooseRuntime(kind: NewAgentRuntimeKind) {
     runtimeChosen.current = true;
+    setClaudeConnectRequested(false);
     setRuntimeKind(kind);
     if (kind === "claude-code") void prepareProjectForClaude();
   }
@@ -1931,9 +2056,11 @@ function NewAgentPanel({
             )}
             <Tooltip
               title={
-                emptyRequest
-                  ? "Create agent without a task (Shift+Enter)"
-                  : "Start agent (Shift+Enter)"
+                signInRequired
+                  ? signInLabel
+                  : emptyRequest
+                    ? "Create agent without a task (Shift+Enter)"
+                    : "Start agent (Shift+Enter)"
               }
             >
               {/* The span receives hover even while the button is disabled. */}
@@ -1942,7 +2069,11 @@ function NewAgentPanel({
                   type="primary"
                   shape="circle"
                   aria-label={
-                    emptyRequest ? "Create agent without a task" : "Start agent"
+                    signInRequired
+                      ? signInLabel
+                      : emptyRequest
+                        ? "Create agent without a task"
+                        : "Start agent"
                   }
                   icon={<Icon name={emptyRequest ? "plus" : "arrow-up"} />}
                   style={{ height: 32, minWidth: 32, width: 32 }}
@@ -1966,8 +2097,9 @@ function NewAgentPanel({
             </Tooltip>
           </div>
         </div>
-        {!isFirstRun && (
+        {
           // The agent's settings sit below the box, apart from the request.
+          // The first run shows only the agent type and how to pay for it.
           <div
             role="group"
             aria-label="Agent settings"
@@ -1980,33 +2112,38 @@ function NewAgentPanel({
               padding: "0 10px",
             }}
           >
-            <NewAgentNamePill
-              name={name}
-              onChange={setName}
-              problem={problem}
-              busy={busy || !!pending}
-            />
-            <Popover
-              content={advancedSettings}
-              open={settingsOpen}
-              placement="bottomLeft"
-              trigger="click"
-              onOpenChange={(open) => {
-                setSettingsOpen(open);
-                if (open) setMoreSettingsOpen(false);
-              }}
-            >
-              <ComposerProjectDirectoryButton
-                ref={projectSettingsButton}
-                projectTitle={projectTitle}
-                directory={effectiveDirectory}
-                displayedDirectory={directoryLabel}
-                disabled={busy || !!pending}
+            {!isFirstRun && (
+              <NewAgentNamePill
+                name={name}
+                onChange={setName}
+                problem={problem}
+                busy={busy || !!pending}
               />
-            </Popover>
+            )}
+            {!isFirstRun && (
+              <Popover
+                content={advancedSettings}
+                open={settingsOpen}
+                placement="bottomLeft"
+                trigger="click"
+                onOpenChange={(open) => {
+                  setSettingsOpen(open);
+                  if (open) setMoreSettingsOpen(false);
+                }}
+              >
+                <ComposerProjectDirectoryButton
+                  ref={projectSettingsButton}
+                  projectTitle={projectTitle}
+                  directory={effectiveDirectory}
+                  displayedDirectory={directoryLabel}
+                  disabled={busy || !!pending}
+                />
+              </Popover>
+            )}
             <NewAgentRuntimeSelect
               value={runtimeKind}
               disabled={busy || !!pending}
+              includeCustom={!isFirstRun}
               onChange={chooseRuntime}
             />
             {runtimeKind === "codex-native" && (
@@ -2125,7 +2262,7 @@ function NewAgentPanel({
                 />
               </span>
             )}
-            {runtimeKind === "codex-native" && (
+            {runtimeKind === "codex-native" && !isFirstRun && (
               <Popover
                 content={advancedSettings}
                 open={moreSettingsOpen}
@@ -2199,6 +2336,9 @@ function NewAgentPanel({
                 }}
                 disabled={busy || !!pending}
                 assertCurrent={() => boundAccount.assertCurrent()}
+                connectRequested={claudeConnectRequested}
+                onConnectRequestHandled={() => setClaudeConnectRequested(false)}
+                onNeedsConnection={setClaudeNeedsConnection}
               />
             )}
             {runtimeKind === "acp" && (
@@ -2211,9 +2351,22 @@ function NewAgentPanel({
                 onCreate={() => void create(undefined, true)}
               />
             )}
-            <span style={{ marginLeft: "auto" }}>
-              <NamedAgentUsage directory={namedAgentDirectory} />
-            </span>
+            {!isFirstRun && (
+              <span style={{ marginLeft: "auto" }}>
+                <NamedAgentUsage directory={namedAgentDirectory} />
+              </span>
+            )}
+          </div>
+        }
+        {isFirstRun && (projectId || !emailVerificationRequired) && (
+          <div style={{ textAlign: "center" }}>
+            <Button
+              type="link"
+              disabled={busy || !!pending || (!projectId && !projectMap)}
+              onClick={() => void openProjectDirectly()}
+            >
+              Or just use your project directly
+            </Button>
           </div>
         )}
         {!isFirstRun && (

@@ -42,7 +42,7 @@ jobs:
       release_id: ${{ steps.release.outputs.release_id }}
       tag: ${{ steps.release.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -72,14 +72,14 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
           cache: pnpm
@@ -91,7 +91,7 @@ jobs:
       - name: Build portable CLI bundle
         run: node src/packages/cli/sea/build-bundle.mjs
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cocalc-cli-bundle
           path: src/packages/cli/build/bundle/index.js
@@ -115,13 +115,13 @@ jobs:
             machine: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cocalc-cli-bundle
           path: ${{ runner.temp }}/cocalc-cli-bundle
@@ -149,7 +149,7 @@ jobs:
           mkdir -p release-assets
           cp "src/packages/cli/build/sea/cocalc-cli-${RELEASE_ID}-${MACHINE}-linux.tar.gz" release-assets/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cocalc-cli-linux-${{ matrix.arch }}
           path: release-assets/
@@ -164,13 +164,13 @@ jobs:
     runs-on: macos-15
     environment: cocalc-cli-signing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cocalc-cli-bundle
           path: ${{ runner.temp }}/cocalc-cli-bundle
@@ -232,7 +232,7 @@ jobs:
           mkdir -p release-assets
           cp "src/packages/cli/build/sea/cocalc-cli-${RELEASE_ID}-arm64-darwin" release-assets/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cocalc-cli-macos-arm64
           path: release-assets/
@@ -241,7 +241,7 @@ jobs:
 
       - name: Upload notarization log
         if: inputs.notarize
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cocalc-cli-notary-log
           path: ${{ runner.temp }}/cocalc-cli-notary-log.json
@@ -265,13 +265,13 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cocalc-cli-bundle
           path: ${{ runner.temp }}\cocalc-cli-bundle
@@ -332,7 +332,7 @@ jobs:
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
           Copy-Item "src/packages/cli/build/sea/cocalc-cli-$env:RELEASE_ID-x86_64-windows.exe" release-assets\
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cocalc-cli-windows-amd64
           path: release-assets/
@@ -352,14 +352,14 @@ jobs:
     env:
       RELEASE_DIR: release-assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.5.2
           run_install: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "26"
           cache: pnpm
@@ -370,18 +370,18 @@ jobs:
           pnpm -C src/packages install --frozen-lockfile
           pnpm --dir src/packages/cli build
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cocalc-cli-macos-arm64
           path: release-assets
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: cocalc-cli-linux-*
           path: release-assets
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cocalc-cli-windows-amd64
           path: release-assets

@@ -9,6 +9,7 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import { callback_opts } from "@cocalc/util/async-utils";
 import { uuid } from "@cocalc/util/misc";
 import type { PostgreSQL } from "../types";
+import { claimProjectInviteSend, sentProjectInvite } from "./invites";
 
 describe("Project invite methods", () => {
   const database: PostgreSQL = db();
@@ -30,6 +31,14 @@ describe("Project invite methods", () => {
     error?: string;
   }): Promise<void> {
     return callback_opts(database.sent_project_invite.bind(database))(opts);
+  }
+
+  async function claim_wrapper(opts: {
+    project_id: string;
+    to: string;
+    cutoff: Date;
+  }): Promise<boolean> {
+    return claimProjectInviteSend(database, opts);
   }
 
   beforeAll(async () => {
@@ -393,6 +402,112 @@ describe("Project invite methods", () => {
         to: email,
       });
       expect(result).toBe(0);
+    });
+  });
+  describe("claim_project_invite_send", () => {
+    const hourAgo = () => new Date(Date.now() - 60 * 60 * 1000);
+
+    async function newProject(): Promise<string> {
+      const projectId = uuid();
+      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
+        projectId,
+      ]);
+      return projectId;
+    }
+
+    it("lets exactly one of several concurrent claims win", async () => {
+      const project_id = await newProject();
+      const to = `race-${Date.now()}@example.com`;
+      const results = await Promise.all(
+        [1, 2, 3, 4].map(() =>
+          claim_wrapper({ project_id, to, cutoff: hourAgo() }),
+        ),
+      );
+      expect(results.filter(Boolean)).toHaveLength(1);
+      // older code only checks when_sent; an in-flight claim must look sent
+      expect(
+        await when_sent_project_invite_wrapper({ project_id, to }),
+      ).toBeInstanceOf(Date);
+    });
+
+    it("keeps one winner even with a zero-minute resend cooldown", async () => {
+      const project_id = await newProject();
+      const to = `zero-${Date.now()}@example.com`;
+      // cutoff = now: the business cooldown alone would allow every caller
+      const results = await Promise.all(
+        [1, 2, 3].map(() =>
+          claim_wrapper({
+            project_id,
+            to,
+            cutoff: new Date(Date.now() + 1000),
+          }),
+        ),
+      );
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
+    it("an unfinished claim blocks others until it is finished", async () => {
+      const project_id = await newProject();
+      const to = `lease-${Date.now()}@example.com`;
+      const future = () => new Date(Date.now() + 60_000);
+      expect(await claim_wrapper({ project_id, to, cutoff: future() })).toBe(
+        true,
+      );
+      expect(await claim_wrapper({ project_id, to, cutoff: future() })).toBe(
+        false,
+      );
+      // finishing the send clears the claim; with no cooldown a new send may go
+      await sentProjectInvite(database, { project_id, to });
+      const { rows } = await pool.query(
+        "SELECT invite -> $2::text AS entry FROM projects WHERE project_id=$1",
+        [project_id, to],
+      );
+      expect(rows[0].entry.claimed_at).toBeUndefined();
+      expect(await claim_wrapper({ project_id, to, cutoff: future() })).toBe(
+        true,
+      );
+    });
+
+    it("refuses while a recent send exists and allows after the cutoff", async () => {
+      const project_id = await newProject();
+      const to = `recent-${Date.now()}@example.com`;
+      await sentProjectInvite(database, { project_id, to });
+      expect(await claim_wrapper({ project_id, to, cutoff: hourAgo() })).toBe(
+        false,
+      );
+      // a cutoff in the future means the last send is "old enough"
+      expect(
+        await claim_wrapper({
+          project_id,
+          to,
+          cutoff: new Date(Date.now() + 60_000),
+        }),
+      ).toBe(true);
+    });
+
+    it("allows a new claim after a failed or unsent attempt", async () => {
+      const project_id = await newProject();
+      const to = `failed-${Date.now()}@example.com`;
+      expect(await claim_wrapper({ project_id, to, cutoff: hourAgo() })).toBe(
+        true,
+      );
+      await sentProjectInvite(database, {
+        project_id,
+        to,
+        error: "not sent: email_backend is none",
+      });
+      expect(await when_sent_project_invite_wrapper({ project_id, to })).toBe(
+        0,
+      );
+      expect(await claim_wrapper({ project_id, to, cutoff: hourAgo() })).toBe(
+        true,
+      );
+      // a new claim drops the previous error
+      const { rows } = await pool.query(
+        "SELECT invite -> $2::text AS entry FROM projects WHERE project_id=$1",
+        [project_id, to],
+      );
+      expect(rows[0].entry.error).toBeUndefined();
     });
   });
 });

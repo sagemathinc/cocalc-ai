@@ -850,6 +850,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "can disable host deletion protection",
   },
+  "hosts.setHostMaintenanceNotice": {
+    decision: "fresh-auth-required",
+    reason:
+      "clearing a relocation's fence (preparing, in progress or failed) lets project starts and provider reconciliation resume on a partly moved host; site-admin notice edits alone are not gated",
+  },
   "hosts.setHostOwnerSpendLimits": {
     decision: "fresh-auth-required",
     reason: "host spend cap mutation",
@@ -1069,6 +1074,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "projects.cleanupRestoreStaging": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.addScheduledCollectionStudents": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "adds already-assigned students to the course's own still-queued scheduled collection, with the same course-manager checks as collectAssignment; removes no safety control",
   },
   "projects.createBackup": {
     decision: "fresh-auth-not-required",
