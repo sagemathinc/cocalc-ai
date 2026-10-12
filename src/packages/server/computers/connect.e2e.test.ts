@@ -532,18 +532,88 @@ describeDb("a computer connected over conat", () => {
     );
     await expect(relay(t)).rejects.toThrow(/already being relayed/);
     // (Under PGlite the stalled transaction holds the only connection, so
-    // the router's bounded revalidation drops the computer's socket: the
-    // first relay may end answered or with the explicit unknown outcome.
-    // Either way it ends exactly once, and only then may it be retried.)
-    const result: any = await first;
-    expect([true, false]).toContain(result.answered);
-    await until(async () => {
-      const r = await db().query(
-        "SELECT state FROM account_computer_relays WHERE operation_id=$1",
-        [t.ticket.payload.operation_id],
-      );
-      return r.rows.every((x) => x.state !== "dispatched");
+    // the router's bounded revalidation drops the computer's session; then
+    // activation refuses and nothing is published: "not sent".)
+    const result: any = await first.catch((err) => err);
+    if (result instanceof Error) {
+      expect(result.message).toMatch(/not sent/);
+    } else {
+      expect([true, false]).toContain(result.answered);
+    }
+    // The computer logs in again before the next test.
+    const { currentSession } = await import("./sessions");
+    await until(
+      async () => (await currentSession(computer_id)) != null,
+      15_000,
+    );
+  });
+
+  it("a late commit acknowledgement can't let a duplicate in: the committed row is a reservation until activated, and exactly one publish happens", async () => {
+    const { setRelayClientForTesting, setRelayMarginForTesting } =
+      await import("./relay");
+    let publishes = 0;
+    const counting = new Proxy(hub, {
+      get(target, prop) {
+        if (prop === "publish") {
+          return async (...args) => {
+            publishes += 1;
+            return await target.publish(...args);
+          };
+        }
+        const v = target[prop];
+        return typeof v === "function" ? v.bind(target) : v;
+      },
     });
+    setRelayClientForTesting(counting as any);
+    setRelayMarginForTesting(300);
+    try {
+      const t = await ticketFor("exec", { command: "echo once" });
+      let duplicate: unknown;
+      const first = relay(t, {
+        // The COMMIT happened, but this hub hears of it only much later than
+        // the margin; meanwhile another call tries the same operation.
+        afterCommit: async () => {
+          await new Promise((r) => setTimeout(r, 1000));
+          duplicate = await relay(t).catch((err) => err);
+        },
+      });
+      const result: any = await first;
+      expect(`${duplicate}`).toMatch(/already being relayed/);
+      expect(result.reply.result.stdout).toBe("once\n");
+      expect(publishes).toBe(1);
+    } finally {
+      setRelayMarginForTesting(undefined);
+      setRelayClientForTesting(hub);
+    }
+  });
+
+  it("a reservation that lapsed before activation publishes nothing", async () => {
+    const { setRelayClientForTesting } = await import("./relay");
+    let publishes = 0;
+    setRelayClientForTesting({
+      subscribe: hub.subscribe.bind(hub),
+      publish: async () => {
+        publishes += 1;
+        return { count: 1 };
+      },
+    } as any);
+    try {
+      const t = await ticketFor("exec", { command: "true" });
+      await expect(
+        relay(t, {
+          afterCommit: async () => {
+            await db().query(
+              `UPDATE account_computer_relays SET expires_at=now() - interval '1 second'
+                WHERE operation_id=$1`,
+              [t.ticket.payload.operation_id],
+            );
+          },
+        }),
+      ).rejects.toThrow(/not sent/);
+      expect(publishes).toBe(0);
+    } finally {
+      setRelayClientForTesting(hub);
+    }
   });
 
   it("finished relay rows older than a day are pruned inline", async () => {

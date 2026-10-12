@@ -62,7 +62,12 @@ export const RELAY_WAIT_MS = 25_000;
 export const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 export const MAX_OPEN_RELAYS_PER_COMPUTER = 16;
 /** A relay row outlives its wait by this much (it is expired after). */
-const RELAY_EXPIRY_MARGIN_MS = 5_000;
+let RELAY_EXPIRY_MARGIN_MS = 5_000;
+
+/** Tests: the activation margin. */
+export function setRelayMarginForTesting(ms: number | undefined): void {
+  RELAY_EXPIRY_MARGIN_MS = ms ?? 5_000;
+}
 const RELAY_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const MAX_OPEN_RELAYS_PER_ACCOUNT = 32;
 export const MAX_WAITERS_PER_PROCESS = 256;
@@ -131,6 +136,7 @@ export async function relayToComputer({
   waitMs = RELAY_WAIT_MS,
   now = Date.now(),
   beforeCommit,
+  afterCommit,
 }: {
   account_id: string;
   agent_id: string;
@@ -143,6 +149,8 @@ export async function relayToComputer({
   now?: number;
   /** Tests: runs inside the transaction, after every lock is held. */
   beforeCommit?: () => Promise<void>;
+  /** Tests: runs after COMMIT returned (e.g. a late commit acknowledgement). */
+  afterCommit?: () => Promise<void>;
 }): Promise<RelayResult> {
   // Reserved before the first await, released whatever happens.
   if (waiters >= maxWaiters) {
@@ -150,7 +158,7 @@ export async function relayToComputer({
   }
   waiters += 1;
   try {
-    const authorized = await authorizeRelay({
+    const authorized: Authorized = await authorizeRelay({
       account_id,
       agent_id,
       run_id,
@@ -162,6 +170,8 @@ export async function relayToComputer({
       now,
       beforeCommit,
     });
+    await afterCommit?.();
+    await activate(authorized, waitMs);
     return await dispatch(authorized, { ticket, proof, request }, waitMs);
   } finally {
     waiters -= 1;
@@ -338,7 +348,7 @@ async function authorizeRelay(opts: {
     const lockedNow = Math.max(now, Date.now());
     const session = (
       await db.query(
-        `SELECT session_id FROM account_computer_sessions
+        `SELECT session_id, lease_until FROM account_computer_sessions
           WHERE computer_id=$1 AND closed_at IS NULL AND epoch=$2
             AND lease_until > $3 AND last_seen > $4
           ORDER BY last_seen DESC, connected_at DESC LIMIT 1 FOR SHARE`,
@@ -355,8 +365,13 @@ async function authorizeRelay(opts: {
     }
     await db.query(
       `UPDATE account_computer_relays SET state='expired'
-        WHERE account_id=$1 AND state='dispatched' AND expires_at <= $2`,
-      [account_id, new Date(lockedNow)],
+        WHERE account_id=$1 AND state='dispatched'
+          AND (expires_at <= clock_timestamp()
+               OR (activated_at IS NULL AND NOT EXISTS (
+                     SELECT 1 FROM account_computer_sessions s
+                      WHERE s.session_id = account_computer_relays.session_id
+                        AND s.closed_at IS NULL)))`,
+      [account_id],
     );
     // Retention, bounded and inline: this computer's finished relay rows
     // older than a day.
@@ -409,31 +424,14 @@ async function authorizeRelay(opts: {
         Number(computer.epoch),
         HUB_PROCESS,
         new Date(lockedNow),
-        new Date(lockedNow + opts.waitMs + RELAY_EXPIRY_MARGIN_MS),
+        // A reservation, not yet sendable: it holds the operation's single
+        // open slot until the session's lease ends, so no slow commit
+        // acknowledgement can let another hub admit the same operation.
+        // activate() turns it into a bounded wait after COMMIT returns.
+        new Date(session.lease_until),
       ],
     );
     await opts.beforeCommit?.();
-    // Stamped again right before COMMIT: the row stays open for the whole
-    // wait that starts after it, however long the locks above took, and the
-    // session's lease must still cover that wait.
-    const commitNow = Date.now();
-    await db.query(
-      `UPDATE account_computer_relays SET created_at=$2, expires_at=$3
-        WHERE correlation=$1`,
-      [
-        correlation,
-        new Date(commitNow),
-        new Date(commitNow + opts.waitMs + RELAY_EXPIRY_MARGIN_MS),
-      ],
-    );
-    const still = await db.query(
-      `SELECT 1 FROM account_computer_sessions
-        WHERE session_id=$1 AND closed_at IS NULL AND lease_until > $2`,
-      [session.session_id, new Date(commitNow + opts.waitMs)],
-    );
-    if (still.rows.length === 0) {
-      throw new ComputerRelayError("this computer is not connected");
-    }
     await db.query("COMMIT");
     return {
       correlation,
@@ -446,6 +444,47 @@ async function authorizeRelay(opts: {
     throw err;
   } finally {
     db.release();
+  }
+}
+
+/**
+ * After COMMIT returned: turn this exact reservation into a bounded wait,
+ * stamped by the database's clock, and only if it is still open and its
+ * session still covers the wait. If that round trip itself took longer than
+ * the margin, nothing is published (another hub could already consider the
+ * row expired); the reservation is released and the caller may retry.
+ */
+async function activate(a: Authorized, waitMs: number): Promise<void> {
+  const sent = Date.now();
+  const { rows } = await getPool().query(
+    `UPDATE account_computer_relays r
+        SET activated_at=clock_timestamp(),
+            expires_at=clock_timestamp() + make_interval(secs => $2::float8 / 1000)
+       FROM account_computer_sessions s
+      WHERE r.correlation=$1 AND r.state='dispatched' AND r.activated_at IS NULL
+        AND r.expires_at > clock_timestamp()
+        AND s.session_id=r.session_id AND s.closed_at IS NULL
+        AND s.lease_until > clock_timestamp() + make_interval(secs => $3::float8 / 1000)
+      RETURNING r.correlation`,
+    [a.correlation, waitMs + RELAY_EXPIRY_MARGIN_MS, waitMs],
+  );
+  const elapsed = Date.now() - sent;
+  if (rows.length === 0) {
+    throw new ComputerRelayError(
+      "not sent: the computer's session ended before it could be; try again",
+    );
+  }
+  if (elapsed * 2 > RELAY_EXPIRY_MARGIN_MS) {
+    await getPool()
+      .query(
+        `UPDATE account_computer_relays SET state='expired'
+          WHERE correlation=$1 AND state='dispatched'`,
+        [a.correlation],
+      )
+      .catch(() => {});
+    throw new ComputerRelayError(
+      "not sent: the hub's database was too slow; try again",
+    );
   }
 }
 

@@ -524,6 +524,9 @@ Table({
     epoch: required("integer", "Computer epoch at dispatch."),
     hub_process: required("string", "Hub process waiting for the answer."),
     state: required("string", "dispatched, answered, expired."),
+    activated_at: timestamp(
+      "When the hub activated the committed reservation and could publish (null: reserved, never published).",
+    ),
     answer: json("The daemon's answer (bounded).", false),
     created_at: created("Dispatch time."),
     expires_at: {
