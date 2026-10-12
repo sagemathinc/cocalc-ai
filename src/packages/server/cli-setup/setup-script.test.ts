@@ -30,14 +30,23 @@ const SHELLS = ["/bin/sh", "/usr/bin/dash"].filter(existsSync);
 const PROJECT = "11111111-2222-4333-8444-555555555555";
 const SITE = "https://lite1b.cocalc.ai";
 
-// Logs each call's arguments as [a][b]...; --help fails when OLD is set;
-// "auth status --check" exits AUTH_RC.
+// Logs each call's arguments as [a][b]...; answers --help like commander:
+// the subcommand's own usage line, or (OLD, a cocalc without it) the general
+// help, still exiting 0; "auth status --check" exits AUTH_RC.
 const FAKE_COCALC = `#!/bin/sh
 for a in "$@"; do printf '[%s]' "$a" >> "$LOG"; done
 printf '\\n' >> "$LOG"
 for a in "$@"; do
   if [ "$a" = "--help" ]; then
-    if [ -n "\${OLD:-}" ]; then exit 1; fi
+    if [ -n "\${OLD:-}" ]; then
+      echo "Usage: cocalc [options] [command]"
+      exit 0
+    fi
+    usage="Usage: cocalc"
+    for w in "$@"; do
+      [ "$w" = "--help" ] || usage="$usage $w"
+    done
+    echo "$usage [options]"
     exit 0
   fi
 done
@@ -94,7 +103,7 @@ describe.each(SHELLS)("setup script under %s", (shell) => {
     const r = run(shell, ssh());
     expect(r.status).toBe(0);
     expect(r.calls).toEqual([
-      `[--api][${SITE}][project][ssh-config][add][--help]`,
+      `[project][ssh-config][add][--help]`,
       `[--api][${SITE}][auth][status][--check]`,
       `[--api][${SITE}][project][ssh-config][add][-w][${PROJECT}]`,
     ]);
@@ -143,7 +152,7 @@ EOF
     // The old one doesn't know the subcommand and must never run a step.
     fake(
       join(dir, "bin", "cocalc"),
-      `#!/bin/sh\necho "[OLD] $*" >> "$LOG"\nexit 1\n`,
+      `#!/bin/sh\necho "[OLD] $*" >> "$LOG"\necho "Usage: cocalc [options] [command]"\nexit 0\n`,
     );
     fake(
       join(dir, "bin", "curl"),

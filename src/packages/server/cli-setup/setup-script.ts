@@ -34,7 +34,12 @@ export interface SetupStep {
 export interface SetupPlan {
   /** One line, for the header comment. */
   title: string;
-  /** cocalc arguments whose --help succeeds only on a version new enough. */
+  /**
+   * The cocalc subcommand the steps need, as words (e.g. ["computer",
+   * "connect"]). A version is new enough when its help for exactly that
+   * subcommand says so: an old cocalc answers `<unknown> --help` with its
+   * general help and exit 0, so the exit code alone proves nothing.
+   */
   probe: string[];
   steps: SetupStep[];
   /** Printed at the end. */
@@ -81,7 +86,10 @@ export function setupScript(
   installer = CLI_INSTALLER_URL,
 ): string {
   const steps = plan.steps.flatMap(stepLines).join("\n");
-  const probe = plan.probe.map(shQuote).join(" ");
+  if (!plan.probe.every((word) => /^[a-z][a-z0-9-]*$/.test(word))) {
+    throw new SetupActionError("probe words must be plain subcommand names");
+  }
+  const probe = plan.probe.join(" ");
   const done = plan.done ? `say ${shQuote(oneLine(plan.done))}` : "";
   return `#!/bin/sh
 # CoCalc: ${oneLine(plan.title)}
@@ -112,9 +120,15 @@ candidates() {
     "$HOME/.local/bin/cocalc" /usr/local/bin/cocalc
 }
 
-# New enough for this: it knows the subcommand.
+# New enough for this: its help for the subcommand is that subcommand's own
+# ("Usage: cocalc ${probe} ..."), not the general help an old one prints.
 works() {
-  [ -n "$1" ] && [ -x "$1" ] && "$1" ${probe} --help >/dev/null 2>&1
+  [ -n "$1" ] && [ -x "$1" ] || return 1
+  usage=$("$1" ${probe} --help 2>/dev/null | grep -m 1 '^Usage:') || return 1
+  case "$usage " in
+    *" ${probe} "*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # The first cocalc that works (pick), or that exists at all (any).
@@ -171,7 +185,7 @@ export function sshPlan(site: string, project_id: string): SetupPlan {
   const api = ["--api", site];
   return {
     title: `set up SSH to project ${project_id}`,
-    probe: [...api, "project", "ssh-config", "add"],
+    probe: ["project", "ssh-config", "add"],
     steps: [
       {
         say: `Signing in to ${site}: approve it in your browser.`,
