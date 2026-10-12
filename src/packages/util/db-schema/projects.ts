@@ -559,6 +559,10 @@ Table({
       pg_default: "0",
       desc: "Monotonic owning-bay revision of the project collaborator authority map.",
     },
+    computers_share_state_known: {
+      type: "boolean",
+      desc: "Whether computers_public_shares is known to cover all of the project's public shares (set at creation, by reconciliation, and copied by rehome). NULL (unknown) for projects that existed before it, and for copies of them: such a project is never attested private for computers until reconciled.",
+    },
     computers_public_shares: {
       type: "integer",
       pg_type: "INTEGER",
