@@ -97,6 +97,7 @@ describe("pairing as the machine", () => {
         };
       } else if (path.endsWith("/pairing/status")) {
         answer = approve(submitted);
+        if (answer instanceof Response) return answer;
       }
       return new Response(JSON.stringify(answer), { status: 200 });
     }) as any;
@@ -204,6 +205,47 @@ describe("pairing as the machine", () => {
     expect(logs.join("\n")).not.toMatch(/whatever the server says/);
     expect(existsSync(join(c.dir, "key.pem"))).toBe(true);
     expect(existsSync(join(c.dir, "agreement.pem"))).toBe(true);
+  });
+
+  it("keeps waiting for approval while the site restarts (5xx, unreachable)", async () => {
+    let calls = 0;
+    site((submitted) => {
+      calls += 1;
+      if (calls === 1) return { state: "paired" };
+      if (calls === 2)
+        return new Response("<html>Bad Gateway</html>", { status: 502 });
+      if (calls === 3) throw new TypeError("fetch failed");
+      if (calls === 4) return new Response("{}", { status: 503 });
+      return {
+        state: "approved",
+        certificate: certificateFor(submitted),
+        directory: directory(),
+      };
+    });
+    logs.length = 0;
+    const c = await pairComputer({
+      url: `${SITE}/c/${REQUEST}`,
+      io: io(),
+      pollMs: 1,
+    });
+    expect(c.name).toBe("m1");
+    expect(calls).toBe(5);
+    const shown = logs.join("\n");
+    // Said once per outage, and once when it is back.
+    expect(shown.match(/still waiting/g)).toHaveLength(1);
+    expect(shown).toMatch(/Reached it again/);
+  });
+
+  it("a real refusal while waiting still ends it at once", async () => {
+    site(
+      () =>
+        new Response(JSON.stringify({ error: "no such request" }), {
+          status: 404,
+        }),
+    );
+    await expect(
+      pairComputer({ url: `${SITE}/c/${REQUEST}`, io: io(), pollMs: 1 }),
+    ).rejects.toThrow(/no such request/);
   });
 
   it("refuses a certificate for another key, account, transcript or policy", async () => {

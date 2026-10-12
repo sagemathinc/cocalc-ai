@@ -151,6 +151,12 @@ export const REQUEST_TIMEOUT_MS = 30_000;
  * caller's abort signal, a byte cap read before parsing, and error text
  * cleaned before anyone prints it.
  */
+/** A failure that may pass: the site unreachable, restarting (5xx) or slow. */
+class TransientError extends Error {}
+
+/** How long pairing waits for the owner while the site can't be reached. */
+const MAX_APPROVAL_WAIT_MS = 70 * 60 * 1000;
+
 async function post<T>(
   origin: string,
   path: string,
@@ -169,7 +175,7 @@ async function post<T>(
     });
   } catch (err) {
     if (signal?.aborted) throw new Error("stopped");
-    throw new Error(
+    throw new TransientError(
       `could not reach ${origin}: ${clean((err as Error)?.message ?? err, 200)}`,
     );
   }
@@ -184,10 +190,16 @@ async function post<T>(
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`${origin} answered ${res.status} without JSON`);
+    throw new (res.status >= 500 ? TransientError : Error)(
+      `${origin} answered ${res.status} without JSON`,
+    );
   }
   if (data?.error != null) throw new Error(clean(data.error, 300));
-  if (!res.ok) throw new Error(`${origin} answered ${res.status}`);
+  if (!res.ok) {
+    throw new (res.status >= 500 ? TransientError : Error)(
+      `${origin} answered ${res.status}`,
+    );
+  }
   return data as T;
 }
 
@@ -307,15 +319,36 @@ export async function pairComputer({
     `\nPairing phrase:  ${pairing_phrase}\n\nApprove it in CoCalc, after checking it shows exactly this phrase. Waiting...`,
   );
 
+  // People take a while to approve, and the site may restart meanwhile:
+  // only a real answer ends the wait, not a moment it can't be reached.
+  const giveUpAt = Date.now() + MAX_APPROVAL_WAIT_MS;
+  let lost = false;
+  let pause = pollMs;
   let status: any;
   for (;;) {
     if (signal?.aborted) throw new Error("stopped");
-    status = await post<unknown>(
-      origin,
-      "pairing/status",
-      { request_id, transcript_hash: ours },
-      signal,
-    );
+    try {
+      status = await post<unknown>(
+        origin,
+        "pairing/status",
+        { request_id, transcript_hash: ours },
+        signal,
+      );
+    } catch (err) {
+      if (!(err instanceof TransientError) || Date.now() > giveUpAt) throw err;
+      if (!lost) {
+        io.log(`${err.message}; still waiting (it may be restarting)...`);
+        lost = true;
+      }
+      pause = Math.min(pause * 2, 30_000);
+      await new Promise((r) => setTimeout(r, pause));
+      continue;
+    }
+    if (lost) {
+      io.log("Reached it again. Waiting for approval...");
+      lost = false;
+      pause = pollMs;
+    }
     if (status?.state === "approved") break;
     if (status?.state === "expired") {
       throw new Error(
