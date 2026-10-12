@@ -55,13 +55,16 @@ describe("computer mentions", () => {
     ).toEqual(["m1", "box"]);
   });
 
-  it("tells the agent what it is and how to use it", () => {
+  it("tells the agent to address it by id, and not to request a replacement", () => {
     expect(computerMentionsNote([])).toBe("");
     const note = computerMentionsNote([
       { version: 1, name: "m1", computer_id: ID },
     ]);
-    expect(note).toMatch(/- @m1 \(computer_id 1a057860-/);
-    expect(note).toMatch(/cocalc computer exec @NAME/);
-    expect(note).toMatch(/not permission/);
+    expect(note).toContain(`- @m1: computer ${ID}`);
+    expect(note).toContain("cocalc computer exec ID --");
+    expect(note).toContain("cocalc computer run ID --");
+    expect(note).not.toMatch(/exec @/);
+    expect(note).toMatch(/don't request a new computer/);
+    expect(note).not.toMatch(/computer request/);
   });
 });

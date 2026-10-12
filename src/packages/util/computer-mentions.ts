@@ -80,14 +80,19 @@ export function extractComputerMentions(
   return [...references.values()];
 }
 
-/** What the agent is told about the computers the person mentioned. */
+/**
+ * What the agent is told about the computers the person mentioned. It
+ * addresses each by its id: names can be renamed or reused by another
+ * computer later, so the @name is only a label.
+ */
 export function computerMentionsNote(
   references: ReadonlyArray<ComputerMentionReference>,
 ): string {
   if (references.length === 0) return "";
   return [
     "Computers mentioned in this human turn (the person's own machines connected to CoCalc; identity only, not permission):",
-    ...references.map((r) => `- @${r.name} (computer_id ${r.computer_id})`),
-    "Run commands there with `cocalc computer exec @NAME -- 'a shell line'` (it waits; see --timeout), or start longer work with `cocalc computer run @NAME --description ... -- ...` (`cocalc computer --help`). `cocalc computer list` shows whether you can use it now; if not, `cocalc computer request NAME --why ...` asks the owner.",
+    ...references.map((r) => `- @${r.name}: computer ${r.computer_id}`),
+    "Address each by its exact id, not its @name (a name can later belong to another computer): run commands with `cocalc computer exec ID -- 'a shell line'` (it waits; see --timeout), or start longer work with `cocalc computer run ID --description ... -- ...` (`cocalc computer --help`).",
+    "If you can't use one (it isn't in `cocalc computer list`, or the command is refused), tell the person you don't have access to it; don't request a new computer for it.",
   ].join("\n");
 }

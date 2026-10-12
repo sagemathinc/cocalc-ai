@@ -4,34 +4,49 @@
  */
 
 // The account's computers, for @name suggestions in chat: one shared list,
-// loaded when something needs it and at most every 30 s.
+// refreshed every 30 s while any composer that offers them is open.
 
 import { useEffect, useState } from "react";
 import type { ComputerSummary } from "@cocalc/util/computers/api";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-const FRESH_MS = 30_000;
+export const REFRESH_MS = 30_000;
 
 let computers: ComputerSummary[] = [];
-let loadedAt = 0;
-let loading: Promise<void> | undefined;
+let loading = false;
+let timer: ReturnType<typeof setInterval> | undefined;
 const listeners = new Set<() => void>();
 
-function load(): void {
-  if (loading || Date.now() - loadedAt < FRESH_MS) return;
-  loading = (async () => {
-    try {
-      computers = await webapp_client.conat_client.hub.computers.listComputers(
-        {},
-      );
-      for (const listener of listeners) listener();
-    } catch {
-      // Suggestions are a convenience: without the list, none are offered.
-    } finally {
-      loadedAt = Date.now();
-      loading = undefined;
+async function load(): Promise<void> {
+  if (loading) return;
+  loading = true;
+  try {
+    computers = await webapp_client.conat_client.hub.computers.listComputers(
+      {},
+    );
+    for (const listener of listeners) listener();
+  } catch {
+    // Suggestions are a convenience: the next refresh tries again.
+  } finally {
+    loading = false;
+  }
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (timer == null) {
+    void load();
+    timer = setInterval(() => void load(), REFRESH_MS);
+  } else {
+    listener();
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && timer != null) {
+      clearInterval(timer);
+      timer = undefined;
     }
-  })();
+  };
 }
 
 /** Not disconnected and not past its time. */
@@ -43,12 +58,7 @@ export function useComputers(enabled: boolean): ComputerSummary[] {
   const [, setVersion] = useState(0);
   useEffect(() => {
     if (!enabled) return;
-    const listener = () => setVersion((v) => v + 1);
-    listeners.add(listener);
-    load();
-    return () => {
-      listeners.delete(listener);
-    };
+    return subscribe(() => setVersion((v) => v + 1));
   }, [enabled]);
   return enabled ? computers : [];
 }

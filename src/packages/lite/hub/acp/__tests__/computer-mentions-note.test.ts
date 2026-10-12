@@ -16,10 +16,10 @@ const human = {
 
 test("a human turn's @computer mentions become a note for the agent", () => {
   const note = humanTurnComputerNote(human);
-  expect(note).toMatch(
-    /- @m1 \(computer_id 1a057860-889d-461a-9073-4b8c69d65123\)/,
+  expect(note).toContain(
+    "- @m1: computer 1a057860-889d-461a-9073-4b8c69d65123",
   );
-  expect(note).toMatch(/cocalc computer exec @NAME/);
+  expect(note).toContain("cocalc computer exec ID --");
 });
 
 test("an agent's message, or a plain @name, adds nothing", () => {
