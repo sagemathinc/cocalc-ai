@@ -776,9 +776,7 @@ async function createProjectImpl(
       }
     }
     await client.query(
-      // computers_share_state_known: a new project has no shares anywhere,
-      // so its share state is known from the start (see computers).
-      "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id, course, computers_share_state_known) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10, $11, true)",
+      "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id, course) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10, $11)",
       [
         project_id,
         title ?? "No Title",
