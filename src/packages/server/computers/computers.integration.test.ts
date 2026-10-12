@@ -396,6 +396,16 @@ describeDb("computers store", () => {
       });
     }
 
+    it("lists each request with its home bay's pairing line, the same one creating it gives", async () => {
+      const { computersAtThisBay, pairingUrl } = await import("./routing");
+      const { request_id } = await newRequest("listed");
+      const listed = (
+        await computersAtThisBay.listRequests({ account_id: account })
+      ).find((r) => r.request_id === request_id);
+      expect(listed?.pairing_url).toBe(await pairingUrl(request_id));
+      expect(listed?.pairing_url).toMatch(new RegExp(`/c/${request_id}$`));
+    });
+
     it("pairs and approves: one computer, a certificate the daemon can verify", async () => {
       const { approveComputerRequest } = await import("./requests");
       const { request_id } = await newRequest();

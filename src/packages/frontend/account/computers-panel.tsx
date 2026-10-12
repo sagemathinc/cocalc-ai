@@ -175,9 +175,11 @@ export function ComputersPanel() {
                   <Space orientation="vertical" size={0}>
                     <Tag>waiting for the machine</Tag>
                     <span>Run this on the machine:</span>
-                    <Typography.Text code copyable>
-                      {`cocalc computer connect ${location.origin}/c/${r.request_id}`}
-                    </Typography.Text>
+                    {r.pairing_url && (
+                      <Typography.Text code copyable>
+                        {`cocalc computer connect ${r.pairing_url}`}
+                      </Typography.Text>
+                    )}
                   </Space>
                 ) : (
                   <Space orientation="vertical" size={0}>

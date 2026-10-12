@@ -132,9 +132,13 @@ export function PairingSteps({
       ) : request.state === "pending" ? (
         <>
           <span>1. On the machine, run:</span>
-          <Typography.Text code copyable>
-            {`cocalc computer connect ${location.origin}/c/${request.request_id}`}
-          </Typography.Text>
+          {request.pairing_url ? (
+            <Typography.Text code copyable>
+              {`cocalc computer connect ${request.pairing_url}`}
+            </Typography.Text>
+          ) : (
+            <span>Loading…</span>
+          )}
           <span>Waiting for the machine…</span>
         </>
       ) : (
@@ -177,6 +181,7 @@ export function ReconnectComputer({
   const [request_id, setRequestId] = useState<string>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const pairing = useRef(false);
   const c = computer;
   const ended = computerState(c) === "ended";
 
@@ -202,14 +207,12 @@ export function ReconnectComputer({
   }, [mode, c.computer_id]);
 
   async function pairAgain() {
+    if (pairing.current) return;
+    pairing.current = true;
     setBusy(true);
     setError("");
     try {
-      if (!ended) {
-        // Its key was only in its connector: the old one can't come back,
-        // and its name goes to the new one.
-        await computersApi().revokeComputer({ computer_id: c.computer_id });
-      }
+      // The new request first: if that fails, the old computer is untouched.
       const { request_id } = await computersApi().createComputerRequest({
         name: c.name,
         policy: {
@@ -220,15 +223,32 @@ export function ReconnectComputer({
         why: `Reconnect @${c.name}`,
       });
       setRequestId(request_id);
+      if (!ended) {
+        // Its key was only in its connector, so it can't come back; approval
+        // gives its name to the new one once it is disconnected.
+        try {
+          await computersApi().revokeComputer({ computer_id: c.computer_id });
+        } catch (err) {
+          setError(
+            `${errorText(err)} Disconnect the old @${c.name} in Settings before approving the new one.`,
+          );
+        }
+      }
     } catch (err) {
       setError(errorText(err));
     } finally {
+      pairing.current = false;
       setBusy(false);
     }
   }
 
   if (request_id != null) {
-    return <PairingSteps request_id={request_id} onDone={onDone} />;
+    return (
+      <Space orientation="vertical" style={{ width: "100%" }}>
+        {error && <Alert type="warning" title={error} />}
+        <PairingSteps request_id={request_id} onDone={onDone} />
+      </Space>
+    );
   }
   return (
     <Space orientation="vertical" style={{ width: "100%" }}>

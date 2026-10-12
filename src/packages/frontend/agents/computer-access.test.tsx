@@ -14,8 +14,16 @@ const mockApi = {
   listAgentNetworks: jest.fn(async () => mockDirectory),
 };
 
+let mockLoadFails = false;
 jest.mock("../account/use-computers", () => ({
-  refreshComputers: async () => mockComputers,
+  loadComputersStrict: async () => {
+    if (mockLoadFails) throw Error("hub unreachable");
+    return mockComputers;
+  },
+}));
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: { getActions: () => undefined },
+  useTypedRedux: () => "account-1",
 }));
 jest.mock("./api", () => ({
   personalAgentApi: () => mockApi,
@@ -31,7 +39,13 @@ jest.mock("../account/computer-pairing", () => ({
 
 import { agentComputers, useComputerMentionCheck } from "./computer-access";
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockLoadFails = false;
+  mockApi.resolveIdentity.mockImplementation(async () => ({
+    agent_id: AGENT.agent_id,
+  }));
+});
 
 const network = (members: any[], state = "active") => ({
   agent_network_id: "n1",
@@ -83,11 +97,11 @@ test("an agent can use a computer when it's in the computer's active network", (
   ).toBe(false);
 });
 
-function useCheck() {
+function useCheck({ threadId = "t1" }: { threadId?: string } = {}) {
   return useComputerMentionCheck({
     projectId: "p1",
     path: "a.chat",
-    threadId: "t1",
+    threadId,
     agentLabel: "@claude-1",
     enabled: true,
   });
@@ -130,4 +144,58 @@ test("guides the fixes when the computer is offline and the agent can't use it; 
   ).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: "Send anyway" }));
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+test("switching threads closes the dialog; the old send can't run", async () => {
+  mockComputers = [m1({ connected: false })];
+  mockDirectory = directory(network([AGENT]));
+  const send = jest.fn();
+  const view = renderHook(useCheck, { initialProps: { threadId: "t1" } });
+  await act(() => view.result.current.preflight(message, send));
+  const shown = render(<>{view.result.current.ui}</>);
+  expect(screen.getByRole("button", { name: "Send anyway" })).toBeTruthy();
+  shown.unmount();
+  view.rerender({ threadId: "t2" });
+  render(<>{view.result.current.ui}</>);
+  expect(screen.queryByRole("button", { name: "Send anyway" })).toBeNull();
+  expect(send).not.toHaveBeenCalled();
+});
+
+test("a switch while the lookup is pending: no dialog, no send", async () => {
+  mockComputers = [m1()];
+  mockDirectory = directory(network([AGENT]));
+  let release: (v: any) => void = () => {};
+  mockApi.resolveIdentity.mockImplementation(
+    () => new Promise((resolve) => (release = resolve)),
+  );
+  const send = jest.fn();
+  const view = renderHook(useCheck, { initialProps: { threadId: "t1" } });
+  let pending: Promise<unknown> = Promise.resolve();
+  act(() => {
+    pending = view.result.current.preflight(message, send);
+  });
+  view.rerender({ threadId: "t2" });
+  await act(async () => {
+    release({ agent_id: AGENT.agent_id });
+    await pending;
+  });
+  expect(send).not.toHaveBeenCalled();
+  render(<>{view.result.current.ui}</>);
+  expect(screen.queryByRole("button", { name: "Send anyway" })).toBeNull();
+});
+
+test("a failed computer refresh is an error, never a stale ready", async () => {
+  mockComputers = [m1()];
+  mockDirectory = directory(network([AGENT]));
+  mockLoadFails = true;
+  const send = jest.fn();
+  const { result } = renderHook(useCheck);
+  await act(() => result.current.preflight(message, send));
+  expect(send).not.toHaveBeenCalled();
+  render(<>{result.current.ui}</>);
+  expect(
+    screen
+      .getAllByRole("alert")
+      .some((e) => /hub unreachable/.test(e.textContent ?? "")),
+  ).toBe(true);
 });

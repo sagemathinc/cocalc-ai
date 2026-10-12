@@ -39,7 +39,18 @@ function load(): Promise<ComputerSummary[]> {
   return p;
 }
 
-/** Load the list now (e.g. before checking a message, or after a fix). */
+/**
+ * The list as it is now, or an error: for decisions (the send check), never
+ * the cached list after a failed load.
+ */
+export async function loadComputersStrict(): Promise<ComputerSummary[]> {
+  const list = await webapp_client.conat_client.hub.computers.listComputers({});
+  computers = list;
+  for (const listener of listeners) listener();
+  return list;
+}
+
+/** Load the list now, best effort (e.g. after a fix). */
 export async function refreshComputers(): Promise<ComputerSummary[]> {
   if (loading) await loading;
   return await load();

@@ -9,7 +9,7 @@
 // @computer mentions and the composer's Computers dialog. Design:
 // src/.agents/computers-lifecycle-ui-2026-10-12.md.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Space, Spin, Tag } from "antd";
 import type { ReactNode } from "react";
 import type {
@@ -33,7 +33,8 @@ import {
   STATE_LABEL,
 } from "../account/computer-state";
 import type { ComputerState } from "../account/computer-state";
-import { refreshComputers } from "../account/use-computers";
+import { loadComputersStrict } from "../account/use-computers";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { activeNetworkMembers } from "./agent-network-utils";
 import { personalAgentApi, refreshAgentNetworks, sameEndpoint } from "./api";
 import { useSourceAgentName } from "./source-agent-name";
@@ -100,6 +101,7 @@ function GiveAccess({
   computer,
   network,
   paused,
+  isCurrent,
   onDone,
 }: {
   agent: AgentEndpoint;
@@ -107,6 +109,8 @@ function GiveAccess({
   computer: ComputerSummary;
   network: AgentNetwork | undefined;
   paused: boolean;
+  /** False once the conversation this was opened for is gone. */
+  isCurrent: () => boolean;
   onDone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -152,6 +156,9 @@ function GiveAccess({
     try {
       await naming.ensureNamed();
       const completed = await runFreshAuthAction(async () => {
+        if (!isCurrent()) {
+          throw Error("The conversation changed; nothing was added.");
+        }
         await personalAgentApi().updateAgentNetwork({
           request_id: requestId.current,
           agent_network_id: network!.agent_network_id,
@@ -201,12 +208,14 @@ export function ComputerRow({
   agent,
   agentLabel,
   paused,
+  isCurrent = () => true,
   onChanged,
 }: {
   item: AgentComputer;
   agent: AgentEndpoint | undefined;
   agentLabel: string;
   paused: boolean;
+  isCurrent?: () => boolean;
   onChanged: () => void;
 }) {
   const [fixing, setFixing] = useState<"reconnect" | "access">();
@@ -253,6 +262,7 @@ export function ComputerRow({
           computer={c}
           network={item.network}
           paused={paused}
+          isCurrent={isCurrent}
           onDone={() => {
             setFixing(undefined);
             onChanged();
@@ -266,6 +276,9 @@ export function ComputerRow({
 /**
  * Before sending a message that mentions computers: if one isn't connected,
  * or this agent can't use it, a dialog guides the fixes (or sends anyway).
+ * Everything is bound to the conversation it started in: switching account,
+ * project, file or thread closes the dialog, and nothing started for the old
+ * one (a lookup, a grant, its send) acts after the switch.
  */
 export function useComputerMentionCheck({
   projectId,
@@ -280,7 +293,9 @@ export function useComputerMentionCheck({
   agentLabel: string;
   enabled: boolean;
 }) {
+  const accountId = useTypedRedux("account", "account_id");
   const [check, setCheck] = useState<{
+    epoch: number;
     ids: string[];
     items: AgentComputer[];
     missing: string[];
@@ -291,6 +306,16 @@ export function useComputerMentionCheck({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const lock = useRef(false);
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current += 1;
+    lock.current = false;
+    setCheck(undefined);
+    setError("");
+    return () => {
+      generation.current += 1;
+    };
+  }, [accountId, projectId, path, threadId]);
 
   async function agentEndpoint(): Promise<AgentEndpoint | undefined> {
     if (!threadId) return;
@@ -309,8 +334,9 @@ export function useComputerMentionCheck({
     names: Map<string, string>,
     agent?: AgentEndpoint,
   ) {
+    // Strict: a failed load is an error, never a stale "ready".
     const [computers, directory] = await Promise.all([
-      refreshComputers(),
+      loadComputersStrict(),
       loadNetworks(),
     ]);
     const all = agentComputers(computers, directory, agent);
@@ -328,52 +354,61 @@ export function useComputerMentionCheck({
     if (refs.length === 0) return await send();
     if (lock.current) return;
     lock.current = true;
+    const epoch = generation.current;
     setError("");
     try {
       const agent = await agentEndpoint();
+      if (epoch !== generation.current) return;
       const ids = refs.map((r) => r.computer_id);
       const names = new Map(refs.map((r) => [r.computer_id, `@${r.name}`]));
       const result = await evaluate(ids, names, agent);
+      if (epoch !== generation.current) return;
       if (result.missing.length === 0 && result.items.every(ready)) {
         await send();
         return;
       }
-      setCheck({ ids, agent, send, ...result });
+      setCheck({ epoch, ids, agent, send, ...result });
     } catch (err) {
-      setError(errorText(err));
+      if (epoch === generation.current) setError(errorText(err));
     } finally {
-      lock.current = false;
+      if (epoch === generation.current) lock.current = false;
     }
   }
 
   async function recheck() {
-    if (!check) return;
+    if (!check || check.epoch !== generation.current) return;
+    const { epoch } = check;
     setLoading(true);
     try {
       const names = new Map(
         check.items.map((x) => [x.computer.computer_id, `@${x.computer.name}`]),
       );
       const result = await evaluate(check.ids, names, check.agent);
-      setCheck((old) => (old ? { ...old, ...result } : old));
+      if (epoch !== generation.current) return;
+      setCheck((old) => (old?.epoch === epoch ? { ...old, ...result } : old));
     } catch (err) {
-      setError(errorText(err));
+      if (epoch === generation.current) setError(errorText(err));
     } finally {
       setLoading(false);
     }
   }
 
   async function sendNow() {
-    const send = check?.send;
+    if (!check || check.epoch !== generation.current) return;
+    const { send } = check;
     setCheck(undefined);
     try {
-      await send?.();
+      await send();
     } catch (err) {
       setError(errorText(err));
     }
   }
 
+  const current = check?.epoch === generation.current ? check : undefined;
   const allReady =
-    check != null && check.missing.length === 0 && check.items.every(ready);
+    current != null &&
+    current.missing.length === 0 &&
+    current.items.every(ready);
   const ui: ReactNode = (
     <>
       {error && (
@@ -387,7 +422,7 @@ export function useComputerMentionCheck({
         </div>
       )}
       <Modal
-        open={check != null}
+        open={current != null}
         title={
           allReady
             ? "Ready to send"
@@ -410,29 +445,30 @@ export function useComputerMentionCheck({
           </Button>,
         ]}
       >
-        {check != null && (
+        {current != null && (
           <Space orientation="vertical" style={{ width: "100%" }} size="large">
             {loading && <Spin size="small" />}
-            {check.missing.map((name) => (
+            {current.missing.map((name) => (
               <Alert
                 key={name}
                 type="warning"
                 title={`${name} isn't one of your computers anymore. Remove it from the message, or pick another.`}
               />
             ))}
-            {check.agent == null && (
+            {current.agent == null && (
               <Alert
                 type="info"
                 title="This conversation has no agent yet, so whether it may use these computers is checked once it starts."
               />
             )}
-            {check.items.map((item) => (
+            {current.items.map((item) => (
               <ComputerRow
-                key={item.computer.computer_id}
+                key={`${current.epoch}:${item.computer.computer_id}`}
                 item={item}
-                agent={check.agent}
+                agent={current.agent}
                 agentLabel={agentLabel}
-                paused={check.paused}
+                paused={current.paused}
+                isCurrent={() => current.epoch === generation.current}
                 onChanged={() => void recheck()}
               />
             ))}
