@@ -17,7 +17,8 @@ import type { Client } from "@cocalc/database/pool";
 //   2026-10-11): the trigger only recorded each change it would revert in
 //   cloud_vm_log, as action 'desired_state_unversioned_change'.
 // - Phase 2 (ENFORCE_DESIRED_STATE_GUARD = true, now): the trigger reverts
-//   them. Schema sync replaces the function, because the contract changes.
+//   them, and records each one as 'desired_state_unversioned_reverted'.
+//   Schema sync replaces the function, because the contract changes.
 //
 // Gate for phase 2 (every bay):
 // (a) every process that writes project_hosts runs phase 1;
@@ -31,6 +32,13 @@ import type { Client } from "@cocalc/database/pool";
 //     Any row names a writer to fix first (its runtime holds from/to).
 export const ENFORCE_DESIRED_STATE_GUARD = true;
 
+// cloud_vm_log actions for a desired_state change that did not bump the
+// generation: recorded (phase 1) or recorded and reverted (phase 2).
+export const DESIRED_STATE_UNVERSIONED_CHANGE =
+  "desired_state_unversioned_change";
+export const DESIRED_STATE_UNVERSIONED_REVERTED =
+  "desired_state_unversioned_reverted";
+
 export const PROJECT_HOST_DESIRED_STATE_TRIGGER =
   "project_hosts_guard_desired_state_trigger";
 const PROJECT_HOST_DESIRED_STATE_FUNCTION = "project_hosts_guard_desired_state";
@@ -41,8 +49,26 @@ const CONTRACT = contract(ENFORCE_DESIRED_STATE_GUARD);
 
 // Exported for tests of both modes.
 export function desiredStateGuardFunctionSql(enforce: boolean): string {
+  // Both modes record the change, so a writer that does not bump the
+  // generation shows up in cloud_vm_log; enforcing also reverts it.
+  const log = (
+    action: string,
+  ) => `INSERT INTO cloud_vm_log (id, vm_id, ts, action, status, runtime)
+       VALUES (
+         gen_random_uuid(),
+         OLD.id::text,
+         NOW(),
+         '${action}',
+         'warning',
+         jsonb_build_object(
+           'from', OLD.metadata->'desired_state',
+           'to', NEW.metadata->'desired_state',
+           'generation', OLD.desired_state_generation
+         )
+       );`;
   const onUnversionedChange = enforce
-    ? `IF OLD.metadata ? 'desired_state' THEN
+    ? `${log(DESIRED_STATE_UNVERSIONED_REVERTED)}
+       IF OLD.metadata ? 'desired_state' THEN
          NEW.metadata := jsonb_set(
            COALESCE(NEW.metadata, '{}'::jsonb),
            '{desired_state}',
@@ -51,19 +77,7 @@ export function desiredStateGuardFunctionSql(enforce: boolean): string {
        ELSE
          NEW.metadata := NEW.metadata - 'desired_state';
        END IF;`
-    : `INSERT INTO cloud_vm_log (id, vm_id, ts, action, status, runtime)
-       VALUES (
-         gen_random_uuid(),
-         OLD.id::text,
-         NOW(),
-         'desired_state_unversioned_change',
-         'warning',
-         jsonb_build_object(
-           'from', OLD.metadata->'desired_state',
-           'to', NEW.metadata->'desired_state',
-           'generation', OLD.desired_state_generation
-         )
-       );`;
+    : log(DESIRED_STATE_UNVERSIONED_CHANGE);
   return `CREATE OR REPLACE FUNCTION ${PROJECT_HOST_DESIRED_STATE_FUNCTION}()
    RETURNS TRIGGER AS $$
    -- ${contract(enforce)}

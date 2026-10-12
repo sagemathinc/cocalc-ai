@@ -59,6 +59,22 @@ describe("desired state guard", () => {
       stale("running"),
     ]);
     expect((await hostRow(id)).metadata.desired_state).toBe("stopped");
+    // ... and records what it reverted, naming the change.
+    const { rows } = await getPool().query(
+      `SELECT action, runtime FROM cloud_vm_log
+        WHERE vm_id=$1 AND action LIKE 'desired_state_unversioned_%'`,
+      [id],
+    );
+    expect(rows).toEqual([
+      {
+        action: "desired_state_unversioned_reverted",
+        runtime: {
+          from: "stopped",
+          to: "running",
+          generation: expect.any(Number),
+        },
+      },
+    ]);
   });
 
   it("phase 1 records a desired_state change that does not bump the generation", async () => {
