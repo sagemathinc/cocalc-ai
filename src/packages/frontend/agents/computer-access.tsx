@@ -317,13 +317,19 @@ export function useComputerMentionCheck({
     };
   }, [accountId, projectId, path, threadId]);
 
-  async function agentEndpoint(): Promise<AgentEndpoint | undefined> {
+  /** This thread's agent; registered only while still in this conversation. */
+  async function agentEndpoint(
+    epoch: number,
+  ): Promise<AgentEndpoint | undefined> {
     if (!threadId) return;
     const api = personalAgentApi();
     const locator = { project_id: projectId, path, thread_id: threadId };
-    const identity =
-      (await api.resolveIdentity(locator)) ??
-      (await api.registerIdentity(locator));
+    let identity = await api.resolveIdentity(locator);
+    if (epoch !== generation.current) return;
+    if (!identity) {
+      identity = await api.registerIdentity(locator);
+      if (epoch !== generation.current) return;
+    }
     return identity
       ? { project_id: projectId, agent_id: identity.agent_id }
       : undefined;
@@ -357,7 +363,7 @@ export function useComputerMentionCheck({
     const epoch = generation.current;
     setError("");
     try {
-      const agent = await agentEndpoint();
+      const agent = await agentEndpoint(epoch);
       if (epoch !== generation.current) return;
       const ids = refs.map((r) => r.computer_id);
       const names = new Map(refs.map((r) => [r.computer_id, `@${r.name}`]));

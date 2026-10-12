@@ -199,3 +199,26 @@ test("a failed computer refresh is an error, never a stale ready", async () => {
       .some((e) => /hub unreachable/.test(e.textContent ?? "")),
   ).toBe(true);
 });
+
+test("a switch while the lookup is pending never registers the old thread's agent", async () => {
+  mockComputers = [m1()];
+  mockDirectory = directory(network([AGENT]));
+  let release: (v: any) => void = () => {};
+  mockApi.resolveIdentity.mockImplementation(
+    () => new Promise((resolve) => (release = resolve)),
+  );
+  const send = jest.fn();
+  const view = renderHook(useCheck, { initialProps: { threadId: "t1" } });
+  let pending: Promise<unknown> = Promise.resolve();
+  act(() => {
+    pending = view.result.current.preflight(message, send);
+  });
+  view.rerender({ threadId: "t2" });
+  await act(async () => {
+    // t1 had no agent yet: registering it now would act on the old thread.
+    release(undefined);
+    await pending;
+  });
+  expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
+});
