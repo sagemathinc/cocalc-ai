@@ -509,6 +509,62 @@ describeDb("a computer connected over conat", () => {
     }
   });
 
+  it("a relay that waited on locks longer than its wait still commits open, and a duplicate stays refused until it finishes", async () => {
+    const t = await ticketFor("exec", { command: "sleep 1; echo slow" });
+    const first = relay(t, {
+      waitMs: 2500,
+      // Authorization stalls longer than the wait itself.
+      beforeCommit: () => new Promise((r) => setTimeout(r, 3000)),
+    });
+    let row: any;
+    await until(async () => {
+      row = (
+        await db().query(
+          "SELECT state, expires_at FROM account_computer_relays WHERE operation_id=$1",
+          [t.ticket.payload.operation_id],
+        )
+      ).rows[0];
+      return row != null;
+    }, 10_000);
+    expect(row.state).toBe("dispatched");
+    expect(new Date(row.expires_at).valueOf()).toBeGreaterThan(
+      Date.now() + 1000,
+    );
+    await expect(relay(t)).rejects.toThrow(/already being relayed/);
+    // (Under PGlite the stalled transaction holds the only connection, so
+    // the router's bounded revalidation drops the computer's socket: the
+    // first relay may end answered or with the explicit unknown outcome.
+    // Either way it ends exactly once, and only then may it be retried.)
+    const result: any = await first;
+    expect([true, false]).toContain(result.answered);
+    await until(async () => {
+      const r = await db().query(
+        "SELECT state FROM account_computer_relays WHERE operation_id=$1",
+        [t.ticket.payload.operation_id],
+      );
+      return r.rows.every((x) => x.state !== "dispatched");
+    });
+  });
+
+  it("finished relay rows older than a day are pruned inline", async () => {
+    const old = randomUUID();
+    await db().query(
+      `INSERT INTO account_computer_relays
+         (correlation, computer_id, account_id, session_id, ticket_id,
+          operation_id, request_hash, epoch, hub_process, state, created_at,
+          expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'h',1,'p','answered',
+               now() - interval '3 days', now() - interval '3 days')`,
+      [old, computer_id, account, randomUUID(), randomUUID(), randomUUID()],
+    );
+    await relay(await ticketFor("exec", { command: "true" }));
+    const r = await db().query(
+      "SELECT 1 FROM account_computer_relays WHERE correlation=$1",
+      [old],
+    );
+    expect(r.rows).toHaveLength(0);
+  });
+
   it("a transport failure after commit is the explicit unknown outcome, and the row is expired", async () => {
     const { setRelayClientForTesting } = await import("./relay");
     const t = await ticketFor("exec", { command: "true" });

@@ -181,7 +181,8 @@ describe("pairing as the machine", () => {
         computer_id: "../../../../tmp/evil",
         agent_network_id: randomUUID(),
         policy: { ...requested, agent_network_id: randomUUID() },
-        name: "../x",
+        // A valid but different name: still ignored (it is unsigned).
+        name: "other-name",
       };
     });
     logs.length = 0;

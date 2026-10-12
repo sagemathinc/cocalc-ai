@@ -37,6 +37,15 @@ jest.setTimeout(60_000);
 
 const describeReal = postgresBinDir() != null ? describe : describe.skip;
 
+/**
+ * Mark a promise that is expected to reject as handled right away: its
+ * assertion is attached only after the race is released, and under load an
+ * unobserved rejection could be reported first.
+ */
+function observe(p: Promise<unknown>): void {
+  p.catch(() => {});
+}
+
 const tables = [
   "accounts",
   "projects",
@@ -287,6 +296,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       });
       await waiters(1);
       const add = addNewcomer(false);
+      observe(add);
       await waiters(2);
       await release();
       await expect(approve).resolves.toHaveProperty("computer_id");
@@ -306,6 +316,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         transcript_hash,
         agent_network_generation: seen,
       });
+      observe(approve);
       await waiters(2);
       await release();
       await expect(add).resolves.toBeDefined();
@@ -431,6 +442,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       const t = await ticketAndProof();
       const release = await block();
       const r = relay(t);
+      observe(r);
       await waiters(1);
       const narrow = removePeer();
       await waiters(2);
@@ -521,6 +533,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       const narrow = removePeer();
       await waiters(1);
       const r = relay(t);
+      observe(r);
       await waiters(2);
       await release();
       await narrow;
@@ -602,6 +615,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       const p = pause();
       await waiters(1);
       const t = ticket();
+      observe(t);
       await waiters(2);
       await release();
       await p;
@@ -663,6 +677,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         name: "late",
         requested_policy: policy(),
       });
+      observe(create);
       await waiters(2);
       await release();
       await rehome;
@@ -679,6 +694,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       });
       await waiters(1);
       const rehome = startRehome();
+      observe(rehome);
       await waiters(2);
       await release();
       await create;
@@ -773,6 +789,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
         [randomUUID(), project],
       );
+      observe(share);
       await waiters(1);
       await rehome.release();
       await expect(share).rejects.toThrow(/project rehome p3 is running/);
@@ -827,6 +844,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         [project],
       );
       const a = attest();
+      observe(a);
       await waiters(1);
       await rehome.release();
       await expect(a).rejects.toThrow(/project rehome p1 is running/);

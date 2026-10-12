@@ -57,6 +57,8 @@ export const SESSION_SLOTS = [1, 2] as const;
 export const SESSION_LIVENESS_MS = 45_000;
 const MAX_OPEN_CHALLENGES = 5;
 const MAX_CHALLENGES_PER_MINUTE = 10;
+/** Used challenges and closed sessions are kept this long (audit). */
+const RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export class ComputerSessionError extends Error {}
 
@@ -129,6 +131,14 @@ export async function createLoginChallenge(
     ) {
       throw new ComputerSessionError("no such computer");
     }
+    // Retention, bounded and inline: this computer's challenges past a day
+    // (a signed request is only accepted within a minute, so its nonce
+    // record is long past use by then).
+    await client.query(
+      `DELETE FROM account_computer_challenges
+        WHERE computer_id=$1 AND expires_at < $2`,
+      [request.computer_id, new Date(now - RETENTION_MS)],
+    );
     const counts = (
       await client.query(
         `SELECT
@@ -296,6 +306,12 @@ export async function loginComputer(
     await client.query(
       `UPDATE account_computer_challenges SET used_at=$2 WHERE challenge_id=$1`,
       [login.challenge_id, new Date(now)],
+    );
+    // Retention: this computer's sessions closed more than a day ago.
+    await client.query(
+      `DELETE FROM account_computer_sessions
+        WHERE computer_id=$1 AND closed_at < $2`,
+      [login.computer_id, new Date(now - RETENTION_MS)],
     );
     // Sessions no router has seen alive lately, or past their lease, are
     // closed first: bumping the generation cuts off any socket still
@@ -473,19 +489,6 @@ export async function closeComputerSession(
         SET closed_at=$3, generation=generation+1
       WHERE session_id=$1 AND generation=$2 AND closed_at IS NULL`,
     [s.session_id, s.generation, new Date(now)],
-  );
-}
-
-/** Forget used and expired challenges and long-closed sessions. */
-export async function pruneComputerSessions(now = Date.now()): Promise<void> {
-  const day = new Date(now - 24 * 60 * 60 * 1000);
-  await getPool().query(
-    `DELETE FROM account_computer_challenges WHERE expires_at < $1`,
-    [day],
-  );
-  await getPool().query(
-    `DELETE FROM account_computer_sessions WHERE closed_at < $1`,
-    [day],
   );
 }
 

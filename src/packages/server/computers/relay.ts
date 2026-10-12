@@ -61,6 +61,9 @@ export const RELAY_WAIT_MS = 25_000;
 /** The largest answer accepted from a computer (raw, before reassembly). */
 export const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 export const MAX_OPEN_RELAYS_PER_COMPUTER = 16;
+/** A relay row outlives its wait by this much (it is expired after). */
+const RELAY_EXPIRY_MARGIN_MS = 5_000;
+const RELAY_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const MAX_OPEN_RELAYS_PER_ACCOUNT = 32;
 export const MAX_WAITERS_PER_PROCESS = 256;
 let maxWaiters = MAX_WAITERS_PER_PROCESS;
@@ -353,7 +356,14 @@ async function authorizeRelay(opts: {
     await db.query(
       `UPDATE account_computer_relays SET state='expired'
         WHERE account_id=$1 AND state='dispatched' AND expires_at <= $2`,
-      [account_id, new Date(now)],
+      [account_id, new Date(lockedNow)],
+    );
+    // Retention, bounded and inline: this computer's finished relay rows
+    // older than a day.
+    await db.query(
+      `DELETE FROM account_computer_relays
+        WHERE computer_id=$1 AND state <> 'dispatched' AND expires_at < $2`,
+      [t.computer_id, new Date(lockedNow - RELAY_RETENTION_MS)],
     );
     const open = (
       await db.query(
@@ -398,11 +408,32 @@ async function authorizeRelay(opts: {
         t.request_hash,
         Number(computer.epoch),
         HUB_PROCESS,
-        new Date(now),
-        new Date(now + opts.waitMs),
+        new Date(lockedNow),
+        new Date(lockedNow + opts.waitMs + RELAY_EXPIRY_MARGIN_MS),
       ],
     );
     await opts.beforeCommit?.();
+    // Stamped again right before COMMIT: the row stays open for the whole
+    // wait that starts after it, however long the locks above took, and the
+    // session's lease must still cover that wait.
+    const commitNow = Date.now();
+    await db.query(
+      `UPDATE account_computer_relays SET created_at=$2, expires_at=$3
+        WHERE correlation=$1`,
+      [
+        correlation,
+        new Date(commitNow),
+        new Date(commitNow + opts.waitMs + RELAY_EXPIRY_MARGIN_MS),
+      ],
+    );
+    const still = await db.query(
+      `SELECT 1 FROM account_computer_sessions
+        WHERE session_id=$1 AND closed_at IS NULL AND lease_until > $2`,
+      [session.session_id, new Date(commitNow + opts.waitMs)],
+    );
+    if (still.rows.length === 0) {
+      throw new ComputerRelayError("this computer is not connected");
+    }
     await db.query("COMMIT");
     return {
       correlation,
@@ -544,12 +575,4 @@ export function summary(reply: any): {
     return { ...out, refused: null };
   }
   return out;
-}
-
-/** Forget old relay rows. */
-export async function pruneComputerRelays(now = Date.now()): Promise<void> {
-  await getPool().query(
-    `DELETE FROM account_computer_relays WHERE expires_at < $1`,
-    [new Date(now - 24 * 60 * 60 * 1000)],
-  );
 }

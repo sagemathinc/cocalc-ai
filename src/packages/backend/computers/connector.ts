@@ -173,7 +173,13 @@ async function post<T>(
       `could not reach ${origin}: ${clean((err as Error)?.message ?? err, 200)}`,
     );
   }
-  const text = await readCapped(res, MAX_RESPONSE_BYTES);
+  let text: string;
+  try {
+    text = await readCapped(res, MAX_RESPONSE_BYTES);
+  } catch (err) {
+    if (signal?.aborted) throw new Error("stopped");
+    throw new Error(`${origin}: ${clean((err as Error)?.message ?? err, 200)}`);
+  }
   let data: any;
   try {
     data = JSON.parse(text);
@@ -336,7 +342,8 @@ export async function pairComputer({
     throw new Error("the certificate is not for this pairing");
   }
   const computer_id = c.computer_id; // a UUID: the parser checked
-  const name = NAME.test(`${status.name}`) ? `${status.name}` : view.name;
+  // The name the person at the machine confirmed; the status's is unsigned.
+  const name = view.name;
   const dir = join(computersDir(), computer_id);
   // Never clobber another pairing's files (keys, ledger, jobs).
   if (existsSync(dir)) {

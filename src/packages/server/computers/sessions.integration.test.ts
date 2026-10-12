@@ -355,6 +355,31 @@ describeDb("computer sessions", () => {
     await expect(createLoginChallenge(good)).rejects.toThrow(/already used/);
   });
 
+  it("old challenges and long-closed sessions are pruned inline", async () => {
+    const c = await pairedComputer();
+    const s1 = (await login(c)).session;
+    await db().query(
+      `UPDATE account_computer_challenges
+          SET created_at=now() - interval '3 days', expires_at=now() - interval '3 days'`,
+    );
+    await db().query(
+      `UPDATE account_computer_sessions SET closed_at=now() - interval '3 days'
+        WHERE session_id=$1`,
+      [s1.session_id],
+    );
+    await login(c);
+    const challenges = await db().query(
+      "SELECT 1 FROM account_computer_challenges WHERE challenge_id=$1",
+      [s1.session_id],
+    );
+    expect(challenges.rows).toHaveLength(0);
+    const sessions = await db().query(
+      "SELECT 1 FROM account_computer_sessions WHERE session_id=$1",
+      [s1.session_id],
+    );
+    expect(sessions.rows).toHaveLength(0);
+  });
+
   it("the relay's live session: a dead newest session is never chosen over a live older one", async () => {
     const { currentSession } = await import("./sessions");
     const c = await pairedComputer();
