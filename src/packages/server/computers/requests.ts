@@ -58,7 +58,12 @@ import { computersSite } from "./site";
 import { assertComputersAuthority } from "./authority";
 import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
 
-export const REQUEST_LIFETIME_MS = 15 * 60 * 1000;
+/**
+ * How long a request waits for the machine and the owner. Generous: people
+ * juggle several agents and get distracted, so a short window mostly just
+ * expires on them (it still needs the owner's fresh auth and phrase check).
+ */
+export const REQUEST_LIFETIME_MS = 60 * 60 * 1000;
 export const MAX_OPEN_REQUESTS_PER_ACCOUNT = 10;
 export const MAX_COMPUTERS_PER_ACCOUNT = 20;
 /** Without a time limit, a certificate is renewed before this runs out. */
