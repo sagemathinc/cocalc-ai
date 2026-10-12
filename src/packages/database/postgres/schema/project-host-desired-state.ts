@@ -13,10 +13,11 @@ import type { Client } from "@cocalc/database/pool";
 // Rollout in two phases, because hub workers restart one at a time and an
 // older worker's intentional change does not bump the generation:
 //
-// - Phase 1 (ENFORCE_DESIRED_STATE_GUARD = false, this release): the trigger
-//   only records each change it would revert in cloud_vm_log, as action
-//   'desired_state_unversioned_change'.
-// - Phase 2 (a later release sets it to true): the trigger reverts them.
+// - Phase 1 (ENFORCE_DESIRED_STATE_GUARD = false; #1002, deployed to prod
+//   2026-10-11): the trigger only recorded each change it would revert in
+//   cloud_vm_log, as action 'desired_state_unversioned_change'.
+// - Phase 2 (ENFORCE_DESIRED_STATE_GUARD = true, now): the trigger reverts
+//   them. Schema sync replaces the function, because the contract changes.
 //
 // Gate for phase 2 (every bay):
 // (a) every process that writes project_hosts runs phase 1;
@@ -28,7 +29,7 @@ import type { Client } from "@cocalc/database/pool";
 //       SELECT count(*), max(ts) FROM cloud_vm_log
 //        WHERE action='desired_state_unversioned_change' AND ts > <time of (a)>;
 //     Any row names a writer to fix first (its runtime holds from/to).
-export const ENFORCE_DESIRED_STATE_GUARD = false;
+export const ENFORCE_DESIRED_STATE_GUARD = true;
 
 export const PROJECT_HOST_DESIRED_STATE_TRIGGER =
   "project_hosts_guard_desired_state_trigger";

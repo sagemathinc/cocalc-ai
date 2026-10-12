@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { upsertProjectHost } from "@cocalc/database/postgres/project-hosts";
-import { desiredStateGuardFunctionSql } from "@cocalc/database/postgres/schema/project-host-desired-state";
+import {
+  desiredStateGuardFunctionSql,
+  ENFORCE_DESIRED_STATE_GUARD,
+} from "@cocalc/database/postgres/schema/project-host-desired-state";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud/db";
 import { before, after, getPool } from "@cocalc/server/test";
 import {
@@ -43,7 +46,31 @@ describe("desired state guard", () => {
     billing: { note: "kept" },
   });
 
+  // Each mode test installs its mode and restores the default.
+  const restoreDefault = () =>
+    getPool().query(desiredStateGuardFunctionSql(ENFORCE_DESIRED_STATE_GUARD));
+
+  it("the installed guard enforces (phase 2)", async () => {
+    expect(ENFORCE_DESIRED_STATE_GUARD).toBe(true);
+    const id = await newHost({ desired_state: "running" });
+    await setHostDesiredState({ host_id: id, state: "stopped" });
+    await getPool().query("UPDATE project_hosts SET metadata=$2 WHERE id=$1", [
+      id,
+      stale("running"),
+    ]);
+    expect((await hostRow(id)).metadata.desired_state).toBe("stopped");
+  });
+
   it("phase 1 records a desired_state change that does not bump the generation", async () => {
+    await getPool().query(desiredStateGuardFunctionSql(false));
+    try {
+      await phase1RecordsUnversionedChange();
+    } finally {
+      await restoreDefault();
+    }
+  });
+
+  async function phase1RecordsUnversionedChange() {
     const id = await newHost({ desired_state: "running" });
     const generation = await setHostDesiredState({
       host_id: id,
@@ -76,7 +103,7 @@ describe("desired state guard", () => {
       [id],
     );
     expect(after.rows[0].n).toBe(1);
-  });
+  }
 
   it("phase 2 reverts a desired_state change that does not bump the generation", async () => {
     await getPool().query(desiredStateGuardFunctionSql(true));
@@ -111,7 +138,7 @@ describe("desired state guard", () => {
       expect(intentSuperseded(row, { intent_generation: next })).toBe(false);
       expect(intentSuperseded(row, {})).toBe(false);
     } finally {
-      await getPool().query(desiredStateGuardFunctionSql(false));
+      await restoreDefault();
     }
   });
 });
