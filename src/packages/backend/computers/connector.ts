@@ -1,0 +1,484 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// The computer's side of CoCalc (`cocalc computer connect`): pair with an
+// account, then run the daemon and keep a conat session to the home bay.
+// Plan: src/.agents/computers-plan-2026-10-11.md (part 4b, revision 3).
+//
+// Each session is its own conat connection: a fresh single-use challenge, a
+// login signed by the computer's key, and subjects bound to that session.
+// Conat's own reconnection is off (it would replay a consumed login); when
+// a session ends (disconnect, lease, revocation) the loop logs in again.
+//
+// Files (owner-only, under ~/.local/share/cocalc/computers/<computer_id>):
+//   connection.json  site, computer id and name
+//   key.pem          the computer's private key, only for a computer without
+//                    a time limit (a time-limited one keeps it in memory, so
+//                    its session never outlives this process)
+//   state/           the daemon's state, ledger, jobs and output
+
+import { hostname, homedir, userInfo } from "node:os";
+import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  parseComputerPolicy,
+  parseRequestedPolicy,
+  type ComputerPolicy,
+} from "@cocalc/util/computers/policy";
+import {
+  parsePairingTranscript,
+  SIGNED_KINDS,
+} from "@cocalc/util/computers/protocol";
+import type { PairingStatus, PairingView } from "@cocalc/util/computers/api";
+import {
+  computerOpSubject,
+  computerSubjectAllowed,
+  isSubjectToken,
+  type ComputerOpMessage,
+  type ComputerReplyMessage,
+} from "@cocalc/conat/computers/subjects";
+import { connect, type Client } from "@cocalc/conat/core/client";
+import {
+  generateAgreementKey,
+  generateSigningKey,
+  keyPairFromPrivatePem,
+  policyHash,
+  privateKeyToPem,
+  randomNonce,
+  signEnvelope,
+  type KeyPair,
+} from "./crypto";
+import { signComputerLogin, type LoginChallengeView } from "./login";
+import {
+  ensurePrivateDir,
+  readJson,
+  writeDurable,
+  writeDurableJson,
+} from "./daemon/durable";
+import { DaemonStore } from "./daemon/state";
+import { ComputerDaemon } from "./daemon/daemon";
+import { HubClock, SessionClock, systemClocks } from "./daemon/clock";
+
+export interface ConnectorIO {
+  log(message: string): void;
+  /** Ask the person at the machine; false if nobody can answer. */
+  confirm(question: string): Promise<boolean>;
+}
+
+export interface Connection {
+  dir: string;
+  origin: string;
+  computer_id: string;
+  name: string;
+  key: KeyPair;
+  /** From pairing: the session's limits (null: none). */
+  duration: ComputerPolicy["duration"];
+}
+
+/** Where computers keep their files (XDG data dir). */
+export function computersDir(): string {
+  const base =
+    process.env.XDG_DATA_HOME?.trim() || join(homedir(), ".local", "share");
+  return join(base, "cocalc", "computers");
+}
+
+/** `https://site/c/R-XXXXXXXXXX` -> its origin and request id. */
+export function parsePairingUrl(url: string): {
+  origin: string;
+  request_id: string;
+} {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(
+      "give the line CoCalc showed you, like https://cocalc.ai/c/R-...",
+    );
+  }
+  const m = u.pathname.match(/^\/c\/(R-[0-9A-HJ-NP-Z]{10})\/?$/);
+  if (m == null || (u.protocol !== "https:" && u.protocol !== "http:")) {
+    throw new Error(
+      "give the line CoCalc showed you, like https://cocalc.ai/c/R-...",
+    );
+  }
+  if (
+    u.protocol === "http:" &&
+    !["localhost", "127.0.0.1"].includes(u.hostname)
+  ) {
+    throw new Error("pairing needs https");
+  }
+  return { origin: u.origin, request_id: m[1] };
+}
+
+async function post<T>(origin: string, path: string, body: object): Promise<T> {
+  const res = await fetch(`${origin}/api/v2/computers/${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`${origin} answered ${res.status} without JSON`);
+  }
+  if (data?.error) throw new Error(`${data.error}`);
+  if (!res.ok) throw new Error(`${origin} answered ${res.status}`);
+  return data as T;
+}
+
+/**
+ * Pair this machine: show the request, resolve the policy, claim it with
+ * fresh keys, show the pairing phrase, and wait for the owner's approval.
+ */
+export async function pairComputer({
+  url,
+  io,
+  pollMs = 2000,
+  signal,
+}: {
+  url: string;
+  io: ConnectorIO;
+  pollMs?: number;
+  signal?: AbortSignal;
+}): Promise<Connection> {
+  const { origin, request_id } = parsePairingUrl(url);
+  const view = await post<PairingView>(origin, "pairing/view", { request_id });
+  if (view.state !== "pending") {
+    throw new Error(`this request is ${view.state}; make a new one in CoCalc`);
+  }
+  const requested = parseRequestedPolicy(view.requested_policy);
+  if (requested.mode !== "direct") {
+    throw new Error("only direct mode is supported so far");
+  }
+  if (requested.mounts.length > 0) {
+    throw new Error("a direct-mode computer has no mounts");
+  }
+  const policy = parseComputerPolicy({ ...requested, mounts: [] });
+  const limit =
+    policy.duration == null
+      ? "no time limit"
+      : `${Math.round(policy.duration.initial_seconds / 60)} minutes (at most ${Math.round(policy.duration.max_seconds / 3600)} hours)`;
+  io.log(
+    [
+      `${origin} asks to connect this computer:`,
+      `  account:  ${view.account_label}`,
+      `  name:     ${view.name}`,
+      `  mode:     DIRECT: agents in that account's agent network run commands`,
+      `            here as ${userInfo().username}, with all of your access`,
+      `  time:     ${limit}`,
+      view.why ? `  why:      ${view.why}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+  if (!(await io.confirm("Connect this computer?"))) {
+    throw new Error("not connected");
+  }
+
+  const key = generateSigningKey();
+  const transcript = parsePairingTranscript({
+    type: "cocalc-computer-pairing",
+    version: 1,
+    site: view.site,
+    cluster_id: view.cluster_id,
+    request_id,
+    account_id: view.account_id,
+    policy_hash: policyHash(policy),
+    signing_key: key.fingerprint,
+    agreement_key: generateAgreementKey().fingerprint,
+    client_nonce: randomNonce(),
+    server_nonce: view.server_nonce,
+    machine: {
+      hostname: hostname().slice(0, 255),
+      os: process.platform,
+      arch: process.arch,
+      user: userInfo().username,
+    },
+  });
+  const { pairing_phrase, transcript_hash } = await post<{
+    pairing_phrase: string;
+    transcript_hash: string;
+  }>(origin, "pairing/submit", {
+    request_id,
+    transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, key),
+    signing_public_key: key.publicDer,
+    resolved_policy: policy,
+  });
+  io.log(
+    `\nPairing phrase:  ${pairing_phrase}\n\nApprove it in CoCalc, after checking it shows exactly this phrase. Waiting...`,
+  );
+
+  let status: PairingStatus;
+  for (;;) {
+    if (signal?.aborted) throw new Error("stopped");
+    status = await post<PairingStatus>(origin, "pairing/status", {
+      request_id,
+      transcript_hash,
+    });
+    if (status.state === "approved") break;
+    if (status.state !== "paired" && status.state !== "pending") {
+      throw new Error(`the request was ${status.state}`);
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  if (
+    status.certificate == null ||
+    status.directory == null ||
+    status.policy == null ||
+    status.computer_id == null ||
+    status.agent_network_id == null
+  ) {
+    throw new Error("the approval is incomplete; try again");
+  }
+  const dir = join(computersDir(), status.computer_id);
+  ensurePrivateDir(dir);
+  // Checks the certificate against the home bay's key, our key and policy.
+  DaemonStore.create(join(dir, "state"), {
+    certificate: status.certificate,
+    ceiling: status.policy,
+    directory: status.directory,
+    computer_key: key.fingerprint,
+    agent_network_id: status.agent_network_id,
+  });
+  const connection: Connection = {
+    dir,
+    origin,
+    computer_id: status.computer_id,
+    name: status.name ?? view.name,
+    key,
+    duration: policy.duration,
+  };
+  writeDurableJson(join(dir, "connection.json"), {
+    origin,
+    computer_id: connection.computer_id,
+    name: connection.name,
+    duration: policy.duration,
+  });
+  if (policy.duration == null) {
+    writeDurable(join(dir, "key.pem"), privateKeyToPem(key.privateKey));
+  }
+  io.log(`Approved: this computer is @${connection.name}.`);
+  return connection;
+}
+
+/** A connected computer without a time limit, from its files. */
+export function loadConnection(computer_id?: string): Connection {
+  const root = computersDir();
+  const ids =
+    computer_id != null
+      ? [computer_id]
+      : existsSync(root)
+        ? readdirSync(root, { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name)
+        : [];
+  const found = ids.filter((id) => existsSync(join(root, id, "key.pem")));
+  if (found.length !== 1) {
+    throw new Error(
+      found.length === 0
+        ? "no connected computer here (a time-limited one ends with its process: connect again)"
+        : `several computers here; name one: ${found.join(", ")}`,
+    );
+  }
+  const dir = join(root, found[0]);
+  const c = readJson<any>(join(dir, "connection.json"));
+  if (c == null) throw new Error("this computer's files are incomplete");
+  const pem = readFileSync(join(dir, "key.pem"), "utf8");
+  return {
+    dir,
+    origin: c.origin,
+    computer_id: c.computer_id,
+    name: c.name,
+    key: keyPairFromPrivatePem(pem),
+    duration: c.duration ?? null,
+  };
+}
+
+export interface RunOptions {
+  connection: Connection;
+  io: ConnectorIO;
+  signal?: AbortSignal;
+  /** Tests: how to get a challenge and open a conat connection. */
+  challenge?: () => Promise<LoginChallengeView>;
+  openConat?: (auth: object) => Client;
+  /** Log in again this long before the lease (15 min) ends. */
+  sessionMs?: number;
+  /** Tests: called once each session is subscribed. */
+  onSession?: (session_id: string) => void;
+}
+
+/**
+ * Run the daemon and keep a session to the home bay until stopped (or the
+ * session's time is over).
+ */
+export async function runConnector(opts: RunOptions): Promise<void> {
+  const { connection, io, signal } = opts;
+  const store = DaemonStore.open(join(connection.dir, "state"));
+  if (store == null) throw new Error("this computer has no daemon state");
+  const clocks = systemClocks;
+  const hubClock = new HubClock(clocks);
+  const session = new SessionClock(clocks, {
+    deadline_ms:
+      connection.duration == null
+        ? null
+        : connection.duration.initial_seconds * 1000,
+    max_ms:
+      connection.duration == null
+        ? null
+        : connection.duration.max_seconds * 1000,
+  });
+  const daemon = new ComputerDaemon({
+    stateDir: join(connection.dir, "state"),
+    store,
+    clocks,
+    hubClock,
+    session,
+    workdir: homedir(),
+    onError: (err) => io.log(`daemon: ${err}`),
+  });
+  daemon.start();
+  const challenge =
+    opts.challenge ??
+    (() =>
+      post<LoginChallengeView>(connection.origin, "session/challenge", {
+        computer_id: connection.computer_id,
+      }));
+  const openConat =
+    opts.openConat ??
+    ((auth: object) =>
+      connect({
+        address: connection.origin,
+        noCache: true,
+        reconnection: false,
+        auth,
+      } as any));
+  let backoff = 1000;
+  try {
+    while (!signal?.aborted && !daemon.sessionEnded) {
+      try {
+        await oneSession({
+          ...opts,
+          store,
+          daemon,
+          hubClock,
+          challenge,
+          openConat,
+        });
+        backoff = 1000;
+      } catch (err) {
+        io.log(`connection: ${(err as Error).message ?? err}`);
+        backoff = Math.min(backoff * 2, 60_000);
+      }
+      if (signal?.aborted || daemon.sessionEnded) break;
+      await new Promise((r) => setTimeout(r, backoff * (0.5 + Math.random())));
+    }
+  } finally {
+    daemon.stop();
+  }
+  if (daemon.sessionEnded) io.log("this computer's session has ended");
+}
+
+async function oneSession({
+  connection,
+  io,
+  signal,
+  store,
+  daemon,
+  hubClock,
+  challenge,
+  openConat,
+  sessionMs = 14 * 60 * 1000,
+  onSession,
+}: RunOptions & {
+  store: DaemonStore;
+  daemon: ComputerDaemon;
+  hubClock: HubClock;
+  challenge: () => Promise<LoginChallengeView>;
+  openConat: (auth: object) => Client;
+}): Promise<void> {
+  const c = await challenge();
+  const login = signComputerLogin({
+    challenge: c,
+    certificate: store.certificate,
+    key: connection.key,
+  });
+  const session_id = c.challenge_id;
+  const client = openConat({ computer_login: login });
+  let sub: Awaited<ReturnType<Client["subscribe"]>> | undefined;
+  const end = () => sub?.close();
+  const timer = setTimeout(end, sessionMs);
+  signal?.addEventListener("abort", end);
+  try {
+    sub = await client.subscribe(
+      computerOpSubject(connection.computer_id, session_id),
+    );
+    client.conn?.on?.("disconnect", end);
+    io.log(`connected (@${connection.name})`);
+    onSession?.(session_id);
+    for await (const mesg of sub) {
+      void answer({
+        client,
+        daemon,
+        hubClock,
+        computer_id: connection.computer_id,
+        session_id,
+        data: mesg.data,
+      }).catch((err) => io.log(`answer: ${err}`));
+    }
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", end);
+    sub?.close();
+    client.close();
+  }
+}
+
+async function answer({
+  client,
+  daemon,
+  hubClock,
+  computer_id,
+  session_id,
+  data,
+}: {
+  client: Client;
+  daemon: ComputerDaemon;
+  hubClock: HubClock;
+  computer_id: string;
+  session_id: string;
+  data: unknown;
+}): Promise<void> {
+  const received_at = systemClocks.continuous();
+  const op = data as Partial<ComputerOpMessage> | null;
+  if (
+    op == null ||
+    op.v !== 1 ||
+    !isSubjectToken(op.correlation) ||
+    typeof op.reply_subject !== "string" ||
+    // Only to a reply subject of this very session, ending in this
+    // correlation (conat auth refuses anything else anyway).
+    !computerSubjectAllowed(computer_id, session_id, op.reply_subject, "pub") ||
+    !op.reply_subject.endsWith(`.${op.correlation}`) ||
+    op.message == null
+  ) {
+    return;
+  }
+  if (typeof op.hub_now === "number") {
+    hubClock.observe(op.hub_now - systemClocks.wall());
+  }
+  const reply = await daemon.handle({
+    ticket: op.message.ticket,
+    proof: op.message.proof,
+    request: op.message.request,
+    received_at,
+  });
+  const out: ComputerReplyMessage = {
+    v: 1,
+    correlation: op.correlation,
+    reply,
+  };
+  await client.publish(op.reply_subject, out);
+}

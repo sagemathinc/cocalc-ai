@@ -67,6 +67,11 @@ export interface PairingStatus {
   computer_id?: string;
   name?: string;
   certificate?: SignedEnvelope<ComputerCertificate>;
+  /** Once approved: the cluster's signing keys the daemon will trust. */
+  directory?: DirectorySigningKey[];
+  /** Once approved: the approved policy (the certificate's ceiling). */
+  policy?: ComputerPolicy;
+  agent_network_id?: string;
 }
 
 /** A new request, and the line the owner runs on the computer. */

@@ -53,7 +53,7 @@ import type {
 } from "@cocalc/util/computers/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
-import { getBaySigningKey } from "./signing-keys";
+import { getBaySigningKey, listSigningKeyDirectory } from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority } from "./authority";
 import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
@@ -412,7 +412,8 @@ export async function getPairingStatus({
   if (row.state !== "approved" || row.computer_id == null) return status;
   const computer = (
     await getPool().query(
-      `SELECT computer_id, name, certificate, revoked_at, tombstoned_at
+      `SELECT computer_id, name, certificate, revoked_at, tombstoned_at,
+              policy_ceiling, agent_network_id
          FROM account_computers
         WHERE computer_id=$1 AND transcript_hash=$2`,
       [row.computer_id, row.transcript_hash],
@@ -430,6 +431,9 @@ export async function getPairingStatus({
     computer_id: computer.computer_id,
     name: computer.name,
     certificate: computer.certificate,
+    directory: await listSigningKeyDirectory(),
+    policy: computer.policy_ceiling,
+    agent_network_id: computer.agent_network_id,
   };
 }
 

@@ -882,6 +882,10 @@ export class ConatServer extends EventEmitter {
       if (typeof user.hub_id === "string" && user.hub_id.length > 0) {
         return `hub:${user.hub_id}`;
       }
+      const computer_id = (user as { computer_id?: unknown }).computer_id;
+      if (typeof computer_id === "string" && computer_id.length > 0) {
+        return `computer:${computer_id}`;
+      }
     }
     return "anonymous";
   };
@@ -1974,6 +1978,37 @@ export class ConatServer extends EventEmitter {
           }, 15_000)
         : undefined;
     apiKeyRefreshTimer?.unref?.();
+    // A computer's session (see server/computers/sessions.ts) can be revoked,
+    // reclaimed or outlived by its computer's epoch at any time: recheck every
+    // interest it holds (isAllowed rechecks the session row, uncached), and
+    // drop the socket the moment any is refused.
+    let computerRefreshInFlight = false;
+    const computerRefreshTimer =
+      !user?.error && typeof user?.computer_id === "string"
+        ? setInterval(async () => {
+            if (!socket.connected || computerRefreshInFlight) return;
+            computerRefreshInFlight = true;
+            try {
+              const interests = new Set([
+                ...(this.subscriptions[id] ?? []),
+                ...(this.rpcServiceSubjects[id] ?? []),
+              ]);
+              // With no interest yet, check the session itself.
+              if (interests.size === 0) interests.add("");
+              for (const subject of interests) {
+                if (!(await this.isAllowed({ user, subject, type: "sub" }))) {
+                  throw Error("computer session ended");
+                }
+              }
+            } catch {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+            } finally {
+              computerRefreshInFlight = false;
+            }
+          }, 15_000)
+        : undefined;
+    computerRefreshTimer?.unref?.();
     this.log("new connection", { id, user });
     if (this.subscriptions[id] == null) {
       this.subscriptions[id] = new Set<string>();
@@ -1981,6 +2016,7 @@ export class ConatServer extends EventEmitter {
     socket.on("disconnecting", async () => {
       if (leaseTimer) clearTimeout(leaseTimer);
       if (apiKeyRefreshTimer) clearInterval(apiKeyRefreshTimer);
+      if (computerRefreshTimer) clearInterval(computerRefreshTimer);
       apiKeyPublicationSubjects.clear();
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);

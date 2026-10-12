@@ -18,7 +18,9 @@ import type {
 } from "@cocalc/util/computers/protocol";
 import { resolveProjectOwningBay } from "@cocalc/server/bay-directory";
 import type { AgentRun } from "@cocalc/server/agents/store";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { accountHomeBay, computersAtBay } from "./routing";
+import { relayToComputer } from "./relay";
 
 export async function agentComputerRequest(
   run: AgentRun,
@@ -90,6 +92,21 @@ export async function agentComputerRequest(
         operation_id: request.operation_id,
         pop_key: request.pop_key,
         attestation,
+      });
+    case "send":
+      // Stage 1: the computer's sessions live at the account's home bay.
+      if (home_bay_id !== getConfiguredBayId()) {
+        throw new Error(
+          "sending to a computer from another bay isn't supported yet",
+        );
+      }
+      return await relayToComputer({
+        account_id,
+        agent_id,
+        run_id: run.run_id,
+        ticket: request.ticket,
+        proof: request.proof,
+        request: request.request,
       });
   }
 }

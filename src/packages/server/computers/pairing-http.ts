@@ -21,6 +21,11 @@ import {
   getPairingView,
   submitPairing,
 } from "./requests";
+import {
+  ComputerSessionError,
+  createLoginChallenge,
+  type LoginChallenge,
+} from "./sessions";
 
 const logger = getLogger("server:computers:pairing-http");
 
@@ -69,6 +74,7 @@ export function resetPairingRateLimitForTesting(): void {
 function publicError(err: unknown): { error: string } {
   if (
     err instanceof ComputerRequestError ||
+    err instanceof ComputerSessionError ||
     err instanceof ProtocolError ||
     err instanceof CanonicalEncodingError ||
     err instanceof PolicyError
@@ -130,6 +136,20 @@ export async function pairingStatus(
       transcript_hash: `${params.transcript_hash ?? ""}`,
       now,
     });
+  } catch (err) {
+    return publicError(err);
+  }
+}
+
+/** A connected computer asks for a login challenge (see sessions.ts). */
+export async function sessionChallenge(
+  params: { computer_id?: unknown },
+  address: string,
+  now = Date.now(),
+): Promise<PairingResult<LoginChallenge>> {
+  try {
+    admit(address, "submit", now);
+    return await createLoginChallenge(`${params.computer_id ?? ""}`, now);
   } catch (err) {
     return publicError(err);
   }

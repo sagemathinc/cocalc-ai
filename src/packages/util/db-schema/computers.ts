@@ -175,7 +175,8 @@ Table({
       },
       {
         name: "account_computer_requests_network",
-        query: "(account_id,agent_network_id) WHERE state IN ('pending','paired')",
+        query:
+          "(account_id,agent_network_id) WHERE state IN ('pending','paired')",
       },
     ],
   },
@@ -419,5 +420,101 @@ Table({
     ),
     created_at: created("Creation time."),
     retired_at: timestamp("No longer used to sign."),
+  },
+});
+
+// Account home: single-use login challenges for computers (consumed by the
+// conat login that answers them). Kept a day for the audit, then pruned.
+Table({
+  name: "account_computer_challenges",
+  rules: {
+    primary_key: "challenge_id",
+    pg_custom_indexes: [
+      {
+        name: "account_computer_challenges_computer",
+        query: "(computer_id, created_at DESC)",
+      },
+    ],
+  },
+  fields: {
+    challenge_id: required("uuid", "Challenge (and session) id."),
+    computer_id: required("uuid", "Computer."),
+    account_id: required("uuid", "Owning account."),
+    nonce: required("string", "Random nonce the login signs."),
+    expires_at: { ...timestamp("Expiry (60 s)."), not_null: true },
+    used_at: timestamp("When a login consumed it."),
+    created_at: created("Issue time."),
+  },
+});
+
+// Account home: a computer's conat sessions. At most two open per computer
+// (slots 1 and 2, claimed atomically); generation fences a router that was
+// thought dead and resumed.
+Table({
+  name: "account_computer_sessions",
+  rules: {
+    primary_key: "session_id",
+    pg_custom_indexes: [
+      {
+        name: "account_computer_sessions_slot",
+        unique: true,
+        query: "(computer_id, slot) WHERE closed_at IS NULL",
+      },
+    ],
+  },
+  fields: {
+    session_id: required("uuid", "Session (the consumed challenge's id)."),
+    computer_id: required("uuid", "Computer."),
+    account_id: required("uuid", "Owning account."),
+    slot: required("integer", "1 or 2."),
+    epoch: required("integer", "The computer's epoch at login."),
+    generation: counter("Bumped when the session is closed or reclaimed.", "1"),
+    router: optional("string", "Router process incarnation holding it."),
+    lease_until: { ...timestamp("End of the login's lease."), not_null: true },
+    connected_at: created("Login time."),
+    last_seen: timestamp("Last revalidation."),
+    closed_at: timestamp("Closed (disconnect, revoke, reclaim)."),
+  },
+});
+
+// Account home: operations dispatched to a computer session and waiting for
+// (or holding) its answer. Committed before the publish: "dispatched", never
+// "delivered", until an answer arrives.
+Table({
+  name: "account_computer_relays",
+  rules: {
+    primary_key: "correlation",
+    pg_custom_indexes: [
+      {
+        name: "account_computer_relays_operation",
+        query: "(computer_id, operation_id)",
+      },
+      { name: "account_computer_relays_expiry", query: "(expires_at)" },
+    ],
+    pg_constraints: [
+      {
+        name: "account_computer_relays_state_check",
+        type: "check",
+        expression: "state IN ('dispatched','answered','expired')",
+      },
+    ],
+  },
+  fields: {
+    correlation: required("string", "128 random bits, base64url."),
+    computer_id: required("uuid", "Computer."),
+    account_id: required("uuid", "Owning account."),
+    session_id: required("uuid", "The session it was sent to."),
+    ticket_id: required("uuid", "Ticket."),
+    operation_id: required("uuid", "Operation."),
+    request_hash: required("string", "Request hash."),
+    epoch: required("integer", "Computer epoch at dispatch."),
+    hub_process: required("string", "Hub process waiting for the answer."),
+    state: required("string", "dispatched, answered, expired."),
+    answer: json("The daemon's answer (bounded).", false),
+    created_at: created("Dispatch time."),
+    expires_at: {
+      ...timestamp("When an unanswered relay expires."),
+      not_null: true,
+    },
   },
 });

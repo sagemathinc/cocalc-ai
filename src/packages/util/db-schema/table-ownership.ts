@@ -452,6 +452,9 @@ export const TABLE_OWNERSHIP = {
       "account_computer_operations",
       "account_computer_jobs",
       "account_computer_ticket_log",
+      "account_computer_challenges",
+      "account_computer_sessions",
+      "account_computer_relays",
     ],
     {
       ownership: "account-home",

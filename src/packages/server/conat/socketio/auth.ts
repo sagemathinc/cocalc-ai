@@ -70,6 +70,11 @@ import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
 import { assertApiKeyProjectMembership } from "@cocalc/server/api/project-membership-revocation";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
+import { computerSubjectAllowed } from "@cocalc/conat/computers/subjects";
+import {
+  loginComputer,
+  sessionIsCurrent,
+} from "@cocalc/server/computers/sessions";
 import {
   ensureAccountSecurityStateReady,
   getAccountRevokedBeforeCached,
@@ -281,11 +286,93 @@ async function accountSecurityStateAllowsAccount({
   return true;
 }
 
+/**
+ * A connected computer (server/computers/sessions.ts). Deliberately NOT a
+ * CoCalcUser variant: it has no account, project, hub or host id, so every
+ * generic code path treats it as nobody; isAllowed handles it first and
+ * allows only its own session's exact subjects.
+ */
+interface ComputerUser {
+  computer_id: string;
+  computer_account_id: string;
+  computer_session_id: string;
+  computer_generation: number;
+  computer_epoch: number;
+  auth_actor: "computer";
+  auth_lease_exp_s: number;
+}
+
+function asComputerUser(user: unknown): ComputerUser | undefined {
+  const u = user as Partial<ComputerUser> | null | undefined;
+  if (u == null || typeof u !== "object" || u.auth_actor !== "computer") {
+    return undefined;
+  }
+  if (
+    !isValidUUID(u.computer_id) ||
+    !isValidUUID(u.computer_session_id) ||
+    !Number.isSafeInteger(u.computer_generation) ||
+    !Number.isSafeInteger(u.computer_epoch) ||
+    (u as any).account_id != null ||
+    (u as any).project_id != null ||
+    (u as any).hub_id != null ||
+    (u as any).host_id != null
+  ) {
+    return undefined;
+  }
+  return u as ComputerUser;
+}
+
+async function isComputerAllowed(
+  user: ComputerUser,
+  subject: string,
+  type: "sub" | "pub",
+): Promise<boolean> {
+  try {
+    // "" is the server's periodic check of the session itself.
+    if (
+      subject !== "" &&
+      !computerSubjectAllowed(
+        user.computer_id,
+        user.computer_session_id,
+        subject,
+        type,
+      )
+    ) {
+      return false;
+    }
+    return await sessionIsCurrent({
+      computer_id: user.computer_id,
+      session_id: user.computer_session_id,
+      generation: user.computer_generation,
+      epoch: user.computer_epoch,
+    });
+  } catch (err) {
+    logger.error("failed closed while checking a computer session", err);
+    return false;
+  }
+}
+
 export async function getUser(
   socket,
   systemAccounts?: { [cookieName: string]: { password: string; user: any } },
   options?: { revalidation?: boolean },
 ): Promise<CoCalcUser> {
+  const computerLogin = socket?.handshake?.auth?.computer_login;
+  if (computerLogin != null) {
+    // A single-use login: never re-run (revalidation rechecks the session).
+    if (options?.revalidation) throw Error("computer logins are single use");
+    const s = await loginComputer(computerLogin);
+    const user: ComputerUser = {
+      computer_id: s.computer_id,
+      computer_account_id: s.account_id,
+      computer_session_id: s.session_id,
+      computer_generation: s.generation,
+      computer_epoch: s.epoch,
+      auth_actor: "computer",
+      auth_lease_exp_s: s.lease_until / 1000,
+    };
+    return user as unknown as CoCalcUser;
+  }
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
     if (bearerToken.startsWith(EXTERNAL_AGENT_TOKEN_PREFIX)) {
@@ -584,6 +671,12 @@ export async function isAllowed({
   if (user == null || user?.error) {
     // non-authenticated user -- allow NOTHING
     return false;
+  }
+  if ((user as any).auth_actor === "computer") {
+    const computer = asComputerUser(user);
+    return computer == null
+      ? false
+      : await isComputerAllowed(computer, subject, type);
   }
   const userType = getCoCalcUserType(user);
   if (userType === "account") {

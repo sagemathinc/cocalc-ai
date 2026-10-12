@@ -35,6 +35,14 @@ export type AgentComputerRequest =
       request: unknown;
       operation_id: string;
       pop_key: string;
+    }
+  | {
+      action: "computer";
+      op: "send";
+      /** The ticket from op "ticket", the proof by its PoP key, the request. */
+      ticket: unknown;
+      proof: string;
+      request: unknown;
     };
 
 type FieldCheck = (value: unknown) => boolean;
@@ -73,6 +81,11 @@ const FIELDS: Record<string, Record<string, [FieldCheck, boolean]>> = {
     request: [isPresent, true],
     operation_id: [isRef, true],
     pop_key: [isText(256), true],
+  },
+  send: {
+    ticket: [(v) => v != null && typeof v === "object", true],
+    proof: [isText(256), true],
+    request: [isPresent, true],
   },
 };
 
