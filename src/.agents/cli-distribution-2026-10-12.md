@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 2 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium). This revision answers every point; the numbers in brackets, e.g. [R2], refer to that review. William reviews after @lite1-review approves.
+Status: revision 3 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) is answered here; its findings are cited as [S1]–[S6]. William reviews after @lite1-review approves.
 
 ## Why change
 
@@ -33,16 +33,17 @@ What went wrong on Oct 12 while testing the one-line setup (`curl … | sh`):
 | Compromised CDN, R2 or mirror **after** a trusted bootstrap | yes | Can only deny service or delay. All content must match signed TUF metadata, and expiring timestamp metadata bounds freeze or replay. |
 | Compromised CDN or site **at first install, or on any `curl \| sh` re-run** | **no** (stated honestly) [R1] | Full code execution as the user. `curl \| sh` trusts the origin that finally serves the script, and its CDN, completely. This is the same for every `curl \| sh`. Mitigations: below. |
 | Malicious or compromised site after install | yes | Can't push code. A site only names a target that already exists in the signed channel metadata the client trusts. |
-| Compromised CI or build pipeline | yes, contained | Can't sign: signing is a separate minimal job with a non-exportable KMS key [R2]. A malicious *commit* that passes review is out of scope, just as for any release process. |
+| Compromised CI or build pipeline | yes, **not contained in phase 1** [S1] | The key can't be stolen (non-exportable KMS, isolated signing job), but the signer is an **oracle**. A compromised authorized builder or workflow can produce malicious bytes with valid provenance, and they get signed. Provenance says where bytes came from, not that they are good. So in phase 1, a compromised builder *can* produce signed dev and candidate releases, and stable ones with a manual approval. Stable hardening below. A malicious commit that passes review is also out of scope, as for any release process. |
 | Compromised online signing key (timestamp/snapshot) | yes | Bounded by short expiry. Rotated by targets or root; can't create new targets. |
-| Compromised targets key (e.g. `cli-stable`) | yes | Can sign bad releases until root revokes the delegation. Recovery is defined below. |
+| Compromised targets key (e.g. `cli-stable`) | yes, **limited to bundles** [S2] | Can sign bad **bundles** until root revokes the delegation. It can't replace the launcher, bootstrap verifier or Node: those are signed only by the offline `runtime` role. Revocation only stops *subsequent* installs. A client that already ran a malicious bundle is compromised (next row). |
+| A malicious signed bundle that already ran | **no recovery in-band** [S2] | The bundle runs as you, so it can rewrite the launcher, TUF state, `active` and every computer release record, and steal credentials. That is full same-user compromise. Recovery is out of band: a clean reinstall from a trusted path, rotating the CoCalc credentials it could read, and incident response. The update system can't clean an account that ran attacker code. |
 | Compromised root keys (threshold) | no | Offline hardware, threshold. Out of scope beyond holding them carefully. |
 | Compromised upstream Node | yes | Release-time verification of Node's signed `SHASUMS256` against pinned Node release keys [R8]. |
-| Insider or targeted equivocation (a different signed release for one victim) | partly | Every signed target is published in snapshot metadata. Clients pin the snapshot version, so a hidden one-off release must sit in public metadata. Transparency logging could come later. |
+| Insider or targeted equivocation (a different signed release for one victim) | **undetected in phase 1** [S3] | Someone holding the relevant delegated plus snapshot and timestamp keys can serve one victim a separately signed metadata chain. Snapshot pinning only prevents rollback for that client and doesn't make the target public. Detecting this needs an append-only log with independent monitors: later hardening, e.g. publishing each metadata version to a public transparency log that clients require. |
 | Freeze or replay (serving old metadata) | yes | TUF timestamp expiry. Clients refuse expired metadata unless a local offline policy explicitly allows it [R7]. |
 | Disk, stream or memory exhaustion | yes | Size caps on metadata and downloads, timeouts, and unpacked-size and file-count limits [R8]. |
 | Partial, crashed or concurrent updates | yes | A transaction with a lock and atomic pointer swap, plus crash recovery [R9]. |
-| Environment injection (`NODE_OPTIONS`, `NODE_PATH`, proxy, custom CA) | partly | The launcher clears `NODE_OPTIONS` and `NODE_PATH` [R10]. A proxy or custom CA can't forge signed metadata, so it only affects availability. |
+| Environment injection (`NODE_OPTIONS`, `NODE_PATH`, proxy, custom CA) | partly | The launcher clears `NODE_OPTIONS` and `NODE_PATH` [R10]. A proxy or custom CA trusted by the system can't forge signed metadata, so **update authenticity survives**. It **can** read and modify ordinary API traffic, stealing CLI cookies and tokens and user data, exactly as for any TLS client that trusts the system CAs [S4]. |
 | Same-user or local-admin compromise | **no** | Anything running as you can rewrite your files. That includes an unsigned dev bundle you opted into [R4] and direct-mode computer jobs [R5]. |
 
 **Reducing first-install trust [R1].**
@@ -68,8 +69,9 @@ Our own policy layer on top of that:
 |---|---|---|---|
 | `root` | the keys and thresholds of every role | offline hardware keys, **2 of 3** (William plus two others) | 1 year; rotated by threshold |
 | `targets` (top level) | delegations to the roles below | offline, 2 of 3 | 6 months |
-| `cli-stable` | stable CLI releases (bundle, Node, bootstrap) | KMS, non-exportable; used only by the release signing job, after a manual approval | 3 months |
-| `cli-candidate`, `cli-dev` | candidate and dev releases | KMS (separate keys); signed automatically per main commit | 1 month |
+| `runtime` | the trusted computing base: launcher, bootstrap verifier, Node archives [S2] | **offline**, 2 of 3; changes rarely (a Node bump or verifier fix) | 6 months |
+| `cli-stable` | stable CLI **bundles only** | KMS, non-exportable; used only by the release signing job, after a manual approval | 3 months |
+| `cli-candidate`, `cli-dev` | candidate and dev **bundles only** | KMS (separate keys); signed automatically per main commit | 1 month |
 | `computers` | computer daemon releases (decision 27) | **offline**, separate from all CLI keys | 6 months |
 | `snapshot`, `timestamp` | which metadata versions are current, and freshness | KMS, online | snapshot 7 days, timestamp 1 day |
 
@@ -77,9 +79,12 @@ Our own policy layer on top of that:
   - The build job produces the bundle and a provenance attestation and never sees a signing key.
   - A separate signing job, a few dozen lines in its own workflow, does no checkout and runs no repository code. It receives the artifact digest and size, checks the attestation, gets KMS access through GitHub OIDC (no exportable secret), and signs the metadata.
   - Stable signing needs a protected environment with manual approval.
+  - **What this does and doesn't buy [S1].** It protects the key. It doesn't stop a compromised builder from getting malicious bytes signed: the signer is an oracle.
+- **Stable hardening: independent reproducible rebuild [S1].** Before `cli-stable` may sign, a second builder rebuilds the bundle from the same approved source revision and its sha256 must match exactly. That builder is administered independently (a machine outside GitHub Actions, e.g. one held by William). The signing policy binds three things: the approved revision, the protected workflow, and both builder identities. This needs a reproducible bundle build (esbuild/ncc with pinned dependencies and no embedded timestamps), which phase 1 must make and test. Until then, the threat-model row above stands as written.
+- **Separate trust for the runtime [S2].** The launcher, bootstrap verifier and Node form the client's trusted computing base. Only the offline `runtime` role signs them, so a compromised online `cli-*` key can't replace the verifier or Node. Bundles from `cli-*` roles are verified by that fixed runtime.
 - **Channels are roles [R6].** A stable client trusts only `cli-stable` targets. Candidate and dev need an explicit local opt-in (`cocalc update --channel candidate`), and highest-seen state is tracked per role. A dev build can't raise a stable client's floor.
 - **Revocation and recovery [R2, R7].**
-  - *A bad signed release:* the role signs metadata that removes the target, and lists it as revoked in a custom field the client honors. Clients on it are told to update or roll back.
+  - *A bad signed release:* the role signs metadata that removes the target, and lists it as revoked in a custom field the client honors. Clients that haven't run it never will. Clients that already ran a *malicious* one are treated as compromised, as described in the threat model: recovery is out of band. Clients on a merely *buggy* one are told to update or roll back.
   - *A compromised delegated key:* the threshold of `targets` and `root` rotates the delegation. Old signatures stop verifying after the next root or targets version.
   - *A compromised online key:* rotated the same way, with exposure bounded by expiry.
   - *Lost root keys:* a threshold means one lost key isn't fatal. Losing two needs a manual re-bootstrap announced out of band.
@@ -151,8 +156,13 @@ From then on, everything goes through the bootstrap verifier and signed metadata
    Pick the newest non-revoked target of the trusted role. Its version must be at least `highest_seen[role]`.
 3. **Stage:** download every needed file into unique private staging (`O_EXCL`), with caps and timeouts, verify sizes and hashes, then extract safely.
 4. **Sync:** fsync the files, rename into `node/<h>` and `targets/<h>`, and fsync the directories.
-5. **Swap:** write `active.new`, fsync it, rename it over `active`, and fsync the directory. Record `previous` and `highest_seen`.
-6. **Recover:** on startup, staging leftovers are deleted, and an `active.new` without the rename is discarded. Every crash point leaves either the old or the new state.
+5. **Raise the floor first [S6].** Write the newly trusted TUF metadata and the new `highest_seen[role]` durably (write, fsync, rename, then fsync the directory) **before** exposing the new code. A crash here leaves the old `active` with a higher floor, which is safe: the next update simply continues.
+6. **Journal, then swap.** Write `transition` = {from: old active line, to: new line} durably. Then write `active.new`, fsync, rename it over `active`, and fsync the directory. Then write `previous` = the `from` line durably, and delete `transition`.
+7. **Recover:** on startup:
+   - staging leftovers are deleted;
+   - a `transition` whose `to` is already `active` is completed (it writes `previous`);
+   - a `transition` whose `to` isn't `active` is discarded, along with any `active.new`.
+   Every crash point leaves either the old or the new active state, with a floor at least as high as before. Crash tests cover every step, including the one between the floor and the swap.
 
 **Rollback** is local only, and the server can never trigger it. It may only go to a target that was verified on this machine before and isn't revoked. It changes `active` but never lowers `highest_seen`.
 
@@ -177,13 +187,20 @@ Rules:
 - **Pinned paths.** The service (launchd/systemd, or the foreground connector) execs **absolute content-addressed paths** from that record. It never runs the global launcher or `active`.
 - **GC roots.** CLI cleanup treats those paths as roots.
 - **Updates.** Only `cocalc computer update`, run locally at a terminal with TTY confirmation, changes the record, and only to a target signed by the `computers` role. The computers protocol has no update operation: an agent or hub request to update is refused.
-- **Honest scope.**
-  - In **direct mode**, the agents' jobs run as the same user and can rewrite these files. So the offline key protects against the *release channels and hubs* changing a computer's code, not against same-user code.
-  - In **isolated mode**, jobs run in a rootless container without write access to the record. That OS separation is what makes the claim hold against job code too.
+- **Honest scope [S2].** The offline `computers` key protects against these changing a computer's code:
+  - hubs;
+  - the computers protocol;
+  - an honest updater, and accidental drift from CLI channels.
+
+  It does **not** protect against code running as the same user, which can rewrite the record. That includes:
+  - a malicious ordinary CLI bundle (even a signed one);
+  - in direct mode, the agents' jobs.
+
+  In isolated mode, job code is containered and can't write the record, but the user's own CLI can. Real protection against same-user code needs an OS boundary: a root-owned updater and record, or a separate service user. That is an option for later, not part of phase 1.
 
 ## Version skew [R13]
 
-- **Enforced by the hub.** Each hub has a minimum supported CLI version. The hub **enforces it at its API**: requests from a CLI below it (identified by a version header the CLI sends) get a specific error. A CLI that sends no header is a pre-manifest CLI, and the hub refuses only the operations that require newer behavior.
+- **The version header is for compatibility, not security [S5].** The CLI sends its version, and the hub uses it to give old clients a clear "please update" error. Any client can forge the header, so **no security property depends on it**. Every security check is enforced from the request itself (auth, required protocol fields and capabilities, server state), regardless of the claimed version. When an operation needs newer behavior, the hub requires the fields or capabilities that behavior adds. A request without them is refused for that reason, not because of the binary's claimed identity.
 - **The client check is UX only.** The CLI reads `/cli/site.json` (cached up to 10 minutes) and stops early with: "This site needs cocalc ≥ X: run `cocalc update`". The cache only delays the friendly message, never enforcement.
 - **Pre-manifest CLIs:** the setup scripts keep their "Usage: line names the subcommand" probe for those.
 
@@ -212,13 +229,17 @@ Developers should use it on development machines (or a separate OS user), never 
 
 1. **Build.** Every merge to `main`: the build job makes the bundle (as it does for projects) and an attestation, and uploads `targets/<sha256>.js`.
 2. **Sign dev builds.** The isolated signing job signs `cli-dev` metadata, then the snapshot and timestamp.
-3. **Promote.** Candidate and stable come from re-signing an existing dev target (same bytes, same hash) under the candidate or stable role. Stable needs a manual approval.
-4. **Verify Node upstream** [R8]. Bumping the Node version is a reviewed change. A CI job checks `SHASUMS256.txt.sig` against the pinned Node release keys, then records each archive's filename, platform, size and sha256 as signed targets. Clients never verify GPG.
+3. **Promote.** Candidate and stable come from re-signing an existing dev target (same bytes, same hash) under the candidate or stable role. Stable needs a manual approval and, once reproducible builds land, a matching independent rebuild [S1]. A manual approval of bytes isn't evidence that they match the reviewed source; the independent rebuild is.
+4. **Verify Node upstream** [R8]. This is signed by the offline `runtime` role, together with launcher and bootstrap changes [S2]. Bumping the Node version is a reviewed change. A CI job checks `SHASUMS256.txt.sig` against the pinned Node release keys, then records each archive's filename, platform, size and sha256 as signed targets. Clients never verify GPG.
 5. **Serve.** Hubs embed the current stable root metadata and the installer for their build, and mirror the official metadata and targets.
 
 ## Rollout
 
-1. **The signing foundation:** the TUF repository, KMS keys, the root ceremony (2 of 3), the isolated signing job, and Node upstream verification.
+1. **The signing foundation:**
+   - the TUF repository and KMS keys;
+   - the root and runtime ceremonies (2 of 3);
+   - the isolated signing job and Node upstream verification;
+   - a reproducible bundle build, plus an independent rebuilder for stable [S1].
 2. **The client:** the bootstrap verifier (`tuf-js` plus our policy), the launcher, `install.sh`, the `cocalc update` transaction, and the local daemon handshake. The hub serves `/cli/*`. Covered by adversarial tests: tampered metadata or targets, expiry, rollback, freeze, crash at every step, concurrent updates, size bombs, symlink and traversal archives, and environment injection.
 3. **Version enforcement:** the hub's minimum-version check, plus the client message.
 4. **Computers:** the release record and `cocalc computer update` with the offline role.
@@ -229,4 +250,6 @@ Developers should use it on development machines (or a separate OS user), never 
 
 - **Root key holders:** who holds the 2-of-3 offline root keys (e.g. YubiKeys)?
 - **Node version:** Node 24 LTS or 26?
+- **The independent rebuilder for stable [S1]:** whose machine, and is it worth the operational cost? The alternative is accepting the phase-1 builder-oracle risk for stable.
+- **Transparency log [S3]:** add one in phase 1, or accept undetected targeted equivocation for now?
 - **Is phase 1 too much?** A smaller first step would be to just fix the drift: hub-served `install.sh` plus the existing SEA with today's (weak) checks. The full TUF version would then be the real phase 1. This document assumes we go straight to the signed version, because the drift fix alone keeps today's weak trust model.
