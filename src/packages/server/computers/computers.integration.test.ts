@@ -533,7 +533,8 @@ describeDb("computers store", () => {
         "INSERT INTO accounts (account_id, email_address, created) VALUES ($1,'s@example.org',now())",
         [stranger],
       );
-      const { approveComputerRequest } = await import("./requests");
+      const { approveComputerRequest, REQUEST_LIFETIME_MS } =
+        await import("./requests");
       const { request_id } = await newRequest();
       const paired = await machinePairs(request_id);
       await expect(
@@ -558,7 +559,7 @@ describeDb("computers store", () => {
           account_id: account,
           request_id,
           transcript_hash: paired.transcript_hash,
-          now: Date.now() + 16 * 60 * 1000,
+          now: Date.now() + REQUEST_LIFETIME_MS + 60_000,
         }),
       ).rejects.toThrow(/expired/);
     });
