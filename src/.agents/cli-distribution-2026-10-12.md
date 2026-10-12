@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 3 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) is answered here; its findings are cited as [S1]–[S6]. William reviews after @lite1-review approves.
+Status: revision 4 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 answers rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. William reviews after @lite1-review approves.
 
 ## Why change
 
@@ -38,7 +38,8 @@ What went wrong on Oct 12 while testing the one-line setup (`curl … | sh`):
 | Compromised targets key (e.g. `cli-stable`) | yes, **limited to bundles** [S2] | Can sign bad **bundles** until root revokes the delegation. It can't replace the launcher, bootstrap verifier or Node: those are signed only by the offline `runtime` role. Revocation only stops *subsequent* installs. A client that already ran a malicious bundle is compromised (next row). |
 | A malicious signed bundle that already ran | **no recovery in-band** [S2] | The bundle runs as you, so it can rewrite the launcher, TUF state, `active` and every computer release record, and steal credentials. That is full same-user compromise. Recovery is out of band: a clean reinstall from a trusted path, rotating the CoCalc credentials it could read, and incident response. The update system can't clean an account that ran attacker code. |
 | Compromised root keys (threshold) | no | Offline hardware, threshold. Out of scope beyond holding them carefully. |
-| Compromised upstream Node | yes | Release-time verification of Node's signed `SHASUMS256` against pinned Node release keys [R8]. |
+| Compromised Node download or mirror | yes | The runtime ceremony verifies Node's signed `SHASUMS256` against the pinned Node release keys [R8, T1]. |
+| Compromised Node project or Node release key | **no (a trust assumption)** [T1] | A malicious release signed by Node's own keys passes. We trust the Node project, as every Node user does. |
 | Insider or targeted equivocation (a different signed release for one victim) | **undetected in phase 1** [S3] | Someone holding the relevant delegated plus snapshot and timestamp keys can serve one victim a separately signed metadata chain. Snapshot pinning only prevents rollback for that client and doesn't make the target public. Detecting this needs an append-only log with independent monitors: later hardening, e.g. publishing each metadata version to a public transparency log that clients require. |
 | Freeze or replay (serving old metadata) | yes | TUF timestamp expiry. Clients refuse expired metadata unless a local offline policy explicitly allows it [R7]. |
 | Disk, stream or memory exhaustion | yes | Size caps on metadata and downloads, timeouts, and unpacked-size and file-count limits [R8]. |
@@ -47,8 +48,8 @@ What went wrong on Oct 12 while testing the one-line setup (`curl … | sh`):
 | Same-user or local-admin compromise | **no** | Anything running as you can rewrite your files. That includes an unsigned dev bundle you opted into [R4] and direct-mode computer jobs [R5]. |
 
 **Reducing first-install trust [R1].**
-- `install.sh` is small and readable. Docs publish its sha256 per release, for people who want to check it before running it.
-- If a verified launcher is already installed, the setup line calls `cocalc update` (signature-verified) instead of piping a new installer, so a re-run doesn't re-trust the site.
+- `install.sh` is small and readable. Docs publish its sha256 per release. That helps only if you get the hash through an independent, authenticated channel (e.g. the signed git tag or release notes), not from the same site or CDN [T3].
+- **Every actual `curl | sh` re-run fully re-trusts the final origin** [T3]. The legitimate script prefers the installed, signature-verified `cocalc update` when a launcher exists, but that is a convenience: a malicious script would simply skip it. To avoid re-trusting a site, people with an installed CLI run `cocalc update` or `cocalc setup …` **directly**, not the `curl` line. The setup dialogs say so: they show the local command first when the person has the CLI, and the `curl` line for first installs.
 - Anyone who needs a CDN-proof first install can use an out-of-band path: a package manager, or the signed SEA, until that is retired.
 
 ## Signing: TUF roles [R2, R3, R6, R7]
@@ -89,6 +90,33 @@ Our own policy layer on top of that:
   - *A compromised online key:* rotated the same way, with exposure bounded by expiry.
   - *Lost root keys:* a threshold means one lost key isn't fatal. Losing two needs a manual re-bootstrap announced out of band.
 
+## Two independent targets [T2]
+
+The client composes two separately signed targets. Neither authority can stand in for the other.
+
+| | Runtime target | Bundle target |
+|---|---|---|
+| Signed by | `runtime` (offline, 2 of 3) | `cli-stable`, `cli-candidate` or `cli-dev` (KMS) |
+| Delegated path namespace | `runtime/*` only | `cli/<channel>/*` only |
+| Contains | launcher, bootstrap verifier, Node archives per platform, `runtime_sequence`, `pointer_format` | the bundle only, plus `min_runtime_sequence` |
+| Floor and revocation | `highest_seen[runtime]`, runtime revocation list | `highest_seen[cli-<channel>]`, that role's revocation list |
+
+- **The namespaces are disjoint.** The delegations in `targets` restrict each role to its path prefix. A target outside its role's prefix is rejected, so `cli-*` metadata can never name a launcher, bootstrap or Node.
+- **The verifier checks both independently:** signatures, thresholds, expiry, revocation and floors per role. A bundle can *require* a minimum `runtime_sequence`, but can never *select* or *downgrade* runtime bytes. If the installed runtime is too old for the newest bundle, the client first updates the runtime (from runtime-signed metadata only). If it can't, it keeps the current bundle and says why.
+- **`active` is not an authority.** It's a locally derived tuple: (runtime target hash, bundle target hash), written only after both were verified. The launcher trusts it only as a pointer to content-addressed directories that the verifier already populated.
+- **The pointer format.** Every launcher reads every `pointer_format` ever written. Formats are only ever added, with a version prefix on the `active` line. A runtime update therefore installs the new launcher before it swaps `active` to a new format. A crash in between leaves a new launcher reading the old pointer, which it supports.
+
+## The runtime ceremony [T1]
+
+The offline `runtime` keys sign only what the signers have proven themselves. A CI-produced digest or attestation is never accepted as proof.
+
+1. **Node:** at least two signers each, independently:
+   - download the pinned Node version's archives and `SHASUMS256.txt` / `.sig` from nodejs.org;
+   - verify the signature against the pinned Node release key set (kept in the repo and reviewed);
+   - check that the archive hashes match.
+2. **Launcher and bootstrap verifier:** rebuilt reproducibly from the approved source revision by at least two independently administered builders, whose hashes must agree. The launcher (about 50 lines of sh) is small enough that signers also read its exact bytes.
+3. **Only when all of that matches** do 2 of 3 signers sign the runtime target. The ceremony's inputs and the hashes each signer computed are recorded in the runtime release notes.
+
 ## What every hub serves
 
 Unauthenticated GETs, all bytes only; trust comes from TUF metadata, never from the site:
@@ -115,8 +143,10 @@ Unauthenticated GETs, all bytes only; trust comes from TUF metadata, never from 
 
    Then rename into `node/<sha256>/`.
 4. **Fetch the bootstrap verifier.** This is `bootstrap.js`: `tuf-js` plus our policy, a small fixed program. Download it and check it against the embedded sha256.
-5. **Verify a release.** Run the verifier with the pinned Node and a cleared environment. It initializes TUF from the embedded root, fetches the timestamp, snapshot and targets metadata, and verifies the stable release target: bundle, Node and bootstrap hashes. That target must match what was embedded, or else it must be a newer, signed one.
-6. **Commit.** Download and verify the bundle, write the active-release record, and install the launcher (all of it in the transaction below).
+5. **Verify both targets** [T2]. Run the verifier with the pinned Node and a cleared environment. It initializes TUF from the embedded root, fetches the timestamp, snapshot and targets metadata, then verifies the two independent targets (below):
+   - the **runtime target**, signed by `runtime`: it must be the one embedded in `install.sh`, or a newer runtime-signed one;
+   - the **bundle target**, signed by `cli-stable`, whose minimum runtime must be satisfied by that runtime.
+6. **Commit.** Download and verify the bundle, install the launcher from the runtime target, and write the local `active` tuple (all of it in the transaction below).
 
 From then on, everything goes through the bootstrap verifier and signed metadata. `install.sh` itself is trusted only once.
 
@@ -128,7 +158,7 @@ From then on, everything goes through the bootstrap verifier and signed metadata
   node/<sha256>/                          verified Node trees, immutable
   targets/<sha256>/                       verified bundles and bootstraps, immutable
   tuf/                                    TUF client state: trusted root, metadata, highest-seen per role
-  active                                  one line: <node sha256> <bootstrap sha256> <bundle sha256>
+  active                                  one line: <pointer format> <runtime target hash> <node sha256> <bootstrap sha256> <bundle sha256>
   previous                                the last active line (for rollback)
   lock                                    the update lock
 ```
@@ -139,7 +169,7 @@ From then on, everything goes through the bootstrap verifier and signed metadata
   - it clears `NODE_OPTIONS`, `NODE_PATH` and `NODE_REPL_EXTERNAL_MODULE`;
   - it then execs `node/<h>/bin/node targets/<b>/bootstrap.js run targets/<c>/cocalc.js -- "$@"`.
 - **The bootstrap** re-hashes the bundle (about 10 ms) before running it. It also detects accidental corruption, but it isn't a defense against same-user tampering.
-- **When Node changes**, the new tree comes with the release record and the pointer swap covers all three at once. The launcher itself is updated only by `cocalc update`, which rewrites it atomically from a signed target.
+- **When the runtime changes** (Node, bootstrap or launcher), it arrives only in a runtime-signed target [T2]. The update installs the new Node and bootstrap trees, then atomically replaces the launcher, then swaps `active`, in that order (see the pointer format above).
 - **Recovery:** `install.sh` reinstalls from scratch. A broken `active` file makes the launcher print that recovery command.
 
 ## Updating [R7, R9, R11]
@@ -153,10 +183,12 @@ From then on, everything goes through the bootstrap verifier and signed metadata
    - the timestamp, which must not be expired;
    - the snapshot;
    - the role's targets.
-   Pick the newest non-revoked target of the trusted role. Its version must be at least `highest_seen[role]`.
+   Then select **separately** [T2]:
+   - **the runtime:** the newest non-revoked runtime target, at least `highest_seen[runtime]`;
+   - **the bundle:** the newest non-revoked bundle target of the trusted channel role, at least `highest_seen[cli-<channel>]`, whose `min_runtime_sequence` that runtime satisfies.
 3. **Stage:** download every needed file into unique private staging (`O_EXCL`), with caps and timeouts, verify sizes and hashes, then extract safely.
 4. **Sync:** fsync the files, rename into `node/<h>` and `targets/<h>`, and fsync the directories.
-5. **Raise the floor first [S6].** Write the newly trusted TUF metadata and the new `highest_seen[role]` durably (write, fsync, rename, then fsync the directory) **before** exposing the new code. A crash here leaves the old `active` with a higher floor, which is safe: the next update simply continues.
+5. **Raise the floors first [S6].** Write the newly trusted TUF metadata and the new `highest_seen` for **both** roles durably (write, fsync, rename, then fsync the directory) **before** exposing the new code. A crash here leaves the old `active` with a higher floor, which is safe: the next update simply continues.
 6. **Journal, then swap.** Write `transition` = {from: old active line, to: new line} durably. Then write `active.new`, fsync, rename it over `active`, and fsync the directory. Then write `previous` = the `from` line durably, and delete `transition`.
 7. **Recover:** on startup:
    - staging leftovers are deleted;
@@ -230,7 +262,7 @@ Developers should use it on development machines (or a separate OS user), never 
 1. **Build.** Every merge to `main`: the build job makes the bundle (as it does for projects) and an attestation, and uploads `targets/<sha256>.js`.
 2. **Sign dev builds.** The isolated signing job signs `cli-dev` metadata, then the snapshot and timestamp.
 3. **Promote.** Candidate and stable come from re-signing an existing dev target (same bytes, same hash) under the candidate or stable role. Stable needs a manual approval and, once reproducible builds land, a matching independent rebuild [S1]. A manual approval of bytes isn't evidence that they match the reviewed source; the independent rebuild is.
-4. **Verify Node upstream** [R8]. This is signed by the offline `runtime` role, together with launcher and bootstrap changes [S2]. Bumping the Node version is a reviewed change. A CI job checks `SHASUMS256.txt.sig` against the pinned Node release keys, then records each archive's filename, platform, size and sha256 as signed targets. Clients never verify GPG.
+4. **Runtime releases** (a Node bump, or a launcher or bootstrap change) don't go through CI signing at all. They go through the runtime ceremony [T1]: independent Node verification and independent reproducible rebuilds before the offline 2-of-3 signature [S2]. CI may *prepare* a candidate runtime target for convenience, but it is only a proposal. Clients never verify GPG; the signed runtime target pins each Node archive's filename, platform, size and sha256.
 5. **Serve.** Hubs embed the current stable root metadata and the installer for their build, and mirror the official metadata and targets.
 
 ## Rollout
