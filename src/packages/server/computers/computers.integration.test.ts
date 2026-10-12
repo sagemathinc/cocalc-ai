@@ -588,7 +588,7 @@ describeDb("computers store", () => {
       ).rejects.toThrow(/expired/);
     });
 
-    it("refuses a request for a network that isn't the account's, and a taken name", async () => {
+    it("refuses a request for a network that isn't the account's; a live computer keeps its name until disconnected", async () => {
       const { createComputerRequest, approveComputerRequest } =
         await import("./requests");
       await expect(
@@ -608,14 +608,31 @@ describeDb("computers store", () => {
       });
       const two = await newRequest("dup");
       const p2 = await machinePairs(two.request_id);
-      await expect(
+      const approveTwo = async () =>
         approveComputerRequest({
           agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id: two.request_id,
           transcript_hash: p2.transcript_hash,
-        }),
-      ).rejects.toThrow(/already exists/);
+        });
+      await expect(approveTwo()).rejects.toThrow(
+        /@dup is still connected\. Disconnect it first/,
+      );
+      // Once disconnected, the new computer takes the name and the old one
+      // leaves the list.
+      const { listComputers, revokeComputer } = await import("./computers");
+      const old = (await listComputers(account)).find((c) => c.name === "dup")!;
+      await revokeComputer({
+        account_id: account,
+        computer_id: old.computer_id,
+      });
+      await approveTwo();
+      const dups = (await listComputers(account)).filter(
+        (c) => c.name === "dup",
+      );
+      expect(dups).toHaveLength(1);
+      expect(dups[0].computer_id).not.toBe(old.computer_id);
+      expect(dups[0].revoked_at).toBeNull();
     });
   });
 

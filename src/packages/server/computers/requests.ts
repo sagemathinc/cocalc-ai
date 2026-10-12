@@ -573,6 +573,31 @@ export async function approveComputerRequest({
         "the computer changed since you saw it; look again",
       );
     }
+    // A computer that is over (disconnected, or past its time) gives up its
+    // name to the new one and leaves the list; a live one keeps it.
+    const taken = await client.query(
+      `SELECT computer_id, revoked_at, deadline FROM account_computers
+        WHERE account_id=$1 AND name=$2 AND tombstoned_at IS NULL
+        FOR UPDATE`,
+      [account_id, row.name],
+    );
+    for (const old of taken.rows) {
+      const over =
+        old.revoked_at != null ||
+        (old.deadline != null && new Date(old.deadline).valueOf() <= now);
+      if (!over) {
+        throw new ComputerRequestError(
+          `@${row.name} is still connected. Disconnect it first, then approve this one.`,
+        );
+      }
+      await client.query(
+        `UPDATE account_computers
+            SET tombstoned_at=$2, revoked_at=COALESCE(revoked_at,$2),
+                epoch=epoch+1, updated_at=$2
+          WHERE computer_id=$1`,
+        [old.computer_id, new Date(now)],
+      );
+    }
     const count = await client.query(
       `SELECT count(*)::int AS n FROM account_computers
         WHERE account_id=$1 AND tombstoned_at IS NULL`,
@@ -580,16 +605,6 @@ export async function approveComputerRequest({
     );
     if (count.rows[0].n >= MAX_COMPUTERS_PER_ACCOUNT) {
       throw new ComputerRequestError("too many computers on this account");
-    }
-    const taken = await client.query(
-      `SELECT 1 FROM account_computers
-        WHERE account_id=$1 AND name=$2 AND tombstoned_at IS NULL`,
-      [account_id, row.name],
-    );
-    if (taken.rows.length > 0) {
-      throw new ComputerRequestError(
-        `a computer named ${row.name} already exists`,
-      );
     }
     const envelope = row.transcript as SignedEnvelope<PairingTranscript> & {
       signing_public_key: string;
