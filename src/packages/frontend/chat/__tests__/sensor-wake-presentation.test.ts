@@ -17,6 +17,7 @@ test("sensor turns are recognized only in the shape CoCalc writes", () => {
     kind: "wake",
     title: "CI",
     summary: '/home/user/sensor-test.txt now contains "DONE"',
+    at: "2026-10-10T18:12:21Z",
   });
   expect(
     sensorWakePresentation(
@@ -38,6 +39,8 @@ test("the fence round-trips the title and summary", () => {
     kind: "wake",
     title: 'a "b" c',
     summary: "x = 1 & y",
+    sensor_id: "33333333-3333-4333-8333-333333333333",
+    at: "2026-10-12T02:36:12Z",
     value: "full ``` prompt",
   });
   const [first, ...rest] = fence.split("\n");
@@ -51,7 +54,13 @@ test("the fence round-trips the title and summary", () => {
     kind: "wake",
     title: 'a "b" c',
     summary: "x = 1 & y",
+    sensor_id: "33333333-3333-4333-8333-333333333333",
+    at: "2026-10-12T02:36:12Z",
   });
+  // Details that are not what CoCalc writes make it plain text.
+  expect(
+    sensorWakeFromMarkdownFence({ info: "sensor-wake sensor=nope", value: "" }),
+  ).toBeUndefined();
   expect(
     sensorWakeFromMarkdownFence({ info: "sensor-wake evil=1", value: "" }),
   ).toBeUndefined();

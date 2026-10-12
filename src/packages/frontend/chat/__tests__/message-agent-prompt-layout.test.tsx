@@ -86,3 +86,39 @@ test("agent messages outside agent threads keep the ordinary layout", () => {
   const fromAgent = renderPrompt(agentPrompt, undefined);
   expect(fromAgent.style.marginLeft).toBe("");
 });
+
+// A sensor's wake is stored under the approving person, like agent messages.
+const sensorWake = {
+  ...ownPrompt,
+  message_id: "wake-1",
+  sensor_wake: {
+    sensor_id: "7cceef51-07a4-44b4-887f-c2332cae59a6",
+    run_id: "run-1",
+    title: "CI on sagebrush",
+  },
+  history: [
+    {
+      content: [
+        '[Sensor wake] "CI on sagebrush" (sensor 7cceef51-07a4-44b4-887f-c2332cae59a6) ran at 2026-10-12T02:36:12Z.',
+        "This is not a message from a person.",
+        "Summary: CI passed",
+        "Data:",
+        "```json",
+        '{"exit_code": 0}',
+        "```",
+        "[/Sensor wake] Manage this sensor with `cocalc sensor show 7cceef51-07a4-44b4-887f-c2332cae59a6`.",
+      ].join("\n"),
+      author_id: "viewer",
+    },
+  ],
+};
+
+test("a sensor wake is a one-line card in the prompt position, not the viewer's own message", () => {
+  const own = renderPrompt(ownPrompt, "codex");
+  const wake = renderPrompt(sensorWake, "codex");
+  expect(wake.className).not.toContain("smc-message-from-viewer");
+  expect(wake.style.marginLeft).toBe(own.style.marginLeft);
+  expect(within(wake).getByText(/Sensor · CI on sagebrush/)).toBeTruthy();
+  expect(within(wake).getByText("CI passed")).toBeTruthy();
+  expect(within(wake).getByRole("button", { name: "Read wake" })).toBeTruthy();
+});

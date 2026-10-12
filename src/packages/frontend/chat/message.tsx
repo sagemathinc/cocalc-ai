@@ -435,13 +435,19 @@ export function getFocusMessageButtonStyle(): CSSProperties {
  * The sensor a wake message says it came from. Chat rows are editable, so
  * this only labels the message; it never replaces the stored sender.
  */
-function sensorWakeTitle(message: ChatMessageTyped): string | undefined {
+function sensorWakeLabel(
+  message: ChatMessageTyped,
+): { title: string; sensor_id: string } | undefined {
   const raw = field<any>(message, "sensor_wake");
   const sensor = typeof raw?.toJS === "function" ? raw.toJS() : raw;
-  if (!sensor?.sensor_id) return;
-  return typeof sensor.title === "string" && sensor.title.trim()
-    ? sensor.title.trim().slice(0, 100)
-    : "sensor";
+  if (typeof sensor?.sensor_id !== "string" || !sensor.sensor_id) return;
+  return {
+    sensor_id: sensor.sensor_id,
+    title:
+      typeof sensor.title === "string" && sensor.title.trim()
+        ? sensor.title.trim().slice(0, 100)
+        : "sensor",
+  };
 }
 
 function rpcSourceAttribution(message: ChatMessageTyped):
@@ -568,10 +574,14 @@ export default function Message({
     [message, account_id],
   );
   const rpcAttribution = rpcSourceAttribution(message);
+  // A turn a sensor started is stored under the approving person too.
+  const sensorLabel = sensorWakeLabel(message);
   // The stored sender remains the target execution principal for compatibility,
-  // but an authenticated RPC source must not visually impersonate that human.
+  // but an authenticated RPC source (or a sensor) must not visually
+  // impersonate that human.
+  const notFromSender = !!rpcAttribution || !!sensorLabel;
   const is_viewers_message =
-    !rpcAttribution && sender_is_viewer(account_id, message);
+    !notFromSender && sender_is_viewer(account_id, message);
   const isLLMThread = useMemo(
     () => actions?.isLanguageModelThread(dateValue(message)),
     [message, actions],
@@ -581,7 +591,7 @@ export default function Message({
   // A message from another agent is a prompt to this thread's agent, so it
   // sits where prompts sit. Its "From @agent" card keeps the source visible.
   const usePromptLayout =
-    is_viewers_message || (!!rpcAttribution && isCodexThread);
+    is_viewers_message || (notFromSender && isCodexThread);
   const senderId = field<string>(message, "sender_id");
   const hasLanguageModelServiceAuthor = useMemo(() => {
     const author_id = firstHistoryEntry?.author_id;
@@ -605,7 +615,7 @@ export default function Message({
     senderId,
     viewerAccountId: account_id,
     isAgent:
-      !!rpcAttribution ||
+      notFromSender ||
       msgWrittenByLLM ||
       (typeof senderId === "string" && isLanguageModelService(senderId)),
   });
@@ -617,12 +627,16 @@ export default function Message({
       }),
     [isCodexThread],
   );
+  // A turn a sensor started runs exactly the prompt CoCalc wrote (its permit
+  // binds it), so editing or resubmitting it would only mislead.
+  const isSensorWake = sensorLabel != null;
   const showEditButton =
     !read_only &&
     project_id != null &&
     path != null &&
     actions != null &&
-    !isEditing;
+    !isEditing &&
+    !isSensorWake;
 
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
@@ -1037,11 +1051,13 @@ export default function Message({
       : formattedValue;
     if (rpcAttribution) return agentMessageFence(value, rpcAttribution);
     // A turn a sensor started: one compact line that expands to the prompt.
-    const sensorTitle = sensorWakeTitle(message);
-    const sensorWake = sensorTitle
-      ? sensorWakePresentation(value, sensorTitle)
+    const sensor = sensorWakeLabel(message);
+    const sensorWake = sensor
+      ? sensorWakePresentation(value, sensor.title)
       : undefined;
-    return sensorWake ? sensorWakeFence({ ...sensorWake, value }) : value;
+    return sensorWake
+      ? sensorWakeFence({ ...sensorWake, sensor_id: sensor!.sensor_id, value })
+      : value;
   }, [
     is_viewers_message,
     renderedMessageValue,
@@ -1222,7 +1238,7 @@ export default function Message({
     threadMetadata?.agent_runtime?.profile?.id === "claude-code"
       ? "Claude Code"
       : "ACP agent";
-  const sensorTitle = sensorWakeTitle(message);
+  const sensorTitle = sensorLabel?.title;
   const senderName = rpcAttribution
     ? rpcAttribution.label
     : isGenericAgentMessage
@@ -1264,7 +1280,7 @@ export default function Message({
     "inline_code_links",
   );
   const timelineMessageClass = message_colors(
-    rpcAttribution ? "" : account_id,
+    notFromSender ? "" : account_id,
     message,
   ).message_class;
   const timelineContext = useMemo<TurnTimelineContext>(
@@ -2723,7 +2739,7 @@ export default function Message({
           ? undefined
           : 22;
 
-    const colors = message_colors(rpcAttribution ? "" : account_id, message);
+    const colors = message_colors(notFromSender ? "" : account_id, message);
     const { color, lighten, message_class } = colors;
     const background = usePromptLayout ? UI_COLORS.inset : colors.background;
 
@@ -2757,7 +2773,7 @@ export default function Message({
         xs={mainXS}
         flex={mode === "standalone" && showHumanAvatar ? "auto" : undefined}
       >
-        {!rpcAttribution &&
+        {!notFromSender &&
         !isCodexAgentMessage &&
         !is_prev_sender &&
         !is_viewers_message &&
@@ -3226,6 +3242,7 @@ export default function Message({
       );
     }
     if (acpStateToRender === "not-sent") {
+      if (isSensorWake) return <Tag color="orange">not sent</Tag>;
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <Tag color="orange">not sent</Tag>
