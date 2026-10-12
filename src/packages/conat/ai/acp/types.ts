@@ -37,6 +37,12 @@ export interface AcpChatContext {
     guidance: boolean;
     /** The sender's attempt, so a failed turn can be reported to it. */
     attempt_id?: string;
+    /**
+     * The hub's signature over this exact admitted message (not a secret
+     * grant): a delivery report must carry it, so no host can report a
+     * message it was never sent.
+     */
+    report_capability?: string;
   };
   // A turn a delivery report started (another agent's turn on this agent's
   // message failed). Rechecked at execution; never itself reported.

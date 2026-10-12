@@ -9126,7 +9126,7 @@ async function recoverPendingFailureRecoveryIntents({
   let recovered = 0;
   for (const job of listAcpJobsWithRecoveryIntent(limit)) {
     try {
-      await enqueueFailureRecoveryContinuation({
+      const resumed = await enqueueFailureRecoveryContinuation({
         client,
         job,
         recoveryCode: job.recovery_code as CodexAcpRecoveryErrorCode,
@@ -9134,6 +9134,13 @@ async function recoverPendingFailureRecoveryIntents({
       });
       clearAcpJobRecoveryIntent(job.op_id);
       recovered += 1;
+      // Declined: the turn is over after all.
+      if (!resumed)
+        reportFailedAgentMessageTurn(
+          job,
+          decodeAcpJobRequest(job),
+          job.error ?? undefined,
+        );
     } catch (err) {
       logger.warn("failed recovering persisted ACP failure intent", {
         op_id: job.op_id,
@@ -9360,6 +9367,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         result.terminalState === "error" ? result.recoveryDetail : undefined,
     });
     let resumed: AcpJobRow | undefined;
+    let recoveryPending = false;
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
         resumed = await enqueueFailureRecoveryContinuation({
@@ -9370,6 +9378,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         });
         clearAcpJobRecoveryIntent(job.op_id);
       } catch (err) {
+        // The persisted intent stays: the recovery poll decides later.
+        recoveryPending = true;
         logger.warn("failed to enqueue ACP failure recovery continuation", {
           op_id: job.op_id,
           recovery_code: result.recoveryCode,
@@ -9377,9 +9387,9 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         });
       }
     }
-    // Retried turns are not over yet; the others are reported to the agent
-    // whose message started them.
-    if (result.terminalState === "error" && !resumed)
+    // A turn that is (or may still be) retried is not over; the others are
+    // reported to the agent whose message started them.
+    if (result.terminalState === "error" && !resumed && !recoveryPending)
       reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
@@ -9408,11 +9418,21 @@ function reportFailedAgentMessageTurn(
   request: AcpRequest,
   error?: string,
 ): void {
+  // A recovery continuation carries the same message: the turn began when
+  // the first of them started, and a reply from any of them counts.
+  let started = job.started_at;
+  let parent = job.recovery_parent_op_id;
+  for (let hops = 0; parent && hops < 20; hops++) {
+    const row = getAcpJobByOpId(parent);
+    if (!row) break;
+    if (row.started_at != null) started = row.started_at;
+    parent = row.recovery_parent_op_id;
+  }
   const report = noteAgentMessageTurnFailed({
     op_id: job.op_id,
     request,
     error: `${error ?? ""}`.trim() || "The turn ended with an error.",
-    turn_started_at: job.started_at,
+    turn_started_at: started,
   });
   if (report)
     void drainAgentRpcReports(hubApi.agent).catch((err) =>
@@ -12320,6 +12340,7 @@ export const acpTestInternals = {
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,
   failureRecoveryDirective,
+  recoverPendingFailureRecoveryIntents,
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,

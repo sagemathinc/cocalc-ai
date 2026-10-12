@@ -119,6 +119,33 @@ function onlyFields(value: object, fields: string[], name: string) {
     if (!fields.includes(key)) throw new Error(`unexpected ${name} field`);
 }
 
+/**
+ * The immutable binding of an admitted message that a report capability
+ * signs: everything that says who sent what to whom, where, under which
+ * network generation. Stable regardless of object key order.
+ */
+export function agentRpcReportBinding(value: AgentRpcExecution): string {
+  const source = value.source as any;
+  return JSON.stringify([
+    "agent-rpc-report-v1",
+    value.attempt_id ?? null,
+    source.kind === "external"
+      ? ["external", source.account_id, source.agent_id, source.installation_id]
+      : [source.project_id, source.agent_id],
+    value.source_run_id ?? null,
+    value.target.project_id,
+    value.target.agent_id,
+    value.target_path,
+    value.target_thread_id,
+    value.agent_network_id,
+    value.network_generation,
+    value.account_generation,
+    value.configured_delivery,
+    value.principal_account_id,
+    value.guidance === true,
+  ]);
+}
+
 export function validateAgentRpcExecution(value: AgentRpcExecution): void {
   if (!value || typeof value !== "object" || value.version !== 3)
     throw new Error("invalid agent message authorization");
@@ -128,6 +155,12 @@ export function validateAgentRpcExecution(value: AgentRpcExecution): void {
   requireUuid(value.principal_account_id, "principal_account_id");
   if (value.attempt_id !== undefined)
     requireUuid(value.attempt_id, "attempt_id");
+  if (
+    value.report_capability !== undefined &&
+    (typeof value.report_capability !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(value.report_capability))
+  )
+    throw new Error("invalid report_capability");
   for (const key of ["target_path", "target_thread_id", "network_generation"])
     if (typeof (value as any)[key] !== "string" || !(value as any)[key])
       throw new Error(`invalid ${key}`);
@@ -164,6 +197,8 @@ export function validateAgentRpcTurnFailureReport(
   validateAgentRpcExecution(report.authorization);
   if (report.authorization.attempt_id !== report.attempt_id)
     throw new Error("delivery report names another message");
+  if (!report.authorization.report_capability)
+    throw new Error("delivery report without the hub's capability");
   // Only a queued message starts a turn of its own.
   if (report.authorization.guidance)
     throw new Error("guidance does not start a turn");
@@ -172,7 +207,8 @@ export function validateAgentRpcTurnFailureReport(
     report.turn_started_at <= 0
   )
     throw new Error("invalid turn_started_at");
-  if (!(report.kind in KIND_TEXT)) throw new Error("invalid kind");
+  if (!Object.prototype.hasOwnProperty.call(KIND_TEXT, report.kind))
+    throw new Error("invalid kind");
   if (
     report.detail !== undefined &&
     (typeof report.detail !== "string" ||

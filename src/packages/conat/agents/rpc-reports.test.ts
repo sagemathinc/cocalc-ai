@@ -1,5 +1,6 @@
 import {
   AGENT_RPC_REPORT_DETAIL_MAX,
+  agentRpcReportBinding,
   agentRpcReportDetail,
   agentRpcReportText,
   classifyAgentTurnError,
@@ -38,6 +39,7 @@ function report(
       principal_account_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       guidance: false,
       attempt_id,
+      report_capability: "c".repeat(43),
     },
     turn_started_at: 1_791_800_000_000,
     kind: "refused",
@@ -101,6 +103,24 @@ test.each<[string, () => AgentRpcTurnFailureReport]>([
   ["a multi-line detail", () => report({ detail: "a\nb" })],
   ["a long detail", () => report({ detail: "x".repeat(301) })],
   ["an unknown kind", () => report({ kind: "other" as any })],
+  ["an inherited kind", () => report({ kind: "toString" as any })],
+  [
+    "no capability from the hub",
+    () =>
+      report({
+        authorization: {
+          ...report().authorization,
+          report_capability: undefined,
+        },
+      }),
+  ],
+  [
+    "a malformed capability",
+    () =>
+      report({
+        authorization: { ...report().authorization, report_capability: "c=" },
+      }),
+  ],
   ["no start time", () => report({ turn_started_at: 0 })],
   [
     "a registered sender without its run",
@@ -111,4 +131,28 @@ test.each<[string, () => AgentRpcTurnFailureReport]>([
   ],
 ])("a report with %s is refused", (_, make) => {
   expect(() => validateAgentRpcTurnFailureReport(make())).toThrow();
+});
+
+test("the capability binds every field that says who, where and under what", () => {
+  const { report_capability: _, ...execution } = report().authorization;
+  const binding = agentRpcReportBinding(execution);
+  // Not the capability itself.
+  expect(agentRpcReportBinding(report().authorization)).toBe(binding);
+  for (const changed of [
+    { attempt_id: B.agent_id },
+    { source: B },
+    { source_run_id: A.agent_id },
+    { target: A },
+    { target_path: "/home/user/other.chat" },
+    { target_thread_id: "other" },
+    { agent_network_id: A.agent_id },
+    { network_generation: A.agent_id },
+    { account_generation: 4 },
+    { configured_delivery: "live" as const },
+    { principal_account_id: A.agent_id },
+    { guidance: true },
+  ])
+    expect(agentRpcReportBinding({ ...execution, ...changed })).not.toBe(
+      binding,
+    );
 });

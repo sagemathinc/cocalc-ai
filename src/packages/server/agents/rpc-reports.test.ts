@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+process.env.COCALC_CLUSTER_SHARED_SECRET = "test-cluster-secret";
+
 // A sent a message to B; B's turn on it failed. These tests are the hub:
 // B's host reports it, and A's host runs the turn the report starts.
 const aProject = randomUUID();
@@ -101,6 +103,7 @@ import {
   authorizeRpcReportExecution,
   reportRpcTurnFailure,
 } from "./rpc";
+import { signAgentRpcReportCapability } from "./rpc-report-capability";
 
 const a = { project_id: aProject, agent_id: aAgent };
 const b = { project_id: bProject, agent_id: bAgent };
@@ -113,8 +116,17 @@ const member = (endpoint: typeof a, name: string) => ({
   added_at: new Date().toISOString(),
 });
 
+// The capability the hub minted when it sent the message.
+function signed<T extends { authorization: any }>(r: T): T {
+  delete r.authorization.report_capability;
+  r.authorization.report_capability = signAgentRpcReportCapability(
+    r.authorization,
+  );
+  return r;
+}
+
 function report(overrides: any = {}) {
-  return {
+  return signed({
     version: 1 as const,
     report_id: randomUUID(),
     attempt_id: attempt,
@@ -137,7 +149,7 @@ function report(overrides: any = {}) {
     kind: "limit" as const,
     detail: "You've hit your usage limit.",
     ...overrides,
-  };
+  });
 }
 
 beforeEach(() => {
@@ -233,7 +245,7 @@ describe("B's host reports the failed turn", () => {
   test("not when B moved to another conversation", async () => {
     const r = report();
     r.authorization.target_thread_id = "older-thread";
-    await expect(reportRpcTurnFailure(fromHost(r))).resolves.toEqual({
+    await expect(reportRpcTurnFailure(fromHost(signed(r)))).resolves.toEqual({
       not_sent: "the recipient's conversation changed",
     });
   });
@@ -252,6 +264,26 @@ describe("B's host reports the failed turn", () => {
     expect(deliverAgentRpcReport).not.toHaveBeenCalled();
   });
 
+  test("never for a message the hub did not send exactly so", async () => {
+    // Forged, or altered after signing (here: another network generation).
+    const forged = report();
+    forged.authorization.report_capability = "A".repeat(43);
+    const altered = report();
+    altered.authorization.network_generation = randomUUID();
+    const unsigned = report();
+    delete (unsigned.authorization as any).report_capability;
+    for (const r of [forged, altered]) {
+      await expect(reportRpcTurnFailure(fromHost(r))).resolves.toEqual({
+        not_sent: "the report does not match an admitted message",
+      });
+    }
+    await expect(reportRpcTurnFailure(fromHost(unsigned))).rejects.toThrow(
+      "without the hub's capability",
+    );
+    expect(checkNetwork).not.toHaveBeenCalled();
+    expect(deliverAgentRpcReport).not.toHaveBeenCalled();
+  });
+
   test("a report A's host could not write yet is retried by B's host", async () => {
     deliverAgentRpcReport.mockResolvedValueOnce({
       not_sent: "the project did not start",
@@ -265,7 +297,7 @@ describe("B's host reports the failed turn", () => {
     });
   });
 
-  test("an external sender gets it in its inbox", async () => {
+  test("not to an external sender, whose replies are not checked", async () => {
     const external = {
       kind: "external" as const,
       account_id: account,
@@ -275,20 +307,10 @@ describe("B's host reports the failed turn", () => {
     const r = report();
     r.authorization.source = external as any;
     delete (r.authorization as any).source_run_id;
-    await expect(reportRpcTurnFailure(fromHost(r))).resolves.toEqual({
-      message_id: r.report_id,
+    await expect(reportRpcTurnFailure(fromHost(signed(r)))).resolves.toEqual({
+      not_sent: "external senders are not sent delivery reports",
     });
-    expect(enqueueExternal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        account_id: account,
-        installation_id: external.installation_id,
-        attempt_id: r.report_id,
-        source: b,
-        body: expect.stringMatching(
-          /^\[Delivery report\] @reviewer's turn ended with an error.*usage/,
-        ),
-      }),
-    );
+    expect(enqueueExternal).not.toHaveBeenCalled();
   });
 });
 

@@ -27,10 +27,13 @@ import {
 } from "@cocalc/conat/agents/rpc";
 import { validateAttachmentPayload } from "@cocalc/conat/agents/attachments";
 import {
-  agentRpcReportText,
   validateAgentRpcTurnFailureReport,
   type AgentRpcExecution,
 } from "@cocalc/conat/agents/rpc-reports";
+import {
+  signAgentRpcReportCapability,
+  verifyAgentRpcReportCapability,
+} from "./rpc-report-capability";
 import {
   parseAgentMessagingSubject,
   requireUuid,
@@ -421,6 +424,22 @@ async function submitAgentRpcOperation(
       thread_id: target.thread_id,
       deadline: Date.now() + 30_000,
     };
+    // A queued message starts a turn of its own; if that turn fails, its
+    // host may report it, but only this exact message (see
+    // rpc-report-capability.ts).
+    if (phase === "send" && !envelope.guidance) {
+      try {
+        envelope.report_capability = signAgentRpcReportCapability(
+          executionOfEnvelope(envelope),
+        );
+      } catch (err) {
+        // Reports are a courtesy: the message still goes, unreportable.
+        logger.warn("agent message sent without a report capability", {
+          attempt_id: envelope.attempt_id,
+          err: `${err}`,
+        });
+      }
+    }
     if (phase !== "prepare" && envelope.snapshot_manifest) {
       const prepared = await claimAgentRpcAdmissionState({
         token_id: envelope.attachment_reservation!,
@@ -572,6 +591,9 @@ export const agentRpcControl: AgentRpcControlApi = {
     if (isExternalAgentSource(sender))
       throw new Error("an external sender has no chat");
     await local(opts, sender);
+    // The forwarding bay checked it; so does this one.
+    if (!verifyAgentRpcReportCapability(opts.report.authorization))
+      throw new Error("the report does not match an admitted message");
     const identity = await sourceIdentity(sender);
     const host = await hostFor(sender);
     const result = await host.api.deliverAgentRpcReport({
@@ -618,6 +640,25 @@ export const agentRpcControl: AgentRpcControlApi = {
     }
   },
 };
+
+/** The execution authorization the recipient's host builds from an envelope. */
+export function executionOfEnvelope(e: AgentRpcEnvelope): AgentRpcExecution {
+  return {
+    version: 3,
+    source: e.source,
+    ...(e.run_id ? { source_run_id: e.run_id } : {}),
+    target: e.target,
+    target_path: e.path,
+    target_thread_id: e.thread_id,
+    agent_network_id: e.agent_network_id,
+    network_generation: e.network_generation,
+    account_generation: e.account_generation,
+    configured_delivery: e.configured_delivery,
+    principal_account_id: e.account_id,
+    guidance: e.guidance === true,
+    attempt_id: e.attempt_id,
+  };
+}
 
 async function reauthorizeEnvelope(e: AgentRpcEnvelope) {
   if (Date.now() >= e.deadline) throw new Error("submission deadline expired");
@@ -750,6 +791,13 @@ export const reportRpcTurnFailure: AgentApi["reportRpcTurnFailure"] = async (
   const message = report.authorization;
   if (message.principal_account_id !== account_id)
     throw new PersonalAgentAuthorizationError("principal_mismatch");
+  // Only a message the hub admitted, exactly as admitted.
+  if (!verifyAgentRpcReportCapability(message))
+    return { not_sent: "the report does not match an admitted message" };
+  // External senders read an inbox where a reply cannot yet be checked for;
+  // they are not sent reports (rather than a false "before it replied").
+  if (isExternalAgentSource(message.source))
+    return { not_sent: "external senders are not sent delivery reports" };
   // Only the host the failed turn ran on (the recipient's) may report it.
   await assertProjectHostAgentTokenAccess({
     account_id,
@@ -766,19 +814,7 @@ export const reportRpcTurnFailure: AgentApi["reportRpcTurnFailure"] = async (
   if ("denied" in proof)
     return { not_sent: `the message is no longer authorized: ${proof.denied}` };
   const target_label = networkMemberLabel(proof.target);
-  const sender = message.source;
-  if (isExternalAgentSource(sender)) {
-    await enqueueExternalAgentMessage({
-      account_id,
-      installation_id: sender.installation_id,
-      attempt_id: report.report_id,
-      agent_network_id: proof.agent_network_id,
-      network_generation: proof.network_generation,
-      source: message.target,
-      body: agentRpcReportText(report, target_label),
-    });
-    return { message_id: report.report_id };
-  }
+  const sender = message.source as AgentEndpoint;
   return await routed(sender.project_id, (api, route) =>
     api.deliverReport({ ...route, account_id, report, target_label }),
   );

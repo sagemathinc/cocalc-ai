@@ -25,6 +25,7 @@ import {
 import { prepareChatSend, admitPreparedChatSend } from "@cocalc/chat/send";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import getLogger from "@cocalc/backend/logger";
+import { getAcpJob } from "../sqlite/acp-jobs";
 import {
   deleteAgentRpcReport,
   enqueueAgentRpcReport,
@@ -50,7 +51,14 @@ export function noteAgentMessageTurnFailed(opts: {
   now?: number;
 }): AgentRpcTurnFailureReport | undefined {
   const authorization = opts.request.chat?.agent_rpc_execution;
-  if (!authorization || authorization.guidance || !authorization.attempt_id)
+  // Without the hub's capability (a message admitted before reports
+  // existed) the hub would refuse the report anyway.
+  if (
+    !authorization ||
+    authorization.guidance ||
+    !authorization.attempt_id ||
+    !authorization.report_capability
+  )
     return;
   const turn_started_at = Number(opts.turn_started_at ?? 0);
   if (!Number.isSafeInteger(turn_started_at) || turn_started_at <= 0) return;
@@ -152,6 +160,7 @@ export async function deliverAgentRpcReport(
   }
   try {
     let prepared: ReturnType<typeof prepareChatSend>;
+    let unadmitted: any;
     try {
       const current = db.get();
       const rows: any[] = Array.isArray(current)
@@ -169,8 +178,23 @@ export async function deliverAgentRpcReport(
         if (row.event !== "chat" || row.thread_id !== delivery.thread_id)
           continue;
         const rpc = row.agent_rpc;
-        if (rpc?.delivery_report?.attempt_id === report.attempt_id)
-          return { skipped: "duplicate" };
+        if (rpc?.delivery_report?.attempt_id === report.attempt_id) {
+          // A report whose admission was not confirmed is replaced below,
+          // unless its turn was queued after all (the acknowledgement was
+          // lost); any other is this report again.
+          if (
+            rpc.delivery_report.admission === "failed" &&
+            !row.acp_state &&
+            !getAcpJob({
+              project_id,
+              path: delivery.path,
+              user_message_id: `${row.message_id ?? ""}`,
+            })
+          )
+            unadmitted = row;
+          else return { skipped: "duplicate" };
+          continue;
+        }
         // The recipient replied after all (its sends are saved here before
         // they are accepted, so before its turn could end).
         if (
@@ -196,26 +220,50 @@ export async function deliverAgentRpcReport(
     // the turn executes, and a turn it starts is never itself reported.
     prepared.request.chat.agent_message = true;
     prepared.request.chat.agent_rpc_report = report;
-    db.set({
-      ...prepared.message,
-      // Display metadata only, never an authorization input.
-      agent_rpc: {
-        version: 3,
-        source: { ...recipient },
-        source_label: delivery.target_label,
-        target: { ...sender },
-        agent_network_id: report.authorization.agent_network_id,
-        delivery_report: {
-          report_id: report.report_id,
-          attempt_id: report.attempt_id,
-          kind: report.kind,
-        },
+    // Display metadata only, never an authorization input.
+    const agent_rpc = {
+      version: 3,
+      source: { ...recipient },
+      source_label: delivery.target_label,
+      target: { ...sender },
+      agent_network_id: report.authorization.agent_network_id,
+      delivery_report: {
+        report_id: report.report_id,
+        attempt_id: report.attempt_id,
+        kind: report.kind,
       },
-    });
+    };
+    if (unadmitted)
+      db.delete({
+        event: "chat",
+        date: unadmitted.date,
+        sender_id: unadmitted.sender_id,
+        message_id: unadmitted.message_id,
+        thread_id: unadmitted.thread_id,
+      });
+    db.set({ ...prepared.message, agent_rpc });
     db.commit();
     await db.save();
     await db.save_to_disk();
-    await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
+    try {
+      await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
+    } catch (err) {
+      // Not confirmed: mark it, so the retry the hub's error causes replaces
+      // it instead of taking it for a delivered report.
+      db.set({
+        ...prepared.message,
+        agent_rpc: {
+          ...agent_rpc,
+          delivery_report: {
+            ...agent_rpc.delivery_report,
+            admission: "failed",
+          },
+        },
+      });
+      db.commit();
+      await db.save();
+      throw err;
+    }
     return { message_id: `${prepared.message.message_id ?? ""}` };
   } finally {
     await releaseChatSyncDB(project_id, delivery.path);

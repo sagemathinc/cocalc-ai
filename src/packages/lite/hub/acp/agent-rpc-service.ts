@@ -323,6 +323,9 @@ export function createAgentRpcService(
               principal_account_id: e.account_id,
               guidance: e.guidance === true,
               attempt_id: e.attempt_id,
+              ...(e.report_capability
+                ? { report_capability: e.report_capability }
+                : {}),
             };
             chatEffect = "unknown";
             db.set({

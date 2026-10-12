@@ -7,6 +7,7 @@ const syncdb = {
   rows: [] as any[],
   get: jest.fn(() => syncdb.rows),
   set: jest.fn(),
+  delete: jest.fn(),
   commit: jest.fn(),
   save: jest.fn(async () => {}),
   save_to_disk: jest.fn(async () => {}),
@@ -14,6 +15,7 @@ const syncdb = {
 const acquire = jest.fn(async () => syncdb);
 const release = jest.fn(async () => {});
 const admit = jest.fn(async () => {});
+const getAcpJob = jest.fn((_opts: any): any => undefined);
 let prepared: any;
 
 jest.mock("@cocalc/chat/server", () => ({
@@ -29,6 +31,10 @@ jest.mock("@cocalc/chat/send", () => ({
     return prepared;
   },
   admitPreparedChatSend: (...args: any[]) => (admit as any)(...args),
+}));
+jest.mock("../../sqlite/acp-jobs", () => ({
+  ...jest.requireActual("../../sqlite/acp-jobs"),
+  getAcpJob: (opts: any) => getAcpJob(opts),
 }));
 
 import {
@@ -65,6 +71,7 @@ const execution = {
   principal_account_id: principal,
   guidance: false,
   attempt_id,
+  report_capability: "c".repeat(43),
 };
 const STARTED = Date.parse("2026-10-12T20:00:00Z");
 const report = {
@@ -153,6 +160,64 @@ describe("the sender's host writes the report", () => {
     expect(admit).not.toHaveBeenCalled();
   });
 
+  describe("when its turn's admission was not confirmed", () => {
+    const unconfirmed = async () => {
+      admit.mockRejectedValueOnce(new Error("no acknowledgement"));
+      await expect(
+        deliverAgentRpcReport({} as any, delivery, running),
+      ).rejects.toThrow("no acknowledgement");
+      // Marked, so B's retry (the hub's error makes it retry) can tell.
+      const marked = syncdb.set.mock.calls.at(-1)![0];
+      expect(marked).toMatchObject({
+        message_id: "m1",
+        agent_rpc: { delivery_report: { attempt_id, admission: "failed" } },
+      });
+      syncdb.rows.push({
+        ...marked,
+        date: "2026-10-12T20:01:00Z",
+        sender_id: principal,
+        thread_id: "thread-a",
+      });
+      syncdb.set.mockClear();
+      admit.mockClear();
+    };
+
+    it("the retry replaces it, rather than taking it for delivered", async () => {
+      await unconfirmed();
+      await expect(
+        deliverAgentRpcReport({} as any, delivery, running),
+      ).resolves.toEqual({ message_id: "m1" });
+      expect(getAcpJob).toHaveBeenCalledWith({
+        project_id: A.project_id,
+        path: "/home/user/a.chat",
+        user_message_id: "m1",
+      });
+      expect(syncdb.delete).toHaveBeenCalledWith({
+        event: "chat",
+        date: "2026-10-12T20:01:00Z",
+        sender_id: principal,
+        message_id: "m1",
+        thread_id: "thread-a",
+      });
+      expect(syncdb.set.mock.calls[0][0].agent_rpc.delivery_report).toEqual({
+        report_id: report.report_id,
+        attempt_id,
+        kind: "refused",
+      });
+      expect(admit).toHaveBeenCalledTimes(1);
+    });
+
+    it("but not if its turn was queued after all (the ack was lost)", async () => {
+      await unconfirmed();
+      getAcpJob.mockReturnValueOnce({ op_id: "queued" });
+      await expect(
+        deliverAgentRpcReport({} as any, delivery, running),
+      ).resolves.toEqual({ skipped: "duplicate" });
+      expect(syncdb.delete).not.toHaveBeenCalled();
+      expect(admit).not.toHaveBeenCalled();
+    });
+  });
+
   it("not_sent only when nothing was written", async () => {
     await expect(
       deliverAgentRpcReport({} as any, delivery, async () => {
@@ -201,7 +266,7 @@ describe("the recipient's host reports a failed turn", () => {
     expect(listDueAgentRpcReports(STARTED + 60_000)).toHaveLength(1);
   });
 
-  it("not for guidance, a person's message, a report, or an old queued message", () => {
+  it("not for guidance, a person's message, a report, or an old or unsigned message", () => {
     expect(
       failed({ agent_rpc_execution: { ...execution, guidance: true } }, "g"),
     ).toBeUndefined();
@@ -211,6 +276,11 @@ describe("the recipient's host reports a failed turn", () => {
     expect(failed({ agent_rpc_report: report }, "report")).toBeUndefined();
     const { attempt_id: _, ...old } = execution;
     expect(failed({ agent_rpc_execution: old }, "old")).toBeUndefined();
+    // Nor one the hub could not sign (it had no secret to sign with).
+    const { report_capability: _c, ...unsigned } = execution;
+    expect(
+      failed({ agent_rpc_execution: unsigned }, "unsigned"),
+    ).toBeUndefined();
     expect(listDueAgentRpcReports(STARTED + 60_000)).toHaveLength(0);
   });
 
