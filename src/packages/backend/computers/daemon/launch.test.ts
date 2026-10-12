@@ -238,4 +238,32 @@ describe("launching commands", () => {
     });
     expect(groupAlive(pid)).toBe(false);
   });
+
+  it("a job whose process identity can't be read is never released", async () => {
+    const stateDir = join(dir, "state");
+    const marker = join(dir, "marker");
+    const s = spec(`echo x >> ${marker}`);
+    const jobs = new JobManager(stateDir, { identify: () => undefined });
+    expect(() => jobs.submit(s)).toThrow(/could not identify/);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const after = await settle(stateDir, s.job_id);
+    expect(after.get(s.job_id)!.state).toBe("cancelled");
+    expect(ranCount(marker)).toBe(0);
+  });
+
+  it("killing right after release never leaves an unverifiable survivor", async () => {
+    const stateDir = join(dir, "state");
+    const jobs = new JobManager(stateDir, { killGraceMs: 100 });
+    for (let i = 0; i < 8; i++) {
+      const s = spec("trap '' TERM; while :; do sleep 0.05; done");
+      jobs.submit(s);
+      jobs.kill(s.job_id, s.agent_id); // immediately
+      const pid = jobs.get(s.job_id)!.pid!;
+      await waitFor(() => {
+        jobs.refresh();
+        return jobs.get(s.job_id)!.state === "killed";
+      });
+      expect(groupAlive(pid)).toBe(false);
+    }
+  });
 });

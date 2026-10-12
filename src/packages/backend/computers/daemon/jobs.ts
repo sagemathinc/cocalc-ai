@@ -34,6 +34,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { ensurePrivateDir, readJson, writeDurableJson } from "./durable";
 import { loginShell } from "./exec";
 import {
+  captureIdentity,
   leaderAlive,
   processStartTime,
   RELEASE_PRELUDE,
@@ -143,22 +144,27 @@ if [ -n "$job_nice" ]; then
 else
   set --
 fi
+# The leader ignores these from before the command exists (no window where
+# an early SIGTERM kills it and leaves an unverifiable group); the command's
+# side resets them, so the command itself gets the defaults.
+trap '' TERM HUP INT
 # The log keeps at most log_cap bytes; the rest is read and dropped (so the
 # command never dies of a closed pipe) and counted at the end.
 {
+  trap - TERM HUP INT
   "$@" "$job_shell" -lc "$cmd"
   code=$?
   printf '%s\\n' "$code" > "$exit_file.tmp" && mv -f "$exit_file.tmp" "$exit_file"
 } 2>&1 | {
+  trap - TERM HUP INT
   head -c "$log_cap"
   rest=$(wc -c | tr -d ' ')
   if [ "$rest" -gt 0 ]; then
     printf '\\n[cocalc: log capped; %s more bytes not kept]\\n' "$rest"
   fi
 } &
-# The command started before this, so it doesn't inherit it: the leader
-# survives SIGTERM and leaves only once the job is gone (or by SIGKILL).
-trap '' TERM HUP INT
+# The leader survives SIGTERM and leaves only once the job is gone (or by
+# SIGKILL).
 wait
 ${STAY_LEADER}
 code=$(cat "$exit_file" 2>/dev/null)
@@ -189,6 +195,8 @@ export class JobManager {
       launchHook?: (
         point: "starting" | "spawned" | "recorded" | "released",
       ) => void;
+      /** Tests only: how a process's identity is read. */
+      identify?: (pid: number) => string | undefined;
     } = {},
   ) {
     this.dir = join(stateDir, "jobs");
@@ -330,7 +338,7 @@ export class JobManager {
       this.opts.launchHook?.("spawned");
       this.setStatus(job_id, {
         pid: child.pid,
-        pid_start: processStartTime(child.pid) ?? null,
+        pid_start: captureIdentity(child.pid, this.opts.identify),
         started_at: now,
       });
     } catch (err) {

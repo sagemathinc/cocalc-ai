@@ -1193,4 +1193,154 @@ describe("the computer daemon (direct mode)", () => {
       expect(existsSync(join(root, recent.operation_id))).toBe(true);
     });
   });
+
+  describe("crash recovery (re-review of a0798222e4)", () => {
+    it("an exec whose identity can't be read is never started", async () => {
+      daemon.endSession("replace");
+      const hubClock = new HubClock(clocks);
+      hubClock.observe(0);
+      daemon = new ComputerDaemon({
+        stateDir: dir,
+        store,
+        clocks,
+        hubClock,
+        session: new SessionClock(clocks, { deadline_ms: null, max_ms: null }),
+        workdir,
+        shell: "/bin/bash",
+        identify: () => undefined,
+      });
+      const marker = join(dir, "marker");
+      const reply = ok(
+        await daemon.handle(message("exec", exec(`touch ${marker}`))),
+      );
+      expect(reply).toMatchObject({ state: "failed" });
+      expect(reply.error).toMatch(/not started/);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it("an unknown exec without a cleanup record (a crash between the two writes) is stopped at the next start", async () => {
+      const { spawn } = require("node:child_process");
+      const child = spawn(
+        "/bin/sh",
+        ["-c", "trap '' TERM; while :; do sleep 0.1; done"],
+        {
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      child.unref();
+      await new Promise((r) => setTimeout(r, 200));
+      const { processStartTime } = await import("./launch");
+      const operation_id = randomUUID();
+      daemon.ledger.begin({
+        operation_id,
+        operation: "exec",
+        request_hash: "sha256:x",
+        ticket_id: randomUUID(),
+        agent_id: agent,
+        source_project_id: project_id,
+      });
+      daemon.ledger.update(operation_id, {
+        state: "unknown",
+        result: { pid: child.pid, pid_start: processStartTime(child.pid) },
+      });
+      expect(daemon.cleanups.pending()).toEqual([]);
+      daemon = makeDaemon(); // restart
+      expect(daemon.cleanups.pending().map((r) => r.id)).toEqual([
+        operation_id,
+      ]);
+      await waitFor(() => {
+        daemon.tick();
+        return daemon.cleanups.pending().length === 0;
+      });
+      let alive = true;
+      try {
+        process.kill(-child.pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+    });
+  });
+
+  describe("output and identity (re-review of a0798222e4)", () => {
+    it("a replay whose output was pruned says so", async () => {
+      const operation_id = randomUUID();
+      ok(
+        await daemon.handle(message("exec", exec("echo hi"), { operation_id })),
+      );
+      rmSync(join(dir, "exec", operation_id), { recursive: true, force: true });
+      const again = ok(
+        await daemon.handle(message("exec", exec("echo hi"), { operation_id })),
+      );
+      expect(again).toMatchObject({ replayed: true });
+      expect(again.result).toMatchObject({ output_pruned: true, stdout: "" });
+    });
+
+    it("keeps exec output under its quota as execs run, oldest first", async () => {
+      daemon.endSession("replace");
+      const hubClock = new HubClock(clocks);
+      hubClock.observe(0);
+      daemon = new ComputerDaemon({
+        stateDir: dir,
+        store,
+        clocks,
+        hubClock,
+        session: new SessionClock(clocks, { deadline_ms: null, max_ms: null }),
+        workdir,
+        shell: "/bin/bash",
+        execOutputQuotaBytes: 25_000,
+      });
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        const r = ok(
+          await daemon.handle(
+            message("exec", exec("head -c 10000 /dev/zero | tr '\\0' z")),
+          ),
+        );
+        ids.push(r.operation_id);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const kept = ids.filter((id) => existsSync(join(dir, "exec", id)));
+      // At most the quota plus the exec that was running when it was checked.
+      expect(kept.length).toBeLessThanOrEqual(3);
+      expect(kept).toContain(ids[3]);
+      expect(kept).not.toContain(ids[0]);
+    });
+
+    it("on a platform without a durable identity, only the daemon that spawned a process may signal it", async () => {
+      const {
+        leaderAlive,
+        processStartTime,
+        setDurableIdentityForTesting,
+        captureIdentity,
+      } = await import("./launch");
+      const { spawn } = require("node:child_process");
+      const stranger = spawn("/bin/sh", ["-c", "sleep 30"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      const ours = spawn("/bin/sh", ["-c", "sleep 30"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      await new Promise((r) => setTimeout(r, 200));
+      const strangerStart = processStartTime(stranger.pid)!;
+      const oursStart = captureIdentity(ours.pid);
+      try {
+        setDurableIdentityForTesting(false);
+        // A start time recorded elsewhere (a previous daemon): not trusted.
+        expect(leaderAlive(stranger.pid, strangerStart)).toBe(false);
+        // One this process captured when it spawned it: trusted.
+        expect(leaderAlive(ours.pid, oursStart)).toBe(true);
+        setDurableIdentityForTesting(true);
+        expect(leaderAlive(stranger.pid, strangerStart)).toBe(true);
+      } finally {
+        setDurableIdentityForTesting(null);
+        process.kill(-stranger.pid, "SIGKILL");
+        process.kill(-ours.pid, "SIGKILL");
+      }
+    });
+  });
 });

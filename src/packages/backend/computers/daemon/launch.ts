@@ -89,7 +89,24 @@ export function leaderAlive(
   const start = processStartTime(pid);
   if (start == null) return false;
   // Without a recorded start time we can't tell a reused pid apart.
-  return pid_start != null && start === pid_start;
+  if (pid_start == null || start !== pid_start) return false;
+  return durableIdentity || spawnedHere.get(pid) === pid_start;
+}
+
+/**
+ * Is a recorded start time a strong identity across daemon restarts? On
+ * Linux it is (/proc starttime, in clock ticks since boot). On macOS `ps -o
+ * lstart` has one-second resolution, so a reused pid could match; there a
+ * persisted identity is trusted only by the daemon process that spawned it,
+ * and processes left by a previous daemon are not signalled (best effort,
+ * documented).
+ */
+let durableIdentity = process.platform === "linux";
+const spawnedHere = new Map<number, string>();
+
+/** Tests only: pretend the platform's identity is (not) durable. */
+export function setDurableIdentityForTesting(value: boolean | null): void {
+  durableIdentity = value ?? process.platform === "linux";
 }
 
 /** Signal a process group, only while its verified leader is alive. */
@@ -105,4 +122,27 @@ export function signalVerifiedGroup(
   } catch {
     return false;
   }
+}
+
+/**
+ * A process's identity, read right after spawning it, before it is released.
+ * Retried briefly (reading /proc or ps can fail transiently); if it still
+ * can't be read, this throws and the caller must not release the process:
+ * a command whose identity we don't know could never be stopped later.
+ */
+export function captureIdentity(
+  pid: number,
+  identify: (pid: number) => string | undefined = processStartTime,
+  attempts = 10,
+  delayMs = 20,
+): string {
+  for (let i = 0; i < attempts; i++) {
+    const start = identify(pid);
+    if (start) {
+      spawnedHere.set(pid, start);
+      return start;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+  }
+  throw new Error(`could not identify process ${pid}`);
 }

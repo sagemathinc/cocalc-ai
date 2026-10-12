@@ -53,7 +53,7 @@ import {
 import { resolveCwd, runExec, type ExecResult } from "./exec";
 import { Cleanups } from "./cleanups";
 import { JobManager, type Job, type JobSummary } from "./jobs";
-import { processStartTime } from "./launch";
+import { captureIdentity } from "./launch";
 import { Ledger, LedgerConflict, type LedgerEntry } from "./ledger";
 import type { DaemonStore } from "./state";
 
@@ -102,6 +102,10 @@ export interface DaemonDeps {
   onError?: (err: unknown) => void;
   bootClock?: BootClock;
   version?: string;
+  /** Tests only: how a process's identity is read. */
+  identify?: (pid: number) => string | undefined;
+  /** All exec output kept on the machine (default EXEC_OUTPUT_RETENTION_BYTES). */
+  execOutputQuotaBytes?: number;
 }
 
 export type DaemonEvent =
@@ -134,19 +138,28 @@ export class ComputerDaemon {
       onEnded: (job) => this.report({ kind: "job", job }),
       authorize: (job) => this.jobRefusal(job),
       bootClock: deps.bootClock,
+      identify: deps.identify,
     });
+    // An exec started by a previous daemon may still be running on its
+    // own; its outcome is unknown either way, so stop it. Its cleanup record
+    // is written BEFORE the ledger marks it unknown, and is ensured again on
+    // every start for every in-flight or unknown exec with a recorded
+    // identity, so a crash between the two never loses it. Every tick then
+    // re-drives it (TERM, then KILL) until the verified leader is gone.
+    for (const entry of this.ledger.list()) {
+      const r = entry.result as { pid?: number; pid_start?: string } | null;
+      if (
+        entry.operation === "exec" &&
+        ["admitted", "running", "unknown"].includes(entry.state) &&
+        r?.pid != null &&
+        r.pid_start != null
+      ) {
+        this.cleanups.add(entry.operation_id, r.pid, r.pid_start);
+      }
+    }
     for (const operation_id of this.ledger.markInterrupted()) {
       const entry = this.ledger.get(operation_id);
-      if (entry == null) continue;
-      // An exec started by a previous daemon may still be running on its
-      // own; its outcome is unknown either way, so stop it. The cleanup is
-      // durable: every tick re-drives it (TERM, then KILL) until its
-      // verified leader is gone, across further restarts too.
-      const r = entry.result as { pid?: number; pid_start?: string } | null;
-      if (entry.operation === "exec" && r?.pid != null && r.pid_start != null) {
-        this.cleanups.add(operation_id, r.pid, r.pid_start);
-      }
-      this.report({ kind: "operation", entry });
+      if (entry != null) this.report({ kind: "operation", entry });
     }
     this.jobs.refresh();
   }
@@ -216,9 +229,12 @@ export class ComputerDaemon {
   private replay(entry: LedgerEntry): OperationReply {
     let result = entry.result;
     if (entry.operation === "exec" && entry.state !== "admitted") {
+      const pruned = !existsSync(this.execDir(entry.operation_id));
       result = {
         ...(entry.result as object),
         ...this.execOutput(entry.operation_id),
+        // Its output was removed (retention or quota): say so.
+        ...(pruned ? { output_pruned: true } : {}),
       };
     }
     return {
@@ -308,6 +324,8 @@ export class ComputerDaemon {
           return done({ job_id: job.job_id, state: job.state });
         }
         case "exec": {
+          // The output quota holds at admission too, not only hourly.
+          this.pruneExecOutput();
           this.ledger.update(id, { state: "running" });
           const controller = new AbortController();
           this.running.set(id, { controller, agent_id });
@@ -332,9 +350,13 @@ export class ComputerDaemon {
                 killGraceMs: this.deps.killGraceMs,
                 signal: controller.signal,
                 // Recorded, so a later daemon can stop it if this one dies.
+                // Without a readable identity it is never released.
                 onSpawn: (pid) =>
                   this.ledger.update(id, {
-                    result: { pid, pid_start: processStartTime(pid) ?? null },
+                    result: {
+                      pid,
+                      pid_start: captureIdentity(pid, this.deps.identify),
+                    },
                   }),
               },
             );
@@ -600,6 +622,12 @@ export class ComputerDaemon {
     for (const id of this.ledger.pruneIds(LEDGER_RETENTION_MS, now)) {
       rmSync(this.execDir(id), { recursive: true, force: true });
     }
+    this.pruneExecOutput();
+    this.jobs.prune(now);
+  }
+
+  /** Keep all exec output under EXEC_OUTPUT_RETENTION_BYTES, oldest first. */
+  private pruneExecOutput(): void {
     const root = join(this.deps.stateDir, "exec");
     if (existsSync(root)) {
       const dirs = readdirSync(root)
@@ -621,12 +649,15 @@ export class ComputerDaemon {
         .sort((a, b) => a.mtime - b.mtime);
       let total = dirs.reduce((sum, d) => sum + d.bytes, 0);
       for (const d of dirs) {
-        if (total <= EXEC_OUTPUT_RETENTION_BYTES) break;
+        if (
+          total <=
+          (this.deps.execOutputQuotaBytes ?? EXEC_OUTPUT_RETENTION_BYTES)
+        )
+          break;
         rmSync(d.path, { recursive: true, force: true });
         total -= d.bytes;
       }
     }
-    this.jobs.prune(now);
   }
 }
 

@@ -98,11 +98,11 @@ const EXEC_WRAPPER = `${RELEASE_PRELUDE}
 cmd=$COCALC_EXEC_COMMAND
 exec_shell=$COCALC_EXEC_SHELL
 unset COCALC_EXEC_COMMAND COCALC_EXEC_SHELL
+trap '' TERM HUP INT
 exec 4<&0
-"$exec_shell" -lc "$cmd" <&4 4<&- &
+( trap - TERM HUP INT; exec "$exec_shell" -lc "$cmd" ) <&4 4<&- &
 child=$!
 exec 4<&- </dev/null
-trap '' TERM HUP INT
 wait "$child"
 code=$?
 ${STAY_LEADER}
