@@ -242,7 +242,7 @@ export function ComputersPanel() {
                     Modal.confirm({
                       title: `Disconnect @${c.name}?`,
                       content:
-                        "Agents lose access at once; running jobs are stopped when the machine learns of it.",
+                        "New operations are refused at once and the machine's connection is closed within seconds. Commands and jobs already running there are NOT stopped yet: stop them on the machine if needed.",
                       okText: "Disconnect",
                       okButtonProps: { danger: true },
                       onOk: () =>

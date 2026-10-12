@@ -104,6 +104,7 @@ export async function agentComputerRequest(
         account_id,
         agent_id,
         run_id: run.run_id,
+        source_project_id: project_id,
         ticket: request.ticket,
         proof: request.proof,
         request: request.request,

@@ -490,6 +490,11 @@ Table({
         query: "(computer_id, operation_id)",
       },
       { name: "account_computer_relays_expiry", query: "(expires_at)" },
+      {
+        name: "account_computer_relays_open_operation",
+        unique: true,
+        query: "(computer_id, operation_id) WHERE state = 'dispatched'",
+      },
     ],
     pg_constraints: [
       {

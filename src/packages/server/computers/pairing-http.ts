@@ -143,13 +143,13 @@ export async function pairingStatus(
 
 /** A connected computer asks for a login challenge (see sessions.ts). */
 export async function sessionChallenge(
-  params: { computer_id?: unknown },
+  params: { request?: unknown },
   address: string,
   now = Date.now(),
 ): Promise<PairingResult<LoginChallenge>> {
   try {
     admit(address, "submit", now);
-    return await createLoginChallenge(`${params.computer_id ?? ""}`, now);
+    return await createLoginChallenge(params.request, now);
   } catch (err) {
     return publicError(err);
   }

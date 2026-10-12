@@ -23,10 +23,11 @@
 // Nothing reusable is ever issued: a stolen transcript is useless once its
 // challenge is consumed (or after 60 s).
 
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import getPool from "@cocalc/database/pool";
-import { isValidUUID } from "@cocalc/util/misc";
+import type { KeyObject } from "node:crypto";
 import {
+  parseComputerChallengeRequest,
   parseComputerLogin,
   parseSignedEnvelope,
   SIGNED_KINDS,
@@ -49,7 +50,13 @@ export const CHALLENGE_LIFETIME_MS = 60 * 1000;
 /** A session's lease: it must log in again (a new challenge) after this. */
 export const SESSION_LEASE_MS = 15 * 60 * 1000;
 export const SESSION_SLOTS = [1, 2] as const;
+/**
+ * A session is live only if its router saw it this recently (the router
+ * revalidates every 15 s and records it); the relay never picks another.
+ */
+export const SESSION_LIVENESS_MS = 45_000;
 const MAX_OPEN_CHALLENGES = 5;
+const MAX_CHALLENGES_PER_MINUTE = 10;
 
 export class ComputerSessionError extends Error {}
 
@@ -63,36 +70,70 @@ export interface LoginChallenge {
 }
 
 /**
- * A single-use challenge for a computer that exists here and isn't revoked.
- * Unknown, revoked and foreign computers get the same answer.
+ * A single-use challenge, for a request signed by the computer's own key
+ * (so someone who only knows its id can't use up its challenges). Unknown,
+ * revoked and foreign computers, and bad signatures, get the same answer.
+ * The computer's row is locked, so count and insert are serialized.
  */
 export async function createLoginChallenge(
-  computer_id: string,
+  input: unknown,
   now = Date.now(),
 ): Promise<LoginChallenge> {
-  if (!isValidUUID(computer_id)) {
-    throw new ComputerSessionError("no such computer");
+  const envelope = parseSignedEnvelope(
+    input,
+    parseComputerChallengeRequest,
+    "challenge request",
+  );
+  const request = envelope.payload;
+  if (Math.abs(request.issued_at - now) > CHALLENGE_LIFETIME_MS) {
+    throw new ComputerSessionError(
+      "this request is too old (or the computer's clock is off)",
+    );
   }
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     const computer = (
       await client.query(
-        `SELECT account_id FROM account_computers
+        `SELECT account_id, signing_key, signing_public_key FROM account_computers
           WHERE computer_id=$1 AND revoked_at IS NULL AND tombstoned_at IS NULL
             AND home_bay_id=$2
-          FOR SHARE`,
-        [computer_id, getConfiguredBayId()],
+          FOR UPDATE`,
+        [request.computer_id, getConfiguredBayId()],
       )
     ).rows[0];
-    if (computer == null) throw new ComputerSessionError("no such computer");
-    // Bounded per computer: anyone who knows the id can ask.
-    const open = await client.query(
-      `SELECT count(*)::int AS n FROM account_computer_challenges
-        WHERE computer_id=$1 AND used_at IS NULL AND expires_at > $2`,
-      [computer_id, new Date(now)],
-    );
-    if (open.rows[0].n >= MAX_OPEN_CHALLENGES) {
+    let key: KeyObject | undefined;
+    try {
+      key =
+        computer == null
+          ? undefined
+          : signingPublicKeyFromDer(computer.signing_public_key);
+    } catch {
+      key = undefined;
+    }
+    if (
+      computer == null ||
+      key == null ||
+      envelope.kid !== computer.signing_key ||
+      !verifyEnvelope(SIGNED_KINDS.challenge_request, envelope, (kid) =>
+        kid === computer.signing_key ? key : undefined,
+      )
+    ) {
+      throw new ComputerSessionError("no such computer");
+    }
+    const counts = (
+      await client.query(
+        `SELECT
+           count(*) FILTER (WHERE used_at IS NULL AND expires_at > $2)::int AS open,
+           count(*) FILTER (WHERE created_at > $3)::int AS recent
+         FROM account_computer_challenges WHERE computer_id=$1`,
+        [request.computer_id, new Date(now), new Date(now - 60_000)],
+      )
+    ).rows[0];
+    if (
+      counts.open >= MAX_OPEN_CHALLENGES ||
+      counts.recent >= MAX_CHALLENGES_PER_MINUTE
+    ) {
       throw new ComputerSessionError("too many login attempts; try again");
     }
     const challenge = {
@@ -106,7 +147,7 @@ export async function createLoginChallenge(
        VALUES ($1,$2,$3,$4,$5,$6)`,
       [
         challenge.challenge_id,
-        computer_id,
+        request.computer_id,
         computer.account_id,
         challenge.nonce,
         new Date(challenge.expires_at),
@@ -128,6 +169,9 @@ export async function createLoginChallenge(
   }
 }
 
+/** This router process (random per start): recorded on its sessions. */
+export const ROUTER = randomBytes(12).toString("base64url");
+
 /** Who a socket is, once a computer has logged in. */
 export interface ComputerSession {
   computer_id: string;
@@ -145,10 +189,7 @@ export interface ComputerSession {
  */
 export async function loginComputer(
   input: unknown,
-  {
-    now = Date.now(),
-    router = null,
-  }: { now?: number; router?: string | null } = {},
+  { now = Date.now(), router = ROUTER }: { now?: number; router?: string } = {},
 ): Promise<ComputerSession> {
   const envelope = parseSignedEnvelope(input, parseComputerLogin, "login");
   const login: ComputerLogin = envelope.payload;
@@ -236,6 +277,16 @@ export async function loginComputer(
       `UPDATE account_computer_challenges SET used_at=$2 WHERE challenge_id=$1`,
       [login.challenge_id, new Date(now)],
     );
+    // Sessions no router has seen alive lately, or past their lease, are
+    // closed first: bumping the generation cuts off any socket still
+    // holding one at its next check.
+    await client.query(
+      `UPDATE account_computer_sessions
+          SET closed_at=$2, generation=generation+1
+        WHERE computer_id=$1 AND closed_at IS NULL
+          AND (lease_until <= $2 OR last_seen <= $3)`,
+      [login.computer_id, new Date(now), new Date(now - SESSION_LIVENESS_MS)],
+    );
     // A slot: a free one, else reclaim the oldest (its generation moves, so
     // its socket loses every authorization at the next check).
     const open = (
@@ -316,6 +367,7 @@ export async function sessionIsCurrent(
     "computer_id" | "session_id" | "generation" | "epoch"
   >,
   now = Date.now(),
+  { touch = false }: { touch?: boolean } = {},
 ): Promise<boolean> {
   const { rows } = await getPool().query(
     `SELECT s.generation, s.lease_until, s.closed_at, s.epoch,
@@ -335,8 +387,22 @@ export async function sessionIsCurrent(
     Number(r.computer_epoch) === s.epoch &&
     r.revoked_at == null &&
     r.tombstoned_at == null &&
-    (r.deadline == null || new Date(r.deadline).valueOf() > now)
+    (r.deadline == null || new Date(r.deadline).valueOf() > now) &&
+    (!touch || (await touchSession(s, now)))
   );
+}
+
+/** The router saw this exact session alive (its periodic revalidation). */
+async function touchSession(
+  s: Pick<ComputerSession, "session_id" | "generation">,
+  now: number,
+): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `UPDATE account_computer_sessions SET last_seen=$3
+      WHERE session_id=$1 AND generation=$2 AND closed_at IS NULL`,
+    [s.session_id, s.generation, new Date(now)],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 /** The session to send to: the newest current one, if any. */
@@ -348,9 +414,10 @@ export async function currentSession(
     `SELECT s.* FROM account_computer_sessions s
        JOIN account_computers c ON c.computer_id = s.computer_id
       WHERE s.computer_id=$1 AND s.closed_at IS NULL AND s.lease_until > $2
+        AND s.last_seen > $3
         AND s.epoch = c.epoch AND c.revoked_at IS NULL AND c.tombstoned_at IS NULL
-      ORDER BY s.connected_at DESC LIMIT 1`,
-    [computer_id, new Date(now)],
+      ORDER BY s.last_seen DESC, s.connected_at DESC LIMIT 1`,
+    [computer_id, new Date(now), new Date(now - SESSION_LIVENESS_MS)],
   );
   const r = rows[0];
   if (r == null) return undefined;

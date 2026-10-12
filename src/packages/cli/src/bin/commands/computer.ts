@@ -41,13 +41,13 @@ From an agent:    cocalc computer request NAME --why "..."   (the owner approves
                   cocalc computer run @NAME --description "build" -- make
                   cocalc computer jobs @NAME ; logs @NAME JOB ; kill @NAME JOB`;
 
-function terminalIO(yes: boolean): ConnectorIO {
+function terminalIO(): ConnectorIO {
   return {
     log: (message) => console.error(message),
+    // Always asked, at a terminal: connecting gives full trust here.
     confirm: async (question) => {
-      if (yes) return true;
       if (!process.stdin.isTTY) {
-        console.error(`${question} (no terminal to ask; pass --yes)`);
+        console.error(`${question} (needs a terminal to answer)`);
         return false;
       }
       const rl = createInterface({
@@ -138,9 +138,8 @@ export function registerComputerCommand(
       "run ON THE MACHINE to connect it: pairs with the account that made the request, then serves its agents until stopped",
     )
     .argument("<url>", "the line CoCalc showed, like https://cocalc.ai/c/R-...")
-    .option("--yes", "don't ask before connecting")
-    .action(async (url: string, opts) => {
-      const io = terminalIO(!!opts.yes);
+    .action(async (url: string) => {
+      const io = terminalIO();
       const stop = stopOnSignals();
       const connection = await pairComputer({ url, io, signal: stop.signal });
       await runConnector({ connection, io, signal: stop.signal });
@@ -153,7 +152,7 @@ export function registerComputerCommand(
     )
     .argument("[computer_id]", "which one, if this machine has several")
     .action(async (computer_id?: string) => {
-      const io = terminalIO(false);
+      const io = terminalIO();
       const stop = stopOnSignals();
       await runConnector({
         connection: loadConnection(computer_id),

@@ -28,10 +28,14 @@ import {
   type ComputerPolicy,
 } from "@cocalc/util/computers/policy";
 import {
+  parseComputerCertificate,
   parsePairingTranscript,
+  parseSignedEnvelope,
+  site as protocolSite,
   SIGNED_KINDS,
 } from "@cocalc/util/computers/protocol";
-import type { PairingStatus, PairingView } from "@cocalc/util/computers/api";
+import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
+import { isValidUUID } from "@cocalc/util/misc";
 import {
   computerOpSubject,
   computerSubjectAllowed,
@@ -48,9 +52,16 @@ import {
   privateKeyToPem,
   randomNonce,
   signEnvelope,
+  transcriptHash,
+  transcriptPairingPhrase,
   type KeyPair,
 } from "./crypto";
-import { signComputerLogin, type LoginChallengeView } from "./login";
+import {
+  signChallengeRequest,
+  signComputerLogin,
+  type LoginChallengeView,
+} from "./login";
+import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
 import {
   ensurePrivateDir,
   readJson,
@@ -60,6 +71,18 @@ import {
 import { DaemonStore } from "./daemon/state";
 import { ComputerDaemon } from "./daemon/daemon";
 import { HubClock, SessionClock, systemClocks } from "./daemon/clock";
+
+/**
+ * Raw limits on what the hub may send, enforced before reassembly: an
+ * operation message is a ticket, a proof and a request (stdin is at most
+ * 1 MiB, base64).
+ */
+export const OP_RECEIVE_LIMITS: ReceiveLimits = {
+  maxMessageBytes: 4 * 1024 * 1024,
+  maxInflightBytes: 16 * 1024 * 1024,
+  maxInflightMessages: 16,
+  maxFragmentsPerMessage: 64,
+};
 
 export interface ConnectorIO {
   log(message: string): void;
@@ -145,7 +168,12 @@ export async function pairComputer({
   signal?: AbortSignal;
 }): Promise<Connection> {
   const { origin, request_id } = parsePairingUrl(url);
-  const view = await post<PairingView>(origin, "pairing/view", { request_id });
+  // Nothing from the server is trusted as is: every field is parsed, and
+  // identities come from the signed certificate and our own resolved policy.
+  const view = parseView(
+    await post<unknown>(origin, "pairing/view", { request_id }),
+    request_id,
+  );
   if (view.state !== "pending") {
     throw new Error(`this request is ${view.state}; make a new one in CoCalc`);
   }
@@ -174,11 +202,13 @@ export async function pairComputer({
       .filter(Boolean)
       .join("\n"),
   );
+  // Always asked: connecting gives that account full trust here.
   if (!(await io.confirm("Connect this computer?"))) {
     throw new Error("not connected");
   }
 
   const key = generateSigningKey();
+  const agreement = generateAgreementKey();
   const transcript = parsePairingTranscript({
     type: "cocalc-computer-pairing",
     version: 1,
@@ -188,7 +218,7 @@ export async function pairComputer({
     account_id: view.account_id,
     policy_hash: policyHash(policy),
     signing_key: key.fingerprint,
-    agreement_key: generateAgreementKey().fingerprint,
+    agreement_key: agreement.fingerprint,
     client_nonce: randomNonce(),
     server_nonce: view.server_nonce,
     machine: {
@@ -198,70 +228,141 @@ export async function pairComputer({
       user: userInfo().username,
     },
   });
-  const { pairing_phrase, transcript_hash } = await post<{
-    pairing_phrase: string;
-    transcript_hash: string;
-  }>(origin, "pairing/submit", {
+  const ours = transcriptHash(transcript);
+  const submitted: any = await post<unknown>(origin, "pairing/submit", {
     request_id,
     transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, key),
     signing_public_key: key.publicDer,
     resolved_policy: policy,
   });
+  if (submitted?.transcript_hash !== ours) {
+    throw new Error("the server answered for another pairing");
+  }
+  // The phrase is ours to compute: it comes from the transcript we signed.
+  const pairing_phrase = transcriptPairingPhrase(transcript);
   io.log(
     `\nPairing phrase:  ${pairing_phrase}\n\nApprove it in CoCalc, after checking it shows exactly this phrase. Waiting...`,
   );
 
-  let status: PairingStatus;
+  let status: any;
   for (;;) {
     if (signal?.aborted) throw new Error("stopped");
-    status = await post<PairingStatus>(origin, "pairing/status", {
+    status = await post<unknown>(origin, "pairing/status", {
       request_id,
-      transcript_hash,
+      transcript_hash: ours,
     });
-    if (status.state === "approved") break;
-    if (status.state !== "paired" && status.state !== "pending") {
-      throw new Error(`the request was ${status.state}`);
+    if (status?.state === "approved") break;
+    if (status?.state !== "paired" && status?.state !== "pending") {
+      throw new Error(`the request was ${clean(status?.state, 40)}`);
     }
     await new Promise((r) => setTimeout(r, pollMs));
   }
+  const certificate = parseSignedEnvelope(
+    status.certificate,
+    parseComputerCertificate,
+    "certificate",
+  );
+  const c = certificate.payload;
+  // Everything the certificate binds must be what we paired.
   if (
-    status.certificate == null ||
-    status.directory == null ||
-    status.policy == null ||
-    status.computer_id == null ||
-    status.agent_network_id == null
+    c.signing_key !== key.fingerprint ||
+    c.signing_public_key !== key.publicDer ||
+    c.agreement_key !== agreement.fingerprint ||
+    c.transcript_hash !== ours ||
+    c.ceiling_hash !== policyHash(policy) ||
+    c.account_id !== view.account_id ||
+    c.site !== view.site ||
+    c.cluster_id !== view.cluster_id
   ) {
-    throw new Error("the approval is incomplete; try again");
+    throw new Error("the certificate is not for this pairing");
   }
-  const dir = join(computersDir(), status.computer_id);
+  const computer_id = c.computer_id; // a UUID: the parser checked
+  const name = NAME.test(`${status.name}`) ? `${status.name}` : view.name;
+  const dir = join(computersDir(), computer_id);
   ensurePrivateDir(dir);
-  // Checks the certificate against the home bay's key, our key and policy.
+  // Checks the certificate's signature against the home bay's key in the
+  // directory (which DaemonStore validates key by key).
   DaemonStore.create(join(dir, "state"), {
-    certificate: status.certificate,
-    ceiling: status.policy,
-    directory: status.directory,
+    certificate,
+    ceiling: policy,
+    directory: Array.isArray(status.directory) ? status.directory : [],
     computer_key: key.fingerprint,
-    agent_network_id: status.agent_network_id,
+    agent_network_id: policy.agent_network_id,
   });
   const connection: Connection = {
     dir,
     origin,
-    computer_id: status.computer_id,
-    name: status.name ?? view.name,
+    computer_id,
+    name,
     key,
     duration: policy.duration,
   };
   writeDurableJson(join(dir, "connection.json"), {
     origin,
-    computer_id: connection.computer_id,
-    name: connection.name,
+    computer_id,
+    name,
     duration: policy.duration,
   });
   if (policy.duration == null) {
     writeDurable(join(dir, "key.pem"), privateKeyToPem(key.privateKey));
+    // Kept for end-to-end encryption to this computer (not used yet).
+    writeDurable(
+      join(dir, "agreement.pem"),
+      privateKeyToPem(agreement.privateKey),
+    );
   }
-  io.log(`Approved: this computer is @${connection.name}.`);
+  io.log(`Approved: this computer is @${name}.`);
   return connection;
+}
+
+const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+/** Server text for the terminal: no control or bidi characters, bounded. */
+function clean(value: unknown, max: number): string {
+  return `${value ?? ""}`.replace(UNSAFE_TEXT_CHARS_GLOBAL, "?").slice(0, max);
+}
+
+const UNSAFE_TEXT_CHARS_GLOBAL = new RegExp(UNSAFE_TEXT_CHARS.source, "gu");
+
+interface ParsedView {
+  site: string;
+  cluster_id: string;
+  account_id: string;
+  account_label: string;
+  name: string;
+  requested_policy: unknown;
+  why: string;
+  server_nonce: string;
+  state: string;
+}
+
+function parseView(input: any, request_id: string): ParsedView {
+  if (input == null || typeof input !== "object") {
+    throw new Error("the server's answer is malformed");
+  }
+  if (input.request_id !== request_id) {
+    throw new Error("the server answered for another request");
+  }
+  if (!isValidUUID(input.account_id) || !NAME.test(`${input.name}`)) {
+    throw new Error("the server's answer is malformed");
+  }
+  if (
+    typeof input.server_nonce !== "string" ||
+    !/^[A-Za-z0-9_-]{43}$/.test(input.server_nonce)
+  ) {
+    throw new Error("the server's answer is malformed");
+  }
+  return {
+    site: protocolSite(input.site),
+    cluster_id: `${input.cluster_id}`,
+    account_id: input.account_id,
+    account_label: clean(input.account_label, 200).replace(/\s+/g, " "),
+    name: input.name,
+    requested_policy: input.requested_policy,
+    why: clean(input.why, 1000),
+    server_nonce: input.server_nonce,
+    state: clean(input.state, 40),
+  };
 }
 
 /** A connected computer without a time limit, from its files. */
@@ -275,7 +376,12 @@ export function loadConnection(computer_id?: string): Connection {
             .filter((d) => d.isDirectory())
             .map((d) => d.name)
         : [];
-  const found = ids.filter((id) => existsSync(join(root, id, "key.pem")));
+  if (computer_id != null && !isValidUUID(computer_id)) {
+    throw new Error("a computer id is a UUID");
+  }
+  const found = ids.filter(
+    (id) => isValidUUID(id) && existsSync(join(root, id, "key.pem")),
+  );
   if (found.length !== 1) {
     throw new Error(
       found.length === 0
@@ -344,7 +450,10 @@ export async function runConnector(opts: RunOptions): Promise<void> {
     opts.challenge ??
     (() =>
       post<LoginChallengeView>(connection.origin, "session/challenge", {
-        computer_id: connection.computer_id,
+        request: signChallengeRequest({
+          computer_id: connection.computer_id,
+          key: connection.key,
+        }),
       }));
   const openConat =
     opts.openConat ??
@@ -353,6 +462,8 @@ export async function runConnector(opts: RunOptions): Promise<void> {
         address: connection.origin,
         noCache: true,
         reconnection: false,
+        // A computer may not subscribe to _INBOX (and makes no requests).
+        disableInbox: true,
         auth,
       } as any));
   let backoff = 1000;
@@ -414,6 +525,7 @@ async function oneSession({
   try {
     sub = await client.subscribe(
       computerOpSubject(connection.computer_id, session_id),
+      { receiveLimits: OP_RECEIVE_LIMITS },
     );
     client.conn?.on?.("disconnect", end);
     io.log(`connected (@${connection.name})`);

@@ -8,13 +8,20 @@
 
 import {
   MAX_LOGIN_MS,
+  parseComputerChallengeRequest,
   parseComputerLogin,
   SIGNED_KINDS,
   type ComputerCertificate,
+  type ComputerChallengeRequest,
   type ComputerLogin,
   type SignedEnvelope,
 } from "@cocalc/util/computers/protocol";
-import { canonicalHash, signEnvelope, type KeyPair } from "./crypto";
+import {
+  canonicalHash,
+  randomNonce,
+  signEnvelope,
+  type KeyPair,
+} from "./crypto";
 
 export interface LoginChallengeView {
   challenge_id: string;
@@ -55,4 +62,27 @@ export function signComputerLogin({
     expires_at: Math.min(now + MAX_LOGIN_MS, challenge.expires_at),
   });
   return signEnvelope(SIGNED_KINDS.login, login, key);
+}
+
+/** Ask for a login challenge, signed by the computer's key. */
+export function signChallengeRequest({
+  computer_id,
+  key,
+  now = Date.now(),
+}: {
+  computer_id: string;
+  key: KeyPair;
+  now?: number;
+}): SignedEnvelope<ComputerChallengeRequest> {
+  return signEnvelope(
+    SIGNED_KINDS.challenge_request,
+    parseComputerChallengeRequest({
+      type: "cocalc-computer-challenge-request",
+      version: 1,
+      computer_id,
+      issued_at: now,
+      nonce: randomNonce(),
+    }),
+    key,
+  );
 }

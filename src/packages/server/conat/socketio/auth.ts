@@ -72,6 +72,7 @@ import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import { computerSubjectAllowed } from "@cocalc/conat/computers/subjects";
 import {
+  closeComputerSession,
   loginComputer,
   sessionIsCurrent,
 } from "@cocalc/server/computers/sessions";
@@ -287,39 +288,59 @@ async function accountSecurityStateAllowsAccount({
 }
 
 /**
- * A connected computer (server/computers/sessions.ts). Deliberately NOT a
- * CoCalcUser variant: it has no account, project, hub or host id, so every
- * generic code path treats it as nobody; isAllowed handles it first and
- * allows only its own session's exact subjects.
+ * A connected computer (server/computers/sessions.ts): its own tagged
+ * principal, deliberately NOT a CoCalcUser variant. It has no account,
+ * project, hub or host id, so every generic code path treats it as nobody;
+ * isAllowed handles it first and allows only its own session's exact
+ * subjects. Anything carrying another field is not a computer.
  */
-interface ComputerUser {
+export interface ComputerUser {
+  auth_actor: "computer";
   computer_id: string;
   computer_account_id: string;
   computer_session_id: string;
   computer_generation: number;
   computer_epoch: number;
-  auth_actor: "computer";
   auth_lease_exp_s: number;
 }
 
-function asComputerUser(user: unknown): ComputerUser | undefined {
+const COMPUTER_USER_KEYS = new Set<string>([
+  "auth_actor",
+  "computer_id",
+  "computer_account_id",
+  "computer_session_id",
+  "computer_generation",
+  "computer_epoch",
+  "auth_lease_exp_s",
+]);
+
+export function asComputerUser(user: unknown): ComputerUser | undefined {
   const u = user as Partial<ComputerUser> | null | undefined;
   if (u == null || typeof u !== "object" || u.auth_actor !== "computer") {
     return undefined;
   }
   if (
+    Object.keys(u).some((k) => !COMPUTER_USER_KEYS.has(k)) ||
     !isValidUUID(u.computer_id) ||
+    !isValidUUID(u.computer_account_id) ||
     !isValidUUID(u.computer_session_id) ||
     !Number.isSafeInteger(u.computer_generation) ||
     !Number.isSafeInteger(u.computer_epoch) ||
-    (u as any).account_id != null ||
-    (u as any).project_id != null ||
-    (u as any).hub_id != null ||
-    (u as any).host_id != null
+    !Number.isFinite(u.auth_lease_exp_s)
   ) {
     return undefined;
   }
   return u as ComputerUser;
+}
+
+/** A socket went away: a computer's session (this generation) is closed. */
+export function onUserDisconnect(user: unknown): void {
+  const computer = asComputerUser(user);
+  if (computer == null) return;
+  closeComputerSession({
+    session_id: computer.computer_session_id,
+    generation: computer.computer_generation,
+  }).catch((err) => logger.warn("closing a computer session failed", err));
 }
 
 async function isComputerAllowed(
@@ -340,12 +361,17 @@ async function isComputerAllowed(
     ) {
       return false;
     }
-    return await sessionIsCurrent({
-      computer_id: user.computer_id,
-      session_id: user.computer_session_id,
-      generation: user.computer_generation,
-      epoch: user.computer_epoch,
-    });
+    return await sessionIsCurrent(
+      {
+        computer_id: user.computer_id,
+        session_id: user.computer_session_id,
+        generation: user.computer_generation,
+        epoch: user.computer_epoch,
+      },
+      Date.now(),
+      // The router's periodic check of the session records it alive.
+      { touch: subject === "" },
+    );
   } catch (err) {
     logger.error("failed closed while checking a computer session", err);
     return false;

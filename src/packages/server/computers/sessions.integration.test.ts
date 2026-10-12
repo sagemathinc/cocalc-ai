@@ -23,7 +23,10 @@ import {
   randomNonce,
   signEnvelope,
 } from "@cocalc/backend/computers/crypto";
-import { signComputerLogin } from "@cocalc/backend/computers/login";
+import {
+  signChallengeRequest,
+  signComputerLogin,
+} from "@cocalc/backend/computers/login";
 import {
   computerOpSubject,
   computerReplySubject,
@@ -152,9 +155,14 @@ describeDb("computer sessions", () => {
     return { computer_id, key, certificate: status.certificate! };
   }
 
+  /** A challenge request signed by the computer's key. */
+  function ask(c: { computer_id: string; key: any }) {
+    return signChallengeRequest({ computer_id: c.computer_id, key: c.key });
+  }
+
   async function login(c: Awaited<ReturnType<typeof pairedComputer>>) {
     const { createLoginChallenge, loginComputer } = await import("./sessions");
-    const challenge = await createLoginChallenge(c.computer_id);
+    const challenge = await createLoginChallenge(ask(c));
     const signed = signComputerLogin({
       challenge,
       certificate: c.certificate,
@@ -187,7 +195,7 @@ describeDb("computer sessions", () => {
   it("refuses a login by another key, for another computer, or tampered", async () => {
     const { createLoginChallenge, loginComputer } = await import("./sessions");
     const c = await pairedComputer();
-    const challenge = await createLoginChallenge(c.computer_id);
+    const challenge = await createLoginChallenge(ask(c));
     const stranger = generateSigningKey();
     // Another key can't even claim the certificate.
     expect(() =>
@@ -233,7 +241,7 @@ describeDb("computer sessions", () => {
       [a.computer_id],
     );
     const b = await pairedComputer();
-    const challenge = await createLoginChallenge(a.computer_id);
+    const challenge = await createLoginChallenge(ask(a));
     const signed = signComputerLogin({
       challenge,
       certificate: b.certificate,
@@ -274,7 +282,7 @@ describeDb("computer sessions", () => {
     await revokeComputer({ account_id: account, computer_id: c.computer_id });
     expect(await sessionIsCurrent(s3)).toBe(false);
     // And a revoked computer gets no challenge.
-    await expect(createLoginChallenge(c.computer_id)).rejects.toThrow(
+    await expect(createLoginChallenge(ask(c))).rejects.toThrow(
       /no such computer/,
     );
   });
@@ -282,13 +290,95 @@ describeDb("computer sessions", () => {
   it("caps open challenges per computer", async () => {
     const { createLoginChallenge } = await import("./sessions");
     const c = await pairedComputer();
-    for (let i = 0; i < 5; i++) await createLoginChallenge(c.computer_id);
-    await expect(createLoginChallenge(c.computer_id)).rejects.toThrow(
-      /too many/,
+    for (let i = 0; i < 5; i++) await createLoginChallenge(ask(c));
+    await expect(createLoginChallenge(ask(c))).rejects.toThrow(/too many/);
+    await expect(
+      createLoginChallenge(
+        signChallengeRequest({ computer_id: randomUUID(), key: c.key }),
+      ),
+    ).rejects.toThrow(/no such computer/);
+  });
+
+  it("only the computer's own key can ask for a challenge, and only recently", async () => {
+    const { createLoginChallenge } = await import("./sessions");
+    const c = await pairedComputer();
+    // Someone who knows the id but not the key (e.g. a removed agent).
+    await expect(
+      createLoginChallenge(
+        signChallengeRequest({
+          computer_id: c.computer_id,
+          key: generateSigningKey(),
+        }),
+      ),
+    ).rejects.toThrow(/no such computer/);
+    await expect(
+      createLoginChallenge(
+        signChallengeRequest({
+          computer_id: c.computer_id,
+          key: c.key,
+          now: Date.now() - 5 * 60_000,
+        }),
+      ),
+    ).rejects.toThrow(/too old/);
+    // Changed after signing.
+    const good = ask(c);
+    await expect(
+      createLoginChallenge({
+        ...good,
+        payload: { ...good.payload, issued_at: good.payload.issued_at + 1 },
+      }),
+    ).rejects.toThrow(/no such computer/);
+    expect((await createLoginChallenge(good)).challenge_id).toBeDefined();
+  });
+
+  it("the relay's live session: a dead newest session is never chosen over a live older one", async () => {
+    const { currentSession } = await import("./sessions");
+    const c = await pairedComputer();
+    const older = (await login(c)).session;
+    const newer = (await login(c)).session;
+    expect((await currentSession(c.computer_id))?.session_id).toBe(
+      newer.session_id,
     );
-    await expect(createLoginChallenge(randomUUID())).rejects.toThrow(
-      /no such computer/,
+    // The newer one's router stopped seeing it (crashed, network gone).
+    await db().query(
+      "UPDATE account_computer_sessions SET last_seen=now() - interval '5 minutes' WHERE session_id=$1",
+      [newer.session_id],
     );
+    expect((await currentSession(c.computer_id))?.session_id).toBe(
+      older.session_id,
+    );
+    await db().query(
+      "UPDATE account_computer_sessions SET last_seen=now() - interval '5 minutes'",
+    );
+    expect(await currentSession(c.computer_id)).toBeUndefined();
+  });
+
+  it("a login closes sessions no router has seen alive, and the periodic check records liveness", async () => {
+    const { sessionIsCurrent } = await import("./sessions");
+    const c = await pairedComputer();
+    const stale = (await login(c)).session;
+    await db().query(
+      "UPDATE account_computer_sessions SET last_seen=now() - interval '5 minutes' WHERE session_id=$1",
+      [stale.session_id],
+    );
+    const fresh = (await login(c)).session;
+    // The stale one was fenced (its generation moved), not left to linger.
+    expect(fresh.slot).toBe(1);
+    expect(await sessionIsCurrent(stale)).toBe(false);
+    await db().query(
+      "UPDATE account_computer_sessions SET last_seen=now() - interval '1 minute' WHERE session_id=$1",
+      [fresh.session_id],
+    );
+    expect(await sessionIsCurrent(fresh, Date.now(), { touch: true })).toBe(
+      true,
+    );
+    const seen = await db().query(
+      "SELECT last_seen FROM account_computer_sessions WHERE session_id=$1",
+      [fresh.session_id],
+    );
+    expect(
+      Date.now() - new Date(seen.rows[0].last_seen).valueOf(),
+    ).toBeLessThan(5_000);
   });
 
   it("subject policy: only the session's exact op subject and its own reply subjects", () => {

@@ -27,6 +27,7 @@ export const SIGNED_KINDS = {
   floors: "computer-floors",
   key_endorsement: "signing-key-endorsement",
   login: "computer-login",
+  challenge_request: "computer-challenge-request",
 } as const;
 
 export interface SignedEnvelope<T> {
@@ -163,6 +164,39 @@ export interface ComputerLogin {
   nonce: string;
   issued_at: number;
   expires_at: number;
+}
+
+/**
+ * Signed by the computer's key to ask for a login challenge, so nobody else
+ * (e.g. someone who only learned the computer's id) can use up its
+ * challenges.
+ */
+export interface ComputerChallengeRequest {
+  type: "cocalc-computer-challenge-request";
+  version: 1;
+  computer_id: string;
+  issued_at: number;
+  nonce: string;
+}
+
+export function parseComputerChallengeRequest(
+  input: unknown,
+): ComputerChallengeRequest {
+  const o = record(input, "challenge request");
+  onlyKeys(
+    o,
+    ["type", "version", "computer_id", "issued_at", "nonce"],
+    "challenge request",
+  );
+  literal(o.type, "cocalc-computer-challenge-request", "challenge.type");
+  version(o.version);
+  return {
+    type: "cocalc-computer-challenge-request",
+    version: 1,
+    computer_id: uuid(o.computer_id, "challenge.computer_id"),
+    issued_at: time(o.issued_at, "challenge.issued_at"),
+    nonce: nonce(o.nonce, "challenge.nonce"),
+  };
 }
 
 /** A login transcript lives at most this long. */

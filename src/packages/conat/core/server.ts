@@ -187,6 +187,18 @@ const DEFAULT_FORGET_CLUSTER_NODE_INTERVAL = 30 * 60_000; // 30 minutes by defau
 
 const DEBUG = false;
 
+/**
+ * The only socket events a connected computer may send ("subscriptions" lists
+ * the socket's own subscriptions, which the client syncs on every sign-in).
+ */
+const COMPUTER_EVENTS = new Set([
+  "publish",
+  "subscribe",
+  "unsubscribe",
+  "subscriptions",
+  "stats",
+]);
+
 function envNumber(name: string, fallback: number): number {
   const n = Number(process.env[name]);
   return Number.isFinite(n) ? n : fallback;
@@ -285,6 +297,10 @@ export type AllowFunction = (opts: {
 }) => Promise<boolean>;
 
 export interface Options {
+  /** Called once when an authenticated socket goes away (with its user). */
+  onDisconnect?: (user: any) => void;
+  /** How often a connected computer's session is rechecked (default 15 s). */
+  computerRevalidationMs?: number;
   id?: string;
   httpServer?;
   // The embedding HTTP server owns and rejects non-Conat upgrade requests.
@@ -512,6 +528,8 @@ export class ConatServer extends EventEmitter {
       maxInboundEventsPerIdentityWindow,
       inboundEventWindowMs,
       inboundEventBlockMs,
+      onDisconnect: options.onDisconnect,
+      computerRevalidationMs: options.computerRevalidationMs,
     };
     this.log("client address mode", {
       mode: resolveStrictCloudflareProxy(strictCloudflareProxy)
@@ -1979,34 +1997,58 @@ export class ConatServer extends EventEmitter {
         : undefined;
     apiKeyRefreshTimer?.unref?.();
     // A computer's session (see server/computers/sessions.ts) can be revoked,
-    // reclaimed or outlived by its computer's epoch at any time: recheck every
-    // interest it holds (isAllowed rechecks the session row, uncached), and
-    // drop the socket the moment any is refused.
+    // reclaimed or outlived by its computer's epoch at any time: recheck the
+    // session (which also records it alive) and every interest it holds
+    // (isAllowed rechecks the session row, uncached), and drop the socket the
+    // moment any is refused, errs, or takes longer than 10 s.
     let computerRefreshInFlight = false;
+    const computerRevalidationMs =
+      this.options.computerRevalidationMs ?? 15_000;
     const computerRefreshTimer =
       !user?.error && typeof user?.computer_id === "string"
         ? setInterval(async () => {
-            if (!socket.connected || computerRefreshInFlight) return;
+            if (!socket.connected) return;
+            if (computerRefreshInFlight) {
+              // The previous check never finished: fail closed.
+              socket.disconnect(true);
+              socket.conn?.close?.();
+              return;
+            }
             computerRefreshInFlight = true;
+            let timeout: ReturnType<typeof setTimeout> | undefined;
             try {
-              const interests = new Set([
-                ...(this.subscriptions[id] ?? []),
-                ...(this.rpcServiceSubjects[id] ?? []),
+              await Promise.race([
+                (async () => {
+                  // "" is the session itself (and records it alive).
+                  const interests = [
+                    "",
+                    ...(this.subscriptions[id] ?? []),
+                    ...(this.rpcServiceSubjects[id] ?? []),
+                  ];
+                  for (const subject of interests) {
+                    if (!socket.connected) throw Error("socket disconnected");
+                    if (
+                      !(await this.isAllowed({ user, subject, type: "sub" }))
+                    ) {
+                      throw Error("computer session ended");
+                    }
+                  }
+                })(),
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(
+                    () => reject(new Error("computer revalidation timed out")),
+                    Math.min(10_000, (computerRevalidationMs * 2) / 3),
+                  );
+                }),
               ]);
-              // With no interest yet, check the session itself.
-              if (interests.size === 0) interests.add("");
-              for (const subject of interests) {
-                if (!(await this.isAllowed({ user, subject, type: "sub" }))) {
-                  throw Error("computer session ended");
-                }
-              }
             } catch {
               socket.disconnect(true);
               socket.conn?.close?.();
             } finally {
+              if (timeout) clearTimeout(timeout);
               computerRefreshInFlight = false;
             }
-          }, 15_000)
+          }, computerRevalidationMs)
         : undefined;
     computerRefreshTimer?.unref?.();
     this.log("new connection", { id, user });
@@ -2017,6 +2059,13 @@ export class ConatServer extends EventEmitter {
       if (leaseTimer) clearTimeout(leaseTimer);
       if (apiKeyRefreshTimer) clearInterval(apiKeyRefreshTimer);
       if (computerRefreshTimer) clearInterval(computerRefreshTimer);
+      if (!user?.error) {
+        try {
+          this.options.onDisconnect?.(user);
+        } catch (err) {
+          this.log("onDisconnect failed", err);
+        }
+      }
       apiKeyPublicationSubjects.clear();
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);
@@ -2075,6 +2124,18 @@ export class ConatServer extends EventEmitter {
       return;
     }
 
+    if (typeof (user as { computer_id?: unknown })?.computer_id === "string") {
+      // A connected computer gets a default-deny event surface: it receives
+      // on its own subject and publishes replies, nothing else (no cluster
+      // addresses, RPC services, raw RPC or interest waits).
+      socket.use((packet, next) => {
+        if (COMPUTER_EVENTS.has(packet[0])) return next();
+        const ack = packet[packet.length - 1];
+        if (typeof ack === "function") {
+          ack({ error: "not allowed for a computer", code: 403 });
+        }
+      });
+    }
     this.registerClusterInterestHandlers({ socket, user });
     this.sendInfo(socket, user);
 
