@@ -52,6 +52,7 @@ import {
   refreshComputers,
   useComputers,
 } from "@cocalc/frontend/account/use-computers";
+import { useComputersAvailable } from "@cocalc/frontend/account/computers-available";
 
 /** The computers an agent can use now, in a few words. */
 export function computersSummary(names: string[]): string {
@@ -211,8 +212,8 @@ function NamedAgentConnectors({
   const [cliOpen, setCliOpen] = useState<CliConnector>();
   const [sensorsOpen, setSensorsOpen] = useState(false);
   const [computersOpen, setComputersOpen] = useState(false);
-  // Computers are a hub feature; CoCalc Lite has none.
-  const computers = useComputers(!lite);
+  const computersAvailable = useComputersAvailable();
+  const computers = useComputers(computersAvailable);
   // Sensors run on the hub's scheduler, which CoCalc Lite does not have.
   const {
     sensors,
@@ -347,7 +348,7 @@ function NamedAgentConnectors({
                   },
                 },
               ]),
-          ...(lite
+          ...(!computersAvailable
             ? []
             : [
                 {

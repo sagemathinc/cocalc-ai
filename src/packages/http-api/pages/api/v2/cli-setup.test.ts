@@ -10,6 +10,11 @@ jest.mock("@cocalc/server/computers/routing", () => ({
   pairingUrl: async (id: string) => `https://bay-2.example.com/c/${id}`,
 }));
 
+let mockLaunchpad = false;
+jest.mock("@cocalc/server/launchpad/mode", () => ({
+  isLaunchpadProduct: () => mockLaunchpad,
+}));
+
 import handle from "./cli/setup";
 
 function call(method: string, query: Record<string, unknown>) {
@@ -64,4 +69,24 @@ test("serves the computer connect script with the home bay's pairing line", asyn
   const bad = await call("GET", { action: "computer", request: "R-x; id" });
   expect(bad.body).toContain("t a pairing request");
   expect(bad.body).not.toContain("; id");
+});
+
+test("Launchpad doesn't offer computers: the computer action only says so", async () => {
+  mockLaunchpad = true;
+  try {
+    const r = await call("GET", {
+      action: "computer",
+      request: "R-396W8E8XD1",
+    });
+    expect(r.body).toContain("computers aren");
+    expect(r.body).not.toContain("connect");
+    // SSH setup is still served there.
+    const ssh = await call("GET", {
+      action: "ssh",
+      project: "11111111-2222-4333-8444-555555555555",
+    });
+    expect(ssh.body).toContain("'ssh-config' 'add'");
+  } finally {
+    mockLaunchpad = false;
+  }
 });

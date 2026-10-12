@@ -37,6 +37,7 @@ import { DictateButton } from "./audio/dictate-button";
 import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
 import { useComputerMentionCheck } from "@cocalc/frontend/agents/computer-access";
+import { useComputersAvailable } from "@cocalc/frontend/account/computers-available";
 import { NameAgent } from "@cocalc/frontend/agents/name-agent";
 import { extractAgentMentions } from "@cocalc/util/agent-mentions";
 import { extractComputerMentions } from "@cocalc/util/computer-mentions";
@@ -458,6 +459,7 @@ export function ChatRoomComposer({
   });
   // Mentioned computers that aren't connected, or this agent can't use: a
   // dialog guides the fixes before the message goes out.
+  const computersAvailable = useComputersAvailable();
   const computerCheck = useComputerMentionCheck({
     projectId: project_id,
     path,
@@ -465,11 +467,13 @@ export function ChatRoomComposer({
     agentLabel: agentMentions.namedAgent
       ? `@${agentMentions.namedAgent.name}`
       : "This agent",
-    enabled: allowAgentMentionsInComposer({
-      agentKind: threadMetadata?.agent_kind,
-      hasSelectedThread: selectedThread != null,
-      isNewThreadCodex,
-    }),
+    enabled:
+      computersAvailable &&
+      allowAgentMentionsInComposer({
+        agentKind: threadMetadata?.agent_kind,
+        hasSelectedThread: selectedThread != null,
+        isNewThreadCodex,
+      }),
   });
   const pendingPreparation = useRef<
     | { reference?: AgentMentionReference; value?: string; immediate?: boolean }

@@ -32,6 +32,7 @@ import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
 import { serializeComputerMention } from "@cocalc/util/computer-mentions";
 import { useComputers } from "@cocalc/frontend/account/use-computers";
+import { useComputersAvailable } from "@cocalc/frontend/account/computers-available";
 import {
   computerState,
   isListed,
@@ -57,9 +58,10 @@ export function useMentionableUsers(): (
   const { names: artifactNames } = useArtifactNames();
   const [expanded, setExpanded] = useState(false);
   const enabled = allowAgentMentions === true;
+  const computersAvailable = useComputersAvailable();
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);
-  const computers = useComputers(enabled);
+  const computers = useComputers(enabled && computersAvailable);
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
