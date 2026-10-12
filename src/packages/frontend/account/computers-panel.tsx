@@ -15,6 +15,7 @@ import type {
   ComputerSummary,
 } from "@cocalc/util/computers/api";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -22,6 +23,23 @@ import {
 
 const api = () => webapp_client.conat_client.hub.computers;
 const OPEN = new Set(["pending", "paired"]);
+/** Expired requests stay listed this long, so the owner sees what happened. */
+const SHOW_EXPIRED_MS = 60 * 60 * 1000;
+
+/** Open, but its time ran out (the list may not have caught up yet). */
+function stateNow(r: ComputerRequestSummary, now: number): string {
+  return OPEN.has(r.state) && r.expires_at <= now ? "expired" : r.state;
+}
+
+/** The reason only, without RPC plumbing, as a sentence. */
+function errorText(err: unknown): string {
+  const message = normalizeUserFacingError(err).message.replace(
+    /^Error:\s*/,
+    "",
+  );
+  const sentence = message.charAt(0).toUpperCase() + message.slice(1);
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
 
 function timeLimit(policy: {
   duration: null | { initial_seconds: number; max_seconds: number };
@@ -45,10 +63,18 @@ export function ComputersPanel() {
         api().listComputerRequests({}),
         api().listComputers({}),
       ]);
-      setRequests(r.filter((x) => OPEN.has(x.state)));
+      const now = Date.now();
+      setRequests(
+        r.filter(
+          (x) =>
+            OPEN.has(stateNow(x, now)) ||
+            (stateNow(x, now) === "expired" &&
+              x.expires_at > now - SHOW_EXPIRED_MS),
+        ),
+      );
       setComputers(c.filter((x) => x.revoked_at == null));
     } catch (err) {
-      setError(`${err}`);
+      setError(errorText(err));
     }
   }
 
@@ -67,7 +93,8 @@ export function ComputersPanel() {
       await fn();
       await refresh();
     } catch (err) {
-      setError(`${err}`);
+      setError(errorText(err));
+      void refresh();
     } finally {
       lock.current = false;
       setBusy(false);
@@ -120,7 +147,12 @@ export function ComputersPanel() {
       </Typography.Title>
       {error && (
         <div role="alert">
-          <Alert type="error" title="Computers" description={error} />
+          <Alert
+            type="error"
+            title={error}
+            closable
+            onClose={() => setError("")}
+          />
         </div>
       )}
       {requests.length > 0 && (
@@ -145,7 +177,14 @@ export function ComputersPanel() {
               key: "state",
               title: "State",
               render: (_, r) =>
-                r.state === "pending" ? (
+                stateNow(r, Date.now()) === "expired" ? (
+                  <Space orientation="vertical" size={0}>
+                    <Tag>expired</Tag>
+                    <span>
+                      Not approved in time. Ask the agent for a new request.
+                    </span>
+                  </Space>
+                ) : r.state === "pending" ? (
                   <Space orientation="vertical" size={0}>
                     <Tag>waiting for the machine</Tag>
                     <span>Run this on the machine:</span>
@@ -170,31 +209,32 @@ export function ComputersPanel() {
               key: "actions",
               title: "",
               align: "right",
-              render: (_, r) => (
-                <Space>
-                  {r.state === "paired" && (
+              render: (_, r) =>
+                stateNow(r, Date.now()) === "expired" ? null : (
+                  <Space>
+                    {r.state === "paired" && (
+                      <Button
+                        type="primary"
+                        disabled={busy}
+                        onClick={() => approve(r)}
+                      >
+                        Approve…
+                      </Button>
+                    )}
                     <Button
-                      type="primary"
                       disabled={busy}
-                      onClick={() => approve(r)}
+                      onClick={() =>
+                        act(() =>
+                          api().declineComputerRequest({
+                            request_id: r.request_id,
+                          }),
+                        )
+                      }
                     >
-                      Approve…
+                      Decline
                     </Button>
-                  )}
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      act(() =>
-                        api().declineComputerRequest({
-                          request_id: r.request_id,
-                        }),
-                      )
-                    }
-                  >
-                    Decline
-                  </Button>
-                </Space>
-              ),
+                  </Space>
+                ),
             },
           ]}
         />

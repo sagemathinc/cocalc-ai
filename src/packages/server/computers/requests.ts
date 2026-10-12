@@ -756,6 +756,7 @@ export function maskEmail(email: unknown): string {
 
 export async function listComputerRequests(
   account_id: string,
+  now = Date.now(),
 ): Promise<ComputerRequestSummary[]> {
   requireUuid(account_id, "account_id");
   const { rows } = await getPool().query(
@@ -786,7 +787,11 @@ export async function listComputerRequests(
     return {
       request_id: row.request_id,
       name: row.name,
-      state: row.state,
+      // Open past its expiry is expired, whether or not the sweep ran yet.
+      state:
+        isOpen(row.state) && new Date(row.expires_at).valueOf() <= now
+          ? "expired"
+          : row.state,
       why: row.why,
       requested_policy: row.requested_policy,
       resolved_policy: row.resolved_policy ?? null,
