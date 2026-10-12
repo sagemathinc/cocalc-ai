@@ -36,7 +36,7 @@ export async function agentComputerRequest(
     const reason = await explainIneligibility(run).catch(() => null);
     throw new Error(
       reason ??
-        "this project can't use computers right now (they need a private project: you are its only collaborator, and nothing is shared publicly)",
+        "this project can't use computers right now (they need a project whose only collaborator is you)",
     );
   }
   const home = computersAtBay(home_bay_id);
