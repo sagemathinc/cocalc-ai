@@ -47,6 +47,10 @@ import {
   parseArtifactMention,
   serializeArtifactMention,
 } from "@cocalc/util/artifact-mentions";
+import {
+  parseComputerMention,
+  serializeComputerMention,
+} from "@cocalc/util/computer-mentions";
 
 function renderMention(tokens, idx): string {
   // TODO: we could dynamically update the username using the account-id
@@ -84,6 +88,25 @@ export function mentionPlugin(md): void {
           );
           if (reference) {
             const token = new Token("artifact-mention", "", 0);
+            token.level = tokens[i].level;
+            token.reference = reference;
+            tokens = tokens
+              .slice(0, i - 2)
+              .concat([token], tokens.slice(i + 1));
+            blockTokens[j].children = tokens;
+            i -= 2;
+            continue;
+          }
+        }
+        if (
+          isMentionClose(tokens[i].content) &&
+          tokens[i - 2].content?.startsWith('<span class="computer-mention" ')
+        ) {
+          const reference = parseComputerMention(
+            `${tokens[i - 2].content}${tokens[i - 1].content}${tokens[i].content}`,
+          );
+          if (reference) {
+            const token = new Token("computer-mention", "", 0);
             token.level = tokens[i].level;
             token.reference = reference;
             tokens = tokens
@@ -150,4 +173,6 @@ export function mentionPlugin(md): void {
     serializeAgentMention(tokens[idx].reference);
   md.renderer.rules["artifact-mention"] = (tokens, idx) =>
     serializeArtifactMention(tokens[idx].reference);
+  md.renderer.rules["computer-mention"] = (tokens, idx) =>
+    serializeComputerMention(tokens[idx].reference);
 }

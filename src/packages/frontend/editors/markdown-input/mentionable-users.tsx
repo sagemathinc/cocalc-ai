@@ -30,6 +30,8 @@ import {
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
+import { serializeComputerMention } from "@cocalc/util/computer-mentions";
+import { isLive, useComputers } from "@cocalc/frontend/account/use-computers";
 import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 
 interface Opts {
@@ -52,6 +54,7 @@ export function useMentionableUsers(): (
   const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);
+  const computers = useComputers(enabled);
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
@@ -127,7 +130,35 @@ export function useMentionableUsers(): (
                 ),
               }))
           : [];
+      const now = Date.now();
+      const computerItems: Item[] = enabled
+        ? computers
+            .filter((c) => isLive(c, now))
+            .filter((c) => c.name.includes(query) || c.hostname.includes(query))
+            .slice(0, 20)
+            .map((c) => ({
+              value: serializeComputerMention({
+                version: 1,
+                computer_id: c.computer_id,
+                name: c.name,
+              }),
+              group: "Computers",
+              search: `${c.name} ${c.hostname}`.toLowerCase(),
+              label: (
+                <span title="Reference your computer; the agent's access is checked when it runs something there">
+                  <strong>@{c.name}</strong>
+                  <div style={{ fontSize: "0.9em" }}>
+                    {c.machine_user}@{c.hostname}
+                    {c.deadline != null
+                      ? ` · until ${new Date(c.deadline).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                      : ""}
+                  </div>
+                </span>
+              ),
+            }))
+        : [];
       return [
+        ...computerItems,
         ...artifacts,
         ...agents,
         ...(enabled && !query && !expanded
@@ -160,6 +191,7 @@ export function useMentionableUsers(): (
     selectedNetworkId,
     settings,
     artifactNames,
+    computers,
     expanded,
     postOnly,
   ]);
