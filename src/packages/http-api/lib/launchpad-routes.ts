@@ -24,6 +24,7 @@ import authAgentDestinations from "../pages/api/v2/auth/cli/agent/destinations";
 import authAgentInstallations from "../pages/api/v2/auth/cli/agent/installations";
 import accountSendVerificationEmail from "../pages/api/v2/accounts/send-verification-email";
 import accountSetEmailAddress from "../pages/api/v2/accounts/set-email-address";
+import cliSetup from "../pages/api/v2/cli/setup";
 
 export function getLaunchpadApiV2Routes(): ApiV2RouteEntry[] {
   return [
@@ -52,5 +53,7 @@ export function getLaunchpadApiV2Routes(): ApiV2RouteEntry[] {
       handler: accountSendVerificationEmail,
     },
     { path: "/accounts/set-email-address", handler: accountSetEmailAddress },
+    // The one-line setup scripts (SSH to a project) Launchpad shows.
+    { path: "/cli/setup", handler: cliSetup },
   ];
 }

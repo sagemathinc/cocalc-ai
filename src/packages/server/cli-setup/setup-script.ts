@@ -81,6 +81,7 @@ export function setupScript(
   installer = CLI_INSTALLER_URL,
 ): string {
   const steps = plan.steps.flatMap(stepLines).join("\n");
+  const probe = plan.probe.map(shQuote).join(" ");
   const done = plan.done ? `say ${shQuote(oneLine(plan.done))}` : "";
   return `#!/bin/sh
 # CoCalc: ${oneLine(plan.title)}
@@ -103,26 +104,44 @@ ask() {
   esac
 }
 
-find_cocalc() {
-  for c in "$(command -v cocalc 2>/dev/null || true)" \\
-    "\${XDG_BIN_HOME:-$HOME/.local/bin}/cocalc" "$HOME/.local/bin/cocalc" \\
-    /usr/local/bin/cocalc; do
-    if [ -n "$c" ] && [ -x "$c" ]; then
-      printf '%s\\n' "$c"
-      return 0
-    fi
-  done
-  return 1
+# Every cocalc we can find, one per line: on PATH, and where the installer
+# puts it (not necessarily on PATH in this shell yet).
+candidates() {
+  command -v cocalc 2>/dev/null || true
+  printf '%s\\n' "\${XDG_BIN_HOME:-$HOME/.local/bin}/cocalc" \\
+    "$HOME/.local/bin/cocalc" /usr/local/bin/cocalc
 }
 
-new_enough() { ${cocalc(plan.probe)} --help >/dev/null 2>&1; }
+# New enough for this: it knows the subcommand.
+works() {
+  [ -n "$1" ] && [ -x "$1" ] && "$1" ${probe} --help >/dev/null 2>&1
+}
 
-cocalc=$(find_cocalc || true)
-if [ -z "$cocalc" ] || ! new_enough; then
-  if [ -z "$cocalc" ]; then
+# The first cocalc that works (pick), or that exists at all (any).
+pick() {
+  candidates | while IFS= read -r c; do
+    if works "$c"; then
+      printf '%s\\n' "$c"
+      exit 0
+    fi
+  done
+}
+any() {
+  candidates | while IFS= read -r c; do
+    if [ -n "$c" ] && [ -x "$c" ]; then
+      printf '%s\\n' "$c"
+      exit 0
+    fi
+  done
+}
+
+cocalc=$(pick)
+if [ -z "$cocalc" ]; then
+  old=$(any)
+  if [ -z "$old" ]; then
     question="This needs the CoCalc command line (cocalc), which isn't installed. Install it now?"
   else
-    question="Your cocalc ($cocalc) is too old for this. Upgrade it now?"
+    question="Your cocalc ($old) is too old for this. Upgrade it now?"
   fi
   if ! ask "$question"; then
     say "Nothing was changed. Install it with:"
@@ -131,8 +150,9 @@ if [ -z "$cocalc" ] || ! new_enough; then
     exit 1
   fi
   curl -fsSL ${shQuote(installer)} | bash
-  cocalc=$(find_cocalc || true)
-  if [ -z "$cocalc" ] || ! new_enough; then
+  # An old cocalc may still come first on PATH: take the one that works.
+  cocalc=$(pick)
+  if [ -z "$cocalc" ]; then
     say "cocalc is installed, but this version can't do this yet. Please try again later."
     exit 1
   fi

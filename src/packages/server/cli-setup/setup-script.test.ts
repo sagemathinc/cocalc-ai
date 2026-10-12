@@ -139,6 +139,47 @@ EOF
     );
   });
 
+  it("an old cocalc first on PATH: after upgrading, uses the new one in ~/.local/bin", () => {
+    // The old one doesn't know the subcommand and must never run a step.
+    fake(
+      join(dir, "bin", "cocalc"),
+      `#!/bin/sh\necho "[OLD] $*" >> "$LOG"\nexit 1\n`,
+    );
+    fake(
+      join(dir, "bin", "curl"),
+      `#!/bin/sh
+cat <<'EOF'
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/cocalc" <<'INNER'
+${FAKE_COCALC}INNER
+chmod +x "$HOME/.local/bin/cocalc"
+EOF
+`,
+    );
+    const r = run(shell, ssh(), { answer: "y\n" });
+    expect(r.status).toBe(0);
+    expect(r.calls.at(-1)).toBe(
+      `[--api][${SITE}][project][ssh-config][add][-w][${PROJECT}]`,
+    );
+    expect(
+      r.calls.filter((c) => c.startsWith("[OLD]") && !c.includes("--help")),
+    ).toEqual([]);
+    expect(readFileSync(join(dir, "tty"), "utf8")).toContain(
+      `Your cocalc (${join(dir, "bin", "cocalc")}) is too old`,
+    );
+  });
+
+  it("a home directory with spaces works", () => {
+    const home = join(dir, "my home");
+    mkdirSync(join(home, ".local", "bin"), { recursive: true });
+    fake(join(home, ".local", "bin", "cocalc"), FAKE_COCALC);
+    const r = run(shell, ssh(), { env: { HOME: home } });
+    expect(r.status).toBe(0);
+    expect(r.calls.at(-1)).toBe(
+      `[--api][${SITE}][project][ssh-config][add][-w][${PROJECT}]`,
+    );
+  });
+
   it("too old: offers to upgrade; still too old after: says so and stops", () => {
     fake(join(dir, "bin", "cocalc"), FAKE_COCALC);
     fake(join(dir, "bin", "curl"), `#!/bin/sh\necho true\n`);
