@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 4 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 answers rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. William reviews after @lite1-review approves.
+Status: revision 5 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 (59c5fac26d) answered rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. Revision 5 answers rev 4's one medium finding [U1]: the exact pointer grammar, the launcher replacement inside the transaction, and how a future pointer format is introduced. William reviews after @lite1-review approves.
 
 ## Why change
 
@@ -103,8 +103,12 @@ The client composes two separately signed targets. Neither authority can stand i
 
 - **The namespaces are disjoint.** The delegations in `targets` restrict each role to its path prefix. A target outside its role's prefix is rejected, so `cli-*` metadata can never name a launcher, bootstrap or Node.
 - **The verifier checks both independently:** signatures, thresholds, expiry, revocation and floors per role. A bundle can *require* a minimum `runtime_sequence`, but can never *select* or *downgrade* runtime bytes. If the installed runtime is too old for the newest bundle, the client first updates the runtime (from runtime-signed metadata only). If it can't, it keeps the current bundle and says why.
-- **`active` is not an authority.** It's a locally derived tuple: (runtime target hash, bundle target hash), written only after both were verified. The launcher trusts it only as a pointer to content-addressed directories that the verifier already populated.
-- **The pointer format.** Every launcher reads every `pointer_format` ever written. Formats are only ever added, with a version prefix on the `active` line. A runtime update therefore installs the new launcher before it swaps `active` to a new format. A crash in between leaves a new launcher reading the old pointer, which it supports.
+- **`active` is not an authority.** It's a locally derived pointer, written only after both targets were verified. The launcher trusts it only to point into content-addressed directories that the verifier already populated. Its exact grammar is below [U1].
+- **The pointer format is frozen at `v1` for phase 1** [U1]. Changing it later needs a two-release bridge:
+  1. a runtime release whose launcher reads both `v1` and `v2`, while its bootstrap still writes `v1`;
+  2. a later runtime release whose bootstrap writes `v2`.
+
+  Launchers only ever gain formats and never drop one, so the launcher installed by a transaction can always read the pointer that transaction leaves behind, old or new. An old bootstrap never has to construct a format it doesn't know: the new-format pointer is written only by a bootstrap that ships with a launcher that reads it.
 
 ## The runtime ceremony [T1]
 
@@ -158,18 +162,24 @@ From then on, everything goes through the bootstrap verifier and signed metadata
   node/<sha256>/                          verified Node trees, immutable
   targets/<sha256>/                       verified bundles and bootstraps, immutable
   tuf/                                    TUF client state: trusted root, metadata, highest-seen per role
-  active                                  one line: <pointer format> <runtime target hash> <node sha256> <bootstrap sha256> <bundle sha256>
+  active                                  the pointer, exact v1 grammar below
   previous                                the last active line (for rollback)
   lock                                    the update lock
 ```
 
 - **The launcher** never parses JSON:
-  - it reads `active`, a single line of three hex strings, and rejects anything else;
-  - it checks that the three directories exist under the fixed root and aren't symlinks;
+  - it reads `active`, which must be exactly one line in the **v1 grammar** [U1]: `v1 <R> <N> <B> <C>\n`, five tokens separated by single spaces. `R`, `N`, `B` and `C` are each 64 lowercase hex characters:
+    - `R` is the sha256 of the runtime target file (the runtime manifest in `runtime/*`);
+    - `N` is the sha256 of the Node archive that was verified and extracted to `node/<N>/`;
+    - `B` is the sha256 of the bootstrap file in `targets/<B>/`;
+    - `C` is the sha256 of the bundle's content, which is also its TUF bundle-target hash, in `targets/<C>/`.
+
+    Anything else (another token count, another version, extra bytes, a missing newline) is rejected, and the launcher prints the recovery command;
+  - it checks that `node/<N>`, `targets/<B>` and `targets/<C>` exist under the fixed root and aren't symlinks;
   - it clears `NODE_OPTIONS`, `NODE_PATH` and `NODE_REPL_EXTERNAL_MODULE`;
-  - it then execs `node/<h>/bin/node targets/<b>/bootstrap.js run targets/<c>/cocalc.js -- "$@"`.
+  - it then execs `node/<N>/bin/node targets/<B>/bootstrap.js run targets/<C>/cocalc.js -- "$@"`. The bootstrap re-checks that `R` names a verified runtime target listing exactly these `N` and `B`.
 - **The bootstrap** re-hashes the bundle (about 10 ms) before running it. It also detects accidental corruption, but it isn't a defense against same-user tampering.
-- **When the runtime changes** (Node, bootstrap or launcher), it arrives only in a runtime-signed target [T2]. The update installs the new Node and bootstrap trees, then atomically replaces the launcher, then swaps `active`, in that order (see the pointer format above).
+- **When the runtime changes** (Node, bootstrap or launcher), it arrives only in a runtime-signed target [T2], and the transaction below handles it: new trees, then the launcher, then `active`.
 - **Recovery:** `install.sh` reinstalls from scratch. A broken `active` file makes the launcher print that recovery command.
 
 ## Updating [R7, R9, R11]
@@ -189,14 +199,23 @@ From then on, everything goes through the bootstrap verifier and signed metadata
 3. **Stage:** download every needed file into unique private staging (`O_EXCL`), with caps and timeouts, verify sizes and hashes, then extract safely.
 4. **Sync:** fsync the files, rename into `node/<h>` and `targets/<h>`, and fsync the directories.
 5. **Raise the floors first [S6].** Write the newly trusted TUF metadata and the new `highest_seen` for **both** roles durably (write, fsync, rename, then fsync the directory) **before** exposing the new code. A crash here leaves the old `active` with a higher floor, which is safe: the next update simply continues.
-6. **Journal, then swap.** Write `transition` = {from: old active line, to: new line} durably. Then write `active.new`, fsync, rename it over `active`, and fsync the directory. Then write `previous` = the `from` line durably, and delete `transition`.
+6. **Journal, then switch** [U1]:
+   1. write `transition` = {from: old `active` line, to: new line} durably;
+   2. **if the runtime changed**, install the runtime-signed launcher atomically: write `cocalc.new` next to it, fsync it, rename it over `~/.local/bin/cocalc`, and fsync the directory;
+   3. write `active.new`, fsync it, rename it over `active`, and fsync the directory;
+   4. write `previous` = the `from` line durably, and delete `transition`.
 7. **Recover:** on startup:
    - staging leftovers are deleted;
    - a `transition` whose `to` is already `active` is completed (it writes `previous`);
-   - a `transition` whose `to` isn't `active` is discarded, along with any `active.new`.
-   Every crash point leaves either the old or the new active state, with a floor at least as high as before. Crash tests cover every step, including the one between the floor and the swap.
+   - a `transition` whose `to` isn't `active` is discarded, along with any `active.new` and `cocalc.new`. **A newer launcher that was already installed is deliberately kept** [U1]: it reads every earlier pointer format, so it works with the old `active`.
 
-**Rollback** is local only, and the server can never trigger it. It may only go to a target that was verified on this machine before and isn't revoked. It changes `active` but never lowers `highest_seen`.
+   Every crash point leaves either the old or the new active state, with a floor at least as high as before. Crash tests cover every step, including:
+   - between the floors and the journal;
+   - just before and just after the launcher replacement;
+   - between the launcher replacement and the `active` swap;
+   - for a format bridge, the first run of the new bootstrap that writes the new format.
+
+**Rollback** is local only, and the server can never trigger it. It may only go to a target that was verified on this machine before and isn't revoked. It changes `active` (and so which Node, bootstrap and bundle run) but never lowers `highest_seen`, and it **leaves the newer launcher installed** [U1], since launchers are backward compatible by rule.
 
 **Freshness** [R7]:
 - expired timestamp metadata means no update, with a clear message;
