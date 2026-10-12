@@ -8,6 +8,7 @@ import type { ReactNode, RefObject } from "react";
 import {
   ApartmentOutlined,
   ApiOutlined,
+  DesktopOutlined,
   ScheduleOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Dropdown, Modal, Spin } from "antd";
@@ -46,6 +47,22 @@ import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 import { activeNetworkMembers } from "./agent-network-utils";
 import { refreshAgentNetworks, sameEndpoint, useAgentNetworks } from "./api";
+import { AgentComputersModal, agentComputers } from "./computer-access";
+import {
+  refreshComputers,
+  useComputers,
+} from "@cocalc/frontend/account/use-computers";
+
+/** The computers an agent can use now, in a few words. */
+export function computersSummary(names: string[]): string {
+  if (names.length === 0) return "None";
+  return (
+    names
+      .slice(0, 2)
+      .map((name) => `@${name}`)
+      .join(", ") + (names.length > 2 ? ` +${names.length - 2}` : "")
+  );
+}
 
 /**
  * The managed CoCalc connector works with native Codex and the qualified
@@ -193,6 +210,9 @@ function NamedAgentConnectors({
   const [detailsId, setDetailsId] = useState<string>();
   const [cliOpen, setCliOpen] = useState<CliConnector>();
   const [sensorsOpen, setSensorsOpen] = useState(false);
+  const [computersOpen, setComputersOpen] = useState(false);
+  // Computers are a hub feature; CoCalc Lite has none.
+  const computers = useComputers(!lite);
   // Sensors run on the hub's scheduler, which CoCalc Lite does not have.
   const {
     sensors,
@@ -257,6 +277,13 @@ function NamedAgentConnectors({
     directory?.controls.paused ||
     assigned.every((network) => network.state !== "active");
   const openNetworks = () => setNetworksOpen(true);
+  const usable = agentComputers(computers, directory, agent.endpoint).filter(
+    (item) => item.canUse,
+  );
+  const computersStatus = computersSummary(
+    usable.map((item) => item.computer.name),
+  );
+  const computersOffline = usable.some((item) => item.state !== "connected");
   const networksStatus = error
     ? "Unable to load"
     : directory
@@ -320,6 +347,22 @@ function NamedAgentConnectors({
                   },
                 },
               ]),
+          ...(lite
+            ? []
+            : [
+                {
+                  key: "computers",
+                  label: "Computers",
+                  extra: (
+                    <Status text={computersStatus} warning={computersOffline} />
+                  ),
+                  icon: <DesktopOutlined aria-hidden />,
+                  onClick: () => {
+                    setComputersOpen(true);
+                    void refreshComputers();
+                  },
+                },
+              ]),
           {
             key: "agent-networks",
             label: "Agent Networks",
@@ -348,7 +391,8 @@ function NamedAgentConnectors({
       Number(cocalcOn) +
       cliOn.length +
       Number(networksOn) +
-      Number(sensorsActive > 0);
+      Number(sensorsActive > 0) +
+      Number(usable.length > 0);
     const parts = [
       ...(cocalcConfigured ? [`CoCalc access ${cocalcStatus}`] : []),
       ...cliOn.map(
@@ -356,6 +400,7 @@ function NamedAgentConnectors({
           `${connector === "github" ? "GitHub" : "Cloudflare"} ${cliConnectorSummary(cli, agent, connector)}`,
       ),
       ...(assigned.length > 0 ? [`Agent Networks ${networksStatus}`] : []),
+      ...(usable.length > 0 ? [`Computers ${computersStatus}`] : []),
       ...(sensorsActive > 0 || sensorsToReview > 0
         ? [`Sensors ${sensorsStatus}`]
         : []),
@@ -458,6 +503,23 @@ function NamedAgentConnectors({
             }}
           />
         </Suspense>
+      )}
+      {computersOpen && (
+        <AgentComputersModal
+          agent={agent.endpoint}
+          agentLabel={`@${agent.name}`}
+          open
+          computers={computers}
+          directory={directory}
+          onChanged={() => {
+            void refreshComputers();
+            refreshAgentNetworks();
+          }}
+          onClose={() => {
+            setComputersOpen(false);
+            chipRef.current?.focus();
+          }}
+        />
       )}
       <AgentNetworkDetailsModal
         network={networks.find(

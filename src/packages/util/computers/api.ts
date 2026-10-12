@@ -32,7 +32,10 @@ export interface ComputerSummary {
   notes_revision: number;
   notes_locked: boolean;
   connected_at: number | null;
+  /** When it was last heard from (its connector's latest heartbeat). */
   last_seen: number | null;
+  /** Its connector is online now: a live session seen in the last 45 s. */
+  connected: boolean;
   revoked_at: number | null;
   origin: string;
 }

@@ -13,13 +13,11 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 export const REFRESH_MS = 30_000;
 
 let computers: ComputerSummary[] = [];
-let loading = false;
+let loading: Promise<ComputerSummary[]> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 const listeners = new Set<() => void>();
 
-async function load(): Promise<void> {
-  if (loading) return;
-  loading = true;
+async function fetchComputers(): Promise<ComputerSummary[]> {
   try {
     computers = await webapp_client.conat_client.hub.computers.listComputers(
       {},
@@ -27,9 +25,24 @@ async function load(): Promise<void> {
     for (const listener of listeners) listener();
   } catch {
     // Suggestions are a convenience: the next refresh tries again.
-  } finally {
-    loading = false;
   }
+  return computers;
+}
+
+/** One load at a time; callers during a load share it. */
+function load(): Promise<ComputerSummary[]> {
+  if (loading) return loading;
+  const p: Promise<ComputerSummary[]> = fetchComputers().finally(() => {
+    if (loading === p) loading = undefined;
+  });
+  loading = p;
+  return p;
+}
+
+/** Load the list now (e.g. before checking a message, or after a fix). */
+export async function refreshComputers(): Promise<ComputerSummary[]> {
+  if (loading) await loading;
+  return await load();
 }
 
 function subscribe(listener: () => void): () => void {

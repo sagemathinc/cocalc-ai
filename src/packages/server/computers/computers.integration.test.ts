@@ -57,6 +57,7 @@ const describeDb =
 const tables = [
   "account_computers",
   "account_computer_requests",
+  "account_computer_sessions",
   "account_computer_operations",
   "account_computer_jobs",
   "cluster_computer_signing_keys",

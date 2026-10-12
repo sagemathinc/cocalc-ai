@@ -31,7 +31,12 @@ import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context"
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
 import { serializeComputerMention } from "@cocalc/util/computer-mentions";
-import { isLive, useComputers } from "@cocalc/frontend/account/use-computers";
+import { useComputers } from "@cocalc/frontend/account/use-computers";
+import {
+  computerState,
+  isListed,
+  STATE_LABEL,
+} from "@cocalc/frontend/account/computer-state";
 import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 
 interface Opts {
@@ -133,7 +138,7 @@ export function useMentionableUsers(): (
       const now = Date.now();
       const computerItems: Item[] = enabled
         ? computers
-            .filter((c) => isLive(c, now))
+            .filter((c) => isListed(c, now))
             .filter((c) => c.name.includes(query) || c.hostname.includes(query))
             .slice(0, 20)
             .map((c) => ({
@@ -148,9 +153,10 @@ export function useMentionableUsers(): (
                 <span title="Reference your computer; the agent's access is checked when it runs something there">
                   <strong>@{c.name}</strong>
                   <div style={{ fontSize: "0.9em" }}>
-                    {c.machine_user}@{c.hostname}
-                    {c.deadline != null
-                      ? ` · until ${new Date(c.deadline).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                    {c.machine_user}@{c.hostname} ·{" "}
+                    {STATE_LABEL[computerState(c, now)]}
+                    {computerState(c, now) !== "ended" && c.deadline != null
+                      ? ` until ${new Date(c.deadline).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                       : ""}
                   </div>
                 </span>

@@ -153,7 +153,7 @@ describe("mentionableUsers", () => {
     expect(items.some((item) => item.search === "elsewhere")).toBe(false);
   });
 
-  it("offers the account's live computers in agent composers only", () => {
+  it("offers the account's computers (with their state) in agent composers only", () => {
     mockStores(jest.fn());
     const computer = (name: string, extra: object = {}) => ({
       computer_id: `1a057860-889d-461a-9073-4b8c69d6512${name.length}`,
@@ -162,21 +162,23 @@ describe("mentionableUsers", () => {
       machine_user: "sage",
       deadline: null,
       revoked_at: null,
+      connected: false,
       ...extra,
     });
     mockComputers = [
-      computer("m1", { deadline: Date.now() + 3_600_000 }),
-      computer("gone", { revoked_at: Date.now() - 1000 }),
+      computer("m1", { deadline: Date.now() + 3_600_000, connected: true }),
       computer("ended", { deadline: Date.now() - 1000 }),
+      computer("old", { revoked_at: Date.now() - 2 * 24 * 3_600_000 }),
     ];
     mockAllowAgentMentions = true;
     const { result } = renderHook(() => useMentionableUsers());
     const offered = result
       .current("")
       .filter((item) => item.group === "Computers");
+    // Ended a moment ago: still offered (to reconnect); ended days ago: not.
     expect(
       offered.map((item) => parseComputerMention(item.value)?.name),
-    ).toEqual(["m1"]);
+    ).toEqual(["m1", "ended"]);
     expect(result.current("studio").some((i) => i.group === "Computers")).toBe(
       true,
     );

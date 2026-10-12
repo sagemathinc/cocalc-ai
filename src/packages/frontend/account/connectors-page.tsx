@@ -28,6 +28,7 @@ import { CocalcConnector } from "@cocalc/frontend/agents/cocalc-connector";
 import { cocalcAccessSummary } from "@cocalc/frontend/agents/composer-connectors";
 import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-network-actions";
 import { AgentMessagingSettings } from "./agent-messaging-settings";
+import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import { ComputersPanel } from "./computers-panel";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -232,6 +233,7 @@ function AgentNetworksSection() {
     ({ state }) => state !== "closed",
   );
   const allPaused = directory?.controls.paused === true;
+  const [revision, setRevision] = useState(0);
   return (
     <Panel header={AGENT_NETWORKS}>
       <Typography.Paragraph type="secondary">
@@ -241,6 +243,12 @@ function AgentNetworksSection() {
         member&apos;s running turn as guidance; a queued one waits for the turn
         to finish.
       </Typography.Paragraph>
+      <div style={{ marginBottom: 24 }}>
+        <AgentMessagingSettings
+          installations={false}
+          onChanged={() => setRevision((value) => value + 1)}
+        />
+      </div>
       {error ? (
         <Alert
           type="error"
@@ -326,7 +334,9 @@ function AgentNetworksSection() {
         </>
       )}
       <ComputersPanel />
-      <AgentMessagingSettings />
+      <div style={{ marginTop: 24 }}>
+        <ExternalAgentInstallations revision={revision} />
+      </div>
       <FreshAuthModal {...actions.freshAuthModalProps} />
     </Panel>
   );
