@@ -114,7 +114,7 @@ describe("SSHPanel", () => {
     });
   });
 
-  it("shows CoCalc CLI install, browser login, and ssh setup commands for launchpad projects", async () => {
+  it("shows the one-line setup first, and the separate install, login and setup commands on request", async () => {
     useHostInfo.mockReturnValue(
       immutable.Map({
         ssh_server: "hub.example.com:2200",
@@ -138,16 +138,17 @@ describe("SSHPanel", () => {
       />,
     );
 
-    expect(
-      screen.getByText(/Launchpad SSH is routed through Cloudflare/i),
-    ).toBeTruthy();
+    // One line: installs the CLI if needed, signs in, configures SSH.
     expect(
       screen.getByText(
-        "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
+        "curl -fsSL 'http://localhost/api/v2/cli/setup?action=ssh&project=project-1' | sh",
       ),
     ).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Copy" }).length).toBe(2);
     expect(
-      screen.getByRole("link", { name: "CoCalc CLI" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "CoCalc command line" })
+        .getAttribute("href"),
     ).toBe("https://software.cocalc.ai/software/cocalc/index.html");
     expect(screen.queryByText(/SSH target:/i)).toBeNull();
     expect(screen.queryByText(/Docs/i)).toBeNull();
@@ -165,9 +166,14 @@ describe("SSHPanel", () => {
       ),
     ).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Show setup commands"));
+    fireEvent.click(screen.getByText("Show the commands step by step"));
 
     expect(apiKeys).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByText("cocalc --api 'http://localhost' auth login"),
     ).toBeTruthy();
@@ -176,7 +182,7 @@ describe("SSHPanel", () => {
         "cocalc --api 'http://localhost' project ssh-config add -w 'project-1'",
       ),
     ).toBeTruthy();
-    expect(screen.getByText("ssh project-1")).toBeTruthy();
+    expect(screen.getAllByText("ssh project-1").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText("scp ./local-file project-1:~/").length,
     ).toBeGreaterThan(0);
@@ -208,7 +214,7 @@ describe("SSHPanel", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Show setup commands"));
+    fireEvent.click(screen.getByText("Show the commands step by step"));
 
     expect(screen.queryByText("Verify fresh auth")).toBeNull();
     expect(apiKeys).not.toHaveBeenCalled();
