@@ -167,8 +167,8 @@ These override older text below wherever they differ:
     lock keeps its old snapshot for everything else it reads.)
 - **Public shares don't affect computers** (Oct 12, William). An earlier
   revision counted them with a trigger on `public_project_paths` and fenced
-  share changes; that trigger is retired (dropped, schema-qualified, where a
-  development build installed it) and its columns are gone from the schema.
+  share changes; that trigger and its columns are gone (it only ever ran on
+  the lite1b dev server, cleaned up there by hand).
 - **Only the owning bay attests**, under the project-rehome fence:
   - never while a rehome runs;
   - never once its own row names another owner.
@@ -686,12 +686,13 @@ the daemon (see "Files").
 
 ### Privacy fence across bays
 
-- **Two authorities:** the grant and computer rows live at the **account's
-  home bay**; project membership and the sticky eligibility flag live at the
-  **project's bay**.
-- **The project's privacy epoch:** the project's bay keeps a monotonic epoch.
-  Every change to membership, public access, ownership or eligibility bumps
-  it under the project's membership lock.
+- **Two authorities:** the network membership and computer rows live at the
+  **account's home bay**; project membership (the users map, from which
+  eligibility is computed at each attestation) lives at the **project's
+  bay**.
+- **The project's privacy epoch:** `runtime_authority_revision`, a monotonic
+  counter on the project's bay. Every change to the users map (membership,
+  ownership) advances it, whatever code path makes the change.
 - **Signed attestations:** to issue tickets for a project, the home bay holds
   an attestation from the project's bay, signed with that bay's key. It binds:
   - protocol, site and cluster;
@@ -1252,8 +1253,8 @@ Each stage ships with tests and a live check on real machines:
   start-by, local clock;
 - the privacy fence with signed project-bay attestations (not-after) and
   interactive leases;
-- the sticky eligibility flag (existing projects start "uncertain") and fresh
-  private projects;
+- eligibility computed from the users map at each attestation (the owner is
+  the only collaborator), and "create a private project";
 - the policy ceiling, its partial order, and `policy_epoch`;
 - the signed pairing transcript with its short authentication phrase, and the
   computer certificate with challenge and response;
