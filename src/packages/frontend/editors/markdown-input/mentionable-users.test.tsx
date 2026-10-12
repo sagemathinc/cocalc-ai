@@ -187,16 +187,6 @@ describe("mentionableUsers", () => {
     expect(
       plain.result.current("").some((item) => item.group === "Computers"),
     ).toBe(false);
-    // Not on Launchpad, where computers aren't available.
-    mockAllowAgentMentions = true;
-    (useTypedRedux as jest.Mock).mockImplementation((store, key) =>
-      store === "customize" && key === "is_launchpad" ? true : undefined,
-    );
-    const launchpad = renderHook(() => useMentionableUsers());
-    expect(
-      launchpad.result.current("").some((item) => item.group === "Computers"),
-    ).toBe(false);
-    (useTypedRedux as jest.Mock).mockReset();
     mockComputers = [];
   });
 

@@ -23,7 +23,6 @@ import {
   sshPlan,
 } from "@cocalc/server/cli-setup/setup-script";
 import { computerConnectPlan } from "@cocalc/server/computers/setup-plan";
-import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 
 function param(req: Request, name: string): string {
   const value = req.query?.[name];
@@ -46,11 +45,6 @@ export default async function handle(req: Request, res: Response) {
       return;
     }
     if (action === "computer") {
-      // Computers are cocalc.ai (and Star) only for now; Launchpad doesn't
-      // serve their API.
-      if (isLaunchpadProduct()) {
-        throw new SetupActionError("computers aren't available on this site");
-      }
       res.send(setupScript(await computerConnectPlan(param(req, "request"))));
       return;
     }

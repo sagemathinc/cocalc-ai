@@ -30,7 +30,6 @@ import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-networ
 import { AgentMessagingSettings } from "./agent-messaging-settings";
 import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import { ComputersPanel } from "./computers-panel";
-import { useComputersAvailable } from "./computers-available";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -235,7 +234,6 @@ function AgentNetworksSection() {
   );
   const allPaused = directory?.controls.paused === true;
   const [revision, setRevision] = useState(0);
-  const computersAvailable = useComputersAvailable();
   return (
     <Panel header={AGENT_NETWORKS}>
       <Typography.Paragraph type="secondary">
@@ -335,7 +333,7 @@ function AgentNetworksSection() {
           />
         </>
       )}
-      {computersAvailable && <ComputersPanel />}
+      <ComputersPanel />
       <div style={{ marginTop: 24 }}>
         <ExternalAgentInstallations revision={revision} />
       </div>
