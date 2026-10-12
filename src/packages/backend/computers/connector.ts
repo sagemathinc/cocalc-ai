@@ -317,8 +317,16 @@ export async function pairComputer({
       signal,
     );
     if (status?.state === "approved") break;
+    if (status?.state === "expired") {
+      throw new Error(
+        "The request expired before it was approved. Ask for a new one in CoCalc and run its line again.",
+      );
+    }
+    if (status?.state === "declined") {
+      throw new Error("The request was declined in CoCalc.");
+    }
     if (status?.state !== "paired" && status?.state !== "pending") {
-      throw new Error(`the request was ${clean(status?.state, 40)}`);
+      throw new Error(`The request is ${clean(status?.state, 40)}.`);
     }
     await new Promise((r) => setTimeout(r, pollMs));
   }
