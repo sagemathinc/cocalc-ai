@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 2 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (7 high, 5 medium). This revision answers every point; the numbers in brackets, e.g. [R2], refer to that review. William reviews after @lite1-review approves.
+Status: revision 2 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium). This revision answers every point; the numbers in brackets, e.g. [R2], refer to that review. William reviews after @lite1-review approves.
 
 ## Why change
 
