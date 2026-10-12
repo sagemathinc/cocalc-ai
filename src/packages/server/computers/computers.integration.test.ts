@@ -45,6 +45,12 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: async () => "https://cocalc.ai",
 }));
 
+let multiBay = false;
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  isMultiBayCluster: () => multiBay,
+}));
+
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
@@ -277,8 +283,8 @@ describeDb("computers store", () => {
       // share rows.
       const moved = randomUUID();
       await db().query(
-        `INSERT INTO projects (project_id, users, runtime_authority_revision, computers_public_shares)
-         VALUES ($1,$2,9,1)`,
+        `INSERT INTO projects (project_id, users, runtime_authority_revision, computers_public_shares, computers_share_state_known)
+         VALUES ($1,$2,9,1,true)`,
         [moved, JSON.stringify({ [account]: { group: "owner" } })],
       );
       const attest = (id: string) =>
@@ -294,6 +300,75 @@ describeDb("computers store", () => {
       );
       expect(await count(project_id)).toBe(0);
       expect((await attest(project_id)).payload.eligible).toBe(true);
+    });
+
+    it("a project whose share state isn't known: reconciled on a single bay, never private on a multi-bay cluster", async () => {
+      const { attestProjectLocal } = await import("./attestation");
+      const make = async () => {
+        const id = randomUUID();
+        // As a project from before the share count, or a copy of one.
+        await db().query(
+          `INSERT INTO projects (project_id, users, runtime_authority_revision)
+           VALUES ($1,$2,3)`,
+          [id, JSON.stringify({ [account]: { group: "owner" } })],
+        );
+        return id;
+      };
+      const attest = (id: string) =>
+        attestProjectLocal({
+          project_id: id,
+          account_id: account,
+          home_bay_id: "bay-0",
+        });
+      const known = async (id: string) =>
+        (
+          await db().query(
+            "SELECT computers_share_state_known AS k FROM projects WHERE project_id=$1",
+            [id],
+          )
+        ).rows[0].k;
+
+      multiBay = true;
+      try {
+        const id = await make();
+        expect((await attest(id)).payload.eligible).toBe(false);
+        expect(await known(id)).toBeNull();
+      } finally {
+        multiBay = false;
+      }
+      const id = await make();
+      expect((await attest(id)).payload.eligible).toBe(true);
+      expect(await known(id)).toBe(true);
+    });
+
+    it("a bay that no longer owns a project can't make its shares active again", async () => {
+      const project_id = await project({ [account]: { group: "owner" } });
+      const share = randomUUID();
+      await db().query(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [share, project_id],
+      );
+      await db().query(
+        "UPDATE projects SET owning_bay_id='bay-3' WHERE project_id=$1",
+        [project_id],
+      );
+      // Disabling is fine; making it active again is refused.
+      await db().query(
+        "UPDATE public_project_paths SET disabled=true WHERE id=$1",
+        [share],
+      );
+      await expect(
+        db().query(
+          "UPDATE public_project_paths SET disabled=false WHERE id=$1",
+          [share],
+        ),
+      ).rejects.toThrow(/owned by another bay/);
+      await expect(
+        db().query(
+          "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub2','listed',false)",
+          [randomUUID(), project_id],
+        ),
+      ).rejects.toThrow(/owned by another bay/);
     });
 
     it("refuses share changes while the project is being rehomed", async () => {

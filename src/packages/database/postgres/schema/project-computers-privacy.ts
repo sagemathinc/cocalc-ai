@@ -15,14 +15,18 @@
 // Plan: src/.agents/computers-plan-2026-10-11.md ("Privacy fence").
 
 import type { Client } from "@cocalc/database/pool";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 const TRIGGER = "public_project_paths_bump_computers_privacy_trigger";
 const FUNCTION = "public_project_paths_bump_computers_privacy";
-const CONTRACT = "computers-privacy-contract-v2";
+const CONTRACT = "computers-privacy-contract-v3";
 
 // For each project the change touches:
 // - take the project-rehome fence and refuse while a rehome of it runs, so
 //   the project row a rehome copies can't miss a share change;
+// - refuse to make a share active on a bay that no longer owns the project
+//   (its share rows stay behind on a rehome), so a stale share can't come
+//   back to life where the new owner can't see it; disabling is allowed;
 // - advance computers_privacy_revision (the epoch);
 // - recount computers_public_shares (the state, which moves with the row).
 const FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${FUNCTION}()
@@ -39,6 +43,16 @@ const FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${FUNCTION}()
         WHERE x IS NOT NULL
      LOOP
        PERFORM pg_advisory_xact_lock(hashtext('project-rehome'), hashtext(pid::text));
+       IF TG_OP <> 'DELETE' AND pid = NEW.project_id
+          AND NEW.disabled IS NOT TRUE
+          AND NEW.visibility IS DISTINCT FROM 'disabled'
+          AND EXISTS (
+            SELECT 1 FROM projects p, computers_local_bay b
+             WHERE p.project_id = pid
+               AND NULLIF(btrim(p.owning_bay_id), '') IS NOT NULL
+               AND p.owning_bay_id <> b.bay_id) THEN
+         RAISE EXCEPTION 'project % is owned by another bay; change its public shares there', pid;
+       END IF;
        IF to_regclass('public.project_rehome_operations') IS NOT NULL THEN
          EXECUTE 'SELECT op_id::text FROM project_rehome_operations
                    WHERE project_id = $1 AND status = ''running'' LIMIT 1'
@@ -80,9 +94,24 @@ async function triggerExists(db: Client): Promise<boolean> {
   return rows[0]?.trigger_exists === true;
 }
 
+/** This bay's id, for the trigger's owner check (env as in bay-config). */
+async function ensureLocalBay(db: Client): Promise<void> {
+  const bay_id = `${process.env.COCALC_BAY_ID ?? ""}`.trim() || DEFAULT_BAY_ID;
+  await db.query(
+    "CREATE TABLE IF NOT EXISTS computers_local_bay (singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton), bay_id TEXT NOT NULL)",
+  );
+  await db.query(
+    `INSERT INTO computers_local_bay (singleton, bay_id) VALUES (true, $1)
+     ON CONFLICT (singleton) DO UPDATE SET bay_id = EXCLUDED.bay_id
+     WHERE computers_local_bay.bay_id IS DISTINCT FROM EXCLUDED.bay_id`,
+    [bay_id],
+  );
+}
+
 export async function ensureProjectComputersPrivacySchema(
   db: Client,
 ): Promise<void> {
+  await ensureLocalBay(db);
   if (await triggerExists(db)) {
     if (await functionIsCurrent(db)) return;
     // Upgrading the function (e.g. v1 had no share count): replace it and

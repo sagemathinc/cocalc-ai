@@ -42,7 +42,10 @@ import {
 } from "@cocalc/util/computers/protocol";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterId,
+  isMultiBayCluster,
+} from "@cocalc/server/cluster-config";
 import { signAsBay } from "./signing-keys";
 import { computersSite } from "./site";
 
@@ -129,13 +132,15 @@ export async function attestProjectLocal({
     await db.query("SELECT 1 FROM projects WHERE project_id=$1 FOR SHARE", [
       project_id,
     ]);
+    const sharesTable = await publicSharesExist(db);
     const { rows } = await db.query(
       `SELECT users, deleted, owning_bay_id,
               COALESCE(runtime_authority_revision, 0)::text AS authority,
               COALESCE(computers_privacy_revision, 0)::text AS privacy,
               COALESCE(computers_public_shares, 0) AS public_shares,
+              computers_share_state_known AS share_state_known,
               ${
-                (await publicSharesExist(db))
+                sharesTable
                   ? `EXISTS (SELECT 1 FROM public_project_paths s
                       WHERE s.project_id = p.project_id
                         AND s.disabled IS NOT TRUE AND s.visibility <> 'disabled')`
@@ -144,7 +149,28 @@ export async function attestProjectLocal({
          FROM projects p WHERE project_id=$1`,
       [project_id],
     );
-    return rows[0];
+    const row = rows[0];
+    if (row != null && row.share_state_known !== true && !isMultiBayCluster()) {
+      // A single-bay site: every share row of the project is here, so the
+      // local count is the whole truth. Record it (under the same fence).
+      const { rows: counted } = await db.query(
+        `UPDATE projects
+            SET computers_share_state_known = true,
+                computers_public_shares = ${
+                  sharesTable
+                    ? `(SELECT count(*) FROM public_project_paths s
+                         WHERE s.project_id = $1 AND s.disabled IS NOT TRUE
+                           AND s.visibility IS DISTINCT FROM 'disabled')`
+                    : "0"
+                }
+          WHERE project_id = $1
+          RETURNING computers_public_shares AS public_shares`,
+        [project_id],
+      );
+      row.share_state_known = true;
+      row.public_shares = counted[0]?.public_shares ?? row.public_shares;
+    }
+    return row;
   });
   if (row == null) throw new Error("no such project on this bay");
   const owner = `${row.owning_bay_id ?? ""}`.trim() || bay_id;
@@ -158,7 +184,10 @@ export async function attestProjectLocal({
     projectEligibleForComputers(row.users, account_id) &&
     !row.shared &&
     // The share count moves with the project; its share rows don't (yet).
-    // So a moved project that had shares stays ineligible here.
+    // So a moved project that had shares stays ineligible here, and so does
+    // one whose share state isn't known (it may predate the count, or be a
+    // copy of such a project), until it is reconciled.
+    row.share_state_known === true &&
     Number(row.public_shares) === 0;
   const privacy_epoch = Number(row.authority) + Number(row.privacy);
   const payload: ProjectAttestation = parseProjectAttestation({
