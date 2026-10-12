@@ -115,6 +115,19 @@ export async function createComputerRequest({
 }> {
   requireUuid(account_id, "account_id");
   const alias = computerName(name);
+  if (
+    requested_by != null &&
+    requested_policy != null &&
+    typeof requested_policy === "object" &&
+    (requested_policy as any).agent_network_id == null
+  ) {
+    // An agent asks for a computer for its own network; it may leave the
+    // network out when it is in exactly one (membership is rechecked below).
+    requested_policy = {
+      ...requested_policy,
+      agent_network_id: await onlyNetworkOf(account_id, requested_by),
+    };
+  }
   const policy = parseRequestedPolicy(requested_policy);
   if (typeof why !== "string" || why.length > MAX_WHY_LENGTH) {
     throw new ComputerRequestError("why must be at most 1000 characters");
@@ -207,6 +220,29 @@ export async function createComputerRequest({
   } finally {
     client.release();
   }
+}
+
+async function onlyNetworkOf(
+  account_id: string,
+  requested_by: RequestedBy,
+): Promise<string> {
+  requireUuid(requested_by.agent_id, "agent_id");
+  requireUuid(requested_by.project_id, "project_id");
+  const { rows } = await getPool().query(
+    `SELECT n.agent_network_id FROM agent_networks n
+       JOIN agent_network_members m ON m.agent_network_id = n.agent_network_id
+      WHERE n.account_id=$1 AND n.state='active' AND m.member_kind='registered'
+        AND m.removed_at IS NULL AND m.registered_agent_id=$2 AND m.project_id=$3`,
+    [account_id, requested_by.agent_id, requested_by.project_id],
+  );
+  if (rows.length !== 1) {
+    throw new ComputerRequestError(
+      rows.length === 0
+        ? "this agent is in no active agent network; a computer serves one"
+        : "this agent is in several agent networks; name one in the policy (agent_network_id)",
+    );
+  }
+  return rows[0].agent_network_id;
 }
 
 export async function getPairingView(

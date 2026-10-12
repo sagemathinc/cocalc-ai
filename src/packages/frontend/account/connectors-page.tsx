@@ -28,6 +28,7 @@ import { CocalcConnector } from "@cocalc/frontend/agents/cocalc-connector";
 import { cocalcAccessSummary } from "@cocalc/frontend/agents/composer-connectors";
 import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-network-actions";
 import { AgentMessagingSettings } from "./agent-messaging-settings";
+import { ComputersPanel } from "./computers-panel";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -324,6 +325,7 @@ function AgentNetworksSection() {
           />
         </>
       )}
+      <ComputersPanel />
       <AgentMessagingSettings />
       <FreshAuthModal {...actions.freshAuthModalProps} />
     </Panel>
