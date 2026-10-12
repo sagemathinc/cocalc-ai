@@ -57,8 +57,8 @@ import {
   projectRuntimeAuthorityRevisionSchemaNeedsSync,
 } from "./project-runtime-authority-revision";
 import {
-  ensureProjectComputersPrivacySchema,
   projectComputersPrivacySchemaNeedsSync,
+  retireProjectComputersPrivacySchema,
 } from "./project-computers-privacy";
 
 const log = getLogger("db:schema:sync");
@@ -488,8 +488,9 @@ export async function syncSchema(
     if (dbSchema.projects != null) {
       await ensureProjectRuntimeAuthorityRevisionSchema(db);
     }
-    if (dbSchema.projects != null && dbSchema.public_project_paths != null) {
-      await ensureProjectComputersPrivacySchema(db);
+    if (dbSchema.projects != null) {
+      // Removes a retired trigger where a development build installed it.
+      await retireProjectComputersPrivacySchema(db);
     }
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
@@ -612,10 +613,9 @@ export async function schemaNeedsSync(
     }
     if (
       dbSchema.projects != null &&
-      dbSchema.public_project_paths != null &&
       (await projectComputersPrivacySchemaNeedsSync(db))
     ) {
-      dbg("detected missing project computers privacy trigger");
+      dbg("detected a retired project computers privacy trigger");
       return true;
     }
     if (

@@ -145,7 +145,8 @@ These override older text below wherever they differ:
   **computer epoch**, bumped on every narrowing (member removed, network
   paused or closed, account messaging paused or revoked, computer revoked).
 - **Eligibility is decision 23**, not "never shared": exactly one
-  collaborator (the owner), and nothing shared publicly. The "never shared"
+  collaborator (the owner). (Public shares were dropped from it on Oct 12;
+  the share-related bullets below are historical.) The "never shared"
   text is the revision-5 record. A formerly shared project is eligible by
   design; the history warning is still to build.
 - **Adding a member, or resuming a network, that a computer or open request
@@ -279,8 +280,11 @@ These override older text below wherever they differ:
     - Only registered members count; external agents don't run in CoCalc
       projects.
 23. **Eligible projects:** an existing project qualifies while it has **exactly
-    one collaborator** (the owner) and isn't public. *(rev 6; replaces "never
-    shared")*
+    one collaborator** (the owner). *(rev 6; replaces "never shared". Oct 12
+    2026, William: public shares no longer matter: they let nobody act in
+    the project, and the same argument would apply to anything done in it.
+    The share trigger, share count and share-state flag were removed; the
+    privacy epoch is runtime_authority_revision.)*
     - Adding a collaborator makes it ineligible at once (privacy epoch,
       attestation, floors, all unchanged).
     - Removing the extra collaborators makes it eligible again.
