@@ -209,11 +209,11 @@ describeDb("computers store", () => {
       const explain = (project_id: string) =>
         explainProjectIneligibility({ project_id, account_id: account });
       const mine = await project({ [account]: { group: "owner" } });
-      // Projects inserted here have an unknown share state.
-      expect(await explain(mine)).toMatch(/sharing state isn't known/);
+      expect(await explain(mine)).toBeNull();
+      // A public share doesn't matter.
       await db().query(
-        "UPDATE projects SET computers_share_state_known=true WHERE project_id=$1",
-        [mine],
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), mine],
       );
       expect(await explain(mine)).toBeNull();
       const shared = await project({
@@ -221,11 +221,6 @@ describeDb("computers store", () => {
         [randomUUID()]: { group: "collaborator" },
       });
       expect(await explain(shared)).toMatch(/only collaborator is you/);
-      await db().query(
-        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
-        [randomUUID(), mine],
-      );
-      expect(await explain(mine)).toMatch(/public shares/);
       await db().query("UPDATE projects SET deleted=true WHERE project_id=$1", [
         mine,
       ]);
@@ -233,7 +228,7 @@ describeDb("computers store", () => {
       expect(await explain(randomUUID())).toBe("no such project");
     });
 
-    it("a public share makes it ineligible and advances the privacy epoch, every way it changes", async () => {
+    it("public shares don't affect eligibility or the privacy epoch, and share changes aren't restricted", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } }, 7);
       const attest = async () =>
@@ -244,182 +239,60 @@ describeDb("computers store", () => {
             home_bay_id: "bay-0",
           })
         ).payload;
-      const epochs: number[] = [];
-      const step = async (
-        sql: string,
-        values: unknown[],
-        eligible: boolean,
-      ) => {
-        if (sql) await db().query(sql, values);
-        const a = await attest();
-        expect(a.eligible).toBe(eligible);
-        epochs.push(a.privacy_epoch);
-      };
-      const share = randomUUID();
-      await step("", [], true);
-      await step(
-        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','unlisted',false)",
-        [share, project_id],
-        false,
-      );
-      await step(
-        "UPDATE public_project_paths SET disabled=true WHERE id=$1",
-        [share],
-        true,
-      );
-      await step(
-        "UPDATE public_project_paths SET disabled=false WHERE id=$1",
-        [share],
-        false,
-      );
-      await step(
-        "UPDATE public_project_paths SET visibility='disabled' WHERE id=$1",
-        [share],
-        true,
-      );
-      await step(
-        "UPDATE public_project_paths SET visibility='listed' WHERE id=$1",
-        [share],
-        false,
-      );
-      await step("DELETE FROM public_project_paths WHERE id=$1", [share], true);
-      // Strictly increasing: every change is visible to a floor.
-      for (let i = 1; i < epochs.length; i++) {
-        expect(epochs[i]).toBeGreaterThan(epochs[i - 1]);
-      }
-      expect(epochs[0]).toBe(7);
-    });
-
-    it("the share count moves with the project: a moved project that had shares is not private", async () => {
-      const { attestProjectLocal } = await import("./attestation");
-      const project_id = await project({ [account]: { group: "owner" } });
+      expect(await attest()).toMatchObject({
+        eligible: true,
+        privacy_epoch: 7,
+      });
       const share = randomUUID();
       await db().query(
         "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
         [share, project_id],
       );
-      const count = async (id: string) =>
-        Number(
-          (
-            await db().query(
-              "SELECT computers_public_shares AS n FROM projects WHERE project_id=$1",
-              [id],
-            )
-          ).rows[0].n,
-        );
-      expect(await count(project_id)).toBe(1);
-      // The destination of a rehome gets the row (count included), not the
-      // share rows.
-      const moved = randomUUID();
+      expect(await attest()).toMatchObject({
+        eligible: true,
+        privacy_epoch: 7,
+      });
+      // Even on a bay that doesn't own the project (no trigger refuses it).
       await db().query(
-        `INSERT INTO projects (project_id, users, runtime_authority_revision, computers_public_shares, computers_share_state_known)
-         VALUES ($1,$2,9,1,true)`,
-        [moved, JSON.stringify({ [account]: { group: "owner" } })],
-      );
-      const attest = (id: string) =>
-        attestProjectLocal({
-          project_id: id,
-          account_id: account,
-          home_bay_id: "bay-0",
-        });
-      expect((await attest(moved)).payload.eligible).toBe(false);
-      await db().query(
-        "UPDATE public_project_paths SET disabled=true WHERE id=$1",
-        [share],
-      );
-      expect(await count(project_id)).toBe(0);
-      expect((await attest(project_id)).payload.eligible).toBe(true);
-    });
-
-    it("a project whose share state isn't known: reconciled on a single bay, never private on a multi-bay cluster", async () => {
-      const { attestProjectLocal } = await import("./attestation");
-      const make = async () => {
-        const id = randomUUID();
-        // As a project from before the share count, or a copy of one.
-        await db().query(
-          `INSERT INTO projects (project_id, users, runtime_authority_revision)
-           VALUES ($1,$2,3)`,
-          [id, JSON.stringify({ [account]: { group: "owner" } })],
-        );
-        return id;
-      };
-      const attest = (id: string) =>
-        attestProjectLocal({
-          project_id: id,
-          account_id: account,
-          home_bay_id: "bay-0",
-        });
-      const known = async (id: string) =>
-        (
-          await db().query(
-            "SELECT computers_share_state_known AS k FROM projects WHERE project_id=$1",
-            [id],
-          )
-        ).rows[0].k;
-
-      multiBay = true;
-      try {
-        const id = await make();
-        expect((await attest(id)).payload.eligible).toBe(false);
-        expect(await known(id)).toBeNull();
-      } finally {
-        multiBay = false;
-      }
-      const id = await make();
-      expect((await attest(id)).payload.eligible).toBe(true);
-      expect(await known(id)).toBe(true);
-    });
-
-    it("a bay that no longer owns a project can't make its shares active again", async () => {
-      const project_id = await project({ [account]: { group: "owner" } });
-      const share = randomUUID();
-      await db().query(
-        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
-        [share, project_id],
-      );
-      await db().query(
-        "UPDATE projects SET owning_bay_id='bay-3' WHERE project_id=$1",
+        "UPDATE projects SET owning_bay_id='bay-9' WHERE project_id=$1",
         [project_id],
       );
-      // Disabling is fine; making it active again is refused.
       await db().query(
-        "UPDATE public_project_paths SET disabled=true WHERE id=$1",
+        "UPDATE public_project_paths SET disabled=false, visibility='unlisted' WHERE id=$1",
         [share],
       );
-      await expect(
-        db().query(
-          "UPDATE public_project_paths SET disabled=false WHERE id=$1",
-          [share],
-        ),
-      ).rejects.toThrow(/owned by another bay/);
-      await expect(
-        db().query(
-          "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub2','listed',false)",
-          [randomUUID(), project_id],
-        ),
-      ).rejects.toThrow(/owned by another bay/);
+      await db().query("DELETE FROM public_project_paths WHERE id=$1", [share]);
     });
 
-    it("refuses share changes while the project is being rehomed", async () => {
-      const project_id = await project({ [account]: { group: "owner" } });
-      await db().query(
-        `CREATE TABLE IF NOT EXISTS project_rehome_operations
-           (op_id TEXT, project_id UUID, source_bay_id TEXT, dest_bay_id TEXT,
-            stage TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now())`,
-      );
+    it("retires the public-share trigger a development build installed", async () => {
+      const {
+        projectComputersPrivacySchemaNeedsSync,
+        retireProjectComputersPrivacySchema,
+      } =
+        await import("@cocalc/database/postgres/schema/project-computers-privacy");
+      const client = await db().connect();
       try {
-        await db().query(
-          "INSERT INTO project_rehome_operations VALUES ('p9',$1,'bay-0','bay-3','requested','running',now())",
-          [project_id],
+        await client.query(
+          "CREATE TABLE IF NOT EXISTS computers_local_bay (singleton BOOLEAN PRIMARY KEY DEFAULT true, bay_id TEXT NOT NULL)",
         );
-        await expect(
-          db().query(
-            "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
-            [randomUUID(), project_id],
-          ),
-        ).rejects.toThrow(/project rehome p9 is running/);
+        await client.query(`CREATE OR REPLACE FUNCTION public_project_paths_bump_computers_privacy()
+          RETURNS TRIGGER AS $$ BEGIN RAISE EXCEPTION 'retired trigger still runs'; END; $$ LANGUAGE plpgsql`);
+        await client.query(`CREATE TRIGGER public_project_paths_bump_computers_privacy_trigger
+          AFTER INSERT OR UPDATE OR DELETE ON public_project_paths
+          FOR EACH ROW EXECUTE FUNCTION public_project_paths_bump_computers_privacy()`);
+        expect(await projectComputersPrivacySchemaNeedsSync(client)).toBe(true);
+        await retireProjectComputersPrivacySchema(client);
+        expect(await projectComputersPrivacySchemaNeedsSync(client)).toBe(
+          false,
+        );
+        // Share changes work again.
+        const project_id = await project({ [account]: { group: "owner" } });
+        await client.query(
+          "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'x','listed',false)",
+          [randomUUID(), project_id],
+        );
       } finally {
-        await db().query("DROP TABLE project_rehome_operations");
+        client.release();
       }
     });
 

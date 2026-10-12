@@ -1041,7 +1041,10 @@ describe("computers across bays", () => {
   let carol; // homed on the attached bay; fresh, so earlier scenarios can't fill her limits
 
   before(async () => {
-    carol = await createAccount(cluster, { home_bay_id: ATTACHED, name: "carol" });
+    carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
     carol.client = await client(carol);
   });
 
@@ -1168,7 +1171,10 @@ describe("computers across bays", () => {
     assert.equal(attestation.payload.project_bay_id, SEED);
     assert.equal(attestation.payload.eligible, true);
     const ticket = await issue(attestation);
-    assert.equal(ticket.ticket.payload.attestation.payload.project_bay_id, SEED);
+    assert.equal(
+      ticket.ticket.payload.attestation.payload.project_bay_id,
+      SEED,
+    );
     assert.equal(ticket.ticket.payload.issuer_bay_id, ATTACHED);
   });
 
@@ -1176,131 +1182,14 @@ describe("computers across bays", () => {
     const attestation = await attest();
     await setOwningBay(ATTACHED);
     try {
-      await assert.rejects(issue(attestation), /not from the project's current bay/);
+      await assert.rejects(
+        issue(attestation),
+        /not from the project's current bay/,
+      );
     } finally {
       await setOwningBay(SEED);
     }
     await issue(await attest());
-  });
-
-  it("a project rehomed with an active public share is not private at its new bay", async () => {
-    const share = randomUUID();
-    await runInBay(
-      cluster,
-      SEED,
-      `const getPool = require("@cocalc/database/pool").default;
-       await getPool().query(
-         "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
-         [${JSON.stringify(share)}, ${JSON.stringify(project)}]);`,
-    );
-    assert.equal((await attest(SEED)).payload.eligible, false);
-    // An admin moves the project to the attached bay.
-    const admin = await createAccount(cluster, { home_bay_id: SEED, name: "dave" });
-    await runInBay(
-      cluster,
-      SEED,
-      `const getPool = require("@cocalc/database/pool").default;
-       await getPool().query("UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
-         [${JSON.stringify(admin.account_id)}]);
-       const { rehomeProject } = server("projects/rehome.js");
-       return await rehomeProject(${JSON.stringify({
-         account_id: admin.account_id,
-         project_id: project,
-         dest_bay_id: ATTACHED,
-         reason: "computers test",
-       })});`,
-      { timeoutMs: 180_000 },
-    );
-    await eventually(async () => (await owningBay(project)) === ATTACHED, {
-      timeoutMs: 120_000,
-      what: "the project to move",
-    });
-    // The new owner has the share count but not the share rows: not private.
-    const moved = await eventually(async () => {
-      try {
-        return await attest(ATTACHED);
-      } catch {
-        return false;
-      }
-    }, { timeoutMs: 60_000, what: "an attestation from the new owner" });
-    assert.equal(moved.payload.project_bay_id, ATTACHED);
-    assert.equal(moved.payload.eligible, false);
-    // Disabling the share where its row still lives doesn't make it private
-    // at the new owner either (fail closed until share state moves).
-    await runInBay(
-      cluster,
-      SEED,
-      `const getPool = require("@cocalc/database/pool").default;
-       await getPool().query("UPDATE public_project_paths SET disabled=true WHERE id=$1",
-         [${JSON.stringify(share)}]);`,
-    );
-    assert.equal((await attest(ATTACHED)).payload.eligible, false);
-    // The old bay no longer attests at all.
-    await assert.rejects(attest(SEED), /no longer owns the project|project rehome/);
-  });
-
-  it("a project moved before its share state was counted is not private at its new bay", async () => {
-    // A seed project of carol's with an active share, whose row looks like
-    // one from before the share count existed (unknown state, count 0).
-    // Created on the seed (alice's home), then carol's alone.
-    const old = await createProject(alice.client, "from before the count");
-    assert.equal(await owningBay(old), SEED);
-    await runInBay(
-      cluster,
-      SEED,
-      `const getPool = require("@cocalc/database/pool").default;
-       await getPool().query("UPDATE projects SET users=$2 WHERE project_id=$1",
-         [${JSON.stringify(old)}, JSON.stringify({ [${JSON.stringify(carol.account_id)}]: { group: "owner" } })]);
-       await getPool().query(
-         "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
-         [${JSON.stringify(randomUUID())}, ${JSON.stringify(old)}]);
-       await getPool().query(
-         "UPDATE projects SET computers_share_state_known=NULL, computers_public_shares=0 WHERE project_id=$1",
-         [${JSON.stringify(old)}]);`,
-    );
-    const admin = await createAccount(cluster, { home_bay_id: SEED, name: "erin" });
-    await runInBay(
-      cluster,
-      SEED,
-      `const getPool = require("@cocalc/database/pool").default;
-       await getPool().query("UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
-         [${JSON.stringify(admin.account_id)}]);
-       const { rehomeProject } = server("projects/rehome.js");
-       return await rehomeProject(${JSON.stringify({
-         account_id: admin.account_id,
-         project_id: old,
-         dest_bay_id: ATTACHED,
-         reason: "computers test",
-       })});`,
-      { timeoutMs: 180_000 },
-    );
-    await eventually(async () => (await owningBay(old)) === ATTACHED, {
-      timeoutMs: 120_000,
-      what: "the old project to move",
-    });
-    const attested = await eventually(
-      async () => {
-        try {
-          return await runInBay(
-            cluster,
-            SEED,
-            `const { computersAtBay } = server("computers/routing.js");
-             return await computersAtBay(${JSON.stringify(ATTACHED)}).attestProject(${JSON.stringify(
-               {
-                 project_id: old,
-                 account_id: carol.account_id,
-                 home_bay_id: ATTACHED,
-               },
-             )});`,
-          );
-        } catch {
-          return false;
-        }
-      },
-      { timeoutMs: 60_000, what: "an attestation from the new owner" },
-    );
-    // Unknown share state on a multi-bay cluster: never private.
-    assert.equal(attested.payload.eligible, false);
   });
 
   // Both go through the hubs over the fabric, as the agent path does: the

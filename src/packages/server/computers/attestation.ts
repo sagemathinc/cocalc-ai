@@ -7,24 +7,17 @@
 // project may use computers right now, at which privacy epoch. Tickets carry
 // the attestation; daemons verify it themselves, so admission after a
 // collaborator is added is bounded even when every invalidation is lost.
-// Plan: src/.agents/computers-plan-2026-10-11.md ("Privacy fence across
-// bays", decision 23).
+// Plan: src/.agents/computers-plan-2026-10-11.md (decision 23).
 //
-// Eligible: the project's users map has exactly one entry, its owner, who is
-// the account asking. Any other entry (collaborator, viewer, owner) makes it
-// ineligible.
+// Eligible: not deleted, and the project's users map has exactly one entry,
+// its owner, who is the account asking. Any other entry (collaborator,
+// viewer, owner) makes it ineligible. Public shares don't matter (William,
+// Oct 12 2026): they let nobody act in the project.
 //
-// And nothing of it is shared publicly (an active public_project_paths row).
-//
-// The privacy epoch is runtime_authority_revision + computers_privacy_revision.
-// Triggers bump the first on every change to the users map and the second on
-// every change to the project's public shares, whatever code path makes them
-// (database/postgres/schema/project-runtime-authority-revision.ts and
-// project-computers-privacy.ts). Both are copied with the project when it is
-// rehomed, so the epoch never goes back. The same trigger keeps a count of
-// active shares on the project row and refuses share changes while a rehome
-// of the project runs; the count moves with the project (the share rows
-// don't yet), so a moved project that had shares is never attested private.
+// The privacy epoch is runtime_authority_revision, bumped by a trigger on
+// every change to the users map, whatever code path makes it
+// (database/postgres/schema/project-runtime-authority-revision.ts), and
+// copied with the project when it is rehomed, so it never goes back.
 //
 // Only the owning bay attests, under the project-rehome fence: never while a
 // rehome runs, and never once this bay's row says another bay owns it. An
@@ -42,10 +35,7 @@ import {
 } from "@cocalc/util/computers/protocol";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import {
-  getConfiguredClusterId,
-  isMultiBayCluster,
-} from "@cocalc/server/cluster-config";
+import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import { signAsBay } from "./signing-keys";
 import { computersSite } from "./site";
 
@@ -68,13 +58,6 @@ export function projectEligibleForComputers(
 type Db = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
-
-async function publicSharesExist(db: Db): Promise<boolean> {
-  const { rows } = await db.query(
-    "SELECT to_regclass('public.public_project_paths') AS t",
-  );
-  return rows[0]?.t != null;
-}
 
 async function withProjectAttestationFence<T>(
   project_id: string,
@@ -119,57 +102,22 @@ export async function attestProjectLocal({
   }
   // Under the project-rehome fence (the advisory lock a rehome takes when it
   // starts): no attestation while a rehome runs, and only while this bay
-  // still owns the project. The row is read FOR SHARE together with its
-  // public shares, so a share change (whose trigger bumps the row) either
-  // happened before or waits for this.
+  // still owns the project.
   const bay_id = getConfiguredBayId();
   const row = await withProjectAttestationFence(project_id, async (db) => {
-    // Lock the row first, in its own statement. Under READ COMMITTED a
-    // statement that waits for a lock re-reads the locked row but keeps its
-    // old snapshot for everything else, so reading the shares in the same
-    // statement could pair a new epoch with old shares. The next statement
-    // starts after any share change that bumped the row has committed.
+    // Lock the row first, in its own statement (under READ COMMITTED a
+    // statement that waits for a lock keeps its old snapshot for anything
+    // else it reads); then read it.
     await db.query("SELECT 1 FROM projects WHERE project_id=$1 FOR SHARE", [
       project_id,
     ]);
-    const sharesTable = await publicSharesExist(db);
     const { rows } = await db.query(
       `SELECT users, deleted, owning_bay_id,
-              COALESCE(runtime_authority_revision, 0)::text AS authority,
-              COALESCE(computers_privacy_revision, 0)::text AS privacy,
-              COALESCE(computers_public_shares, 0) AS public_shares,
-              computers_share_state_known AS share_state_known,
-              ${
-                sharesTable
-                  ? `EXISTS (SELECT 1 FROM public_project_paths s
-                      WHERE s.project_id = p.project_id
-                        AND s.disabled IS NOT TRUE AND s.visibility <> 'disabled')`
-                  : "false"
-              } AS shared
-         FROM projects p WHERE project_id=$1`,
+              COALESCE(runtime_authority_revision, 0)::text AS authority
+         FROM projects WHERE project_id=$1`,
       [project_id],
     );
     const row = rows[0];
-    if (row != null && row.share_state_known !== true && !isMultiBayCluster()) {
-      // A single-bay site: every share row of the project is here, so the
-      // local count is the whole truth. Record it (under the same fence).
-      const { rows: counted } = await db.query(
-        `UPDATE projects
-            SET computers_share_state_known = true,
-                computers_public_shares = ${
-                  sharesTable
-                    ? `(SELECT count(*) FROM public_project_paths s
-                         WHERE s.project_id = $1 AND s.disabled IS NOT TRUE
-                           AND s.visibility IS DISTINCT FROM 'disabled')`
-                    : "0"
-                }
-          WHERE project_id = $1
-          RETURNING computers_public_shares AS public_shares`,
-        [project_id],
-      );
-      row.share_state_known = true;
-      row.public_shares = counted[0]?.public_shares ?? row.public_shares;
-    }
     return row;
   });
   if (row == null) throw new Error("no such project on this bay");
@@ -177,19 +125,10 @@ export async function attestProjectLocal({
   if (owner !== bay_id) {
     throw new Error("this bay no longer owns the project");
   }
-  // Decision 23: exactly one collaborator, the owner, and nothing of it
-  // shared publicly.
+  // Decision 23: exactly one collaborator, the owner.
   const eligible =
-    !row.deleted &&
-    projectEligibleForComputers(row.users, account_id) &&
-    !row.shared &&
-    // The share count moves with the project; its share rows don't (yet).
-    // So a moved project that had shares stays ineligible here, and so does
-    // one whose share state isn't known (it may predate the count, or be a
-    // copy of such a project), until it is reconciled.
-    row.share_state_known === true &&
-    Number(row.public_shares) === 0;
-  const privacy_epoch = Number(row.authority) + Number(row.privacy);
+    !row.deleted && projectEligibleForComputers(row.users, account_id);
+  const privacy_epoch = Number(row.authority);
   const payload: ProjectAttestation = parseProjectAttestation({
     type: "cocalc-project-attestation",
     version: 1,
@@ -221,19 +160,8 @@ export async function explainProjectIneligibility({
   if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
     throw new Error("invalid project or account id");
   }
-  const db = getPool();
-  const sharesTable = await publicSharesExist(db);
-  const { rows } = await db.query(
-    `SELECT users, deleted, COALESCE(computers_public_shares, 0) AS public_shares,
-            computers_share_state_known AS share_state_known,
-            ${
-              sharesTable
-                ? `EXISTS (SELECT 1 FROM public_project_paths s
-                    WHERE s.project_id = p.project_id
-                      AND s.disabled IS NOT TRUE AND s.visibility <> 'disabled')`
-                : "false"
-            } AS shared
-       FROM projects p WHERE project_id=$1`,
+  const { rows } = await getPool().query(
+    `SELECT users, deleted FROM projects WHERE project_id=$1`,
     [project_id],
   );
   const row = rows[0];
@@ -241,12 +169,6 @@ export async function explainProjectIneligibility({
   if (row.deleted) return "this project has been deleted";
   if (!projectEligibleForComputers(row.users, account_id)) {
     return "computers can only be used from a project whose only collaborator is you (create a private project for this agent)";
-  }
-  if (row.shared || Number(row.public_shares) > 0) {
-    return "computers can't be used from a project with public shares (anyone could read what an agent brings back); use a private project";
-  }
-  if (row.share_state_known !== true) {
-    return "this project's public-sharing state isn't known yet on this multi-bay site (the project predates computers), so it can't use computers until it is reconciled; a project created now can";
   }
   return null;
 }
