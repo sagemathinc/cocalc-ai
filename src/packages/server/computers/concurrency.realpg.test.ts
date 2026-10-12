@@ -340,12 +340,16 @@ describeReal("computers: races on real PostgreSQL", () => {
       return computer_id;
     }
 
-    async function ticketAndProof() {
+    async function ticketAndProof(reuse?: {
+      operation_id: string;
+      pop: any;
+      run_id: string;
+    }) {
       const { issueComputerTicket } = await import("./tickets");
       const { attestProjectLocal } = await import("./attestation");
       const crypto = await import("@cocalc/backend/computers/crypto");
-      const pop = crypto.generateSigningKey();
-      const run_id = randomUUID();
+      const pop = reuse?.pop ?? crypto.generateSigningKey();
+      const run_id = reuse?.run_id ?? randomUUID();
       const issued: any = await issueComputerTicket({
         account_id: account,
         agent_id: source.agent_id,
@@ -355,7 +359,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         computer: "bench",
         operation: "exec",
         request: { command: "true" },
-        operation_id: randomUUID(),
+        operation_id: reuse?.operation_id ?? randomUUID(),
         pop_key: pop.publicDer,
         attestation: await attestProjectLocal({
           project_id: project,
@@ -365,6 +369,8 @@ describeReal("computers: races on real PostgreSQL", () => {
       });
       const t = issued.ticket.payload;
       return {
+        pop,
+        operation_id: t.operation_id as string,
         run_id,
         ticket: issued.ticket,
         request: issued.operation.request,
@@ -447,7 +453,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       const { signChallengeRequest } =
         await import("@cocalc/backend/computers/login");
       const { request_id, transcript_hash, signing } = await pairedRequest();
-      const { computer_id } = await approveComputerRequest({
+      const { certificate } = await approveComputerRequest({
         account_id: account,
         request_id,
         transcript_hash,
@@ -456,16 +462,55 @@ describeReal("computers: races on real PostgreSQL", () => {
       const results = await Promise.allSettled(
         Array.from({ length: 12 }, () =>
           createLoginChallenge(
-            signChallengeRequest({ computer_id, key: signing }),
+            signChallengeRequest({ certificate, key: signing }),
           ),
         ),
       );
       expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(5);
       const { rows } = await pool.query(
         "SELECT count(*)::int AS n FROM account_computer_challenges WHERE computer_id=$1",
-        [computer_id],
+        [certificate.payload.computer_id],
       );
       expect(rows[0].n).toBe(5);
+    });
+
+    it("a ticket retry and a relay of the same operation serialize (no deadlock), and the retry supersedes the relayed ticket", async () => {
+      await connectedComputer();
+      await silentHub();
+      const t = await ticketAndProof();
+      const { relayToComputer } = await import("./relay");
+      let inside: () => void = () => {};
+      const entered = new Promise<void>((r) => (inside = r));
+      let resume: () => void = () => {};
+      const paused = new Promise<void>((r) => (resume = r));
+      // The relay holds every lock it takes (fence, operation row, ...).
+      const r = relayToComputer({
+        account_id: account,
+        agent_id: source.agent_id,
+        run_id: t.run_id,
+        source_project_id: project,
+        ticket: t.ticket,
+        proof: t.proof,
+        request: t.request,
+        waitMs: 200,
+        beforeCommit: async () => {
+          inside();
+          await paused;
+        },
+      });
+      await entered;
+      const retry = ticketAndProof(t);
+      await waiters(1);
+      resume();
+      await expect(r).resolves.toMatchObject({ answered: false });
+      const newer: any = await retry;
+      expect(newer.ticket.payload.ticket_id).not.toBe(
+        t.ticket.payload.ticket_id,
+      );
+      // The relayed ticket is now superseded.
+      await expect(relay(t)).rejects.toThrow(
+        /newer ticket|already being relayed/,
+      );
     });
 
     it("narrowing first: the ticket from before is refused, nothing is relayed", async () => {

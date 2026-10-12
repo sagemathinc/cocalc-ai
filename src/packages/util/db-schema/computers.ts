@@ -434,6 +434,11 @@ Table({
         name: "account_computer_challenges_computer",
         query: "(computer_id, created_at DESC)",
       },
+      {
+        name: "account_computer_challenges_request_nonce",
+        unique: true,
+        query: "(computer_id, request_nonce)",
+      },
     ],
   },
   fields: {
@@ -441,6 +446,10 @@ Table({
     computer_id: required("uuid", "Computer."),
     account_id: required("uuid", "Owning account."),
     nonce: required("string", "Random nonce the login signs."),
+    request_nonce: required(
+      "string",
+      "Nonce of the signed request that asked for it (single use).",
+    ),
     expires_at: { ...timestamp("Expiry (60 s)."), not_null: true },
     used_at: timestamp("When a login consumed it."),
     created_at: created("Issue time."),

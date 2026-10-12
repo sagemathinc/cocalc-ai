@@ -64,22 +64,31 @@ export function signComputerLogin({
   return signEnvelope(SIGNED_KINDS.login, login, key);
 }
 
-/** Ask for a login challenge, signed by the computer's key. */
+/**
+ * Ask for a login challenge, signed by the computer's key and bound to the
+ * identity in its certificate (site, cluster, home bay, account, computer),
+ * with a single-use nonce.
+ */
 export function signChallengeRequest({
-  computer_id,
+  certificate,
   key,
   now = Date.now(),
 }: {
-  computer_id: string;
+  certificate: SignedEnvelope<ComputerCertificate>;
   key: KeyPair;
   now?: number;
 }): SignedEnvelope<ComputerChallengeRequest> {
+  const c = certificate.payload;
   return signEnvelope(
     SIGNED_KINDS.challenge_request,
     parseComputerChallengeRequest({
       type: "cocalc-computer-challenge-request",
       version: 1,
-      computer_id,
+      site: c.site,
+      cluster_id: c.cluster_id,
+      home_bay_id: c.home_bay_id,
+      account_id: c.account_id,
+      computer_id: c.computer_id,
       issued_at: now,
       nonce: randomNonce(),
     }),

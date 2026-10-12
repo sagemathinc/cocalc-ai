@@ -126,6 +126,7 @@ describeDb("a computer connected over conat", () => {
   let connector: Promise<void>;
   let computer_id: string;
   let computerKey: KeyPair;
+  let certificate: any;
   let sessions: string[] = [];
   let address: string;
   const inboxChecks: string[] = [];
@@ -221,6 +222,7 @@ describeDb("a computer connected over conat", () => {
       agent_network_generation: generation,
     }));
     const status = await r.getPairingStatus({ request_id, transcript_hash });
+    certificate = status.certificate;
 
     dir = mkdtempSync(join(tmpdir(), "computer-"));
     DaemonStore.create(join(dir, "state"), {
@@ -246,7 +248,7 @@ describeDb("a computer connected over conat", () => {
       signal: stop.signal,
       challenge: () =>
         createLoginChallenge(
-          signChallengeRequest({ computer_id, key: computerKey }),
+          signChallengeRequest({ certificate, key: computerKey }),
         ),
       openConat: (auth) =>
         connect({
@@ -474,6 +476,94 @@ describeDb("a computer connected over conat", () => {
     expect(r.rows[0].state).toBe("expired");
   });
 
+  it("the per-process waiter cap is reserved before any await: concurrent calls can't all slip past it", async () => {
+    const { setMaxWaitersForTesting } = await import("./relay");
+    setMaxWaitersForTesting(2);
+    let release: () => void = () => {};
+    const stalled = new Promise<void>((r) => (release = r));
+    try {
+      const tickets = await Promise.all(
+        [0, 1, 2, 3].map(() => ticketFor("exec", { command: "true" })),
+      );
+      // The first stalls inside its transaction, holding everything after.
+      const calls = tickets.map((t, i) =>
+        relay(t, i === 0 ? { beforeCommit: () => stalled } : {}),
+      );
+      const settled = Promise.allSettled(calls);
+      await new Promise((r) => setTimeout(r, 300));
+      release();
+      const results = await settled;
+      const busy = results.filter(
+        (r) => r.status === "rejected" && /busy/.test(`${r.reason}`),
+      );
+      expect(busy).toHaveLength(2);
+      // Refused calls never reached the database.
+      const rows = await db().query(
+        "SELECT count(*)::int AS n FROM account_computer_relays WHERE operation_id = ANY($1)",
+        [tickets.map((t) => t.ticket.payload.operation_id)],
+      );
+      expect(rows.rows[0].n).toBe(2);
+    } finally {
+      setMaxWaitersForTesting(undefined);
+      release();
+    }
+  });
+
+  it("a transport failure after commit is the explicit unknown outcome, and the row is expired", async () => {
+    const { setRelayClientForTesting } = await import("./relay");
+    const t = await ticketFor("exec", { command: "true" });
+    setRelayClientForTesting({
+      subscribe: async () => {
+        throw new Error("conat is down");
+      },
+    } as any);
+    try {
+      const result: any = await relay(t);
+      expect(result).toMatchObject({ answered: false, state: "dispatched" });
+    } finally {
+      setRelayClientForTesting(hub);
+    }
+    const r = await db().query(
+      "SELECT state FROM account_computer_relays WHERE operation_id=$1",
+      [t.ticket.payload.operation_id],
+    );
+    expect(r.rows[0].state).toBe("expired");
+  });
+
+  it("the stored summary of an answer is fixed-type and bounded, whatever the computer sends", async () => {
+    const { summary, MAX_SUMMARY_BYTES } = await import("./relay");
+    const huge = "x".repeat(1_000_000);
+    for (const reply of [
+      { ok: huge, state: huge, replayed: { nested: huge }, refused: [huge] },
+      {
+        ok: true,
+        state: "done",
+        replayed: false,
+        refused: Array(1000).fill(huge),
+      },
+      {
+        ok: [huge],
+        state: { a: huge },
+        replayed: [huge],
+        refused: { a: huge },
+      },
+      { refused: [{ toString: () => huge }, 5, null] },
+      null,
+      huge,
+    ]) {
+      const s = summary(reply);
+      expect(Buffer.byteLength(JSON.stringify(s))).toBeLessThanOrEqual(
+        MAX_SUMMARY_BYTES,
+      );
+      expect([true, false, null]).toContain(s.ok);
+      expect([true, false, null]).toContain(s.replayed);
+      expect(s.state == null || /^[a-z_]{1,20}$/.test(s.state)).toBe(true);
+    }
+    expect(
+      summary({ ok: true, state: "done", replayed: false, refused: null }),
+    ).toEqual({ ok: true, state: "done", replayed: false, refused: null });
+  });
+
   it("raw limits apply before reassembly in both directions", async () => {
     const { REPLY_RECEIVE_LIMITS } = await import("./relay");
     for (const limits of [REPLY_RECEIVE_LIMITS, OP_RECEIVE_LIMITS]) {
@@ -496,7 +586,7 @@ describeDb("a computer connected over conat", () => {
   it("a computer socket may only publish/subscribe: no cluster, RPC or interest events", async () => {
     const { createLoginChallenge } = await import("./sessions");
     const challenge = await createLoginChallenge(
-      signChallengeRequest({ computer_id, key: computerKey }),
+      signChallengeRequest({ certificate, key: computerKey }),
     );
     const login = signComputerLogin({
       challenge,

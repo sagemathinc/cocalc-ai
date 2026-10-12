@@ -96,6 +96,11 @@ export interface Connection {
   computer_id: string;
   name: string;
   key: KeyPair;
+  /**
+   * For end-to-end encryption to this computer (not used yet). Only in
+   * memory for a time-limited computer, like its signing key.
+   */
+  agreement?: KeyPair;
   /** From pairing: the session's limits (null: none). */
   duration: ComputerPolicy["duration"];
 }
@@ -135,21 +140,67 @@ export function parsePairingUrl(url: string): {
   return { origin: u.origin, request_id: m[1] };
 }
 
-async function post<T>(origin: string, path: string, body: object): Promise<T> {
-  const res = await fetch(`${origin}/api/v2/computers/${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+/** The pairing endpoints answer with small JSON objects. */
+export const MAX_RESPONSE_BYTES = 256 * 1024;
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * One POST to the site's computers API. The site is untrusted until the
+ * person at the machine confirms, so: no redirects (they could point this
+ * machine at another origin, e.g. a local service), a timeout plus the
+ * caller's abort signal, a byte cap read before parsing, and error text
+ * cleaned before anyone prints it.
+ */
+async function post<T>(
+  origin: string,
+  path: string,
+  body: object,
+  signal?: AbortSignal,
+): Promise<T> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${origin}/api/v2/computers/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+  } catch (err) {
+    if (signal?.aborted) throw new Error("stopped");
+    throw new Error(
+      `could not reach ${origin}: ${clean((err as Error)?.message ?? err, 200)}`,
+    );
+  }
+  const text = await readCapped(res, MAX_RESPONSE_BYTES);
   let data: any;
   try {
-    data = await res.json();
+    data = JSON.parse(text);
   } catch {
     throw new Error(`${origin} answered ${res.status} without JSON`);
   }
-  if (data?.error) throw new Error(`${data.error}`);
+  if (data?.error != null) throw new Error(clean(data.error, 300));
   if (!res.ok) throw new Error(`${origin} answered ${res.status}`);
   return data as T;
+}
+
+async function readCapped(res: Response, max: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (reader == null) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      throw new Error("the server's answer is too large");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /**
@@ -171,8 +222,9 @@ export async function pairComputer({
   // Nothing from the server is trusted as is: every field is parsed, and
   // identities come from the signed certificate and our own resolved policy.
   const view = parseView(
-    await post<unknown>(origin, "pairing/view", { request_id }),
+    await post<unknown>(origin, "pairing/view", { request_id }, signal),
     request_id,
+    origin,
   );
   if (view.state !== "pending") {
     throw new Error(`this request is ${view.state}; make a new one in CoCalc`);
@@ -229,12 +281,17 @@ export async function pairComputer({
     },
   });
   const ours = transcriptHash(transcript);
-  const submitted: any = await post<unknown>(origin, "pairing/submit", {
-    request_id,
-    transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, key),
-    signing_public_key: key.publicDer,
-    resolved_policy: policy,
-  });
+  const submitted: any = await post<unknown>(
+    origin,
+    "pairing/submit",
+    {
+      request_id,
+      transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, key),
+      signing_public_key: key.publicDer,
+      resolved_policy: policy,
+    },
+    signal,
+  );
   if (submitted?.transcript_hash !== ours) {
     throw new Error("the server answered for another pairing");
   }
@@ -247,10 +304,12 @@ export async function pairComputer({
   let status: any;
   for (;;) {
     if (signal?.aborted) throw new Error("stopped");
-    status = await post<unknown>(origin, "pairing/status", {
-      request_id,
-      transcript_hash: ours,
-    });
+    status = await post<unknown>(
+      origin,
+      "pairing/status",
+      { request_id, transcript_hash: ours },
+      signal,
+    );
     if (status?.state === "approved") break;
     if (status?.state !== "paired" && status?.state !== "pending") {
       throw new Error(`the request was ${clean(status?.state, 40)}`);
@@ -279,6 +338,12 @@ export async function pairComputer({
   const computer_id = c.computer_id; // a UUID: the parser checked
   const name = NAME.test(`${status.name}`) ? `${status.name}` : view.name;
   const dir = join(computersDir(), computer_id);
+  // Never clobber another pairing's files (keys, ledger, jobs).
+  if (existsSync(dir)) {
+    throw new Error(
+      `${dir} already exists; this computer id is already paired here`,
+    );
+  }
   ensurePrivateDir(dir);
   // Checks the certificate's signature against the home bay's key in the
   // directory (which DaemonStore validates key by key).
@@ -295,6 +360,7 @@ export async function pairComputer({
     computer_id,
     name,
     key,
+    agreement,
     duration: policy.duration,
   };
   writeDurableJson(join(dir, "connection.json"), {
@@ -336,7 +402,7 @@ interface ParsedView {
   state: string;
 }
 
-function parseView(input: any, request_id: string): ParsedView {
+function parseView(input: any, request_id: string, origin: string): ParsedView {
   if (input == null || typeof input !== "object") {
     throw new Error("the server's answer is malformed");
   }
@@ -352,8 +418,21 @@ function parseView(input: any, request_id: string): ParsedView {
   ) {
     throw new Error("the server's answer is malformed");
   }
+  let site: string;
+  try {
+    site = protocolSite(input.site);
+  } catch {
+    throw new Error("the server's answer is malformed");
+  }
+  // The site the computer is paired with (and its certificate names) is the
+  // one this machine actually talked to.
+  if (site !== protocolSite(origin)) {
+    throw new Error(
+      `this pairing line is for ${clean(site, 200)}, not ${origin}`,
+    );
+  }
   return {
-    site: protocolSite(input.site),
+    site,
     cluster_id: `${input.cluster_id}`,
     account_id: input.account_id,
     account_label: clean(input.account_label, 200).replace(/\s+/g, " "),
@@ -449,12 +528,17 @@ export async function runConnector(opts: RunOptions): Promise<void> {
   const challenge =
     opts.challenge ??
     (() =>
-      post<LoginChallengeView>(connection.origin, "session/challenge", {
-        request: signChallengeRequest({
-          computer_id: connection.computer_id,
-          key: connection.key,
-        }),
-      }));
+      post<LoginChallengeView>(
+        connection.origin,
+        "session/challenge",
+        {
+          request: signChallengeRequest({
+            certificate: store.certificate,
+            key: connection.key,
+          }),
+        },
+        signal,
+      ));
   const openConat =
     opts.openConat ??
     ((auth: object) =>

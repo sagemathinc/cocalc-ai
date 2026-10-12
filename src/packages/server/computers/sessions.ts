@@ -85,6 +85,13 @@ export async function createLoginChallenge(
     "challenge request",
   );
   const request = envelope.payload;
+  if (
+    request.site !== (await computersSite()) ||
+    request.cluster_id !== getConfiguredClusterId() ||
+    request.home_bay_id !== getConfiguredBayId()
+  ) {
+    throw new ComputerSessionError("no such computer");
+  }
   if (Math.abs(request.issued_at - now) > CHALLENGE_LIFETIME_MS) {
     throw new ComputerSessionError(
       "this request is too old (or the computer's clock is off)",
@@ -114,6 +121,7 @@ export async function createLoginChallenge(
     if (
       computer == null ||
       key == null ||
+      computer.account_id !== request.account_id ||
       envelope.kid !== computer.signing_key ||
       !verifyEnvelope(SIGNED_KINDS.challenge_request, envelope, (kid) =>
         kid === computer.signing_key ? key : undefined,
@@ -136,6 +144,16 @@ export async function createLoginChallenge(
     ) {
       throw new ComputerSessionError("too many login attempts; try again");
     }
+    // Each signed request is good for one challenge (rows are kept a day,
+    // and a request is only accepted within a minute of its signing).
+    const seen = await client.query(
+      `SELECT 1 FROM account_computer_challenges
+        WHERE computer_id=$1 AND request_nonce=$2`,
+      [request.computer_id, request.nonce],
+    );
+    if (seen.rows.length > 0) {
+      throw new ComputerSessionError("this request was already used");
+    }
     const challenge = {
       challenge_id: randomUUID(),
       nonce: randomNonce(),
@@ -143,13 +161,15 @@ export async function createLoginChallenge(
     };
     await client.query(
       `INSERT INTO account_computer_challenges
-         (challenge_id, computer_id, account_id, nonce, expires_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+         (challenge_id, computer_id, account_id, nonce, request_nonce,
+          expires_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [
         challenge.challenge_id,
         request.computer_id,
         computer.account_id,
         challenge.nonce,
+        request.nonce,
         new Date(challenge.expires_at),
         new Date(now),
       ],
@@ -392,15 +412,26 @@ export async function sessionIsCurrent(
   );
 }
 
-/** The router saw this exact session alive (its periodic revalidation). */
+/**
+ * The router saw this exact session alive (its periodic revalidation): one
+ * statement that records it only if it is still entirely current.
+ */
 async function touchSession(
-  s: Pick<ComputerSession, "session_id" | "generation">,
+  s: Pick<
+    ComputerSession,
+    "computer_id" | "session_id" | "generation" | "epoch"
+  >,
   now: number,
 ): Promise<boolean> {
   const { rowCount } = await getPool().query(
-    `UPDATE account_computer_sessions SET last_seen=$3
-      WHERE session_id=$1 AND generation=$2 AND closed_at IS NULL`,
-    [s.session_id, s.generation, new Date(now)],
+    `UPDATE account_computer_sessions s SET last_seen=$5
+       FROM account_computers c
+      WHERE s.session_id=$1 AND s.computer_id=$2 AND s.generation=$3
+        AND s.closed_at IS NULL AND s.lease_until > $5 AND s.epoch=$4
+        AND c.computer_id=s.computer_id AND c.epoch=$4
+        AND c.revoked_at IS NULL AND c.tombstoned_at IS NULL
+        AND (c.deadline IS NULL OR c.deadline > $5)`,
+    [s.session_id, s.computer_id, s.generation, s.epoch, new Date(now)],
   );
   return (rowCount ?? 0) > 0;
 }

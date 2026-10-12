@@ -174,8 +174,13 @@ export interface ComputerLogin {
 export interface ComputerChallengeRequest {
   type: "cocalc-computer-challenge-request";
   version: 1;
+  site: string;
+  cluster_id: string;
+  home_bay_id: string;
+  account_id: string;
   computer_id: string;
   issued_at: number;
+  /** Single use: the home bay refuses a nonce it has seen. */
   nonce: string;
 }
 
@@ -185,7 +190,17 @@ export function parseComputerChallengeRequest(
   const o = record(input, "challenge request");
   onlyKeys(
     o,
-    ["type", "version", "computer_id", "issued_at", "nonce"],
+    [
+      "type",
+      "version",
+      "site",
+      "cluster_id",
+      "home_bay_id",
+      "account_id",
+      "computer_id",
+      "issued_at",
+      "nonce",
+    ],
     "challenge request",
   );
   literal(o.type, "cocalc-computer-challenge-request", "challenge.type");
@@ -193,6 +208,10 @@ export function parseComputerChallengeRequest(
   return {
     type: "cocalc-computer-challenge-request",
     version: 1,
+    site: site(o.site),
+    cluster_id: clusterId(o.cluster_id),
+    home_bay_id: bayId(o.home_bay_id),
+    account_id: uuid(o.account_id, "challenge.account_id"),
     computer_id: uuid(o.computer_id, "challenge.computer_id"),
     issued_at: time(o.issued_at, "challenge.issued_at"),
     nonce: nonce(o.nonce, "challenge.nonce"),

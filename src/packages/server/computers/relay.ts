@@ -63,6 +63,12 @@ export const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 export const MAX_OPEN_RELAYS_PER_COMPUTER = 16;
 export const MAX_OPEN_RELAYS_PER_ACCOUNT = 32;
 export const MAX_WAITERS_PER_PROCESS = 256;
+let maxWaiters = MAX_WAITERS_PER_PROCESS;
+
+/** Tests: the per-process waiter cap. */
+export function setMaxWaitersForTesting(n: number | undefined): void {
+  maxWaiters = n ?? MAX_WAITERS_PER_PROCESS;
+}
 const TERMINAL_OPERATION_STATES = new Set([
   "done",
   "failed",
@@ -135,23 +141,24 @@ export async function relayToComputer({
   /** Tests: runs inside the transaction, after every lock is held. */
   beforeCommit?: () => Promise<void>;
 }): Promise<RelayResult> {
-  if (waiters >= MAX_WAITERS_PER_PROCESS) {
+  // Reserved before the first await, released whatever happens.
+  if (waiters >= maxWaiters) {
     throw new ComputerRelayError("the hub is busy; try again");
   }
-  const authorized = await authorizeRelay({
-    account_id,
-    agent_id,
-    run_id,
-    source_project_id,
-    ticket,
-    proof,
-    request,
-    waitMs,
-    now,
-    beforeCommit,
-  });
   waiters += 1;
   try {
+    const authorized = await authorizeRelay({
+      account_id,
+      agent_id,
+      run_id,
+      source_project_id,
+      ticket,
+      proof,
+      request,
+      waitMs,
+      now,
+      beforeCommit,
+    });
     return await dispatch(authorized, { ticket, proof, request }, waitMs);
   } finally {
     waiters -= 1;
@@ -276,6 +283,15 @@ async function authorizeRelay(opts: {
         "this ticket is stale (the computer changed); get a new one",
       );
     }
+    // Advisory locks before the operation row, as ticket issuance does, so
+    // a ticket retry and a relay of the same operation can't deadlock.
+    // They also serialize the caps below per account and computer.
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `computer-relay-account:${account_id}`,
+    ]);
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `computer-relay:${t.computer_id}`,
+    ]);
     const op = (
       await db.query(
         `SELECT * FROM account_computer_operations
@@ -314,7 +330,9 @@ async function authorizeRelay(opts: {
       throw new ComputerRelayError("invalid proof of possession");
     }
     // The exact live session: open, at this epoch, seen recently, and with
-    // a lease that covers the whole wait.
+    // a lease that covers the whole wait. Times are taken now, after every
+    // lock wait, not when the call began.
+    const lockedNow = Math.max(now, Date.now());
     const session = (
       await db.query(
         `SELECT session_id FROM account_computer_sessions
@@ -324,21 +342,14 @@ async function authorizeRelay(opts: {
         [
           t.computer_id,
           Number(computer.epoch),
-          new Date(now + opts.waitMs),
-          new Date(now - SESSION_LIVENESS_MS),
+          new Date(lockedNow + opts.waitMs),
+          new Date(lockedNow - SESSION_LIVENESS_MS),
         ],
       )
     ).rows[0];
     if (session == null) {
       throw new ComputerRelayError("this computer is not connected");
     }
-    // Bounded, serialized per computer and per account.
-    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-      `computer-relay-account:${account_id}`,
-    ]);
-    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-      `computer-relay:${t.computer_id}`,
-    ]);
     await db.query(
       `UPDATE account_computer_relays SET state='expired'
         WHERE account_id=$1 AND state='dispatched' AND expires_at <= $2`,
@@ -418,43 +429,56 @@ async function dispatch(
     HUB_PROCESS,
     a.correlation,
   );
-  const cn = hubClient();
-  const sub = await cn.subscribe(reply_subject, {
-    receiveLimits: REPLY_RECEIVE_LIMITS,
-  });
   let answer: unknown;
   try {
-    const op: ComputerOpMessage = {
-      v: 1,
-      correlation: a.correlation,
-      reply_subject,
-      hub_now: Date.now(),
-      message,
-    };
-    const { count } = await cn.publish(
-      computerOpSubject(a.computer_id, a.session_id),
-      op,
-    );
-    if (count === 0) {
-      logger.debug("relay published with no subscriber", {
-        computer_id: a.computer_id,
-        session_id: a.session_id,
-      });
+    const cn = hubClient();
+    const sub = await cn.subscribe(reply_subject, {
+      receiveLimits: REPLY_RECEIVE_LIMITS,
+    });
+    try {
+      const op: ComputerOpMessage = {
+        v: 1,
+        correlation: a.correlation,
+        reply_subject,
+        hub_now: Date.now(),
+        message,
+      };
+      const { count } = await cn.publish(
+        computerOpSubject(a.computer_id, a.session_id),
+        op,
+      );
+      if (count === 0) {
+        logger.debug("relay published with no subscriber", {
+          computer_id: a.computer_id,
+          session_id: a.session_id,
+        });
+      }
+      answer = await firstAnswer(sub, a, waitMs);
+    } finally {
+      sub.close();
     }
-    answer = await firstAnswer(sub, a, waitMs);
-  } finally {
-    sub.close();
+  } catch (err) {
+    // Committed, so it may have been delivered: the outcome is unknown, the
+    // same as when no answer comes.
+    logger.warn("relay transport failed after commit", err);
+    answer = undefined;
   }
+  const record = answer === undefined ? null : summary(answer);
   // At most once, and only for this exact relay.
-  const { rowCount } = await getPool().query(
-    `UPDATE account_computer_relays SET state=$2, answer=$3
-      WHERE correlation=$1 AND state='dispatched'`,
-    [
-      a.correlation,
-      answer === undefined ? "expired" : "answered",
-      answer === undefined ? null : JSON.stringify(summary(answer)),
-    ],
-  );
+  const { rowCount } = await getPool()
+    .query(
+      `UPDATE account_computer_relays SET state=$2, answer=$3
+        WHERE correlation=$1 AND state='dispatched'`,
+      [
+        a.correlation,
+        answer === undefined ? "expired" : "answered",
+        record == null ? null : JSON.stringify(record),
+      ],
+    )
+    .catch((err) => {
+      logger.warn("recording a relay outcome failed", err);
+      return { rowCount: 0 };
+    });
   if (answer === undefined || !rowCount) {
     return {
       answered: false,
@@ -491,17 +515,35 @@ async function firstAnswer(
   }
 }
 
-/** What the relay row keeps of an answer: no command output. */
-function summary(reply: any): unknown {
-  if (reply == null || typeof reply !== "object") return null;
-  return {
-    ok: reply.ok ?? null,
-    state: reply.state ?? null,
-    replayed: reply.replayed ?? null,
-    refused: Array.isArray(reply.refused)
-      ? reply.refused.slice(0, 10).map((r) => `${r}`.slice(0, 200))
+/** The most the relay row keeps of an answer (serialized). */
+export const MAX_SUMMARY_BYTES = 4096;
+const STATE = /^[a-z_]{1,20}$/;
+
+/**
+ * What the relay row keeps of an answer: fixed-type, bounded fields only
+ * (never command output, never anything nested from the computer).
+ */
+export function summary(reply: any): {
+  ok: boolean | null;
+  state: string | null;
+  replayed: boolean | null;
+  refused: string[] | null;
+} {
+  const r = reply != null && typeof reply === "object" ? reply : {};
+  const out = {
+    ok: typeof r.ok === "boolean" ? r.ok : null,
+    state: typeof r.state === "string" && STATE.test(r.state) ? r.state : null,
+    replayed: typeof r.replayed === "boolean" ? r.replayed : null,
+    refused: Array.isArray(r.refused)
+      ? r.refused
+          .slice(0, 10)
+          .map((x) => (typeof x === "string" ? x.slice(0, 200) : "?"))
       : null,
   };
+  if (Buffer.byteLength(JSON.stringify(out)) > MAX_SUMMARY_BYTES) {
+    return { ...out, refused: null };
+  }
+  return out;
 }
 
 /** Forget old relay rows. */

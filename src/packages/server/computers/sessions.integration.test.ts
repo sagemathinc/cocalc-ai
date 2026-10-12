@@ -156,8 +156,8 @@ describeDb("computer sessions", () => {
   }
 
   /** A challenge request signed by the computer's key. */
-  function ask(c: { computer_id: string; key: any }) {
-    return signChallengeRequest({ computer_id: c.computer_id, key: c.key });
+  function ask(c: { certificate: any; key: any }) {
+    return signChallengeRequest({ certificate: c.certificate, key: c.key });
   }
 
   async function login(c: Awaited<ReturnType<typeof pairedComputer>>) {
@@ -292,9 +292,14 @@ describeDb("computer sessions", () => {
     const c = await pairedComputer();
     for (let i = 0; i < 5; i++) await createLoginChallenge(ask(c));
     await expect(createLoginChallenge(ask(c))).rejects.toThrow(/too many/);
+    // Another computer id under this key's signature.
     await expect(
       createLoginChallenge(
-        signChallengeRequest({ computer_id: randomUUID(), key: c.key }),
+        signEnvelope(
+          SIGNED_KINDS.challenge_request,
+          { ...ask(c).payload, computer_id: randomUUID() },
+          c.key,
+        ),
       ),
     ).rejects.toThrow(/no such computer/);
   });
@@ -306,7 +311,7 @@ describeDb("computer sessions", () => {
     await expect(
       createLoginChallenge(
         signChallengeRequest({
-          computer_id: c.computer_id,
+          certificate: c.certificate,
           key: generateSigningKey(),
         }),
       ),
@@ -314,7 +319,7 @@ describeDb("computer sessions", () => {
     await expect(
       createLoginChallenge(
         signChallengeRequest({
-          computer_id: c.computer_id,
+          certificate: c.certificate,
           key: c.key,
           now: Date.now() - 5 * 60_000,
         }),
@@ -328,7 +333,26 @@ describeDb("computer sessions", () => {
         payload: { ...good.payload, issued_at: good.payload.issued_at + 1 },
       }),
     ).rejects.toThrow(/no such computer/);
+    // Bound to this site, cluster, home bay and account.
+    for (const other of [
+      { site: "https://other.example" },
+      { cluster_id: "other-cluster" },
+      { home_bay_id: "other-bay" },
+      { account_id: randomUUID() },
+    ]) {
+      await expect(
+        createLoginChallenge(
+          signEnvelope(
+            SIGNED_KINDS.challenge_request,
+            { ...ask(c).payload, ...other },
+            c.key,
+          ),
+        ),
+      ).rejects.toThrow(/no such computer/);
+    }
     expect((await createLoginChallenge(good)).challenge_id).toBeDefined();
+    // Each signed request is good for one challenge.
+    await expect(createLoginChallenge(good)).rejects.toThrow(/already used/);
   });
 
   it("the relay's live session: a dead newest session is never chosen over a live older one", async () => {

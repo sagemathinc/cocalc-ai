@@ -7,7 +7,14 @@
 // must take identities only from the signed certificate and its own
 // resolved policy, never from unsigned duplicate fields.
 
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -91,7 +98,7 @@ describe("pairing as the machine", () => {
       } else if (path.endsWith("/pairing/status")) {
         answer = approve(submitted);
       }
-      return { ok: true, status: 200, json: async () => answer } as any;
+      return new Response(JSON.stringify(answer), { status: 200 });
     }) as any;
   }
 
@@ -226,5 +233,118 @@ describe("pairing as the machine", () => {
     await expect(
       pairComputer({ url: `${SITE}/c/${REQUEST}`, io: io(), pollMs: 1 }),
     ).rejects.toThrow(/not signed by the computer's home bay/);
+  });
+
+  it("refuses to overwrite a computer already paired here", async () => {
+    let certificate: any;
+    site((submitted) => {
+      certificate ??= certificateFor(submitted);
+      mkdirSync(
+        join(dataHome, "cocalc", "computers", certificate.payload.computer_id),
+        { recursive: true },
+      );
+      return { state: "approved", certificate, directory: directory() };
+    });
+    await expect(
+      pairComputer({ url: `${SITE}/c/${REQUEST}`, io: io(), pollMs: 1 }),
+    ).rejects.toThrow(/already paired here/);
+  });
+});
+
+describe("the pairing HTTP boundary, before anyone has confirmed anything", () => {
+  let server: Server;
+  let port: number;
+  let other: Server;
+  let otherHits = 0;
+  let handler: (req, res) => void = () => {};
+
+  beforeAll(async () => {
+    server = createServer((req, res) => handler(req, res));
+    other = createServer((_req, res) => {
+      otherHits += 1;
+      res.end("{}");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+    port = (server.address() as any).port;
+  });
+  afterAll(async () => {
+    server.closeAllConnections?.();
+    other.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+    await new Promise((r) => other.close(r));
+  });
+
+  const url = () => `http://127.0.0.1:${port}/c/${REQUEST}`;
+  const io = { log: () => {}, confirm: async () => true };
+
+  it("never follows a redirect (e.g. to a local service)", async () => {
+    const target = `http://127.0.0.1:${(other.address() as any).port}/x`;
+    handler = (_req, res) => {
+      res.writeHead(307, { location: target });
+      res.end();
+    };
+    await expect(pairComputer({ url: url(), io })).rejects.toThrow(
+      /could not reach/,
+    );
+    expect(otherHits).toBe(0);
+  });
+
+  it("refuses an oversized answer without reading it all", async () => {
+    handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"x":"');
+      const chunk = "x".repeat(64 * 1024);
+      const timer = setInterval(() => {
+        if (!res.write(chunk)) return;
+      }, 1);
+      res.on("close", () => clearInterval(timer));
+    };
+    await expect(pairComputer({ url: url(), io })).rejects.toThrow(/too large/);
+  });
+
+  it("an endless answer is stopped by the caller", async () => {
+    handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write("{"); // and nothing more, ever
+    };
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 200);
+    const start = Date.now();
+    await expect(
+      pairComputer({ url: url(), io, signal: stop.signal }),
+    ).rejects.toThrow();
+    expect(Date.now() - start).toBeLessThan(5_000);
+  });
+
+  it("cleans error text from the server before it is shown", async () => {
+    handler = (_req, res) => {
+      res.end(JSON.stringify({ error: "bad \u001b[31mred\u202e evil" }));
+    };
+    const err: Error = await pairComputer({ url: url(), io }).catch((e) => e);
+    expect(err.message).not.toMatch(/[\u001b\u202e]/);
+    expect(err.message).toMatch(/bad/);
+  });
+
+  it("refuses a view whose site is not the origin it was fetched from", async () => {
+    handler = (req, res) => {
+      res.end(
+        JSON.stringify({
+          site: "https://cocalc.example",
+          cluster_id: "c1",
+          request_id: REQUEST,
+          account_id: randomUUID(),
+          account_label: "x",
+          name: "m1",
+          requested_policy: {},
+          why: "",
+          server_nonce: randomNonce(),
+          state: "pending",
+        }),
+      );
+    };
+    await expect(pairComputer({ url: url(), io })).rejects.toThrow(
+      /is for https:\/\/cocalc.example, not http:\/\/127.0.0.1/,
+    );
   });
 });

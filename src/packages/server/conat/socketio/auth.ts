@@ -72,6 +72,10 @@ import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import { computerSubjectAllowed } from "@cocalc/conat/computers/subjects";
 import {
+  COMPUTER_PRINCIPAL_KEYS,
+  type ComputerPrincipal,
+} from "@cocalc/conat/computers/principal";
+import {
   closeComputerSession,
   loginComputer,
   sessionIsCurrent,
@@ -287,32 +291,8 @@ async function accountSecurityStateAllowsAccount({
   return true;
 }
 
-/**
- * A connected computer (server/computers/sessions.ts): its own tagged
- * principal, deliberately NOT a CoCalcUser variant. It has no account,
- * project, hub or host id, so every generic code path treats it as nobody;
- * isAllowed handles it first and allows only its own session's exact
- * subjects. Anything carrying another field is not a computer.
- */
-export interface ComputerUser {
-  auth_actor: "computer";
-  computer_id: string;
-  computer_account_id: string;
-  computer_session_id: string;
-  computer_generation: number;
-  computer_epoch: number;
-  auth_lease_exp_s: number;
-}
-
-const COMPUTER_USER_KEYS = new Set<string>([
-  "auth_actor",
-  "computer_id",
-  "computer_account_id",
-  "computer_session_id",
-  "computer_generation",
-  "computer_epoch",
-  "auth_lease_exp_s",
-]);
+/** A connected computer: see @cocalc/conat/computers/principal. */
+export type ComputerUser = ComputerPrincipal;
 
 export function asComputerUser(user: unknown): ComputerUser | undefined {
   const u = user as Partial<ComputerUser> | null | undefined;
@@ -320,7 +300,7 @@ export function asComputerUser(user: unknown): ComputerUser | undefined {
     return undefined;
   }
   if (
-    Object.keys(u).some((k) => !COMPUTER_USER_KEYS.has(k)) ||
+    Object.keys(u).some((k) => !COMPUTER_PRINCIPAL_KEYS.has(k)) ||
     !isValidUUID(u.computer_id) ||
     !isValidUUID(u.computer_account_id) ||
     !isValidUUID(u.computer_session_id) ||
@@ -397,7 +377,7 @@ export async function getUser(
       auth_actor: "computer",
       auth_lease_exp_s: s.lease_until / 1000,
     };
-    return user as unknown as CoCalcUser;
+    return user;
   }
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
