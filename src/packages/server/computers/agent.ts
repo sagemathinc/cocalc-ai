@@ -33,8 +33,10 @@ export async function agentComputerRequest(
   const home_bay_id = await accountHomeBay(account_id);
   const attestation = await attest(run, home_bay_id);
   if (!attestation.payload.eligible) {
+    const reason = await explainIneligibility(run).catch(() => null);
     throw new Error(
-      "computers can only be used from a project whose only collaborator is you (create a private project for this agent)",
+      reason ??
+        "this project can't use computers right now (they need a private project: you are its only collaborator, and nothing is shared publicly)",
     );
   }
   const home = computersAtBay(home_bay_id);
@@ -110,6 +112,18 @@ export async function agentComputerRequest(
         request: request.request,
       });
   }
+}
+
+/** Why the project's owning bay says it can't use computers. */
+async function explainIneligibility(run: AgentRun): Promise<string | null> {
+  const { owning_bay_id } = await resolveProjectOwningBay({
+    account_id: run.account_id,
+    project_id: run.project_id,
+  });
+  return await computersAtBay(owning_bay_id).explainProjectIneligibility({
+    project_id: run.project_id,
+    account_id: run.account_id,
+  });
 }
 
 /** A fresh attestation from the project's owning bay. */

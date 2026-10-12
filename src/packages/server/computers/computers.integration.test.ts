@@ -204,6 +204,35 @@ describeDb("computers store", () => {
       expect(env.payload.eligible).toBe(false);
     });
 
+    it("explains why a project can't use computers, one reason at a time", async () => {
+      const { explainProjectIneligibility } = await import("./attestation");
+      const explain = (project_id: string) =>
+        explainProjectIneligibility({ project_id, account_id: account });
+      const mine = await project({ [account]: { group: "owner" } });
+      // Projects inserted here have an unknown share state.
+      expect(await explain(mine)).toMatch(/sharing state isn't known/);
+      await db().query(
+        "UPDATE projects SET computers_share_state_known=true WHERE project_id=$1",
+        [mine],
+      );
+      expect(await explain(mine)).toBeNull();
+      const shared = await project({
+        [account]: { group: "owner" },
+        [randomUUID()]: { group: "collaborator" },
+      });
+      expect(await explain(shared)).toMatch(/only collaborator is you/);
+      await db().query(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), mine],
+      );
+      expect(await explain(mine)).toMatch(/public shares/);
+      await db().query("UPDATE projects SET deleted=true WHERE project_id=$1", [
+        mine,
+      ]);
+      expect(await explain(mine)).toMatch(/deleted/);
+      expect(await explain(randomUUID())).toBe("no such project");
+    });
+
     it("a public share makes it ineligible and advances the privacy epoch, every way it changes", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } }, 7);

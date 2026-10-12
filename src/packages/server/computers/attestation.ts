@@ -206,3 +206,47 @@ export async function attestProjectLocal({
   });
   return await signAsBay(SIGNED_KINDS.attestation, payload);
 }
+
+/**
+ * Why a project can't use computers, for the agent's error message (null if
+ * it can). A plain read: the signed attestation alone decides.
+ */
+export async function explainProjectIneligibility({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): Promise<string | null> {
+  if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
+    throw new Error("invalid project or account id");
+  }
+  const db = getPool();
+  const sharesTable = await publicSharesExist(db);
+  const { rows } = await db.query(
+    `SELECT users, deleted, COALESCE(computers_public_shares, 0) AS public_shares,
+            computers_share_state_known AS share_state_known,
+            ${
+              sharesTable
+                ? `EXISTS (SELECT 1 FROM public_project_paths s
+                    WHERE s.project_id = p.project_id
+                      AND s.disabled IS NOT TRUE AND s.visibility <> 'disabled')`
+                : "false"
+            } AS shared
+       FROM projects p WHERE project_id=$1`,
+    [project_id],
+  );
+  const row = rows[0];
+  if (row == null) return "no such project";
+  if (row.deleted) return "this project has been deleted";
+  if (!projectEligibleForComputers(row.users, account_id)) {
+    return "computers can only be used from a project whose only collaborator is you (create a private project for this agent)";
+  }
+  if (row.shared || Number(row.public_shares) > 0) {
+    return "computers can't be used from a project with public shares (anyone could read what an agent brings back); use a private project";
+  }
+  if (row.share_state_known !== true) {
+    return "this project's public-sharing state isn't known yet on this multi-bay site (the project predates computers), so it can't use computers until it is reconciled; a project created now can";
+  }
+  return null;
+}
