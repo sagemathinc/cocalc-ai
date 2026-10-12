@@ -20,6 +20,10 @@ import { lite } from "@cocalc/frontend/lite";
 import { ProjectToProjectSsh } from "./project-to-project-ssh";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import { InstallCocalcCli } from "@cocalc/frontend/components/install-cocalc-cli";
+import {
+  cliSetupLine,
+  CommandLine,
+} from "@cocalc/frontend/components/command-line";
 
 const { Text, Paragraph } = Typography;
 const COPYABLE_PROPS = {
@@ -92,6 +96,8 @@ export function SSHPanel({
   const cliLoginCommand = `cocalc --api ${shellQuote(apiUrl)} auth login`;
   const setupCommand = `cocalc --api ${shellQuote(apiUrl)} project ssh-config add -w ${shellQuote(projectId)}`;
   const connectCommand = `ssh ${projectId}`;
+  // One line: installs the CLI if needed (asking), signs in, configures SSH.
+  const oneLineSetup = cliSetupLine({ action: "ssh", project: projectId });
   const scpUploadCommand = `scp ./local-file ${projectId}:~/`;
   const scpDownloadCommand = `scp ${projectId}:~/remote-file ./`;
 
@@ -155,36 +161,33 @@ export function SSHPanel({
         {useCliSsh ? (
           <>
             <Space vertical size={12} style={{ width: "100%" }}>
-              <Alert
-                type="info"
-                showIcon
-                title={
-                  <>
-                    Launchpad SSH is routed through Cloudflare. Install the{" "}
-                    <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc CLI</A> once, then
-                    sign in and configure SSH for this {projectLabelLower}.
-                  </>
-                }
-                description={
-                  <DocsLink
-                    href="/docs/terminal/ssh-access"
-                    slug="terminal/ssh-access"
-                  >
-                    Read the SSH access guide
-                  </DocsLink>
-                }
-              />
-              <InstallCocalcCli />
               <div>
                 <Text strong>Set up SSH for this {projectLabelLower}</Text>
-                <div style={{ marginTop: 6 }}>
-                  <Button
-                    type="primary"
-                    onClick={() => setSetupModalOpen(true)}
-                  >
-                    Show setup commands
-                  </Button>
-                </div>
+                <Paragraph style={{ margin: "4px 0 8px" }}>
+                  Run this line in a terminal on your computer. It installs the{" "}
+                  <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc command line</A> if
+                  needed (it asks first), signs you in, and adds this{" "}
+                  {projectLabelLower} to <Text code>~/.ssh/config</Text>.
+                </Paragraph>
+                <CommandLine command={oneLineSetup} />
+              </div>
+              <div>
+                <Text strong>Then connect</Text>
+                <CommandLine
+                  command={connectCommand}
+                  style={{ marginTop: 6 }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <Button type="link" onClick={() => setSetupModalOpen(true)}>
+                  Show the commands step by step
+                </Button>
+                <DocsLink
+                  href="/docs/terminal/ssh-access"
+                  slug="terminal/ssh-access"
+                >
+                  SSH access guide (routed through Cloudflare)
+                </DocsLink>
               </div>
               <details>
                 <summary style={{ cursor: "pointer" }}>
@@ -252,6 +255,7 @@ export function SSHPanel({
               width={760}
             >
               <Space vertical size={12} style={{ width: "100%" }}>
+                <InstallCocalcCli />
                 <Paragraph style={{ marginBottom: 0 }}>
                   Run these commands in your terminal. First sign the CoCalc CLI
                   into this site using your browser, then configure SSH for this{" "}

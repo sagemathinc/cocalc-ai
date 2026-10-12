@@ -1,0 +1,56 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// The script behind the one-line setup commands shown in CoCalc, e.g.
+//
+//   curl -fsSL '<site>/api/v2/cli/setup?action=ssh&project=<id>' | sh
+//
+// GET with query parameters, unlike other routes: curl fetches it, it changes
+// nothing, it is plain text (never rendered), and only a fixed set of actions
+// with validated arguments exists. Everything else in the script (the site,
+// the installer) comes from this server, never from the request. See
+// server/cli-setup/setup-script.ts.
+
+import type { Request, Response } from "express";
+import siteURL from "@cocalc/database/settings/site-url";
+import {
+  errorScript,
+  SetupActionError,
+  setupScript,
+  sshPlan,
+} from "@cocalc/server/cli-setup/setup-script";
+
+function param(req: Request, name: string): string {
+  const value = req.query?.[name];
+  return typeof value === "string" ? value : "";
+}
+
+export default async function handle(req: Request, res: Response) {
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  if (req.method !== "GET") {
+    res.status(405).send(errorScript("use GET"));
+    return;
+  }
+  try {
+    const action = param(req, "action");
+    if (action === "ssh") {
+      const site = new URL(await siteURL()).href.replace(/\/+$/, "");
+      res.send(setupScript(sshPlan(site, param(req, "project"))));
+      return;
+    }
+    throw new SetupActionError("unknown setup action");
+  } catch (err) {
+    // A script that says what is wrong: with `| sh` the person sees it.
+    res.send(
+      errorScript(
+        err instanceof SetupActionError
+          ? err.message
+          : "this setup line isn't available right now; try again",
+      ),
+    );
+  }
+}
