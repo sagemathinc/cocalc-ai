@@ -29,7 +29,9 @@ sensors), a security review by @lite1-review, and a survey of similar products
   - a signed pairing transcript with a short authentication string, and a
     certificate instead of a delivered secret;
   - a release-signing root kept offline, outside the online service;
-  - a sticky eligibility flag owned by the project's bay;
+  - a sticky eligibility flag owned by the project's bay (superseded:
+    decision 23 computes eligibility from the collaborators at attestation;
+    there is no stored flag);
   - broker isolation as a stage-3 gate;
   - corrected wording for PoP and for the local log.
 
@@ -104,10 +106,10 @@ stops accidents, but it is not a wall between agents in one project.
 
 So:
 - **Computers can be used only from an eligible project:** one whose **only
-  collaborator is the owner** and isn't public (decision 23). The text
-  below is the stricter revision-5 "never shared" design, kept for the
-  record; decision 23 relaxes it, with a warning when the project has had
-  other collaborators.
+  collaborator is the owner** (decision 23; public shares don't matter). The
+  sub-bullets below are the stricter revision-5 "never shared" design,
+  **historical, not current**; decision 23 replaced it, with a warning when
+  the project has had other collaborators.
   - Removing a collaborator doesn't restore eligibility: something they left
     running could steal a later turn's credential.
   - The way back is a new project.
@@ -157,23 +159,16 @@ These override older text below wherever they differ:
   changes.
 - **The relay exception** to "the data path never goes through the hub" is
   stated in rule 14 below.
-- **The privacy epoch** is `runtime_authority_revision +
-  computers_privacy_revision`.
-  - Triggers advance it on every change to the users map and to the
-    project's public shares (`public_project_paths`: create, enable,
-    disable, delete; any code path, legacy replay included).
-  - The attestation locks the project row, then reads shares and counters in
-    a later statement, so it never pairs a new epoch with old shares.
-    (Measured: a single locking statement under READ COMMITTED does exactly
-    that.)
-- **Public-share state moves with the project:**
-  - The same trigger keeps `computers_public_shares` (active shares) on the
-    project row.
-  - It takes the project-rehome fence, and refuses share changes while a
-    rehome of the project runs.
-  - Rehome copies the row, not the share rows, so a moved project that had
-    shares is never attested private at its new bay (it fails closed) until
-    share state itself is portable.
+- **The privacy epoch** is `runtime_authority_revision`.
+  - A trigger advances it on every change to the users map (any code path),
+    and it is copied with the project when it is rehomed.
+  - The attestation locks the project row, then reads it in a later
+    statement. (Measured: under READ COMMITTED a statement that waits for a
+    lock keeps its old snapshot for everything else it reads.)
+- **Public shares don't affect computers** (Oct 12, William). An earlier
+  revision counted them with a trigger on `public_project_paths` and fenced
+  share changes; that trigger is retired (dropped, schema-qualified, where a
+  development build installed it) and its columns are gone from the schema.
 - **Only the owning bay attests**, under the project-rehome fence:
   - never while a rehome runs;
   - never once its own row names another owner.
@@ -1307,7 +1302,7 @@ sessions, ACP, admin and `_INBOX`.
 
 | Threat | Mitigation |
 |---|---|
-| A collaborator uses my computer | Only eligible projects: the owner is the only collaborator and nothing is shared publicly (decision 23), attested by the project's current bay for at most 30 s per ticket. The account check on every ticket. |
+| A collaborator uses my computer | Only eligible projects: the owner is the only collaborator (decision 23), attested by the project's current bay for at most 30 s per ticket. The account check on every ticket. |
 | Another agent, process or untrusted dependency in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. A process holding the identity of a granted turn gets its own tickets, because PoP doesn't stop that. Eligibility keeps other people out of the project, and the docs say every process in that project can use it during such a turn. Later: per-agent runtime principals. |
 | A former collaborator's leftover process steals a later credential | Accepted residual of decision 23 (a formerly shared project becomes eligible again once its owner is the only collaborator). The card warns when the project's history shows other collaborators (to build), and "create a private project" gives a clean one. |
 | A collaborator is added while tickets are being issued (two bays) | Attestations signed by the project's bay with not-after, verified by the daemon; start-by ≤ not-after. Interactive leases expire on their own. Detached jobs continue until the invalidation arrives (documented). |
@@ -1369,10 +1364,10 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
 - **`agent_computer_grants`:** `grant_id`, `account_id`, `agent_id`,
   `source_project_id`, `computer_id` (unique together), `enabled`, `epoch`
   (monotonic across delete and recreate), timestamps.
-- **On the project's bay:** `privacy_epoch`, and `computers_eligibility`
-  (`eligible | ineligible | uncertain`, sticky; existing projects are
-  `uncertain`), both changed under the membership lock and moved with the
-  project when it is rehomed. The bay also has a signing key for
+- **On the project's bay:** `runtime_authority_revision` (the privacy
+  epoch), advanced on every change to the users map and moved with the
+  project when it is rehomed. Eligibility is computed from the users map at
+  each attestation (no stored flag). The bay also has a signing key for
   attestations, published in the cluster's bay-key directory.
 - **The bay-key directory** (`cluster_computer_signing_keys`, on the seed):
   - Standalone and seed bays write their own keys; attached bays send theirs
@@ -1493,8 +1488,8 @@ Each stage ships with tests and a live check on real machines:
   `put`, `get`;
 - safe manifest transfers with CoCalc-side metering and egress reservation;
 - per-agent grants in the Connectors menu, with fresh auth;
-- eligibility (the owner is the only collaborator, nothing public;
-  decision 23) with a history warning, and "create a private project";
+- eligibility (the owner is the only collaborator; decision 23) with a
+  history warning, and "create a private project";
 - time limits (initial and max) and no-limit with `--service`;
 - `--exclusive`, `nice`;
 - aliases and mentions;
