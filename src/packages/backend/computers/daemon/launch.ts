@@ -15,7 +15,9 @@
 //   ignores SIGTERM once the command is running, and (on Linux) stays alive
 //   until nothing else is left in the group. The daemon signals a group only
 //   while its leader is alive and verified by pid and start time; a bare
-//   group id is never trusted (a dead group's id can be reused).
+//   group id is never trusted (a dead group's id can be reused). On Linux
+//   the identity includes the boot id, so no record from an earlier boot
+//   (or one written before boot ids were recorded) can match.
 // - On macOS there is no /proc to scan, so the wrapper leaves when the
 //   command does; descendants it leaves behind in the group are not
 //   signalled afterwards (direct mode is best effort there).
@@ -52,19 +54,27 @@ if [ -r /proc/self/stat ]; then
 fi
 `;
 
-/** The start time of a process, or undefined if it isn't running. */
+/**
+ * A process's identity, or undefined if it isn't running. On Linux this is
+ * the boot id and the /proc start time (ticks since that boot), so a record
+ * from an earlier boot never matches a process of this one. On macOS it is
+ * `ps -o lstart` (one-second resolution; see leaderAlive).
+ */
 export function processStartTime(pid: number): string | undefined {
+  if (identifyOverride != null) return identifyOverride(pid);
   try {
     process.kill(pid, 0);
   } catch (err: any) {
     if (err?.code !== "EPERM") return undefined;
   }
   if (process.platform === "linux") {
+    const boot = linuxBootId();
+    if (boot == null) return undefined;
     try {
       const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
       // Field 22 (starttime), counted after the parenthesized command name.
       const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      return fields[19];
+      return fields[19] ? `${boot}:${fields[19]}` : undefined;
     } catch {
       return undefined;
     }
@@ -80,7 +90,32 @@ export function processStartTime(pid: number): string | undefined {
   }
 }
 
-/** Is the recorded group leader still that same process? */
+let bootIdCache: string | null | undefined;
+let bootIdOverride: string | null | undefined;
+
+function linuxBootId(): string | undefined {
+  if (bootIdOverride !== undefined) return bootIdOverride ?? undefined;
+  if (bootIdCache === undefined) {
+    try {
+      bootIdCache =
+        readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
+    } catch {
+      bootIdCache = null;
+    }
+  }
+  return bootIdCache ?? undefined;
+}
+
+/**
+ * Is the recorded group leader still that same process?
+ *
+ * On Linux the identity (boot id, start tick) is strong across daemon
+ * restarts. On macOS it is not (a pid reused within the same second has the
+ * same lstart), so there only a process this daemon spawned and has not yet
+ * reaped counts: until Node reaps a child its pid can't be reused, so the
+ * pid still names our process. Processes left by a previous daemon, or
+ * already reaped, are never signalled there (best effort, documented).
+ */
 export function leaderAlive(
   pid: number | null,
   pid_start: string | null,
@@ -88,25 +123,32 @@ export function leaderAlive(
   if (pid == null) return false;
   const start = processStartTime(pid);
   if (start == null) return false;
-  // Without a recorded start time we can't tell a reused pid apart.
+  // Without a recorded identity we can't tell a reused pid apart.
   if (pid_start == null || start !== pid_start) return false;
-  return durableIdentity || spawnedHere.get(pid) === pid_start;
+  if (durableIdentity) return true;
+  return spawnedHere.get(pid)?.start === pid_start;
 }
 
-/**
- * Is a recorded start time a strong identity across daemon restarts? On
- * Linux it is (/proc starttime, in clock ticks since boot). On macOS `ps -o
- * lstart` has one-second resolution, so a reused pid could match; there a
- * persisted identity is trusted only by the daemon process that spawned it,
- * and processes left by a previous daemon are not signalled (best effort,
- * documented).
- */
 let durableIdentity = process.platform === "linux";
-const spawnedHere = new Map<number, string>();
+/** Children this daemon spawned and Node has not reaped yet. */
+const spawnedHere = new Map<number, { start: string }>();
+let identifyOverride: ((pid: number) => string | undefined) | undefined;
 
 /** Tests only: pretend the platform's identity is (not) durable. */
 export function setDurableIdentityForTesting(value: boolean | null): void {
   durableIdentity = value ?? process.platform === "linux";
+}
+
+/** Tests only: pretend the current boot id is this (null: unreadable). */
+export function setBootIdForTesting(value: string | null | undefined): void {
+  bootIdOverride = value;
+}
+
+/** Tests only: what processStartTime reports (e.g. a reused pid). */
+export function setIdentifyForTesting(
+  fn: ((pid: number) => string | undefined) | undefined,
+): void {
+  identifyOverride = fn;
 }
 
 /** Signal a process group, only while its verified leader is alive. */
@@ -124,22 +166,38 @@ export function signalVerifiedGroup(
   }
 }
 
+/** The part of a ChildProcess captureIdentity needs. */
+export interface SpawnedChild {
+  pid?: number;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  once(event: "exit", listener: () => void): unknown;
+}
+
 /**
- * A process's identity, read right after spawning it, before it is released.
- * Retried briefly (reading /proc or ps can fail transiently); if it still
- * can't be read, this throws and the caller must not release the process:
- * a command whose identity we don't know could never be stopped later.
+ * A spawned child's identity, read right after spawning it, before it is
+ * released. Retried briefly (reading /proc or ps can fail transiently); if it
+ * still can't be read, this throws and the caller must not release the
+ * process: a command whose identity we don't know could never be stopped.
  */
 export function captureIdentity(
-  pid: number,
+  child: SpawnedChild,
   identify: (pid: number) => string | undefined = processStartTime,
   attempts = 10,
   delayMs = 20,
 ): string {
+  const pid = child.pid;
+  if (pid == null) throw new Error("the process has no pid");
   for (let i = 0; i < attempts; i++) {
+    if (child.exitCode != null || child.signalCode != null) break;
     const start = identify(pid);
     if (start) {
-      spawnedHere.set(pid, start);
+      const entry = { start };
+      spawnedHere.set(pid, entry);
+      // Once reaped, the pid may belong to anyone.
+      child.once("exit", () => {
+        if (spawnedHere.get(pid) === entry) spawnedHere.delete(pid);
+      });
       return start;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);

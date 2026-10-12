@@ -10,8 +10,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1278,6 +1280,17 @@ describe("the computer daemon (direct mode)", () => {
       expect(again.result).toMatchObject({ output_pruned: true, stdout: "" });
     });
 
+    const retained = () => {
+      const root = join(dir, "exec");
+      let total = 0;
+      for (const id of readdirSync(root)) {
+        for (const name of readdirSync(join(root, id))) {
+          total += statSync(join(root, id, name)).size;
+        }
+      }
+      return total;
+    };
+
     it("keeps exec output under its quota as execs run, oldest first", async () => {
       daemon.endSession("replace");
       const hubClock = new HubClock(clocks);
@@ -1303,10 +1316,38 @@ describe("the computer daemon (direct mode)", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       const kept = ids.filter((id) => existsSync(join(dir, "exec", id)));
-      // At most the quota plus the exec that was running when it was checked.
-      expect(kept.length).toBeLessThanOrEqual(3);
-      expect(kept).toContain(ids[3]);
-      expect(kept).not.toContain(ids[0]);
+      // Pruned when each finished: within the quota once nothing runs.
+      expect(kept).toEqual(ids.slice(2));
+      expect(retained()).toBeLessThanOrEqual(25_000);
+    });
+
+    it("the exec output quota holds once concurrent execs finish (running output is the documented excess)", async () => {
+      daemon.endSession("replace");
+      const hubClock = new HubClock(clocks);
+      hubClock.observe(0);
+      daemon = new ComputerDaemon({
+        stateDir: dir,
+        store,
+        clocks,
+        hubClock,
+        session: new SessionClock(clocks, { deadline_ms: null, max_ms: null }),
+        workdir,
+        shell: "/bin/bash",
+        execOutputQuotaBytes: 25_000,
+      });
+      // All admitted while the directory is empty; each writes 10000 bytes.
+      const replies = await Promise.all(
+        [0, 1, 2, 3].map(() =>
+          daemon.handle(
+            message(
+              "exec",
+              exec("sleep 0.3; head -c 10000 /dev/zero | tr '\\0' z"),
+            ),
+          ),
+        ),
+      );
+      replies.forEach((r) => ok(r));
+      expect(retained()).toBeLessThanOrEqual(25_000);
     });
 
     it("on a platform without a durable identity, only the daemon that spawned a process may signal it", async () => {
@@ -1327,7 +1368,7 @@ describe("the computer daemon (direct mode)", () => {
       });
       await new Promise((r) => setTimeout(r, 200));
       const strangerStart = processStartTime(stranger.pid)!;
-      const oursStart = captureIdentity(ours.pid);
+      const oursStart = captureIdentity(ours);
       try {
         setDurableIdentityForTesting(false);
         // A start time recorded elsewhere (a previous daemon): not trusted.
@@ -1342,5 +1383,108 @@ describe("the computer daemon (direct mode)", () => {
         process.kill(-ours.pid, "SIGKILL");
       }
     });
+
+    it("on macOS-like identity, a reaped child's pid is never signalled even if a reused pid has the same lstart", async () => {
+      const {
+        leaderAlive,
+        signalVerifiedGroup,
+        setDurableIdentityForTesting,
+        setIdentifyForTesting,
+        captureIdentity,
+      } = await import("./launch");
+      const { spawn } = require("node:child_process");
+      const child = spawn("/bin/sh", ["-c", "sleep 30"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      const lstart = "Mon Oct 12 10:00:00 2026";
+      try {
+        setDurableIdentityForTesting(false);
+        // Every pid "has" the same one-second lstart: the worst case.
+        setIdentifyForTesting(() => lstart);
+        expect(captureIdentity(child)).toBe(lstart);
+        expect(leaderAlive(child.pid, lstart)).toBe(true);
+        const exited = new Promise((r) => child.once("exit", r));
+        process.kill(-child.pid, "SIGKILL");
+        await exited;
+        // The pid is free now; whoever gets it next must not be signalled.
+        expect(leaderAlive(child.pid, lstart)).toBe(false);
+        const kill = jest.spyOn(process, "kill");
+        try {
+          expect(signalVerifiedGroup(child.pid, lstart, "SIGTERM")).toBe(false);
+          expect(kill).not.toHaveBeenCalledWith(-child.pid, expect.anything());
+        } finally {
+          kill.mockRestore();
+        }
+      } finally {
+        setIdentifyForTesting(undefined);
+        setDurableIdentityForTesting(null);
+      }
+    });
+
+    (process.platform === "linux" ? it : it.skip)(
+      "after a reboot, a process with the same pid and start tick is never signalled",
+      async () => {
+        const { processStartTime, setBootIdForTesting, captureIdentity } =
+          await import("./launch");
+        const { Cleanups } = await import("./cleanups");
+        const { spawn } = require("node:child_process");
+        const victim = spawn("/bin/sh", ["-c", "sleep 30"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        const alive = () => {
+          try {
+            process.kill(victim.pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        try {
+          await new Promise((r) => setTimeout(r, 100));
+          const identity = captureIdentity(victim);
+          const [, tick] = identity.split(":");
+          // The identity includes this boot's id.
+          expect(
+            identity.startsWith(
+              `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:`,
+            ),
+          ).toBe(true);
+          const stateDir = mkdtempSync(join(tmpdir(), "cleanups-"));
+          const cleanups = new Cleanups(stateDir, 0);
+          // A record from an earlier boot (same pid, same tick) and one from
+          // before boot ids were recorded (just the tick).
+          const ids = [randomUUID(), randomUUID()];
+          cleanups.add(ids[0], victim.pid, `previous-boot:${tick}`);
+          cleanups.add(ids[1], victim.pid, tick);
+          const kill = jest.spyOn(process, "kill");
+          try {
+            cleanups.drive();
+            cleanups.drive(Date.now() + 60_000);
+            expect(kill).not.toHaveBeenCalledWith(-victim.pid, "SIGTERM");
+            expect(kill).not.toHaveBeenCalledWith(-victim.pid, "SIGKILL");
+          } finally {
+            kill.mockRestore();
+          }
+          expect(alive()).toBe(true);
+          // Fail closed: both records are dropped, never re-driven.
+          expect(cleanups.pending()).toEqual([]);
+          // And if the boot id itself changes under the same pid and tick.
+          const record = randomUUID();
+          cleanups.add(record, victim.pid, identity);
+          setBootIdForTesting("another-boot");
+          expect(processStartTime(victim.pid)).toBe(`another-boot:${tick}`);
+          cleanups.drive();
+          expect(alive()).toBe(true);
+          // An unreadable boot id: no identity at all.
+          setBootIdForTesting(null);
+          expect(processStartTime(victim.pid)).toBeUndefined();
+        } finally {
+          setBootIdForTesting(undefined);
+          process.kill(-victim.pid, "SIGKILL");
+        }
+      },
+    );
   });
 });

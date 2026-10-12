@@ -71,7 +71,12 @@ export const MAX_ACTIVE_OPERATIONS_PER_AGENT = 4;
 export const ENFORCEMENT_INTERVAL_MS = 1000;
 /** How often the timer forgets old records. */
 export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
-/** All exec output kept on the machine, together. */
+/**
+ * Finished exec output kept on the machine, together. Pruned (oldest first)
+ * when an exec is admitted, when one finishes, and hourly. Output of execs
+ * still running isn't counted (or pruned), so the disk used is at most this
+ * plus, for each running exec, its two capped output files.
+ */
 export const EXEC_OUTPUT_RETENTION_BYTES = 512 * 1024 * 1024;
 
 export type OperationReply =
@@ -324,7 +329,8 @@ export class ComputerDaemon {
           return done({ job_id: job.job_id, state: job.state });
         }
         case "exec": {
-          // The output quota holds at admission too, not only hourly.
+          // The output quota holds at admission and completion, not only
+          // hourly (see EXEC_OUTPUT_RETENTION_BYTES for the real bound).
           this.pruneExecOutput();
           this.ledger.update(id, { state: "running" });
           const controller = new AbortController();
@@ -351,17 +357,19 @@ export class ComputerDaemon {
                 signal: controller.signal,
                 // Recorded, so a later daemon can stop it if this one dies.
                 // Without a readable identity it is never released.
-                onSpawn: (pid) =>
+                onSpawn: (child) =>
                   this.ledger.update(id, {
                     result: {
-                      pid,
-                      pid_start: captureIdentity(pid, this.deps.identify),
+                      pid: child.pid,
+                      pid_start: captureIdentity(child, this.deps.identify),
                     },
                   }),
               },
             );
           } finally {
             this.running.delete(id);
+            // Its output counts now; the reply below carries it inline.
+            this.pruneExecOutput();
           }
           const { stdout, stderr, ...summary } = r;
           const entry = this.ledger.update(id, {

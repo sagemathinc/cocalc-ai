@@ -16,7 +16,7 @@ import {
   type ExecRequest,
 } from "@cocalc/util/computers/operations";
 import { ensurePrivateDir } from "./durable";
-import { RELEASE_PRELUDE, STAY_LEADER } from "./launch";
+import { RELEASE_PRELUDE, STAY_LEADER, type SpawnedChild } from "./launch";
 import type { Writable } from "node:stream";
 
 export interface ExecResult {
@@ -48,8 +48,8 @@ export interface ExecOptions {
   killGraceMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
-  /** Called with the process (group) id once it started. */
-  onSpawn?: (pid: number) => void;
+  /** Called with the process (its group's leader) once it started. */
+  onSpawn?: (child: SpawnedChild) => void;
 }
 
 /** A cwd relative to the working directory, or absolute; it must exist. */
@@ -217,7 +217,7 @@ export async function runExec(
   // released: closing fd 3 ends the wrapper before the command runs.
   try {
     if (child.pid == null) throw new Error("the command could not be started");
-    opts.onSpawn?.(child.pid);
+    opts.onSpawn?.(child);
   } catch (err) {
     release.destroy();
     await finish().catch(() => {});

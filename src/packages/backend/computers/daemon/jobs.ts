@@ -338,7 +338,7 @@ export class JobManager {
       this.opts.launchHook?.("spawned");
       this.setStatus(job_id, {
         pid: child.pid,
-        pid_start: captureIdentity(child.pid, this.opts.identify),
+        pid_start: captureIdentity(child, this.opts.identify),
         started_at: now,
       });
     } catch (err) {
