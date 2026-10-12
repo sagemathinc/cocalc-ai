@@ -34,6 +34,7 @@ import {
   DEFAULT_EXEC_TIMEOUT_MS,
   MAX_EXEC_TIMEOUT_MS,
 } from "@cocalc/util/computers/operations";
+import type { ProjectCommandDeps } from "./project";
 
 /** An exec is settled once refused, or done/failed/unknown on the computer. */
 function execSettled(s: { answered: boolean; reply: any; finished?: unknown }) {
@@ -42,7 +43,21 @@ function execSettled(s: { answered: boolean; reply: any; finished?: unknown }) {
   if (s.reply?.ok !== true) return true;
   return ["done", "failed", "unknown"].includes(s.reply.state);
 }
-import type { ProjectCommandDeps } from "./project";
+
+/**
+ * The line the computer's login shell runs. One argument is that line
+ * itself (pipes, globs and ~ work there); several are the exact arguments
+ * of one command, so `-- sh -c 'du -sh ~/* | sort -h'` keeps its quoting
+ * instead of becoming `sh -c du ...` the way ssh would join it.
+ */
+export function commandLine(parts: string[]): string {
+  if (parts.length === 1) return parts[0];
+  return parts
+    .map((p) =>
+      /^[A-Za-z0-9_@%+=:,./-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`,
+    )
+    .join(" ");
+}
 
 const HELP = `A computer is a machine (a laptop, a server) whose owner connected it so
 the agents in one of their agent networks can run commands there. Direct
@@ -51,6 +66,7 @@ mode is full trust: commands run as the user who connected it.
 On the machine:   cocalc computer connect <the line CoCalc showed>
 From an agent:    cocalc computer request NAME --why "..."   (the owner approves)
                   cocalc computer exec @NAME -- uname -a     (waits; --timeout, default 10 min)
+                  cocalc computer exec @NAME -- 'du -sh ~/* | sort -h'   (one argument: a shell line there)
                   cocalc computer run @NAME --description "build" -- make   (keeps going)
                   cocalc computer jobs @NAME ; logs @NAME JOB ; kill @NAME JOB`;
 
@@ -298,7 +314,10 @@ export function registerComputerCommand(
   computer
     .command("exec")
     .argument("<computer>")
-    .argument("<command...>", "the command line, after --")
+    .argument(
+      "<command...>",
+      "after --: one quoted shell line ('du -sh ~/* | sort -h'), or a command and its arguments",
+    )
     .description(
       "run a command there and wait until it finishes (stopped after --timeout); for work that should keep going without you, use run",
     )
@@ -320,7 +339,7 @@ export function registerComputerCommand(
         );
       }
       const request = {
-        command: parts.join(" "),
+        command: commandLine(parts),
         cwd: opts.cwd ?? null,
         timeout_ms: Math.round(timeout * 1000),
       };
@@ -370,7 +389,10 @@ export function registerComputerCommand(
   computer
     .command("run")
     .argument("<computer>")
-    .argument("<command...>", "the command line, after --")
+    .argument(
+      "<command...>",
+      "after --: one quoted shell line ('du -sh ~/* | sort -h'), or a command and its arguments",
+    )
     .description("start a long-running job there (see jobs, logs, kill)")
     .requiredOption("--description <text>", "what it is (others can see it)")
     .option("--name <name>", "a name for the job")
@@ -382,7 +404,7 @@ export function registerComputerCommand(
         cmd,
         "computer run",
         await operate(cmd, name, "run", {
-          command: parts.join(" "),
+          command: commandLine(parts),
           cwd: opts.cwd ?? null,
           description: opts.description,
           name: opts.name ?? null,
