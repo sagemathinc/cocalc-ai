@@ -61,13 +61,7 @@ export const RELAY_WAIT_MS = 25_000;
 /** The largest answer accepted from a computer (raw, before reassembly). */
 export const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 export const MAX_OPEN_RELAYS_PER_COMPUTER = 16;
-/** A relay row outlives its wait by this much (it is expired after). */
-let RELAY_EXPIRY_MARGIN_MS = 5_000;
 
-/** Tests: the activation margin. */
-export function setRelayMarginForTesting(ms: number | undefined): void {
-  RELAY_EXPIRY_MARGIN_MS = ms ?? 5_000;
-}
 const RELAY_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const MAX_OPEN_RELAYS_PER_ACCOUNT = 32;
 export const MAX_WAITERS_PER_PROCESS = 256;
@@ -448,42 +442,26 @@ async function authorizeRelay(opts: {
 }
 
 /**
- * After COMMIT returned: turn this exact reservation into a bounded wait,
- * stamped by the database's clock, and only if it is still open and its
- * session still covers the wait. If that round trip itself took longer than
- * the margin, nothing is published (another hub could already consider the
- * row expired); the reservation is released and the caller may retry.
+ * After COMMIT returned: mark this exact reservation activated (a CAS on the
+ * database's clock), only if it is still open and its session still covers
+ * the wait. Its expiry stays the session's lease through the subscribe,
+ * publish and wait, however long those take; the outcome then closes it
+ * explicitly (answered or expired). A crash leaves it until that lease.
  */
 async function activate(a: Authorized, waitMs: number): Promise<void> {
-  const sent = Date.now();
   const { rows } = await getPool().query(
-    `UPDATE account_computer_relays r
-        SET activated_at=clock_timestamp(),
-            expires_at=clock_timestamp() + make_interval(secs => $2::float8 / 1000)
+    `UPDATE account_computer_relays r SET activated_at=clock_timestamp()
        FROM account_computer_sessions s
       WHERE r.correlation=$1 AND r.state='dispatched' AND r.activated_at IS NULL
         AND r.expires_at > clock_timestamp()
         AND s.session_id=r.session_id AND s.closed_at IS NULL
-        AND s.lease_until > clock_timestamp() + make_interval(secs => $3::float8 / 1000)
+        AND s.lease_until > clock_timestamp() + make_interval(secs => $2::float8 / 1000)
       RETURNING r.correlation`,
-    [a.correlation, waitMs + RELAY_EXPIRY_MARGIN_MS, waitMs],
+    [a.correlation, waitMs],
   );
-  const elapsed = Date.now() - sent;
   if (rows.length === 0) {
     throw new ComputerRelayError(
       "not sent: the computer's session ended before it could be; try again",
-    );
-  }
-  if (elapsed * 2 > RELAY_EXPIRY_MARGIN_MS) {
-    await getPool()
-      .query(
-        `UPDATE account_computer_relays SET state='expired'
-          WHERE correlation=$1 AND state='dispatched'`,
-        [a.correlation],
-      )
-      .catch(() => {});
-    throw new ComputerRelayError(
-      "not sent: the hub's database was too slow; try again",
     );
   }
 }

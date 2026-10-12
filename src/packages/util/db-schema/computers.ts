@@ -528,9 +528,11 @@ Table({
       "When the hub activated the committed reservation and could publish (null: reserved, never published).",
     ),
     answer: json("The daemon's answer (bounded).", false),
-    created_at: created("Dispatch time."),
+    created_at: created("Reservation time (when authorization committed)."),
     expires_at: {
-      ...timestamp("When an unanswered relay expires."),
+      ...timestamp(
+        "Until when the reservation holds: the session's lease; the outcome closes it sooner.",
+      ),
       not_null: true,
     },
   },

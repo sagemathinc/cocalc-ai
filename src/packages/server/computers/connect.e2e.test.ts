@@ -548,41 +548,54 @@ describeDb("a computer connected over conat", () => {
     );
   });
 
-  it("a late commit acknowledgement can't let a duplicate in: the committed row is a reservation until activated, and exactly one publish happens", async () => {
-    const { setRelayClientForTesting, setRelayMarginForTesting } =
-      await import("./relay");
+  it("neither a late commit acknowledgement nor a stalled subscribe/publish lets a duplicate in: exactly one publish", async () => {
+    const { setRelayClientForTesting } = await import("./relay");
     let publishes = 0;
-    const counting = new Proxy(hub, {
+    let stall = 0;
+    const slow = new Proxy(hub, {
       get(target, prop) {
-        if (prop === "publish") {
+        if (prop === "subscribe" || prop === "publish") {
           return async (...args) => {
-            publishes += 1;
-            return await target.publish(...args);
+            await new Promise((r) => setTimeout(r, stall));
+            if (prop === "publish") publishes += 1;
+            return await target[prop](...args);
           };
         }
         const v = target[prop];
         return typeof v === "function" ? v.bind(target) : v;
       },
     });
-    setRelayClientForTesting(counting as any);
-    setRelayMarginForTesting(300);
+    setRelayClientForTesting(slow as any);
     try {
-      const t = await ticketFor("exec", { command: "echo once" });
-      let duplicate: unknown;
-      const first = relay(t, {
-        // The COMMIT happened, but this hub hears of it only much later than
-        // the margin; meanwhile another call tries the same operation.
-        afterCommit: async () => {
-          await new Promise((r) => setTimeout(r, 1000));
+      for (const where of ["commit ack", "subscribe and publish"]) {
+        publishes = 0;
+        const t = await ticketFor("exec", { command: `echo ${where.length}` });
+        let duplicate: unknown;
+        const tryDuplicate = async () => {
           duplicate = await relay(t).catch((err) => err);
-        },
-      });
-      const result: any = await first;
-      expect(`${duplicate}`).toMatch(/already being relayed/);
-      expect(result.reply.result.stdout).toBe("once\n");
-      expect(publishes).toBe(1);
+        };
+        stall = where === "commit ack" ? 0 : 6000;
+        const first = relay(t, {
+          // Well past the old 5 s margin.
+          afterCommit:
+            where === "commit ack"
+              ? async () => {
+                  await new Promise((r) => setTimeout(r, 6000));
+                  await tryDuplicate();
+                }
+              : undefined,
+        });
+        if (where !== "commit ack") {
+          await new Promise((r) => setTimeout(r, 6500));
+          stall = 0;
+          await tryDuplicate();
+        }
+        const result: any = await first;
+        expect(`${duplicate}`).toMatch(/already being relayed/);
+        expect(result.reply.result.stdout).toBe(`${where.length}\n`);
+        expect(publishes).toBe(1);
+      }
     } finally {
-      setRelayMarginForTesting(undefined);
       setRelayClientForTesting(hub);
     }
   });
