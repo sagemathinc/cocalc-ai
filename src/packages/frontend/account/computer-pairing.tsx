@@ -22,8 +22,43 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { computerState, reconnectKind } from "./computer-state";
+import { CommandLine } from "@cocalc/frontend/components/command-line";
 
 export const computersApi = () => webapp_client.conat_client.hub.computers;
+
+/**
+ * The one line to run on the machine: it installs or upgrades cocalc if
+ * needed (asking), then connects. Served by the request's home bay, the
+ * origin of its pairing line.
+ */
+export function computerSetupLine(pairing_url: string): string {
+  const url = new URL(pairing_url);
+  const request = url.pathname.split("/").pop() ?? "";
+  const script = new URL("/api/v2/cli/setup", url.origin);
+  script.searchParams.set("action", "computer");
+  script.searchParams.set("request", request);
+  return `curl -fsSL '${script.href.replace(/'/g, "%27")}' | sh`;
+}
+
+/** The pairing step on the machine: the one line, or the bare command. */
+export function ConnectOnMachine({ pairing_url }: { pairing_url: string }) {
+  return (
+    <div style={{ width: "100%" }}>
+      <CommandLine
+        command={computerSetupLine(pairing_url)}
+        copiedHint="Copied: paste it in a terminal on that machine."
+      />
+      <details>
+        <summary style={{ cursor: "pointer" }}>
+          Already have the cocalc command line?
+        </summary>
+        <Typography.Text code copyable>
+          {`cocalc computer connect ${pairing_url}`}
+        </Typography.Text>
+      </details>
+    </div>
+  );
+}
 
 /** The reason only, without RPC plumbing, as a sentence. */
 export function errorText(err: unknown): string {
@@ -131,11 +166,12 @@ export function PairingSteps({
         <Alert type="success" title={`Connected: @${request.name}.`} />
       ) : request.state === "pending" ? (
         <>
-          <span>1. On the machine, run:</span>
+          <span>
+            1. In a terminal on the machine, run this line. It installs the
+            cocalc command line if needed (it asks first), then connects.
+          </span>
           {request.pairing_url ? (
-            <Typography.Text code copyable>
-              {`cocalc computer connect ${request.pairing_url}`}
-            </Typography.Text>
+            <ConnectOnMachine pairing_url={request.pairing_url} />
           ) : (
             <span>Loading…</span>
           )}

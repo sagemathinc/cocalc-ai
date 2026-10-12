@@ -82,13 +82,20 @@ test("pairs again: the new request first, then the old computer is disconnected;
       }),
     }),
   );
+  // The one line comes from the home bay (the pairing line's origin), and
+  // the bare command is there for people who already have cocalc.
   await waitFor(() =>
     expect(
       screen.getByText(
-        "cocalc computer connect https://bay-2.example.com/c/R-NEW",
+        "curl -fsSL 'https://bay-2.example.com/api/v2/cli/setup?action=computer&request=R-NEW' | sh",
       ),
     ).toBeTruthy(),
   );
+  expect(
+    screen.getByText(
+      "cocalc computer connect https://bay-2.example.com/c/R-NEW",
+    ),
+  ).toBeTruthy();
   expect(document.body.textContent).not.toContain(location.origin);
 });
 

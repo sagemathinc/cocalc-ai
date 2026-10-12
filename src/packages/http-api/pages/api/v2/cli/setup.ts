@@ -6,6 +6,7 @@
 // The script behind the one-line setup commands shown in CoCalc, e.g.
 //
 //   curl -fsSL '<site>/api/v2/cli/setup?action=ssh&project=<id>' | sh
+//   curl -fsSL '<home bay>/api/v2/cli/setup?action=computer&request=R-...' | sh
 //
 // GET with query parameters, unlike other routes: curl fetches it, it changes
 // nothing, it is plain text (never rendered), and only a fixed set of actions
@@ -21,6 +22,7 @@ import {
   setupScript,
   sshPlan,
 } from "@cocalc/server/cli-setup/setup-script";
+import { computerConnectPlan } from "@cocalc/server/computers/setup-plan";
 
 function param(req: Request, name: string): string {
   const value = req.query?.[name];
@@ -40,6 +42,10 @@ export default async function handle(req: Request, res: Response) {
     if (action === "ssh") {
       const site = new URL(await siteURL()).href.replace(/\/+$/, "");
       res.send(setupScript(sshPlan(site, param(req, "project"))));
+      return;
+    }
+    if (action === "computer") {
+      res.send(setupScript(await computerConnectPlan(param(req, "request"))));
       return;
     }
     throw new SetupActionError("unknown setup action");

@@ -6,6 +6,10 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: () => mockSiteURL(),
 }));
 
+jest.mock("@cocalc/server/computers/routing", () => ({
+  pairingUrl: async (id: string) => `https://bay-2.example.com/c/${id}`,
+}));
+
 import handle from "./cli/setup";
 
 function call(method: string, query: Record<string, unknown>) {
@@ -50,4 +54,14 @@ test("anything else gets a script that only prints why and fails", async () => {
     expect(r.body).not.toContain('cocalc"');
   }
   expect((await call("POST", {})).status).toBe(405);
+});
+
+test("serves the computer connect script with the home bay's pairing line", async () => {
+  const r = await call("GET", { action: "computer", request: "R-396W8E8XD1" });
+  expect(r.body).toContain(
+    `"$cocalc" 'computer' 'connect' 'https://bay-2.example.com/c/R-396W8E8XD1' <"$tty"`,
+  );
+  const bad = await call("GET", { action: "computer", request: "R-x; id" });
+  expect(bad.body).toContain("t a pairing request");
+  expect(bad.body).not.toContain("; id");
 });

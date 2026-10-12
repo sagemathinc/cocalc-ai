@@ -25,6 +25,7 @@ import {
   approveRequest,
   computersApi as api,
   errorText,
+  ConnectOnMachine,
   ReconnectComputer,
   timeLimit,
 } from "./computer-pairing";
@@ -172,13 +173,15 @@ export function ComputersPanel() {
                     </span>
                   </Space>
                 ) : r.state === "pending" ? (
-                  <Space orientation="vertical" size={0}>
+                  <Space
+                    orientation="vertical"
+                    size={4}
+                    style={{ width: "100%" }}
+                  >
                     <Tag>waiting for the machine</Tag>
-                    <span>Run this on the machine:</span>
+                    <span>In a terminal on the machine, run:</span>
                     {r.pairing_url && (
-                      <Typography.Text code copyable>
-                        {`cocalc computer connect ${r.pairing_url}`}
-                      </Typography.Text>
+                      <ConnectOnMachine pairing_url={r.pairing_url} />
                     )}
                   </Space>
                 ) : (
