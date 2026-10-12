@@ -58,9 +58,13 @@ test("the fence round-trips the title and summary", () => {
     at: "2026-10-12T02:36:12Z",
   });
   // Details that are not what CoCalc writes make it plain text.
-  expect(
-    sensorWakeFromMarkdownFence({ info: "sensor-wake sensor=nope", value: "" }),
-  ).toBeUndefined();
+  for (const info of [
+    "sensor-wake sensor=nope",
+    "sensor-wake at=1",
+    "sensor-wake at=2026",
+    "sensor-wake at=2026-10-12",
+  ])
+    expect(sensorWakeFromMarkdownFence({ info, value: "" })).toBeUndefined();
   expect(
     sensorWakeFromMarkdownFence({ info: "sensor-wake evil=1", value: "" }),
   ).toBeUndefined();

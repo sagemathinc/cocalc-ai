@@ -574,14 +574,16 @@ export default function Message({
     [message, account_id],
   );
   const rpcAttribution = rpcSourceAttribution(message);
-  // A turn a sensor started is stored under the approving person too.
+  // A turn a sensor started is stored under the approving person too. That
+  // person still owns the turn (its state, Cancel); only how it looks says
+  // it came from the sensor (see notFromSender).
   const sensorLabel = sensorWakeLabel(message);
   // The stored sender remains the target execution principal for compatibility,
-  // but an authenticated RPC source (or a sensor) must not visually
-  // impersonate that human.
-  const notFromSender = !!rpcAttribution || !!sensorLabel;
+  // but an authenticated RPC source must not visually impersonate that human.
   const is_viewers_message =
-    !notFromSender && sender_is_viewer(account_id, message);
+    !rpcAttribution && sender_is_viewer(account_id, message);
+  // Presentation only (colors, avatar): never a state or action gate.
+  const notFromSender = !!rpcAttribution || !!sensorLabel;
   const isLLMThread = useMemo(
     () => actions?.isLanguageModelThread(dateValue(message)),
     [message, actions],
@@ -591,7 +593,7 @@ export default function Message({
   // A message from another agent is a prompt to this thread's agent, so it
   // sits where prompts sit. Its "From @agent" card keeps the source visible.
   const usePromptLayout =
-    is_viewers_message || (notFromSender && isCodexThread);
+    is_viewers_message || (!!rpcAttribution && isCodexThread);
   const senderId = field<string>(message, "sender_id");
   const hasLanguageModelServiceAuthor = useMemo(() => {
     const author_id = firstHistoryEntry?.author_id;
@@ -1073,6 +1075,9 @@ export default function Message({
     if (!parentId) return undefined;
     const parentMessage = actions.getMessageById(parentId);
     if (parentMessage == null) return undefined;
+    // A wake's permit was for that one turn; resending its text would run
+    // it as the person's own message.
+    if (sensorWakeLabel(parentMessage)) return undefined;
     const messageId = field<string>(message, "message_id");
     const parentMessageIdValue =
       field<string>(parentMessage, "message_id") ?? parentId;
@@ -2773,7 +2778,7 @@ export default function Message({
         xs={mainXS}
         flex={mode === "standalone" && showHumanAvatar ? "auto" : undefined}
       >
-        {!notFromSender &&
+        {!rpcAttribution &&
         !isCodexAgentMessage &&
         !is_prev_sender &&
         !is_viewers_message &&
@@ -3224,7 +3229,7 @@ export default function Message({
               Edit
             </Button>
           ) : null}
-          {presentation.canSteer && (
+          {presentation.canSteer && !isSensorWake && (
             <Tooltip title="Steer running turn (Ctrl+Enter)">
               <Button
                 size="small"

@@ -31,6 +31,14 @@ export interface SensorWake extends SlateElement {
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** A UTC ISO time, as CoCalc writes it (Date.parse alone accepts "1"). */
+function isIsoTime(value: string): boolean {
+  return (
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,3})?Z$/.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
 const KIND_LABEL: Record<SensorWakeKind, string> = {
   wake: "Sensor",
   prompt: "Scheduled prompt",
@@ -70,7 +78,7 @@ export function sensorWakeFromMarkdownFence({
     else if (key === "title") title = decoded(raw, 100) ?? "";
     else if (key === "summary") summary = decoded(raw, 500) ?? "";
     else if (key === "sensor" && UUID.test(raw)) sensor_id = raw;
-    else if (key === "at" && !Number.isNaN(Date.parse(raw))) at = raw;
+    else if (key === "at" && isIsoTime(raw)) at = raw;
     else return;
   }
   return {
@@ -108,7 +116,7 @@ export function sensorWakeFence({
     title ? `title=${encodeURIComponent(title)}` : undefined,
     summary ? `summary=${encodeURIComponent(summary)}` : undefined,
     sensor_id && UUID.test(sensor_id) ? `sensor=${sensor_id}` : undefined,
-    at && !Number.isNaN(Date.parse(at)) ? `at=${at}` : undefined,
+    at && isIsoTime(at) ? `at=${at}` : undefined,
   ]
     .filter(Boolean)
     .join(" ");
