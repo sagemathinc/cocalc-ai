@@ -144,6 +144,35 @@ export function parsePairingUrl(url: string): {
 export const MAX_RESPONSE_BYTES = 256 * 1024;
 export const REQUEST_TIMEOUT_MS = 30_000;
 
+/** A failure that may pass: the site unreachable, restarting (5xx) or slow. */
+class TransientError extends Error {}
+
+/** How long pairing waits for the owner while the site can't be reached. */
+const MAX_APPROVAL_WAIT_MS = 70 * 60 * 1000;
+
+/** An answer bigger than we read: not something waiting fixes. */
+class TooLargeError extends Error {}
+
+/** Sleep, but wake up "stopped" as soon as the caller aborts. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("stopped"));
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
+    };
+    const stop = () => {
+      done();
+      reject(new Error("stopped"));
+    };
+    const timer = setTimeout(() => {
+      done();
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
+
 /**
  * One POST to the site's computers API. The site is untrusted until the
  * person at the machine confirms, so: no redirects (they could point this
@@ -151,12 +180,6 @@ export const REQUEST_TIMEOUT_MS = 30_000;
  * caller's abort signal, a byte cap read before parsing, and error text
  * cleaned before anyone prints it.
  */
-/** A failure that may pass: the site unreachable, restarting (5xx) or slow. */
-class TransientError extends Error {}
-
-/** How long pairing waits for the owner while the site can't be reached. */
-const MAX_APPROVAL_WAIT_MS = 70 * 60 * 1000;
-
 async function post<T>(
   origin: string,
   path: string,
@@ -184,7 +207,10 @@ async function post<T>(
     text = await readCapped(res, MAX_RESPONSE_BYTES);
   } catch (err) {
     if (signal?.aborted) throw new Error("stopped");
-    throw new Error(`${origin}: ${clean((err as Error)?.message ?? err, 200)}`);
+    // A connection reset or the timeout can come after the headers did.
+    throw new (err instanceof TooLargeError ? Error : TransientError)(
+      `${origin}: ${clean((err as Error)?.message ?? err, 200)}`,
+    );
   }
   let data: any;
   try {
@@ -214,7 +240,7 @@ async function readCapped(res: Response, max: number): Promise<string> {
     total += value.byteLength;
     if (total > max) {
       await reader.cancel().catch(() => {});
-      throw new Error("the server's answer is too large");
+      throw new TooLargeError("the server's answer is too large");
     }
     chunks.push(value);
   }
@@ -341,7 +367,7 @@ export async function pairComputer({
         lost = true;
       }
       pause = Math.min(pause * 2, 30_000);
-      await new Promise((r) => setTimeout(r, pause));
+      await sleep(pause, signal);
       continue;
     }
     if (lost) {
@@ -361,7 +387,7 @@ export async function pairComputer({
     if (status?.state !== "paired" && status?.state !== "pending") {
       throw new Error(`The request is ${clean(status?.state, 40)}.`);
     }
-    await new Promise((r) => setTimeout(r, pollMs));
+    await sleep(pollMs, signal);
   }
   const certificate = parseSignedEnvelope(
     status.certificate,

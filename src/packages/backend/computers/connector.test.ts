@@ -236,6 +236,53 @@ describe("pairing as the machine", () => {
     expect(shown).toMatch(/Reached it again/);
   });
 
+  it("keeps waiting when the connection drops while the answer is being read", async () => {
+    let calls = 0;
+    site((submitted) => {
+      calls += 1;
+      if (calls === 1) {
+        // Headers and part of the JSON arrive, then the hub goes away.
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('{"sta'));
+            c.error(new TypeError("terminated: other side closed"));
+          },
+        });
+        return new Response(body, { status: 200 });
+      }
+      return {
+        state: "approved",
+        certificate: certificateFor(submitted),
+        directory: directory(),
+      };
+    });
+    logs.length = 0;
+    const c = await pairComputer({
+      url: `${SITE}/c/${REQUEST}`,
+      io: io(),
+      pollMs: 1,
+    });
+    expect(c.name).toBe("m1");
+    expect(logs.join("\n")).toMatch(/still waiting/);
+  });
+
+  it("stopping while it waits out an outage is immediate", async () => {
+    site(() => new Response("bad gateway", { status: 502 }));
+    const controller = new AbortController();
+    const started = Date.now();
+    setTimeout(() => controller.abort(), 100);
+    await expect(
+      pairComputer({
+        url: `${SITE}/c/${REQUEST}`,
+        io: io(),
+        // The backoff after the first 502 is 20 s.
+        pollMs: 10_000,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/stopped/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("a real refusal while waiting still ends it at once", async () => {
     site(
       () =>
