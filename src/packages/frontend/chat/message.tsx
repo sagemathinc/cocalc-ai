@@ -450,7 +450,7 @@ function rpcSourceAttribution(message: ChatMessageTyped):
       source_label: string;
       source_agent_id: string;
       source_project_id?: string;
-      direction: "incoming";
+      direction: "incoming" | "report";
       agent_network_id?: string;
       attempt_id?: string;
     }
@@ -460,8 +460,10 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   const source = rpc?.source;
   const agentId = `${source?.agent_id ?? ""}`.trim();
   if (!agentId) return;
+  // A delivery report is CoCalc's, about the source agent.
+  const report = !!rpc.delivery_report;
   const evidence = {
-    direction: "incoming" as const,
+    direction: report ? ("report" as const) : ("incoming" as const),
     source_label:
       typeof rpc.source_label === "string" && rpc.source_label.trim()
         ? rpc.source_label.trim()
@@ -485,7 +487,7 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   }
   return {
     ...evidence,
-    label: "Agent message",
+    label: report ? "Delivery report" : "Agent message",
   };
 }
 

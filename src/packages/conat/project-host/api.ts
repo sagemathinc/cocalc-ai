@@ -747,6 +747,12 @@ export interface HostControlApi {
   deliverAgentSensorWake: (
     opts: import("@cocalc/conat/agents/sensors").SensorWakeDelivery,
   ) => Promise<import("@cocalc/conat/agents/sensors").SensorWakeDeliveryResult>;
+  /** Tell an agent its message to another agent ended in a failed turn. */
+  deliverAgentRpcReport: (
+    opts: import("@cocalc/conat/agents/rpc-reports").AgentRpcReportDelivery,
+  ) => Promise<
+    import("@cocalc/conat/agents/rpc-reports").AgentRpcReportDeliveryResult
+  >;
   probePublicRouteOrigin: () => Promise<ProjectHostOriginHealth>;
   restartCloudflared: (opts: {
     reason: "public-route-probe";

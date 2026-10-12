@@ -322,6 +322,7 @@ export function createAgentRpcService(
               configured_delivery: e.configured_delivery,
               principal_account_id: e.account_id,
               guidance: e.guidance === true,
+              attempt_id: e.attempt_id,
             };
             chatEffect = "unknown";
             db.set({

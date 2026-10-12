@@ -116,7 +116,9 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
     }
     if (
       claudeCode &&
-      (request.chat?.agent_rpc_execution || request.chat?.sensor_wake) &&
+      (request.chat?.agent_rpc_execution ||
+        request.chat?.sensor_wake ||
+        request.chat?.agent_rpc_report) &&
       !harness_credential
     ) {
       // Nothing stored yet: fall back to this account's last human turn.
@@ -193,7 +195,9 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
     credential_id: requestedCredentialId || undefined,
   });
   const agentMessage = !!(
-    request.chat?.agent_rpc_execution || request.chat?.sensor_wake
+    request.chat?.agent_rpc_execution ||
+    request.chat?.sensor_wake ||
+    request.chat?.agent_rpc_report
   );
   if (resolved.source !== "subscription") {
     if (preference !== "auto") {

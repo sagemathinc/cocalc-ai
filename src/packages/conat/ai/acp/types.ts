@@ -35,7 +35,12 @@ export interface AcpChatContext {
     configured_delivery: "queued" | "live";
     principal_account_id: string;
     guidance: boolean;
+    /** The sender's attempt, so a failed turn can be reported to it. */
+    attempt_id?: string;
   };
+  // A turn a delivery report started (another agent's turn on this agent's
+  // message failed). Rechecked at execution; never itself reported.
+  agent_rpc_report?: import("@cocalc/conat/agents/rpc-reports").AgentRpcTurnFailureReport;
   project_id: string;
   path: string;
   message_date: string;

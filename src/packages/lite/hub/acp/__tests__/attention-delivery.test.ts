@@ -21,6 +21,7 @@ import {
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
 import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
+import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
 import {
   claimAcpSteer,
   decodeAcpSteerRequest,
@@ -1433,4 +1434,51 @@ it("does not switch to another payer when the answer's selected subscription is 
     }),
   ).rejects.toThrow("Selected subscription revoked");
   expect(listQueuedAcpJobs()).toEqual([]);
+});
+
+describe("a failed turn another agent's message started", () => {
+  const attempt_id = "55555555-5555-4555-8555-555555555555";
+  let reportRpcTurnFailure: jest.Mock;
+  const original = hubApi.agent.reportRpcTurnFailure;
+  beforeEach(() => {
+    reportRpcTurnFailure = jest.fn(async () => ({ message_id: "report" }));
+    hubApi.agent.reportRpcTurnFailure = reportRpcTurnFailure;
+  });
+  afterEach(() => {
+    if (original === undefined) delete hubApi.agent.reportRpcTurnFailure;
+    else hubApi.agent.reportRpcTurnFailure = original;
+  });
+
+  it("is reported to the message's sender, once", async () => {
+    const request = rpcTurnRequest(undefined);
+    request.chat!.agent_rpc_execution!.attempt_id = attempt_id;
+    // The turn fails (here: before the model ran).
+    mockAuthorizeRpcExecution.mockRejectedValue(
+      new Error("You've hit your usage limit."),
+    );
+    const job = startRunningTurn(request);
+    await acpTestInternals.runQueuedAcpJob(job);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("error");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportRpcTurnFailure).toHaveBeenCalledTimes(1);
+    expect(reportRpcTurnFailure.mock.calls[0][0]).toMatchObject({
+      account_id: accountId,
+      report: {
+        attempt_id,
+        kind: "limit",
+        turn_started_at: job.started_at,
+        authorization: request.chat!.agent_rpc_execution,
+      },
+    });
+    // Delivered: nothing left to send.
+    expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
+  });
+
+  it("but a person's failed turn is not reported", async () => {
+    mockAuthorizeRpcExecution.mockRejectedValue(new Error("unused"));
+    const job = startRunningTurn(turnRequest(undefined));
+    await acpTestInternals.runQueuedAcpJob(job);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportRpcTurnFailure).not.toHaveBeenCalled();
+  });
 });

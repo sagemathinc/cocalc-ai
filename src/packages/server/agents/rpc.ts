@@ -27,6 +27,11 @@ import {
 } from "@cocalc/conat/agents/rpc";
 import { validateAttachmentPayload } from "@cocalc/conat/agents/attachments";
 import {
+  agentRpcReportText,
+  validateAgentRpcTurnFailureReport,
+  type AgentRpcExecution,
+} from "@cocalc/conat/agents/rpc-reports";
+import {
   parseAgentMessagingSubject,
   requireUuid,
 } from "@cocalc/conat/agents/protocol";
@@ -561,6 +566,27 @@ export const agentRpcControl: AgentRpcControlApi = {
       opts,
       "cancel",
     )) as import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
+  deliverReport: async (opts) => {
+    validateAgentRpcTurnFailureReport(opts.report);
+    const sender = opts.report.authorization.source;
+    if (isExternalAgentSource(sender))
+      throw new Error("an external sender has no chat");
+    await local(opts, sender);
+    const identity = await sourceIdentity(sender);
+    const host = await hostFor(sender);
+    const result = await host.api.deliverAgentRpcReport({
+      account_id: opts.account_id,
+      report: opts.report,
+      path: identity.path,
+      thread_id: identity.thread_id,
+      target_label: opts.target_label,
+    });
+    // Not written (the project did not start, the chat did not open, ...):
+    // the recipient's host tries again later.
+    if ("not_sent" in result)
+      throw new Error(`delivery report not written: ${result.not_sent}`);
+    return result;
+  },
   inspect: async (opts) => {
     await local(opts, opts.request.target);
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
@@ -672,6 +698,20 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
   // The authenticated destination host supplies its already-admitted queue
   // record, not editable chat content. Recheck current authority, but do not
   // require the original sender process/credential to remain alive.
+  const proof = await messageAuthority(authorization);
+  if ("denied" in proof)
+    throw new PersonalAgentAuthorizationError(proof.denied);
+};
+
+/**
+ * Whether an admitted message (its execution authorization) is still
+ * authorized now: the network, its generation and delivery mode unchanged,
+ * without requiring the sender's process to still be alive.
+ */
+async function messageAuthority(
+  authorization: AgentRpcExecution,
+): Promise<AgentNetworkAuthorization | PersonalAgentDenial> {
+  const account_id = authorization.principal_account_id;
   const proof = await networkProof(
     account_id,
     authorization.source,
@@ -680,8 +720,7 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
     authorization.agent_network_id,
     true,
   );
-  if ("denied" in proof)
-    throw new PersonalAgentAuthorizationError(proof.denied);
+  if ("denied" in proof) return proof;
   if (
     proof.account_id !== account_id ||
     proof.network_generation !== authorization.network_generation ||
@@ -689,8 +728,92 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
     proof.delivery_mode !== authorization.configured_delivery ||
     authorization.guidance !== (proof.delivery_mode === "live")
   )
-    throw new PersonalAgentAuthorizationError("network_stale");
+    return { denied: "network_stale" } as PersonalAgentDenial;
+  return proof;
+}
+
+/**
+ * The recipient's host reports that the turn a message started ended in an
+ * error before the recipient replied. Recheck that message's authority and
+ * tell its sender: an external sender's inbox, or the sender's own chat
+ * (through the sender's project bay and host). Refusals are not_sent and
+ * final; delivery failures throw, so the host tries again later.
+ */
+export const reportRpcTurnFailure: AgentApi["reportRpcTurnFailure"] = async (
+  opts,
+) => {
+  const host_id = `${opts.host_id ?? ""}`.trim();
+  const account_id = `${opts.account_id ?? ""}`.trim();
+  if (!host_id || !account_id) throw new Error("invalid delivery report");
+  const report = opts.report;
+  validateAgentRpcTurnFailureReport(report);
+  const message = report.authorization;
+  if (message.principal_account_id !== account_id)
+    throw new PersonalAgentAuthorizationError("principal_mismatch");
+  // Only the host the failed turn ran on (the recipient's) may report it.
+  await assertProjectHostAgentTokenAccess({
+    account_id,
+    host_id,
+    project_id: message.target.project_id,
+  });
+  const recipient = await sourceIdentity(message.target);
+  if (
+    recipient.path !== message.target_path ||
+    recipient.thread_id !== message.target_thread_id
+  )
+    return { not_sent: "the recipient's conversation changed" };
+  const proof = await messageAuthority(message);
+  if ("denied" in proof)
+    return { not_sent: `the message is no longer authorized: ${proof.denied}` };
+  const target_label = networkMemberLabel(proof.target);
+  const sender = message.source;
+  if (isExternalAgentSource(sender)) {
+    await enqueueExternalAgentMessage({
+      account_id,
+      installation_id: sender.installation_id,
+      attempt_id: report.report_id,
+      agent_network_id: proof.agent_network_id,
+      network_generation: proof.network_generation,
+      source: message.target,
+      body: agentRpcReportText(report, target_label),
+    });
+    return { message_id: report.report_id };
+  }
+  return await routed(sender.project_id, (api, route) =>
+    api.deliverReport({ ...route, account_id, report, target_label }),
+  );
 };
+
+/** Before the turn a delivery report started runs, recheck it. */
+export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"] =
+  async (opts) => {
+    const host_id = `${opts.host_id ?? ""}`.trim();
+    const account_id = `${opts.account_id ?? ""}`.trim();
+    if (!host_id || !account_id)
+      throw new Error("invalid delivery report execution");
+    const report = opts.report;
+    validateAgentRpcTurnFailureReport(report);
+    const message = report.authorization;
+    if (message.principal_account_id !== account_id)
+      throw new PersonalAgentAuthorizationError("principal_mismatch");
+    if (isExternalAgentSource(message.source))
+      throw new Error("an external sender has no turn to run");
+    // The report runs as a turn of the message's sender, on its host.
+    await assertProjectHostAgentTokenAccess({
+      account_id,
+      host_id,
+      project_id: message.source.project_id,
+    });
+    const sender = await sourceIdentity(message.source);
+    if (
+      sender.path !== opts.delivery?.path ||
+      sender.thread_id !== opts.delivery?.thread_id
+    )
+      throw new Error("sender identity changed");
+    const proof = await messageAuthority(message);
+    if ("denied" in proof)
+      throw new PersonalAgentAuthorizationError(proof.denied);
+  };
 
 async function submitExternalInbox(
   account_id: string,

@@ -177,3 +177,21 @@ test("structured agent messages show their text instead of JSON", () => {
   expect(screen.getByText("Please review")).toBeVisible();
   expect(screen.getByText("Raw message")).toBeInTheDocument();
 });
+
+test("a delivery report is about the agent, not from it", () => {
+  const element = agentMessageFromMarkdownFence({
+    info: "agent-message direction=report from=%40reviewer",
+    value: "[Delivery report] @reviewer's turn ended with an error",
+  });
+  expect(element).toMatchObject({
+    direction: "report",
+    source_label: "@reviewer",
+  });
+  render(
+    <AgentMessageElement attributes={{} as any} element={element as any}>
+      Report text
+    </AgentMessageElement>,
+  );
+  expect(screen.getByText(/About @reviewer/)).toBeVisible();
+  expect(screen.queryByText(/From @reviewer/)).toBeNull();
+});
