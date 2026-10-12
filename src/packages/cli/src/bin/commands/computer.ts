@@ -29,6 +29,19 @@ import {
   type ConnectorIO,
 } from "@cocalc/backend/computers/connector";
 import { sendIdentityMessage } from "../core/agent-message";
+import type { KeyPair } from "@cocalc/backend/computers/crypto";
+import {
+  DEFAULT_EXEC_TIMEOUT_MS,
+  MAX_EXEC_TIMEOUT_MS,
+} from "@cocalc/util/computers/operations";
+
+/** An exec is settled once refused, or done/failed/unknown on the computer. */
+function execSettled(s: { answered: boolean; reply: any; finished?: unknown }) {
+  if (s.finished) return true;
+  if (!s.answered) return false;
+  if (s.reply?.ok !== true) return true;
+  return ["done", "failed", "unknown"].includes(s.reply.state);
+}
 import type { ProjectCommandDeps } from "./project";
 
 const HELP = `A computer is a machine (a laptop, a server) whose owner connected it so
@@ -37,8 +50,8 @@ mode is full trust: commands run as the user who connected it.
 
 On the machine:   cocalc computer connect <the line CoCalc showed>
 From an agent:    cocalc computer request NAME --why "..."   (the owner approves)
-                  cocalc computer exec @NAME -- uname -a
-                  cocalc computer run @NAME --description "build" -- make
+                  cocalc computer exec @NAME -- uname -a     (waits; --timeout, default 10 min)
+                  cocalc computer run @NAME --description "build" -- make   (keeps going)
                   cocalc computer jobs @NAME ; logs @NAME JOB ; kill @NAME JOB`;
 
 function terminalIO(): ConnectorIO {
@@ -92,15 +105,26 @@ export function registerComputerCommand(
   const send = async (cmd: Command, request: any) =>
     await sendIdentityMessage(request, globalsFrom(cmd).api);
 
-  /** Ticket, proof of possession, relay. */
-  const operate = async (
+  /**
+   * Ticket, proof of possession, relay. Passing `again` re-sends the same
+   * operation (same id and proof key): the computer then answers with its
+   * recorded outcome, or that it is still running; it never runs it twice.
+   */
+  const sendOnce = async (
     cmd: Command,
     name: string,
     operation: string,
     request: unknown,
-  ): Promise<any> => {
-    const pop = generateSigningKey();
-    const operation_id = randomUUID();
+    again?: { operation_id: string; pop: KeyPair },
+  ): Promise<{
+    answered: boolean;
+    reply: any;
+    finished?: { state: string; exit_code: number | null };
+    operation_id: string;
+    pop: KeyPair;
+  }> => {
+    const pop = again?.pop ?? generateSigningKey();
+    const operation_id = again?.operation_id ?? randomUUID();
     const issued: any = await send(cmd, {
       action: "computer",
       op: "ticket",
@@ -110,7 +134,15 @@ export function registerComputerCommand(
       operation_id,
       pop_key: pop.publicDer,
     });
-    if (issued?.finished) return { finished: issued.finished, operation_id };
+    if (issued?.finished) {
+      return {
+        answered: true,
+        reply: null,
+        finished: issued.finished,
+        operation_id,
+        pop,
+      };
+    }
     const t = issued.ticket.payload;
     const result: any = await send(cmd, {
       action: "computer",
@@ -119,14 +151,31 @@ export function registerComputerCommand(
       proof: signProofOfPossession(pop, t.ticket_id, t.request_hash),
       request: issued.operation.request,
     });
-    if (!result?.answered) {
+    return {
+      answered: !!result?.answered,
+      reply: result?.reply,
+      operation_id,
+      pop,
+    };
+  };
+
+  const operate = async (
+    cmd: Command,
+    name: string,
+    operation: string,
+    request: unknown,
+  ): Promise<any> => {
+    const s = await sendOnce(cmd, name, operation, request);
+    if (s.finished)
+      return { finished: s.finished, operation_id: s.operation_id };
+    if (!s.answered) {
       return {
         dispatched: true,
-        operation_id,
-        hint: `still running; see: cocalc computer ops ${name} ${operation_id}`,
+        operation_id: s.operation_id,
+        hint: `still running; see: cocalc computer ops ${name} ${s.operation_id}`,
       };
     }
-    return result.reply;
+    return s.reply;
   };
 
   const show = (cmd: Command, label: string, value: unknown) =>
@@ -250,25 +299,71 @@ export function registerComputerCommand(
     .command("exec")
     .argument("<computer>")
     .argument("<command...>", "the command line, after --")
-    .description("run a command there and wait for it (up to --timeout)")
+    .description(
+      "run a command there and wait until it finishes (stopped after --timeout); for work that should keep going without you, use run",
+    )
     .option("--cwd <path>", "working directory (default: home)")
-    .option("--timeout <seconds>", "stop it after this long (default 20)", "20")
+    .option(
+      "--timeout <seconds>",
+      `stop it after this long (default ${DEFAULT_EXEC_TIMEOUT_MS / 1000}, at most ${MAX_EXEC_TIMEOUT_MS / 1000})`,
+      `${DEFAULT_EXEC_TIMEOUT_MS / 1000}`,
+    )
     .action(async (name: string, parts: string[], opts, cmd) => {
-      const reply = await operate(cmd, name, "exec", {
+      const timeout = Number(opts.timeout);
+      if (
+        !Number.isFinite(timeout) ||
+        timeout <= 0 ||
+        timeout * 1000 > MAX_EXEC_TIMEOUT_MS
+      ) {
+        throw new Error(
+          `--timeout is in seconds, at most ${MAX_EXEC_TIMEOUT_MS / 1000}`,
+        );
+      }
+      const request = {
         command: parts.join(" "),
         cwd: opts.cwd ?? null,
-        timeout_ms: Math.round(Number(opts.timeout) * 1000),
-      });
+        timeout_ms: Math.round(timeout * 1000),
+      };
+      // Each call to the hub waits at most ~25 s for the answer; a longer
+      // command keeps running there, and asking again with the same
+      // operation returns its outcome once it has one.
+      const giveUpAt = Date.now() + timeout * 1000 + 2 * 60 * 1000;
+      let s = await sendOnce(cmd, name, "exec", request);
+      let pause = 2000;
+      while (!execSettled(s)) {
+        if (Date.now() > giveUpAt) {
+          console.error(
+            `still running on @${ref(name)}; check it with: cocalc computer ops ${name} ${s.operation_id}`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        await new Promise((r) => setTimeout(r, pause));
+        pause = Math.min(pause * 2, 15_000);
+        s = await sendOnce(cmd, name, "exec", request, s);
+      }
+      const reply = s.finished ? { finished: s.finished } : s.reply;
       const globals = globalsFrom(cmd);
       if (globals.json || reply?.ok !== true) {
         show(cmd, "computer exec", reply);
-        if (reply?.ok === false) process.exitCode = 1;
+        if (reply?.ok === false || s.finished) process.exitCode = 1;
         return;
       }
       const r = reply.result ?? {};
       if (r.stdout) process.stdout.write(r.stdout);
       if (r.stderr) process.stderr.write(r.stderr);
       if (r.truncated) console.error("[output truncated]");
+      if (r.output_pruned) console.error("[its output was already removed]");
+      if (r.timed_out) {
+        console.error(
+          `[stopped: it ran longer than --timeout ${timeout} s. Give it more time with --timeout (at most ${MAX_EXEC_TIMEOUT_MS / 1000}), or use \`cocalc computer run\` for work that should keep going]`,
+        );
+      }
+      if (reply.state === "unknown") {
+        console.error(
+          "[its outcome is unknown: the computer restarted while it ran]",
+        );
+      }
       process.exitCode = typeof r.exit_code === "number" ? r.exit_code : 1;
     });
 

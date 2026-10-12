@@ -465,6 +465,46 @@ describeDb("a computer connected over conat", () => {
     expect(((await first) as any).reply.result.stdout).toBe("once\n");
   });
 
+  it("a command longer than the relay's wait: asking again with the same operation reports it running, then returns its output once done (never runs it twice)", async () => {
+    const first = await ticketFor("exec", {
+      command: "sleep 2; echo late >> runs.txt; echo late",
+      cwd: null,
+    });
+    const op = {
+      operation_id: first.ticket.payload.operation_id,
+      pop: first.pop,
+    };
+    expect(await relay(first, { waitMs: 300 })).toMatchObject({
+      answered: false,
+    });
+    const again = await ticketFor(
+      "exec",
+      { command: "sleep 2; echo late >> runs.txt; echo late", cwd: null },
+      op,
+    );
+    const running: any = await relay(again);
+    expect(running.reply).toMatchObject({ ok: true, replayed: true });
+    expect(["admitted", "running"]).toContain(running.reply.state);
+    await new Promise((r) => setTimeout(r, 2500));
+    const last = await ticketFor(
+      "exec",
+      { command: "sleep 2; echo late >> runs.txt; echo late", cwd: null },
+      op,
+    );
+    const done: any = await relay(last);
+    expect(done.reply).toMatchObject({
+      ok: true,
+      replayed: true,
+      state: "done",
+    });
+    expect(done.reply.result.stdout).toBe("late\n");
+    // Ran exactly once on the machine.
+    const count = await ticketFor("exec", {
+      command: "wc -l < runs.txt; rm runs.txt",
+    });
+    expect(((await relay(count)) as any).reply.result.stdout.trim()).toBe("1");
+  });
+
   it("an answer that never comes leaves the relay expired (outcome unknown), not answered", async () => {
     const t = await ticketFor("exec", { command: "sleep 3" });
     const result: any = await relay(t, { waitMs: 500 });
