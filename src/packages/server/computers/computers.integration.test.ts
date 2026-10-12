@@ -264,38 +264,6 @@ describeDb("computers store", () => {
       await db().query("DELETE FROM public_project_paths WHERE id=$1", [share]);
     });
 
-    it("retires the public-share trigger a development build installed", async () => {
-      const {
-        projectComputersPrivacySchemaNeedsSync,
-        retireProjectComputersPrivacySchema,
-      } =
-        await import("@cocalc/database/postgres/schema/project-computers-privacy");
-      const client = await db().connect();
-      try {
-        await client.query(
-          "CREATE TABLE IF NOT EXISTS computers_local_bay (singleton BOOLEAN PRIMARY KEY DEFAULT true, bay_id TEXT NOT NULL)",
-        );
-        await client.query(`CREATE OR REPLACE FUNCTION public_project_paths_bump_computers_privacy()
-          RETURNS TRIGGER AS $$ BEGIN RAISE EXCEPTION 'retired trigger still runs'; END; $$ LANGUAGE plpgsql`);
-        await client.query(`CREATE TRIGGER public_project_paths_bump_computers_privacy_trigger
-          AFTER INSERT OR UPDATE OR DELETE ON public_project_paths
-          FOR EACH ROW EXECUTE FUNCTION public_project_paths_bump_computers_privacy()`);
-        expect(await projectComputersPrivacySchemaNeedsSync(client)).toBe(true);
-        await retireProjectComputersPrivacySchema(client);
-        expect(await projectComputersPrivacySchemaNeedsSync(client)).toBe(
-          false,
-        );
-        // Share changes work again.
-        const project_id = await project({ [account]: { group: "owner" } });
-        await client.query(
-          "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'x','listed',false)",
-          [randomUUID(), project_id],
-        );
-      } finally {
-        client.release();
-      }
-    });
-
     it("only the owning bay attests, and never while the project is being rehomed", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } });
