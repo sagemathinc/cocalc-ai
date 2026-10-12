@@ -406,6 +406,16 @@ describeDb("a computer connected over conat", () => {
     expect(inboxChecks).toEqual([]);
   });
 
+  it("runs an argv exactly as given, through ticket and relay", async () => {
+    const argv = ["sh", "-c", "printf '%s|' \"$@\"", "x", "a\\\\b", "it's"];
+    const result: any = await relay(await ticketFor("exec", { argv }));
+    expect(result.reply).toMatchObject({ ok: true, state: "done" });
+    expect(result.reply.result).toMatchObject({
+      exit_code: 0,
+      stdout: "a\\\\b|it's|",
+    });
+  });
+
   it("refuses another run's ticket, a forged one, another request, a bad proof, and a superseded ticket", async () => {
     const t = await ticketFor("exec", { command: "true" });
     await expect(relay(t, { run_id: randomUUID() })).rejects.toThrow(

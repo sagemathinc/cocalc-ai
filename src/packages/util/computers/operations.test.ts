@@ -1,4 +1,5 @@
 import {
+  commandText,
   MAX_COMMAND_BYTES,
   MAX_TRANSFER_BYTES,
   maxRuntimeMs,
@@ -12,6 +13,7 @@ describe("parseOperationRequest", () => {
       operation: "exec",
       request: {
         command: "docker ps",
+        argv: null,
         cwd: null,
         timeout_ms: 600_000,
         stdin: null,
@@ -35,6 +37,17 @@ describe("parseOperationRequest", () => {
     expect(a).toEqual(b);
   });
 
+  it("takes the exact arguments of one command as argv", () => {
+    const argv = ["sh", "-c", "du -sh ~/* | sort -h", "it's \\'"];
+    expect(parseOperationRequest("exec", { argv }).request).toMatchObject({
+      command: null,
+      argv,
+    });
+    expect(
+      commandText({ command: null, argv: ["ls", "-la", "a b", "it's"] }),
+    ).toBe(`ls -la 'a b' 'it'\\''s'`);
+  });
+
   it("requires a description for jobs", () => {
     expect(() => parseOperationRequest("run", { command: "make" })).toThrow(
       /description/,
@@ -47,6 +60,13 @@ describe("parseOperationRequest", () => {
   it.each<[string, any, any]>([
     ["an unknown field", "exec", { command: "ls", sudo: true }],
     ["an empty command", "exec", { command: "  " }],
+    ["both command and argv", "exec", { command: "ls", argv: ["ls"] }],
+    ["neither command nor argv", "exec", {}],
+    ["an empty argv", "exec", { argv: [] }],
+    ["an argv with a number", "exec", { argv: ["ls", 1] }],
+    ["an argv with an empty command", "run", { argv: [""], description: "d" }],
+    ["an argv with NUL", "exec", { argv: ["echo", "a\u0000b"] }],
+    ["a huge argv", "exec", { argv: ["echo", "x".repeat(MAX_COMMAND_BYTES)] }],
     ["a huge command", "exec", { command: "x".repeat(MAX_COMMAND_BYTES + 1) }],
     ["an exec over an hour", "exec", { command: "ls", timeout_ms: 3_600_001 }],
     [

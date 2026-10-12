@@ -45,18 +45,15 @@ function execSettled(s: { answered: boolean; reply: any; finished?: unknown }) {
 }
 
 /**
- * The line the computer's login shell runs. One argument is that line
- * itself (pipes, globs and ~ work there); several are the exact arguments
- * of one command, so `-- sh -c 'du -sh ~/* | sort -h'` keeps its quoting
- * instead of becoming `sh -c du ...` the way ssh would join it.
+ * What runs there. One argument is a shell line for the computer's login
+ * shell (pipes, globs and ~ work there); several are the exact arguments of
+ * one command, which no shell re-parses: `-- sh -c 'du -sh ~/* | sort -h'`
+ * runs as written, not as `sh -c du ...` the way ssh would join it.
  */
-export function commandLine(parts: string[]): string {
-  if (parts.length === 1) return parts[0];
-  return parts
-    .map((p) =>
-      /^[A-Za-z0-9_@%+=:,./-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`,
-    )
-    .join(" ");
+export function commandOf(
+  parts: string[],
+): { command: string } | { argv: string[] } {
+  return parts.length === 1 ? { command: parts[0] } : { argv: parts };
 }
 
 const HELP = `A computer is a machine (a laptop, a server) whose owner connected it so
@@ -339,7 +336,7 @@ export function registerComputerCommand(
         );
       }
       const request = {
-        command: commandLine(parts),
+        ...commandOf(parts),
         cwd: opts.cwd ?? null,
         timeout_ms: Math.round(timeout * 1000),
       };
@@ -404,7 +401,7 @@ export function registerComputerCommand(
         cmd,
         "computer run",
         await operate(cmd, name, "run", {
-          command: commandLine(parts),
+          ...commandOf(parts),
           cwd: opts.cwd ?? null,
           description: opts.description,
           name: opts.name ?? null,

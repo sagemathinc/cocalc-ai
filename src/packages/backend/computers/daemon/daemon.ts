@@ -314,6 +314,7 @@ export class ComputerDaemon {
             name: op.request.name,
             description: op.request.description,
             command: op.request.command,
+            argv: op.request.argv,
             cwd: resolveCwd(this.deps.workdir, op.request.cwd),
             nice: op.request.nice,
             exclusive: op.request.exclusive,

@@ -1,30 +1,15 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import test from "node:test";
 
-import { commandLine } from "./computer";
+import { commandOf } from "./computer";
 
-// What the computer's login shell would print for this command line.
-function run(parts: string[]): string {
-  return execFileSync("sh", ["-c", commandLine(parts)], {
-    encoding: "utf8",
-    env: { ...process.env, HOME: "/tmp" },
+test("one argument after -- is a shell line there", () => {
+  assert.deepEqual(commandOf(["du -sh ~/* | sort -h"]), {
+    command: "du -sh ~/* | sort -h",
   });
-}
-
-test("one argument is a shell line run there", () => {
-  assert.equal(run(["echo a b | tr a x"]), "x b\n");
-  assert.equal(run(["echo ~"]), "/tmp\n");
 });
 
-test("several arguments keep their quoting (sh -c '...')", () => {
-  assert.equal(run(["sh", "-c", "echo 'a b' | tr a x"]), "x b\n");
-  assert.equal(
-    run(["printf", "%s|", "it's", "a b", "$HOME", "*"]),
-    "it's|a b|$HOME|*|",
-  );
-});
-
-test("plain words are left alone", () => {
-  assert.equal(commandLine(["ls", "-la", "/var/log"]), "ls -la /var/log");
+test("several arguments are sent as exact argv, not joined", () => {
+  const parts = ["sh", "-c", "du -sh ~/* | sort -h", "a\\\\b", "x\\'y"];
+  assert.deepEqual(commandOf(parts), { argv: parts });
 });
