@@ -10,39 +10,49 @@
 // Share changes are then unrestricted again. The unused projects columns
 // (computers_public_shares, computers_share_state_known,
 // computers_privacy_revision) are left alone where they exist.
+//
+// Only the exact objects that build installed are touched: in schema
+// "public", found and dropped by schema-qualified name, never through
+// search_path (a same-named object elsewhere is left alone).
 
 import type { Client } from "@cocalc/database/pool";
 
 const TRIGGER = "public_project_paths_bump_computers_privacy_trigger";
-const FUNCTION = "public_project_paths_bump_computers_privacy";
-const LOCAL_BAY_TABLE = "computers_local_bay";
+const FUNCTION = "public.public_project_paths_bump_computers_privacy()";
+const TABLE = "public.computers_local_bay";
+const SHARES = "public.public_project_paths";
 
-async function retiredObjectsPresent(db: Client): Promise<boolean> {
-  const { rows } = await db.query<{ present: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=$1 AND NOT tgisinternal)
-         OR EXISTS (SELECT 1 FROM pg_proc WHERE proname=$2)
-         OR to_regclass($3) IS NOT NULL AS present`,
-    [TRIGGER, FUNCTION, `public.${LOCAL_BAY_TABLE}`],
+interface Retired {
+  trigger: boolean;
+  fn: boolean;
+  table: boolean;
+}
+
+async function retiredObjects(db: Client): Promise<Retired> {
+  const { rows } = await db.query<Retired>(
+    `SELECT
+       EXISTS (SELECT 1 FROM pg_trigger
+                WHERE tgname = $1 AND NOT tgisinternal
+                  AND tgrelid = to_regclass($2)) AS trigger,
+       to_regprocedure($3) IS NOT NULL AS fn,
+       to_regclass($4) IS NOT NULL AS "table"`,
+    [TRIGGER, SHARES, FUNCTION, TABLE],
   );
-  return rows[0]?.present === true;
+  return rows[0] ?? { trigger: false, fn: false, table: false };
 }
 
 export async function retireProjectComputersPrivacySchema(
   db: Client,
 ): Promise<void> {
-  if (!(await retiredObjectsPresent(db))) return;
+  const present = await retiredObjects(db);
+  if (!present.trigger && !present.fn && !present.table) return;
   await db.query("BEGIN");
   try {
-    if (
-      (await db.query("SELECT to_regclass('public.public_project_paths') AS t"))
-        .rows[0]?.t != null
-    ) {
-      await db.query(
-        `DROP TRIGGER IF EXISTS ${TRIGGER} ON public_project_paths`,
-      );
+    if (present.trigger) {
+      await db.query(`DROP TRIGGER IF EXISTS ${TRIGGER} ON ${SHARES}`);
     }
-    await db.query(`DROP FUNCTION IF EXISTS ${FUNCTION}()`);
-    await db.query(`DROP TABLE IF EXISTS ${LOCAL_BAY_TABLE}`);
+    if (present.fn) await db.query(`DROP FUNCTION IF EXISTS ${FUNCTION}`);
+    if (present.table) await db.query(`DROP TABLE IF EXISTS ${TABLE}`);
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");
@@ -53,5 +63,6 @@ export async function retireProjectComputersPrivacySchema(
 export async function projectComputersPrivacySchemaNeedsSync(
   db: Client,
 ): Promise<boolean> {
-  return await retiredObjectsPresent(db);
+  const present = await retiredObjects(db);
+  return present.trigger || present.fn || present.table;
 }
