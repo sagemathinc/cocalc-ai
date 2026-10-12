@@ -13,7 +13,7 @@ import { createWriteStream, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   MAX_EXEC_OUTPUT_BYTES,
-  posixQuote,
+  argvScript,
   type CommandSpec,
   type ExecRequest,
 } from "@cocalc/util/computers/operations";
@@ -74,7 +74,8 @@ export function loginShell(): string {
  * The line the login shell runs (-lc) and the environment it needs. An argv
  * never goes through the login shell's own parser (fish reads backslashes in
  * single quotes differently): the shell runs a fixed line that reads the same
- * in sh, bash, zsh and fish, and /bin/sh evaluates the POSIX-quoted argv.
+ * in sh, bash, zsh and fish, in which /bin/sh only sets the positional
+ * parameters from the quoted argv (argvScript) and then runs "$@".
  */
 export function loginShellCommand(spec: CommandSpec): {
   line: string;
@@ -82,8 +83,8 @@ export function loginShellCommand(spec: CommandSpec): {
 } {
   if (spec.argv == null) return { line: spec.command ?? "", env: {} };
   return {
-    line: `exec /bin/sh -c 'a=$COCALC_ARGV; unset COCALC_ARGV; eval "$a"'`,
-    env: { COCALC_ARGV: spec.argv.map(posixQuote).join(" ") },
+    line: `exec /bin/sh -c 'a=$COCALC_ARGV; unset COCALC_ARGV; eval "$a"; "$@"'`,
+    env: { COCALC_ARGV: argvScript(spec.argv) },
   };
 }
 

@@ -255,7 +255,8 @@ function commandSpec(o: Record<string, unknown>): CommandSpec {
       `argv must be a command and its arguments (at most ${MAX_ARGV_LENGTH} strings)`,
     );
   }
-  commandSize(argv.join(" "));
+  // Bound what actually travels (one environment string on the computer).
+  commandSize(argvScript(argv));
   return { command: null, argv: [...argv] };
 }
 
@@ -272,6 +273,15 @@ export function posixQuote(arg: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg)
     ? arg
     : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The sh script that sets an argv as the positional parameters: every value
+ * is in argument position after a fixed `set --`, so none can become an
+ * assignment, a reserved word or an operator; the command is then "$@".
+ */
+export function argvScript(argv: string[]): string {
+  return `set -- ${argv.map(posixQuote).join(" ")}`;
 }
 
 /** How a request's command reads, for audit and job lists. */

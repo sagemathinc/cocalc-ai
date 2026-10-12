@@ -11,6 +11,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  MAX_COMMAND_BYTES,
+  parseOperationRequest,
+} from "@cocalc/util/computers/operations";
 import { runExec } from "./exec";
 import { JobManager } from "./jobs";
 
@@ -82,6 +86,51 @@ describe("argv runs exactly in every login shell", () => {
       { workdir: work, logDir: join(dir, randomUUID()), shell },
     );
     expect(r.exit_code).toBe(7);
+  });
+
+  const exec = (argv: string[], shell: string) =>
+    runExec(
+      { command: null, argv, cwd: null, timeout_ms: 10_000, stdin: null },
+      { workdir: work, logDir: join(dir, randomUUID()), shell },
+    );
+
+  it.each(SHELLS)(
+    "argv[0] is always the program, never sh grammar, login shell %s",
+    async (shell) => {
+      // Not an environment assignment for printf: a program named FOO=bar.
+      const assign = await exec(["FOO=bar", "printf", "ran"], shell);
+      expect(assign.stdout).toBe("");
+      expect(assign.exit_code).toBe(127);
+      // Not the start of an if statement (no syntax error): a program "if".
+      for (const word of ["if", "!", "{", "for", "case"]) {
+        const r = await exec([word, "x"], shell);
+        expect(r.exit_code).toBe(127);
+        expect(r.stderr).not.toMatch(/syntax/i);
+      }
+    },
+  );
+
+  it("launches the largest argv it accepts, even of all apostrophes", async () => {
+    const argvOf = (n: number) => ["printf", "%s", "'".repeat(n)];
+    const accepted = (n: number) => {
+      try {
+        parseOperationRequest("exec", { argv: argvOf(n) });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let lo = 1;
+    let hi = MAX_COMMAND_BYTES;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (accepted(mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    expect(accepted(lo + 1)).toBe(false);
+    const r = await exec(argvOf(lo), "/bin/sh");
+    expect(r.exit_code).toBe(0);
+    expect(r.stdout).toBe("'".repeat(lo));
   });
 
   it.each(SHELLS)("a job, login shell %s", async (shell) => {

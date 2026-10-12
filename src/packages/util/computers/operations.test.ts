@@ -67,6 +67,11 @@ describe("parseOperationRequest", () => {
     ["an argv with an empty command", "run", { argv: [""], description: "d" }],
     ["an argv with NUL", "exec", { argv: ["echo", "a\u0000b"] }],
     ["a huge argv", "exec", { argv: ["echo", "x".repeat(MAX_COMMAND_BYTES)] }],
+    [
+      "an argv whose quoted form is too big (apostrophes quadruple)",
+      "exec",
+      { argv: ["echo", "'".repeat(MAX_COMMAND_BYTES / 4)] },
+    ],
     ["a huge command", "exec", { command: "x".repeat(MAX_COMMAND_BYTES + 1) }],
     ["an exec over an hour", "exec", { command: "ls", timeout_ms: 3_600_001 }],
     [
