@@ -610,9 +610,21 @@ async function readJson<T>(path: string): Promise<T | undefined> {
   }
 }
 
-function inside(child: string, parent: string): boolean {
+/*
+ * The path of `child` relative to `parent` if it is `parent` itself ("") or
+ * below it, else undefined. Only a ".." component leaves `parent`: a name
+ * that merely starts with two dots ("..data") is an ordinary child.
+ */
+export function pathWithin(parent: string, child: string): string | undefined {
   const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    return undefined;
+  }
+  return rel;
+}
+
+function inside(child: string, parent: string): boolean {
+  return pathWithin(parent, child) !== undefined;
 }
 
 /*
@@ -670,14 +682,8 @@ async function checkDataPaths(
   // Reserve the whole ${data}.* namespace (the temporary snapshots are
   // ${data}.snapshot.tmp-<id>): the install may not be, or be below, any
   // sibling of the data whose name starts with it.
-  const rel = relative(dirname(data), install);
-  const first = rel.split(sep)[0];
-  if (
-    rel !== "" &&
-    !rel.startsWith("..") &&
-    !isAbsolute(rel) &&
-    first.startsWith(`${basename(data)}.`)
-  ) {
+  const rel = pathWithin(dirname(data), install);
+  if (rel && rel.split(sep)[0].startsWith(`${basename(data)}.`)) {
     throw new Error(
       `the CoCalc Plus install ${install} sits among the data directory's own copies (${data}.*)`,
     );

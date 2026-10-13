@@ -41,6 +41,7 @@ import {
   type DataFault,
   installPlusRelease,
   plusRollback,
+  pathWithin,
   prepareServer,
   recoverData,
   renamable,
@@ -676,6 +677,46 @@ test("well-formed but wrong journals are refused before recovery acts", async ()
     assert.ok(existsSync(join(f.root, "data-journal.json")));
   }
   rmSync(join(f.root, "data-journal.json"));
+});
+
+test("names starting with two dots are ordinary children for containment", async () => {
+  assert.equal(pathWithin("/a/b", "/a/b/..data"), "..data");
+  assert.equal(pathWithin("/a/b", "/a/b/..x/y"), join("..x", "y"));
+  assert.equal(pathWithin("/a/b", "/a/b"), "");
+  assert.equal(pathWithin("/a/b", "/a"), undefined);
+  assert.equal(pathWithin("/a/b", "/a/c"), undefined);
+  assert.equal(pathWithin("/a/b", "/a/b.."), undefined);
+  // Data inside the install, and the install inside the data, both through
+  // a component that starts with "..".
+  const f = fixture("..install");
+  await f.install(f.release(205));
+  const line = readFileSync(join(f.root, "active"), "utf8").trimEnd();
+  for (const data of [join(f.root, "..data"), f.dir]) {
+    await assert.rejects(
+      prepareServer({ root: f.root, line, paths: { home: f.dir, data } }),
+      /overlaps/,
+      data,
+    );
+    // A journal naming such data is refused before recovery acts.
+    const release = {
+      manifest: f.release(205).hash,
+      release: 205,
+      version: "1.0.205",
+    };
+    for (const journal of [
+      { op: "rollback", data, to: release, line, restore: "0123456789abcdef" },
+      { op: "snapshot", data, id: "0123456789abcdef", from: null, to: release },
+    ]) {
+      writeFileSync(join(f.root, "data-journal.json"), JSON.stringify(journal));
+      await assert.rejects(
+        withLock(f.root, () => recoverData(f.root)),
+        /unsafe paths/,
+        `${data} ${journal.op}`,
+      );
+      assert.ok(existsSync(join(f.root, "active")));
+    }
+    rmSync(join(f.root, "data-journal.json"));
+  }
 });
 
 test("relative or overlapping data paths are refused", async () => {
