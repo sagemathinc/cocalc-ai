@@ -15,6 +15,10 @@ describe("isPublicAuthShellTarget", () => {
     "/%2e%2e/auth/oauth/authorize",
     "/base/auth/cli-login/abc",
     "/auth/sign-in",
+    "/invites/abc123",
+    "/x/../invites/abc123",
+    "/sso/google",
+    "/redeem/xyz",
     ["/auth/oauth/authorize", "/features"],
   ])("denies framing for %j", (target) => {
     expect(isPublicAuthShellTarget(target)).toBe(true);
@@ -25,6 +29,7 @@ describe("isPublicAuthShellTarget", () => {
     "/authorize",
     "/oauth/authorize",
     "/auth-help",
+    "/invitesx/abc",
     "",
     undefined,
     ["/features", "/auth/sign-in"],

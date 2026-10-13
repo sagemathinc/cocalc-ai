@@ -12,8 +12,10 @@ import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
 } from "@cocalc/server/purchases/billing-authority/client";
-import { getOAuthPurgeTargets } from "@cocalc/server/auth/oauth/clients";
-import { queueOAuthClientPurges } from "@cocalc/server/auth/oauth/purge";
+import {
+  getOAuthPurgeTargets,
+  queueOAuthClientPurges,
+} from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
 export interface DeleteAccountOptions {

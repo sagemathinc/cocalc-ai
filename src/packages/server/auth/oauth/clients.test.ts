@@ -12,7 +12,7 @@ import {
   authenticateOAuthClient,
   getOAuthClient,
   getOAuthClientPurgeConfig,
-  getOAuthPurgeTargets,
+  getConfiguredOAuthPurgeClients,
   isRegisteredRedirectUri,
   parseBasicAuthorization,
   parseRedirectUris,
@@ -60,12 +60,12 @@ describe("OAuth client registry", () => {
       url: "https://sagebrush.space/api/admin/purge",
       secret: "k",
     });
-    expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+    expect(await getConfiguredOAuthPurgeClients()).toEqual(["sagebrush"]);
     mockSettings = { sagebrush_client_secret: "s" };
     expect(await getOAuthClientPurgeConfig("sagebrush")).toBeUndefined();
-    expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+    expect(await getConfiguredOAuthPurgeClients()).toEqual(["sagebrush"]);
     mockSettings = {};
-    expect(await getOAuthPurgeTargets()).toEqual([]);
+    expect(await getConfiguredOAuthPurgeClients()).toEqual([]);
     expect(await getOAuthClientPurgeConfig("__proto__")).toBeUndefined();
   });
 

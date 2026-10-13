@@ -83,15 +83,11 @@ jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
     setBillingAccountFrozenMock(...args),
 }));
 
-jest.mock("@cocalc/server/auth/oauth/clients", () => ({
-  __esModule: true,
-  getOAuthPurgeTargets: async () => ["sagebrush"],
-}));
-
 jest.mock("@cocalc/server/auth/oauth/purge", () => ({
   __esModule: true,
   queueOAuthClientPurges: (...args: any[]) =>
     queueOAuthClientPurgesMock(...args),
+  getOAuthPurgeTargets: async () => ["sagebrush"],
 }));
 
 jest.mock("./cluster-directory", () => ({

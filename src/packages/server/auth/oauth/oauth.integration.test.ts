@@ -57,9 +57,12 @@ import {
   OAuthTokenError,
   validateAuthorizeRequest,
 } from "./authorize";
-import { deliverDuePurgeRequests, queueOAuthClientPurges } from "./purge";
+import {
+  deliverDuePurgeRequests,
+  getOAuthPurgeTargets,
+  queueOAuthClientPurges,
+} from "./purge";
 import { getSagebrushLimits } from "@cocalc/server/sagebrush/limits";
-import { getOAuthPurgeTargets } from "./clients";
 
 const ACK = (init: any) =>
   new Response(
@@ -147,6 +150,7 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       oauth_authorization_codes: SCHEMA.oauth_authorization_codes,
       oauth_client_approvals: SCHEMA.oauth_client_approvals,
       oauth_client_purge_requests: SCHEMA.oauth_client_purge_requests,
+      oauth_client_purge_obligations: SCHEMA.oauth_client_purge_obligations,
     });
   });
 
@@ -162,6 +166,7 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
     await getPool().query("DELETE FROM oauth_authorization_codes");
     await getPool().query("DELETE FROM oauth_client_approvals");
     await getPool().query("DELETE FROM oauth_client_purge_requests");
+    await getPool().query("DELETE FROM oauth_client_purge_obligations");
   });
 
   it("returns the verified account for a valid code, once", async () => {
@@ -574,6 +579,47 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
     it("has no purge target on a site that never set up the client", async () => {
       mockSettings = {};
       expect(await getOAuthPurgeTargets()).toEqual([]);
+    });
+
+    it("keeps purging after both secrets are blanked, until a decommission", async () => {
+      // Seen configured once (the purge worker records this every minute).
+      expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+      const account_id = await insertAccount();
+      mockSettings = {};
+      expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+      await queueOAuthClientPurges({
+        db: getPool(),
+        account_id,
+        client_ids: await getOAuthPurgeTargets(),
+      });
+      const fetch = jest.fn(async (_url, init: any) => ACK(init));
+      // Waits while the purge key is missing...
+      expect(await deliverDuePurgeRequests({ fetch: fetch as any })).toEqual({
+        accepted: 0,
+        failed: 1,
+      });
+      // ...and is delivered once it is restored.
+      mockSettings = {
+        sagebrush_purge_url: "https://sagebrush.test/api/admin/purge",
+        sagebrush_purge_secret: "purge-key",
+      };
+      await getPool().query(
+        "UPDATE oauth_client_purge_requests SET next_attempt_at = NOW()",
+      );
+      expect(await deliverDuePurgeRequests({ fetch: fetch as any })).toEqual({
+        accepted: 1,
+        failed: 0,
+      });
+      // Only an explicit decommission removes the obligation.
+      await getPool().query("DELETE FROM oauth_client_purge_obligations");
+      mockSettings = {};
+      expect(await getOAuthPurgeTargets()).toEqual([]);
+    });
+
+    it("records the obligation when an account approves a client", async () => {
+      await approvedAccount();
+      mockSettings = {};
+      expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
     });
 
     it("keeps a request queued while the purge is not configured", async () => {

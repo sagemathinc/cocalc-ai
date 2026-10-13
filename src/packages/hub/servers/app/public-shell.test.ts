@@ -1137,6 +1137,8 @@ describe("public shell framing headers", () => {
     "/auth/oauth/authorize?response_type=code&client_id=sagebrush",
     "/auth/x/../oauth/authorize?response_type=code&client_id=sagebrush",
     "/auth/sign-in",
+    "/invites/abc123",
+    "/sso/google",
   ])("denies framing for %s", async (target) => {
     const headers = await serve(target);
     expect(headers["content-security-policy"]).toBe("frame-ancestors 'none'");
@@ -1161,6 +1163,27 @@ describe("public shell framing headers", () => {
     expect(headers["content-security-policy"]).toBe("frame-ancestors 'none'");
     expect(headers["x-frame-options"]).toBe("DENY");
   });
+
+  it.each(["/sso/google", "/invites/abc123", "/redeem/xyz"])(
+    "denies framing for %s served at its own path",
+    async (path) => {
+      const headers = await new Promise<Record<string, string>>((resolve) => {
+        const headers: Record<string, string> = {};
+        const res: any = {
+          setHeader: (name: string, value: string) => {
+            headers[name.toLowerCase()] = value;
+          },
+          vary: () => {},
+          redirect: () => resolve(headers),
+          status: () => res,
+          type: () => res,
+          send: () => resolve(headers),
+        };
+        servePublicShell(request(path), res);
+      });
+      expect(headers["x-frame-options"]).toBe("DENY");
+    },
+  );
 
   it("leaves other public pages as they were", async () => {
     const headers = await serve("/features/jupyter-notebook");

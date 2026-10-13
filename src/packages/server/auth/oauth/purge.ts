@@ -19,7 +19,12 @@ import { createHmac } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
-import { getOAuthClientPurgeConfig, type OAuthPurgeConfig } from "./clients";
+import {
+  getConfiguredOAuthPurgeClients,
+  getOAuthClientPurgeConfig,
+  OAUTH_CLIENTS,
+  type OAuthPurgeConfig,
+} from "./clients";
 
 const logger = getLogger("server:auth:oauth:purge");
 
@@ -56,6 +61,43 @@ export function signAdminRequest({
 }): string {
   const message = `${timestamp}\n${method.toUpperCase()}\n${path}\n${body}`;
   return `sha256=${createHmac("sha256", secret).update(message, "utf8").digest("hex")}`;
+}
+
+/** Record that deleted accounts must be purged from these clients. Removed
+ * only by an explicit decommission (deleting the row on every bay) after the
+ * client confirmed it deleted all data; blanking its secrets keeps it. */
+export async function recordOAuthPurgeObligations(
+  db: Queryable,
+  client_ids: string[],
+): Promise<void> {
+  if (client_ids.length === 0) return;
+  await db.query(
+    `INSERT INTO oauth_client_purge_obligations(client_id, first_recorded)
+     SELECT c, NOW() FROM unnest($1::TEXT[]) AS c
+     ON CONFLICT (client_id) DO NOTHING`,
+    [client_ids],
+  );
+}
+
+/** The clients every deleted account's data must be purged from: those
+ * configured now and those this bay recorded as configured or approved
+ * before, even if both their secrets have since been blanked. A site that
+ * never set up a client has neither, and sends it nothing. */
+export async function getOAuthPurgeTargets(
+  db: Queryable = getPool(),
+): Promise<string[]> {
+  const configured = await getConfiguredOAuthPurgeClients();
+  await recordOAuthPurgeObligations(db, configured);
+  const { rows } = await db.query<{ client_id: string }>(
+    `SELECT client_id FROM oauth_client_purge_obligations ORDER BY client_id`,
+  );
+  return [
+    ...new Set([...configured, ...rows.map(({ client_id }) => client_id)]),
+  ]
+    .filter((client_id) =>
+      Object.prototype.hasOwnProperty.call(OAUTH_CLIENTS, client_id),
+    )
+    .sort();
 }
 
 /** Queue purge requests for a deleted account. Call it with the transaction
@@ -318,6 +360,9 @@ export function startOAuthClientPurgeMaintenance({
   let timer: ReturnType<typeof setTimeout> | undefined;
   const run = async () => {
     try {
+      // Records the obligation for clients configured now, so it survives a
+      // later blanking of their secrets.
+      await getOAuthPurgeTargets();
       const { accepted, failed } = await deliverDuePurgeRequests();
       if (accepted || failed) {
         logger.debug("delivered purge requests", { accepted, failed });

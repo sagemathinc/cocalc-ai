@@ -145,12 +145,10 @@ export async function getOAuthClientPurgeConfig(
   return purgeConfig(OAUTH_CLIENTS[client_id], settings);
 }
 
-/** The clients every deleted account's data must be purged from: those this
- * site has configured at all, i.e. with a client secret or a purge key, now
- * or (by keeping either) since it stored data. A site that never set up a
- * client gets no purge requests for it, rather than requests that wait
- * forever. */
-export async function getOAuthPurgeTargets(): Promise<string[]> {
+/** The clients this site has configured right now, i.e. with a client secret
+ * or a purge key. See getOAuthPurgeTargets in ./purge, which also counts
+ * clients configured in the past. */
+export async function getConfiguredOAuthPurgeClients(): Promise<string[]> {
   const settings = (await getServerSettings()) as Record<string, unknown>;
   return Object.values(OAUTH_CLIENTS)
     .filter(
