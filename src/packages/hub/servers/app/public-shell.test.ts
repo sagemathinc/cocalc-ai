@@ -1143,6 +1143,25 @@ describe("public shell framing headers", () => {
     expect(headers["x-frame-options"]).toBe("DENY");
   });
 
+  it("denies framing for an auth page served at its own path", async () => {
+    const headers = await new Promise<Record<string, string>>((resolve) => {
+      const headers: Record<string, string> = {};
+      const res: any = {
+        setHeader: (name: string, value: string) => {
+          headers[name.toLowerCase()] = value;
+        },
+        vary: () => {},
+        redirect: () => resolve(headers),
+        status: () => res,
+        type: () => res,
+        send: () => resolve(headers),
+      };
+      servePublicShell(request("/auth/sign-in"), res);
+    });
+    expect(headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+    expect(headers["x-frame-options"]).toBe("DENY");
+  });
+
   it("leaves other public pages as they were", async () => {
     const headers = await serve("/features/jupyter-notebook");
     expect(headers["content-security-policy"]).toBeUndefined();

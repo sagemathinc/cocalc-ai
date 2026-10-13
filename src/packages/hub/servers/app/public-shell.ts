@@ -737,7 +737,10 @@ export function servePublicShell(req: Request, res: Response): void {
         return;
       }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      if (isPublicAuthShellTarget(req.query?.target)) {
+      if (
+        isPublicAuthShellTarget(req.query?.target) ||
+        isPublicAuthShellTarget(req.path)
+      ) {
         // Public auth pages, e.g. the OAuth approval page, must never be
         // framed (clickjacking).
         res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
