@@ -272,4 +272,46 @@ describe("reconcileExamDnsOnce", () => {
       record_id: "cname-late",
     });
   });
+
+  it("cleans up a record written just before a crash, before its id was saved", async () => {
+    // The write reaches Cloudflare, then the process dies before saving it.
+    mockEnsureHostnameCnameDns.mockRejectedValueOnce(new Error("crashed"));
+    const host = await examHost(TUNNEL_ROUTE).catch(() => undefined);
+    const { rows } = await getPool().query(
+      "SELECT host_id FROM project_host_exam_configs",
+    );
+    const id = host ?? rows[0].host_id;
+    expect(await config(id)).toMatchObject({
+      dns_record_id: null,
+      dns_target: "tunnel-1.cfargotunnel.com",
+    });
+    await setHost(id, "status='off'");
+
+    await reconcileExamDnsOnce();
+
+    expect(mockDeleteHostnameDns).toHaveBeenCalledWith({
+      hostname: expect.stringContaining(`exam-${id}`),
+      record_id: undefined,
+    });
+    expect(await config(id)).toMatchObject({ dns_target: null });
+  });
+
+  it("restores the DNS at once when the host starts while it is being removed", async () => {
+    const host = await examHost(TUNNEL_ROUTE);
+    await setHost(host, "status='off'");
+    mockEnsureHostnameCnameDns.mockClear();
+    mockDeleteHostnameDns.mockImplementationOnce(async () => {
+      await setHost(host, "status='running'");
+    });
+
+    await reconcileExamDnsOnce();
+
+    expect(mockDeleteHostnameDns).toHaveBeenCalledTimes(1);
+    expect(mockEnsureHostnameCnameDns).toHaveBeenCalledTimes(1);
+    expect(await config(host)).toMatchObject({
+      enabled: true,
+      dns_record_id: "cname-record",
+      dns_target: "tunnel-1.cfargotunnel.com",
+    });
+  });
 });

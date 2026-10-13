@@ -782,9 +782,30 @@ export async function deleteHostnameDns(opts: {
     (await listDnsRecordsByName(token, zoneId, hostname)).filter(
       (record) =>
         record.id &&
+        `${record.name ?? ""}`.trim().toLowerCase() === hostname &&
         ROUTE_RECORD_TYPES.has(`${record.type ?? ""}`.trim().toUpperCase()),
     );
-  if (opts.record_id) await remove(opts.record_id);
+  // A saved id is only trusted while it still names a route record for this
+  // exact hostname; the name-filtered pass below finds the rest.
+  if (opts.record_id) {
+    let saved: DnsRecord | undefined;
+    try {
+      saved = await cloudflareRequest<DnsRecord>(
+        token,
+        "GET",
+        `zones/${zoneId}/dns_records/${opts.record_id}`,
+      );
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+    if (
+      saved?.id &&
+      `${saved.name ?? ""}`.trim().toLowerCase() === hostname &&
+      ROUTE_RECORD_TYPES.has(`${saved.type ?? ""}`.trim().toUpperCase())
+    ) {
+      await remove(saved.id);
+    }
+  }
   for (const record of await routeRecords()) {
     await remove(record.id!);
   }

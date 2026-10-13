@@ -863,6 +863,12 @@ async function ensureExamDns({
   if (ensure_public_ingress) {
     await ensureExamPublicIngress({ host, route });
   }
+  // Record the target before writing the record, so that a crash between the
+  // two still leaves a trace for cleanup to find the record by hostname.
+  await getPool().query(
+    `UPDATE ${CONFIG_TABLE} SET dns_target=$2 WHERE host_id=$1`,
+    [host.id, route.target],
+  );
   const { record_id } =
     route.type === "A"
       ? await ensureProxiedAddressDns({
@@ -1624,39 +1630,64 @@ async function retireExamDns({
   );
 }
 
-export async function reconcileExamDnsOnce(): Promise<void> {
-  await ensureSchema();
-  // c.* has the config's host_id; ExamHostRow needs the host's own id, and
-  // publicIp() reads the address from its metadata. A host row that is gone
-  // counts as deleted.
+// c.* has the config's host_id; ExamHostRow needs the host's own id, and
+// publicIp() reads the address from its metadata. A host row that is gone
+// counts as deleted.
+async function loadExamDnsRow(host_id: string): Promise<any | undefined> {
   const { rows } = await getPool().query(
     `
       SELECT c.*, h.id, h.name, h.status, h.public_url, h.metadata,
         (h.id IS NULL OR h.deleted IS NOT NULL) AS host_deleted
       FROM ${CONFIG_TABLE} c
       LEFT JOIN project_hosts h ON h.id=c.host_id
-      WHERE c.enabled OR c.dns_record_id IS NOT NULL OR c.dns_target IS NOT NULL
+      WHERE c.host_id=$1
+    `,
+    [host_id],
+  );
+  return rows[0];
+}
+
+async function applyExamDnsAction(
+  row: any,
+  action: Exclude<ExamDnsAction, "skip">,
+): Promise<void> {
+  if (action === "ensure") {
+    await ensureExamDns({ host: row as ExamHostRow, config: mapConfig(row) });
+  } else {
+    await retireExamDns({
+      config: mapConfig(row),
+      disable: action === "retire-and-disable",
+    });
+  }
+}
+
+export async function reconcileExamDnsOnce(): Promise<void> {
+  await ensureSchema();
+  const { rows } = await getPool().query(
+    `
+      SELECT host_id FROM ${CONFIG_TABLE}
+      WHERE enabled OR dns_record_id IS NOT NULL OR dns_target IS NOT NULL
     `,
   );
-  for (const row of rows) {
-    const action = examDnsAction(row);
-    if (action === "skip") continue;
+  for (const { host_id } of rows) {
+    let action: ExamDnsAction = "skip";
     try {
-      if (action === "ensure") {
-        await ensureExamDns({
-          host: row as ExamHostRow,
-          config: mapConfig(row),
-        });
-      } else {
-        await retireExamDns({
-          config: mapConfig(row),
-          disable: action === "retire-and-disable",
-        });
+      // Read the host's state just before acting on it, and again after: a
+      // host that started or stopped meanwhile gets what its new state needs
+      // right away rather than on the next pass.
+      const row = await loadExamDnsRow(host_id);
+      action = row ? examDnsAction(row) : "skip";
+      if (action === "skip") continue;
+      await applyExamDnsAction(row, action);
+      const after = await loadExamDnsRow(host_id);
+      const next = after ? examDnsAction(after) : "skip";
+      if (next !== "skip" && next !== action) {
+        action = next;
+        await applyExamDnsAction(after, next);
       }
     } catch (err) {
       logger.warn("exam DNS reconciliation failed", {
-        host_id: row.host_id,
-        hostname: row.hostname,
+        host_id,
         action,
         err: `${err}`,
       });
