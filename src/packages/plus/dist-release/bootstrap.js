@@ -98,6 +98,19 @@ try {
   fail(`cannot read the installed CoCalc Plus: ${err}`);
 }
 
+// Relative data paths mean relative to where CoCalc Plus was started, not to
+// the release directory this changes into below.
+for (const name of [
+  "COCALC_PLUS_HOME",
+  "COCALC_DATA_DIR",
+  "COCALC_PLUS_WORKSPACE",
+]) {
+  const value = process.env[name];
+  if (value && !require("node:path").isAbsolute(value)) {
+    process.env[name] = require("node:path").resolve(value);
+  }
+}
+
 // What the old single-file executable set up before starting Lite.
 const tools = join(app, "tools", "bin");
 if (!process.env.COCALC_BIN_PATH && fs.existsSync(tools)) {

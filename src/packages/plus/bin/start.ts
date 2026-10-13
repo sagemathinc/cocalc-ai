@@ -376,7 +376,11 @@ async function prepareInstalledRelease(paths: {
     });
     if (result === "snapshot") {
       console.log(
-        `Saved a snapshot of your CoCalc Plus data before this version first uses it (${paths.root}/data.snapshot).`,
+        `Saved a snapshot of your CoCalc Plus data before this version first uses it (${paths.data}.snapshot).`,
+      );
+    } else if (result === "no-snapshot") {
+      console.log(
+        `Your CoCalc Plus data directory (${paths.data}) is a mount point, so no snapshot was taken; a rollback won't be able to restore older data.`,
       );
     }
   } catch (err) {

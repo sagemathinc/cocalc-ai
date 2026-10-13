@@ -36,6 +36,36 @@ import { confirmOnTty } from "./update";
 
 export type Log = (message: string) => void;
 
+// Thrown under the lock when a rollback placed a hold after the unlocked
+// check: an automatic update must not undo it.
+export class HeldError extends Error {
+  constructor(readonly release: number) {
+    super(`held at release ${release} after a rollback`);
+  }
+}
+
+/*
+ * What an update may do to the state, decided under the lock: the source
+ * must not have changed, an explicit update clears a hold, and an automatic
+ * one stops at a hold.
+ */
+export function updateState(
+  current: CliState | undefined,
+  origin: string,
+  explicit: boolean,
+): CliState {
+  if (current == null) throw notInstalled();
+  if (current.origin !== origin) {
+    throw new Error("the update source changed during the update; retry");
+  }
+  if (explicit) {
+    current.held_at = null;
+  } else if (current.held_at != null) {
+    throw new HeldError(current.held_at);
+  }
+  return current;
+}
+
 export interface PlusUpdateOutcome {
   status: "updated" | "current" | "held" | "stale";
   message: string;
@@ -108,22 +138,26 @@ export async function updatePlusFromOrigin({
     };
   }
   const manifestText = await pointerManifest(origin, pointer);
-  const result = await installPlusRelease({
-    root,
-    origin,
-    manifestText,
-    manifestHash: pointer.manifest,
-    fetchFile: storeFileFetcher(origin),
-    prepareState: (current) => {
-      if (current == null) throw notInstalled();
-      if (current.origin !== origin) {
-        throw new Error("the update source changed during the update; retry");
-      }
-      if (explicit) current.held_at = null;
-      return current;
-    },
-    log,
-  });
+  let result;
+  try {
+    result = await installPlusRelease({
+      root,
+      origin,
+      manifestText,
+      manifestHash: pointer.manifest,
+      fetchFile: storeFileFetcher(origin),
+      prepareState: (current) => updateState(current, origin, explicit),
+      log,
+    });
+  } catch (err) {
+    if (err instanceof HeldError) {
+      return {
+        status: "held",
+        message: `Held at release ${err.release} after a rollback; run \`cocalc-plus update --resume\` to update.`,
+      };
+    }
+    throw err;
+  }
   return {
     status: "updated",
     release: result.release,

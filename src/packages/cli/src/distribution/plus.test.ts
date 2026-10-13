@@ -6,8 +6,11 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  lstatSync,
   readdirSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,6 +32,7 @@ import {
   prepareServer,
   recoverData,
 } from "./plus";
+import { HeldError, updateState } from "./plus-update";
 
 const ORIGIN = "https://software.example/software/plus";
 
@@ -537,4 +541,166 @@ test("ownership does not carry over when the data moves", async () => {
     /no snapshot of your data/,
   );
   assert.equal(f.run().release, 151);
+});
+
+test("a symlinked data directory is snapshotted by its contents and rolled back", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  const real = join(f.dir, "real-data");
+  mkdirSync(real, { recursive: true });
+  mkdirSync(d.paths.home, { recursive: true });
+  symlinkSync(real, d.paths.data);
+  await f.install(f.release(160));
+  d.write("from 160");
+  await d.start();
+  await f.install(f.release(161));
+  assert.equal(await d.start(), "snapshot");
+  // A real copy next to the real directory, not a second link to it.
+  const snapshot = `${realpathSync(real)}.snapshot`;
+  assert.equal(lstatSync(snapshot).isSymbolicLink(), false);
+  d.write("from 161");
+  assert.equal(readFileSync(join(snapshot, "hub.db"), "utf8"), "from 160");
+  assert.equal(
+    (await plusRollback({ root: f.root, paths: d.paths })).release,
+    160,
+  );
+  assert.equal(d.read(), "from 160");
+  assert.equal(lstatSync(d.paths.data).isSymbolicLink(), true);
+});
+
+test("data on another filesystem than the CoCalc Plus home rolls back", async () => {
+  if (!existsSync("/dev/shm")) return;
+  const f = fixture();
+  const shm = mkdtempSync("/dev/shm/plus-dist-test-");
+  try {
+    const paths = { home: join(f.dir, "home"), data: join(shm, "data") };
+    const line = () => readFileSync(join(f.root, "active"), "utf8").trimEnd();
+    const start = async () => {
+      const r = await prepareServer({ root: f.root, line: line(), paths });
+      rmSync(join(f.root, "running", `${process.pid}`), { force: true });
+      return r;
+    };
+    await f.install(f.release(170));
+    mkdirSync(paths.data, { recursive: true });
+    writeFileSync(join(paths.data, "hub.db"), "from 170");
+    await start();
+    await f.install(f.release(171));
+    assert.equal(await start(), "snapshot");
+    writeFileSync(join(paths.data, "hub.db"), "from 171");
+    assert.equal((await plusRollback({ root: f.root, paths })).release, 170);
+    assert.equal(readFileSync(join(paths.data, "hub.db"), "utf8"), "from 170");
+  } finally {
+    rmSync(shm, { recursive: true, force: true });
+  }
+});
+
+test("a data directory that is a mount point is not snapshotted, and rollback refuses", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  await f.install(f.release(180));
+  d.write("from 180");
+  await d.start();
+  await f.install(f.release(181));
+  assert.equal(
+    await prepareServer({
+      root: f.root,
+      line: d.activeLine(),
+      paths: d.paths,
+      isRenamable: async () => false,
+    }),
+    "no-snapshot",
+  );
+  rmSync(join(f.root, "running", `${process.pid}`), { force: true });
+  await assert.rejects(
+    plusRollback({ root: f.root, paths: d.paths }),
+    /no snapshot of your data/,
+  );
+  assert.equal(f.run().release, 181);
+});
+
+test("well-formed but wrong journals are refused before recovery acts", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  const r = f.release(190);
+  await f.install(r);
+  const other = f.release(191);
+  await f.install(other);
+  const line = d.activeLine(); // release 191
+  const data = join(f.dir, "home", "data");
+  const release = { manifest: r.hash, release: 190, version: "1.0.190" };
+  const cases = [
+    // The line runs a different release than the one recorded as owner.
+    { op: "rollback", data, to: release, line, restore: null },
+    // An id that would turn into a path outside the data's siblings.
+    { op: "snapshot", data, id: "../../../etc", from: null, to: release },
+    {
+      op: "snapshot",
+      data: "relative/data",
+      id: "0123456789abcdef",
+      from: null,
+      to: release,
+    },
+    {
+      op: "snapshot",
+      data,
+      id: "0123456789abcdef",
+      from: null,
+      to: { ...release, release: 1.5 },
+    },
+    {
+      op: "snapshot",
+      data,
+      id: "0123456789abcdef",
+      from: null,
+      to: release,
+      temp: "/",
+    },
+  ];
+  for (const journal of cases) {
+    writeFileSync(join(f.root, "data-journal.json"), JSON.stringify(journal));
+    await assert.rejects(d.start(), /damaged/, JSON.stringify(journal));
+    assert.ok(existsSync(join(f.root, "data-journal.json")));
+  }
+  rmSync(join(f.root, "data-journal.json"));
+});
+
+test("relative or overlapping data paths are refused", async () => {
+  const f = fixture();
+  await f.install(f.release(200));
+  const line = readFileSync(join(f.root, "active"), "utf8").trimEnd();
+  await assert.rejects(
+    prepareServer({ root: f.root, line, paths: { home: "h", data: "data" } }),
+    /absolute path/,
+  );
+  await assert.rejects(
+    prepareServer({
+      root: f.root,
+      line,
+      paths: { home: f.root, data: join(f.root, "apps") },
+    }),
+    /overlaps/,
+  );
+});
+
+test("an automatic update stops at a hold placed after its unlocked check", () => {
+  const state: CliState = {
+    schema: STATE_SCHEMA,
+    origin: ORIGIN,
+    mode: "origin-trust",
+    auto: true,
+    held_at: 7,
+    launcher: "/x/cocalc-plus",
+    origins: {},
+  };
+  assert.throws(() => updateState({ ...state }, ORIGIN, false), HeldError);
+  assert.equal(updateState({ ...state }, ORIGIN, true).held_at, null);
+  assert.throws(
+    () =>
+      updateState(
+        { ...state, held_at: null },
+        "https://elsewhere.example",
+        false,
+      ),
+    /source changed/,
+  );
 });

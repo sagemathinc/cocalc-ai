@@ -32,18 +32,20 @@ import {
   readFile,
   readdir,
   rename,
+  realpath,
   rm,
   stat,
   unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createZstdDecompress } from "node:zlib";
 import {
   type ActivePointer,
   currentPlatform,
   formatActiveLine,
+  isRelease,
   isSha256,
   parseActiveLine,
 } from "@cocalc/util/cli-distribution/schema";
@@ -299,7 +301,7 @@ export async function collectPlusGarbage(root: string): Promise<void> {
   for (const pin of pins) keepPointer(pinPointer(pin.line));
   const data = await readDataState(root);
   if (data?.owner?.manifest) manifests.add(data.owner.manifest);
-  const snapshot = data ? await readSnapshotInfo(data.home) : undefined;
+  const snapshot = data ? await readSnapshotInfo(data.data) : undefined;
   if (snapshot?.manifest) manifests.add(snapshot.manifest);
   if (manifests.size === 0) return;
   for (const hash of manifests) {
@@ -496,6 +498,16 @@ export async function installPlusRelease({
 // owner, in <root>/data.json). When a different release starts, the data is
 // first copied to the snapshot, which records inside its own tree which
 // release it belongs to, so the bytes and the label can never disagree.
+//
+// The data directory is used by its canonical path: absolute, with symlinks
+// resolved, so a symlinked data directory is snapshotted by its contents and
+// relative or aliased paths can't make two directories look like one. The
+// snapshot (<data>.snapshot) and the replaced data after a rollback
+// (<data>.replaced) live next to it, on the same filesystem, so every step
+// is a rename. If the data directory is itself a mount point it can't be
+// renamed: then no snapshot is taken, and a rollback that would need one is
+// refused.
+//
 // Starting a server, taking a snapshot and rolling back (code and data
 // together) all happen under the update lock, and each multi-step change is
 // journaled (<root>/data-journal.json) and rolled forward or undone by
@@ -508,14 +520,14 @@ export interface DataRelease {
 }
 
 export interface DataPaths {
-  // COCALC_PLUS_HOME, which holds data/ and data.snapshot/
+  // COCALC_PLUS_HOME (informational) and the data directory.
   home: string;
   data: string;
 }
 
 interface DataState {
-  schema: "cocalc-plus-data/1";
-  home: string;
+  schema: "cocalc-plus-data/2";
+  // The canonical data directory this owner applies to.
   data: string;
   owner: DataRelease | null;
 }
@@ -525,25 +537,23 @@ interface SnapshotInfo extends DataRelease {
   taken_at: string;
 }
 
-// Each journal names the data paths it acts on, so any operation (an update
-// too) can finish it without knowing them.
-type DataJournal = DataPaths &
-  (
-    | {
-        op: "snapshot";
-        id: string;
-        from: DataRelease | null;
-        to: DataRelease;
-        temp: string;
-      }
-    | {
-        op: "rollback";
-        to: DataRelease;
-        line: string;
-        // The snapshot to restore (its id), or null for a code-only rollback.
-        restore: string | null;
-      }
-  );
+// Each journal names its canonical data directory, so any operation (an
+// update too) can finish it; every other path is derived from it.
+type DataJournal = { data: string } & (
+  | {
+      op: "snapshot";
+      id: string;
+      from: DataRelease | null;
+      to: DataRelease;
+    }
+  | {
+      op: "rollback";
+      to: DataRelease;
+      line: string;
+      // The snapshot to restore (its id), or null for a code-only rollback.
+      restore: string | null;
+    }
+);
 
 export type DataFault =
   | "snapshot-copied"
@@ -553,7 +563,11 @@ export type DataFault =
   | "code-switched";
 
 const SNAPSHOT_INFO = ".cocalc-snapshot.json";
-const snapshotDir = (home: string) => join(home, "data.snapshot");
+const SNAPSHOT_ID = /^[0-9a-f]{16}$/;
+const snapshotDir = (data: string) => `${data}.snapshot`;
+const snapshotTemp = (data: string, id: string) => `${data}.snapshot.tmp-${id}`;
+const snapshotOld = (data: string) => `${data}.snapshot.old`;
+const replacedDir = (data: string) => `${data}.replaced`;
 const journalPath = (root: string) => join(root, "data-journal.json");
 
 function dataFault(at: DataFault | undefined, point: DataFault): void {
@@ -569,30 +583,75 @@ async function readJson<T>(path: string): Promise<T | undefined> {
   }
 }
 
+function inside(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/*
+ * The canonical data directory: absolute, normalized and with symlinks
+ * resolved (a missing directory keeps its normalized path). It must not
+ * overlap the CoCalc Plus install, and must not be the root directory.
+ */
+export async function canonicalData(
+  root: string,
+  data: string,
+): Promise<string> {
+  if (!isAbsolute(data)) {
+    throw new Error(`the data directory must be an absolute path: ${data}`);
+  }
+  let canonical = normalize(data).replace(/\/+$/, "") || "/";
+  try {
+    canonical = await realpath(canonical);
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  if (canonical === "/") {
+    throw new Error("the data directory can't be /");
+  }
+  const install = await realpath(root).catch(() => normalize(root));
+  if (inside(canonical, install) || inside(install, canonical)) {
+    throw new Error(
+      `the data directory ${canonical} overlaps the CoCalc Plus install ${install}`,
+    );
+  }
+  return canonical;
+}
+
 export async function readDataState(
   root: string,
 ): Promise<DataState | undefined> {
-  return await readJson<DataState>(join(root, "data.json"));
+  const state = await readJson<any>(join(root, "data.json"));
+  // An earlier format, or anything unexpected: no known owner.
+  return state?.schema === "cocalc-plus-data/2" ? state : undefined;
 }
 
-async function writeDataState(root: string, state: DataState): Promise<void> {
+async function setOwner(
+  root: string,
+  data: string,
+  owner: DataRelease,
+): Promise<void> {
   await writeFileAtomic(
     join(root, "data.json"),
-    JSON.stringify(state, null, 2) + "\n",
+    JSON.stringify(
+      { schema: "cocalc-plus-data/2", data, owner } satisfies DataState,
+      null,
+      2,
+    ) + "\n",
   );
 }
 
 export async function readSnapshotInfo(
-  home: string,
+  data: string,
 ): Promise<SnapshotInfo | undefined> {
-  return await readJson<SnapshotInfo>(join(snapshotDir(home), SNAPSHOT_INFO));
+  return await readJson<SnapshotInfo>(join(snapshotDir(data), SNAPSHOT_INFO));
 }
 
 // Only a missing directory is empty; anything unreadable stops the caller.
 async function hasContent(dir: string): Promise<boolean> {
   let info;
   try {
-    info = await stat(dir);
+    info = await lstat(dir);
   } catch (err: any) {
     if (err?.code === "ENOENT") return false;
     throw err;
@@ -601,69 +660,53 @@ async function hasContent(dir: string): Promise<boolean> {
   return (await readdir(dir)).length > 0;
 }
 
-// The release that last used the data at these paths. Ownership recorded
-// for other paths (COCALC_PLUS_HOME or the data directory moved) does not
-// carry over: that data's owner is unknown.
+// The release that last used this (canonical) data directory. Ownership
+// recorded for another directory does not carry over: its owner is unknown.
 async function ownerOf(
   root: string,
-  paths: DataPaths,
+  data: string,
 ): Promise<DataRelease | null> {
   const state = await readDataState(root);
-  return state != null && state.home === paths.home && state.data === paths.data
-    ? state.owner
-    : null;
+  return state?.data === data ? state.owner : null;
 }
 
-async function setOwner(
-  root: string,
-  paths: DataPaths,
-  owner: DataRelease,
-): Promise<void> {
-  await writeDataState(root, {
-    schema: "cocalc-plus-data/1",
-    home: paths.home,
-    data: paths.data,
-    owner,
-  });
+// Renaming the data directory needs it and its parent on one filesystem
+// (it isn't a mount point).
+export async function renamable(data: string): Promise<boolean> {
+  const [own, parent] = await Promise.all([stat(data), stat(dirname(data))]);
+  return own.dev === parent.dev;
 }
 
 async function finishSnapshot(
   root: string,
-  paths: DataPaths,
   journal: Extract<DataJournal, { op: "snapshot" }>,
   faultAt?: DataFault,
 ): Promise<void> {
-  const old = `${snapshotDir(paths.home)}.old`;
-  await rm(old, { recursive: true, force: true });
-  if (existsSync(snapshotDir(paths.home))) {
-    await rename(snapshotDir(paths.home), old);
+  const data = journal.data;
+  await rm(snapshotOld(data), { recursive: true, force: true });
+  if (existsSync(snapshotDir(data))) {
+    await rename(snapshotDir(data), snapshotOld(data));
   }
-  await rename(journal.temp, snapshotDir(paths.home));
+  await rename(snapshotTemp(data, journal.id), snapshotDir(data));
   dataFault(faultAt, "snapshot-renamed");
-  await rm(old, { recursive: true, force: true });
-  await setOwner(root, paths, journal.to);
+  await rm(snapshotOld(data), { recursive: true, force: true });
+  await setOwner(root, data, journal.to);
   await unlink(journalPath(root));
 }
 
 async function takeSnapshot(
   root: string,
-  paths: DataPaths,
+  data: string,
   from: DataRelease | null,
   to: DataRelease,
   faultAt?: DataFault,
 ): Promise<void> {
   const id = randomBytes(8).toString("hex");
-  const journal: DataJournal = {
-    op: "snapshot",
-    home: paths.home,
-    data: paths.data,
-    id,
-    from,
-    to,
-    temp: `${snapshotDir(paths.home)}.tmp-${id}`,
-  };
+  const journal: DataJournal = { op: "snapshot", data, id, from, to };
   await writeFileAtomic(journalPath(root), JSON.stringify(journal) + "\n");
-  await cp(paths.data, journal.temp, {
+  // `data` is canonical (no symlink left to copy), so this copies the
+  // contents; symlinks inside the data are copied as symlinks.
+  await cp(data, snapshotTemp(data, id), {
     recursive: true,
     mode: constants.COPYFILE_FICLONE,
     verbatimSymlinks: true,
@@ -674,32 +717,31 @@ async function takeSnapshot(
     taken_at: new Date().toISOString(),
   };
   await writeFileAtomic(
-    join(journal.temp, SNAPSHOT_INFO),
+    join(snapshotTemp(data, id), SNAPSHOT_INFO),
     JSON.stringify(info, null, 2) + "\n",
   );
   dataFault(faultAt, "snapshot-copied");
-  await finishSnapshot(root, paths, journal, faultAt);
+  await finishSnapshot(root, journal, faultAt);
 }
 
 async function finishRollback(
   root: string,
-  paths: DataPaths,
   journal: Extract<DataJournal, { op: "rollback" }>,
   faultAt?: DataFault,
 ): Promise<void> {
+  const data = journal.data;
   if (journal.restore != null) {
-    const snapshot = await readSnapshotInfo(paths.home);
+    const snapshot = await readSnapshotInfo(data);
     if (snapshot?.id === journal.restore) {
-      const replaced = join(paths.home, "data.replaced");
-      if (existsSync(paths.data)) {
-        await rm(replaced, { recursive: true, force: true });
-        await rename(paths.data, replaced);
+      if (existsSync(data)) {
+        await rm(replacedDir(data), { recursive: true, force: true });
+        await rename(data, replacedDir(data));
       }
       dataFault(faultAt, "data-replaced");
-      await rename(snapshotDir(paths.home), paths.data);
+      await rename(snapshotDir(data), data);
     }
     dataFault(faultAt, "snapshot-restored");
-    await rm(join(paths.data, SNAPSHOT_INFO), { force: true });
+    await rm(join(data, SNAPSHOT_INFO), { force: true });
   }
   if ((await readText(join(root, "active"))) !== `${journal.line}\n`) {
     await switchActive(root, `${journal.line}\n`);
@@ -710,40 +752,62 @@ async function finishRollback(
     state.held_at = journal.to.release;
     await writeState(root, state);
   }
-  await setOwner(root, paths, journal.to);
+  await setOwner(root, data, journal.to);
   await unlink(journalPath(root));
 }
 
+function validRelease(value: any, manifestRequired: boolean): boolean {
+  if (value == null || typeof value !== "object") return false;
+  const keys = Object.keys(value).sort().join(",");
+  if (keys !== "manifest,release,version") return false;
+  if (value.manifest === null) {
+    if (manifestRequired || value.release !== null) return false;
+  } else if (!isSha256(value.manifest) || !isRelease(value.release)) {
+    return false;
+  }
+  return (
+    typeof value.version === "string" &&
+    /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/.test(value.version)
+  );
+}
+
+// Every field checked before recovery acts on any of it.
 function validJournal(value: any): value is DataJournal {
-  const release = (r: any) =>
-    r != null &&
-    (r.manifest === null || isSha256(r.manifest)) &&
-    typeof r.version === "string";
+  if (value == null || typeof value !== "object") return false;
   if (
-    value == null ||
-    typeof value.home !== "string" ||
-    typeof value.data !== "string"
+    typeof value.data !== "string" ||
+    !isAbsolute(value.data) ||
+    normalize(value.data) !== value.data ||
+    value.data === "/" ||
+    value.data.endsWith("/")
   ) {
     return false;
   }
+  const keys = Object.keys(value).sort().join(",");
   if (value.op === "snapshot") {
     return (
+      keys === "data,from,id,op,to" &&
       typeof value.id === "string" &&
-      typeof value.temp === "string" &&
-      (value.from === null || release(value.from)) &&
-      release(value.to)
+      SNAPSHOT_ID.test(value.id) &&
+      (value.from === null || validRelease(value.from, false)) &&
+      validRelease(value.to, true)
     );
   }
   if (value.op === "rollback") {
+    if (keys !== "data,line,op,restore,to") return false;
+    if (!validRelease(value.to, true)) return false;
+    if (value.restore !== null && !SNAPSHOT_ID.test(`${value.restore}`)) {
+      return false;
+    }
     try {
-      pinPointer(value.line);
+      const pointer = pinPointer(value.line);
+      return (
+        pointer.manifest === value.to.manifest &&
+        pointer.bundle === value.to.manifest
+      );
     } catch {
       return false;
     }
-    return (
-      release(value.to) &&
-      (value.restore === null || typeof value.restore === "string")
-    );
   }
   return false;
 }
@@ -751,8 +815,8 @@ function validJournal(value: any): value is DataJournal {
 /*
  * Finish or undo an interrupted data change. Call with the lock held, before
  * anything that changes `active` or collects garbage. A journal that exists
- * but can't be read or validated stops everything and is kept: only a
- * missing journal means there is nothing to recover.
+ * but can't be read, or fails validation, stops everything and is kept:
+ * only a missing journal means there is nothing to recover.
  */
 export async function recoverData(root: string): Promise<void> {
   let journal: unknown;
@@ -769,54 +833,63 @@ export async function recoverData(root: string): Promise<void> {
       `the data journal ${journalPath(root)} is damaged; it was kept. Fix or remove it by hand.`,
     );
   }
-  const paths = { home: journal.home, data: journal.data };
   if (journal.op === "rollback") {
-    await finishRollback(root, paths, journal);
+    await finishRollback(root, journal);
     return;
   }
   // A snapshot: done once the snapshot directory carries this journal's id.
-  if ((await readSnapshotInfo(paths.home))?.id === journal.id) {
-    await rm(`${snapshotDir(paths.home)}.old`, {
-      recursive: true,
-      force: true,
-    });
-    await setOwner(root, paths, journal.to);
+  const data = journal.data;
+  if ((await readSnapshotInfo(data))?.id === journal.id) {
+    await rm(snapshotOld(data), { recursive: true, force: true });
+    await setOwner(root, data, journal.to);
   } else {
-    await rm(journal.temp, { recursive: true, force: true });
-    const old = `${snapshotDir(paths.home)}.old`;
-    if (existsSync(old) && !existsSync(snapshotDir(paths.home))) {
-      await rename(old, snapshotDir(paths.home));
+    await rm(snapshotTemp(data, journal.id), { recursive: true, force: true });
+    if (existsSync(snapshotOld(data)) && !existsSync(snapshotDir(data))) {
+      await rename(snapshotOld(data), snapshotDir(data));
     }
-    await rm(old, { recursive: true, force: true });
+    await rm(snapshotOld(data), { recursive: true, force: true });
   }
   await unlink(journalPath(root));
 }
 
+export type ServerPrepared =
+  | "snapshot"
+  | "unchanged"
+  | "no-data"
+  | "no-snapshot";
+
 /*
  * Before Lite opens its data, with the update lock held:
+ *   - finish any interrupted change, then require that this process runs
+ *     the release that is active now;
  *   - refuse if another Lite server is running (it owns the data);
  *   - revalidate this release on disk and pin this process as its server;
  *   - if a different release last used the data (or a build that kept no
  *     record, like the old single-file executable), snapshot it first.
  * Any failure stops the start: Lite must not open data it can't protect.
+ * "no-snapshot" means the data directory is a mount point, which can't be
+ * snapshotted by renames; rollbacks then can't restore data.
  */
 export async function prepareServer({
   root,
   line,
   paths,
   faultAt,
+  isRenamable = renamable,
 }: {
   root: string;
   line: string;
   paths: DataPaths;
   faultAt?: DataFault;
-}): Promise<"snapshot" | "unchanged" | "no-data"> {
+  isRenamable?: (data: string) => Promise<boolean>;
+}): Promise<ServerPrepared> {
   return await withLock(root, async () => {
     await recover(root);
     await recoverData(root);
     // The launcher chose this release before the lock: if an update or a
-    // recovered rollback changed `active` since, this process runs the
-    // wrong code for the data. Stop; the next start picks the right one.
+    // recovered rollback changed the active release since, this process
+    // runs the wrong code for the data. Stop; the next start picks the right
+    // one.
     if ((await readText(join(root, "active"))) !== `${line}\n`) {
       throw new Error(
         "CoCalc Plus changed while starting (an update or a rollback finished); start it again",
@@ -836,6 +909,7 @@ export async function prepareServer({
         "this CoCalc Plus release is incomplete or was removed; start CoCalc Plus again",
       );
     }
+    const data = await canonicalData(root, paths.data);
     await writePin(root, process.pid, line, "server");
     const manifest = await readPlusManifest(root, pointer.manifest);
     const running: DataRelease = {
@@ -843,13 +917,17 @@ export async function prepareServer({
       release: manifest.release,
       version: manifest.version,
     };
-    const owner = await ownerOf(root, paths);
+    const owner = await ownerOf(root, data);
     if (owner?.manifest === running.manifest) return "unchanged";
-    if (!(await hasContent(paths.data))) {
-      await setOwner(root, paths, running);
+    if (!(await hasContent(data))) {
+      await setOwner(root, data, running);
       return "no-data";
     }
-    await takeSnapshot(root, paths, owner, running, faultAt);
+    if (!(await isRenamable(data))) {
+      await setOwner(root, data, running);
+      return "no-snapshot";
+    }
+    await takeSnapshot(root, data, owner, running, faultAt);
     return "snapshot";
   });
 }
@@ -859,7 +937,7 @@ export async function prepareServer({
  *   - if newer releases were installed but the data still belongs to an
  *     older one (it never ran them), go back to that owner, code only;
  *   - otherwise go back to the release whose data is in the snapshot, and
- *     restore that data (the newer data is kept once as data.replaced);
+ *     restore that data (the newer data is kept once as <data>.replaced);
  *   - with no data yet, go back to the previous release.
  * Anything else is refused: older code must never run on newer data.
  */
@@ -890,9 +968,10 @@ export async function plusRollback({
       if ((await readState(root)) == null) {
         throw new Error("CoCalc Plus is not installed here");
       }
+      const data = await canonicalData(root, paths.data);
       const active = await readActive(root);
-      const owner = await ownerOf(root, paths);
-      const snapshot = await readSnapshotInfo(paths.home);
+      const owner = await ownerOf(root, data);
+      const snapshot = await readSnapshotInfo(data);
       let target: string;
       let restore: string | null = null;
       if (
@@ -901,10 +980,10 @@ export async function plusRollback({
         owner.manifest !== active.pointer.manifest
       ) {
         target = owner.manifest;
-      } else if (snapshot?.manifest != null) {
+      } else if (snapshot?.manifest != null && SNAPSHOT_ID.test(snapshot.id)) {
         target = snapshot.manifest;
         restore = snapshot.id;
-      } else if (!(await hasContent(paths.data))) {
+      } else if (!(await hasContent(data))) {
         const previous = await readActive(root, "previous");
         if (previous == null) {
           throw new Error("there is no previous release to go back to");
@@ -928,20 +1007,13 @@ export async function plusRollback({
         release: manifest.release,
         version: manifest.version,
       };
-      const journal: DataJournal = {
-        op: "rollback",
-        home: paths.home,
-        data: paths.data,
-        to,
-        line,
-        restore,
-      };
+      const journal: DataJournal = { op: "rollback", data, to, line, restore };
       await writeFileAtomic(journalPath(root), JSON.stringify(journal) + "\n");
-      await finishRollback(root, paths, journal, faultAt);
+      await finishRollback(root, journal, faultAt);
       log(
         `Rolled back to CoCalc Plus ${to.version} (release ${to.release})${
           restore != null
-            ? `, with the data it last used. The newer data is kept once in ${paths.home}/data.replaced`
+            ? `, with the data it last used. The newer data is kept once in ${replacedDir(data)}`
             : ""
         }. Automatic updates are held; run \`cocalc-plus update --resume\` to resume.`,
       );
