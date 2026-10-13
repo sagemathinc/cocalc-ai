@@ -58,9 +58,11 @@ function isKnownMissingPayer(account_id: string): boolean {
   return false;
 }
 
-function isAccountNotFoundError(err: unknown): boolean {
+// Only the account directory's own answer for this exact account (see
+// getAccountRow in server/bay-directory.ts), not any error that mentions it.
+function isAccountNotFoundError(err: unknown, account_id: string): boolean {
   const message = `${(err as { message?: unknown })?.message ?? err}`;
-  return /\baccount\b.*\bnot found\b/i.test(message);
+  return message === `account '${account_id}' not found`;
 }
 
 export async function listHostProjectMaintenanceSchedules({
@@ -252,6 +254,9 @@ export async function listHostProjectMaintenanceSchedules({
         if (payerOnly && isKnownMissingPayer(account_id)) return;
         try {
           const resolution = await resolveRuntimeMembership(account_id);
+          // It exists now (e.g. created or rehomed since), whatever an earlier
+          // pass found.
+          missingPayers.delete(account_id);
           const limits = getEffectiveMembershipUsageLimits(resolution);
           limitsByOwner.set(account_id, {
             max_snapshots_per_project:
@@ -265,7 +270,7 @@ export async function listHostProjectMaintenanceSchedules({
             priority: limits.shared_compute_priority ?? 0,
           });
         } catch (err) {
-          if (payerOnly && isAccountNotFoundError(err)) {
+          if (payerOnly && isAccountNotFoundError(err, account_id)) {
             if (missingPayers.size >= MAX_MISSING_PAYERS) missingPayers.clear();
             missingPayers.set(account_id, Date.now() + MISSING_PAYER_TTL_MS);
             logger.debug(
