@@ -1,7 +1,7 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
 Status: revision 9 (Oct 13, 2026): answers @lite1-review on 0268b49d8c. Revision 8 answered 091cc355cb. Revision 7: Revision 6 phased the design, following William's point that the CLI shouldn't be held to a stricter standard than the hub's own release process. Revision 7 adds:
-- **William's rule:** every hub release is a CLI release, with automatic updates.
+- **William's rule, as corrected on Oct 13:** releasing the CLI must be *easy*, one deliberate command, so it happens regularly. Not every hub release needs a CLI release.
 - **@lite1-review's answers** on the honesty of the Phase A and B trust claims.
 
 Revision 6 said: phased, following William's point that the CLI shouldn't be held to a stricter standard than the hub it talks to. Phases A and B come first; the full design (revision 5, approved at design level by @lite1-review at 9f4827a4df) is now **Phase C, the end state**.
@@ -37,11 +37,16 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 
 ### Phase A: now (fixes drift and heavy releases)
 
-**The rule: every hub release is a CLI release.** A CLI installed from a site should always run that site's CLI, and nobody has to remember a separate CLI release.
+**The rule: releasing the CLI is one easy, deliberate step.** Some hub releases have no reason to change the CLI, so a hub deploy doesn't release it automatically. Instead it is cheap enough to do whenever it's useful, which in practice means often.
 
 **Release side:**
-- Every hub build makes the bundle from the same commit, as it already does for projects, plus the launcher and bootstrap. They ship inside the hub release.
-- So deploying a hub *is* releasing its CLI. There's no separate step to forget or let drift, and no signing ceremony.
+- **One command** builds the bundle, launcher and bootstrap from the current commit, writes the manifest with a new release number, uploads the content-addressed files, and then flips the origin's single pointer. For example: `pnpm --dir src/packages/cli release:cli`, also runnable as a manual GitHub workflow.
+  - There's no signing ceremony. Node archives are pinned from Node's official signed checksums.
+  - Adding `--min-release` marks the hub as needing at least that CLI release. This is how a hub change that does need a newer CLI forces it.
+- **Where releases live:**
+  - for cocalc.ai, in the software bucket (software.cocalc.ai), which every bay reads, so there is one origin-wide pointer;
+  - for dev and self-hosted sites, a local directory of the same layout, written by the same command with `--dir`.
+- **The hub serves them under its own origin** (`/cli/*`). It fetches from the release store and verifies each file's hash before serving it, so clients only ever talk to the origin. Node archives are proxied the same way, from the upstream URL in the manifest, verified against its pinned sha256.
 - The SEA builds stay for Windows only.
 
 **What the hub serves:**
