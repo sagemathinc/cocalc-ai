@@ -22,6 +22,7 @@ import type {
   HostExamState,
 } from "@cocalc/conat/hub/api/hosts";
 import {
+  deleteHostDns,
   ensureHostnameCnameDns,
   ensureProxiedAddressDns,
 } from "@cocalc/server/cloud/dns";
@@ -1555,22 +1556,54 @@ function assertExamHostRunningForCleanup(host: ExamHostRow): void {
   );
 }
 
+// A deleted host's exam hostname must not keep pointing at its old tunnel or
+// address, and its configuration must not be reconciled forever.
+async function retireExamDnsForDeletedHost(
+  config: HostExamConfig,
+): Promise<void> {
+  await deleteHostDns({
+    record_id: config.dns_record_id ?? undefined,
+    name: config.hostname,
+  });
+  await getPool().query(
+    `
+      UPDATE ${CONFIG_TABLE}
+      SET enabled=FALSE, dns_record_id=NULL, dns_target=NULL, updated_at=NOW()
+      WHERE host_id=$1
+    `,
+    [config.host_id],
+  );
+  logger.info("removed the exam DNS record of a deleted host", {
+    host_id: config.host_id,
+    hostname: config.hostname,
+  });
+}
+
 export async function reconcileExamDnsOnce(): Promise<void> {
   await ensureSchema();
+  // c.* has the config's host_id; ExamHostRow needs the host's own id and
+  // public address, so those are selected by name. Hosts that are not running
+  // are reconciled when they run again.
   const { rows } = await getPool().query(
     `
-      SELECT c.*, h.public_url, h.metadata, h.status, h.name
+      SELECT c.*, h.id, h.name, h.status, h.public_ip, h.public_url, h.metadata,
+        h.deleted IS NOT NULL AS host_deleted
       FROM ${CONFIG_TABLE} c
       JOIN project_hosts h ON h.id=c.host_id
-      WHERE c.enabled=TRUE AND h.deleted IS NULL
+      WHERE c.enabled=TRUE
+        AND (h.deleted IS NOT NULL OR h.status='running')
     `,
   );
   for (const row of rows) {
     try {
-      await ensureExamDns({
-        host: row as ExamHostRow,
-        config: mapConfig(row),
-      });
+      if (row.host_deleted) {
+        await retireExamDnsForDeletedHost(mapConfig(row));
+      } else {
+        await ensureExamDns({
+          host: row as ExamHostRow,
+          config: mapConfig(row),
+        });
+      }
     } catch (err) {
       logger.warn("exam DNS reconciliation failed", {
         host_id: row.host_id,
