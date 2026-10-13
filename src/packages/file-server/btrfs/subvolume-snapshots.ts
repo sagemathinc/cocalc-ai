@@ -105,6 +105,12 @@ function cleanupQuotaReliefBytes(): number {
  * subvolume run one at a time; the caller takes any Btrfs mutation lock inside
  * `run`.
  */
+function isQuotaExceededError(err: unknown): boolean {
+  const message =
+    `${(err as { message?: unknown })?.message ?? err}`.toLowerCase();
+  return message.includes("disk quota exceeded") || message.includes("edquot");
+}
+
 export async function withSubvolumeQuotaRelief<T>({
   subvolume,
   operation,
@@ -217,7 +223,10 @@ export class SubvolumeSnapshots {
     name ??= new Date().toISOString();
     name = assertValidSnapshotName(name);
     logger.debug("create", { name, subvolume: this.subvolume.name });
-    await this.makeSnapshotsDir();
+    await this.retryWithQuotaRelief(
+      "snapshot-dir-create",
+      this.makeSnapshotsDir,
+    );
 
     if (limit != null) {
       const existing = (existingSnapshotNames ?? (await this.readdir())).filter(
@@ -237,15 +246,19 @@ export class SubvolumeSnapshots {
     const snapshotPath = this.snapshotAbsolutePath(name);
     args.push(this.subvolume.path, snapshotPath);
 
-    await withBtrfsMutationLock({
-      mount: this.subvolume.filesystem.opts.mount,
-      operation: "snapshot-create",
-      run: async () => {
-        await btrfs({ args });
-        invalidateSubvolumeMetadata(snapshotPath);
-        invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
-      },
-    });
+    await this.retryWithQuotaRelief(
+      "snapshot-create",
+      async () =>
+        await withBtrfsMutationLock({
+          mount: this.subvolume.filesystem.opts.mount,
+          operation: "snapshot-create",
+          run: async () => {
+            await btrfs({ args });
+            invalidateSubvolumeMetadata(snapshotPath);
+            invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
+          },
+        }),
+    );
 
     if (quotaMode === "skip") {
       return;
@@ -335,6 +348,33 @@ export class SubvolumeSnapshots {
         invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
       },
     });
+  };
+
+  // Creating a snapshot (or the .snapshots directory) adds entries to the
+  // subvolume's own tree, which Btrfs charges to its qgroup, so a project at
+  // or over its quota gets EDQUOT and loses its scheduled snapshots. Retry
+  // such a failure once with the quota raised, as snapshot cleanup does; the
+  // common case pays nothing extra. Snapshot creation is atomic, so a failed
+  // attempt leaves nothing behind.
+  private retryWithQuotaRelief = async <T>(
+    operation: string,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isQuotaExceededError(err)) throw err;
+      logger.info("retrying with temporary quota relief", {
+        operation,
+        subvolume: this.subvolume.name,
+        err: `${err}`,
+      });
+      return await withSubvolumeQuotaRelief({
+        subvolume: this.subvolume,
+        operation,
+        run,
+      });
+    }
   };
 
   private withCleanupQuotaRelief = async <T>({

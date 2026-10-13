@@ -245,6 +245,63 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
   });
 
+  // On prod, scheduled snapshots of projects at their quota failed with
+  // "Disk quota exceeded" on every attempt (68 in a row for one project).
+  it("retries a snapshot that hits the quota once with the quota raised", async () => {
+    btrfsMock.mockRejectedValueOnce(
+      new Error(
+        "ERROR: cannot snapshot '/mnt/test/project-1': Disk quota exceeded",
+      ),
+    );
+    const subvolume = createSubvolume() as any;
+    const snapshots = new SubvolumeSnapshots(subvolume);
+
+    await snapshots.create("snap1");
+
+    expect(btrfsMock).toHaveBeenCalledTimes(2);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
+    const raiseOrder = subvolume.quota.set.mock.invocationCallOrder[0];
+    const retryOrder = btrfsMock.mock.invocationCallOrder[1];
+    const restoreOrder = subvolume.quota.set.mock.invocationCallOrder[1];
+    expect(raiseOrder).toBeLessThan(retryOrder);
+    expect(retryOrder).toBeLessThan(restoreOrder);
+  });
+
+  it("does not retry or touch the quota for other snapshot errors", async () => {
+    btrfsMock.mockRejectedValueOnce(new Error("Permission denied"));
+    const subvolume = createSubvolume() as any;
+    const snapshots = new SubvolumeSnapshots(subvolume);
+
+    await expect(snapshots.create("snap1")).rejects.toThrow(
+      "Permission denied",
+    );
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+    expect(subvolume.quota.get).not.toHaveBeenCalled();
+    expect(subvolume.quota.set).not.toHaveBeenCalled();
+  });
+
+  it("creates the snapshots directory with the quota raised when needed", async () => {
+    const subvolume = createSubvolume() as any;
+    subvolume.fs.exists = jest.fn(async () => false);
+    subvolume.fs.mkdir = jest
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("EDQUOT: disk quota exceeded, mkdir"), {
+          code: "EDQUOT",
+        }),
+      )
+      .mockResolvedValue(undefined);
+    const snapshots = new SubvolumeSnapshots(subvolume);
+
+    await snapshots.create("snap1");
+
+    expect(subvolume.fs.mkdir).toHaveBeenCalledTimes(2);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a replacement before pruning at a one-snapshot limit", async () => {
     const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
     const old = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();
