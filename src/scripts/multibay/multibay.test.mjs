@@ -581,6 +581,44 @@ describe("document history across bays", () => {
   });
 });
 
+describe("project moves across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, asks to move it or place it on a host. Both are routed to the
+  // project's bay, which records each forwarded call it runs. (This
+  // cluster's workspace runtime supports neither, so the method's answer is
+  // that refusal.)
+  const forwardedCalls = async (name) =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+         [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+  for (const [name, args, capability] of [
+    ["projects.moveProject", {}, "move"],
+    [
+      "projects.assignProjectHost",
+      { dest_host_id: randomUUID() },
+      "host placement",
+    ],
+  ]) {
+    it(`${name} runs on the project's bay`, async () => {
+      assert.ok(bob.project, "needs bob's project");
+      const before = await forwardedCalls(name);
+      await assert.rejects(
+        alice.client.call(name, { project_id: bob.project, ...args }),
+        new RegExp(
+          `${capability} is unsupported by the trusted workspace runtime`,
+        ),
+      );
+      assert.equal(await forwardedCalls(name), before + 1);
+    });
+  }
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course

@@ -61,6 +61,10 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.getProjectState": projectFromOpts,
   "projects.getProjectAddress": projectFromOpts,
   "projects.getProjectActiveOperation": projectFromOpts,
+  // Host placement and moves run where the project, its runtime slot and its
+  // operations live; fresh auth for a move asks the caller's home bay.
+  "projects.moveProject": projectFromOpts,
+  "projects.assignProjectHost": projectFromOpts,
   "projects.setProjectMetadata": projectFromOpts,
   "projects.setProjectDeletionProtection": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,

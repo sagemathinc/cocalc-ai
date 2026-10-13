@@ -6270,7 +6270,6 @@ export async function moveProject({
   account_id,
   browser_id,
   session_hash,
-  internalAuth,
   project_id,
   dest_host_id,
   allow_offline,
@@ -6280,7 +6279,6 @@ export async function moveProject({
   account_id: string;
   browser_id?: string | null;
   session_hash?: string | null;
-  internalAuth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   project_id: string;
   dest_host_id?: string;
   allow_offline?: boolean;
@@ -6294,30 +6292,16 @@ export async function moveProject({
   stream_name: string;
 }> {
   assertProjectRuntimeCapability("move");
-  const authSession = await requireDangerousProjectMutationAuth({
+  await requireDangerousProjectMutationAuth({
     account_id,
     browser_id,
     session_hash,
-    internalAuth,
   });
-  const actorSessionHash = authSession?.session_hash ?? session_hash;
   await assertCollab({ account_id, project_id });
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership == null) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  if (ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge().projectControl(ownership.bay_id).move({
-      project_id,
-      account_id,
-      session_hash: actorSessionHash,
-      dest_host_id,
-      allow_offline,
-      backup_region_cutover,
-      allow_oversized_skip,
-      epoch: ownership.epoch,
-    });
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id });
   await assertCanPerformDestructiveStorageAction({
     account_id,
     project_id,
@@ -6450,12 +6434,10 @@ export async function assignProjectHost({
   account_id,
   project_id,
   dest_host_id,
-  skip_owner_route,
 }: {
   account_id: string;
   project_id: string;
   dest_host_id: string;
-  skip_owner_route?: boolean;
 }): Promise<void> {
   assertProjectRuntimeCapability("host_placement");
   if (!account_id) {
@@ -6465,19 +6447,10 @@ export async function assignProjectHost({
     throw new Error("destination host id must be specified");
   }
   await assertCollab({ account_id, project_id });
-  const ownership = skip_owner_route
-    ? null
-    : await resolveProjectBay(project_id);
-  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectControl(ownership.bay_id)
-      .assignHost({
-        project_id,
-        account_id,
-        dest_host_id,
-        epoch: ownership.epoch,
-      });
-  }
+  // Routed to the project's owning bay (see routes).
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id });
   await assertProjectNotHardDeleting({ project_id });
   const { rows } = await getPool().query<{ host_id: string | null }>(
     "SELECT host_id FROM projects WHERE project_id=$1 LIMIT 1",

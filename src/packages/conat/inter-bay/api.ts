@@ -440,36 +440,10 @@ export interface ProjectControlSetUsageAccountResponse {
   updated: boolean;
 }
 
-export interface ProjectControlAssignHostRequest {
-  project_id: string;
-  account_id: string;
-  dest_host_id: string;
-  epoch?: number;
-}
-
 export interface ProjectControlAddressRequest {
   project_id: string;
   account_id: string;
   epoch?: number;
-}
-
-export interface ProjectControlMoveRequest {
-  project_id: string;
-  account_id: string;
-  session_hash?: string | null;
-  dest_host_id?: string;
-  allow_offline?: boolean;
-  backup_region_cutover?: boolean;
-  allow_oversized_skip?: boolean;
-  epoch?: number;
-}
-
-export interface ProjectControlMoveResponse {
-  op_id: string;
-  scope_type: "project";
-  scope_id: string;
-  service: string;
-  stream_name: string;
 }
 
 export interface ProjectControlRehomeRequest {
@@ -2604,9 +2578,7 @@ export type ProjectControlMethod =
   | "set-rootfs-image"
   | "hard-delete-status"
   | "set-usage-account"
-  | "assign-host"
   | "address"
-  | "move"
   | "rehome"
   | "accept-rehome"
   | "active-op"
@@ -3150,11 +3122,7 @@ export interface InterBayProjectControlApi {
   setUsageAccount: (
     opts: ProjectControlSetUsageAccountRequest,
   ) => Promise<ProjectControlSetUsageAccountResponse>;
-  assignHost: (opts: ProjectControlAssignHostRequest) => Promise<void>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
-  move: (
-    opts: ProjectControlMoveRequest,
-  ) => Promise<ProjectControlMoveResponse>;
   rehome: (
     opts: ProjectControlRehomeRequest,
   ) => Promise<ProjectControlRehomeResponse>;
@@ -5791,26 +5759,11 @@ export function createInterBayProjectControlClient({
       method: "set-usage-account",
     }),
   });
-  const assignHostClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "assignHost">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "assign-host",
-    }),
-  });
   const addressClient = createServiceClient<
     Pick<InterBayProjectControlApi, "address">
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "address" }),
-  });
-  const moveClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "move">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({ dest_bay, method: "move" }),
   });
   const rehomeClient = createServiceClient<
     Pick<InterBayProjectControlApi, "rehome">
@@ -5857,9 +5810,7 @@ export function createInterBayProjectControlClient({
       await hardDeleteStatusClient.hardDeleteStatus(opts),
     setUsageAccount: async (opts) =>
       await setUsageAccountClient.setUsageAccount(opts),
-    assignHost: async (opts) => await assignHostClient.assignHost(opts),
     address: async (opts) => await addressClient.address(opts),
-    move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
@@ -12874,45 +12825,6 @@ export function createInterBayProjectControlSetUsageAccountHandler({
     }),
     impl: {
       setUsageAccount: async (opts) => await impl.setUsageAccount(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlAssignHostHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayProjectControlApi, "assignHost">>({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "assign-host",
-    }),
-    impl: {
-      assignHost: async (opts) => await impl.assignHost(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlMoveHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayProjectControlApi, "move">>({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({ dest_bay: bay_id, method: "move" }),
-    impl: {
-      move: async (opts) => await impl.move(opts),
     },
   });
 }
