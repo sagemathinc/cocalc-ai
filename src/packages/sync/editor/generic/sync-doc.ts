@@ -328,6 +328,11 @@ export class SyncDoc extends EventEmitter {
   private updateHasUnsavedChangesDebounced?: ReturnType<typeof debounce>;
   private patchflowStore?: PatchflowPatchStore;
   private patchflowCodec?: DocCodec;
+  // One cursor channel per document, closed with it. Its subscription is
+  // shared by every document on this path in the process, so an unclosed
+  // channel keeps this closed document (and its patch history) alive.
+  private cursorPresenceAdapter?: Promise<PatchflowPresenceAdapter | undefined>;
+  private cursorPubSub?: { close: () => void };
 
   private last: Document;
   private doc: Document;
@@ -1531,6 +1536,8 @@ export class SyncDoc extends EventEmitter {
     cancel_scheduled(this.updateHasUnsavedChangesDebounced);
 
     this.patchflowSession?.close();
+    this.cursorPubSub?.close();
+    this.cursorPubSub = undefined;
 
     try {
       await this.closeTables();
@@ -2066,29 +2073,41 @@ export class SyncDoc extends EventEmitter {
     this.emit("patchflow-ready");
   });
 
-  private getCursorPresenceAdapter = reuseInFlight(
-    async (): Promise<PatchflowPresenceAdapter | undefined> => {
-      if (!this.cursors) {
-        return;
-      }
-      this.emitOpenPhase("cursor_presence_start");
-      try {
-        return await this.createCursorPresenceAdapter();
-      } catch (err) {
-        // Cursor presence is optional.  In particular, an otherwise valid
-        // document session may not have permission to subscribe to cursors.
-        // Editing and Patchflow must still initialize in that case.
-        logger.warn("cursor presence unavailable; continuing without it", {
-          err: `${err}`,
-          project_id: this.project_id,
-          path: this.path,
-        });
-        return;
-      } finally {
-        this.emitOpenPhase("cursor_presence_done");
-      }
-    },
-  );
+  // The open prewarms this and the patchflow session uses it later, so
+  // remember the adapter: creating another would open a second channel.
+  private getCursorPresenceAdapter = (): Promise<
+    PatchflowPresenceAdapter | undefined
+  > => {
+    this.cursorPresenceAdapter ??= this.openCursorPresenceAdapter();
+    return this.cursorPresenceAdapter;
+  };
+
+  private openCursorPresenceAdapter = async (): Promise<
+    PatchflowPresenceAdapter | undefined
+  > => {
+    if (!this.cursors) {
+      return;
+    }
+    this.emitOpenPhase("cursor_presence_start");
+    try {
+      return await this.createCursorPresenceAdapter();
+    } catch (err) {
+      // Cursor presence is optional.  In particular, an otherwise valid
+      // document session may not have permission to subscribe to cursors.
+      // Editing and Patchflow must still initialize in that case.
+      logger.warn("cursor presence unavailable; continuing without it", {
+        err: `${err}`,
+        project_id: this.project_id,
+        path: this.path,
+      });
+      // A later call (e.g. the patchflow session after a failed prewarm)
+      // may try again.
+      this.cursorPresenceAdapter = undefined;
+      return;
+    } finally {
+      this.emitOpenPhase("cursor_presence_done");
+    }
+  };
 
   init_ipywidgets = reuseInFlight(async () => {
     if (this.ipywidgets_state != null) {
@@ -2698,6 +2717,11 @@ export class SyncDoc extends EventEmitter {
         path: this.syncPath,
         name: "cursors",
       });
+      if (this.state == "closed") {
+        table.close();
+        return;
+      }
+      this.cursorPubSub = table;
       const listeners: Array<(state: unknown, clientId: string) => void> = [];
       table.on("change", (obj: any) => {
         const account_id = this.cursorStateAccountId(obj);
