@@ -1,6 +1,8 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 5 (Oct 12, 2026). Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 (59c5fac26d) answered rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. Revision 5 answers rev 4's one medium finding [U1]: the exact pointer grammar, the launcher replacement inside the transaction, and how a future pointer format is introduced. William reviews after @lite1-review approves.
+Status: revision 6 (Oct 13, 2026): phased, following William's point that the CLI shouldn't be held to a stricter standard than the hub it talks to. Phases A and B come first; the full design (revision 5, approved at design level by @lite1-review at 9f4827a4df) is now **Phase C, the end state**.
+
+Review history: Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 (59c5fac26d) answered rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. Revision 5 answers rev 4's one medium finding [U1]: the exact pointer grammar, the launcher replacement inside the transaction, and how a future pointer format is introduced. William reviews after @lite1-review approves.
 
 ## Why change
 
@@ -19,11 +21,46 @@ What went wrong on Oct 12 while testing the one-line setup (`curl … | sh`):
 - **Official Node builds are already signed** (26–32 MB per platform): notarized for macOS and Authenticode-signed for Windows by the Node project, with `SHASUMS256.txt` signed by the Node release keys.
 - **`tuf-js` exists**, the Update Framework client that npm's sigstore uses. It's pure JavaScript, so a TUF client can run on the pinned Node.
 
-## Scope and phases
+## Phasing: the CLI is as trusted as the hub it talks to
 
-- **Phase 1 (this design):** Linux and macOS. A signed release channel (stable by default, candidate and dev by opt-in), hub-served installer and pointers, the launcher, updates, the skew check, and a separate computers release.
-- **Later:** Windows (its own launcher, see below). Until then Windows keeps the signed SEA.
-- **Deferred until site and role binding is designed:** per-site bundles, where the CLI runs each site's own build [R6]. Nothing below depends on them.
+**The principle.** The CLI acts as you, with credentials for one hub. That hub already has the power the strict design defends against:
+- it serves the web app's JavaScript to your browser;
+- it can act as you;
+- its bays sign computer tickets, so it can run commands on your connected computers.
+
+The hub's own releases ship through ordinary CI and deploys. So signing the CLI more strictly than the hub doesn't make anyone safer: an attacker goes for the hub. The CLI's trust should rise **together with** the hub's, not ahead of it.
+
+### Phase A: now (fixes drift and heavy releases)
+
+Same mechanics as the end state, without signing:
+- **What gets installed:** the launcher, a pinned official Node, the bundle, the exact `v1` pointer and the crash-safe update transaction.
+- **What the hub serves:** `/cli/install.sh`, an **unsigned** `/cli/manifest.json` (hashes and sizes of the bundle and of each Node archive), and the bundle by hash.
+- **Trust, stated plainly:** you trust the site you install or update from, exactly as you already trust it with your account in the browser. Everything is fetched over HTTPS and checked against that site's manifest; that protects against corruption and mixed-up files, not against the site. `cocalc update [--from <site>]` re-fetches from the site you installed from by default. There's no rollback protection beyond the site's own honesty, since a compromised site can do worse anyway.
+- **Node:** whenever the pinned version changes, the release job checks Node's signed `SHASUMS256` against the Node release keys (cheap, in CI), and the manifest pins the sha256 of each archive.
+- **Dev sites** such as lite1b simply serve their own bundle. Installing from lite1b *is* the opt-in, so no special trust command is needed.
+- **Computers (decision 27, in its practical form):** a computer's daemon is pinned to the bundle it was connected with and updates only by a local `cocalc computer update`, never remotely. That trusts the hub as much as the rest of the computer feature already does. The offline-key signature comes in Phase B or C.
+- **Version skew:** `/cli/site.json` plus the friendly early error. The version header is for compatibility only.
+- **Windows** keeps the signed SEA.
+
+### Phase B: when releases move off the hub (CDN, R2, Star mirrors)
+
+As soon as bytes come from somewhere other than the hub the person chose, sign what we publish. One person's keys are enough:
+- **Root key:** on a YubiKey, held by William. It's used rarely, to certify a release key for a year at a time (and to revoke it).
+- **Release key:** in CI or a KMS, certified by the root. It signs every release manifest.
+- **The client** embeds the root's public key and verifies the certificate chain, the manifest signature, the expiry and a monotonic sequence. It then gets the two-state rollback rule (`highest_seen` versus `active`).
+- **What this protects against:** a compromised CDN, R2 or mirror, or a site serving bytes we never released.
+- **What it doesn't:** a compromised release key until the root revokes it, a compromised build pipeline, and a malicious bundle that already ran.
+
+### Phase C: the end state (the full design below)
+
+TUF roles with an offline threshold root, the offline runtime role and its ceremony, an independent reproducible rebuild for stable, and a transparency log.
+
+**When:** together with hardening the hub's own release path (signed deploys and reviewed release builds), once there is more than one developer, or once customers require it. The sections below describe Phase C. Phases A and B use the same mechanics (launcher, pointer, transaction, layout) with the simpler trust described above.
+
+### Later, in any phase
+
+- **Windows:** its own native launcher (see below). Until then it keeps the signed SEA.
+- **Per-site bundles:** deferred until site and role binding is designed [R6].
 
 ## Threat model
 
@@ -284,7 +321,7 @@ Developers should use it on development machines (or a separate OS user), never 
 4. **Runtime releases** (a Node bump, or a launcher or bootstrap change) don't go through CI signing at all. They go through the runtime ceremony [T1]: independent Node verification and independent reproducible rebuilds before the offline 2-of-3 signature [S2]. CI may *prepare* a candidate runtime target for convenience, but it is only a proposal. Clients never verify GPG; the signed runtime target pins each Node archive's filename, platform, size and sha256.
 5. **Serve.** Hubs embed the current stable root metadata and the installer for their build, and mirror the official metadata and targets.
 
-## Rollout
+## Rollout (Phase C; Phases A and B are described in Phasing)
 
 1. **The signing foundation:**
    - the TUF repository and KMS keys;
@@ -298,6 +335,12 @@ Developers should use it on development machines (or a separate OS user), never 
 6. *(Deferred)* per-site bundles, once site and role binding is designed.
 
 ## Open questions (for William)
+
+For Phase A (the one to build now):
+- **Node version:** Node 24 LTS or 26? Projects run 26 today.
+- **Default update source:** the site you installed from, or software.cocalc.ai?
+
+For later phases:
 
 - **Root key holders:** who holds the 2-of-3 offline root keys (e.g. YubiKeys)?
 - **Node version:** Node 24 LTS or 26?
