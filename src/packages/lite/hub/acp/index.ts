@@ -139,6 +139,7 @@ import {
   setAcpAdmissionDenialRecorder,
   setAcpAdmissionLimitsProvider,
   throwIfAcpAdmissionDenied,
+  withoutRecoveryLineage,
 } from "./admission";
 import {
   buildCodexTurnNoticeOptions,
@@ -11625,10 +11626,11 @@ async function handleAcpControlRequest(
 
 export async function evaluate({
   stream,
-  ...request
+  ...submitted
 }: AcpRequest & {
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<void> {
+  const request = withoutRecoveryLineage(submitted);
   if (request.chat) {
     await enqueueChatAcpTurn({ request, stream });
     return;
