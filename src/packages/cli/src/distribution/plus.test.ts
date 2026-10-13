@@ -689,7 +689,9 @@ test("names starting with two dots are ordinary children for containment", async
   // Data inside the install, and the install inside the data, both through
   // a component that starts with "..".
   const f = fixture("..install");
-  await f.install(f.release(205));
+  // One release object: building it again re-tars, which can change the hash.
+  const r = f.release(205);
+  await f.install(r);
   const line = readFileSync(join(f.root, "active"), "utf8").trimEnd();
   for (const data of [join(f.root, "..data"), f.dir]) {
     await assert.rejects(
@@ -699,7 +701,7 @@ test("names starting with two dots are ordinary children for containment", async
     );
     // A journal naming such data is refused before recovery acts.
     const release = {
-      manifest: f.release(205).hash,
+      manifest: r.hash,
       release: 205,
       version: "1.0.205",
     };
