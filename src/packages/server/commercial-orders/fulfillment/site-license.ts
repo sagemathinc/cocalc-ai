@@ -364,9 +364,10 @@ function namedTargetMismatches(
     mismatches.push("organization_name");
   }
   if (order.customer_account_id) {
+    // Only active managers control a license; viewers have read access only.
     const managers = new Set(
       current.managers
-        .filter(({ revoked_at }) => !revoked_at)
+        .filter(({ revoked_at, role }) => !revoked_at && role === "manager")
         .map(({ account_id }) => account_id),
     );
     if (

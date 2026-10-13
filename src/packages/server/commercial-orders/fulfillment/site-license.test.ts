@@ -622,6 +622,48 @@ describe("commercial site-license fulfillment", () => {
       );
     });
 
+    it("does not accept a customer who is only a viewer of the license", async () => {
+      mockGetCommercialOrder.mockResolvedValue(customerOrder());
+      mockGetSiteLicenseOverview.mockResolvedValue(
+        matchingOverview({
+          site_license: {
+            organization_name: "Example University",
+            owner_account_id: "someone-else",
+            starts_at: "2026-09-01T00:00:00.000Z",
+            expires_at: "2027-08-31T23:59:59.000Z",
+          },
+          managers: [
+            { account_id: "customer-1", role: "viewer", revoked_at: null },
+            {
+              account_id: "customer-1",
+              role: "manager",
+              revoked_at: "2026-09-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+
+      const preview = await commercialFulfillmentPreview({
+        id: "co_1",
+        account_id: "admin-1",
+        reason: "Review linking a license",
+        existing_site_license_id: "sl_1",
+      });
+      expect(preview.ready).toBe(false);
+      expect(preview.target_mismatches).toEqual(["customer_account"]);
+
+      await expect(
+        provisionCommercialSiteLicense({
+          id: "co_1",
+          account_id: "admin-1",
+          expected_version: 7,
+          existing_site_license_id: "sl_1",
+          reason: "Link a license",
+        }),
+      ).rejects.toThrow("customer_account");
+      expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+    });
+
     it("links a congruent license whose customer is a manager", async () => {
       mockGetCommercialOrder.mockResolvedValue(customerOrder());
       const congruent = matchingOverview({
