@@ -31,6 +31,7 @@ import {
   rollback,
   withLock,
 } from "./local";
+import { HeldError, updateState } from "./update";
 
 const ORIGIN = "https://cocalc.example";
 
@@ -453,4 +454,27 @@ test("the launcher and bootstrap refuse broken or mixed-up installs", async () =
   const damaged = f.run();
   assert.equal(damaged.status, 1);
   assert.match(damaged.stderr, /damaged/);
+});
+
+test("an automatic update stops at a hold placed after its unlocked check", () => {
+  const state: CliState = {
+    schema: STATE_SCHEMA,
+    origin: ORIGIN,
+    mode: "origin-trust",
+    auto: true,
+    held_at: 7,
+    launcher: "/x/cocalc",
+    origins: {},
+  };
+  assert.throws(() => updateState({ ...state }, ORIGIN, false), HeldError);
+  assert.equal(updateState({ ...state }, ORIGIN, true).held_at, null);
+  assert.throws(
+    () =>
+      updateState(
+        { ...state, held_at: null },
+        "https://elsewhere.example",
+        false,
+      ),
+    /origin changed/,
+  );
 });
