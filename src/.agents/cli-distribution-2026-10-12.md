@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 8 (Oct 13, 2026): answers @lite1-review on 091cc355cb. Revision 7: Revision 6 phased the design, following William's point that the CLI shouldn't be held to a stricter standard than the hub's own release process. Revision 7 adds:
+Status: revision 9 (Oct 13, 2026): answers @lite1-review on 0268b49d8c. Revision 8 answered 091cc355cb. Revision 7: Revision 6 phased the design, following William's point that the CLI shouldn't be held to a stricter standard than the hub's own release process. Revision 7 adds:
 - **William's rule:** every hub release is a CLI release, with automatic updates.
 - **@lite1-review's answers** on the honesty of the Phase A and B trust claims.
 
@@ -57,6 +57,7 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 - **The manifest carries a monotonic release number** (unsigned in Phase A).
   - Automatic updates only move forward. A stale or lagging answer never downgrades anyone.
   - A deliberate rollback by the site is published as a *new* release number whose contents are the older build.
+  - **One release number maps to exactly one manifest hash.** The client remembers the number and hash of each release it has seen, and rejects an answer that reuses a number with a different hash. In Phase A this catches confused deploys, not a malicious site.
 
 **Trust, stated plainly:**
 - **The origin is fully trusted.** You trust the exact site you install from, and every later update from it, with full code execution as your local user (above).
@@ -73,19 +74,38 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 - **Updates are automatic by default.** When the CLI talks to its origin, it reads `/cli/site.json` (cached up to 10 minutes). If the manifest hash differs from the active one, it fetches the new manifest and files, checks them, and swaps them in with the transaction.
   - The swap happens before the command runs, when the site requires the newer version.
   - Otherwise it happens in the background, for the next run.
-- **Opting out:** `cocalc update --auto off`, or `COCALC_AUTO_UPDATE=0` for CI that wants pinned versions. `cocalc update` still updates by hand, and `cocalc update --rollback` returns to the previous release.
+- **Opting out:** `cocalc update --auto off`, or `COCALC_AUTO_UPDATE=0` for CI that wants pinned versions. `cocalc update` still updates by hand.
+- **A local rollback places a hold.** `cocalc update --rollback` returns to the previous release and records `held_at=<that release>` for the origin.
+  - It never lowers the highest release seen.
+  - While held, nothing advances automatically, including to newer releases. Each run prints one short line, for example "held at 5; 7 is available: `cocalc update --resume`".
+  - If the site requires a newer version, the command stops with that message instead of updating.
+  - Only an explicit `cocalc update` or `cocalc update --resume` clears the hold.
 - **Version skew** mostly disappears. With updates off, the CLI stops early with a clear "run `cocalc update`" message. The version header is for compatibility only.
 - **Dev sites:** installing from a dev site such as lite1b is the opt-in, because the origin is shown, every update comes only from it, and switching away needs a confirmation.
 
 **Computers:**
-- **The record:** a computer's release record pins the exact manifest, so the Node, bootstrap and connector hashes it runs.
+- **The record has two states:**
+  - `current_release`: the exact manifest the daemon is running, so the Node, bootstrap and connector hashes;
+  - `pending_release`: empty, or a release installed and waiting to be switched to.
+
+  The record never claims the running release changed before it did. Both are GC roots.
 - **No remote update operation:** the computers protocol has none. But the origin can trigger an update **indirectly**: through the CLI's ordinary automatic update, followed by the idle re-exec described next. The doc counts that as origin power, not as something the pin prevents.
-- **Who changes the record:** only the local CLI's update transaction, under its lock and after `active` has swapped. It moves the record of each *eligible* computer (next bullet) to the new manifest. The daemon itself never fetches anything; it only notices the record changed and re-executes into the release the record names.
-- **Automatic replacement only for persistent direct-mode computers** (no time limit). Direct mode already gives every valid job arbitrary execution as the same user, so a job could replace the daemon anyway. Automatic replacement adds nothing the origin's tickets can't already do while the computer is connected. When such a computer is idle (no running jobs), its daemon re-executes into the new release, keeping its key and session.
-- **Everything else stays pinned** and changes only by `cocalc computer update` at the local TTY:
-  - **Isolated computers.** There the daemon and the OS enforce ceilings (the container, mounts, network and resource limits) that the origin must not be able to change silently.
-  - **Any computer whose daemon enforces a local ceiling** the origin must not change: the immutable ceiling and effective-policy bindings, floors, attestations and local timing it verifies today (`util/computers/protocol.ts`), and anything added later.
-  - **Time-limited computers.** Restarting the process ends them, so they keep their release until they end.
+- **Who changes what:**
+  - **The local CLI's update transaction** (under its lock, after `active` has swapped) only sets `pending_release` on each eligible computer (next bullets). It never touches `current_release`.
+  - **The daemon** never fetches anything. When `pending_release` is set, it switches with a barrier and a handshake:
+    1. It closes admission: new operations are refused with a retryable "updating" error.
+    2. It waits until no jobs are running. There is no deadline and it never kills jobs; admission stays closed meanwhile, so the wait can't race a new job.
+    3. It records the switch in the record's journal and re-executes into `pending_release`, keeping its key and session.
+    4. The new process checks the release's hashes and starts. Only then does it atomically set `current_release = pending_release` and clear `pending_release`, then reopens admission.
+  - **Crash recovery:** on start, the launcher reads the journal.
+    - If the new release didn't complete its handshake, it starts `current_release` (still the old one) and records the failure.
+    - It retries the switch once, then leaves `pending_release` set with the error, for `cocalc computer update` to report.
+- **Which computers switch automatically.** The two categories below don't overlap, and every computer falls in exactly one.
+  - **Automatic: persistent (no time limit) direct-mode computers.** Direct mode gives every valid job arbitrary execution as the same user, so a job could replace the daemon anyway. The daemon's checks in direct mode (the ticket and effective-policy bindings, floors, attestations and local timing in `util/computers/protocol.ts`) authorize hub-issued work. They are not a boundary meant to survive arbitrary same-user direct jobs. So automatic replacement adds nothing the origin's tickets can't already do while the computer is connected.
+  - **Pinned, changing only by `cocalc computer update` at the local TTY:**
+    - **Isolated computers.** There the daemon and the OS enforce a boundary meant to survive hub-issued jobs (the container, mounts, network and resource ceilings).
+    - **Direct-mode computers with an owner-controlled restriction** meant to survive hub-issued jobs, if we ever add one.
+    - **Time-limited computers.** Restarting the process ends them, so they keep their release until they end.
 - **Too-old daemons:** the hub's minimum version refuses a daemon that is too old, with a message saying how to update.
 - **What the pin is for:** it stops accidental drift and any remote protocol request from changing the code. It is no defense against a compromised site-served CLI or any other code running as the same user, which can rewrite the record whenever it runs. Phase B and C signatures authenticate release bytes, but don't change that either (see "Computers" below).
 - **The strict decision 27** (offline-signed updates, never automatic) is Phase C.
