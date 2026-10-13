@@ -1,12 +1,12 @@
 /*
 A document whose edit history holds an entry too large to load (in
 production, a runaway notebook output saved as a single 500 MB patch) must
-still open: the browser resets the history like TimeTravel's "purge history",
-tells the user with a toast that stays until dismissed, and other open copies
-of the document close instead of writing stale state.  The old history is
-kept aside in the patch stream's database.  When several browsers hit the
-oversized entry at once, only one resets the history, and a late reset never
-deletes edits made after the first.
+still open: the client opening it resets the history through the document's
+own patch stream, the browser tells the user with a toast that stays until
+dismissed, and other open copies of the document close instead of writing
+stale state.  The old history is kept aside in the patch stream's database.
+When several clients hit the oversized entry at once, only one resets the
+history, and a late reset never deletes edits made after the first.
 
 pnpm test ./oversized-history.test.ts
 */
@@ -15,6 +15,10 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { purgeHistory } from "@cocalc/conat/hub/api/sync-impl";
+import {
+  SyncClient,
+  setSyncClientHooks,
+} from "@cocalc/conat/sync-doc/sync-client";
 import { tempDir } from "@cocalc/backend/conat/test/setup";
 import {
   before,
@@ -27,10 +31,24 @@ import {
   wait,
 } from "./setup";
 
-beforeAll(before);
+// What the browser app registers at startup (frontend/conat/client.ts):
+// toasts.  Recorded here, with the resets documents make.
+let alerts: any[] = [];
+let resets: any[] = [];
+
+beforeAll(async () => {
+  await before();
+  setSyncClientHooks({ alert_message: (opts) => alerts.push(opts) });
+});
 afterAll(async () => {
+  setSyncClientHooks({ alert_message: undefined });
   delete process.env.COCALC_PERSIST_MAX_MESSAGE_BYTES;
   await after();
+});
+
+beforeEach(() => {
+  alerts = [];
+  resets = [];
 });
 
 jest.setTimeout(60000);
@@ -75,26 +93,21 @@ async function archivedHistories(): Promise<
 }
 
 function open(client, project_id: string, path: string) {
-  return client.sync.string({
+  const doc = client.sync.string({
     project_id,
     path,
     service: server.service,
     firstReadLockTimeout: 1,
   });
-}
-
-// what a browser client provides
-function asBrowser(doc, client) {
-  const alerts: any[] = [];
-  const purges: any[] = [];
+  // record the resets this document makes, through its real SyncClient
   const syncClient = (doc as any).client;
-  syncClient.purgeHistory = async (opts) => {
-    const result = await purgeHistory({ ...opts, client });
-    purges.push({ opts, result });
+  const reset = syncClient.resetOversizedHistory;
+  syncClient.resetOversizedHistory = async (opts) => {
+    const result = await reset(opts);
+    resets.push({ opts, result });
     return result;
   };
-  syncClient.alert_message = (opts) => alerts.push(opts);
-  return { alerts, purges };
+  return doc;
 }
 
 // Like a notebook whose runaway output was saved, then cleared: the file is
@@ -123,7 +136,7 @@ async function documentWithLargeHistoryEntry(project_id: string, path: string) {
 describe("opening a document whose history holds an entry too large to load", () => {
   const project_id = uuid();
   const path = "big.txt";
-  let editor, opened, browser;
+  let editor, opened, firstReset;
 
   it("creates the document", async () => {
     editor = await documentWithLargeHistoryEntry(project_id, path);
@@ -131,33 +144,33 @@ describe("opening a document whose history holds an entry too large to load", ()
 
   it("resets the history, opens the file and tells the user; the open copy closes", async () => {
     const before = await archivedHistories();
-    const resets: any[] = [];
-    editor.on("history-reset", (x) => resets.push(x));
+    const historyResets: any[] = [];
+    editor.on("history-reset", (x) => historyResets.push(x));
 
     const client2 = connect();
     opened = open(client2, project_id, path);
-    browser = asBrowser(opened, client2);
 
     await once(opened, "ready", 30000);
     // the file opened normally, with its current content
     expect(opened.to_str()).toBe("hello again");
-    expect(browser.alerts).toHaveLength(1);
-    expect(browser.alerts[0]).toMatchObject({
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
       type: "info",
       title: "Edit history reset",
       block: true,
     });
-    expect(browser.alerts[0].message).toContain("too large to load");
-    expect(browser.alerts[0].message).toContain("kept a copy");
-    expect(browser.purges).toHaveLength(1);
-    expect(browser.purges[0].opts.oversized_seq).toEqual(expect.any(Number));
-    expect(browser.purges[0].result.reset).toBe(true);
+    expect(alerts[0].message).toContain("too large to load");
+    expect(alerts[0].message).toContain("kept a copy");
+    expect(resets).toHaveLength(1);
+    expect(resets[0].opts.oversized_seq).toEqual(expect.any(Number));
+    expect(resets[0].result.reset).toBe(true);
+    firstReset = resets[0].opts;
     // the editor that had the old history open closed itself
     await wait({
       until: () => editor.get_state() === "closed",
       timeout: 10000,
     });
-    expect(resets.length).toBe(1);
+    expect(historyResets.length).toBe(1);
 
     // the old history was kept, in the same database, not copied
     const after = await archivedHistories();
@@ -179,16 +192,13 @@ describe("opening a document whose history holds an entry too large to load", ()
   });
 
   it("a late reset for the same oversized entry changes nothing", async () => {
-    // e.g., a second browser that hit the oversized entry before the first
+    // e.g., a second client that hit the oversized entry before the first
     // reset, and asks to reset only after edits were made in the new history
     const archives = await archivedHistories();
-    const result = await purgeHistory({
-      project_id,
-      path,
-      oversized_seq: browser.purges[0].opts.oversized_seq,
-      client: connect(),
-    });
-    expect(result).toMatchObject({ reset: false, deleted: 0 });
+    const result = await new SyncClient(connect()).resetOversizedHistory(
+      firstReset,
+    );
+    expect(result.reset).toBe(false);
     expect(opened.get_state()).toBe("ready");
     expect(await archivedHistories()).toEqual(archives);
     // the edit made after the first reset is still there
@@ -222,16 +232,13 @@ describe("two browsers opening the document at once", () => {
     const clientB = connect();
     const a = open(clientA, project_id, path);
     const b = open(clientB, project_id, path);
-    const browserA = asBrowser(a, clientA);
-    const browserB = asBrowser(b, clientB);
     await Promise.all([once(a, "ready", 30000), once(b, "ready", 30000)]);
     expect(a.to_str()).toBe("hello again");
     expect(b.to_str()).toBe("hello again");
 
     // exactly one reset, so exactly one toast and one history kept aside
-    const purges = [...browserA.purges, ...browserB.purges];
-    expect(purges.filter(({ result }) => result.reset)).toHaveLength(1);
-    expect(browserA.alerts.length + browserB.alerts.length).toBe(1);
+    expect(resets.filter(({ result }) => result.reset)).toHaveLength(1);
+    expect(alerts).toHaveLength(1);
     expect((await archivedHistories()).length).toBe(before.length + 1);
     await wait({
       until: () => editor.get_state() === "closed",

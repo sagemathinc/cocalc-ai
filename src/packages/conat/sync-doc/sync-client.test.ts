@@ -1,7 +1,7 @@
 jest.mock("@cocalc/conat/hub/call-hub", () => jest.fn());
 
 import callHub from "@cocalc/conat/hub/call-hub";
-import { SyncClient } from "./sync-client";
+import { SyncClient, setSyncClientHooks } from "./sync-client";
 
 describe("SyncClient", () => {
   const callHubMock = callHub as jest.MockedFunction<typeof callHub>;
@@ -63,5 +63,60 @@ describe("SyncClient", () => {
         },
       ],
     });
+  });
+
+  it("tells the user through the app's hook, if any", () => {
+    const syncClient = new SyncClient(createConatClient() as any);
+    expect(() => syncClient.alert_message({ title: "x" })).not.toThrow();
+    const alert_message = jest.fn();
+    // registered before or after the document's client is created
+    setSyncClientHooks({ alert_message });
+    try {
+      syncClient.alert_message({ type: "info", title: "Edit history reset" });
+      expect(alert_message).toHaveBeenCalledWith({
+        type: "info",
+        title: "Edit history reset",
+      });
+    } finally {
+      setSyncClientHooks({ alert_message: undefined });
+    }
+  });
+
+  it("resets an oversized history through the document's own patch stream", async () => {
+    const stream = {
+      resetHistory: jest.fn(async () => ({
+        reset: true,
+        history_epoch: 3,
+        count: 5,
+        archive: "messages_archived_1",
+      })),
+      close: jest.fn(),
+    };
+    const client = createConatClient({
+      sync: { synctable: jest.fn(), astream: jest.fn(() => stream) },
+    });
+    const syncClient = new SyncClient(client as any);
+    const result = await syncClient.resetOversizedHistory({
+      project_id: "p",
+      path: "/home/user/a.ipynb",
+      oversized_seq: 7,
+    });
+    expect(result).toEqual({ history_epoch: 3, reset: true });
+    expect(client.sync.astream).toHaveBeenCalledWith({
+      project_id: "p",
+      name: "patchflow//home/user/a.ipynb",
+      noInventory: true,
+    });
+    expect(stream.resetHistory).toHaveBeenCalledWith({
+      ifOversizedSeq: 7,
+      archive: true,
+      settings: {
+        history_purged_at: expect.any(Number),
+        history_purged_by: "11111111-1111-4111-8111-111111111111",
+      },
+    });
+    expect(stream.close).toHaveBeenCalled();
+    // no hub call: the reset goes straight to the stream
+    expect(callHubMock).not.toHaveBeenCalled();
   });
 });

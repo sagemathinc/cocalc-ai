@@ -202,13 +202,14 @@ export interface Client extends ProjectClient {
     buffer_path: string | string[];
   }) => Promise<ArrayBuffer>;
 
-  // Reset a document's edit history (TimeTravel's "purge history"); used by
-  // SyncDoc to recover from a history too large to load.  Browser only.
-  purgeHistory?: (opts: {
+  // Reset a document's edit history because it holds the patch oversized_seq,
+  // which is too large to load, keeping the old history aside.  Only resets
+  // if that patch is still there.  Used by SyncDoc when it cannot open.
+  resetOversizedHistory?: (opts: {
     project_id: string;
     path: string;
-    oversized_seq?: number;
-  }) => Promise<{ deleted: number; history_epoch: number; reset?: boolean }>;
+    oversized_seq: number;
+  }) => Promise<{ history_epoch: number; reset: boolean }>;
 }
 
 export interface DocType {
