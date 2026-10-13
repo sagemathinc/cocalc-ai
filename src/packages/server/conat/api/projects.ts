@@ -5724,22 +5724,19 @@ export async function transferProjectOwnership({
     if (!isValidUUID(id))
       throw new Error("project and account ids must be valid uuids");
   }
-  // Admin status is authoritative at the authenticated actor's home bay.
-  const trusted_admin = await isAdmin(account_id);
-  const opts = {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  await (
+    await projectControlHandlers()
+  ).assertCurrentProjectOwnership({ project_id });
+  // Admin status is authoritative at the authenticated actor's home bay,
+  // which isAdmin asks.
+  return await transferProjectOwnershipExplicitly({
     account_id,
     project_id,
     from_account_id,
     to_account_id,
-    trusted_admin,
-  };
-  const ownership = await resolveRequiredProjectBay(project_id);
-  if (ownership.bay_id === getConfiguredBayId()) {
-    return await transferProjectOwnershipExplicitly(opts);
-  }
-  return await getInterBayBridge()
-    .projectCollabInvite(ownership.bay_id)
-    .transferProjectOwnership(opts);
+    trusted_admin: await isAdmin(account_id),
+  });
 }
 
 export async function leaveOrDeleteProjects({

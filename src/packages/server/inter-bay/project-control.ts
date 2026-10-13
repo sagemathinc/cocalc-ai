@@ -148,7 +148,12 @@ function staleRoutingError({
   );
 }
 
-async function assertCurrentProjectOwnership({
+/**
+ * Refuse unless this bay owns the project (and, given an epoch, still at that
+ * epoch): a stale routing error otherwise, which callers retry after
+ * re-resolving the owner.
+ */
+export async function assertCurrentProjectOwnership({
   project_id,
   epoch,
 }: {
