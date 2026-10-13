@@ -10,6 +10,7 @@ import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
 } from "./agent-delivery-authorization";
+import { buildRecoveryContinuationPrompt } from "./recovery-prompt";
 import { promises as fs, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -700,33 +701,6 @@ function buildRecoveryContinuationContent({
       ? `CoCalc will automatically resume this Codex session in about ${formatQueuedDelay(delayMs)}, unless you send another turn first`
       : "CoCalc is automatically resuming this Codex session";
   return `${ACP_RECOVERY_VISIBLE_LABEL}: ${plain} ${timing} (attempt ${recoveryCount}/${maxRetries}).`;
-}
-
-function buildRecoveryContinuationPrompt({
-  interruptedNotice,
-  recoveryCount,
-  originalPrompt,
-  recoveryGuidance,
-}: {
-  interruptedNotice: string;
-  recoveryCount: number;
-  originalPrompt: string;
-  recoveryGuidance?: string;
-}): string {
-  return [
-    "The previous turn in this same session did not complete.",
-    `Recovery attempt: ${recoveryCount}.`,
-    `Interruption summary: ${`${interruptedNotice ?? ""}`.replace(/\*\*/g, "").trim()}`,
-    "Resume the work from the current workspace state.",
-    "Before repeating any expensive, destructive, or externally visible action, inspect what already completed and avoid duplicating side effects.",
-    "If commands, calculations, or scripts may have been interrupted, determine their state first and then continue safely.",
-    recoveryGuidance,
-    "",
-    "Original user request:",
-    originalPrompt,
-  ]
-    .filter((line): line is string => line != null)
-    .join("\n");
 }
 
 type AcpFailureRecoveryDirective = {
@@ -8979,6 +8953,7 @@ async function enqueueRecoveryContinuationForJob({
       recoveryCount,
       originalPrompt: request.prompt,
       recoveryGuidance,
+      agentMessage: request.chat?.agent_message === true,
     }),
     // Never "" for a harness: that is the explicit session-reset marker.
     session_id: session_id || undefined,
