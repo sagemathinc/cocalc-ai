@@ -84,7 +84,7 @@ import {
   isAllowedPublicViewerSourceHost,
   resolvePublicViewerDns,
 } from "@cocalc/util/public-viewer-origin";
-import { isValidUUID } from "@cocalc/util/misc";
+import { isValidUUID, uuidsha1 } from "@cocalc/util/misc";
 import { membershipPackageCoversCourseProject } from "@cocalc/util/membership-package-product";
 import { projectStartFailureFromError } from "@cocalc/util/project-start-errors";
 import type { CodexUsageStatusInfo } from "@cocalc/conat/hub/api/system";
@@ -130,6 +130,12 @@ import {
   rehomeProject as rehomeProjectControl,
 } from "@cocalc/server/projects/rehome";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import {
+  BULK_PROJECT_CONTROL_CONCURRENCY,
+  MAX_BULK_PROJECT_CONTROL,
+  type BulkProjectControlResult,
+} from "@cocalc/conat/hub/api/projects";
+import type { HubApiCall } from "./edge-routing";
 import type {
   ProjectRehomeOperationSummary,
   ProjectRehomeResponse,
@@ -4895,6 +4901,107 @@ export async function restart({
     restart_request_id,
     wait,
   });
+}
+
+// Bulk stop and restart, for the projects list. Each project gets its own
+// ordinary call, run where it would run if made directly (routed to the
+// project's owning bay, with that bay's checks), a few at a time: stops of
+// projects on one host contend there.
+
+function bulkProjectIds(project_ids: unknown): string[] {
+  if (!Array.isArray(project_ids)) {
+    throw new Error("project_ids must be an array");
+  }
+  const ids = [...new Set(project_ids.map((id) => `${id ?? ""}`.trim()))];
+  if (ids.length > MAX_BULK_PROJECT_CONTROL) {
+    throw new Error(
+      `at most ${MAX_BULK_PROJECT_CONTROL} projects may be stopped or restarted at once`,
+    );
+  }
+  for (const id of ids) {
+    if (!isValidUUID(id)) {
+      throw new Error(`invalid project id '${id}'`);
+    }
+  }
+  return ids;
+}
+
+async function runBulkProjectControl(
+  project_ids: string[],
+  call: (project_id: string) => HubApiCall,
+  result: (project_id: string, value: any) => BulkProjectControlResult = (
+    project_id,
+  ) => ({ project_id, ok: true }),
+): Promise<BulkProjectControlResult[]> {
+  const { executeHubApiCall } = await import("./edge-routing");
+  return await mapWithConcurrency(
+    project_ids,
+    BULK_PROJECT_CONTROL_CONCURRENCY,
+    async (project_id) => {
+      try {
+        return result(project_id, await executeHubApiCall(call(project_id)));
+      } catch (err) {
+        const code = (err as { code?: unknown })?.code;
+        return {
+          project_id,
+          ok: false,
+          error: err instanceof Error ? err.message : `${err}`,
+          ...(typeof code === "string" || typeof code === "number"
+            ? { code }
+            : {}),
+        };
+      }
+    },
+  );
+}
+
+export async function stopProjects({
+  account_id,
+  project_ids,
+}: {
+  account_id: string;
+  project_ids: string[];
+}): Promise<BulkProjectControlResult[]> {
+  if (!account_id) throw new Error("must be signed in");
+  return await runBulkProjectControl(
+    bulkProjectIds(project_ids),
+    (project_id) => ({
+      name: "projects.stop",
+      args: [{ project_id }],
+      account_id,
+    }),
+  );
+}
+
+export async function restartProjects({
+  account_id,
+  project_ids,
+  request_id,
+}: {
+  account_id: string;
+  project_ids: string[];
+  request_id: string;
+}): Promise<BulkProjectControlResult[]> {
+  if (!account_id) throw new Error("must be signed in");
+  if (!isValidUUID(request_id)) {
+    throw new Error("request_id must be a UUID");
+  }
+  return await runBulkProjectControl(
+    bulkProjectIds(project_ids),
+    (project_id) => ({
+      name: "projects.restart",
+      args: [
+        {
+          project_id,
+          // Stable for a retry of this bulk action, distinct per project.
+          restart_request_id: uuidsha1(`${request_id}:${project_id}`),
+          wait: false,
+        },
+      ],
+      account_id,
+    }),
+    (project_id, op) => ({ project_id, ok: true, op_id: op?.op_id }),
+  );
 }
 
 async function assertProjectAssignedToHostForStart({

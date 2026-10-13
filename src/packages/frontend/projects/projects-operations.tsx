@@ -26,6 +26,10 @@ import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { setProjectRootfsImage } from "@cocalc/frontend/rootfs/manifest";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  bulkProjectControlTimeout,
+  type BulkProjectControlResult,
+} from "@cocalc/conat/hub/api/projects";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -119,6 +123,13 @@ export function shouldSendProjectStop(project: any, hostInfo?: any): boolean {
   );
 }
 
+// Restarting a stopped project starts it.
+export function shouldSendProjectRestart(project: any): boolean {
+  const state = `${project?.getIn?.(["state", "state"]) ?? ""}`;
+  const hostId = `${project?.get?.("host_id") ?? ""}`.trim();
+  return !!hostId && state !== "deleting";
+}
+
 function shouldSendProjectStart(project: any): boolean {
   const state = `${project?.getIn?.(["state", "state"]) ?? ""}`;
   const hostId = `${project?.get?.("host_id") ?? ""}`.trim();
@@ -147,6 +158,9 @@ export function ProjectsOperations({
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const [bulkRootfsUpgradeRunning, setBulkRootfsUpgradeRunning] =
     useState(false);
+  const [bulkControlRunning, setBulkControlRunning] = useState<
+    "stop" | "restart" | null
+  >(null);
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
@@ -339,6 +353,18 @@ export function ProjectsOperations({
       okButtonProps: { danger: true },
       onOk: () => {
         void stopSelectedProjects(projectIds);
+      },
+    });
+  }
+
+  function confirmSelectedRestart() {
+    const projectIds = selected_project_ids.slice();
+    Modal.confirm({
+      title: `Restart selected ${projectsLabelLower}`,
+      content: `Restart ${projectIds.length} selected ${projectsLabelLower}? Stopped ones are started.`,
+      okText: "Restart",
+      onOk: () => {
+        void restartSelectedProjects(projectIds);
       },
     });
   }
@@ -548,44 +574,64 @@ export function ProjectsOperations({
     }
   }
 
-  async function stopSelectedProjects(projectIds: string[]) {
-    const results = await mapWithConcurrency(
-      projectIds,
-      BULK_PROJECT_CONTROL_CONCURRENCY,
-      async (project_id) => {
-        const project = project_map?.get(project_id);
-        const hostId = project?.get?.("host_id");
-        const hostInfo = hostId ? host_info?.get(hostId) : undefined;
-        if (!shouldSendProjectStop(project, hostInfo)) {
-          return { project_id, ok: true as const, skipped: true as const };
-        }
-        try {
-          await actions.stop_project(project_id);
-          return { project_id, ok: true as const };
-        } catch (err) {
-          return { project_id, ok: false as const, error: `${err}` };
-        }
-      },
-    );
-    const succeeded = results
-      .filter((result) => result.ok)
-      .map((result) => result.project_id);
-    const errors: Array<{ project_id: string; error: string }> =
-      results.flatMap((result) =>
-        result.ok
-          ? []
-          : [{ project_id: result.project_id, error: result.error }],
+  // Stop or restart with one bulk call. Stops take several seconds each on
+  // their host, so this says up front that it may take a while.
+  async function controlSelectedProjects(
+    kind: "stop" | "restart",
+    projectIds: string[],
+  ) {
+    const eligible = projectIds.filter((project_id) => {
+      const project = project_map?.get(project_id);
+      if (kind === "restart") return shouldSendProjectRestart(project);
+      const hostId = project?.get?.("host_id");
+      return shouldSendProjectStop(
+        project,
+        hostId ? host_info?.get(hostId) : undefined,
       );
+    });
+    const skipped = projectIds.length - eligible.length;
+    const verb = kind === "stop" ? "Stopped" : "Restarted";
+    if (eligible.length === 0) {
+      alert_message({
+        type: "info",
+        message: `Nothing to ${kind}: none of the selected projects ${
+          kind === "stop" ? "is running" : "is on a host"
+        }.`,
+      });
+      return;
+    }
+    setBulkControlRunning(kind);
+    alert_message({
+      type: "info",
+      message:
+        kind === "stop"
+          ? `Stopping ${eligible.length} project(s); this can take up to ${Math.round(
+              bulkProjectControlTimeout(eligible.length) / 1000,
+            )} seconds.`
+          : `Restarting ${eligible.length} project(s)...`,
+    });
+    let results: BulkProjectControlResult[];
+    try {
+      results =
+        kind === "stop"
+          ? await actions.stop_projects(eligible)
+          : await actions.restart_projects(eligible);
+    } finally {
+      setBulkControlRunning(null);
+    }
+    const succeeded = results.filter((result) => result.ok).length;
+    const errors = results.filter((result) => !result.ok);
     alert_message({
       type: errors.length > 0 ? "warning" : "success",
       message:
-        errors.length > 0
-          ? `Stopped ${succeeded.length} project(s); ${errors.length} failed.`
-          : `Stopped ${succeeded.length} selected project(s).`,
+        `${verb} ${succeeded} project(s)` +
+        (errors.length > 0 ? `; ${errors.length} failed` : "") +
+        (skipped > 0 ? `; ${skipped} skipped` : "") +
+        ".",
     });
     if (errors.length > 0) {
       Modal.error({
-        title: "Some projects could not be stopped",
+        title: `Some projects could not be ${kind === "stop" ? "stopped" : "restarted"}`,
         content: (
           <ul>
             {errors.map((result) => (
@@ -597,6 +643,14 @@ export function ProjectsOperations({
         ),
       });
     }
+  }
+
+  async function stopSelectedProjects(projectIds: string[]) {
+    await controlSelectedProjects("stop", projectIds);
+  }
+
+  async function restartSelectedProjects(projectIds: string[]) {
+    await controlSelectedProjects("restart", projectIds);
   }
 
   function openSelectedArchive() {
@@ -887,13 +941,25 @@ export function ProjectsOperations({
             <Button
               size="small"
               icon={<Icon name="play" />}
+              disabled={bulkControlRunning != null}
               onClick={confirmSelectedStart}
             >
               Start
             </Button>
             <Button
               size="small"
+              icon={<Icon name="redo" />}
+              disabled={bulkControlRunning === "stop"}
+              loading={bulkControlRunning === "restart"}
+              onClick={confirmSelectedRestart}
+            >
+              Restart
+            </Button>
+            <Button
+              size="small"
               icon={<Icon name="stop" />}
+              disabled={bulkControlRunning === "restart"}
+              loading={bulkControlRunning === "stop"}
               onClick={confirmSelectedStop}
             >
               Stop

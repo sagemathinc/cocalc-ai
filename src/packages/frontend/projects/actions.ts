@@ -35,6 +35,11 @@ import type {
   AccountProjectListWindowSort,
   ProjectMetadataPatch,
 } from "@cocalc/conat/hub/api/projects";
+import {
+  bulkProjectControlTimeout,
+  MAX_BULK_PROJECT_CONTROL,
+  type BulkProjectControlResult,
+} from "@cocalc/conat/hub/api/projects";
 import { defaults, is_valid_uuid_string, uuid } from "@cocalc/util/misc";
 import { project_redux_name } from "@cocalc/util/redux/name";
 import { ProjectsState, store } from "./store";
@@ -5251,6 +5256,130 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  // Stop several projects with one stopProjects call per
+  // MAX_BULK_PROJECT_CONTROL projects. Each result is shown on its project as
+  // a single stop_project would; per-project failures are returned, not
+  // thrown.
+  stop_projects = async (
+    project_ids: string[],
+  ): Promise<BulkProjectControlResult[]> => {
+    await ensureProjectReduxRuntime();
+    const t0 = webapp_client.server_time().getTime();
+    for (const project_id of project_ids) {
+      void this.project_log(project_id, { event: "project_stop_requested" });
+    }
+    const results = await this.bulkProjectControl(
+      project_ids,
+      async (chunk) =>
+        await webapp_client.conat_client.hub.projects.stopProjects({
+          project_ids: chunk,
+          timeout: bulkProjectControlTimeout(chunk.length),
+        }),
+    );
+    for (const result of results) {
+      const { project_id } = result;
+      const actions = redux.getProjectActions(project_id);
+      if (!result.ok) {
+        actions?.setState({
+          control_error: `Error stopping project -- ${result.error}`,
+        });
+        continue;
+      }
+      actions?.setState({ control_error: "" });
+      this.optimisticProjectStateUpdate(project_id, "opened");
+      this.scheduleProjectedProjectReconcile(project_id, "project-stop");
+      void this.project_log(project_id, {
+        event: "project_stopped",
+        duration_ms: webapp_client.server_time().getTime() - t0,
+        ...store.classify_project(project_id),
+      });
+    }
+    return results;
+  };
+
+  // Restart several projects with one restartProjects call per
+  // MAX_BULK_PROJECT_CONTROL projects; it returns once each restart is
+  // queued. Per-project failures are returned, not thrown.
+  restart_projects = async (
+    project_ids: string[],
+  ): Promise<BulkProjectControlResult[]> => {
+    await ensureProjectReduxRuntime();
+    const request_id = uuid();
+    const before = new globalThis.Map<string, string | undefined>();
+    for (const project_id of project_ids) {
+      before.set(
+        project_id,
+        store.getIn(["project_map", project_id, "state", "state"]) as
+          | string
+          | undefined,
+      );
+      this.projectLifecycleReconcileTokens[project_id] =
+        (this.projectLifecycleReconcileTokens[project_id] ?? 0) + 1;
+      void this.project_log(project_id, {
+        event: "project_restart_requested",
+      });
+      this.optimisticProjectStateUpdate(project_id, "starting");
+    }
+    const results = await this.bulkProjectControl(
+      project_ids,
+      async (chunk) =>
+        await webapp_client.conat_client.hub.projects.restartProjects({
+          project_ids: chunk,
+          request_id,
+          timeout: bulkProjectControlTimeout(chunk.length),
+        }),
+    );
+    for (const result of results) {
+      const { project_id } = result;
+      const actions = redux.getProjectActions(project_id);
+      if (!result.ok) {
+        this.optimisticProjectStateUpdate(
+          project_id,
+          before.get(project_id) ?? "running",
+        );
+        actions?.setState({
+          control_error: `Error restarting project -- ${result.error}`,
+        });
+        continue;
+      }
+      actions?.setState({ control_error: "" });
+      if (result.op_id) {
+        actions?.trackStartOp({
+          op_id: result.op_id,
+          scope_type: "project",
+          scope_id: project_id,
+        });
+      }
+      this.scheduleProjectLifecycleReconcile({
+        project_id,
+        optimisticState: "starting",
+        reason: "restart_projects",
+      });
+    }
+    return results;
+  };
+
+  // Run a bulk project control call per chunk of at most
+  // MAX_BULK_PROJECT_CONTROL projects. A chunk whose call fails as a whole
+  // reports that error for each of its projects.
+  private bulkProjectControl = async (
+    project_ids: string[],
+    call: (chunk: string[]) => Promise<BulkProjectControlResult[]>,
+  ): Promise<BulkProjectControlResult[]> => {
+    const results: BulkProjectControlResult[] = [];
+    for (let i = 0; i < project_ids.length; i += MAX_BULK_PROJECT_CONTROL) {
+      const chunk = project_ids.slice(i, i + MAX_BULK_PROJECT_CONTROL);
+      try {
+        results.push(...(await call(chunk)));
+      } catch (err) {
+        for (const project_id of chunk) {
+          results.push({ project_id, ok: false, error: `${err}` });
+        }
+      }
+    }
+    return results;
+  };
 
   private createBackupAndWaitForArchive = async (
     project_id: string,

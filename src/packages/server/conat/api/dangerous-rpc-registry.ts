@@ -1231,6 +1231,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.restartProjects": {
+    decision: "fresh-auth-not-required",
+    reason: "runs projects.restart for each project",
+  },
   "projects.restoreBackup": {
     decision: "fresh-auth-not-required",
     reason:
@@ -1340,6 +1344,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "projects.stop": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.stopProjects": {
+    decision: "fresh-auth-not-required",
+    reason: "runs projects.stop for each project",
   },
   "projects.updateAuthorizedKeysOnHost": {
     decision: "internal-auth-only",
