@@ -413,6 +413,75 @@ Table({
   },
 });
 
+// Agent memory, in the account's home bay: one row per account (on/off,
+// namespaces and which projects see them) and one row per note. Descriptions
+// and bodies are encrypted with the site's secret-storage key.
+Table({
+  name: "agent_memory_accounts",
+  rules: {
+    primary_key: "account_id",
+  },
+  fields: {
+    account_id: required("uuid", "Account whose agent memory this is."),
+    enabled: {
+      ...required("boolean", "Whether agents may use the memory."),
+      pg_default: "false",
+    },
+    namespaces: {
+      ...required("map", "Namespaces: [{name, description?}]."),
+      pg_type: "JSONB",
+      pg_default: "'[]'::jsonb",
+    },
+    projects: {
+      ...required("map", "project_id -> attached namespace names."),
+      pg_type: "JSONB",
+      pg_default: "'{}'::jsonb",
+    },
+    migrated_at: timestamp(
+      "When notes of the first version's single record were moved here.",
+    ),
+    updated_at: created("Last settings change."),
+  },
+});
+
+Table({
+  name: "agent_memory_notes",
+  rules: {
+    primary_key: ["account_id", "namespace", "name"],
+    pg_custom_indexes: [
+      {
+        name: "agent_memory_notes_recent",
+        query: "(account_id,namespace,updated_at)",
+      },
+    ],
+  },
+  fields: {
+    account_id: required("uuid", "Account whose note this is."),
+    namespace: required(
+      "string",
+      "'global' or one of the account's namespaces.",
+    ),
+    name: required("string", "Kebab-case name, unique in its namespace."),
+    description: required("string", "Encrypted one-line description."),
+    body: required("string", "Encrypted note text."),
+    bytes: {
+      ...required("integer", "Plain-text bytes of description and body."),
+      pg_default: "0",
+    },
+    project_id: {
+      type: "uuid",
+      desc: "Project the note was last written from; ranks it first there.",
+    },
+    created_at: created("When the note was first saved."),
+    updated_at: created("Last write."),
+    last_read_at: timestamp("Last time an agent read the note."),
+    read_count: {
+      ...required("integer", "Times an agent read the note."),
+      pg_default: "0",
+    },
+  },
+});
+
 // Per-account agent memory usage counters in the account's home bay. One row
 // per account; updated atomically by every hub process in the bay.
 Table({

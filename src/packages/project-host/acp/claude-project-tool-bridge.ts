@@ -23,7 +23,10 @@ import {
   validPath,
   writeProjectFile,
 } from "./claude-project-file-tools";
-import { validateMemoryName } from "@cocalc/conat/agents/memory";
+import {
+  parseMemoryRef,
+  validateMemoryNamespace,
+} from "@cocalc/conat/agents/memory";
 
 // Room for project_write_file content (1 MB, JSON-escaped).
 const MAX_REQUEST_BYTES = 2_500_000;
@@ -113,14 +116,25 @@ export async function runAgentMemoryTool(
 ): Promise<unknown> {
   const b64 = (value: unknown) =>
     Buffer.from(String(value ?? ""), "utf8").toString("base64");
+  // `name`, `namespace/name` or `global/name`, validated before the shell.
+  const name = () => {
+    parseMemoryRef(args.name);
+    return shellQuote(String(args.name));
+  };
   let script: string;
-  if (tool === "memory_list") script = `${COCALC_CLI} project chat memory list`;
+  if (tool === "memory_list")
+    script = `${COCALC_CLI} project chat memory list${args.namespace == null ? "" : ` --namespace ${shellQuote(validateMemoryNamespace(args.namespace))}`}`;
   else if (tool === "memory_read")
-    script = `${COCALC_CLI} project chat memory read ${shellQuote(validateMemoryName(args.name))}`;
-  else if (tool === "memory_delete")
-    script = `${COCALC_CLI} project chat memory delete ${shellQuote(validateMemoryName(args.name))}`;
+    script = `${COCALC_CLI} project chat memory read ${name()}`;
+  else if (tool === "memory_search") {
+    const limit = args.limit == null ? "" : ` --limit ${Number(args.limit)}`;
+    if (args.limit != null && !Number.isInteger(args.limit))
+      throw Error("limit must be an integer");
+    script = `${COCALC_CLI} project chat memory search${limit} -- "$(printf %s '${b64(args.query)}' | base64 -d)"`;
+  } else if (tool === "memory_delete")
+    script = `${COCALC_CLI} project chat memory delete ${name()}`;
   else if (tool === "memory_write")
-    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${shellQuote(validateMemoryName(args.name))} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin`;
+    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${name()} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin`;
   else throw Error("Unsupported project tool");
   const out = await runCaptured(execute, script, signal, 1_000_000);
   let parsed: any;

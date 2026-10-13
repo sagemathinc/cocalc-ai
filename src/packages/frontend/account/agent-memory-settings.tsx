@@ -4,22 +4,37 @@
  */
 
 // Account-wide agent memory: opt-in toggle with the security disclosure,
-// status, and note review/deletion. Shown on Settings > AI and from the
-// Claude Code and Codex settings modals.
+// status, export, namespaces (and the projects that see them), and note
+// review. Shown on Settings > AI and from the Claude Code and Codex settings
+// modals.
 
-import { Alert, Button, Collapse, Modal, Space, Tag, Typography } from "antd";
-import { useCallback, useEffect, useState } from "react";
-import type { AgentMemoryNote } from "@cocalc/conat/agents/memory";
+import {
+  Alert,
+  Button,
+  Collapse,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AGENT_MEMORY_GLOBAL,
+  AGENT_MEMORY_UNUSED_DAYS,
+  isUnusedMemoryNote,
+  memoryRef,
+  type AgentMemoryNoteSummary,
+  type AgentMemoryStatus,
+} from "@cocalc/conat/agents/memory";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { personalAgentApi } from "@cocalc/frontend/agents/api";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
-type Status = {
-  enabled: boolean;
-  notes: number;
-  bytes: number;
-  updated_at?: string;
-};
+type Status = AgentMemoryStatus;
 
 // Keep in sync with the reviewed security model (agent-memory-design-v2.md).
 export function AgentMemoryDisclosure() {
@@ -27,16 +42,18 @@ export function AgentMemoryDisclosure() {
     <div>
       <p>
         When on, your agents can save short notes that they see again in future
-        sessions, in all of your projects. This includes Claude and Codex, and
-        any other agent runtime you set up that can run the CoCalc CLI.
+        sessions. This includes Claude and Codex, and any other agent runtime
+        you set up that can run the CoCalc CLI.
       </p>
       <ul style={{ paddingLeft: 20 }}>
         <li>
-          <b>Your memory follows you into every project.</b> A note saved while
-          working in one project can appear in sessions in your other projects,
-          and collaborators on those projects can see it in agent activity, logs
-          and conversations. Do not use memory for anything you would not share
-          with collaborators on all your projects.
+          <b>Global notes follow you into every project.</b> A global note can
+          appear in sessions in all your projects, and collaborators on those
+          projects can see it in agent activity, logs and conversations. Notes
+          in a namespace appear only in the projects you attach to it; a project
+          with no namespace sees only your global notes. Do not save anything
+          you would not share with the collaborators of the projects that can
+          see it.
         </li>
         <li>
           <b>Agents decide what to save.</b> Content an agent reads (files, web
@@ -58,8 +75,9 @@ export function AgentMemoryDisclosure() {
           tokens, passwords) are rejected, but detection is not complete.
         </li>
         <li>
-          <b>Limits.</b> At most 200 notes and 400 KB. Agent use of memory is
-          rate-limited per account.
+          <b>Limits.</b> At most 2,000 notes (500 per namespace) and 8 MB. Each
+          turn lists only the most relevant notes; agents search for the rest.
+          Agent use of memory is rate-limited per account.
         </li>
       </ul>
       <p style={{ marginBottom: 0 }}>
@@ -99,7 +117,9 @@ export function useAgentMemoryStatus() {
 }
 
 function formatBytes(bytes: number) {
-  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function agentMemorySummary(status?: Status): string {
@@ -109,12 +129,30 @@ export function agentMemorySummary(status?: Status): string {
     : "Memory: off";
 }
 
+function download(markdown: string) {
+  const name = `agent-memory-${new Date().toISOString().slice(0, 10)}.md`;
+  if (typeof URL.createObjectURL !== "function") return;
+  const url = URL.createObjectURL(
+    new Blob([markdown], { type: "text/markdown" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function AgentMemoryPanel() {
   const { status, error, refresh } = useAgentMemoryStatus();
-  const [notes, setNotes] = useState<AgentMemoryNote[] | undefined>();
+  const [notes, setNotes] = useState<AgentMemoryNoteSummary[] | undefined>();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const api = () => personalAgentApi();
 
+  const loadNotes = async () => {
+    const result = await api().manageAgentMemory({ op: "list" });
+    setNotes(result.notes_list ?? []);
+  };
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setActionError("");
@@ -128,10 +166,6 @@ export function AgentMemoryPanel() {
       setBusy(false);
     }
   };
-  const loadNotes = async () => {
-    const result = await personalAgentApi().manageAgentMemory({ op: "list" });
-    setNotes(result.notes_list ?? []);
-  };
 
   const enable = () =>
     Modal.confirm({
@@ -142,18 +176,16 @@ export function AgentMemoryPanel() {
       cancelText: "Cancel",
       onOk: () =>
         act(() =>
-          personalAgentApi().manageAgentMemory({
-            op: "set-enabled",
-            enabled: true,
-          }),
+          api().manageAgentMemory({ op: "set-enabled", enabled: true }),
         ),
     });
 
   return (
     <Space orientation="vertical" style={{ width: "100%", maxWidth: 1000 }}>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-        Agent memory lets Claude and Codex keep short notes across sessions and
-        projects. It is off by default.
+        Agent memory lets Claude and Codex keep short notes across sessions.
+        Global notes are seen in every project; notes in a namespace only in the
+        projects you attach to it. It is off by default.
       </Typography.Paragraph>
       {error && (
         <Alert
@@ -169,15 +201,11 @@ export function AgentMemoryPanel() {
                 Modal.confirm({
                   title: "Reset agent memory?",
                   content:
-                    "Your saved memory could not be read. Resetting deletes all notes and turns memory off.",
+                    "Your saved memory could not be read. Resetting deletes all notes.",
                   okText: "Reset",
                   okButtonProps: { danger: true },
                   onOk: () =>
-                    act(() =>
-                      personalAgentApi().manageAgentMemory({
-                        op: "delete-all",
-                      }),
-                    ),
+                    act(() => api().manageAgentMemory({ op: "delete-all" })),
                 })
               }
             >
@@ -201,7 +229,7 @@ export function AgentMemoryPanel() {
               disabled={busy}
               onClick={() =>
                 act(() =>
-                  personalAgentApi().manageAgentMemory({
+                  api().manageAgentMemory({
                     op: "set-enabled",
                     enabled: false,
                   }),
@@ -221,19 +249,34 @@ export function AgentMemoryPanel() {
           >
             Review notes
           </Button>
+          <Tooltip title="Download every note as one Markdown file">
+            <Button
+              icon={<Icon name="download" />}
+              disabled={busy || !status.notes}
+              onClick={() =>
+                act(async () => {
+                  const { markdown } = await api().manageAgentMemory({
+                    op: "export",
+                  });
+                  download(markdown);
+                })
+              }
+            >
+              Export
+            </Button>
+          </Tooltip>
           <Button
             danger
             disabled={busy || !status.notes}
             onClick={() =>
               Modal.confirm({
                 title: "Delete all memory notes?",
-                content: "This permanently deletes every saved note.",
+                content:
+                  "This permanently deletes every saved note, in every namespace.",
                 okText: "Delete all",
                 okButtonProps: { danger: true },
                 onOk: () =>
-                  act(() =>
-                    personalAgentApi().manageAgentMemory({ op: "delete-all" }),
-                  ),
+                  act(() => api().manageAgentMemory({ op: "delete-all" })),
               })
             }
           >
@@ -241,47 +284,346 @@ export function AgentMemoryPanel() {
           </Button>
         </Space>
       )}
-      {notes && (
-        <Collapse
-          size="small"
-          items={notes.map((note) => ({
-            key: note.name,
-            label: (
-              <span>
-                <b>{note.name}</b>
-                <span style={{ color: UI_COLORS.secondary }}>
-                  {" "}
-                  — {note.description}
-                </span>
-              </span>
-            ),
-            extra: (
-              <Button
-                size="small"
-                type="text"
-                danger
-                aria-label={`Delete note ${note.name}`}
-                icon={<Icon name="trash" />}
-                disabled={busy}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void act(() =>
-                    personalAgentApi().manageAgentMemory({
-                      op: "delete",
-                      name: note.name,
-                    }),
-                  );
-                }}
-              />
-            ),
-            children: (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-                {note.body}
-              </pre>
-            ),
-          }))}
-        />
+      {status && <Namespaces status={status} busy={busy} act={act} />}
+      {notes && status && (
+        <Notes notes={notes} status={status} busy={busy} act={act} />
       )}
+    </Space>
+  );
+}
+
+type Act = (fn: () => Promise<unknown>) => Promise<void>;
+
+function useProjectOptions() {
+  const projectMap = useTypedRedux("projects", "project_map");
+  return useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    projectMap?.forEach((project: any, project_id: string) => {
+      if (project?.get?.("deleted")) return;
+      options.push({
+        value: project_id,
+        label: `${project?.get?.("title") ?? project_id}`,
+      });
+    });
+    return options.sort((a, b) => a.label.localeCompare(b.label));
+  }, [projectMap]);
+}
+
+function Namespaces({
+  status,
+  busy,
+  act,
+}: {
+  status: Status;
+  busy: boolean;
+  act: Act;
+}) {
+  const projectOptions = useProjectOptions();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const namespaces = status.namespaces ?? [];
+  const projects = status.projects ?? {};
+  const api = () => personalAgentApi();
+
+  // Which projects see a namespace, and how to change that one project at a time.
+  const attached = (ns: string) =>
+    Object.entries(projects)
+      .filter(([, list]) => list.includes(ns))
+      .map(([project_id]) => project_id);
+  const setAttached = (ns: string, next: string[]) =>
+    act(async () => {
+      const before = new Set(attached(ns));
+      const after = new Set(next);
+      for (const project_id of new Set([...before, ...after])) {
+        if (before.has(project_id) === after.has(project_id)) continue;
+        const list = projects[project_id] ?? [];
+        await api().manageAgentMemory({
+          op: "set-project-namespaces",
+          project_id,
+          namespaces: after.has(project_id)
+            ? [...list, ns]
+            : list.filter((n) => n !== ns),
+        });
+      }
+    });
+
+  return (
+    <Collapse
+      size="small"
+      items={[
+        {
+          key: "namespaces",
+          label: (
+            <span>
+              Namespaces{" "}
+              <span style={{ color: UI_COLORS.secondary }}>
+                ({namespaces.length}; {status.global_notes ?? 0} global notes)
+              </span>
+            </span>
+          ),
+          children: (
+            <Space orientation="vertical" style={{ width: "100%" }}>
+              <Typography.Text type="secondary">
+                A namespace keeps notes about one area of work (for example one
+                product) out of unrelated projects. Its description helps agents
+                decide where a note belongs. Several projects can share a
+                namespace, and a project can have several.
+              </Typography.Text>
+              {namespaces.map((ns) => (
+                <div
+                  key={ns.name}
+                  style={{
+                    borderTop: `1px solid ${UI_COLORS.border}`,
+                    paddingTop: 8,
+                  }}
+                >
+                  <Space wrap style={{ width: "100%" }}>
+                    <b>{ns.name}</b>
+                    <span style={{ color: UI_COLORS.secondary }}>
+                      {ns.notes} {ns.notes === 1 ? "note" : "notes"}
+                    </span>
+                    <Input
+                      size="small"
+                      style={{ width: 360 }}
+                      placeholder="Description (optional)"
+                      aria-label={`Description of ${ns.name}`}
+                      value={drafts[ns.name] ?? ns.description ?? ""}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setDrafts({ ...drafts, [ns.name]: e.target.value })
+                      }
+                      onBlur={() => {
+                        const value = drafts[ns.name];
+                        if (value == null || value === (ns.description ?? ""))
+                          return;
+                        void act(() =>
+                          api().manageAgentMemory({
+                            op: "namespace-save",
+                            name: ns.name,
+                            description: value,
+                          }),
+                        );
+                      }}
+                    />
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      aria-label={`Delete namespace ${ns.name}`}
+                      icon={<Icon name="trash" />}
+                      disabled={busy}
+                      onClick={() =>
+                        Modal.confirm({
+                          title: `Delete namespace ${ns.name}?`,
+                          content: `This permanently deletes its ${ns.notes} ${ns.notes === 1 ? "note" : "notes"}. To keep them, move them to global or another namespace first.`,
+                          okText: "Delete",
+                          okButtonProps: { danger: true },
+                          onOk: () =>
+                            act(() =>
+                              api().manageAgentMemory({
+                                op: "namespace-delete",
+                                name: ns.name,
+                              }),
+                            ),
+                        })
+                      }
+                    />
+                  </Space>
+                  <Select
+                    mode="multiple"
+                    size="small"
+                    style={{ width: "100%", marginTop: 6 }}
+                    placeholder="Projects that see this namespace"
+                    aria-label={`Projects that see ${ns.name}`}
+                    options={projectOptions}
+                    optionFilterProp="label"
+                    value={attached(ns.name)}
+                    disabled={busy}
+                    onChange={(next: string[]) => setAttached(ns.name, next)}
+                  />
+                </div>
+              ))}
+              <Space wrap>
+                <Input
+                  size="small"
+                  style={{ width: 180 }}
+                  placeholder="new-namespace"
+                  aria-label="New namespace name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value.trim().toLowerCase())}
+                />
+                <Input
+                  size="small"
+                  style={{ width: 360 }}
+                  placeholder="Description (optional)"
+                  aria-label="New namespace description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+                <Button
+                  size="small"
+                  disabled={busy || !name}
+                  onClick={() =>
+                    act(async () => {
+                      await api().manageAgentMemory({
+                        op: "namespace-save",
+                        name,
+                        description,
+                      });
+                      setName("");
+                      setDescription("");
+                    })
+                  }
+                >
+                  Add namespace
+                </Button>
+              </Space>
+            </Space>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+function NoteBody({ note }: { note: AgentMemoryNoteSummary }) {
+  const [body, setBody] = useState<string | undefined>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    personalAgentApi()
+      .manageAgentMemory({
+        op: "read",
+        namespace: note.namespace,
+        name: note.name,
+      })
+      .then((full: any) => setBody(full.body))
+      .catch((err: unknown) => setError(`${err}`));
+  }, [note.namespace, note.name, note.updated_at]);
+  if (error) return <Alert type="error" showIcon title={error} />;
+  return <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{body ?? "…"}</pre>;
+}
+
+function Notes({
+  notes,
+  status,
+  busy,
+  act,
+}: {
+  notes: AgentMemoryNoteSummary[];
+  status: Status;
+  busy: boolean;
+  act: Act;
+}) {
+  const [filter, setFilter] = useState("");
+  const api = () => personalAgentApi();
+  const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = notes.filter((note) => {
+    const text =
+      `${note.namespace}/${note.name} ${note.description}`.toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+  const groups = [
+    AGENT_MEMORY_GLOBAL,
+    ...(status.namespaces ?? []).map((ns) => ns.name),
+  ];
+  const moveOptions = groups.map((ns) => ({
+    value: ns,
+    label: ns === AGENT_MEMORY_GLOBAL ? "global (every project)" : ns,
+  }));
+  return (
+    <Space orientation="vertical" style={{ width: "100%" }}>
+      <Input
+        allowClear
+        placeholder="Filter notes by name or description"
+        aria-label="Filter notes"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+      />
+      {groups.map((ns) => {
+        const inGroup = shown
+          .filter((note) => note.namespace === ns)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        if (!inGroup.length) return null;
+        return (
+          <div key={ns}>
+            <Typography.Text strong>
+              {ns === AGENT_MEMORY_GLOBAL ? "Global (every project)" : ns}
+            </Typography.Text>{" "}
+            <span style={{ color: UI_COLORS.secondary }}>
+              ({inGroup.length})
+            </span>
+            <Collapse
+              size="small"
+              destroyOnHidden
+              items={inGroup.map((note) => ({
+                key: memoryRef(note.namespace, note.name),
+                label: (
+                  <span>
+                    <b>{note.name}</b>
+                    <span style={{ color: UI_COLORS.secondary }}>
+                      {" "}
+                      — {note.description}
+                    </span>{" "}
+                    {isUnusedMemoryNote(note) && (
+                      <Tooltip
+                        title={`Not read or changed by an agent in ${AGENT_MEMORY_UNUSED_DAYS} days`}
+                      >
+                        <Tag>unused</Tag>
+                      </Tooltip>
+                    )}
+                  </span>
+                ),
+                extra: (
+                  <Space size={4} onClick={(event) => event.stopPropagation()}>
+                    {groups.length > 1 && (
+                      <Select
+                        size="small"
+                        style={{ width: 150 }}
+                        aria-label={`Move note ${note.name}`}
+                        placeholder="Move to…"
+                        value={null}
+                        disabled={busy}
+                        options={moveOptions.filter(
+                          (option) => option.value !== note.namespace,
+                        )}
+                        onChange={(to: string) =>
+                          act(() =>
+                            api().manageAgentMemory({
+                              op: "move",
+                              namespace: note.namespace,
+                              name: note.name,
+                              to,
+                            }),
+                          )
+                        }
+                      />
+                    )}
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      aria-label={`Delete note ${note.name}`}
+                      icon={<Icon name="trash" />}
+                      disabled={busy}
+                      onClick={() =>
+                        act(() =>
+                          api().manageAgentMemory({
+                            op: "delete",
+                            namespace: note.namespace,
+                            name: note.name,
+                          }),
+                        )
+                      }
+                    />
+                  </Space>
+                ),
+                children: <NoteBody note={note} />,
+              }))}
+            />
+          </div>
+        );
+      })}
     </Space>
   );
 }

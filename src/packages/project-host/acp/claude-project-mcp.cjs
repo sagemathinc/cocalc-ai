@@ -179,10 +179,35 @@ const tools = [
   {
     name: "memory_list",
     description:
-      "List your persistent memory notes (name, one-line description, last update). Memory belongs to the account this turn runs as and follows it across projects and sessions. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
+      "List the persistent memory notes this project sees (name, one-line description, last update): global notes (every project of the account) and notes in the namespaces the owner attached to this project. Memory belongs to the account this turn runs as. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        namespace: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,31}$",
+          description: "Only this namespace, or global",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_search",
+    description:
+      "Find memory notes containing all of the given words in their name, description or text. Use it for notes not shown in the turn's memory list.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Words to look for" },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "At most this many results (default 20)",
+        },
+      },
+      required: ["query"],
       additionalProperties: false,
     },
   },
@@ -194,8 +219,9 @@ const tools = [
       properties: {
         name: {
           type: "string",
-          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
-          description: "Short kebab-case note name, such as deploy-lite4b",
+          pattern: "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+          description:
+            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed",
         },
       },
       required: ["name"],
@@ -205,14 +231,15 @@ const tools = [
   {
     name: "memory_write",
     description:
-      "Create or replace one memory note: a single fact worth knowing in future sessions (user preferences and corrections, project conventions, how to build/test/deploy, lessons from mistakes). Reuse an existing name to update a note rather than adding a near-duplicate. Never store secrets or credentials. Body up to 8000 characters.",
+      "Create or replace one memory note: a single fact worth knowing in future sessions (user preferences and corrections, project conventions, how to build/test/deploy, lessons from mistakes). Reuse an existing name to update a note rather than adding a near-duplicate; an existing note is updated where it is. A new note goes to this project's namespace, unless named global/name (for notes that apply in every project, such as the user's general preferences) or namespace/name. Never store secrets or credentials. Body up to 8000 characters.",
     inputSchema: {
       type: "object",
       properties: {
         name: {
           type: "string",
-          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
-          description: "Short kebab-case note name, such as deploy-lite4b",
+          pattern: "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+          description:
+            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed",
         },
         description: {
           type: "string",
@@ -232,8 +259,9 @@ const tools = [
       properties: {
         name: {
           type: "string",
-          pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
-          description: "Short kebab-case note name, such as deploy-lite4b",
+          pattern: "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+          description:
+            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed",
         },
       },
       required: ["name"],
