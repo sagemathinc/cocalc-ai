@@ -281,34 +281,6 @@ it("does not deliver a harness answer through Codex when its runtime is missing"
   expect(listQueuedAcpJobs()).toHaveLength(0);
 });
 
-it("guidance that falls back to a new turn carries no client recovery lineage", async () => {
-  const request = {
-    ...turnRequest({ paymentSource: "site-api-key" }),
-    recovery_parent_op_id: "client-chosen-op",
-    recovery_reason: "server restart",
-    recovery_count: 1,
-  } as AcpSteerRequest;
-  request.chat = {
-    ...request.chat!,
-    recovery_parent_op_id: "client-chosen-op",
-    recovery_reason: "server restart",
-    recovery_count: 1,
-  } as any;
-  mockSteer.mockResolvedValue({ state: "missing" });
-  const { state } = await acpTestInternals.handleAcpSteerRequest(request);
-  expect(["queued", "running"]).toContain(state);
-  const jobs = getAcpDatabase()
-    .prepare("SELECT * FROM acp_jobs")
-    .all() as any[];
-  expect(jobs).toHaveLength(1);
-  const [job] = jobs;
-  expect(job.recovery_parent_op_id ?? null).toBeNull();
-  const queued = decodeAcpJobRequest(job);
-  expect(queued).not.toHaveProperty("recovery_parent_op_id");
-  expect(queued.chat).not.toHaveProperty("recovery_parent_op_id");
-  expect(queued.chat).not.toHaveProperty("recovery_count");
-});
-
 it.each([true, false])(
   "delivers Claude answers with private funding (running=%s)",
   async (running) => {
@@ -1569,4 +1541,32 @@ describe("a failed turn another agent's message started", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(reportRpcTurnFailure).not.toHaveBeenCalled();
   });
+});
+
+it("guidance that falls back to a new turn carries no client recovery lineage", async () => {
+  const request = {
+    ...turnRequest({ paymentSource: "site-api-key" }),
+    recovery_parent_op_id: "client-chosen-op",
+    recovery_reason: "server restart",
+    recovery_count: 1,
+  } as AcpSteerRequest;
+  request.chat = {
+    ...request.chat!,
+    recovery_parent_op_id: "client-chosen-op",
+    recovery_reason: "server restart",
+    recovery_count: 1,
+  } as any;
+  mockSteer.mockResolvedValue({ state: "missing" });
+  const { state } = await acpTestInternals.handleAcpSteerRequest(request);
+  expect(["queued", "running"]).toContain(state);
+  const jobs = getAcpDatabase()
+    .prepare("SELECT * FROM acp_jobs")
+    .all() as any[];
+  expect(jobs).toHaveLength(1);
+  const [job] = jobs;
+  expect(job.recovery_parent_op_id ?? null).toBeNull();
+  const queued = decodeAcpJobRequest(job);
+  expect(queued).not.toHaveProperty("recovery_parent_op_id");
+  expect(queued.chat).not.toHaveProperty("recovery_parent_op_id");
+  expect(queued.chat).not.toHaveProperty("recovery_count");
 });
