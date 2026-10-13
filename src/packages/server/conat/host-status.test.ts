@@ -541,7 +541,9 @@ describe("listHostProjectMaintenanceSchedules", () => {
     const ownerRow = { project_id: "proj-2", owner_account_id: "sponsor-1" };
     let page = [payerRow];
     queryMock.mockImplementation(async (sql) => ({
-      rows: sql.includes("SELECT id FROM project_hosts") ? [{ id: "host-1" }] : page,
+      rows: sql.includes("SELECT id FROM project_hosts")
+        ? [{ id: "host-1" }]
+        : page,
     }));
     let exists = false;
     resolveRuntimeMembershipMock.mockImplementation(async (id) => {
@@ -565,7 +567,11 @@ describe("listHostProjectMaintenanceSchedules", () => {
 
   it.each([
     ["an owner that does not exist", "owner-1", "account 'owner-1' not found"],
-    ["a payer whose home bay is unavailable", "sponsor-1", "home bay unavailable"],
+    [
+      "a payer whose home bay is unavailable",
+      "sponsor-1",
+      "home bay unavailable",
+    ],
     [
       "a payer with another not-found error",
       "sponsor-1",
