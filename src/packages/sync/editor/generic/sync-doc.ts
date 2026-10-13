@@ -2036,7 +2036,10 @@ export class SyncDoc extends EventEmitter {
     this.patchflowCodec = this.buildPatchflowCodec();
     this.patchflowStore = this.createPatchflowStore();
     const presenceAdapter = await this.getCursorPresenceAdapter();
-    this.patchflowSession = new PatchflowSession({
+    // close() only closes a session that already exists, so one created
+    // after it would outlive the document.
+    if (this.isClosed()) throw Error("closed while opening");
+    const session = new PatchflowSession({
       codec: this.patchflowCodec,
       patchStore: this.patchflowStore,
       clock: () => this.client?.server_time().valueOf() ?? Date.now(),
@@ -2044,20 +2047,27 @@ export class SyncDoc extends EventEmitter {
       docId: this.string_id,
       presenceAdapter,
     });
+    this.patchflowSession = session;
     if (this.cursors) {
-      this.patchflowSession.on("cursors", this.handlePatchflowCursors);
+      session.on("cursors", this.handlePatchflowCursors);
     }
-    this.patchflowSession.on("patch", this.handlePatchflowPatch);
-    this.patchflowSession.on("change", this.handlePatchflowChange);
-    this.patchflowSession.on("inconsistency", this.handleInconsistency);
+    session.on("patch", this.handlePatchflowPatch);
+    session.on("change", this.handlePatchflowChange);
+    session.on("inconsistency", this.handleInconsistency);
     try {
-      await this.patchflowSession.init();
+      await session.init();
     } catch (err) {
-      this.patchflowSession.close();
+      session.close();
       this.patchflowSession = undefined;
       this.patchflowStore = undefined;
       this.patchflowCodec = undefined;
       throw err;
+    }
+    if (this.isClosed()) {
+      // close() ran during init, which can subscribe even after the
+      // session was closed; close it again now that init is done.
+      session.close();
+      throw Error("closed while opening");
     }
     dbg("patchflow session initialized");
 

@@ -6,6 +6,7 @@ whole patch history, alive for the life of the process.
 */
 
 import { before, after, uuid, connect, server, once } from "./setup";
+import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
 
 beforeAll(before);
 afterAll(after);
@@ -69,5 +70,41 @@ describe("cursor channel lifetime", () => {
       await doc.close();
     }
     expect(client.listenerCount("closed")).toBe(before);
+  });
+
+  it("stops listening to the connection when a SyncClient is closed directly", () => {
+    const before = client.listenerCount("closed");
+    for (let i = 0; i < 3; i++) {
+      new SyncClient(client).close();
+    }
+    expect(client.listenerCount("closed")).toBe(before);
+  });
+
+  it("reports a denied cursor subscription as a failed open", async () => {
+    const original = client.subscribe;
+    const subscribe = jest
+      .spyOn(client, "subscribe")
+      .mockImplementation(async (subject: string, opts?: any) => {
+        if (subject.includes("pubsub-cursors")) {
+          throw new Error("permission denied");
+        }
+        return await original(subject, opts);
+      });
+    try {
+      await expect(
+        new SyncClient(client).pubsub_conat({
+          project_id,
+          path,
+          name: "cursors",
+        }),
+      ).rejects.toThrow("permission denied");
+      const doc = open();
+      await once(doc, "ready");
+      expect((doc as any).patchflowSession?.presenceAdapter).toBeUndefined();
+      expect(cursorSubscriptions(client)).toEqual([]);
+      await doc.close();
+    } finally {
+      subscribe.mockRestore();
+    }
   });
 });
