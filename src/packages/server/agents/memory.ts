@@ -115,8 +115,9 @@ export const defaultAgentMemoryDeps: AgentMemoryDeps = {
       const { rows } = await (db ?? getPool()).query(
         `SELECT encrypted_payload FROM external_credentials
           WHERE provider='cocalc' AND kind='agent-memory' AND scope='account'
-            AND owner_account_id=$1 AND revoked IS NULL
-          ORDER BY updated DESC LIMIT 1`,
+            AND owner_account_id=$1 AND project_id IS NULL
+            AND organization_id IS NULL AND revoked IS NULL
+          ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST LIMIT 1`,
         [account_id],
       );
       if (!rows[0]) return undefined;
