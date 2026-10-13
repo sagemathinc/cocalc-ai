@@ -82,8 +82,8 @@ export interface CliSiteInfo {
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
-const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
-const GIT = /^[0-9a-f]{7,40}(-dirty)?$|^unknown$/;
+export const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
+export const GIT = /^[0-9a-f]{7,40}(-dirty)?$|^unknown$/;
 const NODE_VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 const NODE_DIR = /^node-v\d{1,3}\.\d{1,3}\.\d{1,3}-[a-z0-9-]{1,32}$/;
 
@@ -95,25 +95,25 @@ export function isRelease(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function fail(what: string): never {
+export function fail(what: string): never {
   throw new Error(`invalid CLI release data: ${what}`);
 }
 
-function object(value: unknown, what: string): Record<string, unknown> {
+export function object(value: unknown, what: string): Record<string, unknown> {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     fail(`${what} must be an object`);
   }
   return value as Record<string, unknown>;
 }
 
-function str(value: unknown, what: string, re: RegExp): string {
+export function str(value: unknown, what: string, re: RegExp): string {
   if (typeof value !== "string" || !re.test(value)) fail(what);
   return value;
 }
 
 // Schema /1 is strict: unknown keys are rejected. Extensions need a new
 // schema version.
-function exactKeys(
+export function exactKeys(
   o: Record<string, unknown>,
   allowed: readonly string[],
   what: string,
@@ -123,7 +123,7 @@ function exactKeys(
   }
 }
 
-function fileRef(value: unknown, what: string, max: number): FileRef {
+export function fileRef(value: unknown, what: string, max: number): FileRef {
   const o = object(value, what);
   exactKeys(o, ["sha256", "size"], what);
   if (!isSha256(o.sha256)) fail(`${what}.sha256`);
@@ -148,7 +148,7 @@ export function canonicalJson(value: unknown, pretty: boolean): string {
   return pretty ? JSON.stringify(value, null, 2) + "\n" : JSON.stringify(value);
 }
 
-function parseJson(
+export function parseJson(
   text: string,
   max: number,
   what: string,
@@ -179,15 +179,8 @@ const MANIFEST_KEYS = [
   "node",
 ] as const;
 
-export function parseManifest(text: string): CliReleaseManifest {
-  const o = object(
-    parseJson(text, MAX_MANIFEST_BYTES, "manifest", true),
-    "manifest",
-  );
-  exactKeys(o, MANIFEST_KEYS, "manifest");
-  if (o.schema !== MANIFEST_SCHEMA) fail("manifest.schema");
-  if (!isRelease(o.release)) fail("manifest.release");
-  const node = object(o.node, "manifest.node");
+export function parseNodeSection(value: unknown): CliReleaseManifest["node"] {
+  const node = object(value, "manifest.node");
   exactKeys(node, ["version", "platforms"], "manifest.node");
   const platforms = object(node.platforms, "manifest.node.platforms");
   const parsedPlatforms: Partial<Record<CliPlatform, NodeArchive>> = {};
@@ -213,6 +206,21 @@ export function parseManifest(text: string): CliReleaseManifest {
   }
   if (Object.keys(parsedPlatforms).length === 0) fail("no node platforms");
   return {
+    version: str(node.version, "manifest.node.version", NODE_VERSION),
+    platforms: parsedPlatforms,
+  };
+}
+
+export function parseManifest(text: string): CliReleaseManifest {
+  const o = object(
+    parseJson(text, MAX_MANIFEST_BYTES, "manifest", true),
+    "manifest",
+  );
+  exactKeys(o, MANIFEST_KEYS, "manifest");
+  if (o.schema !== MANIFEST_SCHEMA) fail("manifest.schema");
+  if (!isRelease(o.release)) fail("manifest.release");
+  const node = parseNodeSection(o.node);
+  return {
     schema: MANIFEST_SCHEMA,
     release: o.release,
     version: str(o.version, "manifest.version", VERSION),
@@ -221,10 +229,7 @@ export function parseManifest(text: string): CliReleaseManifest {
     launcher: fileRef(o.launcher, "launcher", MAX_LAUNCHER_BYTES),
     bootstrap: fileRef(o.bootstrap, "bootstrap", MAX_BOOTSTRAP_BYTES),
     bundle: fileRef(o.bundle, "bundle", MAX_BUNDLE_BYTES),
-    node: {
-      version: str(node.version, "manifest.node.version", NODE_VERSION),
-      platforms: parsedPlatforms,
-    },
+    node,
   };
 }
 

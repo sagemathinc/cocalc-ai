@@ -7,9 +7,11 @@
 import { createHash } from "node:crypto";
 import { open, unlink } from "node:fs/promises";
 import {
+  type CliCurrentPointer,
   type CliSiteInfo,
   MAX_MANIFEST_BYTES,
   MAX_POINTER_BYTES,
+  parsePointer,
   parseSiteInfo,
 } from "@cocalc/util/cli-distribution/schema";
 import { sha256 } from "./local";
@@ -86,8 +88,50 @@ export async function fetchManifestText(
 
 // Download one file a manifest lists into `dest`, checking size and sha256.
 export function originFileFetcher(origin: string, manifestHash: string) {
+  return fileFetcher(origin, (hash) => `/cli/files/${manifestHash}/${hash}`);
+}
+
+/*
+ * A release store read directly (CoCalc Plus, from software.cocalc.ai): the
+ * same layout publish-release.mjs writes, current.json, manifests/<sha>.json
+ * and files/<sha>, under one base URL that is the trusted origin.
+ */
+export async function fetchStorePointer(
+  base: string,
+  timeoutMs = 15_000,
+): Promise<CliCurrentPointer> {
+  const bytes = await getCapped(
+    base,
+    "/current.json",
+    MAX_POINTER_BYTES,
+    timeoutMs,
+  );
+  return parsePointer(bytes.toString("utf8"));
+}
+
+export async function fetchStoreManifestText(
+  base: string,
+  hash: string,
+): Promise<string> {
+  const bytes = await getCapped(
+    base,
+    `/manifests/${hash}.json`,
+    MAX_MANIFEST_BYTES,
+    30_000,
+  );
+  if (sha256(bytes) !== hash) {
+    throw new Error(`${base} served a manifest that does not match ${hash}`);
+  }
+  return bytes.toString("utf8");
+}
+
+export function storeFileFetcher(base: string) {
+  return fileFetcher(base, (hash) => `/files/${hash}`);
+}
+
+function fileFetcher(origin: string, pathOf: (hash: string) => string) {
   return async (hash: string, dest: string, size: number): Promise<void> => {
-    const path = `/cli/files/${manifestHash}/${hash}`;
+    const path = pathOf(hash);
     const response = await get(origin, path, DOWNLOAD_TIMEOUT_MS);
     const out = await open(dest, "wx", 0o600);
     const digest = createHash("sha256");
