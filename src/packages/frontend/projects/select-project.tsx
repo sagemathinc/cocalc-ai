@@ -12,7 +12,7 @@ import { Loading } from "../components";
 
 type ProjectSelectionList = { id: string; title: string }[];
 
-interface Props {
+interface CommonProps {
   ariaLabel?: string;
   id?: string;
   exclude?: string[]; // project_id's to exclude
@@ -22,11 +22,25 @@ interface Props {
   // Offer only projects this accepts (a plain project object).
   filter?: (project: any) => boolean;
   placeholder?: string;
+  style?: CSS;
+}
+
+interface SingleProps extends CommonProps {
+  multiple?: false;
   onChange: (project_id: string) => void; // called when specific project selected
   value?: string | null; // null keeps a controlled picker empty
   defaultValue?: string;
-  style?: CSS;
 }
+
+// Several projects at once, e.g. the projects that see a memory namespace.
+interface MultipleProps extends CommonProps {
+  multiple: true;
+  onChange: (project_ids: string[]) => void;
+  value: string[];
+  defaultValue?: undefined;
+}
+
+type Props = SingleProps | MultipleProps;
 
 function fullCollaboratorGroup(group: unknown): boolean {
   return group === "owner" || group === "collaborator";
@@ -37,21 +51,29 @@ function hasFullCollaboratorAccess(project: any, account_id?: string): boolean {
   return fullCollaboratorGroup(project?.users?.[account_id]?.group);
 }
 
-export function SelectProject({
-  ariaLabel,
-  id,
-  filter,
-  placeholder = "Select a project...",
-  exclude,
-  at_top,
-  disabled = false,
-  fullCollaboratorOnly = false,
-  onChange,
-  value,
-  defaultValue,
-  style,
-}: Props) {
+export function SelectProject(props: Props) {
+  const {
+    ariaLabel,
+    id,
+    filter,
+    placeholder = props.multiple ? "Select projects..." : "Select a project...",
+    exclude,
+    at_top,
+    disabled = false,
+    fullCollaboratorOnly = false,
+    value,
+    defaultValue,
+    style,
+  } = props;
   const project_map = useTypedRedux("projects", "project_map");
+  // Chosen projects are always offered, so they show their titles.
+  const selected = useMemo(
+    () =>
+      new Set<string>(
+        Array.isArray(value) ? value : value != null ? [value] : [],
+      ),
+    [value],
+  );
 
   // include hidden projects in the selector
   const [include_hidden, set_include_hidden] = useState<boolean>(false);
@@ -105,13 +127,18 @@ export function SelectProject({
 
     const others: ProjectSelectionList = [];
     for (let i of v) {
-      if (i.deleted && i.project_id != value) continue;
-      if (fullCollaboratorOnly && !hasFullCollaboratorAccess(i, account_id)) {
+      const chosen = selected.has(i.project_id);
+      if (i.deleted && !chosen) continue;
+      if (
+        fullCollaboratorOnly &&
+        !chosen &&
+        !hasFullCollaboratorAccess(i, account_id)
+      ) {
         continue;
       }
-      if (filter != null && i.project_id != value && !filter(i)) continue;
+      if (filter != null && !chosen && !filter(i)) continue;
       const is_hidden = !!i.users?.[account_id ?? ""]?.hide;
-      if (i.project_id == value || is_hidden == include_hidden) {
+      if (chosen || is_hidden == include_hidden) {
         others.push({ id: i.project_id, title: i.title });
       }
     }
@@ -123,7 +150,7 @@ export function SelectProject({
     fullCollaboratorOnly,
     filter,
     include_hidden,
-    value,
+    selected,
   ]);
 
   if (data == null) {
@@ -136,6 +163,7 @@ export function SelectProject({
         <Select
           id={id}
           aria-label={ariaLabel}
+          mode={props.multiple ? "multiple" : undefined}
           allowClear
           disabled={disabled}
           style={{ marginRight: "15px", flex: 1, minWidth: 0 }}
@@ -144,7 +172,11 @@ export function SelectProject({
           optionFilterProp={"children"}
           value={value}
           defaultValue={defaultValue}
-          onChange={onChange}
+          onChange={(next: string | string[]) =>
+            props.multiple
+              ? props.onChange((next as string[] | undefined) ?? [])
+              : props.onChange(next as string)
+          }
           filterOption={(input, option) =>
             option
               ? (`${option.children}`

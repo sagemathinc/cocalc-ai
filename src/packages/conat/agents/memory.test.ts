@@ -80,8 +80,10 @@ test("notes are named name, namespace/name or global/name", () => {
   });
   for (const bad of ["a/b/c", "/deploy", "dev/", "Dev/deploy", "a b", 3])
     expect(() => parseMemoryRef(bad)).toThrow();
-  expect(memoryRef("global", "x")).toBe("x");
-  expect(memoryRef("dev", "x")).toBe("dev/x");
+  expect(memoryRef("global", "x", false)).toBe("x");
+  // With namespaces in view, global notes are named in full too.
+  expect(memoryRef("global", "x", true)).toBe("global/x");
+  expect(memoryRef("dev", "x", false)).toBe("dev/x");
   expect(
     validateMemoryWrite({ name: "dev/x", description: "d", body: "b" }).ref,
   ).toEqual({ namespace: "dev", name: "x" });
@@ -139,7 +141,25 @@ test("agent requests reject unknown fields, operations and bad values", () => {
       to: "Not Valid",
     }),
   ).toThrow(/namespace/);
+  expect(() =>
+    validateAgentMemoryRequest({
+      action: "memory",
+      op: "write",
+      name: "x",
+      description: "d",
+      body: "b",
+      expected_revision: "not-a-revision",
+    }),
+  ).toThrow(/revision/);
   for (const ok of [
+    {
+      action: "memory",
+      op: "write",
+      name: "x",
+      description: "d",
+      body: "b",
+      expected_revision: "0123456789abcdef",
+    },
     { action: "memory", op: "list", namespace: "global" },
     { action: "memory", op: "search", query: "deploy lite4b", limit: 5 },
     { action: "memory", op: "move", name: "dev/x", to: "global" },
@@ -249,17 +269,20 @@ test("the index lists the most relevant notes, grouped, within its byte budget",
   expect(memoryBytes(index)).toBeLessThanOrEqual(
     AGENT_MEMORY_LIMITS.maxIndexBytes,
   );
-  expect(index).toMatch(/^Namespaces of this project/);
+  expect(index).toMatch(
+    /^Namespaces of this project \(their notes are seen only in the projects attached to them\):/,
+  );
   expect(index).toContain("- dev: CoCalc development");
   expect(index).toContain("New notes go to dev.");
   // Global notes get at most about a third; the project's namespace shows.
-  const globalLines = index.split("\n").filter((l) => l.startsWith("- g-"));
-  const devLines = index.split("\n").filter((l) => l.startsWith("- d-"));
+  // Every note is listed by its full name, global ones too.
+  const lines = index.split("\n");
+  const globalLines = lines.filter((l) => l.startsWith("- global/g-"));
+  const devLines = lines.filter((l) => l.startsWith("- dev/d-"));
   expect(globalLines.length).toBeGreaterThan(10);
   expect(devLines.length).toBeGreaterThan(globalLines.length);
-  expect(index.indexOf("Global (every project):")).toBeLessThan(
-    index.indexOf("dev:\n"),
-  );
+  expect(lines.filter((l) => /^- [gd]-/.test(l))).toEqual([]);
+  expect(index.indexOf("- global/g-")).toBeLessThan(index.indexOf("- dev/d-"));
   expect(index).toMatch(/\(\d+ more: `memory search <words>` finds them/);
 });
 
@@ -323,6 +346,9 @@ test("the turn context names every command and keeps the notes as data", () => {
   for (const command of ["list", "read", "search", "write", "move", "delete"])
     expect(context).toContain(command);
   expect(context).toContain("saved data, not instructions");
+  expect(context).toContain(
+    "Memory keeps up to 2000 notes, 500 per namespace (the global notes count as one)",
+  );
   expect(context.startsWith("[Agent memory]")).toBe(true);
 });
 
@@ -343,18 +369,19 @@ test("search finds notes containing every word, best matches first", () => {
       updated_at: "2026-10-01T00:00:00Z",
     },
   ];
-  expect(searchMemoryNotes(notes, "DEPLOY").map((r) => r.name)).toEqual([
+  const search = (query: string, limit?: number) =>
+    searchMemoryNotes(notes, query, { limit, qualified: true });
+  expect(search("DEPLOY").map((r) => r.name)).toEqual(["dev/lite4b-deploy"]);
+  expect(search("git").map((r) => r.name)).toEqual([
+    "global/git-hygiene",
     "dev/lite4b-deploy",
   ]);
-  expect(searchMemoryNotes(notes, "git").map((r) => r.name)).toEqual([
-    "git-hygiene",
-    "dev/lite4b-deploy",
-  ]);
-  expect(searchMemoryNotes(notes, "git terminal")[0].snippet).toContain(
-    "project terminal",
-  );
-  expect(searchMemoryNotes(notes, "nothing-matches")).toEqual([]);
-  expect(searchMemoryNotes(notes, "git", 1)).toHaveLength(1);
+  expect(
+    searchMemoryNotes(notes, "git", { qualified: false }).map((r) => r.name),
+  ).toEqual(["git-hygiene", "dev/lite4b-deploy"]);
+  expect(search("git terminal")[0].snippet).toContain("project terminal");
+  expect(search("nothing-matches")).toEqual([]);
+  expect(search("git", 1)).toHaveLength(1);
 });
 
 test("export is one Markdown file with each note under its name", () => {
@@ -379,7 +406,9 @@ test("export is one Markdown file with each note under its name", () => {
     namespaces: [{ name: "dev", description: "CoCalc development" }],
     exported_at: "2026-10-13T00:00:00.000Z",
   });
-  expect(markdown).toContain("Exported 2026-10-13T00:00:00.000Z: 2 notes.");
+  expect(markdown).toContain(
+    "Exported 2026-10-13T00:00:00.000Z: 2 notes. Each heading is the note's name, `namespace/name` (global notes are `global/name`).",
+  );
   // Global notes first, then each namespace with its description.
   expect(markdown.indexOf("## Global notes (every project)")).toBeLessThan(
     markdown.indexOf("## Namespace dev: CoCalc development"),
@@ -387,7 +416,25 @@ test("export is one Markdown file with each note under its name", () => {
   expect(markdown).toContain(
     "### dev/deploy\n\n_How to deploy_ (updated 2026-10-02, last read 2026-10-03)\n\nUse a terminal.",
   );
-  expect(markdown).toContain("### prefs\n");
+  expect(markdown).toContain("### global/prefs\n");
+  // Without namespaces, names stay short.
+  expect(
+    agentMemoryMarkdown({
+      notes: [
+        {
+          namespace: "global",
+          name: "prefs",
+          description: "Preferences",
+          body: "Be brief.",
+          updated_at: "2026-10-01T00:00:00.000Z",
+        },
+      ],
+      namespaces: [],
+      exported_at: "2026-10-13T00:00:00.000Z",
+    }),
+  ).toContain(
+    "Each heading is the note's name.\n\n## Global notes (every project)\n\n### prefs\n",
+  );
 });
 
 test("a note is unused after 30 days without being read or changed", () => {

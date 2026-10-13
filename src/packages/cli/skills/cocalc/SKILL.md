@@ -444,7 +444,8 @@ loaded for this turn; check with `list` rather than searching the filesystem.
 cocalc project chat memory list [--namespace <namespace>]
 cocalc project chat memory search <words...>
 cocalc project chat memory read <name>
-cocalc project chat memory write <name> --description "<one line>" --stdin
+cocalc project chat memory write <name> --description "<one line>" --stdin \
+  [--expect-revision <revision>]
 cocalc project chat memory move <name> <namespace|global>
 cocalc project chat memory delete <name>
 cocalc project chat memory namespaces
@@ -454,7 +455,13 @@ cocalc project chat memory export [--out notes.md]
 - Name notes `name`, `namespace/name` or `global/name`. An existing note is
   updated where it is; a new one goes to the project's namespace when it has
   exactly one. Write `global/<name>` for facts that apply everywhere, such as
-  the user's general preferences.
+  the user's general preferences. In a project with namespaces, every name
+  comes back in full (`global/name` too): use names as listed.
+- Memory keeps up to 2,000 notes, 500 per namespace (the global notes count
+  as one); `namespaces` shows the counts and limits.
+- `read` returns the note's `revision`. When updating a note other agents may
+  change, pass it as `--expect-revision`: the write then fails instead of
+  replacing a newer change.
 - Save durable facts: the user's preferences and corrections, project
   conventions, how to build, test or deploy, lessons from mistakes.
 - One fact per note, short kebab-case name, one-line description. Update a note

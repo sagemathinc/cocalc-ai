@@ -19,7 +19,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AGENT_MEMORY_GLOBAL,
   AGENT_MEMORY_UNUSED_DAYS,
@@ -28,10 +28,10 @@ import {
   type AgentMemoryNoteSummary,
   type AgentMemoryStatus,
 } from "@cocalc/conat/agents/memory";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { personalAgentApi } from "@cocalc/frontend/agents/api";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 type Status = AgentMemoryStatus;
@@ -294,21 +294,6 @@ export function AgentMemoryPanel() {
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
-function useProjectOptions() {
-  const projectMap = useTypedRedux("projects", "project_map");
-  return useMemo(() => {
-    const options: { value: string; label: string }[] = [];
-    projectMap?.forEach((project: any, project_id: string) => {
-      if (project?.get?.("deleted")) return;
-      options.push({
-        value: project_id,
-        label: `${project?.get?.("title") ?? project_id}`,
-      });
-    });
-    return options.sort((a, b) => a.label.localeCompare(b.label));
-  }, [projectMap]);
-}
-
 function Namespaces({
   status,
   busy,
@@ -318,7 +303,6 @@ function Namespaces({
   busy: boolean;
   act: Act;
 }) {
-  const projectOptions = useProjectOptions();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -430,17 +414,15 @@ function Namespaces({
                       }
                     />
                   </Space>
-                  <Select
-                    mode="multiple"
-                    size="small"
-                    style={{ width: "100%", marginTop: 6 }}
+                  <SelectProject
+                    multiple
+                    fullCollaboratorOnly
+                    style={{ marginTop: 6 }}
                     placeholder="Projects that see this namespace"
-                    aria-label={`Projects that see ${ns.name}`}
-                    options={projectOptions}
-                    optionFilterProp="label"
+                    ariaLabel={`Projects that see ${ns.name}`}
                     value={attached(ns.name)}
                     disabled={busy}
-                    onChange={(next: string[]) => setAttached(ns.name, next)}
+                    onChange={(next) => setAttached(ns.name, next)}
                   />
                 </div>
               ))}
@@ -557,7 +539,7 @@ function Notes({
               size="small"
               destroyOnHidden
               items={inGroup.map((note) => ({
-                key: memoryRef(note.namespace, note.name),
+                key: memoryRef(note.namespace, note.name, true),
                 label: (
                   <span>
                     <b>{note.name}</b>

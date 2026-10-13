@@ -16,6 +16,7 @@ import {
   removeNamedAgent,
 } from "../../core/agent-create";
 import { akv } from "@cocalc/conat/sync/akv";
+import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
 import {
   agentSendExitCode,
@@ -553,7 +554,7 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   const memory = chat
     .command("memory")
     .description(
-      "account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials. Notes are global (every project) or in a namespace the owner attached to this project; name them <name>, <namespace>/<name> or global/<name>",
+      `account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials. Notes are global (every project) or in a namespace the owner attached to this project; name them <name>, <namespace>/<name> or global/<name>. Memory keeps up to ${AGENT_MEMORY_LIMITS.maxNotes} notes, ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} per namespace (the global notes count as one)`,
     );
   const stdinText = async () => {
     let value = "";
@@ -587,7 +588,9 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     );
   memory
     .command("read <name>")
-    .description("read one note")
+    .description(
+      "read one note, with its revision (for write --expect-revision)",
+    )
     .action(async (name: string, _opts, cmd) =>
       memoryRequest(
         cmd,
@@ -620,8 +623,18 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     .description(
       "create or replace a note: one durable fact, never secrets (use --stdin for multiline bodies). An existing note is updated where it is; a new one goes to the project's namespace unless named global/<name> or <namespace>/<name>",
     )
-    .requiredOption("--description <text>", "one line used in the index")
-    .option("--stdin", "read the body from standard input")
+    .requiredOption(
+      "--description <text>",
+      `one line used in the index (at most ${AGENT_MEMORY_LIMITS.maxDescriptionBytes} bytes)`,
+    )
+    .option(
+      "--stdin",
+      `read the body (at most ${AGENT_MEMORY_LIMITS.maxBodyBytes} bytes) from standard input`,
+    )
+    .option(
+      "--expect-revision <revision>",
+      "only replace the note if it is unchanged since a read returned this revision",
+    )
     .action(async (name: string, body: string[], opts, cmd) =>
       memoryRequest(
         cmd,
@@ -631,6 +644,9 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
           name,
           description: opts.description,
           body: opts.stdin ? await stdinText() : body.join(" "),
+          ...(opts.expectRevision
+            ? { expected_revision: opts.expectRevision }
+            : {}),
         },
         "project chat memory write",
       ),
@@ -660,7 +676,7 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   memory
     .command("namespaces")
     .description(
-      "the namespaces this project sees, with descriptions and note counts",
+      "the namespaces this project sees, with descriptions, note counts and the limits",
     )
     .action(async (_opts, cmd) =>
       memoryRequest(

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { fromJS } from "immutable";
+import React from "react";
 import {
   AgentMemoryButton,
   AgentMemoryPanel,
@@ -8,18 +9,43 @@ import {
 
 const P1 = "11111111-1111-4111-8111-111111111111";
 const P2 = "22222222-2222-4222-8222-222222222222";
+const P3 = "33333333-3333-4333-8333-333333333333";
 
 const manageAgentMemory = jest.fn();
 jest.mock("@cocalc/frontend/agents/api", () => ({
   personalAgentApi: () => ({ manageAgentMemory }),
 }));
 const mockProjects = fromJS({
-  [P1]: { title: "CoCalc dev" },
-  [P2]: { title: "Sagebrush" },
+  [P1]: {
+    project_id: P1,
+    title: "CoCalc dev",
+    last_edited: "2026-01-02",
+    users: { me: { group: "owner" } },
+  },
+  [P2]: {
+    project_id: P2,
+    title: "Sagebrush",
+    last_edited: "2026-01-03",
+    users: { me: { group: "owner", hide: true } },
+  },
+  [P3]: {
+    project_id: P3,
+    title: "Shared course",
+    last_edited: "2026-01-04",
+    users: { me: { group: "viewer" } },
+  },
 });
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  useMemo: React.useMemo,
+  useState: React.useState,
   useTypedRedux: () => mockProjects,
   useAccountOtherSetting: () => undefined,
+}));
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: { account_id: "me" },
+}));
+jest.mock("@cocalc/frontend/components", () => ({
+  Loading: () => <div>Loading</div>,
 }));
 
 let state: any;
@@ -195,11 +221,15 @@ test("namespaces have a name and optional description, and choose their projects
     name: "dev",
     description: "CoCalc development",
   });
-  // Attach a project: pick it from the namespace's project list.
+  // Attach a project: pick it from the namespace's project list, the same
+  // picker as for a new agent (projects you can run agents in, hidden ones
+  // behind its Hidden toggle).
   const select = await screen.findByLabelText("Projects that see dev");
   await act(async () => {
     fireEvent.mouseDown(select);
   });
+  expect(screen.queryByText("Sagebrush")).toBeNull();
+  expect(screen.queryByText("Shared course")).toBeNull();
   await act(async () => {
     fireEvent.click(await screen.findByText("CoCalc dev"));
   });
@@ -208,6 +238,17 @@ test("namespaces have a name and optional description, and choose their projects
     project_id: P1,
     namespaces: ["dev"],
   });
+  expect(screen.getByRole("checkbox", { name: "Hidden" })).toBeTruthy();
+});
+
+test("a namespace's hidden projects still show by title", async () => {
+  state.enabled = true;
+  state.namespaces = [{ name: "dev" }];
+  state.projects = { [P2]: ["dev"] };
+  render(<AgentMemoryPanel />);
+  await screen.findByText("On");
+  fireEvent.click(screen.getByText(/^Namespaces/));
+  expect(await screen.findByText("Sagebrush")).toBeTruthy();
 });
 
 test("the settings-modal button shows whether memory is on", async () => {

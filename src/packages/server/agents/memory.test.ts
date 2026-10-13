@@ -182,6 +182,7 @@ describeDb("agent memory", () => {
       name: "deploy",
       namespace: "global",
       saved: "created",
+      revision: expect.stringMatching(/^[0-9a-f]{16}$/),
     });
     expect((await write(memory, account, P1, "deploy", "v2")).saved).toBe(
       "updated",
@@ -442,8 +443,9 @@ describeDb("agent memory", () => {
     expect((await write(memory, account, P1, "deploy")).name).toBe(
       "dev/deploy",
     );
+    // With namespaces in view, global notes are named in full too.
     expect((await write(memory, account, P1, "global/prefs")).name).toBe(
-      "prefs",
+      "global/prefs",
     );
     // P3 has no namespace: global notes only, and dev notes are invisible.
     expect(await names(memory, account, P3)).toEqual(["prefs"]);
@@ -478,15 +480,16 @@ describeDb("agent memory", () => {
       "math/theorem",
     );
     expect(await names(memory, account, P2)).toEqual([
-      "prefs",
+      "global/prefs",
       "dev/deploy",
       "math/theorem",
     ]);
     // An existing note is updated where it is, not copied into a namespace.
     expect(await write(memory, account, P1, "prefs", "v2")).toEqual({
-      name: "prefs",
+      name: "global/prefs",
       namespace: "global",
       saved: "updated",
+      revision: expect.stringMatching(/^[0-9a-f]{16}$/),
     });
   });
 
@@ -638,9 +641,9 @@ describeDb("agent memory", () => {
     const index = result!.index;
     expect(index).toContain("- dev: CoCalc development");
     expect(index).toContain("New notes go to dev.");
-    expect(index).toContain("Global (every project):\n- prefs: the prefs note");
-    expect(index.indexOf("- written-here")).toBeLessThan(
-      index.indexOf("- written-elsewhere"),
+    expect(index).toContain("- global/prefs: the prefs note");
+    expect(index.indexOf("- dev/written-here")).toBeLessThan(
+      index.indexOf("- dev/written-elsewhere"),
     );
     expect(index).toMatch(/\(\d+ more: `memory search <words>` finds them/);
     // A project without the namespace sees only the global note.
@@ -702,7 +705,64 @@ describeDb("agent memory", () => {
       global_notes: 1,
       namespaces: [{ name: "dev", notes: 1 }],
       default_namespace: "dev",
+      limits: {
+        account_notes: 2000,
+        namespace_notes: 500,
+        description_bytes: 200,
+        body_bytes: 8000,
+      },
     });
+  });
+
+  test("a write with the revision it read refuses to replace a later change", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory);
+    await write(memory, account, P1, "deploy", "v1");
+    const read = (): Promise<any> =>
+      memory.agent(account, P1, {
+        action: "memory",
+        op: "read",
+        name: "deploy",
+      });
+    const writeIf = (body: string, expected_revision: string) =>
+      memory.agent(account, P1, {
+        action: "memory",
+        op: "write",
+        name: "deploy",
+        description: "the deploy note",
+        body,
+        expected_revision,
+      }) as Promise<any>;
+    const mine = (await read()).revision;
+    expect(mine).toMatch(/^[0-9a-f]{16}$/);
+    // Another agent changes the note in between.
+    const theirs = (await write(memory, account, P1, "deploy", "v2")).revision;
+    expect(theirs).not.toBe(mine);
+    expect((await read()).revision).toBe(theirs);
+    await expect(writeIf("v3", mine)).rejects.toThrow(
+      "memory note deploy changed since you read it; read it again and merge your change",
+    );
+    expect((await read()).body).toBe("v2");
+    expect(await writeIf("v3", theirs)).toMatchObject({ saved: "updated" });
+    // Nor does it bring back a note deleted since the read.
+    const last = (await read()).revision;
+    await memory.agent(account, P1, {
+      action: "memory",
+      op: "delete",
+      name: "deploy",
+    });
+    await expect(writeIf("v4", last)).rejects.toThrow(
+      "memory note deploy no longer exists",
+    );
+    expect(await names(memory, account, P1)).toEqual([]);
+    // Deleting a note that is not there is an error, not a quiet success.
+    await expect(
+      memory.agent(account, P1, {
+        action: "memory",
+        op: "delete",
+        name: "deploy",
+      }),
+    ).rejects.toThrow("no memory note named deploy");
   });
 
   test("deleting a namespace deletes its notes and its project attachments", async () => {
@@ -771,11 +831,9 @@ describeDb("agent memory", () => {
         .agent(account, P1, request as any)
         .catch((err) => err.message);
       expect(result).toEqual(
-        request.op === "delete"
-          ? { name: "deploy", deleted: false }
-          : request.name === "deploy"
-            ? "no memory note named deploy"
-            : "memory namespace dev is not available in this project",
+        request.name === "deploy"
+          ? "no memory note named deploy"
+          : "memory namespace dev is not available in this project",
       );
     }
     expect(

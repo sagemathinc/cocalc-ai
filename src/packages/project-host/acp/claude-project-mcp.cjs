@@ -179,7 +179,7 @@ const tools = [
   {
     name: "memory_list",
     description:
-      "List the persistent memory notes this project sees (name, one-line description, last update): global notes (every project of the account) and notes in the namespaces the owner attached to this project. Memory belongs to the account this turn runs as. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
+      "List the persistent memory notes this project sees (name, one-line description, last update): global notes (every project of the account) and notes in the namespaces the owner attached to this project. Memory belongs to the account this turn runs as and keeps up to 2000 notes, 500 per namespace (the global notes count as one). It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
     inputSchema: {
       type: "object",
       properties: {
@@ -213,7 +213,8 @@ const tools = [
   },
   {
     name: "memory_read",
-    description: "Read the full text of one memory note.",
+    description:
+      "Read the full text of one memory note and its revision (pass that to memory_write as expected_revision when updating a note others may change).",
     inputSchema: {
       type: "object",
       properties: {
@@ -246,6 +247,12 @@ const tools = [
           description: "One line (at most 200 characters) used in the index",
         },
         body: { type: "string", description: "The note itself" },
+        expected_revision: {
+          type: "string",
+          pattern: "^[0-9a-f]{16}$",
+          description:
+            "The revision memory_read returned: the write fails instead of replacing a change made since that read",
+        },
       },
       required: ["name", "description", "body"],
       additionalProperties: false,

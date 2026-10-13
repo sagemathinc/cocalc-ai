@@ -26,6 +26,7 @@ import {
 import {
   parseMemoryRef,
   validateMemoryNamespace,
+  validateMemoryRevision,
 } from "@cocalc/conat/agents/memory";
 
 // Room for project_write_file content (1 MB, JSON-escaped).
@@ -133,9 +134,13 @@ export async function runAgentMemoryTool(
     script = `${COCALC_CLI} project chat memory search${limit} -- "$(printf %s '${b64(args.query)}' | base64 -d)"`;
   } else if (tool === "memory_delete")
     script = `${COCALC_CLI} project chat memory delete ${name()}`;
-  else if (tool === "memory_write")
-    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${name()} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin`;
-  else throw Error("Unsupported project tool");
+  else if (tool === "memory_write") {
+    const expect =
+      args.expected_revision == null
+        ? ""
+        : ` --expect-revision ${shellQuote(validateMemoryRevision(args.expected_revision))}`;
+    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${name()} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin${expect}`;
+  } else throw Error("Unsupported project tool");
   const out = await runCaptured(execute, script, signal, 1_000_000);
   let parsed: any;
   try {

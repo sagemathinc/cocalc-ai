@@ -501,6 +501,37 @@ test("trusted MCP helper executes only through the scoped project socket", async
       arguments: { name: "dev/../x" },
     });
     expect(bad.result?.isError ?? !!bad.error).toBe(true);
+    // A write that must not replace a change made since the read.
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: JSON.stringify({ ok: true, data: { saved: "updated" } }),
+      stderr: "",
+    }));
+    await request(35, "tools/call", {
+      name: "memory_write",
+      arguments: {
+        name: "deploy",
+        description: "d",
+        body: "b",
+        expected_revision: "0123456789abcdef",
+      },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toMatch(
+      /memory write 'deploy' .* --stdin --expect-revision '0123456789abcdef'$/,
+    );
+    const calls = execute.mock.calls.length;
+    const badRevision = await request(36, "tools/call", {
+      name: "memory_write",
+      arguments: {
+        name: "deploy",
+        description: "d",
+        body: "b",
+        expected_revision: "x'; rm -rf ~; '",
+      },
+    });
+    expect(badRevision.result?.isError ?? !!badRevision.error).toBe(true);
+    expect(execute.mock.calls.length).toBe(calls);
     const called = await request(3, "tools/call", {
       name: "project_exec",
       arguments: { script: "pwd", cwd: "/home/user" },
@@ -606,7 +637,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(7);
+    expect(execute).toHaveBeenCalledTimes(8);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

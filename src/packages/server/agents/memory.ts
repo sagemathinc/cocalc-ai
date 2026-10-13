@@ -190,6 +190,17 @@ type NoteRow = {
   read_count: number;
 };
 
+/**
+ * Identifies a note's content, so a write can refuse to replace a change
+ * made since its caller read the note.
+ */
+function memoryRevision(description: string, body: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([description, body]))
+    .digest("hex")
+    .slice(0, 16);
+}
+
 function notAvailable(namespace: string) {
   // The same answer whether or not the namespace exists.
   return new Error(
@@ -666,7 +677,7 @@ export function createAgentMemory(
       [account_id, from, name],
     );
     if (!rows[0])
-      throw new Error(`no memory note named ${memoryRef(from, name)}`);
+      throw new Error(`no memory note named ${memoryRef(from, name, true)}`);
     const { rows: taken } = await db.query(
       "SELECT 1 FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
       [account_id, to, name],
@@ -751,6 +762,7 @@ export function createAgentMemory(
       if (!settings.enabled) throw new Error(AGENT_MEMORY_DISABLED);
       const projectNamespaces = projectMemoryNamespaces(settings, project_id);
       const visible = [GLOBAL, ...projectNamespaces.map((ns) => ns.name)];
+      const qualified = projectNamespaces.length > 0;
       const db = pool();
       // Changes recheck, under the account's lock, that memory is still on
       // and which namespaces the project sees now: the owner may have
@@ -781,7 +793,7 @@ export function createAgentMemory(
             )
             .map(
               ({ namespace, name, description, updated_at, last_read_at }) => ({
-                name: memoryRef(namespace, name),
+                name: memoryRef(namespace, name, qualified),
                 namespace,
                 description,
                 updated_at,
@@ -803,8 +815,9 @@ export function createAgentMemory(
           const [note] = await decryptRows(account_id, rows);
           return {
             ...note,
-            name: memoryRef(namespace, ref.name),
+            name: memoryRef(namespace, ref.name, qualified),
             last_read_at: undefined,
+            revision: memoryRevision(note.description, note.body),
           };
         }
         case "search": {
@@ -813,7 +826,10 @@ export function createAgentMemory(
             await noteRows(db, account_id, visible, true),
           );
           return {
-            results: searchMemoryNotes(notes, request.query, request.limit),
+            results: searchMemoryNotes(notes, request.query, {
+              limit: request.limit,
+              qualified,
+            }),
             searched: notes.length,
           };
         }
@@ -829,6 +845,14 @@ export function createAgentMemory(
               projectNamespaces.length <= 1
                 ? (projectNamespaces[0]?.name ?? GLOBAL)
                 : undefined,
+            // Whole-account usage is not shown: it would count notes in
+            // namespaces this project does not see.
+            limits: {
+              account_notes: AGENT_MEMORY_LIMITS.maxNotes,
+              namespace_notes: AGENT_MEMORY_LIMITS.maxNotesPerNamespace,
+              description_bytes: AGENT_MEMORY_LIMITS.maxDescriptionBytes,
+              body_bytes: AGENT_MEMORY_LIMITS.maxBodyBytes,
+            },
           };
         }
         case "export": {
@@ -852,12 +876,31 @@ export function createAgentMemory(
           const valid = validateMemoryWrite(request);
           return await transaction(account_id, async (tx) => {
             const now = await current(tx);
+            const fullNames = now.namespaces.length > 0;
             // An existing note is updated where it is; a new one goes to
             // the named namespace, or the project's default.
+            const found = await locate(tx, account_id, valid.ref, now.visible);
+            if (request.expected_revision !== undefined) {
+              if (!found)
+                throw new Error(
+                  `memory note ${request.name} no longer exists: it was deleted or moved since you read it`,
+                );
+              const { rows } = await tx.query(
+                `SELECT namespace, name, description, body FROM agent_memory_notes
+                  WHERE account_id=$1 AND namespace=$2 AND name=$3`,
+                [account_id, found, valid.ref.name],
+              );
+              const [note] = await decryptRows(account_id, rows);
+              if (
+                memoryRevision(note.description, note.body) !==
+                request.expected_revision
+              )
+                throw new Error(
+                  `memory note ${memoryRef(found, valid.ref.name, fullNames)} changed since you read it; read it again and merge your change`,
+                );
+            }
             const namespace =
-              (await locate(tx, account_id, valid.ref, now.visible)) ??
-              valid.ref.namespace ??
-              defaultNamespace(now.namespaces);
+              found ?? valid.ref.namespace ?? defaultNamespace(now.namespaces);
             await deps.assertWritable(tx, account_id);
             const saved = await writeNote(
               tx,
@@ -869,25 +912,32 @@ export function createAgentMemory(
               project_id,
             );
             return {
-              name: memoryRef(namespace, valid.ref.name),
+              name: memoryRef(namespace, valid.ref.name, fullNames),
               namespace,
               saved,
+              revision: memoryRevision(valid.description, valid.body),
             };
           });
         }
         case "delete": {
           const ref = parseMemoryRef(request.name);
           return await transaction(account_id, async (tx) => {
-            const { visible } = await current(tx);
-            const namespace = await locate(tx, account_id, ref, visible);
-            if (!namespace) return { name: request.name, deleted: false };
+            const now = await current(tx);
+            // A missing note is an error, as for read and move, so it is
+            // not mistaken for a deletion.
+            const namespace = await mustLocate(
+              tx,
+              account_id,
+              ref,
+              now.visible,
+            );
             await deps.assertWritable(tx, account_id);
             await tx.query(
               "DELETE FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
               [account_id, namespace, ref.name],
             );
             return {
-              name: memoryRef(namespace, ref.name),
+              name: memoryRef(namespace, ref.name, now.namespaces.length > 0),
               namespace,
               deleted: true,
             };
@@ -897,12 +947,16 @@ export function createAgentMemory(
           const ref = parseMemoryRef(request.name);
           const to = validateMemoryNamespace(request.to);
           return await transaction(account_id, async (tx) => {
-            const { visible } = await current(tx);
-            if (!visible.includes(to)) throw notAvailable(to);
-            const from = await mustLocate(tx, account_id, ref, visible);
+            const now = await current(tx);
+            if (!now.visible.includes(to)) throw notAvailable(to);
+            const from = await mustLocate(tx, account_id, ref, now.visible);
             await deps.assertWritable(tx, account_id);
             await moveNote(tx, account_id, from, ref.name, to, false);
-            return { name: memoryRef(to, ref.name), from, to };
+            return {
+              name: memoryRef(to, ref.name, now.namespaces.length > 0),
+              from,
+              to,
+            };
           });
         }
       }
@@ -1003,7 +1057,7 @@ export function createAgentMemory(
           );
           if (!rows[0])
             throw new Error(
-              `no memory note named ${memoryRef(request.namespace, request.name)}`,
+              `no memory note named ${memoryRef(request.namespace, request.name, true)}`,
             );
           return (await decryptRows(account_id, rows))[0];
         }
