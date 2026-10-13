@@ -891,4 +891,57 @@ describe("cloud dns", () => {
       record_id: "record-sibling",
     });
   });
+
+  describe("deleteHostnameDns", () => {
+    it("removes the hostname's route records even without a saved record id", async () => {
+      dnsRecords = [
+        { id: "a-1", type: "A", name: "exam-1.example.com" },
+        { id: "cname-1", type: "CNAME", name: "exam-1.example.com" },
+        { id: "txt-1", type: "TXT", name: "exam-1.example.com" },
+      ];
+      const { deleteHostnameDns } = await import("./dns");
+      await deleteHostnameDns({ hostname: "exam-1.example.com" });
+      expect(dnsRecords.map((record) => record.id)).toEqual(["txt-1"]);
+      const listed = fetchMock.mock.calls
+        .map(([url]) => String(url))
+        .filter((url) => url.includes("/dns_records?"));
+      expect(listed[0]).toContain("name=exam-1.example.com");
+    });
+
+    it("deletes a saved record id only while it names this hostname", async () => {
+      dnsRecords = [
+        { id: "other-1", type: "A", name: "renamed.example.com" },
+        { id: "a-1", type: "A", name: "exam-1.example.com" },
+      ];
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
+        const url = String(input);
+        const byId = url.split("/dns_records/")[1];
+        if ((init?.method ?? "GET") === "GET" && byId && !byId.includes("?")) {
+          return responseWith(dnsRecords.find((record) => record.id === byId));
+        }
+        return await base(input, init);
+      });
+      const { deleteHostnameDns } = await import("./dns");
+      await deleteHostnameDns({
+        hostname: "exam-1.example.com",
+        record_id: "other-1",
+      });
+      expect(dnsRecords.map((record) => record.id)).toEqual(["other-1"]);
+    });
+
+    it("fails, rather than reporting success, while a record remains", async () => {
+      dnsRecords = [{ id: "a-1", type: "A", name: "exam-1.example.com" }];
+      const ignoreDeletes = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input: any, init?: RequestInit) =>
+        init?.method === "DELETE"
+          ? responseWith({})
+          : await ignoreDeletes(input, init),
+      );
+      const { deleteHostnameDns } = await import("./dns");
+      await expect(
+        deleteHostnameDns({ hostname: "exam-1.example.com", record_id: "a-1" }),
+      ).rejects.toThrow("remain after deletion");
+    });
+  });
 });

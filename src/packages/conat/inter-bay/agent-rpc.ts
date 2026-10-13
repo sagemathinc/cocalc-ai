@@ -165,6 +165,19 @@ export interface AgentRpcControlApi {
   inspect(
     opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcAttempt },
   ): Promise<AgentRpcOutcome>;
+  /**
+   * Trusted fabric only, at the message sender's project bay: write a
+   * delivery report into the sender's chat (the reporting bay rechecked it).
+   */
+  deliverReport(
+    opts: RpcRoute & {
+      account_id: string;
+      report: import("@cocalc/conat/agents/rpc-reports").AgentRpcTurnFailureReport;
+      target_label: string;
+    },
+  ): Promise<
+    import("@cocalc/conat/agents/rpc-reports").AgentRpcReportDeliveryResult
+  >;
 }
 function subject(bay: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(bay)) throw new Error("invalid bay");

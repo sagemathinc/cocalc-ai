@@ -13,6 +13,7 @@
 // MULTIBAY_KEEP=1 keeps the cluster's directory (logs, databases) afterwards.
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -178,6 +179,85 @@ describe("routing by ownership", () => {
     await eventually(() => listed(bob.client, bob.project), {
       what: "bob's own project in his list",
     });
+  });
+});
+
+describe("agent delivery reports across bays", () => {
+  // The seed forwards a report about a message to the bay that owns the
+  // sender's project, over the real fabric; only that bay may write it, and
+  // only with the capability a hub of this cluster minted for the message.
+  async function deliverFromSeed({ project_id, forged = false }) {
+    const report = {
+      version: 1,
+      report_id: randomUUID(),
+      attempt_id: randomUUID(),
+      turn_started_at: Date.now() - 60_000,
+      kind: "error",
+    };
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { resolveProjectBay } = server("inter-bay/directory.js");
+       const { signAgentRpcReportCapability } = server("agents/rpc-report-capability.js");
+       const { createAgentRpcControlClient } = require("@cocalc/conat/inter-bay/agent-rpc");
+       const report = ${JSON.stringify(report)};
+       const project_id = ${JSON.stringify(project_id)};
+       report.authorization = {
+         version: 3,
+         source: { project_id, agent_id: ${JSON.stringify(randomUUID())} },
+         source_run_id: ${JSON.stringify(randomUUID())},
+         target: { project_id: ${JSON.stringify(alice.project)}, agent_id: ${JSON.stringify(randomUUID())} },
+         target_path: "/home/user/b.chat",
+         target_thread_id: "thread-b",
+         agent_network_id: ${JSON.stringify(randomUUID())},
+         network_generation: ${JSON.stringify(randomUUID())},
+         account_generation: 1,
+         configured_delivery: "queued",
+         principal_account_id: ${JSON.stringify(bob.account_id)},
+         guidance: false,
+         attempt_id: report.attempt_id,
+       };
+       report.authorization.report_capability = ${forged}
+         ? Date.now() + "." + "A".repeat(43)
+         : signAgentRpcReportCapability(report.authorization);
+       const route = await resolveProjectBay(project_id);
+       try {
+         await createAgentRpcControlClient(getInterBayFabricClient(), ${JSON.stringify(ATTACHED)}).deliverReport({
+           project_id,
+           route: { bay_id: ${JSON.stringify(ATTACHED)}, epoch: route.epoch },
+           account_id: ${JSON.stringify(bob.account_id)},
+           report,
+           target_label: "@reviewer",
+         });
+         return "delivered";
+       } catch (err) {
+         return String(err?.message ?? err);
+       }`,
+    );
+  }
+
+  it("refuses a report for a project the bay does not own", async () => {
+    assert.match(
+      await deliverFromSeed({ project_id: alice.project }),
+      /stale agent RPC route/,
+    );
+  });
+
+  it("refuses a report without a capability this cluster minted", async () => {
+    assert.match(
+      await deliverFromSeed({ project_id: bob.project, forged: true }),
+      /does not match an admitted message/,
+    );
+  });
+
+  it("accepts the seed's capability and looks the sender up where it lives", async () => {
+    // No agent is registered in this cluster: reaching the owning bay's own
+    // identity lookup means routing and the capability were accepted.
+    assert.match(
+      await deliverFromSeed({ project_id: bob.project }),
+      /agent not found/,
+    );
   });
 });
 

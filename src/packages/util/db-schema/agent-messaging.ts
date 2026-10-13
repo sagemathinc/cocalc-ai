@@ -68,6 +68,36 @@ Table({
 });
 
 Table({
+  name: "agent_rpc_report_executions",
+  rules: {
+    primary_key: "attempt_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_rpc_report_executions_expiry",
+        query: "(expires_at)",
+      },
+    ],
+  },
+  fields: {
+    attempt_id: required(
+      "uuid",
+      "The reported message: a delivery report starts at most one turn.",
+    ),
+    report_id: required("uuid", "The report whose turn ran."),
+    account_id: required("uuid", "Execution principal binding."),
+    project_id: required("uuid", "The sender's project, where the turn ran."),
+    host_id: required("uuid", "The host that ran it."),
+    path: required("string", "The sender's chat."),
+    thread_id: required("string", "The sender's thread."),
+    created_at: created("When the report's turn was authorized."),
+    expires_at: {
+      ...timestamp("Kept until after the report's capability expired."),
+      not_null: true,
+    },
+  },
+});
+
+Table({
   name: "agent_message_project_fences",
   rules: {
     primary_key: "project_id",

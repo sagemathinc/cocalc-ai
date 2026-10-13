@@ -426,6 +426,8 @@ export interface AgentRpcEnvelope extends Omit<AgentRpcSend, "target"> {
   path: string;
   thread_id: string;
   deadline: number;
+  /** Hub signature binding this exact message, for a later delivery report. */
+  report_capability?: string;
 }
 
 /** Stable metadata-only permit binding, independent of object insertion order. */

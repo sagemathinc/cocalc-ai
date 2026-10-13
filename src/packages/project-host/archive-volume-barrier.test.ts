@@ -4,6 +4,8 @@ let getGenerationMock: jest.Mock;
 let getSubvolumeFieldMock: jest.Mock;
 let existsMock: jest.Mock;
 let fsReaddirMock: jest.Mock;
+let quotaReliefMock: jest.Mock;
+let inQuotaRelief = false;
 
 jest.mock("@cocalc/file-server/btrfs/util", () => ({
   btrfs: (...args: any[]) => btrfsMock(...args),
@@ -12,6 +14,7 @@ jest.mock("@cocalc/file-server/btrfs/util", () => ({
 
 jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
   getGeneration: (...args: any[]) => getGenerationMock(...args),
+  withSubvolumeQuotaRelief: (...args: any[]) => quotaReliefMock(...args),
 }));
 
 jest.mock("@cocalc/file-server/btrfs/subvolume", () => ({
@@ -68,6 +71,15 @@ describe("archive volume barrier", () => {
     existsMock = jest.fn(async (path: string) => path === "/mnt/project-1");
     fsReaddirMock = jest.fn(async () => {
       throw Object.assign(new Error("not found"), { code: "ENOENT" });
+    });
+    inQuotaRelief = false;
+    quotaReliefMock = jest.fn(async ({ run }) => {
+      inQuotaRelief = true;
+      try {
+        return await run();
+      } finally {
+        inQuotaRelief = false;
+      }
     });
   });
 
@@ -548,7 +560,8 @@ describe("archive volume barrier", () => {
 
   it("reports idempotent rollback states without changing data", async () => {
     const vol = volume(jest.fn(async () => []));
-    existsMock.mockResolvedValueOnce(false);
+    // Once before raising the quota, once inside the lock.
+    existsMock.mockResolvedValueOnce(false).mockResolvedValueOnce(false);
     await expect(
       releaseArchiveVolumeFreezeIfGenerationMatches({
         volume: vol,
@@ -564,5 +577,57 @@ describe("archive volume barrier", () => {
       }),
     ).resolves.toBe("already-writable");
     expect(getGenerationMock).not.toHaveBeenCalled();
+  });
+
+  // Over-quota projects failed every automatic archive with "Disk quota
+  // exceeded": deleting a snapshot inside the project subvolume is charged to
+  // the project's qgroup.
+  it("moves snapshots out of and back into the project with its quota raised", async () => {
+    const insideRelief: string[] = [];
+    const record = btrfsMock.getMockImplementation()!;
+    btrfsMock.mockImplementation(async (opts) => {
+      if (opts.args?.[0] === "subvolume") {
+        insideRelief.push(`${opts.args[1]} ${inQuotaRelief}`);
+      }
+      return await record(opts);
+    });
+    const vol = volume(jest.fn(async () => ["daily-1"]));
+
+    await freezeVolumeForArchiveBackup(vol);
+
+    expect(quotaReliefMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subvolume: vol,
+        operation: "archive-volume-freeze",
+      }),
+    );
+    expect(insideRelief).toEqual(["snapshot true", "delete true"]);
+
+    insideRelief.length = 0;
+    fsReaddirMock.mockResolvedValueOnce(["daily-1"]);
+    await releaseArchiveVolumeFreeze(vol);
+    expect(quotaReliefMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        subvolume: vol,
+        operation: "archive-volume-unfreeze",
+      }),
+    );
+    expect(insideRelief).toEqual(["snapshot true", "delete true"]);
+
+    quotaReliefMock.mockClear();
+    btrfsMock.mockResolvedValue({ stdout: "ro=true\n" });
+    await releaseArchiveVolumeFreezeIfGenerationMatches({
+      volume: vol,
+      expectedGeneration: 42,
+    });
+    expect(quotaReliefMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the quota of a project volume that is already gone", async () => {
+    existsMock.mockResolvedValue(false);
+    await expect(
+      releaseArchiveVolumeFreeze(volume(jest.fn(async () => []))),
+    ).resolves.toBe("absent");
+    expect(quotaReliefMock).not.toHaveBeenCalled();
   });
 });

@@ -68,6 +68,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.reportRpcTurnFailure": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.authorizeRpcReportExecution": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.authorizeSensorExecution": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,

@@ -67,6 +67,8 @@ export const agent = {
   setPersonalMessagingState: authFirstRequireAccountWithBoundSession,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
+  reportRpcTurnFailure: authFirstRequireHostWithAccountTarget,
+  authorizeRpcReportExecution: authFirstRequireHostWithAccountTarget,
   listSensors: authFirstRequireAccount,
   // Approving or resuming decides what code runs and wakes an agent: a
   // person's bound session only, never an agent credential.
@@ -496,6 +498,25 @@ export interface AgentApi {
       authorization: NonNullable<
         import("@cocalc/conat/ai/acp/types").AcpChatContext["agent_rpc_execution"]
       >;
+    },
+  ): Promise<void>;
+  /**
+   * From the host of an agent whose turn on another agent's message ended in
+   * an error without a reply: tell the sender. The hub rechecks the message's
+   * authorization; delivery is best-effort and never repeated for one report.
+   */
+  reportRpcTurnFailure(
+    opts: AgentHostAuth & {
+      report: import("@cocalc/conat/agents/rpc-reports").AgentRpcTurnFailureReport;
+    },
+  ): Promise<
+    import("@cocalc/conat/agents/rpc-reports").AgentRpcReportDeliveryResult
+  >;
+  /** Before the turn a delivery report started runs, recheck it. */
+  authorizeRpcReportExecution(
+    opts: AgentHostAuth & {
+      report: import("@cocalc/conat/agents/rpc-reports").AgentRpcTurnFailureReport;
+      delivery: { path: string; thread_id: string };
     },
   ): Promise<void>;
   /** A project's sensors (optionally one agent's), or one sensor with its runs. */
