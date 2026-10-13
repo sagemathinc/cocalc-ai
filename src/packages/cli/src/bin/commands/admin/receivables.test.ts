@@ -1340,10 +1340,13 @@ test("fulfillment provision previews the named existing site license", async () 
     "AR-2026-000123",
     "--site-license",
     siteLicenseId,
+    "--allow-target-mismatch",
     "--reason",
     "link the already provisioned license",
   ]);
   assert.equal(previewRequest.existing_site_license_id, siteLicenseId);
+  assert.equal(previewRequest.allow_target_mismatch, true);
+  assert.equal(output().request.allow_target_mismatch, true);
   assert.equal(output().request.existing_site_license_id, siteLicenseId);
   assert.equal(output().fulfillment_preview.site_license_id, siteLicenseId);
 });

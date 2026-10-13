@@ -444,6 +444,8 @@ export interface CommercialFulfillmentPreviewRequest extends CommercialReadReque
   id: string;
   /** Existing site license to link when the order has none stored yet. */
   existing_site_license_id?: string;
+  /** Treat target_mismatches as reviewed instead of as blockers. */
+  allow_target_mismatch?: boolean;
 }
 
 export interface CommercialFulfillmentPlan {
@@ -451,6 +453,21 @@ export interface CommercialFulfillmentPlan {
   adapter: "site_license";
   action: "create" | "link" | "update" | "none";
   site_license_id?: string | null;
+  /** Identity and term of the existing license that would be linked. */
+  target?: {
+    name: string;
+    organization_name: string;
+    crm_organization_id: string | null;
+    owner_account_id: string | null;
+    starts_at: string | null;
+    expires_at: string | null;
+  };
+  /**
+   * For a license named on an order without a site-license plan: order facts
+   * the license disagrees with (crm_organization_id, organization_name,
+   * customer_account, starts_at, expires_at).
+   */
+  target_mismatches?: string[];
   plan?: CommercialSiteLicensePlan;
   planned_changes: string[];
   ready: boolean;
@@ -463,9 +480,12 @@ export interface CommercialProvisionRequest extends CommercialMutationRequest {
   /**
    * Existing site license to fulfill with. It must equal the license stored on
    * the order; if none is stored, it links this license after the same
-   * preflight checks.
+   * preflight checks. Without a site-license plan, the license must also
+   * agree with the order's customer facts unless allow_target_mismatch is set.
    */
   existing_site_license_id?: string;
+  /** Link a named license despite reviewed target_mismatches. */
+  allow_target_mismatch?: boolean;
 }
 
 export interface CommercialDiagnosticsRequest extends CommercialReadRequest {

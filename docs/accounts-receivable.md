@@ -460,6 +460,16 @@ license to match it; without one, it only records the order association. This
 links a paid order without revising its approved terms. If the order already
 stores a license id, `--site-license` must name that same license.
 
+Without a plan, the named license must also agree with the order's customer
+facts. The preview shows the license identity as `target` and lists any
+disagreement in `target_mismatches`: `crm_organization_id`,
+`organization_name`, `customer_account` (the customer is neither owner nor an
+active manager), `starts_at` or `expires_at` (the license term does not cover
+the order's service period). Any mismatch blocks linking. After reviewing it,
+`--allow-target-mismatch` links the license anyway and records the accepted
+mismatches on the order's fulfillment event. Only one site-license provision
+may be unresolved per order; replay that exact command to resolve it.
+
 ```sh
 cocalc admin receivables fulfillment provision AR-2026-000123 \
   --site-license <uuid> --reason "link the already provisioned license"

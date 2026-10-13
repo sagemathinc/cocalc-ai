@@ -1882,6 +1882,11 @@ function registerFulfillmentCommands(
       "--site-license <uuid>",
       "existing site license to link when the order has none stored",
     )
+    .option(
+      "--allow-target-mismatch",
+      "treat reviewed target_mismatches as warnings instead of blockers",
+      false,
+    )
     .action(async (order: string, opts: any, command: Command) => {
       await deps.withContext(
         command,
@@ -1892,6 +1897,7 @@ function registerFulfillmentCommands(
             reason: readReason(opts.reason, READ_REASONS.fulfillmentPreview),
             existing_site_license_id:
               `${opts.siteLicense ?? ""}`.trim() || undefined,
+            allow_target_mismatch: opts.allowTargetMismatch || undefined,
           }),
       );
     });
@@ -1909,6 +1915,11 @@ function registerFulfillmentCommands(
       .option(
         "--site-license <uuid>",
         "link this existing site license (must match the order's stored license, if any)",
+      )
+      .option(
+        "--allow-target-mismatch",
+        "link a named license despite reviewed target_mismatches",
+        false,
       ),
     "provision or link the approved site license",
   ).action(async (orderRef: string, opts: any, command: Command) => {
@@ -1927,6 +1938,7 @@ function registerFulfillmentCommands(
             allow_before_payment: opts.allowBeforePayment || undefined,
             existing_site_license_id:
               `${opts.siteLicense ?? ""}`.trim() || undefined,
+            allow_target_mismatch: opts.allowTargetMismatch || undefined,
           }),
         } as CommercialProvisionRequest;
         if (!opts.commit) {
@@ -1940,6 +1952,7 @@ function registerFulfillmentCommands(
                   id: order.id,
                   reason,
                   existing_site_license_id: request.existing_site_license_id,
+                  allow_target_mismatch: request.allow_target_mismatch,
                 }),
             },
           );

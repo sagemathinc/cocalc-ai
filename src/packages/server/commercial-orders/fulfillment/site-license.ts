@@ -309,6 +309,10 @@ async function preflightExistingSiteLicense(opts: {
   return current;
 }
 
+function normalizedSiteLicenseId(value: unknown): string | undefined {
+  return `${value ?? ""}`.trim() || undefined;
+}
+
 // The license to fulfill with: the one stored on the order, or, when none is
 // stored yet, an existing license the operator names explicitly. Naming a
 // different license than the stored one is rejected.
@@ -316,7 +320,7 @@ function targetSiteLicenseId(
   order: CommercialOrder,
   existingSiteLicenseId?: string,
 ): string | undefined {
-  const requested = `${existingSiteLicenseId ?? ""}`.trim() || undefined;
+  const requested = normalizedSiteLicenseId(existingSiteLicenseId);
   if (
     requested &&
     order.site_license_id &&
@@ -327,6 +331,88 @@ function targetSiteLicenseId(
     );
   }
   return order.site_license_id ?? requested;
+}
+
+function normalizedOrganization(value: unknown): string {
+  return `${value ?? ""}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Without a site-license plan nothing else ties a named license to the order,
+// so it must agree with the order's frozen customer facts: CRM organization,
+// organization name, customer account (owner or active manager), and a term
+// covering the order's service period.
+function namedTargetMismatches(
+  order: CommercialOrder,
+  current: SiteLicenseOverview,
+): string[] {
+  const license = current.site_license;
+  const mismatches: string[] = [];
+  if (
+    order.crm_organization_id &&
+    license.crm_organization_id &&
+    order.crm_organization_id !== license.crm_organization_id
+  ) {
+    mismatches.push("crm_organization_id");
+  }
+  if (
+    normalizedOrganization(license.organization_name) !==
+    normalizedOrganization(order.organization_name)
+  ) {
+    mismatches.push("organization_name");
+  }
+  if (order.customer_account_id) {
+    const managers = new Set(
+      current.managers
+        .filter(({ revoked_at }) => !revoked_at)
+        .map(({ account_id }) => account_id),
+    );
+    if (
+      license.owner_account_id !== order.customer_account_id &&
+      !managers.has(order.customer_account_id)
+    ) {
+      mismatches.push("customer_account");
+    }
+  }
+  if (
+    order.service_starts_at &&
+    license.starts_at != null &&
+    dateValue(license.starts_at) > dateValue(order.service_starts_at)
+  ) {
+    mismatches.push("starts_at");
+  }
+  if (
+    order.service_ends_at &&
+    license.expires_at != null &&
+    dateValue(license.expires_at) < dateValue(order.service_ends_at)
+  ) {
+    mismatches.push("expires_at");
+  }
+  return mismatches;
+}
+
+function namedTargetMismatchError(mismatches: string[]): string {
+  return `site license does not match the commercial order (${mismatches.join(", ")}); review the target and pass allow_target_mismatch to link it anyway`;
+}
+
+function fulfillmentTarget(
+  current: SiteLicenseOverview,
+): NonNullable<CommercialFulfillmentPlan["target"]> {
+  const license = current.site_license;
+  return {
+    name: license.name,
+    organization_name: license.organization_name,
+    crm_organization_id: license.crm_organization_id ?? null,
+    owner_account_id: license.owner_account_id ?? null,
+    starts_at: license.starts_at
+      ? new Date(license.starts_at).toISOString()
+      : null,
+    expires_at: license.expires_at
+      ? new Date(license.expires_at).toISOString()
+      : null,
+  };
 }
 
 async function overview(
@@ -377,6 +463,8 @@ export async function commercialFulfillmentPreview(
       "terms_snapshot.site_license is required to create a license",
     );
   }
+  let target: CommercialFulfillmentPlan["target"];
+  let targetMismatches: string[] | undefined;
   if (siteLicenseId) {
     try {
       const current = await preflightExistingSiteLicense({
@@ -385,6 +473,13 @@ export async function commercialFulfillmentPreview(
         siteLicenseId,
         plan,
       });
+      target = fulfillmentTarget(current);
+      if (!plan && !order.site_license_id) {
+        targetMismatches = namedTargetMismatches(order, current);
+        if (targetMismatches.length && !opts.allow_target_mismatch) {
+          blockers.push(namedTargetMismatchError(targetMismatches));
+        }
+      }
       if (!current.site_license.metadata?.commercial_order_id) {
         plannedChanges.push("commercial-order-association");
         action = "update";
@@ -405,6 +500,8 @@ export async function commercialFulfillmentPreview(
     adapter: "site_license",
     action,
     site_license_id: siteLicenseId,
+    ...(target ? { target } : {}),
+    ...(targetMismatches ? { target_mismatches: targetMismatches } : {}),
     plan,
     planned_changes: plannedChanges,
     ready: blockers.length === 0,
@@ -519,10 +616,17 @@ export async function provisionCommercialSiteLicense(
     throw Error("account_id and expected_version are required");
   }
   const order = await getCommercialOrder(opts.id);
-  const key = commercialIdempotencyKey("site-license-provision", opts as any);
+  // Canonicalize the named target so that the idempotency key and the stored
+  // operation request identify the same license regardless of formatting.
+  const namedTarget = normalizedSiteLicenseId(opts.existing_site_license_id);
+  const key = commercialIdempotencyKey("site-license-provision", {
+    ...opts,
+    existing_site_license_id: namedTarget,
+  } as any);
   const operationRequest = {
-    existing_site_license_id: opts.existing_site_license_id ?? null,
+    existing_site_license_id: namedTarget ?? null,
     allow_before_payment: opts.allow_before_payment === true,
+    ...(opts.allow_target_mismatch ? { allow_target_mismatch: true } : {}),
   };
   if (
     order.workflow_state === "complete" &&
@@ -533,12 +637,22 @@ export async function provisionCommercialSiteLicense(
     if (!prior) {
       throw Error("a complete commercial order cannot be provisioned");
     }
+    // A replayed operation may only be resolved against the license it named.
+    const priorTarget = normalizedSiteLicenseId(
+      prior.request?.existing_site_license_id,
+    );
+    if (priorTarget && priorTarget !== order.site_license_id) {
+      throw Error(
+        `provision operation targeted site license ${priorTarget}, but the order is fulfilled with ${order.site_license_id}`,
+      );
+    }
     const reservation = await reserveCommercialProviderOperation({
       order_id: order.id,
       operation: "provision-site-license",
       expected_version: opts.expected_version,
       idempotency_key: key,
       request: operationRequest,
+      exclusive: true,
     });
     if (reservation.operation.status === "succeeded") return order;
     const plan = siteLicensePlan(order);
@@ -582,12 +696,20 @@ export async function provisionCommercialSiteLicense(
     requestedId && plan && preflight
       ? fulfillmentMismatches(plan, preflight)
       : [];
+  const targetMismatches =
+    preflight && !plan && !order.site_license_id
+      ? namedTargetMismatches(order, preflight)
+      : [];
+  if (targetMismatches.length && !opts.allow_target_mismatch) {
+    throw Error(namedTargetMismatchError(targetMismatches));
+  }
   const reservation = await reserveCommercialProviderOperation({
     order_id: order.id,
     operation: "provision-site-license",
     expected_version: opts.expected_version,
     idempotency_key: key,
     request: operationRequest,
+    exclusive: true,
   });
   if (reservation.operation.status === "succeeded") {
     return await getCommercialOrder(order.id);
@@ -678,6 +800,9 @@ export async function provisionCommercialSiteLicense(
       site_license_id: siteLicenseId,
       metadata: {
         allow_before_payment: opts.allow_before_payment === true,
+        ...(targetMismatches.length
+          ? { accepted_target_mismatches: targetMismatches }
+          : {}),
         action: requestedId
           ? existingMismatches.length ||
             !preflight?.site_license.metadata?.commercial_order_id
