@@ -1087,6 +1087,39 @@ describe("terminal failure recovery", () => {
     ).toHaveLength(1);
   });
 
+  it("resumes another agent's message as that message, not a user request", async () => {
+    const request = makeRequest();
+    request.prompt =
+      "Message from @builder (agent a in project p).\nAgent Network: Review.\n\nPlease review.\n\nAttached file snapshots in this project (temporary; copy into the project home to retain across restart):\n{}";
+    (request.chat as any).agent_message = true;
+    const queued = enqueueAcpJob(request as any);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat",
+          date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          generating: false,
+          history: [],
+        },
+      ]),
+    );
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_model_capacity",
+    });
+    const { prompt, chat } = decodeAcpJobRequest(resumed!);
+    expect(prompt).toContain(
+      `Original message (delivered by CoCalc; its header says who it is from):\n${request.prompt}`,
+    );
+    expect(prompt).not.toContain("Original user request");
+    expect(prompt).toContain("check that each listed path still exists");
+    expect(chat?.agent_message).toBe(true);
+  });
+
   it("schedules delayed recovery before fallible chat projection", async () => {
     const previous = process.env.COCALC_LITE_ACP_DETACHED_WORKER;
     process.env.COCALC_LITE_ACP_DETACHED_WORKER = "0";
