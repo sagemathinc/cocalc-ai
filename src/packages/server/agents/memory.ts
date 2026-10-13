@@ -57,6 +57,8 @@ export const AGENT_MEMORY_DISABLED =
   "Agent memory is off for this account. The account owner can turn it on in Settings > AI.";
 
 const GLOBAL = AGENT_MEMORY_GLOBAL;
+// An absorb that found the first-version record changed under it.
+const STALE = Symbol("stale");
 // The turn index never shows more lines than this, so it decrypts no more.
 const INDEX_CANDIDATES = 400;
 
@@ -289,7 +291,7 @@ export function createAgentMemory(
   async function absorb(
     account_id: string,
     legacy: LegacyRecord,
-  ): Promise<AgentMemorySettings | undefined> {
+  ): Promise<AgentMemorySettings | undefined | typeof STALE> {
     const { rows: seen } = await pool().query(
       "SELECT legacy_version FROM agent_memory_accounts WHERE account_id=$1",
       [account_id],
@@ -328,6 +330,10 @@ export function createAgentMemory(
       const row = rows[0];
       if (row?.legacy_version === legacy.version)
         return parseAgentMemorySettings(row);
+      // Read before the lock: if the record changed since, a newer version
+      // may already be absorbed, and absorbing this one would undo it.
+      if ((await deps.legacy.get(account_id))?.version !== legacy.version)
+        return STALE;
       await deps.assertWritable(db, account_id);
       // Each note's fingerprint in the record absorbed last time; none the
       // first time, when every note is taken.
@@ -377,10 +383,14 @@ export function createAgentMemory(
   }
 
   async function settingsOf(account_id: string): Promise<AgentMemorySettings> {
-    const legacy = await deps.legacy.get(account_id);
-    if (legacy) {
+    // A few tries: each stale one means an old hub just wrote the record.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const legacy = await deps.legacy.get(account_id);
+      if (!legacy) break;
       const absorbed = await absorb(account_id, legacy);
+      if (absorbed === STALE) continue;
       if (absorbed) return absorbed;
+      break;
     }
     return (
       (await loadSettings(pool(), account_id)) ?? {

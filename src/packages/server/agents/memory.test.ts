@@ -38,13 +38,16 @@ class LegacyStore {
 function setup() {
   const legacy = new LegacyStore();
   let beforeCharge: (() => Promise<void>) | undefined;
+  let encryptGate: { text: string; wait: Promise<void> } | undefined;
   const charges: string[] = [];
   const writable = jest.fn(async () => {});
   const memory = createAgentMemory({
     pool: () => getPool() as any,
     // Bound to the note's place, like the real cipher's associated data.
-    encrypt: async (aad, text) =>
-      `enc:${aad}:${Buffer.from(text).toString("base64")}`,
+    encrypt: async (aad, text) => {
+      if (encryptGate && text === encryptGate.text) await encryptGate.wait;
+      return `enc:${aad}:${Buffer.from(text).toString("base64")}`;
+    },
     decrypt: async (aad, value) => {
       const prefix = `enc:${aad}:`;
       if (!value.startsWith(prefix)) throw new Error("wrong associated data");
@@ -69,6 +72,15 @@ function setup() {
     legacy,
     charges,
     writable,
+    /** Holds encrypting this text until the returned function is called. */
+    holdEncrypting: (text: string) => {
+      let release!: () => void;
+      encryptGate = { text, wait: new Promise<void>((r) => (release = r)) };
+      return () => {
+        encryptGate = undefined;
+        release();
+      };
+    },
     /** Runs once, after a request read its settings and before it acts. */
     onceBeforeCharge: (hook: () => Promise<void>) => {
       beforeCharge = hook;
@@ -299,6 +311,40 @@ describeDb("agent memory", () => {
         (n: any) => n.name,
       ),
     ).toEqual(["late"]);
+  });
+
+  test("an absorb of an older record that finishes last does not undo a newer one", async () => {
+    const { memory, legacy, holdEncrypting } = setup();
+    const account = randomUUID();
+    const record = (body: string) =>
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        notes: [
+          {
+            name: "deploy",
+            description: "Deploy",
+            body,
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      });
+    legacy.set(account, record("p1"));
+    await memory.owner(account, { op: "status" });
+    // A reads the record (p2) and stalls before its transaction...
+    legacy.set(account, record("p2"));
+    const release = holdEncrypting("p2");
+    const a = memory.owner(account, { op: "list" });
+    await new Promise((r) => setTimeout(r, 20));
+    // ...meanwhile an old hub writes p3, B absorbs it, the owner deletes it.
+    legacy.set(account, record("p3"));
+    await memory.owner(account, { op: "status" });
+    await memory.owner(account, { op: "delete", name: "deploy" });
+    release();
+    expect((await a).notes_list).toEqual([]);
+    expect((await memory.owner(account, { op: "list" })).notes_list).toEqual(
+      [],
+    );
   });
 
   test("a note changed here after the move is not overwritten by an older record", async () => {
