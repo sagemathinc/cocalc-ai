@@ -27,9 +27,12 @@ committed.
 | client secret | `sagebrush_client_secret` | the token exchange and the limits API |
 | purge key     | `sagebrush_purge_secret`  | signing the deletion requests         |
 
-A blank client secret turns off the Sagebrush client: the authorize page refuses
-it and both server-to-server endpoints answer `401 invalid_client`. A blank
-purge key or purge URL turns off deletion requests.
+A blank client secret turns off sign-in: the authorize page refuses the client
+and the token and limits endpoints answer `401 invalid_client`. It does not
+turn off purges. While either the client secret or the purge key is set, every
+deleted account gets a purge request; it waits, and admins are alerted, while
+the purge URL or key is missing. A site with neither set never used Sagebrush
+and sends no purge requests.
 
 ## 1. Sign in with CoCalc
 

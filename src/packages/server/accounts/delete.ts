@@ -12,7 +12,7 @@ import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
 } from "@cocalc/server/purchases/billing-authority/client";
-import { getOAuthClients } from "@cocalc/server/auth/oauth/clients";
+import { getOAuthPurgeTargets } from "@cocalc/server/auth/oauth/clients";
 import { queueOAuthClientPurges } from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
@@ -86,9 +86,7 @@ export async function markAccountDeleted(
   account_id: string,
   { keep_client_ids }: DeleteAccountOptions = {},
 ): Promise<void> {
-  const client_ids = (await getOAuthClients()).map(
-    ({ client_id }) => client_id,
-  );
+  const client_ids = await getOAuthPurgeTargets();
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT email_address FROM accounts WHERE account_id=$1",

@@ -12,15 +12,10 @@ jest.mock("@cocalc/server/messages/admin-alert", () => ({
 }));
 
 import { purgeBackoffMs, sendPurgeRequest, signAdminRequest } from "./purge";
-import type { OAuthClient } from "./clients";
 
-const client: OAuthClient = {
-  client_id: "sagebrush",
-  name: "Sagebrush",
-  homepage: "https://sagebrush.space",
-  client_secret: "s",
-  redirect_uris: [],
-  purge: { url: "https://sagebrush.test/api/admin/purge", secret: "test-key" },
+const purge = {
+  url: "https://sagebrush.test/api/admin/purge",
+  secret: "test-key",
 };
 
 describe("signAdminRequest", () => {
@@ -76,7 +71,7 @@ describe("sendPurgeRequest", () => {
   it("sends a signed request the receiver can verify", async () => {
     const fetch = jest.fn(async () => ack());
     const result = await sendPurgeRequest({
-      client,
+      purge,
       row,
       fetch: fetch as any,
       now: () => 1700000000_000,
@@ -96,14 +91,14 @@ describe("sendPurgeRequest", () => {
     const fetch = jest.fn(
       async () => new Response("bad signature", { status: 401 }),
     );
-    expect(
-      await sendPurgeRequest({ client, row, fetch: fetch as any }),
-    ).toEqual({ status: 401, error: "HTTP 401: bad signature" });
+    expect(await sendPurgeRequest({ purge, row, fetch: fetch as any })).toEqual(
+      { status: 401, error: "HTTP 401: bad signature" },
+    );
     const failing = jest.fn(async () => {
       throw new Error("connection refused");
     });
     expect(
-      (await sendPurgeRequest({ client, row, fetch: failing as any })).error,
+      (await sendPurgeRequest({ purge, row, fetch: failing as any })).error,
     ).toContain("connection refused");
   });
 
@@ -120,7 +115,7 @@ describe("sendPurgeRequest", () => {
       ),
     ]) {
       const result = await sendPurgeRequest({
-        client,
+        purge,
         row,
         fetch: (async () => response) as any,
       });
@@ -138,7 +133,7 @@ describe("sendPurgeRequest", () => {
       },
     });
     const result = await sendPurgeRequest({
-      client,
+      purge,
       row,
       fetch: (async () => new Response(body, { status: 500 })) as any,
     });
@@ -152,7 +147,7 @@ describe("sendPurgeRequest", () => {
     expect(
       (
         await sendPurgeRequest({
-          client: { ...client, purge: { url: "not a url", secret: "k" } },
+          purge: { url: "not a url", secret: "k" },
           row,
           fetch: fetch as any,
         })
@@ -165,7 +160,7 @@ describe("sendPurgeRequest", () => {
     const fetch = jest.fn();
     expect(
       await sendPurgeRequest({
-        client: { ...client, purge: undefined },
+        purge: undefined,
         row,
         fetch: fetch as any,
       }),

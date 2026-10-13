@@ -11,6 +11,8 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 import {
   authenticateOAuthClient,
   getOAuthClient,
+  getOAuthClientPurgeConfig,
+  getOAuthPurgeTargets,
   isRegisteredRedirectUri,
   parseBasicAuthorization,
   parseRedirectUris,
@@ -49,6 +51,22 @@ describe("OAuth client registry", () => {
       url: "https://sagebrush.space/api/admin/purge",
       secret: "k",
     });
+  });
+
+  it("finds purge configuration and targets independently of sign-in", async () => {
+    mockSettings = { sagebrush_purge_secret: "k" };
+    expect(await getOAuthClient("sagebrush")).toBeUndefined();
+    expect(await getOAuthClientPurgeConfig("sagebrush")).toEqual({
+      url: "https://sagebrush.space/api/admin/purge",
+      secret: "k",
+    });
+    expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+    mockSettings = { sagebrush_client_secret: "s" };
+    expect(await getOAuthClientPurgeConfig("sagebrush")).toBeUndefined();
+    expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+    mockSettings = {};
+    expect(await getOAuthPurgeTargets()).toEqual([]);
+    expect(await getOAuthClientPurgeConfig("__proto__")).toBeUndefined();
   });
 
   it("ignores a purge URL that is not https", async () => {

@@ -59,6 +59,7 @@ import {
 } from "./authorize";
 import { deliverDuePurgeRequests, queueOAuthClientPurges } from "./purge";
 import { getSagebrushLimits } from "@cocalc/server/sagebrush/limits";
+import { getOAuthPurgeTargets } from "./clients";
 
 const ACK = (init: any) =>
   new Response(
@@ -540,6 +541,39 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       await deliverDuePurgeRequests({ fetch: down as any });
       // Overdue alerts are sent once per request.
       expect(mockAlert).toHaveBeenCalledTimes(2);
+    });
+
+    it("purges even when sign-in was turned off, before or after the deletion", async () => {
+      const deliver = (fetch: any) => deliverDuePurgeRequests({ fetch });
+      const ok = jest.fn(async (_url, init: any) => ACK(init));
+
+      // Turned off before the deletion: the client is still a purge target.
+      const before = await approvedAccount();
+      mockSettings.sagebrush_client_secret = "";
+      expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+      await queueOAuthClientPurges({
+        db: getPool(),
+        account_id: before,
+        client_ids: await getOAuthPurgeTargets(),
+      });
+      expect(await deliver(ok)).toEqual({ accepted: 1, failed: 0 });
+
+      // Turned off after the request was queued.
+      mockSettings.sagebrush_client_secret = SECRET;
+      const after = await approvedAccount();
+      await queueOAuthClientPurges({
+        db: getPool(),
+        account_id: after,
+        client_ids: await getOAuthPurgeTargets(),
+      });
+      mockSettings.sagebrush_client_secret = "";
+      expect(await deliver(ok)).toEqual({ accepted: 1, failed: 0 });
+      expect(ok).toHaveBeenCalledTimes(2);
+    });
+
+    it("has no purge target on a site that never set up the client", async () => {
+      mockSettings = {};
+      expect(await getOAuthPurgeTargets()).toEqual([]);
     });
 
     it("keeps a request queued while the purge is not configured", async () => {

@@ -85,7 +85,7 @@ jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
 
 jest.mock("@cocalc/server/auth/oauth/clients", () => ({
   __esModule: true,
-  getOAuthClients: async () => [{ client_id: "sagebrush" }],
+  getOAuthPurgeTargets: async () => ["sagebrush"],
 }));
 
 jest.mock("@cocalc/server/auth/oauth/purge", () => ({

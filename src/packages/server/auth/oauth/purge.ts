@@ -19,7 +19,7 @@ import { createHmac } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
-import { getOAuthClient, type OAuthClient } from "./clients";
+import { getOAuthClientPurgeConfig, type OAuthPurgeConfig } from "./clients";
 
 const logger = getLogger("server:auth:oauth:purge");
 
@@ -144,17 +144,17 @@ function isAcknowledgment(body: string, request_id: string): boolean {
 /** Send one purge request. Resolves to { accepted: true } only when the
  * client acknowledged this request, and otherwise to the reason it failed. */
 export async function sendPurgeRequest({
-  client,
+  purge,
   row,
   fetch = globalThis.fetch,
   now = Date.now,
 }: {
-  client: OAuthClient;
+  purge: OAuthPurgeConfig | undefined;
   row: Pick<PurgeRow, "request_id" | "account_id">;
   fetch?: Fetch;
   now?: () => number;
 }): Promise<{ accepted?: true; status?: number; error?: string }> {
-  if (client.purge == null) {
+  if (purge == null) {
     return { error: "purge is not configured for this client" };
   }
   const body = JSON.stringify({
@@ -164,14 +164,14 @@ export async function sendPurgeRequest({
   const timestamp = Math.floor(now() / 1000);
   let response: Response;
   try {
-    const url = new URL(client.purge.url);
+    const url = new URL(purge.url);
     response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Sagebrush-Timestamp": `${timestamp}`,
         "X-Sagebrush-Signature": signAdminRequest({
-          secret: client.purge.secret,
+          secret: purge.secret,
           timestamp,
           method: "POST",
           path: url.pathname,
@@ -241,11 +241,12 @@ export async function deliverDuePurgeRequests({
   for (const row of rows) {
     let result: { accepted?: true; status?: number; error?: string };
     try {
-      const client = await getOAuthClient(row.client_id);
-      result =
-        client == null
-          ? { error: "the client is not enabled" }
-          : await sendPurgeRequest({ client, row, fetch, now });
+      result = await sendPurgeRequest({
+        purge: await getOAuthClientPurgeConfig(row.client_id),
+        row,
+        fetch,
+        now,
+      });
     } catch (err) {
       // One row's failure (e.g. reading the settings) must not stop the
       // others; it is recorded and retried like any failed attempt.

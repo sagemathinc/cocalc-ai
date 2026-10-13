@@ -106,21 +106,59 @@ export async function getOAuthClient(
     configuredUris == null
       ? definition.defaultRedirectUris
       : parseRedirectUris(configuredUris);
-  const purgeUrl =
-    settings[definition.settings.purge_url] == null
-      ? definition.defaultPurgeUrl
-      : setting(settings, definition.settings.purge_url);
-  const purgeSecret = setting(settings, definition.settings.purge_secret);
+  const purge = purgeConfig(definition, settings);
   return {
     client_id: definition.client_id,
     name: definition.name,
     homepage: definition.homepage,
     client_secret,
     redirect_uris,
-    ...(purgeUrl && purgeSecret && isAllowedClientUrl(purgeUrl)
-      ? { purge: { url: purgeUrl, secret: purgeSecret } }
-      : {}),
+    ...(purge ? { purge } : {}),
   };
+}
+
+export interface OAuthPurgeConfig {
+  url: string;
+  secret: string;
+}
+
+function purgeConfig(
+  definition: OAuthClientDefinition,
+  settings: Record<string, unknown>,
+): OAuthPurgeConfig | undefined {
+  const url =
+    settings[definition.settings.purge_url] == null
+      ? definition.defaultPurgeUrl
+      : setting(settings, definition.settings.purge_url);
+  const secret = setting(settings, definition.settings.purge_secret);
+  return url && secret && isAllowedClientUrl(url) ? { url, secret } : undefined;
+}
+
+/** Where to send a client's purge requests, or undefined if its purge URL or
+ * key is not (validly) set. Independent of the client secret: turning off
+ * sign-in must not stop purges of data stored earlier. */
+export async function getOAuthClientPurgeConfig(
+  client_id: string,
+): Promise<OAuthPurgeConfig | undefined> {
+  if (!Object.prototype.hasOwnProperty.call(OAUTH_CLIENTS, client_id)) return;
+  const settings = (await getServerSettings()) as Record<string, unknown>;
+  return purgeConfig(OAUTH_CLIENTS[client_id], settings);
+}
+
+/** The clients every deleted account's data must be purged from: those this
+ * site has configured at all, i.e. with a client secret or a purge key, now
+ * or (by keeping either) since it stored data. A site that never set up a
+ * client gets no purge requests for it, rather than requests that wait
+ * forever. */
+export async function getOAuthPurgeTargets(): Promise<string[]> {
+  const settings = (await getServerSettings()) as Record<string, unknown>;
+  return Object.values(OAUTH_CLIENTS)
+    .filter(
+      (definition) =>
+        setting(settings, definition.settings.client_secret) ||
+        setting(settings, definition.settings.purge_secret),
+    )
+    .map((definition) => definition.client_id);
 }
 
 /** All enabled clients. */
