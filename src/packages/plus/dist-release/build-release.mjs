@@ -170,7 +170,12 @@ async function main() {
             copyFileSync(source, join(toolsDir, "bin", name));
           }
         }
-        copyFileSync(cliBundle, join(toolsDir, "bin", "cocalc-cli.js"));
+        // cocalc-cli.js starts the bundle with the compile cache on.
+        copyFileSync(cliBundle, join(toolsDir, "bin", "cocalc-cli-bundle.js"));
+        copyFileSync(
+          join(packages, "cli", "sea", "cli-loader.cjs"),
+          join(toolsDir, "bin", "cocalc-cli.js"),
+        );
         writeFileSync(
           join(toolsDir, "bin", "cocalc"),
           '#!/usr/bin/env sh\nset -eu\nSCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nexec node "$SCRIPT_DIR/cocalc-cli.js" "$@"\n',
