@@ -15,6 +15,7 @@ import {
   DEFAULT_AUTO_UPDATE,
   STATE_SCHEMA,
   readState,
+  settleCurrent,
   sha256,
   validOrigin,
   withLock,
@@ -26,6 +27,7 @@ import {
   plusActiveRelease,
   plusRollback,
   readPlusManifest,
+  recoverData,
 } from "./plus";
 import {
   fetchStoreManifestText,
@@ -119,34 +121,39 @@ export async function updatePlusFromOrigin({
       message: `${origin} offers release ${pointer.release}, older than release ${highest} seen before; not downgrading.`,
     };
   }
-  const active = await plusActiveRelease(root);
-  if (active?.manifest === pointer.manifest) {
-    if (explicit && state.held_at != null) {
-      await withLock(root, async () => {
-        const current = await readState(root);
-        if (current) {
-          current.held_at = null;
-          await writeState(root, current);
-        }
-      });
-    }
-    return {
-      status: "current",
-      release: active.release,
-      version: active.version,
-      message: `CoCalc Plus is up to date (release ${active.release}, version ${active.version}).`,
-    };
-  }
-  const manifestText = await pointerManifest(origin, pointer);
+  const prepareState = (current: CliState | undefined) =>
+    updateState(current, origin, explicit);
   let result;
   try {
+    // Already current? Decided under the lock, after any pending data
+    // change is finished, as a rollback may land between any check out
+    // here and the install.
+    const current = await settleCurrent({
+      root,
+      origin,
+      release: pointer.release,
+      manifestHash: pointer.manifest,
+      prepareState,
+      active: plusActiveRelease,
+      recoverMore: recoverData,
+      log,
+    });
+    if (current != null) {
+      return {
+        status: "current",
+        release: current.release,
+        version: current.version,
+        message: `CoCalc Plus is up to date (release ${current.release}, version ${current.version}).`,
+      };
+    }
+    const manifestText = await pointerManifest(origin, pointer);
     result = await installPlusRelease({
       root,
       origin,
       manifestText,
       manifestHash: pointer.manifest,
       fetchFile: storeFileFetcher(origin),
-      prepareState: (current) => updateState(current, origin, explicit),
+      prepareState,
       log,
     });
   } catch (err) {

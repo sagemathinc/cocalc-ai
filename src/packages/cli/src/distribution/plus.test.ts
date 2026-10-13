@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,26 +14,38 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { constants, zstdCompressSync } from "node:zlib";
 
 import {
+  POINTER_SCHEMA,
   canonicalJson,
   currentPlatform,
 } from "@cocalc/util/cli-distribution/schema";
 import { PLUS_MANIFEST_SCHEMA } from "@cocalc/util/cli-distribution/plus-schema";
 
-import { type CliState, STATE_SCHEMA, readState, withLock } from "./local";
+import {
+  type CliState,
+  STATE_SCHEMA,
+  readActive,
+  readState,
+  switchActive,
+  withLock,
+  writeState,
+} from "./local";
 import {
   type DataFault,
   installPlusRelease,
   plusRollback,
   prepareServer,
   recoverData,
+  renamable,
 } from "./plus";
-import { HeldError, updateState } from "./plus-update";
+import { HeldError, updatePlusFromOrigin, updateState } from "./plus-update";
 
 const ORIGIN = "https://software.example/software/plus";
 
@@ -58,7 +71,7 @@ function tarZst(cwd: string, entries: string[]): Buffer {
   });
 }
 
-function fixture() {
+function fixture(rootName = "root") {
   const dir = mkdtempSync(join(tmpdir(), "plus-dist-test-"));
   const files = new Map<string, Buffer>();
   const add = (data: Buffer | string) => {
@@ -155,19 +168,19 @@ console.log(JSON.stringify({
     fetched.push(hash);
     writeFileSync(dest, data);
   };
-  const root = join(dir, "root");
+  const root = join(dir, rootName);
   const launcherPath = join(dir, "bin", "cocalc-plus");
-  const install = (r: ReturnType<typeof release>) =>
+  const install = (r: ReturnType<typeof release>, origin = ORIGIN) =>
     installPlusRelease({
       root,
-      origin: ORIGIN,
+      origin,
       manifestText: r.text,
       manifestHash: r.hash,
       fetchFile,
       prepareState: (current): CliState =>
         current ?? {
           schema: STATE_SCHEMA,
-          origin: ORIGIN,
+          origin,
           mode: "origin-trust",
           auto: true,
           held_at: null,
@@ -190,6 +203,7 @@ console.log(JSON.stringify({
     install,
     run,
     fetched,
+    files,
     staticPart,
     publicPart,
   };
@@ -704,3 +718,214 @@ test("an automatic update stops at a hold placed after its unlocked check", () =
     /source changed/,
   );
 });
+
+test("a rollback whose snapshot went missing fails closed and keeps its journal", async () => {
+  for (const damage of ["removed", "replaced by another"]) {
+    const f = fixture();
+    const d = dataFixture(f);
+    await f.install(f.release(210));
+    d.write("from 210");
+    await d.start();
+    await f.install(f.release(211));
+    await d.start();
+    d.write("from 211");
+    // The data is moved aside, then the crash...
+    await assert.rejects(
+      plusRollback({ root: f.root, paths: d.paths, faultAt: "data-replaced" }),
+      /injected fault/,
+    );
+    // ...and the snapshot is gone, or is not this rollback's.
+    const snapshot = join(d.paths.home, "data.snapshot");
+    if (damage === "removed") {
+      rmSync(snapshot, { recursive: true });
+    } else {
+      const marker = join(snapshot, ".cocalc-snapshot.json");
+      const info = JSON.parse(readFileSync(marker, "utf8"));
+      writeFileSync(
+        marker,
+        JSON.stringify({ ...info, id: "ffffffffffffffff" }) + "\n",
+      );
+    }
+    await assert.rejects(
+      withLock(f.root, () => recoverData(f.root)),
+      /is missing; the journal .* was kept/,
+    );
+    await assert.rejects(d.start(), /is missing/);
+    assert.ok(existsSync(join(f.root, "data-journal.json")));
+    // Older code never went live, and the newer data is where it was put.
+    assert.equal(f.run().release, 211);
+    assert.equal(
+      readFileSync(join(d.paths.home, "data.replaced", "hub.db"), "utf8"),
+      "from 211",
+    );
+  }
+});
+
+test("a rollback whose data can't be moved is undone, not left half done", async () => {
+  if (process.getuid?.() === 0) return; // root ignores the permissions
+  const f = fixture();
+  const d = dataFixture(f);
+  await f.install(f.release(220));
+  d.write("from 220");
+  await d.start();
+  await f.install(f.release(221));
+  await d.start();
+  d.write("from 221");
+  // Like a mount point: renaming the data directory is refused.
+  chmodSync(d.paths.home, 0o555);
+  try {
+    await assert.rejects(
+      plusRollback({ root: f.root, paths: d.paths }),
+      /can't be moved \(EACCES\).*nothing was changed/,
+    );
+  } finally {
+    chmodSync(d.paths.home, 0o755);
+  }
+  assert.equal(existsSync(join(f.root, "data-journal.json")), false);
+  assert.equal(f.run().release, 221);
+  assert.equal(d.read(), "from 221");
+  assert.equal(await d.start(), "unchanged");
+});
+
+test("mount points on the same device as their parent are not renamable", async () => {
+  let found: string | undefined;
+  for (const line of readFileSync("/proc/self/mountinfo", "utf8").split("\n")) {
+    const point = line.split(" ")[4];
+    if (!point || point === "/" || /\\/.test(point)) continue;
+    try {
+      const own = lstatSync(point);
+      if (own.isDirectory() && own.dev === lstatSync(dirname(point)).dev) {
+        found = point;
+        break;
+      }
+    } catch {}
+  }
+  if (found == null) return; // no such mount here
+  assert.equal(await renamable(found), false, found);
+  const f = fixture();
+  mkdirSync(join(f.dir, "plain"));
+  assert.equal(await renamable(join(f.dir, "plain")), true);
+});
+
+test("the install may not sit among the data's derived paths", async () => {
+  for (const rootName of [
+    "data.snapshot",
+    "data.replaced",
+    "data.snapshot.old",
+    "data.snapshot.tmp-0123456789abcdef",
+  ]) {
+    const f = fixture(rootName);
+    const r = f.release(230);
+    await f.install(r);
+    const line = readFileSync(join(f.root, "active"), "utf8").trimEnd();
+    const paths = { home: f.dir, data: join(f.dir, "data") };
+    await assert.rejects(
+      prepareServer({ root: f.root, line, paths }),
+      /overlaps|sits among/,
+      rootName,
+    );
+    // Nor may a journal name such data: recovery refuses before acting.
+    const release = { manifest: r.hash, release: 230, version: "1.0.230" };
+    writeFileSync(
+      join(f.root, "data-journal.json"),
+      JSON.stringify({
+        op: "rollback",
+        data: paths.data,
+        to: release,
+        line,
+        restore: "0123456789abcdef",
+      }),
+    );
+    await assert.rejects(
+      withLock(f.root, () => recoverData(f.root)),
+      /unsafe paths/,
+      rootName,
+    );
+    assert.ok(existsSync(join(f.root, "data-journal.json")));
+    assert.ok(existsSync(join(f.root, "active")));
+  }
+});
+
+/*
+ * "Already current" is decided under the lock. A rollback lands while the
+ * update waits for the lock, after it read current.json naming the release
+ * that was active until then.
+ */
+for (const explicit of [true, false]) {
+  test(`a rollback while ${explicit ? "an explicit" : "an automatic"} Plus update waits for the lock`, async () => {
+    const f = fixture();
+    const r1 = f.release(240);
+    const r2 = f.release(241);
+    const manifests = new Map([r1, r2].map((r) => [r.hash, r.text]));
+    let pointerServed = false;
+    const server = createServer((req, res) => {
+      const url = req.url ?? "";
+      let body: Buffer | string | undefined;
+      if (url === "/current.json") {
+        pointerServed = true;
+        body = canonicalJson(
+          {
+            schema: POINTER_SCHEMA,
+            release: 241,
+            manifest: r2.hash,
+            min_release: 241,
+            published_at: "2026-10-13T00:00:00Z",
+          },
+          true,
+        );
+      } else if (url.startsWith("/manifests/")) {
+        body = manifests.get(url.slice(11, -5));
+      } else if (url.startsWith("/files/")) {
+        body = f.files.get(url.slice(7));
+      }
+      res.statusCode = body == null ? 404 : 200;
+      res.end(body);
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      await f.install(r1, origin);
+      await f.install(r2, origin);
+      const log: string[] = [];
+      let update: ReturnType<typeof updatePlusFromOrigin>;
+      await withLock(f.root, async () => {
+        update = updatePlusFromOrigin({
+          root: f.root,
+          explicit,
+          log: (m) => log.push(m),
+        });
+        let settled = false;
+        update.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        const start = Date.now();
+        while (!(pointerServed && log.some((m) => /Waiting/.test(m)))) {
+          assert.ok(!settled, "the update finished without the lock");
+          assert.ok(Date.now() - start < 10_000, "the update never waited");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        // What rollback does, while the update waits for the lock.
+        const state = await readState(f.root);
+        await writeState(f.root, { ...state!, held_at: 240 });
+        const previous = await readActive(f.root, "previous");
+        await switchActive(f.root, previous!.line);
+      });
+      const outcome = await update!;
+      const state = await readState(f.root);
+      if (explicit) {
+        assert.equal(outcome.status, "updated");
+        assert.equal(f.run().release, 241);
+        assert.equal(state?.held_at, null);
+      } else {
+        assert.equal(outcome.status, "held");
+        assert.equal(f.run().release, 240);
+        assert.equal(state?.held_at, 240);
+      }
+    } finally {
+      server.close();
+    }
+  });
+}

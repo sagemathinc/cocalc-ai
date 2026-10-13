@@ -23,7 +23,12 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { constants, createReadStream, existsSync } from "node:fs";
+import {
+  constants,
+  createReadStream,
+  createWriteStream,
+  existsSync,
+} from "node:fs";
 import {
   cp,
   lstat,
@@ -38,7 +43,14 @@ import {
   unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+} from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createZstdDecompress } from "node:zlib";
 import {
@@ -156,23 +168,37 @@ async function ensureBlob(
 
 // Unpack a zstd-compressed tar with Node's own zstd and the system tar (no
 // xz needed).
+/*
+ * Decompressed to a file first: tar stops reading at the end-of-archive
+ * marker and may exit before the trailing padding arrives, so piping into
+ * it fails at random with a premature close.
+ */
 export async function unpackZstdTar(file: string, dest: string): Promise<void> {
   await mkdir(dest, { recursive: true });
-  const tar = spawn("tar", ["-xf", "-", "-C", dest], {
-    stdio: ["pipe", "ignore", "pipe"],
-  });
-  let stderr = "";
-  tar.stderr.on("data", (chunk) => (stderr += chunk));
-  const exited = new Promise<void>((resolve, reject) => {
-    tar.on("error", reject);
-    tar.on("exit", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error(`tar failed (${code}): ${stderr.trim()}`)),
+  // Beside dest, in staging (wiped by recovery), never beside the blob.
+  const tarFile = `${dest}.unpack.tar`;
+  try {
+    await pipeline(
+      createReadStream(file),
+      createZstdDecompress(),
+      createWriteStream(tarFile, { flags: "wx", mode: 0o600 }),
     );
-  });
-  await pipeline(createReadStream(file), createZstdDecompress(), tar.stdin);
-  await exited;
+    await new Promise<void>((resolve, reject) => {
+      const tar = spawn("tar", ["-xf", tarFile, "-C", dest], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      tar.stderr.on("data", (chunk) => (stderr += chunk));
+      tar.on("error", reject);
+      tar.on("close", (code) =>
+        code === 0
+          ? resolve()
+          : reject(new Error(`tar failed (${code}): ${stderr.trim()}`)),
+      );
+    });
+  } finally {
+    await rm(tarFile, { force: true });
+  }
 }
 
 export async function appIntact(root: string, R: string): Promise<boolean> {
@@ -606,16 +632,43 @@ export async function canonicalData(
   } catch (err: any) {
     if (err?.code !== "ENOENT") throw err;
   }
-  if (canonical === "/") {
-    throw new Error("the data directory can't be /");
+  await checkDataPaths(root, canonical);
+  return canonical;
+}
+
+/*
+ * The data directory and every path derived from it (the snapshot, its
+ * temporary and old copies, the replaced data) must stay clear of the
+ * CoCalc Plus install, in both directions: recovery renames and removes
+ * them. Checked for every data path, including one read from a journal.
+ */
+async function checkDataPaths(root: string, data: string): Promise<void> {
+  if (data === "/" || !isAbsolute(data)) {
+    throw new Error(`unusable data directory: ${data}`);
   }
   const install = await realpath(root).catch(() => normalize(root));
-  if (inside(canonical, install) || inside(install, canonical)) {
+  const derived = [
+    data,
+    snapshotDir(data),
+    snapshotOld(data),
+    replacedDir(data),
+  ];
+  for (const path of derived) {
+    if (inside(path, install) || inside(install, path)) {
+      throw new Error(
+        `the data directory ${data} (or ${path}) overlaps the CoCalc Plus install ${install}`,
+      );
+    }
+  }
+  // The temporary snapshots are ${data}.snapshot.tmp-<id>.
+  if (
+    dirname(install) === dirname(data) &&
+    basename(install).startsWith(`${basename(data)}.`)
+  ) {
     throw new Error(
-      `the data directory ${canonical} overlaps the CoCalc Plus install ${install}`,
+      `the CoCalc Plus install ${install} sits among the data directory's own copies (${data}.*)`,
     );
   }
-  return canonical;
 }
 
 export async function readDataState(
@@ -670,12 +723,42 @@ async function ownerOf(
   return state?.data === data ? state.owner : null;
 }
 
-// Renaming the data directory needs it and its parent on one filesystem
-// (it isn't a mount point).
+// The mount points listed in /proc/self/mountinfo (Linux), or undefined.
+async function linuxMountPoints(): Promise<Set<string> | undefined> {
+  let text: string;
+  try {
+    text = await readFile("/proc/self/mountinfo", "utf8");
+  } catch {
+    return undefined;
+  }
+  const points = new Set<string>();
+  for (const line of text.split("\n")) {
+    const field = line.split(" ")[4];
+    if (!field) continue;
+    points.add(
+      field.replace(/\\([0-7]{3})/g, (_, octal) =>
+        String.fromCharCode(parseInt(octal, 8)),
+      ),
+    );
+  }
+  return points;
+}
+
+/*
+ * Renaming the data directory needs it not to be a mount point. A different
+ * device than its parent's means a mount point; on Linux, mountinfo also
+ * catches bind mounts within one filesystem (same device number). If a
+ * rename still fails, the rollback transaction undoes itself (see
+ * finishRollback).
+ */
 export async function renamable(data: string): Promise<boolean> {
   const [own, parent] = await Promise.all([stat(data), stat(dirname(data))]);
-  return own.dev === parent.dev;
+  if (own.dev !== parent.dev) return false;
+  const points = await linuxMountPoints();
+  return !(points?.has(data) ?? false);
 }
+
+const RENAME_REFUSED = new Set(["EBUSY", "EXDEV", "EPERM", "EACCES", "EINVAL"]);
 
 async function finishSnapshot(
   root: string,
@@ -731,17 +814,54 @@ async function finishRollback(
 ): Promise<void> {
   const data = journal.data;
   if (journal.restore != null) {
-    const snapshot = await readSnapshotInfo(data);
-    if (snapshot?.id === journal.restore) {
+    const id = journal.restore;
+    const marked = async (dir: string) =>
+      (
+        await readJson<SnapshotInfo>(join(dir, SNAPSHOT_INFO)).catch(
+          () => undefined,
+        )
+      )?.id === id;
+    if (await marked(snapshotDir(data))) {
+      // (a) The snapshot is still waiting: move the data aside, then the
+      // snapshot into place. If the first rename is refused nothing has
+      // moved; if the second is, the data this call moved goes back.
+      // Either way the rollback is undone and its journal removed.
+      let moved = false;
       if (existsSync(data)) {
         await rm(replacedDir(data), { recursive: true, force: true });
-        await rename(data, replacedDir(data));
+        try {
+          await rename(data, replacedDir(data));
+          moved = true;
+        } catch (err: any) {
+          if (!RENAME_REFUSED.has(err?.code)) throw err;
+          await unlink(journalPath(root));
+          throw new Error(
+            `the data directory ${data} can't be moved (${err.code}), so its snapshot can't be restored; nothing was changed`,
+          );
+        }
       }
       dataFault(faultAt, "data-replaced");
-      await rename(snapshotDir(data), data);
+      try {
+        await rename(snapshotDir(data), data);
+      } catch (err: any) {
+        if (!RENAME_REFUSED.has(err?.code) || !moved || existsSync(data)) {
+          throw err;
+        }
+        await rename(replacedDir(data), data);
+        await unlink(journalPath(root));
+        throw new Error(
+          `the snapshot can't be moved into ${data} (${err.code}); nothing was changed`,
+        );
+      }
+    } else if (!(await marked(data))) {
+      // (c) Neither the snapshot nor already-restored data carries this
+      // rollback's snapshot: never put older code over unknown data.
+      throw new Error(
+        `the snapshot this rollback needs (${id}) is missing; the journal ${journalPath(root)} was kept. Fix or remove it by hand.`,
+      );
     }
+    // (b) Otherwise the snapshot was already moved into place.
     dataFault(faultAt, "snapshot-restored");
-    await rm(join(data, SNAPSHOT_INFO), { force: true });
   }
   if ((await readText(join(root, "active"))) !== `${journal.line}\n`) {
     await switchActive(root, `${journal.line}\n`);
@@ -754,6 +874,11 @@ async function finishRollback(
   }
   await setOwner(root, data, journal.to);
   await unlink(journalPath(root));
+  // The marker goes last: until the journal is gone it tells recovery the
+  // snapshot is already in place.
+  if (journal.restore != null) {
+    await rm(join(data, SNAPSHOT_INFO), { force: true });
+  }
 }
 
 function validRelease(value: any, manifestRequired: boolean): boolean {
@@ -831,6 +956,13 @@ export async function recoverData(root: string): Promise<void> {
   if (!validJournal(journal)) {
     throw new Error(
       `the data journal ${journalPath(root)} is damaged; it was kept. Fix or remove it by hand.`,
+    );
+  }
+  try {
+    await checkDataPaths(root, journal.data);
+  } catch (err) {
+    throw new Error(
+      `the data journal ${journalPath(root)} names unsafe paths (${err instanceof Error ? err.message : err}); it was kept. Fix or remove it by hand.`,
     );
   }
   if (journal.op === "rollback") {
@@ -1007,6 +1139,11 @@ export async function plusRollback({
         release: manifest.release,
         version: manifest.version,
       };
+      if (restore != null && !(await renamable(data))) {
+        throw new Error(
+          `the data directory ${data} is a mount point, so its snapshot can't be restored; nothing was changed`,
+        );
+      }
       const journal: DataJournal = { op: "rollback", data, to, line, restore };
       await writeFileAtomic(journalPath(root), JSON.stringify(journal) + "\n");
       await finishRollback(root, journal, faultAt);
