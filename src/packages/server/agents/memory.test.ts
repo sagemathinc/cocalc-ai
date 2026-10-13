@@ -261,6 +261,46 @@ describeDb("agent memory", () => {
     expect((await memory.owner(account, { op: "status" })).enabled).toBe(true);
   });
 
+  test("a recent note deleted here stays deleted when an old hub rewrites the record", async () => {
+    const { memory, legacy } = setup();
+    const account = randomUUID();
+    const recent = {
+      name: "recent",
+      description: "Recent",
+      body: "written a second before the move",
+      updated_at: new Date(Date.now() - 1000).toISOString(),
+    };
+    legacy.set(
+      account,
+      JSON.stringify({ version: 1, enabled: true, notes: [recent] }),
+    );
+    await memory.owner(account, { op: "status" });
+    await memory.owner(account, { op: "delete", name: "recent" });
+    // The old hub writes its cached record: the deleted note unchanged, and
+    // a genuinely new note.
+    legacy.set(
+      account,
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        notes: [
+          recent,
+          {
+            ...recent,
+            name: "late",
+            body: "new",
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      }),
+    );
+    expect(
+      (await memory.owner(account, { op: "list" })).notes_list.map(
+        (n: any) => n.name,
+      ),
+    ).toEqual(["late"]);
+  });
+
   test("a note changed here after the move is not overwritten by an older record", async () => {
     const { memory, legacy } = setup();
     const account = randomUUID();

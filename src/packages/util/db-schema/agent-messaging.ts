@@ -444,6 +444,11 @@ Table({
       type: "string",
       desc: "Hash of the first version's record as last absorbed (rolling upgrades).",
     },
+    legacy_notes: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Fingerprint of each note in that record, so only notes an old hub changed are absorbed again.",
+    },
     legacy_absorbed_at: timestamp(
       "When the first version's record was last absorbed.",
     ),

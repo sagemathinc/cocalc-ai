@@ -149,6 +149,21 @@ export const defaultAgentMemoryDeps: AgentMemoryDeps = {
     chargeAgentMemoryUsage(account_id, op, bytes),
 };
 
+/** Identifies one note's content in the first version's record. */
+function legacyFingerprint(note: {
+  name: string;
+  description: string;
+  body: string;
+  updated_at: string;
+}): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([note.name, note.description, note.body, note.updated_at]),
+    )
+    .digest("hex")
+    .slice(0, 32);
+}
+
 const aad = (
   account_id: string,
   namespace: string,
@@ -263,9 +278,11 @@ export function createAgentMemory(
    * Absorbs the first version's single record into rows whenever its content
    * changed since it was last absorbed: on first use, and again whenever a
    * hub still running the first version writes it during a rolling upgrade.
-   * The first time takes every note; later times only notes written since
-   * (so a note deleted here does not come back), and a note wins only if it
-   * is newer than its row. A note an old hub deleted is not deleted here.
+   * The first time takes every note; later times only notes the old hub
+   * actually changed or added, judged by each note's fingerprint in the
+   * record last absorbed (so an unchanged copy of a note deleted here does
+   * not bring it back), and a note wins only if it is newer than its row. A
+   * note an old hub deleted is not deleted here.
    * Accounts that never used memory get no row until the owner changes a
    * setting.
    */
@@ -304,7 +321,7 @@ export function createAgentMemory(
     );
     return await transaction(account_id, async (db) => {
       const { rows } = await db.query(
-        `SELECT enabled, namespaces, projects, legacy_version, legacy_absorbed_at
+        `SELECT enabled, namespaces, projects, legacy_version, legacy_notes
            FROM agent_memory_accounts WHERE account_id=$1`,
         [account_id],
       );
@@ -312,12 +329,11 @@ export function createAgentMemory(
       if (row?.legacy_version === legacy.version)
         return parseAgentMemorySettings(row);
       await deps.assertWritable(db, account_id);
-      // Notes changed since the last absorb, with a minute's slack for the
-      // clocks of the hubs that wrote them.
-      const since =
-        row?.legacy_absorbed_at == null
-          ? undefined
-          : new Date(row.legacy_absorbed_at).getTime() - 60_000;
+      // Each note's fingerprint in the record absorbed last time; none the
+      // first time, when every note is taken.
+      const previous: Record<string, string> | undefined =
+        row?.legacy_notes ?? undefined;
+      const fingerprints: Record<string, string> = {};
       const settings: AgentMemorySettings = row
         ? parseAgentMemorySettings(row)
         : { enabled: record.enabled, namespaces: [], projects: {} };
@@ -328,8 +344,9 @@ export function createAgentMemory(
           [account_id, record.enabled],
         );
       for (const { note, description, body } of encrypted) {
-        if (since !== undefined && Date.parse(note.updated_at) <= since)
-          continue;
+        const fingerprint = legacyFingerprint(note);
+        fingerprints[note.name] = fingerprint;
+        if (previous && previous[note.name] === fingerprint) continue;
         await db.query(
           `INSERT INTO agent_memory_notes
              (account_id, namespace, name, description, body, bytes, created_at, updated_at)
@@ -350,9 +367,10 @@ export function createAgentMemory(
         );
       }
       await db.query(
-        `UPDATE agent_memory_accounts SET legacy_version=$2, legacy_absorbed_at=now()
+        `UPDATE agent_memory_accounts
+            SET legacy_version=$2, legacy_notes=$3::jsonb, legacy_absorbed_at=now()
           WHERE account_id=$1`,
-        [account_id, legacy.version],
+        [account_id, legacy.version, JSON.stringify(fingerprints)],
       );
       return settings;
     });
