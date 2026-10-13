@@ -42,7 +42,7 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 **Release side:**
 - **One command** builds the bundle, launcher and bootstrap from the current commit, writes the manifest with a new release number, uploads the content-addressed files, and then flips the origin's single pointer. For example: `pnpm --dir src/packages/cli release:cli`, also runnable as a manual GitHub workflow.
   - There's no signing ceremony. Node archives are pinned from Node's official signed checksums.
-  - Adding `--min-release` marks the hub as needing at least that CLI release. This is how a hub change that does need a newer CLI forces it.
+  - `--min-release this` (or a number) marks the CLI release the site wants. **It is advisory in Phase A:** an up-to-date CLI updates (or stops with a clear message) before using the site. An older CLI doesn't know the field, and a check that times out lets the command run. Real protocol compatibility is the API's job, not this check's.
 - **Where releases live:**
   - for cocalc.ai, in the software bucket (software.cocalc.ai), which every bay reads, so there is one origin-wide pointer;
   - for dev and self-hosted sites, a local directory of the same layout, written by the same command with `--dir`.
