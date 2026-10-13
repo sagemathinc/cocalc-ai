@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 6 (Oct 13, 2026): phased, following William's point that the CLI shouldn't be held to a stricter standard than the hub it talks to. Phases A and B come first; the full design (revision 5, approved at design level by @lite1-review at 9f4827a4df) is now **Phase C, the end state**.
+Status: revision 7 (Oct 13, 2026): phased, following William's point that the CLI shouldn't be held to a stricter standard than the hub it talks to. Phases A and B come first; the full design (revision 5, approved at design level by @lite1-review at 9f4827a4df) is now **Phase C, the end state**.
 
 Review history: Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 (59c5fac26d) answered rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. Revision 5 answers rev 4's one medium finding [U1]: the exact pointer grammar, the launcher replacement inside the transaction, and how a future pointer format is introduced. William reviews after @lite1-review approves.
 
@@ -32,19 +32,37 @@ The hub's own releases ship through ordinary CI and deploys. So signing the CLI 
 
 ### Phase A: now (fixes drift and heavy releases)
 
-Same mechanics as the end state, without signing:
+**The rule: every hub release is a CLI release.** If you install the CLI from a site, it should always be running that site's CLI. Nobody has to remember a separate CLI release. Phase A trusts whatever builds and deploys the hub, and nothing more.
+
+**Release side:**
+- Every hub build makes the bundle from the same commit, as it already does for projects. The bundle ships inside the hub release.
+- So deploying a hub *is* releasing its CLI. There's no separate CLI release step to forget or let drift, and no signing ceremony.
+- The SEA builds stay for Windows only.
+
+**On the user's machine:**
+- **Updates are automatic by default.** When the CLI talks to its site, it reads `/cli/site.json` (cached up to 10 minutes). If the site's bundle hash differs from the active one, the CLI fetches the new bundle, checks it against the manifest and swaps it in with the crash-safe transaction.
+  - The swap happens before the command runs, when the site requires the newer version.
+  - Otherwise it happens in the background, for the next run.
+- **Opting out:** `cocalc update --auto off`, or `COCALC_AUTO_UPDATE=0` for CI that wants pinned versions. `cocalc update` still updates by hand, and `cocalc update --rollback` goes back to the previous bundle.
+- **A new Node** comes the same way when the manifest pins a different version. The archive is checked against the manifest's sha256.
+
+**The details:**
 - **What gets installed:** the launcher, a pinned official Node, the bundle, the exact `v1` pointer and the crash-safe update transaction.
 - **What the hub serves:** `/cli/install.sh`, an **unsigned** `/cli/manifest.json` (hashes and sizes of the bundle and of each Node archive), and the bundle by hash.
-- **Trust, stated plainly:** you trust the site you install or update from, exactly as you already trust it with your account in the browser. Everything is fetched over HTTPS and checked against that site's manifest; that protects against corruption and mixed-up files, not against the site. `cocalc update [--from <site>]` re-fetches from the site you installed from by default. There's no rollback protection beyond the site's own honesty, since a compromised site can do worse anyway.
+- **Trust, stated plainly:** you trust the site you install or update from, exactly as you already trust it with your account in the browser. Everything is fetched over HTTPS and checked against that site's manifest; that protects against corruption and mixed-up files, not against the site. Updates come from the site you installed from by default (`cocalc update --from <site>` changes that). There's no rollback protection beyond the site's own honesty, since a compromised site can do worse anyway.
 - **Node:** whenever the pinned version changes, the release job checks Node's signed `SHASUMS256` against the Node release keys (cheap, in CI), and the manifest pins the sha256 of each archive.
 - **Dev sites** such as lite1b simply serve their own bundle. Installing from lite1b *is* the opt-in, so no special trust command is needed.
-- **Computers (decision 27, in its practical form):** a computer's daemon is pinned to the bundle it was connected with and updates only by a local `cocalc computer update`, never remotely. That trusts the hub as much as the rest of the computer feature already does. The offline-key signature comes in Phase B or C.
-- **Version skew:** `/cli/site.json` plus the friendly early error. The version header is for compatibility only.
+- **Computers:** the daemon follows the same rule, because the hub can already run commands on a connected computer. Pushing it new code adds no power the hub doesn't already have.
+  - **Persistent computers:** when a new bundle is active and no jobs are running, the daemon re-executes into it, keeping its key and session.
+  - **Time-limited computers:** they keep their bundle until they end, because restarting the process ends them.
+  - The hub's minimum version still refuses a daemon that is too old, with a message saying how to update.
+  - The strict form of decision 27 (updates signed with an offline key, never automatic) is Phase C.
+- **Version skew:** with automatic updates this mostly disappears. When updates are off, the CLI stops early with a clear "run `cocalc update`" message. The version header is for compatibility only.
 - **Windows** keeps the signed SEA.
 
 ### Phase B: when releases move off the hub (CDN, R2, Star mirrors)
 
-As soon as bytes come from somewhere other than the hub the person chose, sign what we publish. One person's keys are enough:
+As soon as bytes come from somewhere other than the hub the person chose, sign what we publish. Automatic updates continue, now verified. One person's keys are enough:
 - **Root key:** on a YubiKey, held by William. It's used rarely, to certify a release key for a year at a time (and to revoke it).
 - **Release key:** in CI or a KMS, certified by the root. It signs every release manifest.
 - **The client** embeds the root's public key and verifies the certificate chain, the manifest signature, the expiry and a monotonic sequence. It then gets the two-state rollback rule (`highest_seen` versus `active`).
@@ -338,12 +356,9 @@ Developers should use it on development machines (or a separate OS user), never 
 
 For Phase A (the one to build now):
 - **Node version:** Node 24 LTS or 26? Projects run 26 today.
-- **Default update source:** the site you installed from, or software.cocalc.ai?
 
 For later phases:
 
-- **Root key holders:** who holds the 2-of-3 offline root keys (e.g. YubiKeys)?
-- **Node version:** Node 24 LTS or 26?
-- **The independent rebuilder for stable [S1]:** whose machine, and is it worth the operational cost? The alternative is accepting the phase-1 builder-oracle risk for stable.
-- **Transparency log [S3]:** add one in phase 1, or accept undetected targeted equivocation for now?
-- **Is phase 1 too much?** A smaller first step would be to just fix the drift: hub-served `install.sh` plus the existing SEA with today's (weak) checks. The full TUF version would then be the real phase 1. This document assumes we go straight to the signed version, because the drift fix alone keeps today's weak trust model.
+- **Root key holders (Phase C):** who holds the 2-of-3 offline root keys (e.g. YubiKeys)?
+- **The independent rebuilder for stable [S1] (Phase C):** whose machine, and is it worth the operational cost?
+- **Transparency log [S3]:** in Phase B or C?
