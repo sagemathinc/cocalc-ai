@@ -10,6 +10,10 @@ import { join } from "node:path";
 import { InstancesClient, ZoneOperationsClient } from "@google-cloud/compute";
 
 import getLogger from "@cocalc/backend/logger";
+import {
+  formatRecoveryTargetTimeForPostgres,
+  normalizeRecoveryTargetTime,
+} from "./recovery-target-time";
 
 const logger = getLogger("server:bay-backup:disposable-gcp");
 
@@ -298,16 +302,19 @@ export function buildDisposableRestoreStartupScript(
 ): string {
   const workerConfig = { ...config };
   if (workerConfig.restore_mode === "pitr" && workerConfig.target_time) {
-    const target = new Date(workerConfig.target_time);
-    if (Number.isNaN(target.getTime())) {
+    let target: string | null;
+    try {
+      target = normalizeRecoveryTargetTime(workerConfig.target_time);
+    } catch {
+      target = null;
+    }
+    if (!target) {
       throw new Error(
         `invalid disposable PITR target '${workerConfig.target_time}'`,
       );
     }
-    workerConfig.target_time = target
-      .toISOString()
-      .replace("T", " ")
-      .replace("Z", "+00");
+    // Keep microseconds (see recovery-target-time.ts).
+    workerConfig.target_time = formatRecoveryTargetTimeForPostgres(target);
   }
   const encodedConfig = Buffer.from(JSON.stringify(workerConfig)).toString(
     "base64",

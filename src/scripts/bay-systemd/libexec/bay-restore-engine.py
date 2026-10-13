@@ -1019,6 +1019,14 @@ curl "${common[@]}" --fail "$base" -o "$destination"
                     break
                 if counts == (1, 1):
                     raise RuntimeError("PITR crossed the requested target transaction")
+                if recovery_text == "false":
+                    # Recovery is over and promoted, so no more WAL will be
+                    # replayed: waiting cannot change the outcome.
+                    raise RuntimeError(
+                        "PITR recovery ended at the target without the pre-target sentinel "
+                        "(counts=" + str(counts) + "); the target time precedes the "
+                        "transaction it was meant to follow"
+                    )
             elif CONFIG["restore_mode"] == "pitr":
                 if psql(container, "SELECT pg_catalog.pg_is_in_recovery()::text", log=False) == "false":
                     postgres_ready = True

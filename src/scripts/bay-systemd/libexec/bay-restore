@@ -213,6 +213,24 @@ kill_bay_processes() {
   die "processes of ${COCALC_BAY_USER} keep running (is a unit restarting them?); nothing was changed"
 }
 
+# Start the bay: its target, the services stop_bay stopped outside it, and
+# every enabled bay service outside it. The frontdoor and the tunnel are
+# wanted by multi-user.target, not the target, so on a freshly built VM (mode
+# B) nothing has started them and stop_bay recorded none. Oneshot units (the
+# backup jobs) are left alone: they run from their timers, which stay stopped
+# until the bay is healthy. Safe to repeat.
+start_bay() {
+  local work_dir="$1" unit enabled=()
+  systemctl start cocalc-bay.target || true
+  start_stopped_services "$work_dir" || true
+  for unit in $(systemctl list-unit-files --no-legend --plain --state=enabled 'cocalc-bay*.service' | awk '{print $1}'); do
+    [[ "$unit" != *@.service ]] || continue
+    [[ "$(systemctl show -p Type --value "$unit" 2>/dev/null)" != oneshot ]] || continue
+    enabled+=("$unit")
+  done
+  [[ "${#enabled[@]}" == 0 ]] || systemctl start "${enabled[@]}" || true
+}
+
 # Start the bay services stop_bay stopped outside cocalc-bay.target.
 start_stopped_services() {
   local work_dir="$1" services
@@ -227,8 +245,7 @@ restart_bay() {
   echo "bay-restore: restarting the bay on its unchanged data"
   # Nothing the restore ran as the bay account may live on into the bay.
   kill_bay_processes
-  systemctl start cocalc-bay.target || true
-  start_stopped_services "$work_dir" || true
+  start_bay "$work_dir"
   timers="$(cat "${work_dir}/stopped-timers" 2>/dev/null || true)"
   # shellcheck disable=SC2086
   [[ -z "$timers" ]] || systemctl start $timers || true
@@ -415,10 +432,11 @@ cmd_cutover() {
   date -u +%FT%TZ > "${work_dir}/cutover-at"
 
   echo "bay-restore: starting the bay on the restored data"
-  systemctl start cocalc-bay.target
-  start_stopped_services "$work_dir"
   local healthy=0
   for _ in $(seq 1 60); do
+    # Again on every round: a unit whose dependency failed at first (say
+    # PostgreSQL before its disks were ready) is not retried by systemd.
+    start_bay "$work_dir"
     if runuser -u "$COCALC_BAY_USER" -- "$BAY_HEALTH" >/dev/null 2>&1; then
       healthy=1
       break

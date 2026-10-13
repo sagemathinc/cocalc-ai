@@ -1134,9 +1134,9 @@ describe("bay-backup runner", () => {
           });
           return { rows: [] };
         }
-        if (sql === "SELECT clock_timestamp() AS target_time") {
+        if (sql.includes("clock_timestamp() AT TIME ZONE 'UTC'")) {
           return {
-            rows: [{ target_time: "2026-04-07T15:38:10.000Z" }],
+            rows: [{ target_time: "2026-04-07T15:38:10.000123Z" }],
           };
         }
         if (sql === "SELECT pg_sleep(0.25)") {
@@ -1479,9 +1479,9 @@ describe("bay-backup runner", () => {
           });
           return { rows: [] };
         }
-        if (sql === "SELECT clock_timestamp() AS target_time") {
+        if (sql.includes("clock_timestamp() AT TIME ZONE 'UTC'")) {
           return {
-            rows: [{ target_time: "2026-04-07T15:38:10.000Z" }],
+            rows: [{ target_time: "2026-04-07T15:38:10.000123Z" }],
           };
         }
         if (sql === "SELECT pg_sleep(0.25)") {
@@ -1579,7 +1579,7 @@ describe("bay-backup runner", () => {
     expect(result.recovery_ready).toBe(true);
     expect(result.pitr_verified).toBe(true);
     expect(result.kept_on_disk).toBe(false);
-    expect(result.target_time).toBe("2026-04-07T15:38:10.000Z");
+    expect(result.target_time).toBe("2026-04-07T15:38:10.000123Z");
     expect(result.verified_queries).toEqual([
       "pitr_recovery_promoted=true",
       "pitr_pre_count=1",
@@ -1606,7 +1606,7 @@ describe("bay-backup runner", () => {
       backupSetId,
     );
     expect(status.restore_readiness.last_pitr_test_target_time).toBe(
-      "2026-04-07T15:38:10.000Z",
+      "2026-04-07T15:38:10.000123Z",
     );
   });
 
@@ -1759,7 +1759,7 @@ describe("bay-backup runner", () => {
           });
           return { rows: [] };
         }
-        if (sql === "SELECT clock_timestamp() AS target_time") {
+        if (sql.includes("clock_timestamp() AT TIME ZONE 'UTC'")) {
           return {
             rows: [{ target_time: "2026-04-07T15:39:10.000Z" }],
           };

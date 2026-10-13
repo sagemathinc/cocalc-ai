@@ -3,7 +3,8 @@
 # (and its processes gone) before the restore engine runs, restarted on its
 # old data when the restore fails or with --no-cutover, and cutover stops and
 # starts units in the right order, also when the bay does not come up healthy
-# or the full backup cannot be started. Needs root (passwordless sudo),
+# or the full backup cannot be started, and on a fresh VM the enabled bay
+# services that were never running start with the bay. Needs root (passwordless sudo),
 # because bay-restore refuses to run otherwise. Run: bash bay-restore-cutover.test.sh
 set -euo pipefail
 
@@ -92,6 +93,14 @@ case "\$1" in
       echo "cocalc-bay-pgbackrest-status.service loaded inactive dead status"
     fi
     ;;
+  list-unit-files)
+    if [[ -e "${TMP_ROOT}/enabled-units" ]]; then
+      while read -r unit; do echo "\$unit enabled enabled"; done < "${TMP_ROOT}/enabled-units"
+    fi
+    ;;
+  show)
+    [[ "\${@: -1}" != *backup* ]] || echo oneshot
+    ;;
   is-active) exit 1 ;;
   stop)
     shift
@@ -119,7 +128,7 @@ setup() {
   mkdir -p "${TMP_ROOT}/bay/postgres" "${TMP_ROOT}/bay/sync"
   echo live > "${TMP_ROOT}/bay/postgres/marker"
   : > "$LOG"
-  rm -f "${TMP_ROOT}/fail-engine" "${TMP_ROOT}/fail-full" "${TMP_ROOT}/bay-procs"
+  rm -f "${TMP_ROOT}/fail-engine" "${TMP_ROOT}/fail-full" "${TMP_ROOT}/bay-procs" "${TMP_ROOT}/enabled-units"
   # The frontdoor and the tunnel run, outside cocalc-bay.target.
   rm -rf "$UNITS"
   mkdir -p "$UNITS"
@@ -267,5 +276,21 @@ restore --work-dir "${WORKS}/r3" || { cat "${TMP_ROOT}/out" >&2; fail "restore f
   fail "full restore: wrong order: $(cat "$LOG")"
 (( $(line 'start cocalc-bay.target') < $(line 'start cocalc-bay-sqlite-backup.timer cocalc-bay-pgbackrest-diff.timer') )) ||
   fail "timers restarted before the bay: $(cat "$LOG")"
+
+# A fresh VM (mode B): the frontdoor and the tunnel never ran, so there is
+# nothing to restart, but they are enabled and must be started with the bay.
+setup ""
+rm -rf "$UNITS"
+mkdir -p "$UNITS"
+# A backup job enabled by mistake still runs only from its timer.
+printf '%s\n' cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service \
+  cocalc-bay-sqlite-backup.service cocalc-bay-pgbackrest-backup@.service > "${TMP_ROOT}/enabled-units"
+restore --work-dir "${WORKS}/r4" || { cat "${TMP_ROOT}/out" >&2; fail "fresh-VM restore failed"; }
+[[ -e "${UNITS}/cocalc-bay-frontdoor.service" && -e "${UNITS}/cocalc-bay-cloudflared.service" ]] ||
+  fail "the enabled frontdoor and tunnel were not started on a fresh VM: $(cat "$LOG")"
+! grep -E -q '^start .*(cocalc-bay-sqlite-backup.service|@\.service)' "$LOG" ||
+  fail "started an enabled oneshot or template unit: $(cat "$LOG")"
+(( $(line engine) < $(line 'start cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service') )) ||
+  fail "fresh VM: started the frontdoor and tunnel before the restore: $(cat "$LOG")"
 
 echo "bay-restore tests passed"
