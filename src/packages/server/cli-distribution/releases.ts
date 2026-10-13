@@ -8,12 +8,17 @@
  *
  * Nothing is served unverified: manifests must hash to the name they're
  * requested by, and a file is served only if the requested manifest lists it
- * and its bytes match the listed size and sha256.
+ * and its bytes match the listed size and sha256. A file is verified through
+ * the open handle that is then served, so it can't change in between. The
+ * release store's own URLs are fetched without following redirects; only
+ * a Node archive's pinned upstream may redirect (its hash is pinned).
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import {
+  type FileHandle,
+  lstat,
   mkdir,
   open,
   readdir,
@@ -72,14 +77,29 @@ function sha256(data: Buffer | string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+async function fetchStore(
+  url: string,
+  timeoutMs: number,
+  followRedirects = false,
+): Promise<Response> {
+  const response = await fetch(url, {
+    redirect: followRedirects ? "follow" : "manual",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(
+      `GET ${url}: redirected; the release store must not redirect`,
+    );
+  }
+  return response;
+}
+
 async function fetchCapped(
   url: string,
   maxBytes: number,
   timeoutMs: number,
 ): Promise<Buffer | undefined> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetchStore(url, timeoutMs);
   if (response.status === 404) return undefined;
   if (!response.ok || response.body == null) {
     throw new Error(`GET ${url}: ${response.status}`);
@@ -94,9 +114,20 @@ async function fetchCapped(
   return Buffer.concat(chunks);
 }
 
+// An open, verified file; the caller serves it and closes the handle.
 export interface ServableFile {
-  path: string;
+  handle: FileHandle;
   size: number;
+}
+
+// The identity of a file's bytes as far as the filesystem can tell.
+function identity(info: {
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+}): string {
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}`;
 }
 
 export class CliReleases {
@@ -105,8 +136,10 @@ export class CliReleases {
     string,
     { text: string; manifest: CliReleaseManifest }
   >();
-  private verifiedLocal = new Map<string, string>();
-  private inflight = new Map<string, Promise<ServableFile>>();
+  // sha256 -> identity of a file whose bytes were verified.
+  private verified = new Map<string, string>();
+  private inflight = new Map<string, Promise<string>>();
+  private cacheReady?: Promise<void>;
   readonly cacheDir: string;
 
   constructor(
@@ -116,7 +149,33 @@ export class CliReleases {
     this.cacheDir =
       opts.cacheDir ??
       process.env.COCALC_CLI_RELEASE_CACHE_DIR ??
-      join(tmpdir(), "cocalc-cli-release-cache");
+      join(tmpdir(), `cocalc-cli-release-cache-${process.getuid?.() ?? 0}`);
+  }
+
+  // The cache directory must be ours alone: a real directory (not a
+  // symlink), owned by this process's user, with no group or other access.
+  private async ensureCache(): Promise<void> {
+    this.cacheReady ??= (async () => {
+      await mkdir(this.cacheDir, { recursive: true, mode: 0o700 });
+      const info = await lstat(this.cacheDir);
+      const uid = process.getuid?.();
+      if (
+        !info.isDirectory() ||
+        info.isSymbolicLink() ||
+        (uid != null && info.uid !== uid) ||
+        (info.mode & 0o077) !== 0
+      ) {
+        throw new Error(
+          `${this.cacheDir} is not a private directory owned by this user; refusing to cache CLI files there`,
+        );
+      }
+    })();
+    try {
+      await this.cacheReady;
+    } catch (err) {
+      this.cacheReady = undefined;
+      throw err;
+    }
   }
 
   private async read(
@@ -185,54 +244,94 @@ export class CliReleases {
     return entry;
   }
 
-  // A verified local path for a file the given manifest lists.
+  // An open, verified handle for a file the given manifest lists.
   async file(manifestHash: string, fileHash: string): Promise<ServableFile> {
     if (!isSha256(fileHash)) throw new NotFound("bad file name");
     const { manifest } = await this.manifest(manifestHash);
     const entry = manifestFiles(manifest).get(fileHash);
     if (entry == null) throw new NotFound("not part of this release");
+    if (this.source.kind === "dir") {
+      const path = join(this.source.dir, "files", fileHash);
+      const local = await this.openVerified(path, fileHash, entry.size);
+      if (local != null) return local;
+    }
+    await this.ensureCache();
+    const cached = join(this.cacheDir, fileHash);
+    const hit = await this.openVerified(cached, fileHash, entry.size);
+    if (hit != null) return hit;
     let pending = this.inflight.get(fileHash);
     if (pending == null) {
-      pending = this.resolveFile(fileHash, entry).finally(() =>
+      pending = this.fetchToCache(fileHash, entry).finally(() =>
         this.inflight.delete(fileHash),
       );
       this.inflight.set(fileHash, pending);
     }
-    return await pending;
+    const path = await pending;
+    const fetched = await this.openVerified(path, fileHash, entry.size);
+    if (fetched == null) throw new Error(`${fileHash}: cache write failed`);
+    return fetched;
   }
 
-  private async resolveFile(
+  // Open a regular file (never through a symlink) and check its bytes, via
+  // the same handle, against the expected size and hash. Undefined if it is
+  // missing or doesn't match (a mismatched cache entry is removed).
+  private async openVerified(
+    path: string,
+    hash: string,
+    size: number,
+  ): Promise<ServableFile | undefined> {
+    let handle: FileHandle;
+    try {
+      const info = await lstat(path);
+      if (!info.isFile()) return undefined;
+      handle = await open(path, "r");
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return undefined;
+      throw err;
+    }
+    try {
+      const info = await handle.stat();
+      const id = identity(info);
+      if (info.size === size && this.verified.get(hash) === id) {
+        return { handle, size };
+      }
+      if (info.size === size) {
+        const digest = createHash("sha256");
+        for await (const chunk of handle.createReadStream({
+          start: 0,
+          autoClose: false,
+        })) {
+          digest.update(chunk);
+        }
+        if (digest.digest("hex") === hash) {
+          this.verified.set(hash, id);
+          return { handle, size };
+        }
+      }
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
+    await handle.close();
+    if (path.startsWith(this.cacheDir)) await rm(path, { force: true });
+    return undefined;
+  }
+
+  private async fetchToCache(
     hash: string,
     entry: { size: number; upstream?: string },
-  ): Promise<ServableFile> {
-    if (this.source.kind === "dir") {
-      const path = join(this.source.dir, "files", hash);
-      if (existsSync(path)) {
-        const info = await stat(path);
-        const key = `${info.size}:${info.mtimeMs}`;
-        if (this.verifiedLocal.get(path) !== key) {
-          await verifyFile(path, hash, entry.size);
-          this.verifiedLocal.set(path, key);
-        }
-        return { path, size: info.size };
-      }
-    }
-    const cached = join(this.cacheDir, hash);
-    if (existsSync(cached)) {
-      const info = await stat(cached);
-      if (info.size === entry.size) return { path: cached, size: info.size };
-      await rm(cached, { force: true });
-    }
-    const urls: string[] = [];
+  ): Promise<string> {
+    const target = join(this.cacheDir, hash);
+    const urls: { url: string; follow: boolean }[] = [];
     if (this.source.kind === "url") {
-      urls.push(`${this.source.base}/files/${hash}`);
+      urls.push({ url: `${this.source.base}/files/${hash}`, follow: false });
     }
-    if (entry.upstream) urls.push(entry.upstream);
+    if (entry.upstream) urls.push({ url: entry.upstream, follow: true });
     let lastError: unknown = new NotFound("file is not available");
-    for (const url of urls) {
+    for (const { url, follow } of urls) {
       try {
-        await this.download(url, cached, hash, entry.size);
-        return { path: cached, size: entry.size };
+        await this.download(url, target, hash, entry.size, follow);
+        return target;
       } catch (err) {
         lastError = err;
       }
@@ -245,12 +344,10 @@ export class CliReleases {
     target: string,
     hash: string,
     size: number,
+    followRedirects: boolean,
   ): Promise<void> {
-    await mkdir(this.cacheDir, { recursive: true, mode: 0o700 });
     const temp = `${target}.${randomBytes(6).toString("hex")}.tmp`;
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
-    });
+    const response = await fetchStore(url, FILE_TIMEOUT_MS, followRedirects);
     if (response.status === 404) throw new NotFound(`GET ${url}: 404`);
     if (!response.ok || response.body == null) {
       throw new Error(`GET ${url}: ${response.status}`);
@@ -294,16 +391,4 @@ export class CliReleases {
       await rm(join(this.cacheDir, name), { force: true });
     }
   }
-}
-
-async function verifyFile(
-  path: string,
-  hash: string,
-  size: number,
-): Promise<void> {
-  const info = await stat(path);
-  if (info.size !== size) throw new Error(`${path}: wrong size`);
-  const digest = createHash("sha256");
-  for await (const chunk of createReadStream(path)) digest.update(chunk);
-  if (digest.digest("hex") !== hash) throw new Error(`${path}: wrong hash`);
 }

@@ -6,11 +6,16 @@
  *
  *   files/<sha256>             immutable, content-addressed
  *   manifests/<sha256>.json    immutable release manifests
+ *   releases/<N>.json          which manifest release number N names
  *   current.json               the single origin-wide pointer
  *
- * Publishing is ordered so no reader ever sees a pointer to something missing:
- * the files first, then the manifest, then the pointer flip. Every hub that
- * serves this store reads the same pointer.
+ * Publishing is ordered so no reader ever sees a pointer to something
+ * missing: files, then the manifest, then the release-number reservation,
+ * then the pointer. Two publishers can't collide: the release number is
+ * reserved with a create-only write (one number names one manifest), and
+ * current.json is replaced only if it is still the version read at the start
+ * (a conditional write; on R2, If-None-Match/If-Match). Existing
+ * content-addressed objects are verified, not trusted.
  *
  * Usage:
  *   node dist-release/publish-release.mjs [--build DIR]
@@ -19,16 +24,19 @@
  *
  * The release number is max(current + 1, unix seconds), so it only grows.
  * --min-release keeps the store's current minimum unless given; "this"
- * makes this release the minimum (clients must update before using the site).
+ * makes this release the minimum. It is advisory: current CLIs update before
+ * using the site, but nothing stops an older CLI (see cli/src/distribution/
+ * auto.ts).
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -41,6 +49,7 @@ const require = createRequire(join(cliRoot, "package.json"));
 const {
   MANIFEST_SCHEMA,
   POINTER_SCHEMA,
+  canonicalJson,
   parseManifest,
   parsePointer,
 } = require("@cocalc/util/cli-distribution/schema");
@@ -69,23 +78,66 @@ function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+/*
+ * A store has: get(name) -> {body, version} | undefined;
+ * create(name, body, opts) -> true, or false if it already exists;
+ * replace(name, body, version, opts) -> true, or false if the object is no
+ * longer at `version` (undefined = must not exist); put(name, body, opts).
+ */
 function dirStore(root) {
-  const path = (key) => join(root, ...key.split("/"));
+  const path = (name) => join(root, ...name.split("/"));
+  const temp = (target) => {
+    mkdirSync(dirname(target), { recursive: true });
+    return `${target}.${randomBytes(6).toString("hex")}.tmp`;
+  };
+  const lock = join(root, ".publish-lock");
   return {
     describe: root,
-    async get(key) {
-      return existsSync(path(key)) ? readFileSync(path(key)) : undefined;
+    // Serializes local publishers; replace() is checked under it.
+    acquire() {
+      mkdirSync(root, { recursive: true });
+      try {
+        writeFileSync(lock, `${process.pid}\n`, { flag: "wx" });
+      } catch {
+        throw new Error(
+          `another publish holds ${lock}; if none is running, remove it`,
+        );
+      }
+      return () => unlinkSync(lock);
     },
-    async list(prefix) {
-      const dir = path(prefix);
-      return existsSync(dir) ? readdirSync(dir) : [];
+    async get(name) {
+      if (!existsSync(path(name))) return undefined;
+      const body = readFileSync(path(name));
+      return { body, version: sha256(body) };
     },
-    async put(key, body) {
-      const target = path(key);
-      mkdirSync(dirname(target), { recursive: true });
-      const temp = `${target}.tmp-${process.pid}`;
-      writeFileSync(temp, body);
-      renameSync(temp, target);
+    async create(name, body) {
+      const target = path(name);
+      const t = temp(target);
+      writeFileSync(t, body);
+      try {
+        linkSync(t, target);
+        return true;
+      } catch (err) {
+        if (err?.code === "EEXIST") return false;
+        throw err;
+      } finally {
+        unlinkSync(t);
+      }
+    },
+    async replace(name, body, version) {
+      const current = await this.get(name);
+      if (current?.version !== version) return false;
+      const target = path(name);
+      const t = temp(target);
+      writeFileSync(t, body);
+      renameSync(t, target);
+      return true;
+    },
+    async put(name, body) {
+      const target = path(name);
+      const t = temp(target);
+      writeFileSync(t, body);
+      renameSync(t, target);
     },
   };
 }
@@ -116,25 +168,71 @@ function r2Store(prefix) {
     );
   }
   const key = (name) => `${prefix}/${name}`;
+  const send = async (method, name, body, headers = {}) =>
+    await r2.sendR2Request({
+      auth,
+      method,
+      key: key(name),
+      payload: body,
+      extraHeaders: headers,
+      label: `R2 ${method} ${key(name)}`,
+    });
+  const putHeaders = ({ contentType, cacheControl }, body) => ({
+    "content-type": contentType,
+    "cache-control": cacheControl,
+    "content-length": Buffer.byteLength(body),
+  });
+  const check = (response, name) => {
+    if (response.statusCode >= 200 && response.statusCode < 300) return true;
+    if (response.statusCode === 412) return false;
+    throw new Error(`R2 ${key(name)}: HTTP ${response.statusCode}`);
+  };
   return {
     describe: `r2://${auth.bucket}/${prefix}`,
+    acquire: () => () => {},
     async get(name) {
-      return await r2.getR2ObjectBuffer({ auth, key: key(name) });
+      const response = await send("GET", name);
+      if (response.statusCode === 404) return undefined;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new Error(`R2 GET ${key(name)}: HTTP ${response.statusCode}`);
+      }
+      return { body: response.body, version: `${response.headers.etag}` };
     },
-    async list(name) {
-      const keys = await r2.listR2ObjectKeys({ auth, prefix: key(name) + "/" });
-      return keys.map((k) => k.split("/").pop());
+    async create(name, body, opts) {
+      return check(
+        await send("PUT", name, body, {
+          ...putHeaders(opts, body),
+          "if-none-match": "*",
+        }),
+        name,
+      );
     },
-    async put(name, body, { contentType, cacheControl }) {
-      await r2.putR2ObjectFromBuffer({
-        auth,
-        key: key(name),
-        body,
-        contentType,
-        cacheControl,
-      });
+    async replace(name, body, version, opts) {
+      return check(
+        await send("PUT", name, body, {
+          ...putHeaders(opts, body),
+          ...(version == null
+            ? { "if-none-match": "*" }
+            : { "if-match": version }),
+        }),
+        name,
+      );
+    },
+    async put(name, body, opts) {
+      check(await send("PUT", name, body, putHeaders(opts, body)), name);
     },
   };
+}
+
+// Upload a content-addressed object unless an intact copy is there already.
+async function putImmutable(store, name, body, expected, opts, dryRun) {
+  const existing = await store.get(name);
+  if (existing != null) {
+    if (sha256(existing.body) === expected) return "kept";
+    process.stdout.write(`  ${name} in the store is damaged; replacing it\n`);
+  }
+  if (!dryRun) await store.put(name, body, opts);
+  return "uploaded";
 }
 
 async function main() {
@@ -150,91 +248,141 @@ async function main() {
       ? dirStore(resolve(args.dir))
       : r2Store(typeof args.prefix === "string" ? args.prefix : "software/cli");
   const dryRun = !!args["dry-run"];
-
-  const currentBytes = await store.get("current.json");
-  const current = currentBytes
-    ? parsePointer(currentBytes.toString("utf8"))
-    : undefined;
-  const release =
-    typeof args.release === "string"
-      ? Number(args.release)
-      : Math.max((current?.release ?? 0) + 1, Math.floor(Date.now() / 1000));
-  if (!Number.isSafeInteger(release) || release <= (current?.release ?? 0)) {
-    throw new Error(
-      `release ${release} must be greater than the current release ${current?.release}`,
-    );
+  const release_ = store.acquire();
+  try {
+    await publish({ args, build, buildDir, store, dryRun });
+  } finally {
+    release_();
   }
-  let minRelease = current?.min_release ?? null;
-  if (args["min-release"] === "none") {
-    minRelease = null;
-  } else if (args["min-release"] === "this") {
-    minRelease = release;
-  } else if (typeof args["min-release"] === "string") {
-    minRelease = Number(args["min-release"]);
-  }
+}
 
-  const manifest = {
-    schema: MANIFEST_SCHEMA,
-    release,
-    version: build.version,
-    git: build.git,
-    built_at: build.built_at,
-    launcher: build.launcher,
-    bootstrap: build.bootstrap,
-    bundle: build.bundle,
-    node: build.node,
-  };
-  const manifestText = JSON.stringify(manifest, null, 2) + "\n";
-  parseManifest(manifestText);
-  const manifestHash = sha256(Buffer.from(manifestText));
-  const pointer = {
-    schema: POINTER_SCHEMA,
-    release,
-    manifest: manifestHash,
-    min_release: minRelease,
-    published_at: new Date().toISOString(),
-  };
-  const pointerText = JSON.stringify(pointer, null, 2) + "\n";
-  parsePointer(pointerText);
-
+async function publish({ args, build, buildDir, store, dryRun }) {
   const files = [build.launcher, build.bootstrap, build.bundle];
   for (const archive of Object.values(build.node.platforms))
     files.push(archive);
-  const existing = new Set(await store.list("files"));
-  process.stdout.write(
-    `Publishing CLI release ${release} (manifest ${manifestHash.slice(0, 12)}) to ${store.describe}\n`,
-  );
+  process.stdout.write(`Publishing to ${store.describe}\n`);
   for (const file of files) {
-    if (existing.has(file.sha256)) continue;
     const body = readFileSync(join(buildDir, "files", file.sha256));
     if (body.length !== file.size || sha256(body) !== file.sha256) {
       throw new Error(`build file ${file.sha256} does not match build.json`);
     }
-    process.stdout.write(`  files/${file.sha256} (${body.length} bytes)\n`);
-    if (!dryRun) {
-      await store.put(`files/${file.sha256}`, body, {
-        contentType: "application/octet-stream",
-        cacheControl: IMMUTABLE,
-      });
+    const result = await putImmutable(
+      store,
+      `files/${file.sha256}`,
+      body,
+      file.sha256,
+      { contentType: "application/octet-stream", cacheControl: IMMUTABLE },
+      dryRun,
+    );
+    process.stdout.write(`  files/${file.sha256}: ${result}\n`);
+  }
+
+  // Choose a number and reserve it; then move current.json only if nobody
+  // else has since.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const current = await store.get("current.json");
+    const pointer = current
+      ? parsePointer(current.body.toString("utf8"))
+      : undefined;
+    const release =
+      typeof args.release === "string"
+        ? Number(args.release)
+        : Math.max((pointer?.release ?? 0) + 1, Math.floor(Date.now() / 1000));
+    if (!Number.isSafeInteger(release) || release <= (pointer?.release ?? 0)) {
+      throw new Error(
+        `release ${release} must be greater than the current release ${pointer?.release}`,
+      );
     }
+    let minRelease = pointer?.min_release ?? null;
+    if (args["min-release"] === "none") {
+      minRelease = null;
+    } else if (args["min-release"] === "this") {
+      minRelease = release;
+    } else if (typeof args["min-release"] === "string") {
+      minRelease = Number(args["min-release"]);
+    }
+    const manifestText = canonicalJson(
+      {
+        schema: MANIFEST_SCHEMA,
+        release,
+        version: build.version,
+        git: build.git,
+        built_at: build.built_at,
+        launcher: build.launcher,
+        bootstrap: build.bootstrap,
+        bundle: build.bundle,
+        node: build.node,
+      },
+      true,
+    );
+    parseManifest(manifestText);
+    const manifestHash = sha256(Buffer.from(manifestText));
+    const pointerText = canonicalJson(
+      {
+        schema: POINTER_SCHEMA,
+        release,
+        manifest: manifestHash,
+        min_release: minRelease,
+        published_at: new Date().toISOString(),
+      },
+      true,
+    );
+    parsePointer(pointerText);
+    const json = { contentType: "application/json", cacheControl: IMMUTABLE };
+    process.stdout.write(
+      `Release ${release}: manifests/${manifestHash}.json\n`,
+    );
+    if (dryRun) {
+      process.stdout.write("Dry run: nothing written.\n");
+      return;
+    }
+    await putImmutable(
+      store,
+      `manifests/${manifestHash}.json`,
+      manifestText,
+      manifestHash,
+      json,
+      false,
+    );
+    const reservation = canonicalJson({ manifest: manifestHash }, true);
+    if (!(await store.create(`releases/${release}.json`, reservation, json))) {
+      const taken = await store.get(`releases/${release}.json`);
+      if (taken?.body.toString("utf8") !== reservation) {
+        process.stdout.write(
+          `  release ${release} is taken by another publish; choosing again\n`,
+        );
+        if (typeof args.release === "string") {
+          throw new Error(`release ${release} is already taken`);
+        }
+        continue;
+      }
+    }
+    const moved = await store.replace(
+      "current.json",
+      pointerText,
+      current?.version,
+      { contentType: "application/json", cacheControl: POINTER_CACHE },
+    );
+    if (!moved) {
+      process.stdout.write(
+        "  current.json changed during this publish; choosing again\n",
+      );
+      continue;
+    }
+    const check = await store.get("current.json");
+    if (check?.body.toString("utf8") !== pointerText) {
+      throw new Error(
+        "current.json was overwritten right after this publish; check the store",
+      );
+    }
+    process.stdout.write(
+      `Published: current.json -> release ${release}${minRelease ? `, min_release ${minRelease}` : ""}\n`,
+    );
+    return;
   }
-  process.stdout.write(`  manifests/${manifestHash}.json\n`);
-  if (!dryRun) {
-    await store.put(`manifests/${manifestHash}.json`, manifestText, {
-      contentType: "application/json",
-      cacheControl: IMMUTABLE,
-    });
-  }
-  process.stdout.write(
-    `  current.json -> release ${release}${minRelease ? `, min_release ${minRelease}` : ""}\n`,
+  throw new Error(
+    "could not publish after 5 attempts; another publisher is busy",
   );
-  if (!dryRun) {
-    await store.put("current.json", pointerText, {
-      contentType: "application/json",
-      cacheControl: POINTER_CACHE,
-    });
-  }
-  process.stdout.write(dryRun ? "Dry run: nothing written.\n" : "Published.\n");
 }
 
 main().catch((err) => {

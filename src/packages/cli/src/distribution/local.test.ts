@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,11 +15,13 @@ import test from "node:test";
 
 import {
   MANIFEST_SCHEMA,
+  canonicalJson,
   currentPlatform,
 } from "@cocalc/util/cli-distribution/schema";
 
 import {
   type CliState,
+  type FaultPoint,
   STATE_SCHEMA,
   installRelease,
   readActive,
@@ -31,6 +32,7 @@ import {
 } from "./local";
 
 const ORIGIN = "https://cocalc.example";
+
 // The compiled test runs from build/test/..., so look upward for dist-release.
 function distRelease(): string {
   for (let dir = __dirname; dir !== "/"; dir = dirname(dir)) {
@@ -57,13 +59,13 @@ function fixture() {
     return { sha256: sha256(buffer), size: buffer.length };
   };
   // A "Node" that runs the real node, so the bootstrap and bundle really run.
-  const nodeDir = "node-v26.0.0-" + (currentPlatform() ?? "linux-x64");
+  const platform = currentPlatform() ?? "linux-x64";
+  const nodeDir = `node-v26.0.0-${platform}`;
+  const nodeScript = `#!/bin/sh\nexec ${process.execPath} "$@"\n`;
   mkdirSync(join(dir, "archive", nodeDir, "bin"), { recursive: true });
-  writeFileSync(
-    join(dir, "archive", nodeDir, "bin", "node"),
-    `#!/bin/sh\nexec ${process.execPath} "$@"\n`,
-    { mode: 0o755 },
-  );
+  writeFileSync(join(dir, "archive", nodeDir, "bin", "node"), nodeScript, {
+    mode: 0o755,
+  });
   writeFileSync(join(dir, "archive", nodeDir, "LICENSE"), "MIT\n");
   execFileSync("tar", [
     "-czf",
@@ -79,8 +81,8 @@ function fixture() {
     const bundle = add(
       `console.log(JSON.stringify({release: ${n}, args: process.argv.slice(2), opts: process.env.NODE_OPTIONS ?? null}));\n`,
     );
-    const text =
-      JSON.stringify({
+    const text = canonicalJson(
+      {
         schema: MANIFEST_SCHEMA,
         release: n,
         version: `1.0.${n}`,
@@ -92,15 +94,18 @@ function fixture() {
         node: {
           version: "26.0.0",
           platforms: {
-            [currentPlatform() ?? "linux-x64"]: {
+            [platform]: {
               ...node,
               url: "https://nodejs.org/dist/x.tar.gz",
               dir: nodeDir,
+              binary: { sha256: sha256(nodeScript), size: nodeScript.length },
             },
           },
         },
-      }) + "\n";
-    return { text, hash: sha256(text) };
+      },
+      true,
+    );
+    return { text, hash: sha256(text), bundle: bundle.sha256 };
   };
   const fetched: string[] = [];
   const fetchFile = async (hash: string, dest: string, size: number) => {
@@ -122,28 +127,44 @@ function fixture() {
       launcher: launcherPath,
       origins: {},
     };
-  const install = (n: ReturnType<typeof release>) =>
+  const install = (
+    n: ReturnType<typeof release>,
+    faultAt?: FaultPoint,
+    origin = ORIGIN,
+  ) =>
     installRelease({
       root,
-      origin: ORIGIN,
+      origin,
       manifestText: n.text,
       manifestHash: n.hash,
       fetchFile,
-      prepareState: initialState,
+      prepareState: (s) => ({ ...initialState(s), origin }),
+      faultAt,
     });
   const run = (...args: string[]) =>
     spawnSync(launcherPath, args, {
       encoding: "utf8",
       env: { ...process.env, COCALC_CLI_ROOT: root, NODE_OPTIONS: "--inspect" },
     });
-  return { dir, root, launcherPath, release, install, fetched, run, fetchFile };
+  const runs = () => JSON.parse(run().stdout).release;
+  return {
+    dir,
+    root,
+    launcherPath,
+    release,
+    install,
+    fetched,
+    run,
+    runs,
+    fetchFile,
+  };
 }
 
 test("install, run through the launcher, update, rollback with a hold", async () => {
   const f = fixture();
   const r1 = f.release(100);
   await f.install(r1);
-  let out = f.run("a b", "c");
+  const out = f.run("a b", "c");
   assert.equal(out.status, 0, out.stderr);
   // Arguments arrive exactly; NODE_OPTIONS is cleared by the launcher.
   assert.deepEqual(JSON.parse(out.stdout), {
@@ -158,34 +179,45 @@ test("install, run through the launcher, update, rollback with a hold", async ()
   assert.equal(result.changed, true);
   // Only the new bundle was downloaded; Node, bootstrap and launcher reused.
   assert.equal(f.fetched.length - fetchedBefore, 1);
-  assert.equal(JSON.parse(f.run().stdout).release, 101);
+  assert.equal(f.runs(), 101);
   assert.equal(
     (await readActive(f.root, "previous"))?.pointer.manifest,
     r1.hash,
   );
 
   await rollback(f.root);
-  assert.equal(JSON.parse(f.run().stdout).release, 100);
+  assert.equal(f.runs(), 100);
   const state = await readState(f.root);
   assert.equal(state?.held_at, 100);
   // Rollback never lowers the floor.
   assert.equal(state?.origins[ORIGIN].highest_seen, 101);
-  assert.equal(
-    (await readActive(f.root, "previous"))?.pointer.manifest,
-    r2.hash,
-  );
+});
+
+test("releases below the floor are refused under the lock", async () => {
+  const f = fixture();
+  await f.install(f.release(11));
+  await assert.rejects(f.install(f.release(10)), /not downgrading/);
+  assert.equal(f.runs(), 11);
+  // The same after switching away and back to an origin.
+  await f.install(f.release(5), undefined, "https://other.example");
+  await assert.rejects(f.install(f.release(10)), /not downgrading/);
+  // Concurrent updates to 20 and 21 always end at 21.
+  const results = await Promise.allSettled([
+    f.install(f.release(20)),
+    f.install(f.release(21)),
+  ]);
+  assert.equal(f.runs(), 21);
+  for (const r of results) {
+    if (r.status === "rejected") assert.match(`${r.reason}`, /not downgrading/);
+  }
 });
 
 test("one release number names one manifest", async () => {
   const f = fixture();
   await f.install(f.release(200));
   const before = readFileSync(join(f.root, "active"), "utf8");
-  // A different manifest under the same number (a different bundle).
   const other = f.release(200);
-  const changed = other.text.replace(
-    '"version":"1.0.200"',
-    '"version":"1.0.999"',
-  );
+  const changed = other.text.replace('"1.0.200"', '"1.0.999"');
   await assert.rejects(
     installRelease({
       root: f.root,
@@ -224,15 +256,37 @@ test("garbage collection keeps only active and previous", async () => {
   assert.equal(readdirSync(join(f.root, "targets")).length, 3);
 });
 
+for (const point of [
+  "after-floors",
+  "after-journal",
+  "after-launcher",
+  "after-active",
+] as FaultPoint[]) {
+  test(`a crash ${point} leaves the old or new release, and the next update completes`, async () => {
+    const f = fixture();
+    await f.install(f.release(500));
+    await assert.rejects(f.install(f.release(501), point), /injected fault/);
+    await withLock(f.root, () => recover(f.root));
+    assert.ok([500, 501].includes(f.runs()));
+    assert.equal(existsSync(join(f.root, "transition.json")), false);
+    // Floors were raised before the switch, never lowered.
+    assert.equal((await readState(f.root))?.origins[ORIGIN].highest_seen, 501);
+    if (point === "after-active") {
+      assert.equal(f.runs(), 501);
+      assert.ok(existsSync(join(f.root, "previous")));
+    }
+    await f.install(f.release(501));
+    assert.equal(f.runs(), 501);
+  });
+}
+
 test("recovery completes or discards an interrupted switch", async () => {
   const f = fixture();
-  const r1 = f.release(500);
-  await f.install(r1);
+  await f.install(f.release(600));
   const a = readFileSync(join(f.root, "active"), "utf8");
-  await f.install(f.release(501));
+  await f.install(f.release(601));
   const b = readFileSync(join(f.root, "active"), "utf8");
 
-  // Crash after `active` was switched but before `previous` was written.
   writeFileSync(join(f.root, "previous"), "stale\n");
   writeFileSync(
     join(f.root, "transition.json"),
@@ -240,44 +294,74 @@ test("recovery completes or discards an interrupted switch", async () => {
   );
   await withLock(f.root, () => recover(f.root));
   assert.equal(readFileSync(join(f.root, "previous"), "utf8"), a);
-  assert.equal(existsSync(join(f.root, "transition.json")), false);
 
-  // Crash before `active` was switched: the journal is discarded and the old
-  // release stays active.
   writeFileSync(
     join(f.root, "transition.json"),
     JSON.stringify({ from: b, to: a }),
   );
   await withLock(f.root, () => recover(f.root));
   assert.equal(readFileSync(join(f.root, "active"), "utf8"), b);
-  assert.equal(existsSync(join(f.root, "transition.json")), false);
 
-  // A torn journal is discarded too.
   writeFileSync(join(f.root, "transition.json"), "{");
   await withLock(f.root, () => recover(f.root));
   assert.equal(existsSync(join(f.root, "transition.json")), false);
 });
 
-test("a stale lock from a dead process is taken over", async () => {
+test("the lock: mutual exclusion, live owners are never stolen, release is token-checked", async () => {
   const f = fixture();
   mkdirSync(f.root, { recursive: true });
-  writeFileSync(join(f.root, "lock"), `999999999 ${Date.now()}\n`);
+  // Many contenders: never two inside at once.
+  let inside = 0;
+  let max = 0;
+  await Promise.all(
+    Array.from({ length: 8 }, () =>
+      withLock(f.root, async () => {
+        inside += 1;
+        max = Math.max(max, inside);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inside -= 1;
+      }),
+    ),
+  );
+  assert.equal(max, 1);
+  assert.equal(existsSync(join(f.root, "lock")), false);
+
+  // A live owner (this process) is waited for, however old the lock is.
+  const old = `${process.pid} 1 ${"a".repeat(32)}\n`;
+  writeFileSync(join(f.root, "lock"), old);
+  await assert.rejects(
+    withLock(f.root, async () => 1, undefined, 300),
+    /holds/,
+  );
+  assert.equal(readFileSync(join(f.root, "lock"), "utf8"), old);
+
+  // A dead owner's lock is taken over.
+  writeFileSync(join(f.root, "lock"), `999999999 1 ${"b".repeat(32)}\n`);
   assert.equal(await withLock(f.root, async () => 7), 7);
   assert.equal(existsSync(join(f.root, "lock")), false);
+
+  // An owner whose lock was replaced (taken over) leaves the new one alone.
+  const successor = `${process.pid} 2 ${"c".repeat(32)}\n`;
+  await withLock(f.root, async () => {
+    writeFileSync(join(f.root, "lock"), successor);
+  });
+  assert.equal(readFileSync(join(f.root, "lock"), "utf8"), successor);
 });
 
-test("the launcher refuses malformed pointers and incomplete installs", async () => {
+test("the launcher and bootstrap refuse broken or mixed-up installs", async () => {
   const f = fixture();
-  await f.install(f.release(600));
+  const r1 = f.release(700);
+  await f.install(r1);
+  const r2 = f.release(701);
+  await f.install(r2);
   const good = readFileSync(join(f.root, "active"), "utf8");
-  const cases = [
+  for (const bad of [
     "v1 junk\n",
-    good.slice(0, -1), // no newline
+    good.slice(0, -1),
     good + "x",
     good.replace("v1 ", "v2 "),
     good.replace(/[0-9a-f]$/m, "G"),
-  ];
-  for (const bad of cases) {
+  ]) {
     writeFileSync(join(f.root, "active"), bad);
     const out = f.run();
     assert.equal(out.status, 1, bad);
@@ -286,14 +370,15 @@ test("the launcher refuses malformed pointers and incomplete installs", async ()
       /To repair it, reinstall: curl -fsSL https:\/\/cocalc.example\/cli\/install.sh/,
     );
   }
+  // The manifest of one release with the bundle of another.
+  writeFileSync(join(f.root, "active"), good.replace(r2.bundle, r1.bundle));
+  const mixed = f.run();
+  assert.equal(mixed.status, 1);
+  assert.match(mixed.stderr, /does not match its manifest/);
+
   writeFileSync(join(f.root, "active"), good);
-  const bundle = good.trim().split(" ")[4];
-  copyFileSync(
-    join(f.root, "targets", bundle, "cocalc.js"),
-    join(f.dir, "bundle.save"),
-  );
   writeFileSync(
-    join(f.root, "targets", bundle, "cocalc.js"),
+    join(f.root, "targets", r2.bundle, "cocalc.js"),
     "process.exit(9)\n",
   );
   const damaged = f.run();

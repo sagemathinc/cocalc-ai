@@ -3,6 +3,7 @@ import {
   MANIFEST_SCHEMA,
   POINTER_SCHEMA,
   SITE_SCHEMA,
+  canonicalJson,
   currentPlatform,
   formatActiveLine,
   manifestFiles,
@@ -32,17 +33,19 @@ function manifest(overrides: Record<string, unknown> = {}) {
           size: 62798625,
           url: "https://nodejs.org/dist/v26.11.1/node-v26.11.1-linux-x64.tar.gz",
           dir: "node-v26.11.1-linux-x64",
+          binary: { sha256: h("5"), size: 120000000 },
         },
-        "solaris-sparc": { anything: true },
       },
     },
     ...overrides,
   };
 }
 
+const text = (value: unknown) => canonicalJson(value, true);
+
 describe("CLI release manifests", () => {
-  it("parses a valid manifest and ignores unknown platforms", () => {
-    const parsed = parseManifest(JSON.stringify(manifest({ extra: 1 })));
+  it("parses a valid manifest", () => {
+    const parsed = parseManifest(text(manifest()));
     expect(parsed.release).toBe(1791851943);
     expect(Object.keys(parsed.node.platforms)).toEqual(["linux-x64"]);
     expect([...manifestFiles(parsed).keys()]).toEqual([
@@ -79,8 +82,37 @@ describe("CLI release manifests", () => {
       },
     ],
   ])("rejects %s", (_name, overrides) => {
-    expect(() => parseManifest(JSON.stringify(manifest(overrides)))).toThrow(
+    expect(() => parseManifest(text(manifest(overrides)))).toThrow(
       /invalid CLI release data/,
+    );
+  });
+
+  it.each([
+    ["an unknown top-level key", { extra: 1 }],
+    ["an unknown file key", { bundle: { sha256: h("3"), size: 1, x: 1 } }],
+    [
+      "an unknown platform",
+      {
+        node: {
+          version: "26.11.1",
+          platforms: { ...manifest().node.platforms, "solaris-sparc": {} },
+        },
+      },
+    ],
+  ])("rejects %s (schema /1 is strict)", (_name, overrides) => {
+    expect(() => parseManifest(text(manifest(overrides)))).toThrow(/unknown/);
+  });
+
+  it("rejects duplicate keys and non-canonical text", () => {
+    const good = text(manifest());
+    const duplicate = good.replace(
+      '"release": 1791851943,',
+      '"release": 1,\n  "release": 1791851943,',
+    );
+    expect(() => JSON.parse(duplicate)).not.toThrow();
+    expect(() => parseManifest(duplicate)).toThrow(/canonical/);
+    expect(() => parseManifest(JSON.stringify(manifest()))).toThrow(
+      /canonical/,
     );
   });
 
@@ -100,7 +132,7 @@ describe("pointers and site info", () => {
   };
 
   it("parses the store pointer and site info", () => {
-    expect(parsePointer(JSON.stringify(pointer)).min_release).toBe(9);
+    expect(parsePointer(text(pointer)).min_release).toBe(9);
     expect(
       parseSiteInfo(
         JSON.stringify({
@@ -114,9 +146,9 @@ describe("pointers and site info", () => {
   });
 
   it("rejects a minimum above the release itself", () => {
-    expect(() =>
-      parsePointer(JSON.stringify({ ...pointer, min_release: 11 })),
-    ).toThrow(/min_release/);
+    expect(() => parsePointer(text({ ...pointer, min_release: 11 }))).toThrow(
+      /min_release/,
+    );
   });
 });
 

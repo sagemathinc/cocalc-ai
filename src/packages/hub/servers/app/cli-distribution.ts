@@ -11,7 +11,6 @@
  * and install.sh briefly.
  */
 
-import { createReadStream } from "node:fs";
 import type { Request, Response, Router } from "express";
 import siteURL from "@cocalc/database/settings/site-url";
 import { installScript } from "@cocalc/server/cli-distribution/install-script";
@@ -73,7 +72,8 @@ export default function initCliDistribution(
     "/cli/site.json",
     handle(async (r, _req, res) => {
       res.set("Cache-Control", "public, max-age=30");
-      res.json(await r.site());
+      // Exactly the canonical form clients require.
+      res.type("application/json").send(JSON.stringify(await r.site()));
     }),
   );
 
@@ -107,16 +107,27 @@ export default function initCliDistribution(
   router.get(
     "/cli/files/:manifest/:file",
     handle(async (r, req, res) => {
-      const file = await r.file(`${req.params.manifest}`, `${req.params.file}`);
-      res.set("Cache-Control", IMMUTABLE);
-      res.set("Content-Type", "application/octet-stream");
-      res.set("Content-Length", `${file.size}`);
-      await new Promise<void>((resolve, reject) => {
-        const stream = createReadStream(file.path);
-        stream.on("error", reject);
-        res.on("close", resolve);
-        stream.pipe(res);
-      });
+      // Served from the very handle whose bytes were verified.
+      const { handle, size } = await r.file(
+        `${req.params.manifest}`,
+        `${req.params.file}`,
+      );
+      try {
+        res.set("Cache-Control", IMMUTABLE);
+        res.set("Content-Type", "application/octet-stream");
+        res.set("Content-Length", `${size}`);
+        await new Promise<void>((resolve, reject) => {
+          const stream = handle.createReadStream({
+            start: 0,
+            autoClose: false,
+          });
+          stream.on("error", reject);
+          res.on("close", resolve);
+          stream.pipe(res);
+        });
+      } finally {
+        await handle.close();
+      }
     }),
   );
 }

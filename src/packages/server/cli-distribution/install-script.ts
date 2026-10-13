@@ -41,6 +41,8 @@ export function installScript({
       `    node_sha=${archive.sha256}`,
       `    node_size=${archive.size}`,
       `    node_dir=${shQuote(archive.dir)}`,
+      `    node_bin_sha=${archive.binary.sha256}`,
+      `    node_bin_size=${archive.binary.size}`,
       `    ;;`,
     ];
   }).join("\n");
@@ -125,14 +127,32 @@ fetch() {
   [ "$(sha256 "$2")" = "$4" ] || die "$origin$1 does not match its sha256"
 }
 
-if [ ! -x "$root/node/$node_sha/bin/node" ]; then
+# intact <file> <size> <sha256>: an existing file is reused only if intact.
+intact() {
+  [ -f "$1" ] && [ ! -L "$1" ] &&
+    [ "$(wc -c <"$1" | tr -d ' ')" = "$2" ] &&
+    [ "$(sha256 "$1")" = "$3" ]
+}
+
+# put <dir> <name> <size> <sha256>: install targets/<sha256>/<name>, replacing
+# a damaged copy.
+put() {
+  if ! intact "$root/targets/$4/$2" "$3" "$4"; then
+    mkdir "$staging/$1"
+    fetch "/cli/files/$manifest/$4" "$staging/$1/$2" "$3" "$4"
+    rm -rf "$root/targets/$4"
+    mv "$staging/$1" "$root/targets/$4"
+  fi
+}
+
+if ! intact "$root/node/$node_sha/bin/node" "$node_bin_size" "$node_bin_sha"; then
   say "Downloading Node for $platform..."
   fetch "/cli/files/$manifest/$node_sha" "$staging/node.tar.gz" "$node_size" "$node_sha"
   mkdir "$staging/node"
   tar -xzf "$staging/node.tar.gz" -C "$staging/node" "$node_dir/bin/node" "$node_dir/LICENSE" ||
     die "could not unpack Node"
-  [ -f "$staging/node/$node_dir/bin/node" ] && [ ! -L "$staging/node/$node_dir/bin/node" ] ||
-    die "the Node archive is missing bin/node"
+  intact "$staging/node/$node_dir/bin/node" "$node_bin_size" "$node_bin_sha" ||
+    die "the Node binary does not match the release manifest"
   mkdir -p "$staging/node-tree/bin"
   mv "$staging/node/$node_dir/bin/node" "$staging/node-tree/bin/node"
   mv "$staging/node/$node_dir/LICENSE" "$staging/node-tree/LICENSE"
@@ -142,24 +162,18 @@ if [ ! -x "$root/node/$node_sha/bin/node" ]; then
 fi
 
 say "Downloading the CLI..."
-if [ ! -f "$root/targets/$bootstrap/bootstrap.js" ]; then
-  mkdir "$staging/bootstrap"
-  fetch "/cli/files/$manifest/$bootstrap" "$staging/bootstrap/bootstrap.js" "$bootstrap_size" "$bootstrap"
-  rm -rf "$root/targets/$bootstrap"
-  mv "$staging/bootstrap" "$root/targets/$bootstrap"
-fi
-if [ ! -f "$root/targets/$bundle/cocalc.js" ]; then
-  mkdir "$staging/bundle"
-  fetch "/cli/files/$manifest/$bundle" "$staging/bundle/cocalc.js" "$bundle_size" "$bundle"
-  rm -rf "$root/targets/$bundle"
-  mv "$staging/bundle" "$root/targets/$bundle"
-fi
+put bootstrap bootstrap.js "$bootstrap_size" "$bootstrap"
+put bundle cocalc.js "$bundle_size" "$bundle"
 fetch "/cli/manifests/$manifest.json" "$staging/manifest.json" "$manifest_size" "$manifest"
+cp "$staging/manifest.json" "$root/manifests/$manifest.json"
 fetch "/cli/files/$manifest/$launcher_sha" "$staging/launcher" "$launcher_size" "$launcher_sha"
 
+unset NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE
 # The new CLI finishes the install: it records the origin (asking first if
 # this replaces another site), installs the launcher and switches \`active\`.
-COCALC_CLI_ROOT="$root" "$root/node/$node_sha/bin/node" \\
+COCALC_CLI_ROOT="$root" \\
+  COCALC_CLI_ACTIVE="v1 $manifest $node_sha $bootstrap $bundle" \\
+  "$root/node/$node_sha/bin/node" \\
   "$root/targets/$bootstrap/bootstrap.js" "$root/targets/$bundle/cocalc.js" \\
   update --finish-install \\
   --origin "$origin" \\

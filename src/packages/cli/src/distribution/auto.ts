@@ -10,6 +10,11 @@
  *
  * A slow or unreachable site never blocks a command for long, and notices go
  * to stderr only when it's a terminal.
+ *
+ * In Phase A the site's min_release is advisory: it makes up-to-date CLIs
+ * update before they talk to the site. Older CLIs ignore it, and a check that
+ * times out lets the command run. Protocol compatibility itself is enforced
+ * by the API, not by this check.
  */
 
 import { spawn, spawnSync } from "node:child_process";

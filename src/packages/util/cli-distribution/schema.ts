@@ -27,6 +27,7 @@ export const MAX_LAUNCHER_BYTES = 64 * 1024;
 export const MAX_BOOTSTRAP_BYTES = 256 * 1024;
 export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
 export const MAX_NODE_ARCHIVE_BYTES = 128 * 1024 * 1024;
+export const MAX_NODE_BINARY_BYTES = 512 * 1024 * 1024;
 
 export interface FileRef {
   sha256: string;
@@ -39,6 +40,9 @@ export interface NodeArchive extends FileRef {
   url: string;
   // The top-level directory inside the archive, e.g. node-v26.11.1-linux-x64.
   dir: string;
+  // The extracted bin/node, so an installed runtime can be checked before
+  // it is reused.
+  binary: FileRef;
 }
 
 export interface CliReleaseManifest {
@@ -62,8 +66,9 @@ export interface CliCurrentPointer {
   schema: typeof POINTER_SCHEMA;
   release: number;
   manifest: string; // sha256 of the manifest bytes
-  // Clients below this release must update (or stop) before talking to the
-  // site. null when the site has no minimum.
+  // Advisory: current clients below this release update (or stop with a
+  // clear message) before talking to the site. Older clients don't know it.
+  // null when the site has no minimum.
   min_release: number | null;
   published_at: string;
 }
@@ -106,8 +111,21 @@ function str(value: unknown, what: string, re: RegExp): string {
   return value;
 }
 
+// Schema /1 is strict: unknown keys are rejected. Extensions need a new
+// schema version.
+function exactKeys(
+  o: Record<string, unknown>,
+  allowed: readonly string[],
+  what: string,
+): void {
+  for (const key of Object.keys(o)) {
+    if (!allowed.includes(key)) fail(`${what} has an unknown key "${key}"`);
+  }
+}
+
 function fileRef(value: unknown, what: string, max: number): FileRef {
   const o = object(value, what);
+  exactKeys(o, ["sha256", "size"], what);
   if (!isSha256(o.sha256)) fail(`${what}.sha256`);
   if (
     typeof o.size !== "number" ||
@@ -120,31 +138,78 @@ function fileRef(value: unknown, what: string, max: number): FileRef {
   return { sha256: o.sha256, size: o.size };
 }
 
-function parseJson(text: string, max: number, what: string): unknown {
+/*
+ * Every format has one canonical serialization: manifests and pointers are
+ * JSON.stringify(value, null, 2) + "\n", site.json is JSON.stringify(value).
+ * Requiring it rejects duplicate keys (JSON.parse would silently keep the
+ * last one) and anything else that could make two readers disagree.
+ */
+export function canonicalJson(value: unknown, pretty: boolean): string {
+  return pretty ? JSON.stringify(value, null, 2) + "\n" : JSON.stringify(value);
+}
+
+function parseJson(
+  text: string,
+  max: number,
+  what: string,
+  pretty: boolean,
+): unknown {
   if (Buffer.byteLength(text) > max) fail(`${what} is too large`);
+  let value: unknown;
   try {
-    return JSON.parse(text);
+    value = JSON.parse(text);
   } catch {
     fail(`${what} is not JSON`);
   }
+  if (canonicalJson(value, pretty) !== text) {
+    fail(`${what} is not in canonical form (duplicate keys?)`);
+  }
+  return value;
 }
 
-// Unknown keys are ignored, so later releases can add fields; every known
-// field is checked strictly.
+const MANIFEST_KEYS = [
+  "schema",
+  "release",
+  "version",
+  "git",
+  "built_at",
+  "launcher",
+  "bootstrap",
+  "bundle",
+  "node",
+] as const;
+
 export function parseManifest(text: string): CliReleaseManifest {
-  const o = object(parseJson(text, MAX_MANIFEST_BYTES, "manifest"), "manifest");
+  const o = object(
+    parseJson(text, MAX_MANIFEST_BYTES, "manifest", true),
+    "manifest",
+  );
+  exactKeys(o, MANIFEST_KEYS, "manifest");
   if (o.schema !== MANIFEST_SCHEMA) fail("manifest.schema");
   if (!isRelease(o.release)) fail("manifest.release");
   const node = object(o.node, "manifest.node");
+  exactKeys(node, ["version", "platforms"], "manifest.node");
   const platforms = object(node.platforms, "manifest.node.platforms");
   const parsedPlatforms: Partial<Record<CliPlatform, NodeArchive>> = {};
   for (const [key, value] of Object.entries(platforms)) {
-    if (!(CLI_PLATFORMS as readonly string[]).includes(key)) continue;
-    const ref = fileRef(value, `node.${key}`, MAX_NODE_ARCHIVE_BYTES);
+    if (!(CLI_PLATFORMS as readonly string[]).includes(key)) {
+      fail(`unknown platform "${key}"`);
+    }
     const v = object(value, `node.${key}`);
+    exactKeys(v, ["sha256", "size", "url", "dir", "binary"], `node.${key}`);
+    const { sha256, size } = fileRef(
+      { sha256: v.sha256, size: v.size },
+      `node.${key}`,
+      MAX_NODE_ARCHIVE_BYTES,
+    );
     const url = str(v.url, `node.${key}.url`, /^https?:\/\/\S{1,2000}$/);
     const dir = str(v.dir, `node.${key}.dir`, NODE_DIR);
-    parsedPlatforms[key as CliPlatform] = { ...ref, url, dir };
+    const binary = fileRef(
+      v.binary,
+      `node.${key}.binary`,
+      MAX_NODE_BINARY_BYTES,
+    );
+    parsedPlatforms[key as CliPlatform] = { sha256, size, url, dir, binary };
   }
   if (Object.keys(parsedPlatforms).length === 0) fail("no node platforms");
   return {
@@ -170,7 +235,15 @@ function minRelease(value: unknown, release: number): number | null {
 }
 
 export function parsePointer(text: string): CliCurrentPointer {
-  const o = object(parseJson(text, MAX_POINTER_BYTES, "pointer"), "pointer");
+  const o = object(
+    parseJson(text, MAX_POINTER_BYTES, "pointer", true),
+    "pointer",
+  );
+  exactKeys(
+    o,
+    ["schema", "release", "manifest", "min_release", "published_at"],
+    "pointer",
+  );
   if (o.schema !== POINTER_SCHEMA) fail("pointer.schema");
   if (!isRelease(o.release)) fail("pointer.release");
   if (!isSha256(o.manifest)) fail("pointer.manifest");
@@ -184,7 +257,11 @@ export function parsePointer(text: string): CliCurrentPointer {
 }
 
 export function parseSiteInfo(text: string): CliSiteInfo {
-  const o = object(parseJson(text, MAX_POINTER_BYTES, "site.json"), "site");
+  const o = object(
+    parseJson(text, MAX_POINTER_BYTES, "site.json", false),
+    "site",
+  );
+  exactKeys(o, ["schema", "release", "manifest", "min_release"], "site");
   if (o.schema !== SITE_SCHEMA) fail("site.schema");
   if (!isRelease(o.release)) fail("site.release");
   if (!isSha256(o.manifest)) fail("site.manifest");

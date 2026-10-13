@@ -1,21 +1,56 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { type Server, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   MANIFEST_SCHEMA,
   POINTER_SCHEMA,
+  canonicalJson,
   parseManifest,
 } from "@cocalc/util/cli-distribution/schema";
 import { installScript, shQuote } from "./install-script";
-import { CliReleases, NotFound, configuredReleaseSource } from "./releases";
+import {
+  CliReleases,
+  NotFound,
+  type ServableFile,
+  configuredReleaseSource,
+} from "./releases";
 
 const sha256 = (data: Buffer | string) =>
   createHash("sha256").update(data).digest("hex");
 
-function store() {
+async function bytes(file: ServableFile): Promise<string> {
+  try {
+    return (await file.handle.readFile()).toString("utf8");
+  } finally {
+    await file.handle.close();
+  }
+}
+
+function pointerText(release: number, manifest: string): string {
+  return canonicalJson(
+    {
+      schema: POINTER_SCHEMA,
+      release,
+      manifest,
+      min_release: null,
+      published_at: "2026-10-13T00:00:00Z",
+    },
+    true,
+  );
+}
+
+function store(upstream = "http://127.0.0.1:1/unused") {
   const dir = mkdtempSync(join(tmpdir(), "cli-releases-"));
   mkdirSync(join(dir, "files"));
   mkdirSync(join(dir, "manifests"));
@@ -39,35 +74,31 @@ function store() {
         "linux-x64": {
           sha256: sha256(node),
           size: node.length,
-          url: "http://127.0.0.1:1/unused",
+          url: upstream,
           dir: "node-v26.11.1-linux-x64",
+          binary: { sha256: sha256("bin"), size: 3 },
         },
       },
     },
   };
-  const text = JSON.stringify(manifest);
+  const text = canonicalJson(manifest, true);
   const hash = sha256(text);
   writeFileSync(join(dir, "manifests", `${hash}.json`), text);
-  writeFileSync(
-    join(dir, "current.json"),
-    JSON.stringify({
-      schema: POINTER_SCHEMA,
-      release: 42,
-      manifest: hash,
-      min_release: null,
-      published_at: "2026-10-13T00:00:00Z",
-    }),
-  );
+  writeFileSync(join(dir, "current.json"), pointerText(42, hash));
   return { dir, hash, manifest, text, node };
+}
+
+function dirReleases(s: ReturnType<typeof store>) {
+  return new CliReleases(
+    { kind: "dir", dir: s.dir },
+    { cacheDir: join(s.dir, "cache") },
+  );
 }
 
 describe("CliReleases from a directory", () => {
   it("serves the site info, manifests and listed files", async () => {
     const s = store();
-    const releases = new CliReleases(
-      { kind: "dir", dir: s.dir },
-      { cacheDir: join(s.dir, "cache") },
-    );
+    const releases = dirReleases(s);
     expect(await releases.site()).toEqual({
       schema: "cocalc-cli-site/1",
       release: 42,
@@ -77,25 +108,34 @@ describe("CliReleases from a directory", () => {
     expect((await releases.manifest(s.hash)).text).toBe(s.text);
     const bundle = await releases.file(s.hash, s.manifest.bundle.sha256);
     expect(bundle.size).toBe(6);
+    expect(await bytes(bundle)).toBe("bundle");
   });
 
   it("refuses unlisted, missing or tampered files", async () => {
     const s = store();
-    const releases = new CliReleases(
-      { kind: "dir", dir: s.dir },
-      { cacheDir: join(s.dir, "cache") },
-    );
+    const releases = dirReleases(s);
     await expect(releases.file(s.hash, sha256("other"))).rejects.toThrow(
       NotFound,
     );
     await expect(releases.manifest("0".repeat(64))).rejects.toThrow(NotFound);
+    // A same-sized tampered file is caught by its hash.
     writeFileSync(join(s.dir, "files", s.manifest.launcher.sha256), "LAUNCHER");
     await expect(
       releases.file(s.hash, s.manifest.launcher.sha256),
-    ).rejects.toThrow(/wrong hash/);
+    ).rejects.toThrow();
     // The Node archive isn't in the store and its upstream is unreachable.
     await expect(
       releases.file(s.hash, s.manifest.node.platforms["linux-x64"].sha256),
+    ).rejects.toThrow();
+  });
+
+  it("re-verifies a file whose bytes changed after it was verified", async () => {
+    const s = store();
+    const releases = dirReleases(s);
+    await bytes(await releases.file(s.hash, s.manifest.bundle.sha256));
+    writeFileSync(join(s.dir, "files", s.manifest.bundle.sha256), "BUNDLE");
+    await expect(
+      releases.file(s.hash, s.manifest.bundle.sha256),
     ).rejects.toThrow();
   });
 
@@ -103,72 +143,104 @@ describe("CliReleases from a directory", () => {
     const s = store();
     const other = "0".repeat(63) + "1";
     writeFileSync(join(s.dir, "manifests", `${other}.json`), s.text);
-    const releases = new CliReleases({ kind: "dir", dir: s.dir });
-    await expect(releases.manifest(other)).rejects.toThrow(/does not match/);
+    await expect(dirReleases(s).manifest(other)).rejects.toThrow(
+      /does not match/,
+    );
   });
 
   it("refuses a pointer whose manifest is another release", async () => {
     const s = store();
-    writeFileSync(
-      join(s.dir, "current.json"),
-      JSON.stringify({
-        schema: POINTER_SCHEMA,
-        release: 43,
-        manifest: s.hash,
-        min_release: null,
-        published_at: "x",
-      }),
-    );
-    const releases = new CliReleases({ kind: "dir", dir: s.dir });
-    await expect(releases.site()).rejects.toThrow(/release 42/);
+    writeFileSync(join(s.dir, "current.json"), pointerText(43, s.hash));
+    await expect(dirReleases(s).site()).rejects.toThrow(/release 42/);
   });
 });
 
 describe("CliReleases from a URL", () => {
   let server: Server;
   let base = "";
-  const s = store();
+  let port = 0;
+  let s: ReturnType<typeof store>;
 
   beforeAll(async () => {
-    const { readFileSync, existsSync } = await import("node:fs");
     server = createServer((req, res) => {
-      const path = join(s.dir, `${req.url}`.replace(/^\/cli/, ""));
-      if (req.url?.startsWith("/upstream")) {
+      const url = `${req.url}`;
+      if (url.startsWith("/upstream")) {
         res.end(s.node);
-      } else if (existsSync(path)) {
-        res.end(readFileSync(path));
-      } else {
-        res.statusCode = 404;
+      } else if (url.startsWith("/moved/")) {
+        res.statusCode = 302;
+        res.setHeader("Location", url.replace("/moved", "/cli"));
         res.end();
+      } else {
+        const path = join(s.dir, url.replace(/^\/cli/, ""));
+        if (existsSync(path)) {
+          res.end(readFileSync(path));
+        } else {
+          res.statusCode = 404;
+          res.end();
+        }
       }
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));
-    const port = (server.address() as any).port;
+    port = (server.address() as any).port;
     base = `http://127.0.0.1:${port}/cli`;
+    s = store(`http://127.0.0.1:${port}/upstream`);
   });
   afterAll(() => server.close());
 
   it("downloads, verifies and caches files, falling back to the upstream URL", async () => {
     const manifest = parseManifest(s.text);
-    // Point the Node archive's upstream at the test server.
-    const port = new URL(base).port;
-    const text = s.text.replace(
-      "http://127.0.0.1:1/unused",
-      `http://127.0.0.1:${port}/upstream`,
-    );
-    const hash = sha256(text);
-    writeFileSync(join(s.dir, "manifests", `${hash}.json`), text);
-    const releases = new CliReleases(
-      { kind: "url", base },
-      { cacheDir: join(s.dir, "url-cache") },
-    );
-    const bundle = await releases.file(hash, manifest.bundle.sha256);
-    expect(bundle.path).toBe(join(s.dir, "url-cache", manifest.bundle.sha256));
+    const cacheDir = join(s.dir, "url-cache");
+    const releases = new CliReleases({ kind: "url", base }, { cacheDir });
+    expect(
+      await bytes(await releases.file(s.hash, manifest.bundle.sha256)),
+    ).toBe("bundle");
+    expect(existsSync(join(cacheDir, manifest.bundle.sha256))).toBe(true);
     const node = await releases.file(
-      hash,
+      s.hash,
       manifest.node.platforms["linux-x64"]!.sha256,
     );
-    expect(node.size).toBe(s.node.length);
+    expect(await bytes(node)).toBe(s.node);
+  });
+
+  it("replaces a tampered cache entry instead of serving it", async () => {
+    const manifest = parseManifest(s.text);
+    const cacheDir = join(s.dir, "tamper-cache");
+    mkdirSync(cacheDir, { mode: 0o700 });
+    writeFileSync(join(cacheDir, manifest.bundle.sha256), "BUNDLE");
+    const releases = new CliReleases({ kind: "url", base }, { cacheDir });
+    expect(
+      await bytes(await releases.file(s.hash, manifest.bundle.sha256)),
+    ).toBe("bundle");
+  });
+
+  it("refuses a cache directory that isn't private", async () => {
+    const manifest = parseManifest(s.text);
+    const open = join(s.dir, "open-cache");
+    mkdirSync(open);
+    chmodSync(open, 0o755);
+    await expect(
+      new CliReleases({ kind: "url", base }, { cacheDir: open }).file(
+        s.hash,
+        manifest.bundle.sha256,
+      ),
+    ).rejects.toThrow(/private directory/);
+    const link = join(s.dir, "link-cache");
+    mkdirSync(join(s.dir, "real-cache"), { mode: 0o700 });
+    symlinkSync(join(s.dir, "real-cache"), link);
+    await expect(
+      new CliReleases({ kind: "url", base }, { cacheDir: link }).file(
+        s.hash,
+        manifest.bundle.sha256,
+      ),
+    ).rejects.toThrow(/private directory/);
+  });
+
+  it("does not follow redirects from the release store", async () => {
+    const releases = new CliReleases({
+      kind: "url",
+      base: `http://127.0.0.1:${port}/moved`,
+    });
+    await expect(releases.site()).rejects.toThrow(/redirect/);
   });
 });
 
@@ -206,6 +278,7 @@ describe("install.sh", () => {
     execFileSync("sh", ["-n"], { input: script });
     expect(script).toContain(`manifest=${s.hash}`);
     expect(script).toContain(`bundle=${s.manifest.bundle.sha256}`);
+    expect(script).toContain(`node_bin_sha=${sha256("bin")}`);
     expect(script).toContain("linux-x64)");
     expect(script).not.toContain("darwin-arm64)");
     // Downloads never follow redirects.

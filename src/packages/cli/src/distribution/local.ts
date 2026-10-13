@@ -22,6 +22,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -52,7 +53,6 @@ const execFile = promisify(execFileCb);
 export const STATE_SCHEMA = "cocalc-cli-state/1";
 export const DEFAULT_AUTO_UPDATE = true;
 const MAX_SEEN_PER_ORIGIN = 64;
-const LOCK_STALE_MS = 15 * 60_000;
 const LOCK_WAIT_MS = 120_000;
 
 export interface OriginFloors {
@@ -252,13 +252,22 @@ export function recordRelease(
   }
 }
 
+// Checked with the lock held, after re-reading the state: a release must
+// not be below the highest one seen from its origin (only a local rollback
+// goes back), and its number must not name a different manifest.
 export function checkRelease(
   state: CliState | undefined,
   origin: string,
   release: number,
   manifestHash: string,
 ): void {
-  const known = state?.origins[origin]?.seen[`${release}`];
+  const floors = state?.origins[origin];
+  if (floors != null && release < floors.highest_seen) {
+    throw new Error(
+      `${origin} offered release ${release}, older than release ${floors.highest_seen} seen from it before; not downgrading (a local \`cocalc update --rollback\` is the way back).`,
+    );
+  }
+  const known = floors?.seen[`${release}`];
   if (known != null && known !== manifestHash) {
     throw new Error(
       `${origin} offered release ${release} with a different manifest than before; refusing it.`,
@@ -275,38 +284,91 @@ function processAlive(pid: number): boolean {
   }
 }
 
+interface LockOwner {
+  pid: number;
+  token: string;
+}
+
+function parseOwner(text: string | undefined): LockOwner | undefined {
+  const match = /^(\d+) (\d+) ([0-9a-f]{32})\n$/.exec(text ?? "");
+  if (match == null) return undefined;
+  return { pid: Number(match[1]), token: match[3] };
+}
+
+/*
+ * The update lock. The owner record (pid, time, random token) is written
+ * to a private file first and then published with link(), which fails if
+ * the lock exists, so a lock is never visible without its owner.
+ *
+ * A lock is taken over only when its owner process is gone (never because it
+ * is old: a slow download is still a live update). The takeover renames the
+ * dead lock aside and checks that it renamed the file it inspected; if a
+ * live lock slipped in instead, it is put back. Release removes the lock only
+ * if it still carries this owner's token.
+ */
 export async function withLock<T>(
   root: string,
   fn: () => Promise<T>,
   log: (message: string) => void = () => {},
+  waitMs = LOCK_WAIT_MS,
 ): Promise<T> {
   await mkdir(root, { recursive: true, mode: 0o700 });
   const path = join(root, "lock");
+  const token = randomBytes(16).toString("hex");
+  const record = join(root, `.lock.${token}`);
+  const handle = await open(record, "wx", 0o600);
+  try {
+    await handle.writeFile(`${process.pid} ${Date.now()} ${token}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   const start = Date.now();
   let told = false;
-  while (true) {
-    try {
-      const handle = await open(path, "wx", 0o600);
-      await handle.writeFile(`${process.pid} ${Date.now()}\n`);
-      await handle.close();
-      break;
-    } catch (err: any) {
-      if (err?.code !== "EEXIST") throw err;
-      const [pid, at] = `${(await readText(path)) ?? ""}`
-        .trim()
-        .split(" ")
-        .map(Number);
-      const stale =
-        !Number.isSafeInteger(pid) ||
-        !processAlive(pid) ||
-        !(Date.now() - at < LOCK_STALE_MS);
-      if (stale) {
-        await unlink(path).catch(() => {});
+  try {
+    while (true) {
+      try {
+        await link(record, path);
+        break;
+      } catch (err: any) {
+        if (err?.code !== "EEXIST") throw err;
+      }
+      let observed: { ino: number; owner?: LockOwner; mtimeMs: number };
+      try {
+        const info = await lstat(path);
+        observed = {
+          ino: info.ino,
+          mtimeMs: info.mtimeMs,
+          owner: parseOwner(await readText(path)),
+        };
+      } catch (err: any) {
+        if (err?.code === "ENOENT") continue;
+        throw err;
+      }
+      const dead =
+        observed.owner != null
+          ? !processAlive(observed.owner.pid)
+          : // Not written by this code; leave it alone for a while.
+            Date.now() - observed.mtimeMs > 60_000;
+      if (dead) {
+        const aside = join(root, `.lock.dead.${token}`);
+        try {
+          await rename(path, aside);
+        } catch (err: any) {
+          if (err?.code === "ENOENT") continue;
+          throw err;
+        }
+        const moved = await lstat(aside);
+        if (moved.ino !== observed.ino) {
+          // A live lock replaced the dead one meanwhile: put it back.
+          await link(aside, path).catch(() => {});
+        }
+        await unlink(aside).catch(() => {});
         continue;
       }
-      if (Date.now() - start > LOCK_WAIT_MS) {
+      if (Date.now() - start > waitMs) {
         throw new Error(
-          `another CLI update (process ${pid}) holds ${path}; try again later`,
+          `another CLI update (process ${observed.owner?.pid ?? "?"}) holds ${path}; try again later`,
         );
       }
       if (!told) {
@@ -315,11 +377,17 @@ export async function withLock<T>(
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
+  } finally {
+    await unlink(record).catch(() => {});
   }
   try {
     return await fn();
   } finally {
-    await unlink(path).catch(() => {});
+    if (
+      parseOwner(await readText(path).catch(() => undefined))?.token === token
+    ) {
+      await unlink(path).catch(() => {});
+    }
   }
 }
 
@@ -352,18 +420,33 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-export async function pointerComplete(
+// Every file a pointer names is present and intact (used before a rollback).
+export async function pointerIntact(
   root: string,
   pointer: ActivePointer,
 ): Promise<boolean> {
-  return (
-    existsSync(join(root, "node", pointer.node, "bin", "node")) &&
-    existsSync(join(root, "targets", pointer.bootstrap, "bootstrap.js")) &&
-    existsSync(join(root, "targets", pointer.bundle, "cocalc.js")) &&
-    existsSync(join(root, "manifests", `${pointer.manifest}.json`)) &&
-    (await isDirectory(join(root, "node", pointer.node))) &&
-    (await isDirectory(join(root, "targets", pointer.bundle)))
-  );
+  try {
+    const manifest = await readLocalManifest(root, pointer.manifest);
+    const platform = currentPlatform();
+    const archive = platform ? manifest.node.platforms[platform] : undefined;
+    if (
+      archive == null ||
+      archive.sha256 !== pointer.node ||
+      manifest.bootstrap.sha256 !== pointer.bootstrap ||
+      manifest.bundle.sha256 !== pointer.bundle
+    ) {
+      return false;
+    }
+    const bootstrap = join(root, "targets", pointer.bootstrap, "bootstrap.js");
+    const bundle = join(root, "targets", pointer.bundle, "cocalc.js");
+    return (
+      (await nodeIntact(join(root, "node", pointer.node), archive.binary)) &&
+      (await sha256File(bootstrap)) === pointer.bootstrap &&
+      (await sha256File(bundle)) === pointer.bundle
+    );
+  } catch {
+    return false;
+  }
 }
 
 // Writes the journal, switches `active` (and the launcher, if it changed),
@@ -372,17 +455,21 @@ async function switchActive(
   root: string,
   to: string,
   launcher?: { path: string; bytes: Buffer },
+  faultAt?: FaultPoint,
 ): Promise<string | undefined> {
   const from = (await readText(join(root, "active"))) ?? null;
   await writeFileAtomic(
     join(root, "transition.json"),
     JSON.stringify({ from, to }) + "\n",
   );
+  fault(faultAt, "after-journal");
   if (launcher != null) {
     await mkdir(dirname(launcher.path), { recursive: true });
     await writeFileAtomic(launcher.path, launcher.bytes, 0o755);
   }
+  fault(faultAt, "after-launcher");
   await writeFileAtomic(join(root, "active"), to, 0o644);
+  fault(faultAt, "after-active");
   if (from != null && from !== to) {
     await writeFileAtomic(join(root, "previous"), from);
   }
@@ -391,11 +478,37 @@ async function switchActive(
   return from ?? undefined;
 }
 
+// Test hook: throw at a named point of the switch, as a crash would stop it.
+export type FaultPoint =
+  | "after-floors"
+  | "after-journal"
+  | "after-launcher"
+  | "after-active";
+
+function fault(at: FaultPoint | undefined, point: FaultPoint): void {
+  if (at === point) throw new Error(`injected fault: ${point}`);
+}
+
 export type FetchFile = (
   hash: string,
   dest: string,
   size: number,
 ) => Promise<void>;
+
+async function nodeIntact(
+  dir: string,
+  binary: { sha256: string; size: number },
+): Promise<boolean> {
+  const file = join(dir, "bin", "node");
+  try {
+    if (!(await isDirectory(dir))) return false;
+    const info = await lstat(file);
+    if (!info.isFile() || info.size !== binary.size) return false;
+    return (await sha256File(file)) === binary.sha256;
+  } catch {
+    return false;
+  }
+}
 
 async function installNode(
   root: string,
@@ -411,9 +524,7 @@ async function installNode(
     );
   }
   const target = join(root, "node", archive.sha256);
-  if (existsSync(join(target, "bin", "node")) && (await isDirectory(target))) {
-    return archive.sha256;
-  }
+  if (await nodeIntact(target, archive.binary)) return archive.sha256;
   const file = join(staging, "node.tar.gz");
   await fetchFile(archive.sha256, file, archive.size);
   const unpack = join(staging, "node-unpack");
@@ -430,6 +541,12 @@ async function installNode(
   const info = await lstat(binary);
   if (!info.isFile() || info.isSymbolicLink()) {
     throw new Error("the Node archive has no regular bin/node");
+  }
+  if (
+    info.size !== archive.binary.size ||
+    (await sha256File(binary)) !== archive.binary.sha256
+  ) {
+    throw new Error("the Node binary does not match the release manifest");
   }
   const tree = join(staging, "node-tree");
   await mkdir(join(tree, "bin"), { recursive: true });
@@ -493,6 +610,7 @@ export async function installRelease({
   launcherBytes,
   prepareState,
   log = () => {},
+  faultAt,
 }: {
   root: string;
   origin: string;
@@ -502,6 +620,7 @@ export async function installRelease({
   launcherBytes?: Buffer;
   prepareState: (state: CliState | undefined) => CliState;
   log?: (message: string) => void;
+  faultAt?: FaultPoint;
 }): Promise<InstallResult> {
   if (sha256(manifestText) !== manifestHash) {
     throw new Error("the release manifest does not match its hash");
@@ -560,6 +679,7 @@ export async function installRelease({
 
         recordRelease(state, origin, manifest.release, manifestHash);
         await writeState(root, state);
+        fault(faultAt, "after-floors");
         if ((await readText(join(root, "origin"))) !== `${state.origin}\n`) {
           await writeFileAtomic(
             join(root, "origin"),
@@ -583,7 +703,7 @@ export async function installRelease({
             launcherChanged: false,
           };
         }
-        await switchActive(root, to, launcher);
+        await switchActive(root, to, launcher, faultAt);
         await collectGarbage(root);
         log(
           `CoCalc CLI release ${manifest.release} (version ${manifest.version}) is now active.`,
@@ -621,8 +741,8 @@ export async function rollback(
       if (previous == null) {
         throw new Error("there is no previous release to go back to");
       }
-      if (!(await pointerComplete(root, previous.pointer))) {
-        throw new Error("the previous release is no longer complete on disk");
+      if (!(await pointerIntact(root, previous.pointer))) {
+        throw new Error("the previous release is no longer intact on disk");
       }
       const manifest = await readLocalManifest(root, previous.pointer.manifest);
       state.held_at = manifest.release;

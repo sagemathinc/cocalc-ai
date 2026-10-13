@@ -93,6 +93,28 @@ function git(args) {
   return result.stdout.trim();
 }
 
+// Size and sha256 of bin/node inside an archive, so installed runtimes can
+// be checked before they are reused.
+function nodeBinary(archive, dir) {
+  const work = join(tmpdir(), `cocalc-cli-node-bin-${process.pid}`);
+  rmSync(work, { recursive: true, force: true });
+  mkdirSync(work, { recursive: true });
+  try {
+    writeFileSync(join(work, "node.tar.gz"), archive);
+    run("tar", [
+      "-xzf",
+      join(work, "node.tar.gz"),
+      "-C",
+      work,
+      `${dir}/bin/node`,
+    ]);
+    const binary = readFileSync(join(work, dir, "bin", "node"));
+    return { sha256: sha256(binary), size: binary.length };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
 async function verifiedNodeChecksums(version, args) {
   const base = `${NODE_DIST}/v${version}`;
   const shasums = await download(`${base}/SHASUMS256.txt`);
@@ -181,7 +203,12 @@ async function main() {
     if (ref.sha256 !== expected) {
       throw new Error(`${name} does not match SHASUMS256.txt`);
     }
-    platforms[platform] = { ...ref, url, dir };
+    platforms[platform] = {
+      ...ref,
+      url,
+      dir,
+      binary: nodeBinary(archive, dir),
+    };
   }
 
   const head = git(["rev-parse", "HEAD"]);
