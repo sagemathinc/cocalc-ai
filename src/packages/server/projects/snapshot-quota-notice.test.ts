@@ -52,6 +52,9 @@ beforeEach(() => {
   eventIds.clear();
   rows = [pausedProject("2026-10-01T00:00:00.000Z")];
   query.mockImplementation((sql: string, params: unknown[]) => {
+    if (sql.includes("FROM project_maintenance_status")) {
+      return Promise.resolve({ rows });
+    }
     if (sql.includes("FROM notification_events")) {
       return Promise.resolve({
         rows: eventIds.has(`${params[0]}`) ? [{ event_id: params[0] }] : [],
@@ -87,11 +90,11 @@ it("tells the owner and collaborators once that snapshots are paused by the quot
     input.targets[0].dedupe_key.startsWith("project-snapshots-paused-quota:"),
   ).toBe(true);
   const [sql, params] = query.mock.calls.find(([sql]) =>
-    `${sql}`.includes("project_maintenance_status"),
+    `${sql}`.includes("FROM project_maintenance_status"),
   )!;
   expect(sql).toContain("s.reason='storage_quota_exceeded'");
   expect(sql).toContain("s.consecutive_failures >= $2");
-  expect(params).toEqual(["bay-1", 2, 1000]);
+  expect(params).toEqual(["bay-1", 2, 1000, "project_snapshots_paused_quota"]);
 
   // The next check in the same episode sends nothing.
   expect(await runProjectSnapshotQuotaNoticeCheck()).toMatchObject({

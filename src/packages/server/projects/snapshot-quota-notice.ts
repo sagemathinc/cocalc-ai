@@ -25,6 +25,7 @@ const logger = getLogger("server:projects:snapshot-quota-notice");
 // One failure may race a cleanup that brings the project back under quota.
 const MIN_CONSECUTIVE_FAILURES = 2;
 const MAX_PROJECTS_PER_CHECK = 1000;
+export const SNAPSHOT_QUOTA_NOTICE_TYPE = "project_snapshots_paused_quota";
 
 type Row = {
   project_id: string;
@@ -38,7 +39,7 @@ export async function snapshotQuotaNotice(project_id: string) {
     `projects/${encodeURIComponent(project_id)}/settings#recovery`,
   );
   return {
-    body: `New local snapshots of this project have stopped because the project is at its storage quota. Existing snapshots are kept, but recent changes are not covered by a new snapshot.\n\nTo resume, delete files you no longer need (space that older snapshots still hold is freed when those snapshots are deleted) or increase the project's storage. Snapshots resume automatically once the project is back under its quota.\n\n${url}\n\nYou will not get this notice again unless snapshots resume and then stop again.`,
+    body: `New local snapshots of this project have stopped because the project is at its storage quota, so recent changes are not covered by a new snapshot. Existing snapshots remain available, subject to normal retention.\n\nTo resume, delete files you no longer need (space that older snapshots still hold is freed when those snapshots are deleted) or increase the project's storage. Snapshots resume automatically once the project is back under its quota.\n\n${url}\n\nYou will not get this notice again unless snapshots resume and then stop again.`,
   };
 }
 
@@ -58,9 +59,25 @@ export async function runProjectSnapshotQuotaNoticeCheck(): Promise<{
         AND s.consecutive_failures >= $2
         AND p.provisioned IS TRUE AND p.deleted IS NOT TRUE
         AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $1)=$1
+        -- Already told in this episode: since the last successful snapshot,
+        -- or in the last week when that is unknown (e.g. after a host move,
+        -- which clears it). Notified projects also leave the page, so later
+        -- projects are not starved.
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_events e
+           WHERE e.source_project_id=p.project_id
+             AND e.payload_json->>'notice_type'=$4
+             AND e.created_at >= COALESCE(
+               s.latest_snapshot_at, NOW() - INTERVAL '7 days')
+        )
       ORDER BY p.project_id
       LIMIT $3`,
-    [bayId, MIN_CONSECUTIVE_FAILURES, MAX_PROJECTS_PER_CHECK],
+    [
+      bayId,
+      MIN_CONSECUTIVE_FAILURES,
+      MAX_PROJECTS_PER_CHECK,
+      SNAPSHOT_QUOTA_NOTICE_TYPE,
+    ],
   );
   let noticesSent = 0;
   let failures = 0;
@@ -93,7 +110,7 @@ export async function runProjectSnapshotQuotaNoticeCheck(): Promise<{
                 title: `Automatic snapshots paused: ${name}`,
                 body_markdown: body,
                 severity: "warning",
-                notice_type: "project_snapshots_paused_quota",
+                notice_type: SNAPSHOT_QUOTA_NOTICE_TYPE,
                 origin_label: "Project Recovery",
                 action_link: `/projects/${row.project_id}/settings#recovery`,
                 action_label: "Review storage and snapshots",

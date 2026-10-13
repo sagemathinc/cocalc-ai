@@ -42,10 +42,19 @@ export function isStorageQuotaBlocked(
   );
 }
 
-export const STORAGE_QUOTA_PAUSED_TEXT =
-  "This project is at its storage quota, so new snapshots cannot be taken. Existing snapshots are kept. To resume, delete files you no longer need (space that older snapshots still hold is freed when those snapshots are deleted) or increase the project's storage; snapshots then resume automatically.";
+const STORAGE_QUOTA_RESUME_TEXT =
+  "To resume, delete files you no longer need (space that older snapshots still hold is freed when those snapshots are deleted) or increase the project's storage";
 
-function reasonText(reason: string | null | undefined): string | null {
+export function storageQuotaPausedText(kind: "snapshot" | "backup"): string {
+  return kind === "snapshot"
+    ? `This project is at its storage quota, so new snapshots cannot be taken. Existing snapshots remain available, subject to normal retention. ${STORAGE_QUOTA_RESUME_TEXT}; snapshots then resume automatically.`
+    : `This project is at its storage quota, so a new backup cannot be prepared (each backup starts from a local snapshot). Existing backups remain available, subject to normal retention. ${STORAGE_QUOTA_RESUME_TEXT}; backups then resume automatically.`;
+}
+
+function reasonText(
+  reason: string | null | undefined,
+  kind: "snapshot" | "backup",
+): string | null {
   if (!reason) return null;
   const text = reason.toLowerCase();
   if (text === "queued")
@@ -87,7 +96,7 @@ function reasonText(reason: string | null | undefined): string | null {
     return "The off-host backup store is unavailable. Maintenance will retry.";
   if (text.includes("managed_backup_egress_policy_blocked"))
     return "Backup uploads are temporarily blocked by the account's upload allowance.";
-  if (isStorageQuotaBlocked(text)) return STORAGE_QUOTA_PAUSED_TEXT;
+  if (isStorageQuotaBlocked(text)) return storageQuotaPausedText(kind);
   if (text.includes("quota")) return "Storage quota is blocking maintenance.";
   if (text.includes("limit of") && text.includes("backup")) {
     return "The backup retention limit is blocking a new backup.";
@@ -172,6 +181,7 @@ export function ProjectRecoveryStatus({
     overdue
       ? (status.host_maintenance_block?.reason ?? report?.reason)
       : report?.reason,
+    kind,
   );
   let title = `${label}: latest confirmed ${formatted(latest)}`;
   let description: string | undefined;
@@ -182,7 +192,7 @@ export function ProjectRecoveryStatus({
     type = "info";
   } else if (unknown) {
     title = `${label}: current protection status unknown`;
-    const hostBlock = reasonText(status.host_maintenance_block?.reason);
+    const hostBlock = reasonText(status.host_maintenance_block?.reason, kind);
     const reportProblem =
       hostStale == null || hostStale > STALE_HOST_MS
         ? "Host reporting is stale."
@@ -194,7 +204,7 @@ export function ProjectRecoveryStatus({
     isStorageQuotaBlocked(report?.reason)
   ) {
     title = `${label}: paused because the project is at its storage quota`;
-    description = `${STORAGE_QUOTA_PAUSED_TEXT} Latest confirmed: ${formatted(latest)}.`;
+    description = `${storageQuotaPausedText(kind)} Latest confirmed: ${formatted(latest)}.`;
     type = "warning";
   } else if (overdue) {
     title = `${label}: scheduled recovery point overdue`;

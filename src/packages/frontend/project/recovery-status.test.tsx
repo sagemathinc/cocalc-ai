@@ -80,7 +80,35 @@ it("says why snapshots stopped as soon as the quota blocks one", async () => {
       /Local snapshots: paused because the project is at its storage quota/,
     ),
   ).toBeVisible();
-  expect(screen.getByText(/Existing snapshots are kept/)).toBeVisible();
+  expect(screen.getByText(/Existing snapshots remain available/)).toBeVisible();
+});
+
+it("explains a backup blocked by the quota in terms of backups", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_changed: current(),
+    last_backup: "2026-09-20T00:00:00.000Z",
+    snapshot_due_at: null,
+    backup_due_at: new Date(Date.now() + 60_000).toISOString(),
+    snapshot_disabled: false,
+    backup_disabled: false,
+    backup: {
+      observed_at: current(),
+      outcome: "failed",
+      reason: "storage_quota_exceeded",
+      due_at: null,
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="backup" />);
+  expect(
+    await screen.findByText(
+      /Off-host backups: paused because the project is at its storage quota/,
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/a new backup cannot be prepared/)).toBeVisible();
+  expect(screen.queryByText(/new snapshots cannot be taken/)).toBeNull();
 });
 
 it("shows unknown status when the host has stopped reporting", async () => {
