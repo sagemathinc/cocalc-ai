@@ -29,7 +29,32 @@ function age(value: string | null | undefined): number | null {
   return Number.isFinite(timestamp) ? Date.now() - timestamp : null;
 }
 
-function reasonText(reason: string | null | undefined): string | null {
+// A project at its storage quota cannot take new snapshots: Btrfs charges the
+// snapshot to the project, and raising the quota for it would let writes
+// exceed the quota. They resume once the project is back under its quota.
+export function isStorageQuotaBlocked(
+  reason: string | null | undefined,
+): boolean {
+  const text = `${reason ?? ""}`.toLowerCase();
+  return (
+    text.includes("storage_quota_exceeded") ||
+    text.includes("disk quota exceeded")
+  );
+}
+
+const STORAGE_QUOTA_RESUME_TEXT =
+  "To resume, delete files you no longer need (space that older snapshots still hold is freed when those snapshots are deleted) or increase the project's storage";
+
+export function storageQuotaPausedText(kind: "snapshot" | "backup"): string {
+  return kind === "snapshot"
+    ? `This project is at its storage quota, so new snapshots cannot be taken. Existing snapshots remain available, subject to normal retention. ${STORAGE_QUOTA_RESUME_TEXT}; snapshots then resume automatically.`
+    : `This project is at its storage quota, so a new backup cannot be prepared (each backup starts from a local snapshot). Existing backups remain available, subject to normal retention. ${STORAGE_QUOTA_RESUME_TEXT}; backups then resume automatically.`;
+}
+
+function reasonText(
+  reason: string | null | undefined,
+  kind: "snapshot" | "backup",
+): string | null {
   if (!reason) return null;
   const text = reason.toLowerCase();
   if (text === "queued")
@@ -71,8 +96,7 @@ function reasonText(reason: string | null | undefined): string | null {
     return "The off-host backup store is unavailable. Maintenance will retry.";
   if (text.includes("managed_backup_egress_policy_blocked"))
     return "Backup uploads are temporarily blocked by the account's upload allowance.";
-  if (text.includes("storage_quota_exceeded"))
-    return "Storage quota is blocking maintenance.";
+  if (isStorageQuotaBlocked(text)) return storageQuotaPausedText(kind);
   if (text.includes("quota")) return "Storage quota is blocking maintenance.";
   if (text.includes("limit of") && text.includes("backup")) {
     return "The backup retention limit is blocking a new backup.";
@@ -157,6 +181,7 @@ export function ProjectRecoveryStatus({
     overdue
       ? (status.host_maintenance_block?.reason ?? report?.reason)
       : report?.reason,
+    kind,
   );
   let title = `${label}: latest confirmed ${formatted(latest)}`;
   let description: string | undefined;
@@ -167,13 +192,20 @@ export function ProjectRecoveryStatus({
     type = "info";
   } else if (unknown) {
     title = `${label}: current protection status unknown`;
-    const hostBlock = reasonText(status.host_maintenance_block?.reason);
+    const hostBlock = reasonText(status.host_maintenance_block?.reason, kind);
     const reportProblem =
       hostStale == null || hostStale > STALE_HOST_MS
         ? "Host reporting is stale."
         : "Maintenance reporting is missing or stale.";
     description = `Latest confirmed recovery point: ${formatted(latest)}. ${reportProblem}${overdue ? ` Scheduled recovery point was due ${formatted(dueAt)}.` : ""}${hostBlock ? ` ${hostBlock}` : ""}`;
     type = critical ? "error" : "warning";
+  } else if (
+    report?.outcome === "failed" &&
+    isStorageQuotaBlocked(report?.reason)
+  ) {
+    title = `${label}: paused because the project is at its storage quota`;
+    description = `${storageQuotaPausedText(kind)} Latest confirmed: ${formatted(latest)}.`;
+    type = "warning";
   } else if (overdue) {
     title = `${label}: scheduled recovery point overdue`;
     description = `Due ${formatted(dueAt)}. Latest confirmed: ${formatted(latest)}.${reason ? ` ${reason}` : ""}`;
