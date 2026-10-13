@@ -1,6 +1,10 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 7 (Oct 13, 2026): phased, following William's point that the CLI shouldn't be held to a stricter standard than the hub it talks to. Phases A and B come first; the full design (revision 5, approved at design level by @lite1-review at 9f4827a4df) is now **Phase C, the end state**.
+Status: revision 7 (Oct 13, 2026). Revision 6 phased the design, following William's point that the CLI shouldn't be held to a stricter standard than the hub's own release process. Revision 7 adds:
+- **William's rule:** every hub release is a CLI release, with automatic updates.
+- **@lite1-review's answers** on the honesty of the Phase A and B trust claims.
+
+Revision 6 said: phased, following William's point that the CLI shouldn't be held to a stricter standard than the hub it talks to. Phases A and B come first; the full design (revision 5, approved at design level by @lite1-review at 9f4827a4df) is now **Phase C, the end state**.
 
 Review history: Rev 1 (7e17dbc41f) got a REQUEST CHANGES security review from @lite1-review (8 high, 5 medium), answered in rev 2 (a157920c69); bracketed numbers such as [R2] refer to that review. Rev 2's review (2 high, 4 medium) was answered in rev 3 (85c9cba88d), with its findings cited as [S1]–[S6]. Revision 4 (59c5fac26d) answered rev 3's review (2 high, 1 medium), cited as [T1]–[T3]. Revision 5 answers rev 4's one medium finding [U1]: the exact pointer grammar, the launcher replacement inside the transaction, and how a future pointer format is introduced. William reviews after @lite1-review approves.
 
@@ -21,66 +25,98 @@ What went wrong on Oct 12 while testing the one-line setup (`curl … | sh`):
 - **Official Node builds are already signed** (26–32 MB per platform): notarized for macOS and Authenticode-signed for Windows by the Node project, with `SHASUMS256.txt` signed by the Node release keys.
 - **`tuf-js` exists**, the Update Framework client that npm's sigstore uses. It's pure JavaScript, so a TUF client can run on the pinned Node.
 
-## Phasing: the CLI is as trusted as the hub it talks to
+## Phasing: trust the CLI no more strictly than the release process
 
-**The principle.** The CLI acts as you, with credentials for one hub. That hub already has the power the strict design defends against:
-- it serves the web app's JavaScript to your browser;
-- it can act as you;
-- its bays sign computer tickets, so it can run commands on your connected computers.
+**The principle.** Installing or updating the CLI from an origin gives that origin **full code execution as your local OS user**. It can read any of your files, your SSH keys, and credentials for other sites. Browser JavaScript is sandboxed; the CLI is not, so this is more than you give a site by using it in the browser. (For a computer already connected in direct mode, the hub already has similar practical power, since its bays sign the tickets that run commands. That isn't true for every CLI user.)
 
-The hub's own releases ship through ordinary CI and deploys. So signing the CLI more strictly than the hub doesn't make anyone safer: an attacker goes for the hub. The CLI's trust should rise **together with** the hub's, not ahead of it.
+The CLI's release trust should still rise **together with** the hub's, not ahead of it:
+- The hub's own releases ship through ordinary CI and deploys, and the hub serves the web app, holds your account, and signs computer tickets.
+- So defending the CLI more strictly than the hub's release path mostly moves the attacker to the hub.
+
+Phase A therefore trusts whatever builds and deploys the site, says so plainly, and keeps the origin visible and explicit.
 
 ### Phase A: now (fixes drift and heavy releases)
 
-**The rule: every hub release is a CLI release.** If you install the CLI from a site, it should always be running that site's CLI. Nobody has to remember a separate CLI release. Phase A trusts whatever builds and deploys the hub, and nothing more.
+**The rule: every hub release is a CLI release.** A CLI installed from a site should always run that site's CLI, and nobody has to remember a separate CLI release.
 
 **Release side:**
-- Every hub build makes the bundle from the same commit, as it already does for projects. The bundle ships inside the hub release.
-- So deploying a hub *is* releasing its CLI. There's no separate CLI release step to forget or let drift, and no signing ceremony.
+- Every hub build makes the bundle from the same commit, as it already does for projects, plus the launcher and bootstrap. They ship inside the hub release.
+- So deploying a hub *is* releasing its CLI. There's no separate step to forget or let drift, and no signing ceremony.
 - The SEA builds stay for Windows only.
 
+**What the hub serves:**
+- `/cli/install.sh`.
+- An **unsigned** `/cli/manifest.json`: the strict schema and size caps of the end state, pinning size and sha256 for the launcher, the bootstrap, the Node archive for each platform, and the bundle.
+- Each of those files, by hash.
+- For the `v1` pointer, **R is the sha256 of that manifest**, so the pointer and the shared update transaction cover every byte that executes.
+
+**Trust, stated plainly:**
+- **The origin is fully trusted.** You trust the exact site you install from, and every later update from it, with full code execution as your local user (above).
+- **What the checks are for:** HTTPS and the manifest hashes protect against network attackers, corruption and mixed-up files. They do not protect against the site.
+- **No rollback protection** beyond the site's honesty. A malicious origin can do worse anyway.
+- **The origin is explicit and visible:**
+  - The CLI records the install origin, and `install.sh`, `cocalc update` and `cocalc version` print it prominently.
+  - Updates fetch only from that exact origin. Cross-origin redirects are rejected, so a site's CDN is trusted only when it serves that same origin name (for cocalc.ai, Cloudflare in front of it, which is already true for the web app).
+  - Changing the origin (`cocalc update --from <site>`) needs an explicit local confirmation at a TTY, or `--yes`, showing both origins.
+- **Node:** when the pinned version changes, the release job checks Node's signed `SHASUMS256` against the Node release keys. That is hygiene for an honest release, not protection for clients against a compromised site, which can pin any archive it likes.
+
 **On the user's machine:**
-- **Updates are automatic by default.** When the CLI talks to its site, it reads `/cli/site.json` (cached up to 10 minutes). If the site's bundle hash differs from the active one, the CLI fetches the new bundle, checks it against the manifest and swaps it in with the crash-safe transaction.
+- **The layout and mechanics of the end state:** the launcher, the pinned Node, the bundle, the exact `v1` pointer and the crash-safe update transaction.
+- **Updates are automatic by default.** When the CLI talks to its origin, it reads `/cli/site.json` (cached up to 10 minutes). If the manifest hash differs from the active one, it fetches the new manifest and files, checks them, and swaps them in with the transaction.
   - The swap happens before the command runs, when the site requires the newer version.
   - Otherwise it happens in the background, for the next run.
-- **Opting out:** `cocalc update --auto off`, or `COCALC_AUTO_UPDATE=0` for CI that wants pinned versions. `cocalc update` still updates by hand, and `cocalc update --rollback` goes back to the previous bundle.
-- **A new Node** comes the same way when the manifest pins a different version. The archive is checked against the manifest's sha256.
+- **Opting out:** `cocalc update --auto off`, or `COCALC_AUTO_UPDATE=0` for CI that wants pinned versions. `cocalc update` still updates by hand, and `cocalc update --rollback` returns to the previous release.
+- **Version skew** mostly disappears. With updates off, the CLI stops early with a clear "run `cocalc update`" message. The version header is for compatibility only.
+- **Dev sites:** installing from a dev site such as lite1b is the opt-in, because the origin is shown, every update comes only from it, and switching away needs a confirmation.
 
-**The details:**
-- **What gets installed:** the launcher, a pinned official Node, the bundle, the exact `v1` pointer and the crash-safe update transaction.
-- **What the hub serves:** `/cli/install.sh`, an **unsigned** `/cli/manifest.json` (hashes and sizes of the bundle and of each Node archive), and the bundle by hash.
-- **Trust, stated plainly:** you trust the site you install or update from, exactly as you already trust it with your account in the browser. Everything is fetched over HTTPS and checked against that site's manifest; that protects against corruption and mixed-up files, not against the site. Updates come from the site you installed from by default (`cocalc update --from <site>` changes that). There's no rollback protection beyond the site's own honesty, since a compromised site can do worse anyway.
-- **Node:** whenever the pinned version changes, the release job checks Node's signed `SHASUMS256` against the Node release keys (cheap, in CI), and the manifest pins the sha256 of each archive.
-- **Dev sites** such as lite1b simply serve their own bundle. Installing from lite1b *is* the opt-in, so no special trust command is needed.
-- **Computers:** the daemon follows the same rule, because the hub can already run commands on a connected computer. Pushing it new code adds no power the hub doesn't already have.
-  - **Persistent computers:** when a new bundle is active and no jobs are running, the daemon re-executes into it, keeping its key and session.
-  - **Time-limited computers:** they keep their bundle until they end, because restarting the process ends them.
-  - The hub's minimum version still refuses a daemon that is too old, with a message saying how to update.
-  - The strict form of decision 27 (updates signed with an offline key, never automatic) is Phase C.
-- **Version skew:** with automatic updates this mostly disappears. When updates are off, the CLI stops early with a clear "run `cocalc update`" message. The version header is for compatibility only.
-- **Windows** keeps the signed SEA.
+**Computers:**
+- **The record:** a computer's release record pins the exact manifest, so the Node, bootstrap and connector hashes it runs.
+- **No remote update operation:** the computers protocol has none. The record changes only through this machine's CLI.
+- **Persistent computers:** the daemon follows the automatic-update rule. When a new release is active and no jobs are running, it re-executes into it, keeping its key and session. That gives the origin nothing beyond what it has while the computer is connected, since the hub can already run commands there through tickets. The daemon enforces no local policy that an update could remove. **If we ever add local limits enforced by the daemon** (path or command allowlists, a read-only mode), automatic daemon updates must stop: those computers pin their release, and `cocalc computer update` is run at the local TTY.
+- **Time-limited computers** keep their release until they end, because restarting the process ends them.
+- **Too-old daemons:** the hub's minimum version refuses a daemon that is too old, with a message saying how to update.
+- **What the pin is for:** it stops accidental drift and any remote protocol request from changing the code. It is no defense against a compromised site-served CLI or any other code running as the same user, which can rewrite the record whenever it runs. Phase B and C signatures authenticate release bytes, but don't change that either (see "Computers" below).
+- **The strict decision 27** (offline-signed updates, never automatic) is Phase C.
 
-### Phase B: when releases move off the hub (CDN, R2, Star mirrors)
+**Windows** keeps the signed SEA.
 
-As soon as bytes come from somewhere other than the hub the person chose, sign what we publish. Automatic updates continue, now verified. One person's keys are enough:
-- **Root key:** on a YubiKey, held by William. It's used rarely, to certify a release key for a year at a time (and to revoke it).
+### Phase B: when release bytes come from somewhere other than the chosen hub (CDN, R2, Star mirrors)
+
+As soon as bytes come from a distributor the person didn't choose, sign what we publish. Automatic updates continue, now verified. One person's keys are enough:
+- **Root key:** on a YubiKey, held by William. It's used rarely, to certify a release key for at most a year, and to revoke it.
 - **Release key:** in CI or a KMS, certified by the root. It signs every release manifest.
-- **The client** embeds the root's public key and verifies the certificate chain, the manifest signature, the expiry and a monotonic sequence. It then gets the two-state rollback rule (`highest_seen` versus `active`).
-- **What this protects against:** a compromised CDN, R2 or mirror, or a site serving bytes we never released.
-- **What it doesn't:** a compromised release key until the root revokes it, a compromised build pipeline, and a malicious bundle that already ran.
+- **The client** verifies, against the embedded root public key:
+  - the certificate chain;
+  - the manifest signature and expiry;
+  - a monotonic release sequence, with the two-state rollback rule (`highest_seen` versus `active`).
+- **Root and certificate metadata are rollback-protected** too: a monotonic version, and the client never accepts an older certificate or rotation than it has seen. A revocation supersedes the release-key sequence: once seen, no manifest signed by the revoked key is accepted, whatever its sequence.
+- **Withholding a revocation** is possible for a distributor. That is availability: the stale key works only until its certificate expires.
+
+**The root of trust must be pinned before untrusted distribution enters the path.** If `install.sh` or the root key is itself fetched from a compromised CDN, R2 or mirror, that distributor can substitute its own root, and the signatures prove nothing. So Phase B protects only clients whose root was embedded:
+- by an already trusted Phase A launcher or update;
+- by an installer served directly by the trusted hub the person chose;
+- or by an authenticated out-of-band installer or package.
+
+**Then, honestly:**
+- **Protected:** a compromised CDN, R2 or mirror, or a site serving release bytes we never signed. They can only deny service or delay.
+- **Not protected:**
+  - a first install bootstrapped from the compromised distributor;
+  - a compromised release key, until the root revokes it or its certificate expires;
+  - a compromised build pipeline;
+  - a malicious release that already ran (full same-user compromise; recovery is out of band).
 
 ### Phase C: the end state (the full design below)
 
 TUF roles with an offline threshold root, the offline runtime role and its ceremony, an independent reproducible rebuild for stable, and a transparency log.
 
-**When:** together with hardening the hub's own release path (signed deploys and reviewed release builds), once there is more than one developer, or once customers require it. The sections below describe Phase C. Phases A and B use the same mechanics (launcher, pointer, transaction, layout) with the simpler trust described above.
+**When:** together with hardening the hub's own release path (signed deploys and reviewed release builds), once there is more than one developer, or once customers require it. **Every section below, from "Threat model" on, describes Phase C**, and its threat claims are Phase C's. For example, "a malicious site after install can't push code" is false in Phases A and B. Phases A and B share the mechanics (launcher, pointer, transaction, layout) with the trust described above.
 
 ### Later, in any phase
 
 - **Windows:** its own native launcher (see below). Until then it keeps the signed SEA.
 - **Per-site bundles:** deferred until site and role binding is designed [R6].
 
-## Threat model
+## Threat model (Phase C)
 
 | Threat | In scope? | Outcome with this design |
 |---|---|---|
@@ -88,14 +124,14 @@ TUF roles with an offline threshold root, the offline runtime role and its cerem
 | Compromised CDN, R2 or mirror **after** a trusted bootstrap | yes | Can only deny service or delay. All content must match signed TUF metadata, and expiring timestamp metadata bounds freeze or replay. |
 | Compromised CDN or site **at first install, or on any `curl \| sh` re-run** | **no** (stated honestly) [R1] | Full code execution as the user. `curl \| sh` trusts the origin that finally serves the script, and its CDN, completely. This is the same for every `curl \| sh`. Mitigations: below. |
 | Malicious or compromised site after install | yes | Can't push code. A site only names a target that already exists in the signed channel metadata the client trusts. |
-| Compromised CI or build pipeline | yes, **not contained in phase 1** [S1] | The key can't be stolen (non-exportable KMS, isolated signing job), but the signer is an **oracle**. A compromised authorized builder or workflow can produce malicious bytes with valid provenance, and they get signed. Provenance says where bytes came from, not that they are good. So in phase 1, a compromised builder *can* produce signed dev and candidate releases, and stable ones with a manual approval. Stable hardening below. A malicious commit that passes review is also out of scope, as for any release process. |
+| Compromised CI or build pipeline | yes, **not contained** [S1] | The key can't be stolen (non-exportable KMS, isolated signing job), but the signer is an **oracle**. A compromised authorized builder or workflow can produce malicious bytes with valid provenance, and they get signed. Provenance says where bytes came from, not that they are good. So a compromised builder *can* produce signed dev and candidate releases, and stable ones with a manual approval. Stable hardening below. A malicious commit that passes review is also out of scope, as for any release process. |
 | Compromised online signing key (timestamp/snapshot) | yes | Bounded by short expiry. Rotated by targets or root; can't create new targets. |
 | Compromised targets key (e.g. `cli-stable`) | yes, **limited to bundles** [S2] | Can sign bad **bundles** until root revokes the delegation. It can't replace the launcher, bootstrap verifier or Node: those are signed only by the offline `runtime` role. Revocation only stops *subsequent* installs. A client that already ran a malicious bundle is compromised (next row). |
 | A malicious signed bundle that already ran | **no recovery in-band** [S2] | The bundle runs as you, so it can rewrite the launcher, TUF state, `active` and every computer release record, and steal credentials. That is full same-user compromise. Recovery is out of band: a clean reinstall from a trusted path, rotating the CoCalc credentials it could read, and incident response. The update system can't clean an account that ran attacker code. |
 | Compromised root keys (threshold) | no | Offline hardware, threshold. Out of scope beyond holding them carefully. |
 | Compromised Node download or mirror | yes | The runtime ceremony verifies Node's signed `SHASUMS256` against the pinned Node release keys [R8, T1]. |
 | Compromised Node project or Node release key | **no (a trust assumption)** [T1] | A malicious release signed by Node's own keys passes. We trust the Node project, as every Node user does. |
-| Insider or targeted equivocation (a different signed release for one victim) | **undetected in phase 1** [S3] | Someone holding the relevant delegated plus snapshot and timestamp keys can serve one victim a separately signed metadata chain. Snapshot pinning only prevents rollback for that client and doesn't make the target public. Detecting this needs an append-only log with independent monitors: later hardening, e.g. publishing each metadata version to a public transparency log that clients require. |
+| Insider or targeted equivocation (a different signed release for one victim) | **undetected until a transparency log exists** [S3] | Someone holding the relevant delegated plus snapshot and timestamp keys can serve one victim a separately signed metadata chain. Snapshot pinning only prevents rollback for that client and doesn't make the target public. Detecting this needs an append-only log with independent monitors: later hardening, e.g. publishing each metadata version to a public transparency log that clients require. |
 | Freeze or replay (serving old metadata) | yes | TUF timestamp expiry. Clients refuse expired metadata unless a local offline policy explicitly allows it [R7]. |
 | Disk, stream or memory exhaustion | yes | Size caps on metadata and downloads, timeouts, and unpacked-size and file-count limits [R8]. |
 | Partial, crashed or concurrent updates | yes | A transaction with a lock and atomic pointer swap, plus crash recovery [R9]. |
@@ -107,7 +143,7 @@ TUF roles with an offline threshold root, the offline runtime role and its cerem
 - **Every actual `curl | sh` re-run fully re-trusts the final origin** [T3]. The legitimate script prefers the installed, signature-verified `cocalc update` when a launcher exists, but that is a convenience: a malicious script would simply skip it. To avoid re-trusting a site, people with an installed CLI run `cocalc update` or `cocalc setup …` **directly**, not the `curl` line. The setup dialogs say so: they show the local command first when the person has the CLI, and the `curl` line for first installs.
 - Anyone who needs a CDN-proof first install can use an out-of-band path: a package manager, or the signed SEA, until that is retired.
 
-## Signing: TUF roles [R2, R3, R6, R7]
+## Signing: TUF roles (Phase C) [R2, R3, R6, R7]
 
 We use TUF's metadata format and semantics through `tuf-js`, rather than inventing our own. TUF provides the following:
 - canonical JSON;
@@ -136,7 +172,7 @@ Our own policy layer on top of that:
   - A separate signing job, a few dozen lines in its own workflow, does no checkout and runs no repository code. It receives the artifact digest and size, checks the attestation, gets KMS access through GitHub OIDC (no exportable secret), and signs the metadata.
   - Stable signing needs a protected environment with manual approval.
   - **What this does and doesn't buy [S1].** It protects the key. It doesn't stop a compromised builder from getting malicious bytes signed: the signer is an oracle.
-- **Stable hardening: independent reproducible rebuild [S1].** Before `cli-stable` may sign, a second builder rebuilds the bundle from the same approved source revision and its sha256 must match exactly. That builder is administered independently (a machine outside GitHub Actions, e.g. one held by William). The signing policy binds three things: the approved revision, the protected workflow, and both builder identities. This needs a reproducible bundle build (esbuild/ncc with pinned dependencies and no embedded timestamps), which phase 1 must make and test. Until then, the threat-model row above stands as written.
+- **Stable hardening: independent reproducible rebuild [S1].** Before `cli-stable` may sign, a second builder rebuilds the bundle from the same approved source revision and its sha256 must match exactly. That builder is administered independently (a machine outside GitHub Actions, e.g. one held by William). The signing policy binds three things: the approved revision, the protected workflow, and both builder identities. This needs a reproducible bundle build (esbuild/ncc with pinned dependencies and no embedded timestamps), which Phase C must make and test. Until then, the threat-model row above stands as written.
 - **Separate trust for the runtime [S2].** The launcher, bootstrap verifier and Node form the client's trusted computing base. Only the offline `runtime` role signs them, so a compromised online `cli-*` key can't replace the verifier or Node. Bundles from `cli-*` roles are verified by that fixed runtime.
 - **Channels are roles [R6].** A stable client trusts only `cli-stable` targets. Candidate and dev need an explicit local opt-in (`cocalc update --channel candidate`), and highest-seen state is tracked per role. A dev build can't raise a stable client's floor.
 - **Revocation and recovery [R2, R7].**
@@ -145,7 +181,7 @@ Our own policy layer on top of that:
   - *A compromised online key:* rotated the same way, with exposure bounded by expiry.
   - *Lost root keys:* a threshold means one lost key isn't fatal. Losing two needs a manual re-bootstrap announced out of band.
 
-## Two independent targets [T2]
+## Two independent targets (Phase C) [T2]
 
 The client composes two separately signed targets. Neither authority can stand in for the other.
 
@@ -159,13 +195,13 @@ The client composes two separately signed targets. Neither authority can stand i
 - **The namespaces are disjoint.** The delegations in `targets` restrict each role to its path prefix. A target outside its role's prefix is rejected, so `cli-*` metadata can never name a launcher, bootstrap or Node.
 - **The verifier checks both independently:** signatures, thresholds, expiry, revocation and floors per role. A bundle can *require* a minimum `runtime_sequence`, but can never *select* or *downgrade* runtime bytes. If the installed runtime is too old for the newest bundle, the client first updates the runtime (from runtime-signed metadata only). If it can't, it keeps the current bundle and says why.
 - **`active` is not an authority.** It's a locally derived pointer, written only after both targets were verified. The launcher trusts it only to point into content-addressed directories that the verifier already populated. Its exact grammar is below [U1].
-- **The pointer format is frozen at `v1` for phase 1** [U1]. Changing it later needs a two-release bridge:
+- **The pointer format is frozen at `v1` from Phase A on** [U1]. Changing it later needs a two-release bridge:
   1. a runtime release whose launcher reads both `v1` and `v2`, while its bootstrap still writes `v1`;
   2. a later runtime release whose bootstrap writes `v2`.
 
   Launchers only ever gain formats and never drop one, so the launcher installed by a transaction can always read the pointer that transaction leaves behind, old or new. An old bootstrap never has to construct a format it doesn't know: the new-format pointer is written only by a bootstrap that ships with a launcher that reads it.
 
-## The runtime ceremony [T1]
+## The runtime ceremony (Phase C) [T1]
 
 The offline `runtime` keys sign only what the signers have proven themselves. A CI-produced digest or attestation is never accepted as proof.
 
@@ -176,7 +212,7 @@ The offline `runtime` keys sign only what the signers have proven themselves. A 
 2. **Launcher and bootstrap verifier:** rebuilt reproducibly from the approved source revision by at least two independently administered builders, whose hashes must agree. The launcher (about 50 lines of sh) is small enough that signers also read its exact bytes.
 3. **Only when all of that matches** do 2 of 3 signers sign the runtime target. The ceremony's inputs and the hashes each signer computed are recorded in the runtime release notes.
 
-## What every hub serves
+## What every hub serves (Phase C)
 
 Unauthenticated GETs, all bytes only; trust comes from TUF metadata, never from the site:
 
@@ -190,7 +226,7 @@ Unauthenticated GETs, all bytes only; trust comes from TUF metadata, never from 
 - **Redirects [R6]:** the client never follows a cross-origin redirect for metadata. Mirrors for target bytes must appear in signed metadata (a custom `mirrors` list in `targets`).
 - **The source of truth:** official metadata lives at `software.cocalc.ai` and in R2. Hubs and Star sites mirror it; a hub has no signing authority.
 
-## Install (first time) [R1, R8, R10]
+## Install (first time) (Phase C) [R1, R8, R10]
 
 `curl -fsSL <site>/cli/install.sh | sh` runs these steps under `umask 077`:
 
@@ -209,7 +245,7 @@ Unauthenticated GETs, all bytes only; trust comes from TUF metadata, never from 
 
 From then on, everything goes through the bootstrap verifier and signed metadata. `install.sh` itself is trusted only once.
 
-## On the user's machine [R9, R10]
+## On the user's machine (Phase C) [R9, R10]
 
 ```
 ~/.local/bin/cocalc                       launcher (POSIX sh, fixed; see below)
@@ -237,7 +273,7 @@ From then on, everything goes through the bootstrap verifier and signed metadata
 - **When the runtime changes** (Node, bootstrap or launcher), it arrives only in a runtime-signed target [T2], and the transaction below handles it: new trees, then the launcher, then `active`.
 - **Recovery:** `install.sh` reinstalls from scratch. A broken `active` file makes the launcher print that recovery command.
 
-## Updating [R7, R9, R11]
+## Updating (Phase C) [R7, R9, R11]
 
 `cocalc update [--channel stable|candidate|dev] [--rollback]` is always user-initiated. A background check may only report that an update exists.
 
@@ -283,7 +319,7 @@ From then on, everything goes through the bootstrap verifier and signed metadata
 - **The handshake** announces the daemon's protocol version and bundle hash. A newer foreground CLI either talks to it if the protocol is compatible, or refuses with "run `cocalc daemon restart`".
 - **Restarts are explicit:** `cocalc daemon restart` drains in-flight work first. Updating never restarts the daemon silently.
 
-## Computers (decision 27) [R5]
+## Computers (decision 27) (Phase C) [R5]
 
 A connected computer doesn't follow the CLI's `active` release. It has its own **computer release record**, `~/.local/share/cocalc/computers/<id>/release`:
 - what it holds: the Node, bootstrap and connector hashes;
@@ -302,15 +338,15 @@ Rules:
   - a malicious ordinary CLI bundle (even a signed one);
   - in direct mode, the agents' jobs.
 
-  In isolated mode, job code is containered and can't write the record, but the user's own CLI can. Real protection against same-user code needs an OS boundary: a root-owned updater and record, or a separate service user. That is an option for later, not part of phase 1.
+  In isolated mode, job code is containered and can't write the record, but the user's own CLI can. Real protection against same-user code needs an OS boundary: a root-owned updater and record, or a separate service user. That is an option for later, beyond Phase C.
 
-## Version skew [R13]
+## Version skew (Phase C) [R13]
 
 - **The version header is for compatibility, not security [S5].** The CLI sends its version, and the hub uses it to give old clients a clear "please update" error. Any client can forge the header, so **no security property depends on it**. Every security check is enforced from the request itself (auth, required protocol fields and capabilities, server state), regardless of the claimed version. When an operation needs newer behavior, the hub requires the fields or capabilities that behavior adds. A request without them is refused for that reason, not because of the binary's claimed identity.
 - **The client check is UX only.** The CLI reads `/cli/site.json` (cached up to 10 minutes) and stops early with: "This site needs cocalc ≥ X: run `cocalc update`". The cache only delays the friendly message, never enforcement.
 - **Pre-manifest CLIs:** the setup scripts keep their "Usage: line names the subcommand" probe for those.
 
-## Dev sites [R4]
+## Dev sites (Phase C) [R4]
 
 Dev hubs such as lite1b build unsigned bundles. Running one means **full local code execution as you, by that site**: it can read every site's credentials and rewrite your CLI installation. The opt-in says exactly that:
 - **The command:** `cocalc dev trust https://lite1b.cocalc.ai`. It requires the exact scheme, host and port, a typed confirmation, and a warning on every run.
@@ -331,7 +367,7 @@ Developers should use it on development machines (or a separate OS user), never 
   - a PowerShell bootstrap with the same honest first-install trust.
 - **Computers on Windows** stay WSL2-only, as already approved.
 
-## Release pipeline
+## Release pipeline (Phase C)
 
 1. **Build.** Every merge to `main`: the build job makes the bundle (as it does for projects) and an attestation, and uploads `targets/<sha256>.js`.
 2. **Sign dev builds.** The isolated signing job signs `cli-dev` metadata, then the snapshot and timestamp.
