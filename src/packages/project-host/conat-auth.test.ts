@@ -230,6 +230,61 @@ describe("project-host Conat auth", () => {
     }
   });
 
+  it("keeps an agent bearer off its account's hub API and account subjects", async () => {
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    // the human account first, so its decisions are cached
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "account",
+    });
+    const human = await getUser({
+      handshake: { auth: { bearer: "account-token" }, headers: {} },
+    } as any);
+    const accountSubjects = [
+      // the embedded hub API identifies callers by this subject alone
+      `hub.account.${account_id}.api`,
+      `account.${account_id}.account-feed-live`,
+      `services.account-${account_id}.some-service`,
+      `persist.account-${account_id}.id`,
+    ];
+    for (const subject of accountSubjects) {
+      await expect(
+        isAllowed({ user: human, type: "pub", subject }),
+      ).resolves.toBe(true);
+    }
+
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "agent",
+      project_id,
+    });
+    const agent = await getUser({
+      handshake: { auth: { bearer: "signed-agent-token" }, headers: {} },
+    } as any);
+    for (const subject of accountSubjects) {
+      for (const type of ["pub", "sub"] as const) {
+        await expect(isAllowed({ user: agent, type, subject })).resolves.toBe(
+          false,
+        );
+      }
+    }
+    // still fine inside its own project
+    await expect(
+      isAllowed({
+        user: agent,
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).resolves.toBe(true);
+  });
+
   it("rejects a direct account bearer after its browser session expires", async () => {
     mockVerifyProjectHostAuthToken.mockReturnValue({
       act: "account",

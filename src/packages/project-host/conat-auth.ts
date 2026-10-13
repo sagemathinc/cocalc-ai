@@ -425,6 +425,19 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       ) {
         return false;
       }
+      // The account's own subjects are not the agent's, as on the bay
+      // (server/conat/socketio/auth.ts): neither its hub API, whose embedded
+      // handler here knows the caller only from the subject -- so an agent
+      // publishing there would act as its account, in any project the account
+      // collaborates on -- nor its account services and streams.  This must
+      // come before the decision cache, which does not distinguish an agent
+      // from its account.
+      if (
+        subject.startsWith("hub.") ||
+        isAccountSubjectAllowed({ account_id: userId, subject })
+      ) {
+        return false;
+      }
     }
     const examProjectId =
       userType === "account" ? getLocalExamAccountProjectId(userId) : undefined;
