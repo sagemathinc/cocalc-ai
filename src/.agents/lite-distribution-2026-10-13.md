@@ -1,6 +1,37 @@
 # CoCalc Lite (Plus): the same distribution approach?
 
-Status: investigation, Oct 13, 2026. Builds on the CLI design (`cli-distribution-2026-10-12.md`) and its Phase A implementation (#1043).
+Status: decided and implemented as Phase A, Oct 13, 2026 (branch `feat/plus-dist-phase-a`, stacked on #1043). Builds on the CLI design (`cli-distribution-2026-10-12.md`) and its Phase A implementation (#1043).
+
+## William's decisions (Oct 13)
+
+1. **Served from software.cocalc.ai.** There is no link between cocalc-lite and a hub, so releases live in the release store at software.cocalc.ai/software/plus. The client reads it directly: `current.json`, `manifests/<sha>.json`, `files/<sha>`. A generated `install.sh` is published with each release.
+2. **Lite never restarts automatically,** because that could lose data or state (notebook kernels, terminals).
+   - Updates download and install in the background, at most every 6 hours while Lite runs.
+   - They take effect the next time Lite starts.
+   - The UI shows a "Restart to update" pill (the existing update indicator) whose action explains how to restart.
+3. **A data snapshot, one previous version.** Whenever a different release first uses the data, the data directory is copied (with reflinks where the filesystem supports them) to `data.snapshot`, replacing the previous snapshot.
+   - A rollback to that release restores it.
+   - The newer data is kept once, as `data.replaced`.
+
+## What was built
+
+- **Release format:** `cocalc-plus-release/1` (`util/cli-distribution/plus-schema.ts`). It is strict and canonical like the CLI's, and lists a pinned Node, launcher and bootstrap, plus these zstd-compressed tars:
+  - `app/<platform>`: the Lite bundle with that platform's native modules;
+  - `tools/<platform>`: rg, fd and ouch, plus this build's CLI;
+  - `static` and `public`.
+- **On the user's machine** (`cli/src/distribution/plus.ts`):
+  - Parts are kept by hash in `blobs/` and assembled once into `apps/<manifest>/`, verified at install (like Node).
+  - It reuses the CLI's lock, floors, journaled switch, rollback hold and fault points.
+  - Every running process holds a pin (`running/<pid>`), and garbage collection keeps whatever a live pin uses, so a running Lite's release is never removed.
+  - Rollback is refused while a Lite server is running.
+- **Launcher and bootstrap** (`plus/dist-release`): the bootstrap checks the manifest binding, pins the process, puts the tools and the pinned Node on `PATH`, and runs Lite as the main module.
+- **Commands:** `cocalc-plus update [--check | --rollback | --resume | --auto on|off]`.
+- **Releasing:**
+  - `pnpm --dir src/packages/plus release:plus`, or the "Release CoCalc Plus (bundle)" workflow.
+  - It builds each platform, then publishes with the CLI's publisher (compare-and-swap included) and writes `install.sh` last.
+- **Compression:** zstd level 19 (as small as xz). Users unpack with Node's built-in zstd, so they need no `xz` or `zstd` tool.
+
+Measured: app about 12 MB per platform, static 13 MB, public 23 MB. A typical update downloads one app part (about 12 MB), compared with 185 MB for the old single-file executable.
 
 ## Short answer
 
