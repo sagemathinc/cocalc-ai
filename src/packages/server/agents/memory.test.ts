@@ -12,9 +12,18 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
-import { AGENT_MEMORY_DISABLED, createAgentMemory } from "./memory";
+import {
+  AGENT_MEMORY_DISABLED,
+  createAgentMemory,
+  defaultAgentMemoryDeps,
+} from "./memory";
 
-jest.mock("@cocalc/database/settings/secret-settings", () => ({}));
+// Identity "encryption" for the default first-version reader.
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  decryptSecretStorageValue: async (_aad: string, value: string) => ({
+    value,
+  }),
+}));
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -26,6 +35,7 @@ const P3 = randomUUID();
 // The first version's record, with a version that changes on every write.
 class LegacyStore {
   records = new Map<string, { payload: string; version: string }>();
+  reads: ("transaction" | "pool")[] = [];
   private n = 0;
   set(account: string, payload: string) {
     this.records.set(account, { payload, version: `v${++this.n}` });
@@ -54,7 +64,10 @@ function setup() {
       return Buffer.from(value.slice(prefix.length), "base64").toString();
     },
     legacy: {
-      get: async (account_id) => legacy.records.get(account_id),
+      get: async (account_id, db) => {
+        legacy.reads.push(db ? "transaction" : "pool");
+        return legacy.records.get(account_id);
+      },
       remove: async (account_id) => {
         legacy.records.delete(account_id);
       },
@@ -131,7 +144,24 @@ describeDb("agent memory", () => {
     await syncSchema({
       agent_memory_accounts: SCHEMA.agent_memory_accounts,
       agent_memory_notes: SCHEMA.agent_memory_notes,
+      external_credentials: SCHEMA.external_credentials,
     });
+  });
+
+  test("the first-version record is read from the credentials table", async () => {
+    const account = randomUUID();
+    const read = () => defaultAgentMemoryDeps.legacy.get(account);
+    expect(await read()).toBeUndefined();
+    await getPool().query(
+      `INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, metadata, created, updated)
+       VALUES ($1, 'cocalc', 'agent-memory', 'account', $2, $3, '{}'::jsonb, now(), now())`,
+      [randomUUID(), account, '{"version":1,"enabled":true,"notes":[]}'],
+    );
+    const record = await read();
+    expect(record?.payload).toBe('{"version":1,"enabled":true,"notes":[]}');
+    expect(record?.version).toMatch(/^[0-9a-f]{64}$/);
+    await defaultAgentMemoryDeps.legacy.remove(account);
+    expect(await read()).toBeUndefined();
   });
 
   test("agents need the owner to turn memory on; then notes work as before", async () => {
@@ -342,6 +372,9 @@ describeDb("agent memory", () => {
     await memory.owner(account, { op: "delete", name: "deploy" });
     release();
     expect((await a).notes_list).toEqual([]);
+    // Under the lock, the record is re-read on the transaction's own
+    // connection, never a second one from the pool.
+    expect(legacy.reads).toContain("transaction");
     expect((await memory.owner(account, { op: "list" })).notes_list).toEqual(
       [],
     );

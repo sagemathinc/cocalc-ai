@@ -83,8 +83,9 @@ export type AgentMemoryDeps = {
    * first-version hub can be running.
    */
   legacy: {
-    get(account_id: string): Promise<LegacyRecord | undefined>;
-    remove(account_id: string): Promise<void>;
+    /** With db, on that connection (never a second one under a lock). */
+    get(account_id: string, db?: MemoryDb): Promise<LegacyRecord | undefined>;
+    remove(account_id: string, db?: MemoryDb): Promise<void>;
   };
   assertWritable(db: MemoryDb, account_id: string): Promise<void>;
   /** Rate limits for agent operations; the owner is never charged. */
@@ -101,39 +102,39 @@ export type LegacyRecord = {
   version: string;
 };
 
-const LEGACY_SELECTOR = (account_id: string) => ({
-  provider: "cocalc",
-  kind: "agent-memory",
-  scope: "account" as const,
-  owner_account_id: account_id,
-});
-
 export const defaultAgentMemoryDeps: AgentMemoryDeps = {
   pool: () => getPool() as unknown as MemoryPool,
   encrypt: (aad, text) => encryptSecretStorageValue(aad, text),
   decrypt: async (aad, text) =>
     (await decryptSecretStorageValue(aad, text)).value,
   legacy: {
-    async get(account_id) {
+    async get(account_id, db) {
       // Memory requests run on the account's home bay, where account-scoped
-      // credentials live, so this is a local read.
-      const { getExternalCredential } =
-        await import("@cocalc/server/external-credentials/store");
-      const row = await getExternalCredential({
-        selector: LEGACY_SELECTOR(account_id),
-        touchLastUsed: false,
-      });
-      return row && !row.revoked
-        ? {
-            payload: row.payload,
-            version: createHash("sha256").update(row.payload).digest("hex"),
-          }
-        : undefined;
+      // credentials live, so this is a local read (the same row and
+      // associated data as the external-credential store).
+      const { rows } = await (db ?? getPool()).query(
+        `SELECT encrypted_payload FROM external_credentials
+          WHERE provider='cocalc' AND kind='agent-memory' AND scope='account'
+            AND owner_account_id=$1 AND revoked IS NULL
+          ORDER BY updated DESC LIMIT 1`,
+        [account_id],
+      );
+      if (!rows[0]) return undefined;
+      const payload = (
+        await decryptSecretStorageValue(
+          "external_credentials:cocalc:agent-memory:account",
+          rows[0].encrypted_payload,
+        )
+      ).value;
+      return {
+        payload,
+        version: createHash("sha256").update(payload).digest("hex"),
+      };
     },
-    async remove(account_id) {
+    async remove(account_id, db) {
       // Deleted, not revoked: deleting memory must not leave an encrypted
       // copy behind.
-      await getPool().query(
+      await (db ?? getPool()).query(
         `DELETE FROM external_credentials
           WHERE provider='cocalc' AND kind='agent-memory' AND scope='account'
             AND owner_account_id=$1`,
@@ -332,7 +333,7 @@ export function createAgentMemory(
         return parseAgentMemorySettings(row);
       // Read before the lock: if the record changed since, a newer version
       // may already be absorbed, and absorbing this one would undo it.
-      if ((await deps.legacy.get(account_id))?.version !== legacy.version)
+      if ((await deps.legacy.get(account_id, db))?.version !== legacy.version)
         return STALE;
       await deps.assertWritable(db, account_id);
       // Each note's fingerprint in the record absorbed last time; none the
@@ -1048,7 +1049,7 @@ export function createAgentMemory(
               "DELETE FROM agent_memory_notes WHERE account_id=$1",
               [account_id],
             );
-            await deps.legacy.remove(account_id);
+            await deps.legacy.remove(account_id, tx);
             return { deleted: rowCount ?? 0 };
           }
           case "move": {
