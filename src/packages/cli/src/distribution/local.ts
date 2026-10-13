@@ -295,27 +295,91 @@ function parseOwner(text: string | undefined): LockOwner | undefined {
   return { pid: Number(match[1]), token: match[3] };
 }
 
+const SLOT = /^\d{1,15}$/;
+
+async function slotNumbers(dir: string): Promise<number[]> {
+  return (await readdir(dir))
+    .filter((name) => SLOT.test(name))
+    .map(Number)
+    .sort((a, b) => a - b);
+}
+
+// A slot is free once its owner marked it done, or once its owner is gone.
+async function slotFree(dir: string, slot: number): Promise<boolean> {
+  if (existsSync(join(dir, `${slot}.done`))) return true;
+  let text: string | undefined;
+  let mtimeMs = Date.now();
+  try {
+    text = await readText(join(dir, `${slot}`));
+    mtimeMs = (await lstat(join(dir, `${slot}`))).mtimeMs;
+  } catch {
+    return false;
+  }
+  const owner = parseOwner(text);
+  if (owner != null) return !processAlive(owner.pid);
+  // Not written by this code (slots are published complete): leave it a while.
+  return Date.now() - mtimeMs > 60_000;
+}
+
 /*
- * The update lock. The owner record (pid, time, random token) is written
- * to a private file first and then published with link(), which fails if
- * the lock exists, so a lock is never visible without its owner.
+ * Claim `slot` with the owner record, then check it is still the newest
+ * slot. Exported for tests. Returns false (and withdraws the claim) if the
+ * slot is taken or a newer one exists, e.g. because this contender's view
+ * was stale.
+ */
+export async function claimSlot(
+  dir: string,
+  record: string,
+  slot: number,
+): Promise<boolean> {
+  try {
+    await link(record, join(dir, `${slot}`));
+  } catch (err: any) {
+    if (err?.code === "EEXIST") return false;
+    throw err;
+  }
+  const newest = (await slotNumbers(dir)).pop();
+  if (newest !== slot) {
+    await unlink(join(dir, `${slot}`)).catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+export interface LockHooks {
+  // Called after a contender has decided which slot to claim, before
+  // claiming it; tests use it to force interleavings.
+  beforeClaim?: (slot: number) => Promise<void>;
+}
+
+/*
+ * The update lock: a sequence of numbered slots in <root>/locks.
  *
- * A lock is taken over only when its owner process is gone (never because it
- * is old: a slow download is still a live update). The takeover renames the
- * dead lock aside and checks that it renamed the file it inspected; if a
- * live lock slipped in instead, it is put back. Release removes the lock only
- * if it still carries this owner's token.
+ * To acquire, a contender looks at the newest slot n. If n is still held (not
+ * marked done, and its owner process is alive) it waits; a slow update is
+ * never stolen, however old. Otherwise it claims slot n + 1 with link(),
+ * which only one contender can win, so an owner record is never visible
+ * half-written. It then re-checks that n + 1 is still the newest slot before
+ * entering.
+ *
+ * Nothing is ever renamed or deleted to take over from a dead owner: the next
+ * slot simply follows it. So there is no takeover race. A contender that
+ * reused an old, already-collected slot number sees the newer slot in its
+ * re-check and withdraws. Release marks the slot done. Only slots older than
+ * the owner's are collected, never the newest, so a stale contender always
+ * has a newer slot to see.
  */
 export async function withLock<T>(
   root: string,
   fn: () => Promise<T>,
   log: (message: string) => void = () => {},
   waitMs = LOCK_WAIT_MS,
+  hooks: LockHooks = {},
 ): Promise<T> {
-  await mkdir(root, { recursive: true, mode: 0o700 });
-  const path = join(root, "lock");
+  const dir = join(root, "locks");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const token = randomBytes(16).toString("hex");
-  const record = join(root, `.lock.${token}`);
+  const record = join(dir, `.owner.${token}`);
   const handle = await open(record, "wx", 0o600);
   try {
     await handle.writeFile(`${process.pid} ${Date.now()} ${token}\n`);
@@ -325,57 +389,31 @@ export async function withLock<T>(
   }
   const start = Date.now();
   let told = false;
+  let slot = 0;
   try {
     while (true) {
-      try {
-        await link(record, path);
-        break;
-      } catch (err: any) {
-        if (err?.code !== "EEXIST") throw err;
-      }
-      let observed: { ino: number; owner?: LockOwner; mtimeMs: number };
-      try {
-        const info = await lstat(path);
-        observed = {
-          ino: info.ino,
-          mtimeMs: info.mtimeMs,
-          owner: parseOwner(await readText(path)),
-        };
-      } catch (err: any) {
-        if (err?.code === "ENOENT") continue;
-        throw err;
-      }
-      const dead =
-        observed.owner != null
-          ? !processAlive(observed.owner.pid)
-          : // Not written by this code; leave it alone for a while.
-            Date.now() - observed.mtimeMs > 60_000;
-      if (dead) {
-        const aside = join(root, `.lock.dead.${token}`);
-        try {
-          await rename(path, aside);
-        } catch (err: any) {
-          if (err?.code === "ENOENT") continue;
-          throw err;
+      const newest = (await slotNumbers(dir)).pop() ?? 0;
+      if (newest === 0 || (await slotFree(dir, newest))) {
+        await hooks.beforeClaim?.(newest + 1);
+        if (await claimSlot(dir, record, newest + 1)) {
+          slot = newest + 1;
+          break;
         }
-        const moved = await lstat(aside);
-        if (moved.ino !== observed.ino) {
-          // A live lock replaced the dead one meanwhile: put it back.
-          await link(aside, path).catch(() => {});
-        }
-        await unlink(aside).catch(() => {});
         continue;
       }
       if (Date.now() - start > waitMs) {
+        const owner = parseOwner(
+          await readText(join(dir, `${newest}`)).catch(() => undefined),
+        );
         throw new Error(
-          `another CLI update (process ${observed.owner?.pid ?? "?"}) holds ${path}; try again later`,
+          `another CLI update (process ${owner?.pid ?? "?"}) holds the lock in ${dir}; try again later`,
         );
       }
       if (!told) {
         log("Waiting for another CLI update to finish...");
         told = true;
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   } finally {
     await unlink(record).catch(() => {});
@@ -383,10 +421,11 @@ export async function withLock<T>(
   try {
     return await fn();
   } finally {
-    if (
-      parseOwner(await readText(path).catch(() => undefined))?.token === token
-    ) {
-      await unlink(path).catch(() => {});
+    await writeFileAtomic(join(dir, `${slot}.done`), "");
+    for (const old of await slotNumbers(dir).catch(() => [] as number[])) {
+      if (old >= slot) continue;
+      await unlink(join(dir, `${old}`)).catch(() => {});
+      await unlink(join(dir, `${old}.done`)).catch(() => {});
     }
   }
 }

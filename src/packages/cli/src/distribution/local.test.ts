@@ -23,6 +23,7 @@ import {
   type CliState,
   type FaultPoint,
   STATE_SCHEMA,
+  claimSlot,
   installRelease,
   readActive,
   readState,
@@ -307,10 +308,15 @@ test("recovery completes or discards an interrupted switch", async () => {
   assert.equal(existsSync(join(f.root, "transition.json")), false);
 });
 
-test("the lock: mutual exclusion, live owners are never stolen, release is token-checked", async () => {
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { open, opened };
+}
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("the lock: mutual exclusion among many contenders", async () => {
   const f = fixture();
-  mkdirSync(f.root, { recursive: true });
-  // Many contenders: never two inside at once.
   let inside = 0;
   let max = 0;
   await Promise.all(
@@ -318,34 +324,97 @@ test("the lock: mutual exclusion, live owners are never stolen, release is token
       withLock(f.root, async () => {
         inside += 1;
         max = Math.max(max, inside);
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await sleep(5);
         inside -= 1;
       }),
     ),
   );
   assert.equal(max, 1);
-  assert.equal(existsSync(join(f.root, "lock")), false);
+  // Only the newest slot (and its done marker) remains.
+  assert.deepEqual(readdirSync(join(f.root, "locks")).sort(), ["8", "8.done"]);
+});
 
-  // A live owner (this process) is waited for, however old the lock is.
+test("the lock: a live owner is never stolen, however old", async () => {
+  const f = fixture();
+  mkdirSync(join(f.root, "locks"), { recursive: true });
   const old = `${process.pid} 1 ${"a".repeat(32)}\n`;
-  writeFileSync(join(f.root, "lock"), old);
+  writeFileSync(join(f.root, "locks", "1"), old);
   await assert.rejects(
     withLock(f.root, async () => 1, undefined, 300),
-    /holds/,
+    /holds the lock/,
   );
-  assert.equal(readFileSync(join(f.root, "lock"), "utf8"), old);
+  assert.equal(readFileSync(join(f.root, "locks", "1"), "utf8"), old);
+  assert.equal(existsSync(join(f.root, "locks", "2")), false);
+});
 
-  // A dead owner's lock is taken over.
-  writeFileSync(join(f.root, "lock"), `999999999 1 ${"b".repeat(32)}\n`);
+test("the lock: a dead owner is followed, not taken over", async () => {
+  const f = fixture();
+  mkdirSync(join(f.root, "locks"), { recursive: true });
+  writeFileSync(join(f.root, "locks", "1"), `999999999 1 ${"b".repeat(32)}\n`);
   assert.equal(await withLock(f.root, async () => 7), 7);
-  assert.equal(existsSync(join(f.root, "lock")), false);
+  assert.deepEqual(readdirSync(join(f.root, "locks")).sort(), ["2", "2.done"]);
+});
 
-  // An owner whose lock was replaced (taken over) leaves the new one alone.
-  const successor = `${process.pid} 2 ${"c".repeat(32)}\n`;
-  await withLock(f.root, async () => {
-    writeFileSync(join(f.root, "lock"), successor);
+test("the lock: the stale-takeover schedule A/B/C keeps exclusion", async () => {
+  // Slot 1 is held by a dead owner. A decides to claim slot 2 and pauses;
+  // B claims slot 2 and enters; C arrives; then A resumes.
+  const f = fixture();
+  mkdirSync(join(f.root, "locks"), { recursive: true });
+  writeFileSync(join(f.root, "locks", "1"), `999999999 1 ${"d".repeat(32)}\n`);
+  let inside = 0;
+  let max = 0;
+  const body = async (wait?: Promise<void>) => {
+    inside += 1;
+    max = Math.max(max, inside);
+    await (wait ?? sleep(5));
+    inside -= 1;
+  };
+  const aPaused = gate();
+  const aResume = gate();
+  const a = withLock(f.root, () => body(), undefined, 10_000, {
+    beforeClaim: async () => {
+      aPaused.open();
+      await aResume.opened;
+    },
   });
-  assert.equal(readFileSync(join(f.root, "lock"), "utf8"), successor);
+  await aPaused.opened;
+  const bInside = gate();
+  const bRelease = gate();
+  const b = withLock(f.root, async () => {
+    bInside.open();
+    await body(bRelease.opened);
+  });
+  await bInside.opened;
+  const c = withLock(f.root, () => body(), undefined, 10_000);
+  await sleep(150);
+  aResume.open();
+  await sleep(300);
+  assert.equal(inside, 1, "only B is inside while it holds the lock");
+  bRelease.open();
+  await Promise.all([a, b, c]);
+  assert.equal(max, 1);
+});
+
+test("the lock: a contender with a stale view of collected slots withdraws", async () => {
+  const f = fixture();
+  for (let i = 0; i < 4; i += 1) await withLock(f.root, async () => {});
+  const dir = join(f.root, "locks");
+  assert.deepEqual(readdirSync(dir).sort(), ["4", "4.done"]);
+  const hold = gate();
+  const holding = gate();
+  const b = withLock(f.root, async () => {
+    holding.open();
+    await hold.opened;
+  });
+  await holding.opened;
+  const record = join(dir, ".owner.test");
+  writeFileSync(record, `${process.pid} 1 ${"e".repeat(32)}\n`);
+  // Slot 3 was collected, so linking it succeeds, but slot 5 is newer.
+  assert.equal(await claimSlot(dir, record, 3), false);
+  assert.equal(existsSync(join(dir, "3")), false);
+  assert.equal(await claimSlot(dir, record, 5), false);
+  hold.open();
+  await b;
 });
 
 test("the launcher and bootstrap refuse broken or mixed-up installs", async () => {
