@@ -402,6 +402,41 @@ describe("a project managed from the other bay", () => {
     await assert.rejects(rename(alice.client, project, "viewer rename"));
     assert.equal((await listed(bob.client, project))?.title, "renamed by bob");
   });
+
+  it("lets the new owner on the other bay transfer ownership back", async () => {
+    // A transfer runs on the project's bay, which records each call
+    // forwarded to it; fresh auth and admin status come from bob's home bay.
+    const forwardedTransfers = async () =>
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.transferProjectOwnership' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(ATTACHED)}, ${JSON.stringify(bob.account_id)}]);
+         return rows[0].n;`,
+      );
+    await bob.client.call("projects.setProjectUserRole", {
+      opts: {
+        project_id: project,
+        target_account_id: alice.account_id,
+        role: "collaborator",
+      },
+    });
+    const before = await forwardedTransfers();
+    await bob.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: bob.account_id,
+      to_account_id: alice.account_id,
+    });
+    assert.equal(await forwardedTransfers(), before + 1);
+    await eventually(
+      async () =>
+        (await listed(alice.client, project))?.users_summary?.[alice.account_id]
+          ?.group === "owner",
+      { what: "alice to be the owner again in her list" },
+    );
+  });
 });
 
 describe("project secrets across bays", () => {
