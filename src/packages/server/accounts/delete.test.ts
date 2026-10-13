@@ -83,6 +83,11 @@ jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
     setBillingAccountFrozenMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/oauth/clients", () => ({
+  __esModule: true,
+  getOAuthClients: async () => [{ client_id: "sagebrush" }],
+}));
+
 jest.mock("@cocalc/server/auth/oauth/purge", () => ({
   __esModule: true,
   queueOAuthClientPurges: (...args: any[]) =>
@@ -172,17 +177,19 @@ describe("delete account", () => {
       await fn(db);
     });
     const { default: deleteAccount } = await import("./delete");
-    await deleteAccount(ACCOUNT_ID, { purge_client_ids: [] });
+    await deleteAccount(ACCOUNT_ID, { keep_client_ids: ["sagebrush"] });
     expect(queueOAuthClientPurgesMock).toHaveBeenCalledWith({
       db,
       account_id: ACCOUNT_ID,
-      client_ids: [],
+      client_ids: ["sagebrush"],
+      keep_client_ids: ["sagebrush"],
     });
     await deleteAccount(ACCOUNT_ID);
     expect(queueOAuthClientPurgesMock).toHaveBeenLastCalledWith({
       db,
       account_id: ACCOUNT_ID,
-      client_ids: undefined,
+      client_ids: ["sagebrush"],
+      keep_client_ids: undefined,
     });
   });
 

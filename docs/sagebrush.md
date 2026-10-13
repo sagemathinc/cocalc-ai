@@ -157,14 +157,17 @@ tier.
 
 ## 3. Deletion
 
-When a user deletes their CoCalc account, the deletion dialog shows **Also
-delete my Sagebrush shared files**, checked by default, if the account has ever
-approved a Sagebrush sign-in. If it stays checked, CoCalc asks the Worker to
-purge the account. Accounts deleted by other means (an admin, or an expired
-temporary account) are always purged.
+Every deleted CoCalc account is purged on Sagebrush, whether or not CoCalc knows
+it signed in there (an approval recorded before an account moved bays stays on
+the old bay), unless the user chose to keep their files. The Worker answers a
+normal 202 for an account it has no data for.
 
-If the user unchecks it, CoCalc sends nothing. Their Sagebrush data then belongs
-to an account id that can never sign in again, and `limits` answers 404.
+The deletion dialog shows **Also delete my Sagebrush shared files**, checked by
+default, if the account's home bay has a record of a Sagebrush sign-in.
+Unchecking it is the only way to keep the files: CoCalc then sends nothing,
+their Sagebrush data belongs to an account id that can never sign in again, and
+`limits` answers 404. Accounts deleted by other means (an admin, or an expired
+temporary account) are always purged.
 
 ### The request
 
@@ -178,7 +181,9 @@ X-Sagebrush-Signature: sha256=<hex>
 ```
 
 The Worker answers `202 {"request_id": "<uuid>", "status": "accepted"}` and
-purges asynchronously. It is idempotent per `request_id`. An account with no
+purges asynchronously. CoCalc counts a request as accepted only on a 202 whose
+JSON body has that `request_id` and `"status": "accepted"`; any other response
+is retried. The purge URL must be https (http only for a loopback host). It is idempotent per `request_id`. An account with no
 Sagebrush data gets a normal 202.
 
 ### Signing
@@ -215,7 +220,7 @@ to a durable queue (the `oauth_client_purge_requests` table) in the same
 database transaction that marks the account deleted. A background worker on the
 account's home bay sends the queued requests:
 
-- It retries anything other than a 202 with exponential backoff, from 1 minute
+- It retries anything but that acknowledgment with exponential backoff, from 1 minute
   up to 6 hours between attempts, and never gives up.
 - Each retry sends the same `request_id` with a fresh timestamp and signature.
 - It alerts the site admins when a request has not been accepted after a day,
@@ -234,14 +239,19 @@ account's home bay sends the queued requests:
   that page.
 - Approval works across bays like CLI login approval: the user's home bay
   checks the session and the verified email, records the approval in
-  `oauth_client_approvals` and issues a short-lived signed proof bound to the
-  request; the bay serving the authorize page checks the proof and issues the
-  code. The code is stored on that bay, which is also the bay the Worker's token
-  request reaches.
-- `src/packages/server/sagebrush/limits.ts`: the limits, read from the
-  membership resolution on the account's home bay.
+  `oauth_client_approvals` (under the account rehome fence) and issues a
+  short-lived signed proof bound to the request; the bay serving the authorize
+  page checks the proof and issues the code. The code is stored on that bay,
+  which is also the bay the Worker's token request reaches.
+- `src/packages/server/auth/oauth/account-state.ts`: token redemption and limits
+  ask the account's home bay (an inter-bay call, `get-oauth-account-state`)
+  whether the account is live, unbanned and still has the same verified email.
+  The cluster directory only says which bay to ask: it can still list an
+  account for a while after its home bay deleted it.
+- `src/packages/server/sagebrush/limits.ts`: the limits, from the membership
+  resolved on the account's home bay in the same call.
 - `src/packages/server/auth/oauth/purge.ts`: the purge queue, its signing and
   its worker.
 - The deletion dialog lists the approved clients through
   `/api/v2/accounts/oauth-client-approvals`, and `/api/v2/accounts/delete`
-  takes the chosen `purge_client_ids`.
+  takes `keep_client_ids`, the clients whose data the user chose to keep.

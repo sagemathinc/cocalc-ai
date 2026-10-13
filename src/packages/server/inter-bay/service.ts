@@ -228,6 +228,7 @@ import {
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
+import { getOAuthAccountStateLocal } from "@cocalc/server/auth/oauth/account-state";
 import { getMembershipTierUsageReport as getMembershipTierUsageReportLocal } from "@cocalc/database/postgres/membership-tiers";
 import {
   backfillMembershipAnalyticsPurchaseEvents,
@@ -1561,6 +1562,7 @@ async function startAccountLocalService(): Promise<void> {
     listProjectSummaries: listProjectSummariesLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
+    getOAuthAccountState: async (opts) => await getOAuthAccountStateLocal(opts),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>
       await getArchiveLifecycleAccountStatusesLocal({ account_ids }),
     getMembershipDetails: async ({ account_id, refresh_usage_status }) =>

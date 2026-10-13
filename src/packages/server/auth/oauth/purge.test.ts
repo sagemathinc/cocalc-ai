@@ -68,15 +68,20 @@ describe("sendPurgeRequest", () => {
     request_id: "00000000-0000-4000-8000-000000000002",
   };
 
+  const ack = (request_id = row.request_id) =>
+    new Response(JSON.stringify({ request_id, status: "accepted" }), {
+      status: 202,
+    });
+
   it("sends a signed request the receiver can verify", async () => {
-    const fetch = jest.fn(async () => new Response("{}", { status: 202 }));
+    const fetch = jest.fn(async () => ack());
     const result = await sendPurgeRequest({
       client,
       row,
       fetch: fetch as any,
       now: () => 1700000000_000,
     });
-    expect(result).toEqual({ status: 202 });
+    expect(result).toEqual({ accepted: true, status: 202 });
     const [url, init] = fetch.mock.calls[0] as any[];
     expect(`${url}`).toBe("https://sagebrush.test/api/admin/purge");
     expect(init.method).toBe("POST");
@@ -100,6 +105,60 @@ describe("sendPurgeRequest", () => {
     expect(
       (await sendPurgeRequest({ client, row, fetch: failing as any })).error,
     ).toContain("connection refused");
+  });
+
+  it("counts only the acknowledgment of this request as accepted", async () => {
+    for (const response of [
+      ack("00000000-0000-4000-8000-000000000099"),
+      new Response("", { status: 202 }),
+      new Response("<html>ok</html>", { status: 202 }),
+      new Response(
+        '{"request_id":"' + row.request_id + '","status":"queued"}',
+        {
+          status: 202,
+        },
+      ),
+    ]) {
+      const result = await sendPurgeRequest({
+        client,
+        row,
+        fetch: (async () => response) as any,
+      });
+      expect(result.accepted).toBeUndefined();
+      expect(result.error).toMatch(/^HTTP 202 without an acknowledgment/);
+    }
+  });
+
+  it("reads at most a few kilobytes of a response", async () => {
+    let pulled = 0;
+    const body = new ReadableStream({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1024).fill(120));
+      },
+    });
+    const result = await sendPurgeRequest({
+      client,
+      row,
+      fetch: (async () => new Response(body, { status: 500 })) as any,
+    });
+    expect(result.status).toBe(500);
+    expect(result.error!.length).toBeLessThan(300);
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it("reports an invalid purge URL as this row's failure", async () => {
+    const fetch = jest.fn();
+    expect(
+      (
+        await sendPurgeRequest({
+          client: { ...client, purge: { url: "not a url", secret: "k" } },
+          row,
+          fetch: fetch as any,
+        })
+      ).error,
+    ).toMatch(/^request failed/);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("fails without a purge configuration", async () => {

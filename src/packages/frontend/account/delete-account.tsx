@@ -16,9 +16,9 @@ import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, Icon } from "@cocalc/frontend/components";
 
 interface Props {
-  // purge_client_ids: the sites (e.g. Sagebrush) whose data to also delete;
-  // undefined means all of them.
-  confirm: (purge_client_ids?: string[]) => void;
+  // keep_client_ids: the sites (e.g. Sagebrush) whose data the user chose
+  // to keep; the others are asked to delete it.
+  confirm: (keep_client_ids: string[]) => void;
   requiredText: string;
 }
 
@@ -124,7 +124,9 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
   const { token } = theme.useToken();
   const [open, setOpen] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
-  // undefined until loaded; the purge then covers every client.
+  // The sites this account signed in to, which the user may choose to keep
+  // data on. Until loaded (or if loading fails) there is no choice, and every
+  // site is asked to delete the data.
   const [clients, setClients] = useState<OAuthClientApproval[] | undefined>();
   // Clients whose data the user chose to keep.
   const [keep, setKeep] = useState<Set<string>>(new Set());
@@ -140,8 +142,7 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
         const result = await api("/accounts/oauth-client-approvals");
         if (!cancelled) setClients(result?.clients ?? []);
       } catch {
-        // Without the list the dialog shows no options and deletion purges
-        // every client's data, which is the default anyway.
+        // Without the list the dialog offers no choice; see above.
       }
     })();
     return () => {
@@ -189,11 +190,7 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
             if (!canDeleteAccount) {
               return;
             }
-            confirm(
-              clients
-                ?.map(({ client_id }) => client_id)
-                .filter((client_id) => !keep.has(client_id)),
-            );
+            confirm([...keep]);
           }}
           open
           styles={{

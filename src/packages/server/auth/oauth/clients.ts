@@ -33,7 +33,8 @@ export interface OAuthClient {
   homepage: string;
   client_secret: string;
   redirect_uris: string[];
-  // Both set, or the client gets no purge requests.
+  // Set when both the purge URL (an allowed client URL) and the key are;
+  // otherwise queued purge requests wait and admins are alerted.
   purge?: { url: string; secret: string };
 }
 
@@ -55,28 +56,30 @@ export const OAUTH_CLIENTS: Readonly<Record<string, OAuthClientDefinition>> = {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** Redirect URIs from a setting: whitespace or comma separated absolute URLs
- * without a fragment or credentials, https except for a loopback host (local
- * development). Anything else is dropped. */
+/** Whether a configured URL is an absolute URL without a fragment or
+ * credentials, https except for a loopback host (local development). */
+export function isAllowedClientUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" ||
+        (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))) &&
+      !url.hash &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Redirect URIs from a setting: whitespace or comma separated, each one
+ * allowed by isAllowedClientUrl. Anything else is dropped. */
 export function parseRedirectUris(value: unknown): string[] {
   return `${value ?? ""}`
     .split(/[\s,]+/)
     .map((uri) => uri.trim())
-    .filter((uri) => {
-      if (!uri) return false;
-      try {
-        const url = new URL(uri);
-        return (
-          (url.protocol === "https:" ||
-            (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))) &&
-          !url.hash &&
-          !url.username &&
-          !url.password
-        );
-      } catch {
-        return false;
-      }
-    });
+    .filter((uri) => uri && isAllowedClientUrl(uri));
 }
 
 function setting(settings: Record<string, unknown>, name: string): string {
@@ -114,7 +117,7 @@ export async function getOAuthClient(
     homepage: definition.homepage,
     client_secret,
     redirect_uris,
-    ...(purgeUrl && purgeSecret
+    ...(purgeUrl && purgeSecret && isAllowedClientUrl(purgeUrl)
       ? { purge: { url: purgeUrl, secret: purgeSecret } }
       : {}),
   };

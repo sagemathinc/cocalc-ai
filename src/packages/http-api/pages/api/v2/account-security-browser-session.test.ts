@@ -217,26 +217,26 @@ describe("browser-session-only account security routes", () => {
       action: "delete the account",
     });
     expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1", {
-      purge_client_ids: undefined,
+      keep_client_ids: undefined,
     });
     expect(mockClearAuthCookies).toHaveBeenCalledWith({ req, res });
   });
 
-  it("passes the user's choice of client data purges to account deletion", async () => {
-    mockGetParams.mockReturnValue({ purge_client_ids: [] });
+  it("passes the sites whose data the user keeps to account deletion", async () => {
+    mockGetParams.mockReturnValue({ keep_client_ids: ["sagebrush"] });
     const { req, res } = createMocks({ method: "POST" });
     const { default: handler } = await import("./accounts/delete");
     await handler(req, res);
     expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1", {
-      purge_client_ids: [],
+      keep_client_ids: ["sagebrush"],
     });
 
     mockDeleteAccount.mockClear();
-    mockGetParams.mockReturnValue({ purge_client_ids: "sagebrush" });
+    mockGetParams.mockReturnValue({ keep_client_ids: "sagebrush" });
     const bad = createMocks({ method: "POST" });
     await handler(bad.req, bad.res);
     expect(bad.res._getJSONData()).toEqual({
-      error: "purge_client_ids must be an array of client ids",
+      error: "keep_client_ids must be an array of client ids",
     });
     expect(mockDeleteAccount).not.toHaveBeenCalled();
   });

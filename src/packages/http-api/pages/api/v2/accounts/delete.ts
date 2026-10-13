@@ -34,7 +34,7 @@ async function handle(req, res) {
         action: "delete the account",
       });
       await deleteAccount(account_id, {
-        purge_client_ids: purgeClientIds(getParams(req).purge_client_ids),
+        keep_client_ids: keepClientIds(getParams(req).keep_client_ids),
       });
       await clearAuthCookies({ req, res });
       res.json(SuccessStatus);
@@ -46,11 +46,11 @@ async function handle(req, res) {
   }
 }
 
-// Which OAuth clients' data to purge. Absent means all the account approved.
-function purgeClientIds(value: unknown): string[] | undefined {
+// The OAuth clients (e.g. Sagebrush) whose data the user chose to keep.
+function keepClientIds(value: unknown): string[] | undefined {
   if (value == null) return undefined;
   if (!Array.isArray(value) || value.some((id) => typeof id !== "string")) {
-    throw Error("purge_client_ids must be an array of client ids");
+    throw Error("keep_client_ids must be an array of client ids");
   }
   return value;
 }

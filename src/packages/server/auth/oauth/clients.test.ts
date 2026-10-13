@@ -51,6 +51,22 @@ describe("OAuth client registry", () => {
     });
   });
 
+  it("ignores a purge URL that is not https", async () => {
+    mockSettings.sagebrush_purge_secret = "k";
+    for (const url of [
+      "http://sagebrush.space/api/admin/purge",
+      "https://u:p@sagebrush.space/api/admin/purge",
+      "not a url",
+    ]) {
+      mockSettings.sagebrush_purge_url = url;
+      expect((await getOAuthClient("sagebrush"))?.purge).toBeUndefined();
+    }
+    mockSettings.sagebrush_purge_url = "http://localhost:8787/api/admin/purge";
+    expect((await getOAuthClient("sagebrush"))?.purge?.url).toBe(
+      "http://localhost:8787/api/admin/purge",
+    );
+  });
+
   it("reads one redirect URI per line and matches them exactly", async () => {
     mockSettings.sagebrush_redirect_uris =
       "https://dev.sagebrush.space/auth/callback\nhttp://localhost:8787/auth/callback\n";

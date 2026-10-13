@@ -20,7 +20,6 @@ Approval works across bays like CLI login approval:
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import getPool from "@cocalc/database/pool";
-import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -28,6 +27,8 @@ import {
   verifyHomeBayRetryToken,
 } from "@cocalc/server/auth/home-bay-retry-token";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { getOAuthAccountState, isCurrentEmailVerified } from "./account-state";
 import {
   authenticateOAuthClient,
   getOAuthClient,
@@ -190,6 +191,13 @@ export function denyRedirectUrl(request: AuthorizeRequest): string {
   });
 }
 
+type Queryable = {
+  query: <T = any>(
+    sql: string,
+    params?: any[],
+  ) => Promise<{ rows: T[]; rowCount?: number | null }>;
+};
+
 type LocalAccountRow = {
   email_address?: string | null;
   email_address_verified?: Record<string, unknown> | null;
@@ -198,27 +206,18 @@ type LocalAccountRow = {
   home_bay_id?: string | null;
 };
 
-/** Whether the account's current email address is verified. */
-export function isCurrentEmailVerified(row: LocalAccountRow): boolean {
-  const email = `${row.email_address ?? ""}`.trim();
-  if (!email) return false;
-  const verified = row.email_address_verified;
-  return (
-    verified != null &&
-    typeof verified === "object" &&
-    Object.prototype.hasOwnProperty.call(verified, email) &&
-    verified[email] != null
-  );
-}
-
+// Approvals only decide whether the account deletion dialog offers to keep
+// the client's data; deletion purges every enabled client either way.
 export async function recordOAuthClientApproval({
+  db,
   account_id,
   client_id,
 }: {
+  db: Queryable;
   account_id: string;
   client_id: string;
 }): Promise<void> {
-  await getPool().query(
+  await db.query(
     `INSERT INTO oauth_client_approvals(account_id, client_id, first_approved, last_approved)
      VALUES($1::UUID, $2, NOW(), NOW())
      ON CONFLICT (account_id, client_id) DO UPDATE SET last_approved = NOW()`,
@@ -249,12 +248,46 @@ export async function issueAuthorizeApprovalProof({
   account_id: string;
   request: AuthorizeRequest;
 }): Promise<{ token: string; home_bay_id: string; expires_at: number }> {
-  const { rows } = await getPool().query<LocalAccountRow>(
-    `SELECT email_address, email_address_verified, banned, deleted, home_bay_id
-       FROM accounts WHERE account_id = $1::UUID`,
-    [account_id],
-  );
-  const row = rows[0];
+  // The account check and the approval record share one transaction under
+  // the rehome fence, which also asserts this is the account's home bay.
+  const row = await withAccountRehomeWriteFence({
+    account_id,
+    action: `approve a sign-in to ${request.client.name}`,
+    fn: async (db) => {
+      const row = (
+        await db.query<LocalAccountRow>(
+          `SELECT email_address, email_address_verified, banned, deleted, home_bay_id
+             FROM accounts WHERE account_id = $1::UUID`,
+          [account_id],
+        )
+      ).rows[0];
+      checkApprovingAccount(row);
+      await recordOAuthClientApproval({
+        db,
+        account_id,
+        client_id: request.client.client_id,
+      });
+      return row;
+    },
+  });
+  const issued = issueHomeBayRetryToken({
+    account_id,
+    email: `${row.email_address}`,
+    challenge_id: authorizeRequestBinding(request),
+    home_bay_id: getConfiguredBayId(),
+    purpose: "oauth-authorize",
+    ttl_seconds: APPROVAL_PROOF_TTL_SECONDS,
+  });
+  return {
+    token: issued.token,
+    home_bay_id: getConfiguredBayId(),
+    expires_at: issued.expires_at,
+  };
+}
+
+function checkApprovingAccount(
+  row: LocalAccountRow | undefined,
+): asserts row is LocalAccountRow {
   if (row == null || row.deleted) {
     throw new Error("unknown account");
   }
@@ -271,19 +304,6 @@ export async function issueAuthorizeApprovalProof({
       { code: "email_not_verified" },
     );
   }
-  await recordOAuthClientApproval({
-    account_id,
-    client_id: request.client.client_id,
-  });
-  const issued = issueHomeBayRetryToken({
-    account_id,
-    email: `${row.email_address}`,
-    challenge_id: authorizeRequestBinding(request),
-    home_bay_id,
-    purpose: "oauth-authorize",
-    ttl_seconds: APPROVAL_PROOF_TTL_SECONDS,
-  });
-  return { token: issued.token, home_bay_id, expires_at: issued.expires_at };
 }
 
 function hashCode(code: string): string {
@@ -426,22 +446,23 @@ export async function exchangeAuthorizationCode({
   ) {
     throw new OAuthTokenError("invalid_grant", 400, "code_verifier mismatch");
   }
-  // The home bay checked the verified email when it approved, at most a few
-  // minutes ago; refuse if the account was deleted or banned, or its email
-  // address changed, since then.
-  const account = await getClusterAccountById(row.account_id);
+  // Ask the account's home bay, not the directory, which can still list an
+  // account for a while after its home bay deleted it. Refuse if the account
+  // was deleted or banned, or its email address changed or is no longer
+  // verified, since it approved.
+  const account = await getOAuthAccountState(row.account_id);
   if (
-    account == null ||
-    account.banned ||
-    `${account.email_address ?? ""}`.trim().toLowerCase() !==
+    account.state !== "live" ||
+    !account.email_verified ||
+    account.email_address.toLowerCase() !==
       row.email_address.trim().toLowerCase()
   ) {
     throw new OAuthTokenError("invalid_grant", 400, "account changed");
   }
   return {
     account_id: row.account_id,
-    email: `${account.email_address}`.trim(),
+    email: account.email_address,
     email_verified: true,
-    name: displayNameFromAccount(account) || "",
+    name: account.display_name,
   };
 }

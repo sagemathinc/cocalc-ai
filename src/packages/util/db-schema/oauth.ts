@@ -63,7 +63,6 @@ Table({
   name: "oauth_client_approvals",
   rules: {
     primary_key: ["account_id", "client_id"],
-    durability: "soft",
   },
   fields: {
     account_id: {
@@ -90,7 +89,6 @@ Table({
   name: "oauth_client_purge_requests",
   rules: {
     primary_key: "request_id",
-    durability: "soft",
     pg_indexes: ["next_attempt_at", "account_id"],
   },
   fields: {

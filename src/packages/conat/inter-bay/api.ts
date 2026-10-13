@@ -1021,6 +1021,26 @@ export interface AccountLocalGetMembershipRequest {
   account_id: string;
 }
 
+export interface AccountLocalGetOAuthAccountStateRequest {
+  account_id: string;
+  // Also resolve the account's membership in the same call.
+  include_membership?: boolean;
+}
+
+// An account's state for an OAuth client (e.g. Sagebrush), read from the
+// primary on the account's home bay: "missing" is unknown, deleted or banned;
+// "moved" means this bay is not the home bay (e.g. after a rehome).
+export type AccountLocalOAuthAccountState =
+  | {
+      state: "live";
+      email_address: string;
+      email_verified: boolean;
+      display_name: string;
+      membership?: MembershipResolution;
+    }
+  | { state: "missing" }
+  | { state: "moved"; home_bay_id: string };
+
 export interface AccountLocalGetArchiveLifecycleStatusesRequest {
   account_ids: string[];
 }
@@ -2811,6 +2831,7 @@ export type AccountLocalMethod =
   | "upsert-membership-grant"
   | "revoke-membership-grant"
   | "get-membership"
+  | "get-oauth-account-state"
   | "get-archive-lifecycle-statuses"
   | "get-membership-details"
   | "get-account-usage-overview"
@@ -4539,6 +4560,9 @@ export interface InterBayAccountLocalApi
   getMembership: (
     opts: AccountLocalGetMembershipRequest,
   ) => Promise<MembershipResolution>;
+  getOAuthAccountState: (
+    opts: AccountLocalGetOAuthAccountStateRequest,
+  ) => Promise<AccountLocalOAuthAccountState>;
   getArchiveLifecycleStatuses: (
     opts: AccountLocalGetArchiveLifecycleStatusesRequest,
   ) => Promise<AccountLocalArchiveLifecycleStatus[]>;
@@ -7408,6 +7432,15 @@ export function createInterBayAccountLocalClient({
       method: "get-membership",
     }),
   });
+  const getOAuthAccountStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getOAuthAccountState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-oauth-account-state",
+    }),
+  });
   const getArchiveLifecycleStatusesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getArchiveLifecycleStatuses">
   >({
@@ -8546,6 +8579,8 @@ export function createInterBayAccountLocalClient({
       await revokeMembershipGrantClient.revokeMembershipGrant(opts),
     getMembership: async (opts) =>
       await getMembershipClient.getMembership(opts),
+    getOAuthAccountState: async (opts) =>
+      await getOAuthAccountStateClient.getOAuthAccountState(opts),
     getArchiveLifecycleStatuses: async (opts) =>
       await getArchiveLifecycleStatusesClient.getArchiveLifecycleStatuses(opts),
     getMembershipDetails: async (opts) =>
@@ -9701,6 +9736,20 @@ export function createInterBayAccountLocalHandler({
         getMembership: async (opts) => await impl.getMembership(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getOAuthAccountState">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "get-oauth-account-state",
+        }),
+        impl: {
+          getOAuthAccountState: async (opts) =>
+            await impl.getOAuthAccountState(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getArchiveLifecycleStatuses">
     >({

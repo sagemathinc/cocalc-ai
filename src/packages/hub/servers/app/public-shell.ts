@@ -726,6 +726,11 @@ export async function renderPublicShell(req: Request): Promise<{
   };
 }
 
+function isOAuthAuthorizeTarget(req: Request): boolean {
+  const target = `${req.query?.target ?? ""}`;
+  return /(^|\/)auth\/oauth\/authorize(\?|$)/.test(target.split("#")[0]);
+}
+
 export function servePublicShell(req: Request, res: Response): void {
   void renderPublicShell(req)
     .then(({ html, redirectTo, status }) => {
@@ -736,6 +741,11 @@ export function servePublicShell(req: Request, res: Response): void {
         return;
       }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
+      if (isOAuthAuthorizeTarget(req)) {
+        // The OAuth approval page must never be framed (clickjacking).
+        res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+        res.setHeader("X-Frame-Options", "DENY");
+      }
       if (status === 503) {
         // An outage response must not be stored by any cache.
         res.setHeader("Cache-Control", "no-store");

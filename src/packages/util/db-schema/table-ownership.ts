@@ -477,7 +477,7 @@ export const TABLE_OWNERSHIP = {
     authority: "account_id",
     portability: "unsupported",
     notes:
-      "Which OAuth clients an account has approved, recorded by the home bay when it issues the approval proof. Account deletion reads it on the home bay to offer and queue client data purges.",
+      "Which OAuth clients an account has approved, recorded under the rehome fence by the home bay when it issues the approval proof. It only decides whether the deletion dialog offers to keep a client's data: deletion purges every enabled client regardless, so a row left on an old home bay by a rehome cannot skip a purge.",
   }),
 
   ...entries(["oauth_client_purge_requests"], {

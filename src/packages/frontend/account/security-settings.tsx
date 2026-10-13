@@ -59,10 +59,10 @@ export function SecuritySettings({
               ) : undefined}
             </Flex>
             <DeleteAccountButton
-              confirm={async (purge_client_ids) => {
+              confirm={async (keep_client_ids) => {
                 try {
                   await runFreshAuthAction(async () => {
-                    await actions().delete_account({ purge_client_ids });
+                    await actions().delete_account({ keep_client_ids });
                   });
                 } catch (err) {
                   ugly_error(err);

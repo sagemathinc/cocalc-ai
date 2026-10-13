@@ -12,14 +12,15 @@ import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
 } from "@cocalc/server/purchases/billing-authority/client";
+import { getOAuthClients } from "@cocalc/server/auth/oauth/clients";
 import { queueOAuthClientPurges } from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
 export interface DeleteAccountOptions {
-  // OAuth clients (e.g. Sagebrush) to ask to purge the account's data, from
-  // those the account approved. Undefined means all of them; the user's own
-  // deletion dialog can opt out.
-  purge_client_ids?: string[];
+  // OAuth clients (e.g. Sagebrush) whose data the user chose to keep in the
+  // deletion dialog. Every other enabled client is asked to purge the
+  // account's data.
+  keep_client_ids?: string[];
 }
 
 export default async function deleteAccount(
@@ -83,8 +84,11 @@ any deleted accounts, e.g., delete the email_address_before_delete field.
 
 export async function markAccountDeleted(
   account_id: string,
-  { purge_client_ids }: DeleteAccountOptions = {},
+  { keep_client_ids }: DeleteAccountOptions = {},
 ): Promise<void> {
+  const client_ids = (await getOAuthClients()).map(
+    ({ client_id }) => client_id,
+  );
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT email_address FROM accounts WHERE account_id=$1",
@@ -107,7 +111,8 @@ export async function markAccountDeleted(
       await queueOAuthClientPurges({
         db,
         account_id,
-        client_ids: purge_client_ids,
+        client_ids,
+        keep_client_ids,
       });
     },
   });

@@ -59,30 +59,35 @@ export function signAdminRequest({
 }
 
 /** Queue purge requests for a deleted account. Call it with the transaction
- * that marks the account deleted. `client_ids` lists the clients whose purge
- * the user chose; undefined means every client the account approved. Clients
- * that already have a request for this account are skipped. */
+ * that marks the account deleted. Every enabled client gets one, whether or
+ * not this bay knows the account approved it (an approval recorded before a
+ * rehome stays on the old home bay), except those in `keep_client_ids`, whose
+ * data the user chose to keep. The client answers 202 for an account it has
+ * no data for. Clients that already have a request for this account are
+ * skipped. */
 export async function queueOAuthClientPurges({
   db,
   account_id,
   client_ids,
+  keep_client_ids = [],
 }: {
   db: Queryable;
   account_id: string;
-  client_ids?: string[];
+  client_ids: string[];
+  keep_client_ids?: string[];
 }): Promise<string[]> {
+  const ids = client_ids.filter((id) => !keep_client_ids.includes(id));
+  if (ids.length === 0) return [];
   const { rows } = await db.query<{ client_id: string }>(
     `INSERT INTO oauth_client_purge_requests(
        request_id, client_id, account_id, created, attempts, next_attempt_at)
-     SELECT gen_random_uuid(), a.client_id, a.account_id, NOW(), 0, NOW()
-       FROM oauth_client_approvals a
-      WHERE a.account_id = $1::UUID
-        AND ($2::TEXT[] IS NULL OR a.client_id = ANY($2::TEXT[]))
-        AND NOT EXISTS (
+     SELECT gen_random_uuid(), c.client_id, $1::UUID, NOW(), 0, NOW()
+       FROM unnest($2::TEXT[]) AS c(client_id)
+      WHERE NOT EXISTS (
           SELECT 1 FROM oauth_client_purge_requests p
-           WHERE p.account_id = a.account_id AND p.client_id = a.client_id)
+           WHERE p.account_id = $1::UUID AND p.client_id = c.client_id)
      RETURNING client_id`,
-    [account_id, client_ids ?? null],
+    [account_id, ids],
   );
   return rows.map((row) => row.client_id);
 }
@@ -103,8 +108,41 @@ type PurgeRow = {
 
 type Fetch = typeof globalThis.fetch;
 
-/** Send one purge request. Resolves to undefined when the client accepted it,
- * or to the reason it failed. */
+// Response bodies are read only this far: an acknowledgment is small, and a
+// broken endpoint must not make the worker buffer an unbounded body.
+const MAX_RESPONSE_BYTES = 4096;
+
+async function readCapped(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (reader == null) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < MAX_RESPONSE_BYTES) {
+      const { done, value } = await reader.read();
+      if (done || value == null) break;
+      chunks.push(value);
+      size += value.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks).subarray(0, MAX_RESPONSE_BYTES).toString("utf8");
+}
+
+/** Whether a 202 body is the client's acknowledgment of this request. Any
+ * other 202 (a wrong route, a proxy page) is retried, not counted. */
+function isAcknowledgment(body: string, request_id: string): boolean {
+  try {
+    const ack = JSON.parse(body);
+    return ack?.request_id === request_id && ack?.status === "accepted";
+  } catch {
+    return false;
+  }
+}
+
+/** Send one purge request. Resolves to { accepted: true } only when the
+ * client acknowledged this request, and otherwise to the reason it failed. */
 export async function sendPurgeRequest({
   client,
   row,
@@ -115,11 +153,10 @@ export async function sendPurgeRequest({
   row: Pick<PurgeRow, "request_id" | "account_id">;
   fetch?: Fetch;
   now?: () => number;
-}): Promise<{ status?: number; error?: string }> {
+}): Promise<{ accepted?: true; status?: number; error?: string }> {
   if (client.purge == null) {
     return { error: "purge is not configured for this client" };
   }
-  const url = new URL(client.purge.url);
   const body = JSON.stringify({
     account_id: row.account_id,
     request_id: row.request_id,
@@ -127,6 +164,7 @@ export async function sendPurgeRequest({
   const timestamp = Math.floor(now() / 1000);
   let response: Response;
   try {
+    const url = new URL(client.purge.url);
     response = await fetch(url, {
       method: "POST",
       headers: {
@@ -147,18 +185,25 @@ export async function sendPurgeRequest({
   } catch (err) {
     return { error: `request failed: ${err}` };
   }
-  if (response.status === 202) {
-    return { status: 202 };
-  }
-  let detail = "";
+  let text = "";
   try {
-    detail = (await response.text()).slice(0, 200);
-  } catch {
-    // only for the log
+    text = await readCapped(response);
+  } catch (err) {
+    return {
+      status: response.status,
+      error: `reading the response failed: ${err}`,
+    };
   }
+  if (response.status === 202 && isAcknowledgment(text, row.request_id)) {
+    return { accepted: true, status: 202 };
+  }
+  const detail = text.slice(0, 200);
   return {
     status: response.status,
-    error: `HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+    error:
+      response.status === 202
+        ? `HTTP 202 without an acknowledgment of this request${detail ? `: ${detail}` : ""}`
+        : `HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
   };
 }
 
@@ -194,13 +239,20 @@ export async function deliverDuePurgeRequests({
   let accepted = 0;
   let failed = 0;
   for (const row of rows) {
-    const client = await getOAuthClient(row.client_id);
-    const result =
-      client == null
-        ? { error: "the client is not enabled" }
-        : await sendPurgeRequest({ client, row, fetch, now });
+    let result: { accepted?: true; status?: number; error?: string };
+    try {
+      const client = await getOAuthClient(row.client_id);
+      result =
+        client == null
+          ? { error: "the client is not enabled" }
+          : await sendPurgeRequest({ client, row, fetch, now });
+    } catch (err) {
+      // One row's failure (e.g. reading the settings) must not stop the
+      // others; it is recorded and retried like any failed attempt.
+      result = { error: `${err}` };
+    }
     const attempts = row.attempts + 1;
-    if (result.status === 202) {
+    if (result.accepted) {
       accepted += 1;
       await db.query(
         `UPDATE oauth_client_purge_requests

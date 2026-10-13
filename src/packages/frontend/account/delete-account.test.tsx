@@ -81,17 +81,17 @@ describe("DeleteAccountButton", () => {
     await user.click(
       screen.getByRole("button", { name: "Yes, delete my account" }),
     );
-    expect(confirm).toHaveBeenCalledWith(["sagebrush"]);
+    expect(confirm).toHaveBeenCalledWith([]);
   });
 
-  it("passes an empty list when the user keeps the files", async () => {
+  it("passes the site whose files the user keeps", async () => {
     mockApi.mockResolvedValue({
       clients: [{ client_id: "sagebrush", name: "Sagebrush" }],
     });
     const user = userEvent.setup();
     const confirm = renderButton();
     await openAndConfirm(user, "Also delete my Sagebrush shared files");
-    expect(confirm).toHaveBeenCalledWith([]);
+    expect(confirm).toHaveBeenCalledWith(["sagebrush"]);
   });
 
   it("shows no option for an account that never used Sagebrush", async () => {
@@ -103,11 +103,11 @@ describe("DeleteAccountButton", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("purges every client when the list cannot be loaded", async () => {
+  it("keeps nothing when the list cannot be loaded", async () => {
     mockApi.mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();
     const confirm = renderButton();
     await openAndConfirm(user);
-    expect(confirm).toHaveBeenCalledWith(undefined);
+    expect(confirm).toHaveBeenCalledWith([]);
   });
 });

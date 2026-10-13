@@ -23,11 +23,23 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 // The real single-bay directory lookup, so deleted and banned accounts behave
 // as in production.
+// A test can make the directory stale, as it is for a while after a remote
+// home bay deleted an account.
+const mockStaleDirectory = new Map<string, any>();
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: async (account_id: string) =>
-    await jest
+    mockStaleDirectory.get(account_id) ??
+    (await jest
       .requireActual("@cocalc/server/accounts/cluster-directory")
-      .getClusterAccountByIdDirect(account_id),
+      .getClusterAccountByIdDirect(account_id)),
+}));
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  resolveMembershipForAccount: async () => ({
+    class: "free",
+    source: "free",
+    entitlements: {},
+    effective_limits: {},
+  }),
 }));
 const mockAlert = jest.fn();
 jest.mock("@cocalc/server/messages/admin-alert", () => ({
@@ -46,6 +58,16 @@ import {
   validateAuthorizeRequest,
 } from "./authorize";
 import { deliverDuePurgeRequests, queueOAuthClientPurges } from "./purge";
+import { getSagebrushLimits } from "@cocalc/server/sagebrush/limits";
+
+const ACK = (init: any) =>
+  new Response(
+    JSON.stringify({
+      request_id: JSON.parse(init.body).request_id,
+      status: "accepted",
+    }),
+    { status: 202 },
+  );
 
 const REDIRECT = "https://sagebrush.space/auth/callback";
 const SECRET = "client-secret";
@@ -135,6 +157,7 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       sagebrush_purge_secret: "purge-key",
     };
     mockAlert.mockReset();
+    mockStaleDirectory.clear();
     await getPool().query("DELETE FROM oauth_authorization_codes");
     await getPool().query("DELETE FROM oauth_client_approvals");
     await getPool().query("DELETE FROM oauth_client_purge_requests");
@@ -298,6 +321,45 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
     }
   });
 
+  it("asks the home bay, not a stale directory entry, at redemption and for limits", async () => {
+    const account_id = await insertAccount();
+    const { verifier, challenge } = pkce();
+    const { code } = await authorize(account_id, challenge);
+    expect(await getSagebrushLimits(account_id)).toMatchObject({
+      tier: "free",
+    });
+    const email_address = `${account_id.slice(0, 8)}@example.com`;
+    // The home bay deleted the account; the directory still lists it.
+    await getPool().query(
+      "UPDATE accounts SET deleted = TRUE, email_address = NULL WHERE account_id = $1",
+      [account_id],
+    );
+    mockStaleDirectory.set(account_id, {
+      account_id,
+      email_address,
+      home_bay_id: "bay-0",
+    });
+    await expectTokenError(
+      exchange({ code, redirect_uri: REDIRECT, code_verifier: verifier }),
+      "invalid_grant",
+    );
+    expect(await getSagebrushLimits(account_id)).toBeUndefined();
+  });
+
+  it("refuses the token when the email address is no longer verified", async () => {
+    const account_id = await insertAccount();
+    const { verifier, challenge } = pkce();
+    const { code } = await authorize(account_id, challenge);
+    await getPool().query(
+      "UPDATE accounts SET email_address_verified = '{}'::JSONB WHERE account_id = $1",
+      [account_id],
+    );
+    await expectTokenError(
+      exchange({ code, redirect_uri: REDIRECT, code_verifier: verifier }),
+      "invalid_grant",
+    );
+  });
+
   it("never issues a code for an unverified email address or a banned account", async () => {
     const unverified = await insertAccount({ verified: false });
     const request = await validateAuthorizeRequest(
@@ -367,32 +429,32 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       return account_id;
     }
 
-    it("queues one request per approved client, unless the user opted out", async () => {
+    it("queues one request per enabled client, approved here or not, unless kept", async () => {
       const a = await approvedAccount();
       const b = await approvedAccount();
+      // No approval on this bay, e.g. it was recorded before a rehome.
       const c = await insertAccount();
-      expect(
-        await queueOAuthClientPurges({ db: getPool(), account_id: a }),
-      ).toEqual(["sagebrush"]);
-      // A retried deletion queues nothing new.
-      expect(
-        await queueOAuthClientPurges({ db: getPool(), account_id: a }),
-      ).toEqual([]);
-      expect(
-        await queueOAuthClientPurges({
+      const queue = (account_id: string, keep_client_ids?: string[]) =>
+        queueOAuthClientPurges({
           db: getPool(),
-          account_id: b,
-          client_ids: [],
-        }),
-      ).toEqual([]);
-      expect(
-        await queueOAuthClientPurges({ db: getPool(), account_id: c }),
-      ).toEqual([]);
+          account_id,
+          client_ids: ["sagebrush"],
+          keep_client_ids,
+        });
+      expect(await queue(a)).toEqual(["sagebrush"]);
+      // A retried deletion queues nothing new.
+      expect(await queue(a)).toEqual([]);
+      expect(await queue(b, ["sagebrush"])).toEqual([]);
+      expect(await queue(c)).toEqual(["sagebrush"]);
     });
 
     it("retries with the same request id until accepted", async () => {
       const account_id = await approvedAccount();
-      await queueOAuthClientPurges({ db: getPool(), account_id });
+      await queueOAuthClientPurges({
+        db: getPool(),
+        account_id,
+        client_ids: ["sagebrush"],
+      });
       const bodies: string[] = [];
       const fail = jest.fn(async (_url, init: any) => {
         bodies.push(init.body);
@@ -419,9 +481,22 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       await getPool().query(
         "UPDATE oauth_client_purge_requests SET next_attempt_at = NOW()",
       );
+      // A 202 that does not acknowledge this request is retried.
+      const wrongAck = jest.fn(
+        async () =>
+          new Response('{"request_id":"other","status":"accepted"}', {
+            status: 202,
+          }),
+      );
+      expect(await deliverDuePurgeRequests({ fetch: wrongAck as any })).toEqual(
+        { accepted: 0, failed: 1 },
+      );
+      await getPool().query(
+        "UPDATE oauth_client_purge_requests SET next_attempt_at = NOW()",
+      );
       const ok = jest.fn(async (_url, init: any) => {
         bodies.push(init.body);
-        return new Response("{}", { status: 202 });
+        return ACK(init);
       });
       expect(await deliverDuePurgeRequests({ fetch: ok as any })).toEqual({
         accepted: 1,
@@ -441,7 +516,11 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
 
     it("alerts admins on a 401 and once a request is a day overdue", async () => {
       const account_id = await approvedAccount();
-      await queueOAuthClientPurges({ db: getPool(), account_id });
+      await queueOAuthClientPurges({
+        db: getPool(),
+        account_id,
+        client_ids: ["sagebrush"],
+      });
       const unauthorized = jest.fn(
         async () => new Response("", { status: 401 }),
       );
@@ -465,7 +544,11 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
 
     it("keeps a request queued while the purge is not configured", async () => {
       const account_id = await approvedAccount();
-      await queueOAuthClientPurges({ db: getPool(), account_id });
+      await queueOAuthClientPurges({
+        db: getPool(),
+        account_id,
+        client_ids: ["sagebrush"],
+      });
       mockSettings.sagebrush_purge_secret = "";
       const fetch = jest.fn();
       expect(await deliverDuePurgeRequests({ fetch: fetch as any })).toEqual({
