@@ -13,8 +13,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
 import {
   MANIFEST_SCHEMA,
+  SITE_SCHEMA,
   canonicalJson,
   currentPlatform,
 } from "@cocalc/util/cli-distribution/schema";
@@ -29,9 +33,11 @@ import {
   readState,
   recover,
   rollback,
+  switchActive,
   withLock,
+  writeState,
 } from "./local";
-import { HeldError, updateState } from "./update";
+import { HeldError, updateFromOrigin, updateState } from "./update";
 
 const ORIGIN = "https://cocalc.example";
 
@@ -159,6 +165,7 @@ function fixture() {
     run,
     runs,
     fetchFile,
+    files,
   };
 }
 
@@ -478,3 +485,87 @@ test("an automatic update stops at a hold placed after its unlocked check", () =
     /origin changed/,
   );
 });
+
+/*
+ * The "already current" answer is decided under the lock. Here a rollback
+ * lands while the update waits for the lock, after the update fetched
+ * site.json naming the release that was active until then.
+ */
+for (const explicit of [true, false]) {
+  test(`a rollback while ${explicit ? "an explicit" : "an automatic"} update waits for the lock`, async () => {
+    const f = fixture();
+    const r1 = f.release(100);
+    const r2 = f.release(101);
+    const manifests = new Map([r1, r2].map((r) => [r.hash, r.text]));
+    let siteServed = false;
+    const server = createServer((req, res) => {
+      const url = req.url ?? "";
+      let body: Buffer | string | undefined;
+      if (url === "/cli/site.json") {
+        siteServed = true;
+        body = JSON.stringify({
+          schema: SITE_SCHEMA,
+          release: 101,
+          manifest: r2.hash,
+          min_release: 101,
+        });
+      } else if (url.startsWith("/cli/manifests/")) {
+        body = manifests.get(url.slice(15, -5));
+      } else if (url.startsWith("/cli/files/")) {
+        body = f.files.get(url.split("/").pop() ?? "");
+      }
+      res.statusCode = body == null ? 404 : 200;
+      res.end(body);
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      await f.install(r1, undefined, origin);
+      await f.install(r2, undefined, origin);
+      const log: string[] = [];
+      let update: Promise<Awaited<ReturnType<typeof updateFromOrigin>>>;
+      await withLock(f.root, async () => {
+        update = updateFromOrigin({
+          root: f.root,
+          explicit,
+          log: (m) => log.push(m),
+        });
+        let settled = false;
+        update.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        const start = Date.now();
+        while (!(siteServed && log.some((m) => /Waiting/.test(m)))) {
+          // Answering while the lock is held means it decided outside it.
+          assert.ok(!settled, "the update finished without the lock");
+          assert.ok(Date.now() - start < 10_000, "the update never waited");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        // What rollback does, while the update waits for the lock.
+        const state = await readState(f.root);
+        await writeState(f.root, { ...state!, held_at: 100 });
+        const previous = await readActive(f.root, "previous");
+        await switchActive(f.root, previous!.line);
+      });
+      const outcome = await update!;
+      const state = await readState(f.root);
+      if (explicit) {
+        // A person's update resumes: it installs 101 again, never just
+        // reports it while 100 runs.
+        assert.equal(outcome.status, "updated");
+        assert.equal(f.runs(), 101);
+        assert.equal(state?.held_at, null);
+      } else {
+        // An automatic one stops at the fresh hold.
+        assert.equal(outcome.status, "held");
+        assert.equal(f.runs(), 100);
+        assert.equal(state?.held_at, 100);
+      }
+    } finally {
+      server.close();
+    }
+  });
+}
