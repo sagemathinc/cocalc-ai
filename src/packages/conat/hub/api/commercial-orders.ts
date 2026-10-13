@@ -442,6 +442,8 @@ export interface CommercialManualInvoiceIssueRequest extends CommercialMutationR
 
 export interface CommercialFulfillmentPreviewRequest extends CommercialReadRequest {
   id: string;
+  /** Existing site license to link when the order has none stored yet. */
+  existing_site_license_id?: string;
 }
 
 export interface CommercialFulfillmentPlan {
@@ -458,6 +460,11 @@ export interface CommercialFulfillmentPlan {
 export interface CommercialProvisionRequest extends CommercialMutationRequest {
   id: string;
   allow_before_payment?: boolean;
+  /**
+   * Existing site license to fulfill with. It must equal the license stored on
+   * the order; if none is stored, it links this license after the same
+   * preflight checks.
+   */
   existing_site_license_id?: string;
 }
 

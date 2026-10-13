@@ -451,6 +451,23 @@ operation will create, link, or leave a license unchanged. Provision verifies
 the resulting license against the approved snapshot and stores the license id
 on the order.
 
+When the license already exists (for example, it was provisioned by hand) and
+the order stores no license id, name it with `--site-license <uuid>` on
+`fulfillment preview` and `fulfillment provision`. The same preflight applies:
+the license must not belong to another commercial order, and its owner must
+match the plan when the order has one. With a plan, provisioning updates the
+license to match it; without one, it only records the order association. This
+links a paid order without revising its approved terms. If the order already
+stores a license id, `--site-license` must name that same license.
+
+```sh
+cocalc admin receivables fulfillment provision AR-2026-000123 \
+  --site-license <uuid> --reason "link the already provisioned license"
+cocalc admin receivables fulfillment provision AR-2026-000123 \
+  --site-license <uuid> --reason "link the already provisioned license" \
+  --expected-version 25 --commit
+```
+
 Use `--allow-before-payment` only when early activation was explicitly
 approved. Ending fulfillment never rewrites collection history and overdue
 payment never automatically suspends a university license.

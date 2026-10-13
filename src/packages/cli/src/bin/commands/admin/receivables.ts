@@ -1878,6 +1878,10 @@ function registerFulfillmentCommands(
     .command("preview <order>")
     .description("preview site-license fulfillment")
     .option("--reason <text>", "audit reason for this admin read")
+    .option(
+      "--site-license <uuid>",
+      "existing site license to link when the order has none stored",
+    )
     .action(async (order: string, opts: any, command: Command) => {
       await deps.withContext(
         command,
@@ -1886,6 +1890,8 @@ function registerFulfillmentCommands(
           await ctx.hub.commercialOrders.fulfillmentPreview({
             id: normalizeOrderReference(order),
             reason: readReason(opts.reason, READ_REASONS.fulfillmentPreview),
+            existing_site_license_id:
+              `${opts.siteLicense ?? ""}`.trim() || undefined,
           }),
       );
     });
@@ -1900,7 +1906,10 @@ function registerFulfillmentCommands(
         "explicitly allow university fulfillment before collection",
         false,
       )
-      .option("--site-license <uuid>", "link this existing site license"),
+      .option(
+        "--site-license <uuid>",
+        "link this existing site license (must match the order's stored license, if any)",
+      ),
     "provision or link the approved site license",
   ).action(async (orderRef: string, opts: any, command: Command) => {
     await deps.withContext(
@@ -1930,6 +1939,7 @@ function registerFulfillmentCommands(
                 await ctx.hub.commercialOrders.fulfillmentPreview({
                   id: order.id,
                   reason,
+                  existing_site_license_id: request.existing_site_license_id,
                 }),
             },
           );

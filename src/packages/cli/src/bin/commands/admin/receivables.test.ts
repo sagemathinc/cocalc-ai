@@ -1308,6 +1308,46 @@ test("fulfillment provision includes authoritative preview", async () => {
   assert.equal(output().request.allow_before_payment, true);
 });
 
+test("fulfillment provision previews the named existing site license", async () => {
+  const siteLicenseId = "33333333-3333-4333-8333-333333333333";
+  let previewRequest: any;
+  const { program, output } = setup({
+    get: async () => order(),
+    fulfillmentPreview: async (request: any) => {
+      previewRequest = request;
+      return {
+        order_id: order().id,
+        adapter: "site_license",
+        action: "update",
+        site_license_id: siteLicenseId,
+        ready: true,
+        blockers: [],
+        planned_changes: ["order-site-license-link"],
+      };
+    },
+    provision: async () => {
+      throw Error("preview must not provision");
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "receivables",
+    "fulfillment",
+    "provision",
+    "AR-2026-000123",
+    "--site-license",
+    siteLicenseId,
+    "--reason",
+    "link the already provisioned license",
+  ]);
+  assert.equal(previewRequest.existing_site_license_id, siteLicenseId);
+  assert.equal(output().request.existing_site_license_id, siteLicenseId);
+  assert.equal(output().fulfillment_preview.site_license_id, siteLicenseId);
+});
+
 test("backfill calls server preview before commit and propagates commit", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cocalc-ar-backfill-"));
   const file = join(directory, "backfill.json");

@@ -309,6 +309,26 @@ async function preflightExistingSiteLicense(opts: {
   return current;
 }
 
+// The license to fulfill with: the one stored on the order, or, when none is
+// stored yet, an existing license the operator names explicitly. Naming a
+// different license than the stored one is rejected.
+function targetSiteLicenseId(
+  order: CommercialOrder,
+  existingSiteLicenseId?: string,
+): string | undefined {
+  const requested = `${existingSiteLicenseId ?? ""}`.trim() || undefined;
+  if (
+    requested &&
+    order.site_license_id &&
+    requested !== order.site_license_id
+  ) {
+    throw Error(
+      "existing_site_license_id must match the target already stored and reviewed on the commercial order",
+    );
+  }
+  return order.site_license_id ?? requested;
+}
+
 async function overview(
   actorAccountId: string,
   siteLicenseId: string,
@@ -338,7 +358,15 @@ export async function commercialFulfillmentPreview(
   } catch (err) {
     blockers.push(`${err}`.replace(/^Error:\s*/, ""));
   }
-  const siteLicenseId = order.site_license_id;
+  let siteLicenseId: string | null | undefined = order.site_license_id;
+  try {
+    siteLicenseId = targetSiteLicenseId(order, opts.existing_site_license_id);
+  } catch (err) {
+    blockers.push(`${err}`.replace(/^Error:\s*/, ""));
+  }
+  if (siteLicenseId && !order.site_license_id) {
+    plannedChanges.push("order-site-license-link");
+  }
   let action: CommercialFulfillmentPlan["action"] = siteLicenseId
     ? "link"
     : plan
@@ -540,15 +568,7 @@ export async function provisionCommercialSiteLicense(
     );
   }
   const plan = siteLicensePlan(order);
-  if (
-    opts.existing_site_license_id &&
-    opts.existing_site_license_id !== order.site_license_id
-  ) {
-    throw Error(
-      "existing_site_license_id must match the target already stored and reviewed on the commercial order",
-    );
-  }
-  const requestedId = order.site_license_id ?? undefined;
+  const requestedId = targetSiteLicenseId(order, opts.existing_site_license_id);
   if (!requestedId && !plan) throw Error("site-license plan is required");
   const preflight = requestedId
     ? await preflightExistingSiteLicense({

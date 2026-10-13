@@ -439,7 +439,11 @@ describe("commercial site-license fulfillment", () => {
     },
   );
 
-  it("rejects a target that was not stored and reviewed on the order", async () => {
+  it("rejects a target that differs from the license stored on the order", async () => {
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ site_license_id: "sl_1" }),
+    );
+
     await expect(
       provisionCommercialSiteLicense({
         id: "co_1",
@@ -452,6 +456,130 @@ describe("commercial site-license fulfillment", () => {
 
     expect(mockGetSiteLicenseOverview).not.toHaveBeenCalled();
     expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+  });
+
+  it("links an explicitly named existing license when the order stores none", async () => {
+    // An order approved without a site-license plan, whose license was
+    // provisioned separately (e.g. by hand before the order was paid).
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ site_license_id: null, terms_snapshot: {} }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(matchingOverview());
+    mockUpdateSiteLicense.mockResolvedValue(
+      matchingOverview({
+        site_license: { metadata: { commercial_order_id: "co_1" } },
+      }),
+    );
+
+    await provisionCommercialSiteLicense({
+      id: "co_1",
+      account_id: "admin-1",
+      expected_version: 7,
+      existing_site_license_id: " sl_1 ",
+      reason: "Link the already provisioned campus license",
+    });
+
+    expect(mockReserveCommercialProviderOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "provision-site-license",
+        request: expect.objectContaining({
+          existing_site_license_id: " sl_1 ",
+        }),
+      }),
+    );
+    expect(mockAdminProvisionSiteLicense).not.toHaveBeenCalled();
+    expect(mockUpdateSiteLicense).toHaveBeenCalledWith({
+      actor_account_id: "admin-1",
+      site_license_id: "sl_1",
+      metadata: {
+        commercial_order_id: "co_1",
+        commercial_order_number: "AR-2026-000001",
+      },
+    });
+    expect(mockSetCommercialFulfillment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fulfillment_state: "provisioned",
+        site_license_id: "sl_1",
+        expected_version: 7,
+      }),
+    );
+  });
+
+  it("preflights an explicitly named license held by another order before mutation", async () => {
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ site_license_id: null }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(
+      matchingOverview({
+        site_license: { metadata: { commercial_order_id: "co_other" } },
+      }),
+    );
+
+    await expect(
+      provisionCommercialSiteLicense({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 7,
+        existing_site_license_id: "sl_1",
+        reason: "Link the already provisioned campus license",
+      }),
+    ).rejects.toThrow("belongs to commercial order co_other");
+
+    expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+    expect(mockUpdateSiteLicense).not.toHaveBeenCalled();
+    expect(mockSetCommercialFulfillment).not.toHaveBeenCalled();
+  });
+
+  it("previews linking an explicitly named license when the order stores none", async () => {
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ site_license_id: null, terms_snapshot: {} }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(matchingOverview());
+
+    await expect(
+      commercialFulfillmentPreview({
+        id: "co_1",
+        account_id: "admin-1",
+        reason: "Review linking the campus license",
+        existing_site_license_id: "sl_1",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        action: "update",
+        site_license_id: "sl_1",
+        ready: true,
+        blockers: [],
+        planned_changes: [
+          "order-site-license-link",
+          "commercial-order-association",
+        ],
+      }),
+    );
+    expect(mockUpdateSiteLicense).not.toHaveBeenCalled();
+    expect(mockSetCommercialFulfillment).not.toHaveBeenCalled();
+  });
+
+  it("previews a license that differs from the stored one as a blocker", async () => {
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ site_license_id: "sl_1" }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(
+      matchingOverview({
+        site_license: { metadata: { commercial_order_id: "co_1" } },
+      }),
+    );
+
+    const preview = await commercialFulfillmentPreview({
+      id: "co_1",
+      account_id: "admin-1",
+      reason: "Review linking the campus license",
+      existing_site_license_id: "sl_other",
+    });
+    expect(preview.ready).toBe(false);
+    expect(preview.site_license_id).toBe("sl_1");
+    expect(preview.blockers).toEqual([
+      expect.stringContaining("must match the target already stored"),
+    ]);
   });
 
   it("preflights immutable ownership before any external mutation", async () => {
