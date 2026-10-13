@@ -26,7 +26,6 @@ import {
   plusActiveRelease,
   plusRollback,
   readPlusManifest,
-  restoreDataSnapshot,
 } from "./plus";
 import {
   fetchStoreManifestText,
@@ -193,8 +192,7 @@ export async function finishPlusInstall({
   };
 }
 
-// Roll back, and bring back the data that release last used when the
-// snapshot has it.
+// Roll back code and data together (see plusRollback).
 export async function rollbackPlus({
   root,
   dataPaths,
@@ -204,23 +202,7 @@ export async function rollbackPlus({
   dataPaths: DataPaths;
   log?: Log;
 }): Promise<void> {
-  const to = await plusRollback(root, log);
-  const restored = await restoreDataSnapshot(dataPaths, {
-    manifest: to.manifest,
-    release: to.release,
-    version: to.version,
-  });
-  if (restored === "restored") {
-    log(
-      `Restored the data snapshot from release ${to.release}. The newer data is kept once in ${dataPaths.home}/data.replaced.`,
-    );
-  } else if (restored === "other-release") {
-    log(
-      "The data snapshot belongs to a different release, so the data was left as it is.",
-    );
-  } else {
-    log("There is no data snapshot; the data was left as it is.");
-  }
+  await plusRollback({ root, paths: dataPaths, log });
 }
 
 export async function describePlus(root: string): Promise<string[]> {

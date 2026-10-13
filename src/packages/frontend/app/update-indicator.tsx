@@ -255,24 +255,43 @@ export function usePlusRestartToUpdate():
   return pending;
 }
 
-function PlusRestartIndicator() {
+export function PlusRestartIndicator() {
   const pending = usePlusRestartToUpdate();
+  const [howTo, setHowTo] = useState(false);
   if (!pending) return null;
+  const close = () => setHowTo(false);
   return (
-    <UpdatePill
-      level="recommended"
-      since={pending.since}
-      label="Restart to update"
-      description={`CoCalc Plus ${pending.version} is installed. It takes effect the next time CoCalc Plus starts. Restart it when it suits you: running notebooks and terminals stop when CoCalc Plus stops.`}
-      actionLabel="How to restart"
-      onAction={() =>
-        Modal.info({
-          title: "Restart CoCalc Plus",
-          content:
-            "Save your work, then stop CoCalc Plus (press Control-C in the terminal running it, or run `cocalc-plus --daemon-stop` with your pidfile if it runs in the background) and start it again with `cocalc-plus`. Your previous version's data is kept as a snapshot, and `cocalc-plus update --rollback` goes back to it.",
-        })
-      }
-    />
+    <>
+      <UpdatePill
+        level="recommended"
+        since={pending.since}
+        label="Restart to update"
+        description={`CoCalc Plus ${pending.version} is installed. It takes effect the next time CoCalc Plus starts. Restart it when it suits you: running notebooks and terminals stop when CoCalc Plus stops.`}
+        actionLabel="How to restart"
+        onAction={() => setHowTo(true)}
+      />
+      <Modal
+        open={howTo}
+        title="Restart CoCalc Plus"
+        onCancel={close}
+        footer={
+          <Button type="primary" onClick={close}>
+            OK
+          </Button>
+        }
+      >
+        <p>
+          Save your work, then stop CoCalc Plus: press Control-C in the terminal
+          running it, or, if it runs in the background, run{" "}
+          <code>cocalc-plus --daemon-stop</code> with your pidfile. Then start
+          it again with <code>cocalc-plus</code>.
+        </p>
+        <p>
+          Your data from the previous version is kept as a snapshot, and{" "}
+          <code>cocalc-plus update --rollback</code> goes back to it.
+        </p>
+      </Modal>
+    </>
   );
 }
 

@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,12 +21,13 @@ import {
 } from "@cocalc/util/cli-distribution/schema";
 import { PLUS_MANIFEST_SCHEMA } from "@cocalc/util/cli-distribution/plus-schema";
 
-import { type CliState, STATE_SCHEMA, readState } from "./local";
+import { type CliState, STATE_SCHEMA, readState, withLock } from "./local";
 import {
+  type DataFault,
   installPlusRelease,
   plusRollback,
-  restoreDataSnapshot,
-  snapshotDataIfNewRelease,
+  prepareServer,
+  recoverData,
 } from "./plus";
 
 const ORIGIN = "https://software.example/software/plus";
@@ -215,7 +217,7 @@ test("an update reuses unchanged parts and keeps what a running Lite uses", asyn
   assert.equal(f.fetched.length - before, 1);
   assert.equal(f.run().release, 21);
 
-  // A live server pinned to release 20 keeps it through later updates.
+  // A live process pinned to release 20 keeps it through later updates.
   mkdirSync(join(f.root, "running"), { recursive: true });
   writeFileSync(
     join(f.root, "running", `${process.pid}`),
@@ -224,69 +226,197 @@ test("an update reuses unchanged parts and keeps what a running Lite uses", asyn
   await f.install(f.release(22));
   await f.install(f.release(23));
   assert.ok(existsSync(join(f.root, "apps", r1.hash, ".complete")));
-  // Without the pin, release 20 is collected.
-  writeFileSync(join(f.root, "running", `${process.pid}`), "");
+  // An unreadable pin of a live process stops collection entirely.
+  writeFileSync(join(f.root, "running", `${process.pid}`), "{");
   await f.install(f.release(24));
+  assert.ok(existsSync(join(f.root, "apps", r1.hash, ".complete")));
+  // Without the pin, release 20 is collected.
+  rmSync(join(f.root, "running", `${process.pid}`));
+  await f.install(f.release(25));
   assert.equal(existsSync(join(f.root, "apps", r1.hash)), false);
 });
 
-test("rollback waits for a running Lite and places a hold", async () => {
+function dataFixture(f: ReturnType<typeof fixture>) {
+  const home = join(f.dir, "home");
+  const paths = { home, data: join(home, "data") };
+  const activeLine = () =>
+    readFileSync(join(f.root, "active"), "utf8").trimEnd();
+  // Start a server for the active release (this test process plays Lite).
+  const start = async (faultAt?: DataFault) => {
+    const result = await prepareServer({
+      root: f.root,
+      line: activeLine(),
+      paths,
+      faultAt,
+    });
+    // ...and stop it: drop this process's server pin.
+    rmSync(join(f.root, "running", `${process.pid}`), { force: true });
+    return result;
+  };
+  const write = (text: string) => {
+    mkdirSync(join(paths.data, "sync"), { recursive: true });
+    writeFileSync(join(paths.data, "hub.db"), text);
+    writeFileSync(join(paths.data, "sync", "blobs.db"), `blobs ${text}`);
+  };
+  const read = () => readFileSync(join(paths.data, "hub.db"), "utf8");
+  return { paths, start, write, read, activeLine };
+}
+
+test("a server start: no data, unchanged, snapshot, and only one server", async () => {
   const f = fixture();
-  await f.install(f.release(30));
-  await f.install(f.release(31));
-  const line = readFileSync(join(f.root, "active"), "utf8").trimEnd();
+  const d = dataFixture(f);
+  await f.install(f.release(40));
+  assert.equal(await d.start(), "no-data");
+  d.write("from 40");
+  assert.equal(await d.start(), "unchanged");
+  await f.install(f.release(41));
+  assert.equal(await d.start(), "snapshot");
+  assert.equal(
+    readFileSync(join(d.paths.home, "data.snapshot", "hub.db"), "utf8"),
+    "from 40",
+  );
+  // Another live server owns the data: refused, and nothing is snapshotted.
   mkdirSync(join(f.root, "running"), { recursive: true });
-  // A server pin for another live process (our parent stands in).
   writeFileSync(
     join(f.root, "running", `${process.ppid}`),
-    JSON.stringify({ line, role: "server" }) + "\n",
+    JSON.stringify({ line: d.activeLine(), role: "server" }) + "\n",
   );
-  await assert.rejects(plusRollback(f.root), /is running/);
-  writeFileSync(join(f.root, "running", `${process.ppid}`), "");
-  const to = await plusRollback(f.root);
-  assert.equal(to.release, 30);
-  assert.equal(f.run().release, 30);
-  assert.equal((await readState(f.root))?.held_at, 30);
+  await assert.rejects(d.start(), /already running/);
+  rmSync(join(f.root, "running", `${process.ppid}`));
+  // A release removed before the server could pin it is not started.
+  const r = d.activeLine().split(" ")[1];
+  rmSync(join(f.root, "apps", r, ".complete"));
+  await assert.rejects(d.start(), /incomplete or was removed/);
 });
 
-test("data snapshot: one previous version, restored by a rollback", async () => {
+test("rollback goes to the release that owns the data, not the last installed one", async () => {
   const f = fixture();
-  const home = join(f.dir, "home");
-  const data = join(home, "data");
-  mkdirSync(join(data, "sync"), { recursive: true });
-  writeFileSync(join(data, "hub.db"), "v1 data");
-  writeFileSync(join(data, "sync", "blobs.db"), "blobs");
-  const paths = { home, data };
-  const v1 = { manifest: "a".repeat(64), release: 1, version: "1.0.1" };
-  const v2 = { manifest: "b".repeat(64), release: 2, version: "1.0.2" };
+  const d = dataFixture(f);
+  const r1 = f.release(50);
+  await f.install(r1);
+  d.write("from 50");
+  await d.start(); // release 50 owns the data
+  // Two background installs while 50 keeps running.
+  await f.install(f.release(51));
+  await f.install(f.release(52));
+  // Never restarted: rollback goes back to 50, code only (its data is intact).
+  const back = await plusRollback({ root: f.root, paths: d.paths });
+  assert.equal(back.release, 50);
+  assert.equal(f.run().release, 50);
+  assert.equal(d.read(), "from 50");
 
-  // First run of the installed build on old data: snapshot it.
-  assert.equal(await snapshotDataIfNewRelease(paths, v1), "snapshot");
-  assert.equal(await snapshotDataIfNewRelease(paths, v1), "unchanged");
-  // Release 2 starts: the data release 1 used is the snapshot.
-  assert.equal(await snapshotDataIfNewRelease(paths, v2), "snapshot");
-  writeFileSync(join(data, "hub.db"), "v2 data (migrated)");
+  // Restart into 52 (resume), which migrates the data; then roll back.
+  await f.install(f.release(53));
+  assert.equal(await d.start(), "snapshot");
+  d.write("from 53 (migrated)");
+  const restored = await plusRollback({ root: f.root, paths: d.paths });
+  assert.equal(restored.release, 50);
+  assert.equal(f.run().release, 50);
+  assert.equal(d.read(), "from 50");
   assert.equal(
-    readFileSync(join(home, "data.snapshot", "hub.db"), "utf8"),
-    "v1 data",
+    readFileSync(join(d.paths.home, "data.replaced", "hub.db"), "utf8"),
+    "from 53 (migrated)",
   );
-  assert.equal(
-    readFileSync(join(home, "data.snapshot", "sync", "blobs.db"), "utf8"),
-    "blobs",
+  assert.equal(existsSync(join(d.paths.data, ".cocalc-snapshot.json")), false);
+  assert.equal((await readState(f.root))?.held_at, 50);
+  // Nothing older is left to restore: refused, nothing changes.
+  await assert.rejects(
+    plusRollback({ root: f.root, paths: d.paths }),
+    /no snapshot of your data/,
   );
-  // Rolling back to another release leaves the data alone.
-  assert.equal(
-    await restoreDataSnapshot(paths, { ...v1, manifest: "c".repeat(64) }),
-    "other-release",
-  );
-  // Rolling back to release 1 brings its data back and keeps the newer once.
-  assert.equal(await restoreDataSnapshot(paths, v1), "restored");
-  assert.equal(readFileSync(join(data, "hub.db"), "utf8"), "v1 data");
-  assert.equal(
-    readFileSync(join(home, "data.replaced", "hub.db"), "utf8"),
-    "v2 data (migrated)",
-  );
-  assert.equal(existsSync(join(home, "data.snapshot")), false);
-  // Starting release 1 again is not a new release for this data.
-  assert.equal(await snapshotDataIfNewRelease(paths, v1), "unchanged");
+  assert.equal(d.read(), "from 50");
 });
+
+test("garbage collection keeps the releases the data may need", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  const r1 = f.release(60);
+  await f.install(r1);
+  d.write("from 60");
+  await d.start();
+  for (const n of [61, 62, 63, 64]) await f.install(f.release(n));
+  // 60 owns the data, so it stays installed.
+  assert.ok(existsSync(join(f.root, "apps", r1.hash, ".complete")));
+  await d.start(); // 64 takes over; 60 is now the snapshot's release
+  for (const n of [65, 66, 67]) await f.install(f.release(n));
+  assert.ok(existsSync(join(f.root, "apps", r1.hash, ".complete")));
+});
+
+test("rollback refuses while Lite runs and without a snapshot for newer data", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  await f.install(f.release(70));
+  await f.install(f.release(71));
+  d.write("from 71");
+  await d.start(); // first start, by 71: data had no owner, so it's snapshotted
+  mkdirSync(join(f.root, "running"), { recursive: true });
+  writeFileSync(
+    join(f.root, "running", `${process.ppid}`),
+    JSON.stringify({ line: d.activeLine(), role: "server" }) + "\n",
+  );
+  await assert.rejects(
+    plusRollback({ root: f.root, paths: d.paths }),
+    /is running/,
+  );
+  rmSync(join(f.root, "running", `${process.ppid}`));
+  // The snapshot holds data that no release owned (from before this build):
+  // there is no release to restore it with, so rollback is refused.
+  await assert.rejects(
+    plusRollback({ root: f.root, paths: d.paths }),
+    /no snapshot of your data/,
+  );
+  assert.equal(f.run().release, 71);
+});
+
+for (const point of ["snapshot-copied", "snapshot-renamed"] as DataFault[]) {
+  test(`a crash at ${point} leaves data, snapshot and owner consistent`, async () => {
+    const f = fixture();
+    const d = dataFixture(f);
+    await f.install(f.release(80));
+    d.write("from 80");
+    await d.start();
+    await f.install(f.release(81));
+    await assert.rejects(d.start(point), /injected fault/);
+    rmSync(join(f.root, "running", `${process.pid}`), { force: true });
+    // The next start recovers and ends with 80's data in the snapshot.
+    assert.equal(await d.start().then(() => "ok"), "ok");
+    assert.equal(
+      readFileSync(join(d.paths.home, "data.snapshot", "hub.db"), "utf8"),
+      "from 80",
+    );
+    assert.equal(d.read(), "from 80");
+    const back = await plusRollback({ root: f.root, paths: d.paths });
+    assert.equal(back.release, 80);
+  });
+}
+
+for (const point of [
+  "data-replaced",
+  "snapshot-restored",
+  "code-switched",
+] as DataFault[]) {
+  test(`a crash at ${point} during rollback is finished by recovery`, async () => {
+    const f = fixture();
+    const d = dataFixture(f);
+    await f.install(f.release(90));
+    d.write("from 90");
+    await d.start();
+    await f.install(f.release(91));
+    await d.start();
+    d.write("from 91");
+    await assert.rejects(
+      plusRollback({ root: f.root, paths: d.paths, faultAt: point }),
+      /injected fault/,
+    );
+    // Recovery (here: the next server start's) completes the rollback.
+    await withLock(f.root, () => recoverData(f.root, d.paths));
+    assert.equal(f.run().release, 90);
+    assert.equal(d.read(), "from 90");
+    assert.equal(
+      readFileSync(join(d.paths.home, "data.replaced", "hub.db"), "utf8"),
+      "from 91",
+    );
+    assert.equal((await readState(f.root))?.held_at, 90);
+    assert.equal(existsSync(join(f.root, "data-journal.json")), false);
+  });
+}

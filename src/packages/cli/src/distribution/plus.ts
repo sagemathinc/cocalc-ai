@@ -22,6 +22,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { constants, createReadStream, existsSync } from "node:fs";
 import {
   cp,
@@ -191,16 +192,15 @@ async function installApp(
   if (await appIntact(root, R)) return;
   const platform = currentPlatform();
   const app = platform ? manifest.app[platform] : undefined;
-  if (platform == null || app == null) {
+  const tools = platform ? manifest.tools[platform] : undefined;
+  if (platform == null || app == null || tools == null) {
     throw new Error(
       `CoCalc Plus release ${manifest.release} has no build for ${process.platform}-${process.arch}`,
     );
   }
   const dir = join(staging, "app");
   await mkdir(dir);
-  const parts = [app, manifest.static, manifest.public];
-  const tools = manifest.tools[platform];
-  if (tools) parts.push(tools);
+  const parts = [app, manifest.static, manifest.public, tools];
   for (const part of parts) {
     await unpackZstdTar(await ensureBlob(root, staging, part, fetchFile), dir);
   }
@@ -227,6 +227,12 @@ export interface RunningPin {
   role: "server" | "command";
 }
 
+/*
+ * Pins of live processes. A pin is published atomically (written to a
+ * temporary name, then renamed), so a readable file is complete. A pin of a
+ * live process that can't be read makes this throw: garbage collection must
+ * then keep everything rather than guess.
+ */
 export async function livePins(root: string): Promise<RunningPin[]> {
   const pins: RunningPin[] = [];
   for (const name of await readdir(join(root, "running")).catch(() => [])) {
@@ -237,49 +243,69 @@ export async function livePins(root: string): Promise<RunningPin[]> {
       await unlink(path).catch(() => {});
       continue;
     }
+    let pin: any;
     try {
-      const pin = JSON.parse(await readFile(path, "utf8"));
+      pin = JSON.parse(await readFile(path, "utf8"));
       pinPointer(pin.line);
-      pins.push({ pid, line: pin.line, role: pin.role });
-    } catch {
-      // a pin being written, or damaged: ignore it
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue; // the process just exited
+      throw new Error(`the pin of running process ${pid} is unreadable`);
     }
+    pins.push({ pid, line: pin.line, role: pin.role });
   }
   return pins;
 }
 
-// Mark this process's pin (written by the bootstrap) as a server.
-export async function markServerPin(root: string, line: string): Promise<void> {
+async function writePin(
+  root: string,
+  pid: number,
+  line: string,
+  role: RunningPin["role"],
+): Promise<void> {
   await mkdir(join(root, "running"), { recursive: true, mode: 0o700 });
   await writeFileAtomic(
-    join(root, "running", `${process.pid}`),
-    JSON.stringify({ line, role: "server" }) + "\n",
+    join(root, "running", `${pid}`),
+    JSON.stringify({ line, role }) + "\n",
   );
 }
 
-// --- garbage collection, integrity, rollback ---
+// --- garbage collection and integrity ---
 
-// Keep what active, previous and every live pin use.
+/*
+ * Keep what active and previous use, what every live pin uses, and the
+ * releases the data needs for a rollback: the one that last used the data
+ * (its owner) and the one whose data is in the snapshot. Called with the
+ * lock held. An unreadable live pin stops collection entirely.
+ */
 export async function collectPlusGarbage(root: string): Promise<void> {
-  const pointers: ActivePointer[] = [];
-  for (const name of ["active", "previous"] as const) {
-    const entry = await readActive(root, name).catch(() => undefined);
-    if (entry) pointers.push(entry.pointer);
+  let pins: RunningPin[];
+  try {
+    pins = await livePins(root);
+  } catch {
+    return;
   }
-  for (const pin of await livePins(root)) {
-    pointers.push(pinPointer(pin.line));
-  }
-  if (pointers.length === 0) return;
+  const manifests = new Set<string>();
   const keep = new Set<string>();
-  for (const pointer of pointers) {
-    keep.add(pointer.manifest);
+  const keepPointer = (pointer: ActivePointer) => {
+    manifests.add(pointer.manifest);
     keep.add(pointer.node);
     keep.add(pointer.bootstrap);
-    const manifest = await readPlusManifest(root, pointer.manifest).catch(
-      () => undefined,
-    );
-    for (const hash of manifest ? plusManifestFiles(manifest).keys() : []) {
-      keep.add(hash);
+  };
+  for (const name of ["active", "previous"] as const) {
+    const entry = await readActive(root, name).catch(() => undefined);
+    if (entry) keepPointer(entry.pointer);
+  }
+  for (const pin of pins) keepPointer(pinPointer(pin.line));
+  const data = await readDataState(root);
+  if (data?.owner?.manifest) manifests.add(data.owner.manifest);
+  const snapshot = data ? await readSnapshotInfo(data.home) : undefined;
+  if (snapshot?.manifest) manifests.add(snapshot.manifest);
+  if (manifests.size === 0) return;
+  for (const hash of manifests) {
+    keep.add(hash);
+    const manifest = await readPlusManifest(root, hash).catch(() => undefined);
+    for (const file of manifest ? plusManifestFiles(manifest).keys() : []) {
+      keep.add(file);
     }
   }
   for (const dir of ["node", "targets", "apps", "blobs"]) {
@@ -323,6 +349,22 @@ export async function plusPointerIntact(
   } catch {
     return false;
   }
+}
+
+// The active line that runs the release with this manifest here.
+async function lineForManifest(
+  root: string,
+  manifestHash: string,
+): Promise<string> {
+  const manifest = await readPlusManifest(root, manifestHash);
+  const platform = currentPlatform();
+  const archive = platform ? manifest.node.platforms[platform] : undefined;
+  if (archive == null) throw new Error("no Node for this platform");
+  return plusActiveLine(
+    manifestHash,
+    archive.sha256,
+    manifest.bootstrap.sha256,
+  );
 }
 
 // --- install ---
@@ -444,54 +486,16 @@ export async function installPlusRelease({
   );
 }
 
-/*
- * Go back to the previous release, with a hold so automatic updates don't
- * undo it. Refused while a Lite server is running. If the data snapshot
- * belongs to that release, it is restored too (see restoreDataSnapshot).
- */
-export async function plusRollback(
-  root: string,
-  log: (message: string) => void = () => {},
-): Promise<{ release: number; version: string; manifest: string }> {
-  return await withLock(
-    root,
-    async () => {
-      await recover(root);
-      const servers = (await livePins(root)).filter(
-        (pin) => pin.role === "server" && pin.pid !== process.pid,
-      );
-      if (servers.length > 0) {
-        throw new Error(
-          `CoCalc Plus is running (process ${servers[0].pid}); stop it first, then roll back.`,
-        );
-      }
-      const state = await readState(root);
-      if (state == null) throw new Error("CoCalc Plus is not installed here");
-      const previous = await readActive(root, "previous");
-      if (previous == null) {
-        throw new Error("there is no previous release to go back to");
-      }
-      if (!(await plusPointerIntact(root, previous.pointer))) {
-        throw new Error("the previous release is no longer intact on disk");
-      }
-      const manifest = await readPlusManifest(root, previous.pointer.manifest);
-      state.held_at = manifest.release;
-      await writeState(root, state);
-      await switchActive(root, previous.line);
-      log(
-        `Rolled back to CoCalc Plus release ${manifest.release} (version ${manifest.version}). Automatic updates are held; run \`cocalc-plus update --resume\` to resume.`,
-      );
-      return {
-        release: manifest.release,
-        version: manifest.version,
-        manifest: previous.pointer.manifest,
-      };
-    },
-    log,
-  );
-}
-
-// --- the data snapshot (one previous version) ---
+// --- the data: who owns it, one snapshot, and a journal ---
+//
+// Lite's data directory belongs to the release that last ran on it (its
+// owner, in <root>/data.json). When a different release starts, the data is
+// first copied to the snapshot, which records inside its own tree which
+// release it belongs to, so the bytes and the label can never disagree.
+// Starting a server, taking a snapshot and rolling back (code and data
+// together) all happen under the update lock, and each multi-step change is
+// journaled (<root>/data-journal.json) and rolled forward or undone by
+// recoverData, so a crash at any point leaves code and data that match.
 
 export interface DataRelease {
   manifest: string | null;
@@ -500,84 +504,358 @@ export interface DataRelease {
 }
 
 export interface DataPaths {
-  // COCALC_PLUS_HOME: holds data/, the snapshot and the markers.
+  // COCALC_PLUS_HOME, which holds data/ and data.snapshot/
   home: string;
   data: string;
 }
 
-const marker = (paths: DataPaths) => join(paths.home, "data-release.json");
-const snapshotDir = (paths: DataPaths) => join(paths.home, "data.snapshot");
-const snapshotInfo = (paths: DataPaths) =>
-  join(paths.home, "data.snapshot.json");
+interface DataState {
+  schema: "cocalc-plus-data/1";
+  home: string;
+  data: string;
+  owner: DataRelease | null;
+}
+
+interface SnapshotInfo extends DataRelease {
+  id: string;
+  taken_at: string;
+}
+
+type DataJournal =
+  | {
+      op: "snapshot";
+      id: string;
+      from: DataRelease | null;
+      to: DataRelease;
+      temp: string;
+    }
+  | {
+      op: "rollback";
+      to: DataRelease;
+      line: string;
+      // The snapshot to restore (its id), or null for a code-only rollback.
+      restore: string | null;
+    };
+
+export type DataFault =
+  | "snapshot-copied"
+  | "snapshot-renamed"
+  | "data-replaced"
+  | "snapshot-restored"
+  | "code-switched";
+
+const SNAPSHOT_INFO = ".cocalc-snapshot.json";
+const snapshotDir = (home: string) => join(home, "data.snapshot");
+const journalPath = (root: string) => join(root, "data-journal.json");
+
+function dataFault(at: DataFault | undefined, point: DataFault): void {
+  if (at === point) throw new Error(`injected fault: ${point}`);
+}
 
 async function readJson<T>(path: string): Promise<T | undefined> {
   try {
     return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return undefined;
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return undefined;
+    throw err;
   }
 }
 
-/*
- * Before Lite opens its data: if this data was last used by a different
- * release (or by a build that kept no record, such as the old single-file
- * executable), copy it to the snapshot, replacing the previous one. Copies
- * use reflinks where the filesystem supports them (APFS, btrfs, XFS), so
- * they are cheap there. Call only when no other Lite server is running.
- */
-export async function snapshotDataIfNewRelease(
-  paths: DataPaths,
-  running: DataRelease,
-): Promise<"snapshot" | "unchanged" | "no-data"> {
-  const last = await readJson<DataRelease>(marker(paths));
-  if (last?.manifest != null && last.manifest === running.manifest) {
-    return "unchanged";
-  }
-  let result: "snapshot" | "no-data" = "no-data";
-  if (existsSync(paths.data) && (await readdir(paths.data)).length > 0) {
-    const temp = `${snapshotDir(paths)}.tmp`;
-    await rm(temp, { recursive: true, force: true });
-    await cp(paths.data, temp, {
-      recursive: true,
-      mode: constants.COPYFILE_FICLONE,
-      verbatimSymlinks: true,
-    });
-    await rm(snapshotDir(paths), { recursive: true, force: true });
-    await rename(temp, snapshotDir(paths));
-    await writeFileAtomic(
-      snapshotInfo(paths),
-      JSON.stringify(
-        {
-          ...(last ?? { manifest: null, release: null, version: "unknown" }),
-          taken_at: new Date().toISOString(),
-        },
-        null,
-        2,
-      ) + "\n",
-    );
-    result = "snapshot";
-  }
-  await writeFileAtomic(marker(paths), JSON.stringify(running, null, 2) + "\n");
-  return result;
+export async function readDataState(
+  root: string,
+): Promise<DataState | undefined> {
+  return await readJson<DataState>(join(root, "data.json"));
 }
 
-/*
- * After a rollback to `to`: if the snapshot is the data `to` last used,
- * put it back. The data it replaces is kept once as data.replaced, so
- * nothing is lost. Call only when Lite is not running.
- */
-export async function restoreDataSnapshot(
+async function writeDataState(root: string, state: DataState): Promise<void> {
+  await writeFileAtomic(
+    join(root, "data.json"),
+    JSON.stringify(state, null, 2) + "\n",
+  );
+}
+
+export async function readSnapshotInfo(
+  home: string,
+): Promise<SnapshotInfo | undefined> {
+  return await readJson<SnapshotInfo>(join(snapshotDir(home), SNAPSHOT_INFO));
+}
+
+async function hasContent(dir: string): Promise<boolean> {
+  return (await readdir(dir).catch(() => [])).length > 0;
+}
+
+async function setOwner(
+  root: string,
   paths: DataPaths,
+  owner: DataRelease,
+): Promise<void> {
+  await writeDataState(root, {
+    schema: "cocalc-plus-data/1",
+    home: paths.home,
+    data: paths.data,
+    owner,
+  });
+}
+
+async function finishSnapshot(
+  root: string,
+  paths: DataPaths,
+  journal: Extract<DataJournal, { op: "snapshot" }>,
+  faultAt?: DataFault,
+): Promise<void> {
+  const old = `${snapshotDir(paths.home)}.old`;
+  await rm(old, { recursive: true, force: true });
+  if (existsSync(snapshotDir(paths.home))) {
+    await rename(snapshotDir(paths.home), old);
+  }
+  await rename(journal.temp, snapshotDir(paths.home));
+  dataFault(faultAt, "snapshot-renamed");
+  await rm(old, { recursive: true, force: true });
+  await setOwner(root, paths, journal.to);
+  await unlink(journalPath(root));
+}
+
+async function takeSnapshot(
+  root: string,
+  paths: DataPaths,
+  from: DataRelease | null,
   to: DataRelease,
-): Promise<"restored" | "no-snapshot" | "other-release"> {
-  const info = await readJson<DataRelease>(snapshotInfo(paths));
-  if (info == null || !existsSync(snapshotDir(paths))) return "no-snapshot";
-  if (info.manifest !== to.manifest) return "other-release";
-  const replaced = join(paths.home, "data.replaced");
-  await rm(replaced, { recursive: true, force: true });
-  if (existsSync(paths.data)) await rename(paths.data, replaced);
-  await rename(snapshotDir(paths), paths.data);
-  await unlink(snapshotInfo(paths));
-  await writeFileAtomic(marker(paths), JSON.stringify(to, null, 2) + "\n");
-  return "restored";
+  faultAt?: DataFault,
+): Promise<void> {
+  const id = randomBytes(8).toString("hex");
+  const journal: DataJournal = {
+    op: "snapshot",
+    id,
+    from,
+    to,
+    temp: `${snapshotDir(paths.home)}.tmp-${id}`,
+  };
+  await writeFileAtomic(journalPath(root), JSON.stringify(journal) + "\n");
+  await cp(paths.data, journal.temp, {
+    recursive: true,
+    mode: constants.COPYFILE_FICLONE,
+    verbatimSymlinks: true,
+  });
+  const info: SnapshotInfo = {
+    ...(from ?? { manifest: null, release: null, version: "unknown" }),
+    id,
+    taken_at: new Date().toISOString(),
+  };
+  await writeFileAtomic(
+    join(journal.temp, SNAPSHOT_INFO),
+    JSON.stringify(info, null, 2) + "\n",
+  );
+  dataFault(faultAt, "snapshot-copied");
+  await finishSnapshot(root, paths, journal, faultAt);
+}
+
+async function finishRollback(
+  root: string,
+  paths: DataPaths,
+  journal: Extract<DataJournal, { op: "rollback" }>,
+  faultAt?: DataFault,
+): Promise<void> {
+  if (journal.restore != null) {
+    const snapshot = await readSnapshotInfo(paths.home);
+    if (snapshot?.id === journal.restore) {
+      const replaced = join(paths.home, "data.replaced");
+      if (existsSync(paths.data)) {
+        await rm(replaced, { recursive: true, force: true });
+        await rename(paths.data, replaced);
+      }
+      dataFault(faultAt, "data-replaced");
+      await rename(snapshotDir(paths.home), paths.data);
+    }
+    dataFault(faultAt, "snapshot-restored");
+    await rm(join(paths.data, SNAPSHOT_INFO), { force: true });
+  }
+  if ((await readText(join(root, "active"))) !== `${journal.line}\n`) {
+    await switchActive(root, `${journal.line}\n`);
+  }
+  dataFault(faultAt, "code-switched");
+  const state = await readState(root);
+  if (state != null && journal.to.release != null) {
+    state.held_at = journal.to.release;
+    await writeState(root, state);
+  }
+  await setOwner(root, paths, journal.to);
+  await unlink(journalPath(root));
+}
+
+// Finish or undo an interrupted data change. Call with the lock held.
+export async function recoverData(
+  root: string,
+  paths: DataPaths,
+): Promise<void> {
+  const journal = await readJson<DataJournal>(journalPath(root)).catch(
+    () => undefined,
+  );
+  if (journal == null) {
+    await rm(journalPath(root), { force: true });
+    return;
+  }
+  if (journal.op === "rollback") {
+    await finishRollback(root, paths, journal);
+    return;
+  }
+  // A snapshot: done once the snapshot directory carries this journal's id.
+  if ((await readSnapshotInfo(paths.home))?.id === journal.id) {
+    await rm(`${snapshotDir(paths.home)}.old`, {
+      recursive: true,
+      force: true,
+    });
+    await setOwner(root, paths, journal.to);
+  } else {
+    await rm(journal.temp, { recursive: true, force: true });
+    const old = `${snapshotDir(paths.home)}.old`;
+    if (existsSync(old) && !existsSync(snapshotDir(paths.home))) {
+      await rename(old, snapshotDir(paths.home));
+    }
+    await rm(old, { recursive: true, force: true });
+  }
+  await unlink(journalPath(root));
+}
+
+/*
+ * Before Lite opens its data, with the update lock held:
+ *   - refuse if another Lite server is running (it owns the data);
+ *   - revalidate this release on disk and pin this process as its server;
+ *   - if a different release last used the data (or a build that kept no
+ *     record, like the old single-file executable), snapshot it first.
+ * Any failure stops the start: Lite must not open data it can't protect.
+ */
+export async function prepareServer({
+  root,
+  line,
+  paths,
+  faultAt,
+}: {
+  root: string;
+  line: string;
+  paths: DataPaths;
+  faultAt?: DataFault;
+}): Promise<"snapshot" | "unchanged" | "no-data"> {
+  return await withLock(root, async () => {
+    await recover(root);
+    await recoverData(root, paths);
+    const others = (await livePins(root)).filter(
+      (pin) => pin.role === "server" && pin.pid !== process.pid,
+    );
+    if (others.length > 0) {
+      throw new Error(
+        `CoCalc Plus is already running (process ${others[0].pid}) and owns the data. Stop it first.`,
+      );
+    }
+    const pointer = pinPointer(line);
+    if (!(await plusPointerIntact(root, pointer))) {
+      throw new Error(
+        "this CoCalc Plus release is incomplete or was removed; start CoCalc Plus again",
+      );
+    }
+    await writePin(root, process.pid, line, "server");
+    const manifest = await readPlusManifest(root, pointer.manifest);
+    const running: DataRelease = {
+      manifest: pointer.manifest,
+      release: manifest.release,
+      version: manifest.version,
+    };
+    const owner = (await readDataState(root))?.owner ?? null;
+    if (owner?.manifest === running.manifest) return "unchanged";
+    if (!(await hasContent(paths.data))) {
+      await setOwner(root, paths, running);
+      return "no-data";
+    }
+    await takeSnapshot(root, paths, owner, running, faultAt);
+    return "snapshot";
+  });
+}
+
+/*
+ * Roll back code and data together, with the lock held and no Lite running:
+ *   - if newer releases were installed but the data still belongs to an
+ *     older one (it never ran them), go back to that owner, code only;
+ *   - otherwise go back to the release whose data is in the snapshot, and
+ *     restore that data (the newer data is kept once as data.replaced);
+ *   - with no data yet, go back to the previous release.
+ * Anything else is refused: older code must never run on newer data.
+ */
+export async function plusRollback({
+  root,
+  paths,
+  log = () => {},
+  faultAt,
+}: {
+  root: string;
+  paths: DataPaths;
+  log?: (message: string) => void;
+  faultAt?: DataFault;
+}): Promise<DataRelease> {
+  return await withLock(
+    root,
+    async () => {
+      await recover(root);
+      await recoverData(root, paths);
+      const servers = (await livePins(root)).filter(
+        (pin) => pin.role === "server" && pin.pid !== process.pid,
+      );
+      if (servers.length > 0) {
+        throw new Error(
+          `CoCalc Plus is running (process ${servers[0].pid}); stop it first, then roll back.`,
+        );
+      }
+      if ((await readState(root)) == null) {
+        throw new Error("CoCalc Plus is not installed here");
+      }
+      const active = await readActive(root);
+      const owner = (await readDataState(root))?.owner ?? null;
+      const snapshot = await readSnapshotInfo(paths.home);
+      let target: string;
+      let restore: string | null = null;
+      if (
+        owner?.manifest != null &&
+        active != null &&
+        owner.manifest !== active.pointer.manifest
+      ) {
+        target = owner.manifest;
+      } else if (snapshot?.manifest != null) {
+        target = snapshot.manifest;
+        restore = snapshot.id;
+      } else if (!(await hasContent(paths.data))) {
+        const previous = await readActive(root, "previous");
+        if (previous == null) {
+          throw new Error("there is no previous release to go back to");
+        }
+        target = previous.pointer.manifest;
+      } else {
+        throw new Error(
+          "there is no snapshot of your data from an older release, so rolling back would run older code on newer data. Nothing was changed.",
+        );
+      }
+      if (target === active?.pointer.manifest) {
+        throw new Error("that release is already active");
+      }
+      const line = (await lineForManifest(root, target)).trimEnd();
+      if (!(await plusPointerIntact(root, pinPointer(line)))) {
+        throw new Error("that release is no longer complete on disk");
+      }
+      const manifest = await readPlusManifest(root, target);
+      const to: DataRelease = {
+        manifest: target,
+        release: manifest.release,
+        version: manifest.version,
+      };
+      const journal: DataJournal = { op: "rollback", to, line, restore };
+      await writeFileAtomic(journalPath(root), JSON.stringify(journal) + "\n");
+      await finishRollback(root, paths, journal, faultAt);
+      log(
+        `Rolled back to CoCalc Plus ${to.version} (release ${to.release})${
+          restore != null
+            ? `, with the data it last used. The newer data is kept once in ${paths.home}/data.replaced`
+            : ""
+        }. Automatic updates are held; run \`cocalc-plus update --resume\` to resume.`,
+      );
+      return to;
+    },
+    log,
+  );
 }

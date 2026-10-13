@@ -340,10 +340,12 @@ function getPackageVersion() {
 
 /*
  * When this Lite was started by the installed launcher (distribution Phase
- * A): pin this release as a running server, snapshot the data if a different
- * release used it last, and check for updates in the background. Updates are
- * installed but never applied to a running Lite: they take effect the next
- * time it starts.
+ * A), before it opens any data: under the update lock, refuse if another
+ * Lite server already owns the data, revalidate this release, pin this
+ * process as its server, and snapshot the data if a different release used
+ * it last. Any failure stops the start. Then check for updates in the
+ * background: they install but never apply to a running Lite; they take
+ * effect the next time it starts.
  */
 async function prepareInstalledRelease(paths: {
   root: string;
@@ -356,10 +358,6 @@ async function prepareInstalledRelease(paths: {
   const { updatePlusFromOrigin } =
     await import("@cocalc/cli/distribution/plus-update");
   const { readState } = await import("@cocalc/cli/distribution/local");
-  const otherServers = (await plus.livePins(root)).filter(
-    (pin) => pin.role === "server" && pin.pid !== process.pid,
-  );
-  await plus.markServerPin(root, line);
   const pin = path.join(root, "running", `${process.pid}`);
   process.on("exit", () => {
     try {
@@ -370,26 +368,22 @@ async function prepareInstalledRelease(paths: {
       // ignore
     }
   });
-  const manifestHash = line.split(" ")[1];
-  if (otherServers.length === 0) {
-    try {
-      const manifest = await plus.readPlusManifest(root, manifestHash);
-      const result = await plus.snapshotDataIfNewRelease(
-        { home: paths.root, data: paths.data },
-        {
-          manifest: manifestHash,
-          release: manifest.release,
-          version: manifest.version,
-        },
+  try {
+    const result = await plus.prepareServer({
+      root,
+      line,
+      paths: { home: paths.root, data: paths.data },
+    });
+    if (result === "snapshot") {
+      console.log(
+        `Saved a snapshot of your CoCalc Plus data before this version first uses it (${paths.root}/data.snapshot).`,
       );
-      if (result === "snapshot") {
-        console.log(
-          `Saved a snapshot of your CoCalc Plus data before version ${manifest.version} first uses it (${paths.root}/data.snapshot).`,
-        );
-      }
-    } catch (err) {
-      console.error(`cocalc-plus: could not snapshot the data: ${err}`);
     }
+  } catch (err) {
+    console.error(
+      `cocalc-plus: not starting: ${err instanceof Error ? err.message : err}`,
+    );
+    process.exit(1);
   }
   const state = await readState(root).catch(() => undefined);
   if (state?.auto && process.env.COCALC_AUTO_UPDATE !== "0") {

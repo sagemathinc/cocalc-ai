@@ -8,9 +8,11 @@
 //     platform) and this bootstrap (B);
 //   - apps/<R> was completely assembled (its .complete marker names R).
 // The release directory and the Node binary are verified when they are
-// installed, not on every start. Then it pins this process (running/<pid>),
-// so garbage collection keeps the release while it runs, and prepares the
-// environment Lite expects.
+// installed, not on every start. It pins this process (running/<pid>) first,
+// so garbage collection keeps the release while it runs, then checks the
+// release (so it can't have been collected just before the pin), and
+// prepares the environment Lite expects. A server additionally revalidates
+// its release under the update lock before it opens any data (start.ts).
 
 "use strict";
 
@@ -52,6 +54,27 @@ if (
 ) {
   fail("the CoCalc Plus files do not match the active release.");
 }
+// Pin this release while the process runs: written to a temporary name and
+// renamed, so a pin is never seen half-written. Without a pin, don't run.
+const pin = join(root, "running", `${process.pid}`);
+try {
+  fs.mkdirSync(join(root, "running"), { recursive: true, mode: 0o700 });
+  const temp = `${pin}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify({ line, role: "command" }) + "\n", {
+    mode: 0o600,
+  });
+  fs.renameSync(temp, pin);
+} catch (err) {
+  fail(`cannot record that CoCalc Plus is running (${pin}): ${err}`);
+}
+process.on("exit", () => {
+  try {
+    if (JSON.parse(fs.readFileSync(pin, "utf8")).line === line) {
+      fs.unlinkSync(pin);
+    }
+  } catch {}
+});
+
 try {
   if (sha256(fs.readFileSync(__filename)) !== B) {
     fail("CoCalc Plus is damaged (its bootstrap does not match).");
@@ -74,20 +97,6 @@ try {
 } catch (err) {
   fail(`cannot read the installed CoCalc Plus: ${err}`);
 }
-
-// Pin this release while the process runs.
-const pin = join(root, "running", `${process.pid}`);
-try {
-  fs.mkdirSync(join(root, "running"), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(pin, JSON.stringify({ line, role: "command" }) + "\n");
-  process.on("exit", () => {
-    try {
-      if (JSON.parse(fs.readFileSync(pin, "utf8")).line === line) {
-        fs.unlinkSync(pin);
-      }
-    } catch {}
-  });
-} catch {}
 
 // What the old single-file executable set up before starting Lite.
 const tools = join(app, "tools", "bin");

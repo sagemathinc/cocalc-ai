@@ -51,6 +51,11 @@ describe("CoCalc Plus release manifests", () => {
     ["an unknown key", { extra: 1 }],
     ["a CLI schema", { schema: "cocalc-cli-release/1" }],
     ["a missing static part", { static: undefined }],
+    ["an app without tools", { tools: {} }],
+    [
+      "tools without an app",
+      { tools: { "darwin-arm64": ref("6"), "linux-x64": ref("9") } },
+    ],
   ])("rejects %s", (_name, overrides) => {
     expect(() => parsePlusManifest(text(manifest(overrides)))).toThrow(
       /invalid CLI release data/,

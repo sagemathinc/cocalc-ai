@@ -103,10 +103,16 @@ export function parsePlusManifest(text: string): PlusReleaseManifest {
   const node = parseNodeSection(o.node);
   const app = platformParts(o.app, "app");
   const tools = platformParts(o.tools, "tools");
+  // Every platform has its Node and its tools (rg, fd, ouch and the CLI are
+  // part of CoCalc Plus): the app, node and tools platforms must match.
   for (const platform of Object.keys(app) as CliPlatform[]) {
     if (node.platforms[platform] == null) {
       fail(`app for ${platform} has no Node`);
     }
+    if (tools[platform] == null) fail(`app for ${platform} has no tools`);
+  }
+  for (const platform of Object.keys(tools) as CliPlatform[]) {
+    if (app[platform] == null) fail(`tools for ${platform} have no app`);
   }
   if (Object.keys(app).length === 0) fail("no app platforms");
   return {

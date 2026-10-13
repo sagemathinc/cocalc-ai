@@ -15,7 +15,7 @@
  *
  * Usage:
  *   node plus/dist-release/build-release.mjs [--out DIR]
- *     [--platforms linux-x64,darwin-arm64] [--node-version 26.11.1]
+ *     [--platforms linux-x64,linux-arm64,darwin-arm64] [--node-version 26.11.1]
  *     [--skip-node-signature] [--zstd-level 19]
  * Then publish with the same command as the CLI:
  *   node cli/dist-release/publish-release.mjs --build <out> [...]
@@ -99,7 +99,11 @@ async function main() {
       : join(plusRoot, "build", "plus-release"),
   );
   const level = Number(args["zstd-level"] ?? 19);
-  const platforms = wantedPlatforms(args);
+  // darwin-x64 has no tools-minimal artifact, so it isn't built by default.
+  const platforms = wantedPlatforms({
+    platforms: "linux-x64,linux-arm64,darwin-arm64",
+    ...args,
+  });
   const work = join(tmpdir(), `cocalc-plus-release-${process.pid}`);
   rmSync(out, { recursive: true, force: true });
   rmSync(work, { recursive: true, force: true });
@@ -151,7 +155,9 @@ async function main() {
 
       const binaries = await toolsBinaries(platform, work);
       if (binaries == null) {
-        process.stdout.write(`  (no tools-minimal for ${platform}; skipped)\n`);
+        throw new Error(
+          `no tools-minimal artifact for ${platform}; CoCalc Plus needs its tools on every platform`,
+        );
       } else {
         const toolsDir = join(work, `tools-tree-${platform}`, "tools");
         mkdirSync(join(toolsDir, "bin"), { recursive: true });
