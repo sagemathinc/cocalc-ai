@@ -24,5 +24,7 @@ export function immerdb({ client, service, ...opts }: ImmerDBOptions): ImmerDB {
       project_id: opts.project_id,
     });
   const syncClient = new SyncClient(client);
-  return new ImmerDB({ ...opts, fs, client: syncClient });
+  const doc = new ImmerDB({ ...opts, fs, client: syncClient });
+  doc.once("closed", syncClient.release);
+  return doc;
 }

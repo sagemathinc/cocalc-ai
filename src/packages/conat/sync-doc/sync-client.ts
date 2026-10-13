@@ -46,6 +46,12 @@ export class SyncClient extends EventEmitter implements Client0 {
     delete this.client;
   };
 
+  // Each document gets its own SyncClient, but the conat client outlives
+  // them; stop listening to it once the document using this one closes.
+  release = () => {
+    this.client?.removeListener("closed", this.close);
+  };
+
   is_project = (): boolean => false;
   is_browser = (): boolean => true;
 
