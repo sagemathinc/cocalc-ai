@@ -474,10 +474,12 @@ export type AgentMemoryIndexInput = {
   /** All notes this project sees, for the "more" line. */
   total: number;
   namespaces: readonly AgentMemoryNamespace[];
-  /** Notes per namespace (global included), for the nearly-full nudge. */
+  /**
+   * Notes per namespace this project sees (global included), for the
+   * nearly-full nudge. Never other namespaces: the index must not reveal
+   * anything about them.
+   */
   counts: Record<string, number>;
-  accountNotes: number;
-  accountBytes: number;
   maxBytes?: number;
 };
 
@@ -507,15 +509,6 @@ export function buildMemoryIndex(input: AgentMemoryIndexInput): string {
       head.push(
         `Memory is nearly full in ${ns} (${count} of ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes): merge related notes and delete outdated ones before adding more.`,
       );
-  if (
-    input.accountNotes >=
-      AGENT_MEMORY_NEARLY_FULL * AGENT_MEMORY_LIMITS.maxNotes ||
-    input.accountBytes >=
-      AGENT_MEMORY_NEARLY_FULL * AGENT_MEMORY_LIMITS.maxAccountBytes
-  )
-    head.push(
-      "This account's memory is nearly full: merge related notes and delete outdated ones before adding more.",
-    );
   head.push(
     input.total
       ? "Saved notes (name: description), most relevant first:"

@@ -23,8 +23,21 @@ const P1 = randomUUID();
 const P2 = randomUUID();
 const P3 = randomUUID();
 
+// The first version's record, with a version that changes on every write.
+class LegacyStore {
+  records = new Map<string, { payload: string; version: string }>();
+  private n = 0;
+  set(account: string, payload: string) {
+    this.records.set(account, { payload, version: `v${++this.n}` });
+  }
+  has(account: string) {
+    return this.records.has(account);
+  }
+}
+
 function setup() {
-  const legacy = new Map<string, string>();
+  const legacy = new LegacyStore();
+  let beforeCharge: (() => Promise<void>) | undefined;
   const charges: string[] = [];
   const writable = jest.fn(async () => {});
   const memory = createAgentMemory({
@@ -38,17 +51,31 @@ function setup() {
       return Buffer.from(value.slice(prefix.length), "base64").toString();
     },
     legacy: {
-      get: async (account_id) => legacy.get(account_id),
-      remove: async (account_id) => {
-        legacy.delete(account_id);
+      get: async (account_id) => legacy.records.get(account_id),
+      remove: async (account_id, version) => {
+        const record = legacy.records.get(account_id);
+        if (record && (version == null || record.version === version))
+          legacy.records.delete(account_id);
       },
     },
     assertWritable: writable,
     charge: async (_account, op, bytes = 0) => {
       charges.push(`${op}:${bytes}`);
+      const hook = beforeCharge;
+      beforeCharge = undefined;
+      await hook?.();
     },
   });
-  return { memory, legacy, charges, writable };
+  return {
+    memory,
+    legacy,
+    charges,
+    writable,
+    /** Runs once, after a request read its settings and before it acts. */
+    onceBeforeCharge: (hook: () => Promise<void>) => {
+      beforeCharge = hook;
+    },
+  };
 }
 
 async function newAccount(
@@ -173,12 +200,89 @@ describeDb("agent memory", () => {
       body: "Be brief.",
       updated_at: "2026-10-01T00:00:00.000Z",
     });
-    // Not again, even if a record reappeared.
+    // A record written again (by a hub still on the first version) is
+    // absorbed too; the owner's on/off setting here stays as it is.
     legacy.set(
       account,
-      JSON.stringify({ version: 1, enabled: false, notes: [] }),
+      JSON.stringify({
+        version: 1,
+        enabled: false,
+        notes: [
+          {
+            name: "late",
+            description: "Written by an old hub",
+            body: "after the move",
+            updated_at: "2026-10-12T00:00:00.000Z",
+          },
+        ],
+      }),
     );
-    expect((await memory.owner(account, { op: "status" })).enabled).toBe(true);
+    expect(await memory.owner(account, { op: "status" })).toMatchObject({
+      enabled: true,
+      notes: 3,
+    });
+    expect(legacy.has(account)).toBe(false);
+  });
+
+  test("rolling upgrade: an old hub's write during the move is not lost", async () => {
+    const { memory, legacy, onceBeforeCharge } = setup();
+    const account = randomUUID();
+    const record = (body: string, updated_at: string) =>
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        notes: [{ name: "deploy", description: "Deploy", body, updated_at }],
+      });
+    legacy.set(account, record("before", "2026-10-01T00:00:00.000Z"));
+    // The record changes after it was read, before it would be deleted.
+    const get = legacy.records.get.bind(legacy.records);
+    let raced = false;
+    legacy.records.get = (key: string) => {
+      const value = get(key);
+      if (!raced && value) {
+        raced = true;
+        legacy.set(account, record("after", "2026-10-02T00:00:00.000Z"));
+      }
+      return value;
+    };
+    onceBeforeCharge(async () => {});
+    await memory.turnIndex(account, P1);
+    // Moved as read; the newer record was not deleted...
+    expect(legacy.has(account)).toBe(true);
+    // ...and the next use absorbs it, the newer note winning.
+    const note: any = await memory.agent(account, P1, {
+      action: "memory",
+      op: "read",
+      name: "deploy",
+    });
+    expect(note.body).toBe("after");
+    expect(legacy.has(account)).toBe(false);
+  });
+
+  test("a note changed here after the move is not overwritten by an older record", async () => {
+    const { memory, legacy } = setup();
+    const account = randomUUID();
+    const record = JSON.stringify({
+      version: 1,
+      enabled: true,
+      notes: [
+        {
+          name: "deploy",
+          description: "Deploy",
+          body: "old",
+          updated_at: "2026-10-01T00:00:00.000Z",
+        },
+      ],
+    });
+    legacy.set(account, record);
+    await write(memory, account, P1, "deploy", "new");
+    legacy.set(account, record);
+    const note: any = await memory.agent(account, P1, {
+      action: "memory",
+      op: "read",
+      name: "deploy",
+    });
+    expect(note.body).toBe("new");
   });
 
   test("an unreadable first-version record starts empty and is kept for the owner", async () => {
@@ -381,7 +485,7 @@ describeDb("agent memory", () => {
     );
     await expect(
       write(memory, account, P1, "one-more", "x".repeat(100)),
-    ).rejects.toThrow("would exceed 8 MB");
+    ).rejects.toThrow("agent memory has no room for this note");
   });
 
   test("the turn index: this project's namespace and notes first, the rest searchable", async () => {
@@ -520,5 +624,90 @@ describeDb("agent memory", () => {
     expect(charges).toHaveLength(3);
     // Every write path checks the account is writable here (rehome fence).
     expect(writable).toHaveBeenCalled();
+  });
+
+  test("a namespace detached during a request cannot be changed by it", async () => {
+    const { memory, onceBeforeCharge } = setup();
+    const account = await newAccount(memory, { namespaces: [{ name: "dev" }] });
+    const attach = (namespaces: string[]) =>
+      memory.owner(account, {
+        op: "set-project-namespaces",
+        project_id: P1,
+        namespaces,
+      });
+    await attach(["dev"]);
+    await write(memory, account, P1, "dev/deploy");
+    await write(memory, account, P1, "global/prefs");
+    for (const request of [
+      { action: "memory", op: "delete", name: "deploy" },
+      { action: "memory", op: "move", name: "deploy", to: "global" },
+      { action: "memory", op: "move", name: "prefs", to: "dev" },
+    ] as const) {
+      await attach(["dev"]);
+      // The owner detaches dev after the request read the settings.
+      onceBeforeCharge(() => attach([]));
+      const result = await memory
+        .agent(account, P1, request as any)
+        .catch((err) => err.message);
+      expect(result).toEqual(
+        request.op === "delete"
+          ? { name: "deploy", deleted: false }
+          : request.name === "deploy"
+            ? "no memory note named deploy"
+            : "memory namespace dev is not available in this project",
+      );
+    }
+    expect(
+      (await memory.owner(account, { op: "list" })).notes_list.map(
+        (n: any) => `${n.namespace}/${n.name}`,
+      ),
+    ).toEqual(expect.arrayContaining(["dev/deploy", "global/prefs"]));
+  });
+
+  test("a project's turn list says nothing about namespaces it does not see", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory, {
+      namespaces: [{ name: "hidden" }],
+    });
+    await getPool().query(
+      `INSERT INTO agent_memory_notes (account_id, namespace, name, description, body, bytes)
+       SELECT $1, 'hidden', 'n-' || i, 'x', 'x', 17000 FROM generate_series(1, 480) AS i`,
+      [account],
+    );
+    // 8.16 MB, all of it hidden from P1: the list stays silent about it.
+    const index = (await memory.turnIndex(account, P1))!.index;
+    expect(index).toBe("Saved notes: (none yet)");
+    // At the account's limit, an agent learns only that there is no room.
+    await expect(write(memory, account, P1, "one-more")).rejects.toThrow(
+      /^agent memory has no room for this note; the account owner can review and tidy it/,
+    );
+  });
+
+  test("a move fits when the account is exactly full", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory, { namespaces: [{ name: "dev" }] });
+    await memory.owner(account, {
+      op: "set-project-namespaces",
+      project_id: P1,
+      namespaces: ["dev"],
+    });
+    // 499 in dev and 500 in each of three others, then one global note:
+    // 2,000, the account's limit.
+    await getPool().query(
+      `INSERT INTO agent_memory_notes (account_id, namespace, name, description, body, bytes)
+       SELECT $1, CASE WHEN i <= 499 THEN 'dev' WHEN i <= 999 THEN 'a'
+                       WHEN i <= 1499 THEN 'b' ELSE 'c' END, 'n-' || i, 'x', 'x', 2
+         FROM generate_series(1, 1999) AS i`,
+      [account],
+    );
+    await write(memory, account, P1, "global/last");
+    expect(
+      await memory.agent(account, P1, {
+        action: "memory",
+        op: "move",
+        name: "last",
+        to: "dev",
+      }),
+    ).toEqual({ name: "dev/last", from: "global", to: "dev" });
   });
 });

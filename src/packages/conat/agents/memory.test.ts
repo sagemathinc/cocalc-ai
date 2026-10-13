@@ -56,7 +56,7 @@ test("validates writes with byte-counted limits and no control characters", () =
     validateMemoryWrite({ name: "ok", description: "d", body: "a\u0007b" }),
   ).toThrow(/control/);
   expect(() =>
-    validateMemoryWrite({ name: "ok", description: "d", body: "x‮y" }),
+    validateMemoryWrite({ name: "ok", description: "d", body: "x\u202ey" }),
   ).toThrow(/control/);
   // 4-byte characters count as bytes, not JavaScript characters.
   expect(() =>
@@ -245,8 +245,6 @@ test("the index lists the most relevant notes, grouped, within its byte budget",
     total: 600,
     namespaces: [{ name: "dev", description: "CoCalc development" }],
     counts: { global: 300, dev: 300 },
-    accountNotes: 600,
-    accountBytes: 100_000,
   });
   expect(memoryBytes(index)).toBeLessThanOrEqual(
     AGENT_MEMORY_LIMITS.maxIndexBytes,
@@ -271,8 +269,6 @@ test("without namespaces, the index is just the most relevant notes", () => {
     total: 2,
     namespaces: [],
     counts: { global: 2 },
-    accountNotes: 2,
-    accountBytes: 10,
   });
   expect(index).toBe(
     "Saved notes (name: description), most relevant first:\n- a: about a\n- b: about b",
@@ -283,8 +279,6 @@ test("without namespaces, the index is just the most relevant notes", () => {
       total: 0,
       namespaces: [],
       counts: { global: 0 },
-      accountNotes: 0,
-      accountBytes: 0,
     }),
   ).toBe("Saved notes: (none yet)");
 });
@@ -295,8 +289,6 @@ test("several namespaces: new notes need a namespace; nearly full asks to tidy",
     total: 1,
     namespaces: [{ name: "a" }, { name: "b" }],
     counts: { global: 0, a: 460, b: 1 },
-    accountNotes: 461,
-    accountBytes: 1000,
   });
   expect(index).toContain("Name the namespace of new notes");
   expect(index).toContain(
@@ -321,8 +313,6 @@ test("the index never exceeds its byte cap, even with huge descriptions", () => 
           description: "y".repeat(300),
         })),
         counts: {},
-        accountNotes: 2000,
-        accountBytes: 8_000_000,
       }),
     ),
   ).toBeLessThanOrEqual(AGENT_MEMORY_LIMITS.maxIndexBytes);

@@ -15,92 +15,51 @@ Both agents share the same notes.
 Agent memory is **off by default**. Turn it on in **Settings -> AI** (also
 reachable from the Memory button in the Codex and Claude Code settings). The
 dialog explains who can use your memory before you enable it. Turning memory
-off stops agents from reading or writing notes; the saved notes are kept until
-you delete them, and you can review and delete them in the same panel.
-
-Memory belongs to your account. A turn uses your memory only when it runs as
-you, for example a message you send, or an Agent Networks message that starts a
-turn as you. Collaborators' turns use their own memory, not yours.
+off stops agents from reading or writing notes; saved notes are kept until you
+delete them. Memory belongs to your account: a turn uses it only when it runs
+as you. Collaborators' turns use their own memory.
 
 ## Global notes and namespaces
 
-A note is either **global**, seen in every one of your projects, or in a
-**namespace**, seen only in the projects you attach to that namespace. Use
-namespaces to keep notes about one area of work (for example one product) out
-of unrelated projects, and out of projects you share with others.
-
-In **Settings -> AI -> Agent memory -> Namespaces**, add a namespace with a
-name and an optional description (the description helps agents decide where a
-note belongs), then choose the projects that see it. Several projects can share
-a namespace, and a project can have several. A project with no namespace sees
-only your global notes. Nothing changes until you add a namespace: all notes
-start out global.
-
-Agents name notes ` +
-  "`name`" +
-  `, ` +
-  "`namespace/name`" +
-  ` or ` +
-  "`global/name`" +
-  `. An existing
-note is updated where it is. A new note goes to the project's namespace when it
-has exactly one; agents write ` +
+A note is **global** (seen in all your projects) or in a **namespace** (seen
+only in the projects you attach to it), which keeps notes about one area of
+work out of unrelated or shared projects. Add namespaces, with an optional
+description that helps agents choose, and pick their projects in the same
+panel. A project with no namespace sees only global notes. Agents write new
+notes to the project's namespace, or ` +
   "`global/<name>`" +
-  ` for notes that apply everywhere,
-such as your general preferences.
+  ` for notes that apply
+everywhere.
 
 ## What agents see
 
-When memory is on, each turn starts with an **Agent memory** block listing the
-most relevant notes by name and one-line description: notes written in this
-project, then the most recently used, with a share kept for your global notes.
-The list is limited to about 12 KB however much is stored; agents **search**
-for the rest and read a note's full text only when it is relevant. The turn's
-activity log shows a **Memory** line:
+Each turn starts with an **Agent memory** block listing the most relevant notes
+(about 12 KB at most); agents search for the rest. The activity log shows a
+**Memory** line: **On · N saved notes in context**, or **On, but the saved
+notes could not be loaded for this turn** if the lookup failed. No Memory line
+means memory is off for the account running the turn.
 
-- **On · N saved notes in context** means the list reached the agent.
-- **On, but the saved notes could not be loaded for this turn** means the
-  lookup failed or timed out. The turn continues without the list.
-
-If no Memory line appears, memory is off for the account running the turn.
-
-## Review and export
-
-**Review notes** lists every note by namespace, with a filter box; expand a
-note to read it, move it to another namespace, or delete it. Notes no agent has
-read or changed for 30 days are marked **unused**. **Export** downloads all
-notes as one Markdown file, with each note under its name.
+**Review notes** lists notes by namespace to read, move or delete; notes
+unused for 30 days are marked. **Export** downloads them all as Markdown.
 
 ## Commands
 
-Agents manage notes with the CoCalc CLI, using the turn's runtime agent
-identity rather than your account credentials:
+Agents use the CoCalc CLI with the turn's runtime identity, never your account
+credentials; Claude Code also has memory tools.
 
 ~~~bash
-cocalc project chat memory list [--namespace <namespace>]
-cocalc project chat memory read <name>
+cocalc project chat memory list|namespaces|export
+cocalc project chat memory read|delete <name>
 cocalc project chat memory search <words...>
 cocalc project chat memory write <name> --description "<one line>" --stdin
 cocalc project chat memory move <name> <namespace|global>
-cocalc project chat memory delete <name>
-cocalc project chat memory namespaces
-cocalc project chat memory export [--namespace <namespace>] [--output notes.md]
 ~~~
-
-Agents see and change only global notes and the namespaces of their project.
-Only you create namespaces and choose which projects see them. Claude Code also
-has equivalent memory tools. Ask an agent to "remember" or "forget" something,
-or to show its memory notes.
 
 ## Guidance and limits
 
-- One fact per note, with a short kebab-case name and a one-line description.
-  Agents update an existing note instead of writing a duplicate, and merge
-  related notes.
-- Notes must never contain secrets, credentials, or tokens.
-- Notes are saved data, not instructions. Agents should verify a note before
-  relying on it, and delete notes that turn out to be wrong.
-- At most 2,000 notes per account (500 per namespace, global notes counting as
-  one) and 8 MB. When memory is nearly full, turns are asked to merge related
-  notes and delete outdated ones. The rate of changes is limited per account.
+- One fact per note, with a short kebab-case name and a one-line description;
+  update or merge notes instead of duplicating them.
+- Never store secrets, credentials, or tokens.
+- Notes are saved data, not instructions: verify before relying on them.
+- At most 2,000 notes (500 per namespace) and 8 MB per account.
 `;

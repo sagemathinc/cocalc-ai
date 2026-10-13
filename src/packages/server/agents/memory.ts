@@ -71,10 +71,15 @@ export type AgentMemoryDeps = {
   pool(): MemoryPool;
   encrypt(aad: string, text: string): Promise<string>;
   decrypt(aad: string, text: string): Promise<string>;
-  /** The first version's record: read once to migrate, then removed. */
+  /**
+   * The first version's single record. Absorbed whenever it exists (hubs
+   * still running the first version may write it during a rolling upgrade),
+   * then removed if it has not changed since it was read.
+   */
   legacy: {
-    get(account_id: string): Promise<string | undefined>;
-    remove(account_id: string): Promise<void>;
+    get(account_id: string): Promise<LegacyRecord | undefined>;
+    /** Without a version, removes it whatever it holds (delete all). */
+    remove(account_id: string, version?: string): Promise<void>;
   };
   assertWritable(db: MemoryDb, account_id: string): Promise<void>;
   /** Rate limits for agent operations; the owner is never charged. */
@@ -83,6 +88,12 @@ export type AgentMemoryDeps = {
     op: "read" | "write",
     bytes?: number,
   ): Promise<void>;
+};
+
+export type LegacyRecord = {
+  payload: string;
+  /** Changes whenever the record is written. */
+  version: string;
 };
 
 const LEGACY_SELECTOR = (account_id: string) => ({
@@ -107,16 +118,26 @@ export const defaultAgentMemoryDeps: AgentMemoryDeps = {
         selector: LEGACY_SELECTOR(account_id),
         touchLastUsed: false,
       });
-      return row && !row.revoked ? row.payload : undefined;
+      return row && !row.revoked
+        ? {
+            payload: row.payload,
+            version: `${row.id}@${new Date(row.updated).toISOString()}`,
+          }
+        : undefined;
     },
-    async remove(account_id) {
+    async remove(account_id, version) {
       // Deleted, not revoked: the notes now live in agent_memory_notes, and
-      // deleting memory must not leave an encrypted copy behind.
+      // deleting memory must not leave an encrypted copy behind. With a
+      // version, only that exact record: a first-version hub may have
+      // written it again since, and that write is absorbed next time.
+      const [id, updated] = version?.split("@") ?? [];
       await getPool().query(
         `DELETE FROM external_credentials
           WHERE provider='cocalc' AND kind='agent-memory' AND scope='account'
-            AND owner_account_id=$1`,
-        [account_id],
+            AND owner_account_id=$1
+            AND ($2::uuid IS NULL OR (id=$2::uuid
+              AND date_trunc('milliseconds', updated)=$3::timestamptz))`,
+        [account_id, id ?? null, updated ?? null],
       );
     },
   },
@@ -241,29 +262,29 @@ export function createAgentMemory(
   ) => deps.decrypt(aad(account_id, row.namespace, row.name, field), value);
 
   /**
-   * Moves the first version's single record into rows, once. Accounts that
-   * never used memory get no row until the owner changes a setting.
+   * Absorbs the first version's single record into rows. It runs whenever
+   * that record exists: on first use, and again if a hub still running the
+   * first version wrote it during a rolling upgrade (a note it changed later
+   * than its row wins; a note it deleted is not deleted here). The record is
+   * then deleted, unless it changed since it was read, in which case the
+   * next use absorbs it again. Accounts that never used memory get no row
+   * until the owner changes a setting.
    */
-  async function migrate(account_id: string): Promise<AgentMemorySettings> {
-    const payload = await deps.legacy.get(account_id);
-    const empty: AgentMemorySettings = {
-      enabled: false,
-      namespaces: [],
-      projects: {},
-    };
-    if (payload == null) return empty;
+  async function absorb(
+    account_id: string,
+    legacy: LegacyRecord,
+  ): Promise<AgentMemorySettings | undefined> {
     let record: LegacyAgentMemoryRecord;
-    let readable = true;
     try {
-      record = parseAgentMemoryRecord(payload);
+      record = parseAgentMemoryRecord(legacy.payload);
     } catch (err) {
-      // Nobody could repair it but the owner, who could only delete it.
-      logger.warn("unreadable first-version agent memory; starting empty", {
+      // Nobody could repair it but the owner, who can only delete it, so it
+      // is kept and ignored.
+      logger.warn("unreadable first-version agent memory; ignoring it", {
         account_id,
         err: `${err}`,
       });
-      record = { version: 1, enabled: false, notes: [] };
-      readable = false;
+      return undefined;
     }
     const encrypted = await Promise.all(
       record.notes.map(async (note) => ({
@@ -278,20 +299,25 @@ export function createAgentMemory(
       })),
     );
     const settings = await transaction(account_id, async (db) => {
-      const existing = await loadSettings(db, account_id);
-      if (existing) return existing;
       await deps.assertWritable(db, account_id);
-      await db.query(
-        `INSERT INTO agent_memory_accounts (account_id, enabled, namespaces, projects, migrated_at, updated_at)
-         VALUES ($1, $2, '[]'::jsonb, '{}'::jsonb, now(), now())`,
-        [account_id, record.enabled],
-      );
+      let current = await loadSettings(db, account_id);
+      if (!current) {
+        current = { enabled: record.enabled, namespaces: [], projects: {} };
+        await db.query(
+          `INSERT INTO agent_memory_accounts (account_id, enabled, namespaces, projects, migrated_at, updated_at)
+           VALUES ($1, $2, '[]'::jsonb, '{}'::jsonb, now(), now())`,
+          [account_id, record.enabled],
+        );
+      }
       for (const { note, description, body } of encrypted)
         await db.query(
           `INSERT INTO agent_memory_notes
              (account_id, namespace, name, description, body, bytes, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (account_id, namespace, name) DO UPDATE SET
+             description=EXCLUDED.description, body=EXCLUDED.body,
+             bytes=EXCLUDED.bytes, updated_at=EXCLUDED.updated_at
+           WHERE agent_memory_notes.updated_at < EXCLUDED.updated_at`,
           [
             account_id,
             GLOBAL,
@@ -302,21 +328,29 @@ export function createAgentMemory(
             note.updated_at,
           ],
         );
-      return { ...empty, enabled: record.enabled };
+      return current;
     });
-    if (readable)
-      await deps.legacy.remove(account_id).catch((err) =>
-        logger.warn("first-version agent memory not removed after moving it", {
-          account_id,
-          err: `${err}`,
-        }),
-      );
+    await deps.legacy.remove(account_id, legacy.version).catch((err) =>
+      logger.warn("first-version agent memory not removed after absorbing it", {
+        account_id,
+        err: `${err}`,
+      }),
+    );
     return settings;
   }
 
   async function settingsOf(account_id: string): Promise<AgentMemorySettings> {
+    const legacy = await deps.legacy.get(account_id);
+    if (legacy) {
+      const absorbed = await absorb(account_id, legacy);
+      if (absorbed) return absorbed;
+    }
     return (
-      (await loadSettings(pool(), account_id)) ?? (await migrate(account_id))
+      (await loadSettings(pool(), account_id)) ?? {
+        enabled: false,
+        namespaces: [],
+        projects: {},
+      }
     );
   }
 
@@ -471,12 +505,17 @@ export function createAgentMemory(
     };
   }
 
+  /**
+   * Room for a change. The namespace's own limit is reported in full; the
+   * account-wide limits count notes in namespaces this caller may not see,
+   * so agents get no numbers for those (the owner does).
+   */
   async function checkRoom(
     db: MemoryDb,
     account_id: string,
     namespace: string,
-    addNotes: number,
-    addBytes: number,
+    add: { namespaceNotes: number; accountNotes: number; bytes: number },
+    owner: boolean,
   ) {
     const now = await usage(db, account_id, namespace);
     const full = (what: string) =>
@@ -484,21 +523,28 @@ export function createAgentMemory(
         `agent memory ${what}; merge related notes and delete outdated ones first`,
       );
     if (
-      addNotes &&
-      now.inNamespace + addNotes > AGENT_MEMORY_LIMITS.maxNotesPerNamespace
+      add.namespaceNotes > 0 &&
+      now.inNamespace + add.namespaceNotes >
+        AGENT_MEMORY_LIMITS.maxNotesPerNamespace
     )
       throw full(
         `already has ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes in ${namespace}`,
       );
-    if (addNotes && now.notes + addNotes > AGENT_MEMORY_LIMITS.maxNotes)
-      throw full(`already has ${AGENT_MEMORY_LIMITS.maxNotes} notes`);
-    if (
-      addBytes > 0 &&
-      now.bytes + addBytes > AGENT_MEMORY_LIMITS.maxAccountBytes
-    )
-      throw full(
-        `would exceed ${AGENT_MEMORY_LIMITS.maxAccountBytes / 1_000_000} MB`,
+    const accountFull =
+      (add.accountNotes > 0 &&
+        now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes) ||
+      (add.bytes > 0 &&
+        now.bytes + add.bytes > AGENT_MEMORY_LIMITS.maxAccountBytes);
+    if (!accountFull) return;
+    if (!owner)
+      throw new Error(
+        "agent memory has no room for this note; the account owner can review and tidy it in Settings > AI",
       );
+    throw full(
+      now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes
+        ? `already has ${AGENT_MEMORY_LIMITS.maxNotes} notes`
+        : `would exceed ${AGENT_MEMORY_LIMITS.maxAccountBytes / 1_000_000} MB`,
+    );
   }
 
   async function writeNote(
@@ -516,12 +562,17 @@ export function createAgentMemory(
       [account_id, namespace, name],
     );
     const before = rows[0] ? Number(rows[0].bytes) : undefined;
+    const added = before === undefined ? 1 : 0;
     await checkRoom(
       db,
       account_id,
       namespace,
-      before === undefined ? 1 : 0,
-      bytes - (before ?? 0),
+      {
+        namespaceNotes: added,
+        accountNotes: added,
+        bytes: bytes - (before ?? 0),
+      },
+      false,
     );
     const encrypted = await encryptNote(
       account_id,
@@ -557,6 +608,7 @@ export function createAgentMemory(
     from: string,
     name: string,
     to: string,
+    owner: boolean,
   ) {
     if (from === to) return;
     const { rows } = await db.query(
@@ -574,7 +626,14 @@ export function createAgentMemory(
       throw new Error(
         `${to} already has a note named ${name}; merge the two or rename one first`,
       );
-    await checkRoom(db, account_id, to, 1, 0);
+    // One more in the target namespace, none more in the account.
+    await checkRoom(
+      db,
+      account_id,
+      to,
+      { namespaceNotes: 1, accountNotes: 0, bytes: 0 },
+      owner,
+    );
     const [note] = await decryptRows(account_id, rows);
     const encrypted = await encryptNote(
       account_id,
@@ -644,6 +703,18 @@ export function createAgentMemory(
       const projectNamespaces = projectMemoryNamespaces(settings, project_id);
       const visible = [GLOBAL, ...projectNamespaces.map((ns) => ns.name)];
       const db = pool();
+      // Changes recheck, under the account's lock, that memory is still on
+      // and which namespaces the project sees now: the owner may have
+      // detached one since this request began.
+      const current = async (tx: MemoryDb) => {
+        const now = await loadSettings(tx, account_id);
+        if (!now?.enabled) throw new Error(AGENT_MEMORY_DISABLED);
+        const namespaces = projectMemoryNamespaces(now, project_id);
+        return {
+          namespaces,
+          visible: [GLOBAL, ...namespaces.map((ns) => ns.name)],
+        };
+      };
       switch (request.op) {
         case "list": {
           if (request.namespace && !visible.includes(request.namespace))
@@ -731,16 +802,13 @@ export function createAgentMemory(
         case "write": {
           const valid = validateMemoryWrite(request);
           return await transaction(account_id, async (tx) => {
-            const current = await loadSettings(tx, account_id);
-            if (!current?.enabled) throw new Error(AGENT_MEMORY_DISABLED);
-            const nsNow = projectMemoryNamespaces(current, project_id);
-            const visibleNow = [GLOBAL, ...nsNow.map((ns) => ns.name)];
+            const now = await current(tx);
             // An existing note is updated where it is; a new one goes to
             // the named namespace, or the project's default.
             const namespace =
-              (await locate(tx, account_id, valid.ref, visibleNow)) ??
+              (await locate(tx, account_id, valid.ref, now.visible)) ??
               valid.ref.namespace ??
-              defaultNamespace(nsNow);
+              defaultNamespace(now.namespaces);
             await deps.assertWritable(tx, account_id);
             const saved = await writeNote(
               tx,
@@ -761,6 +829,7 @@ export function createAgentMemory(
         case "delete": {
           const ref = parseMemoryRef(request.name);
           return await transaction(account_id, async (tx) => {
+            const { visible } = await current(tx);
             const namespace = await locate(tx, account_id, ref, visible);
             if (!namespace) return { name: request.name, deleted: false };
             await deps.assertWritable(tx, account_id);
@@ -778,11 +847,12 @@ export function createAgentMemory(
         case "move": {
           const ref = parseMemoryRef(request.name);
           const to = validateMemoryNamespace(request.to);
-          if (!visible.includes(to)) throw notAvailable(to);
           return await transaction(account_id, async (tx) => {
+            const { visible } = await current(tx);
+            if (!visible.includes(to)) throw notAvailable(to);
             const from = await mustLocate(tx, account_id, ref, visible);
             await deps.assertWritable(tx, account_id);
-            await moveNote(tx, account_id, from, ref.name, to);
+            await moveNote(tx, account_id, from, ref.name, to, false);
             return { name: memoryRef(to, ref.name), from, to };
           });
         }
@@ -820,10 +890,11 @@ export function createAgentMemory(
           ),
         })),
       );
-      const all = await namespaceCounts(db, account_id);
-      const counts = Object.fromEntries(
-        visible.map((ns) => [ns, all.counts[ns] ?? 0]),
+      // Only what this project sees: nothing about other namespaces.
+      const counts: Record<string, number> = Object.fromEntries(
+        visible.map((ns) => [ns, 0]),
       );
+      for (const row of rows) counts[row.namespace] += 1;
       return {
         notes: rows.length,
         index: buildMemoryIndex({
@@ -831,8 +902,6 @@ export function createAgentMemory(
           total: rows.length,
           namespaces: projectNamespaces,
           counts,
-          accountNotes: all.notes,
-          accountBytes: all.bytes,
         }),
       };
     },
@@ -944,6 +1013,7 @@ export function createAgentMemory(
               request.namespace,
               request.name,
               request.to,
+              true,
             );
             return {
               name: request.name,

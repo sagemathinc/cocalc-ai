@@ -19,6 +19,7 @@ const mockProjects = fromJS({
 });
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => mockProjects,
+  useAccountOtherSetting: () => undefined,
 }));
 
 let state: any;

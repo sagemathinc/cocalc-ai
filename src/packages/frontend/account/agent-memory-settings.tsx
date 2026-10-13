@@ -17,7 +17,6 @@ import {
   Select,
   Space,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -32,6 +31,7 @@ import {
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { personalAgentApi } from "@cocalc/frontend/agents/api";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 type Status = AgentMemoryStatus;
