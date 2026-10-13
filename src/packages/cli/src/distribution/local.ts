@@ -490,7 +490,7 @@ export async function pointerIntact(
 
 // Writes the journal, switches `active` (and the launcher, if it changed),
 // records `previous`, and clears the journal.
-async function switchActive(
+export async function switchActive(
   root: string,
   to: string,
   launcher?: { path: string; bytes: Buffer },
@@ -766,6 +766,54 @@ export async function installRelease({
  * keeps the launcher (launchers read every earlier pointer format) and
  * places a hold, so automatic updates don't undo it.
  */
+/*
+ * Whether `manifestHash` is already the active release, decided under the
+ * lock like an install: after recovery, with `prepareState` checking the
+ * origin and the hold, and the floors checked. A change `prepareState` makes
+ * (an explicit update clears a hold) is saved only when the answer is yes;
+ * otherwise undefined, and the caller installs.
+ */
+export async function settleCurrent({
+  root,
+  origin,
+  release,
+  manifestHash,
+  prepareState,
+  active,
+  recoverMore,
+  log = () => {},
+}: {
+  root: string;
+  origin: string;
+  release: number;
+  manifestHash: string;
+  prepareState: (state: CliState | undefined) => CliState;
+  active: (
+    root: string,
+  ) => Promise<
+    { release: number; version: string; manifest: string } | undefined
+  >;
+  recoverMore?: (root: string) => Promise<void>;
+  log?: (message: string) => void;
+}): Promise<{ release: number; version: string } | undefined> {
+  return await withLock(
+    root,
+    async () => {
+      await recover(root);
+      await recoverMore?.(root);
+      const before = await readState(root);
+      const saved = JSON.stringify(before);
+      const state = prepareState(before);
+      checkRelease(state, origin, release, manifestHash);
+      const current = await active(root);
+      if (current?.manifest !== manifestHash) return undefined;
+      if (JSON.stringify(state) !== saved) await writeState(root, state);
+      return { release: current.release, version: current.version };
+    },
+    log,
+  );
+}
+
 export async function rollback(
   root: string,
   log: (message: string) => void = () => {},

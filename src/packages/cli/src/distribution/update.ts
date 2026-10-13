@@ -22,6 +22,7 @@ import {
   normalizeOrigin,
   readState,
   rollback,
+  settleCurrent,
   sha256,
   validOrigin,
   withLock,
@@ -114,16 +115,6 @@ export interface UpdateOutcome {
   site?: CliSiteInfo;
 }
 
-async function clearHold(root: string): Promise<void> {
-  await withLock(root, async () => {
-    const state = await readState(root);
-    if (state != null && state.held_at != null) {
-      state.held_at = null;
-      await writeState(root, state);
-    }
-  });
-}
-
 /*
  * Update to the site's current release. `explicit` is a person running
  * `cocalc update` (or --resume): it clears a rollback hold. Automatic
@@ -156,26 +147,37 @@ export async function updateFromOrigin({
       message: `${origin} offers release ${site.release}, older than release ${highest} seen before; not downgrading.`,
     };
   }
-  const active = await activeRelease(root);
-  if (active?.manifest === site.manifest) {
-    if (explicit) await clearHold(root);
-    return {
-      status: "current",
-      site,
-      release: active.release,
-      message: `The CoCalc CLI is up to date (release ${active.release}, version ${active.version}, from ${origin}).`,
-    };
-  }
-  const manifestText = await siteManifest(origin, site);
+  const prepareState = (current: CliState | undefined) =>
+    updateState(current, origin, explicit);
   let result;
   try {
+    // Already current? Decided under the lock, as a rollback may land
+    // between any check out here and the install.
+    const current = await settleCurrent({
+      root,
+      origin,
+      release: site.release,
+      manifestHash: site.manifest,
+      prepareState,
+      active: activeRelease,
+      log,
+    });
+    if (current != null) {
+      return {
+        status: "current",
+        site,
+        release: current.release,
+        message: `The CoCalc CLI is up to date (release ${current.release}, version ${current.version}, from ${origin}).`,
+      };
+    }
+    const manifestText = await siteManifest(origin, site);
     result = await installRelease({
       root,
       origin,
       manifestText,
       manifestHash: site.manifest,
       fetchFile: originFileFetcher(origin, site.manifest),
-      prepareState: (current) => updateState(current, origin, explicit),
+      prepareState,
       log,
     });
   } catch (err) {
