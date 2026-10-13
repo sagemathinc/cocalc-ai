@@ -59,7 +59,11 @@ describe("CoCalc Plus restart-to-update indicator", () => {
     const action = await screen.findByRole("button", {
       name: "How to restart",
     });
-    action.focus();
+    // Reach the action with Tab, as a keyboard user would.
+    for (let i = 0; i < 3 && document.activeElement !== action; i += 1) {
+      await user.tab();
+    }
+    expect(action).toHaveFocus();
     await user.keyboard("{Enter}");
     const dialog = await screen.findByRole("dialog", {
       name: "Restart CoCalc Plus",

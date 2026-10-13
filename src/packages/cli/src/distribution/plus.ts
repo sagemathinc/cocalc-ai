@@ -33,6 +33,7 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -404,6 +405,9 @@ export async function installPlusRelease({
     root,
     async () => {
       await recover(root);
+      // A pending data change (snapshot or rollback) is finished first, so
+      // this update neither switches past it nor collects what it needs.
+      await recoverData(root);
       const state = prepareState(await readState(root));
       checkRelease(state, origin, manifest.release, manifestHash);
       await mkdir(join(root, "staging"), { recursive: true, mode: 0o700 });
@@ -521,21 +525,25 @@ interface SnapshotInfo extends DataRelease {
   taken_at: string;
 }
 
-type DataJournal =
-  | {
-      op: "snapshot";
-      id: string;
-      from: DataRelease | null;
-      to: DataRelease;
-      temp: string;
-    }
-  | {
-      op: "rollback";
-      to: DataRelease;
-      line: string;
-      // The snapshot to restore (its id), or null for a code-only rollback.
-      restore: string | null;
-    };
+// Each journal names the data paths it acts on, so any operation (an update
+// too) can finish it without knowing them.
+type DataJournal = DataPaths &
+  (
+    | {
+        op: "snapshot";
+        id: string;
+        from: DataRelease | null;
+        to: DataRelease;
+        temp: string;
+      }
+    | {
+        op: "rollback";
+        to: DataRelease;
+        line: string;
+        // The snapshot to restore (its id), or null for a code-only rollback.
+        restore: string | null;
+      }
+  );
 
 export type DataFault =
   | "snapshot-copied"
@@ -580,8 +588,30 @@ export async function readSnapshotInfo(
   return await readJson<SnapshotInfo>(join(snapshotDir(home), SNAPSHOT_INFO));
 }
 
+// Only a missing directory is empty; anything unreadable stops the caller.
 async function hasContent(dir: string): Promise<boolean> {
-  return (await readdir(dir).catch(() => [])).length > 0;
+  let info;
+  try {
+    info = await stat(dir);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return false;
+    throw err;
+  }
+  if (!info.isDirectory()) throw new Error(`${dir} is not a directory`);
+  return (await readdir(dir)).length > 0;
+}
+
+// The release that last used the data at these paths. Ownership recorded
+// for other paths (COCALC_PLUS_HOME or the data directory moved) does not
+// carry over: that data's owner is unknown.
+async function ownerOf(
+  root: string,
+  paths: DataPaths,
+): Promise<DataRelease | null> {
+  const state = await readDataState(root);
+  return state != null && state.home === paths.home && state.data === paths.data
+    ? state.owner
+    : null;
 }
 
 async function setOwner(
@@ -625,6 +655,8 @@ async function takeSnapshot(
   const id = randomBytes(8).toString("hex");
   const journal: DataJournal = {
     op: "snapshot",
+    home: paths.home,
+    data: paths.data,
     id,
     from,
     to,
@@ -682,18 +714,62 @@ async function finishRollback(
   await unlink(journalPath(root));
 }
 
-// Finish or undo an interrupted data change. Call with the lock held.
-export async function recoverData(
-  root: string,
-  paths: DataPaths,
-): Promise<void> {
-  const journal = await readJson<DataJournal>(journalPath(root)).catch(
-    () => undefined,
-  );
-  if (journal == null) {
-    await rm(journalPath(root), { force: true });
-    return;
+function validJournal(value: any): value is DataJournal {
+  const release = (r: any) =>
+    r != null &&
+    (r.manifest === null || isSha256(r.manifest)) &&
+    typeof r.version === "string";
+  if (
+    value == null ||
+    typeof value.home !== "string" ||
+    typeof value.data !== "string"
+  ) {
+    return false;
   }
+  if (value.op === "snapshot") {
+    return (
+      typeof value.id === "string" &&
+      typeof value.temp === "string" &&
+      (value.from === null || release(value.from)) &&
+      release(value.to)
+    );
+  }
+  if (value.op === "rollback") {
+    try {
+      pinPointer(value.line);
+    } catch {
+      return false;
+    }
+    return (
+      release(value.to) &&
+      (value.restore === null || typeof value.restore === "string")
+    );
+  }
+  return false;
+}
+
+/*
+ * Finish or undo an interrupted data change. Call with the lock held, before
+ * anything that changes `active` or collects garbage. A journal that exists
+ * but can't be read or validated stops everything and is kept: only a
+ * missing journal means there is nothing to recover.
+ */
+export async function recoverData(root: string): Promise<void> {
+  let journal: unknown;
+  try {
+    journal = await readJson<unknown>(journalPath(root));
+  } catch (err) {
+    throw new Error(
+      `the data journal ${journalPath(root)} can't be read (${err instanceof Error ? err.message : err}); it was kept. Fix or remove it by hand.`,
+    );
+  }
+  if (journal === undefined) return;
+  if (!validJournal(journal)) {
+    throw new Error(
+      `the data journal ${journalPath(root)} is damaged; it was kept. Fix or remove it by hand.`,
+    );
+  }
+  const paths = { home: journal.home, data: journal.data };
   if (journal.op === "rollback") {
     await finishRollback(root, paths, journal);
     return;
@@ -737,7 +813,15 @@ export async function prepareServer({
 }): Promise<"snapshot" | "unchanged" | "no-data"> {
   return await withLock(root, async () => {
     await recover(root);
-    await recoverData(root, paths);
+    await recoverData(root);
+    // The launcher chose this release before the lock: if an update or a
+    // recovered rollback changed `active` since, this process runs the
+    // wrong code for the data. Stop; the next start picks the right one.
+    if ((await readText(join(root, "active"))) !== `${line}\n`) {
+      throw new Error(
+        "CoCalc Plus changed while starting (an update or a rollback finished); start it again",
+      );
+    }
     const others = (await livePins(root)).filter(
       (pin) => pin.role === "server" && pin.pid !== process.pid,
     );
@@ -759,7 +843,7 @@ export async function prepareServer({
       release: manifest.release,
       version: manifest.version,
     };
-    const owner = (await readDataState(root))?.owner ?? null;
+    const owner = await ownerOf(root, paths);
     if (owner?.manifest === running.manifest) return "unchanged";
     if (!(await hasContent(paths.data))) {
       await setOwner(root, paths, running);
@@ -794,7 +878,7 @@ export async function plusRollback({
     root,
     async () => {
       await recover(root);
-      await recoverData(root, paths);
+      await recoverData(root);
       const servers = (await livePins(root)).filter(
         (pin) => pin.role === "server" && pin.pid !== process.pid,
       );
@@ -807,7 +891,7 @@ export async function plusRollback({
         throw new Error("CoCalc Plus is not installed here");
       }
       const active = await readActive(root);
-      const owner = (await readDataState(root))?.owner ?? null;
+      const owner = await ownerOf(root, paths);
       const snapshot = await readSnapshotInfo(paths.home);
       let target: string;
       let restore: string | null = null;
@@ -844,7 +928,14 @@ export async function plusRollback({
         release: manifest.release,
         version: manifest.version,
       };
-      const journal: DataJournal = { op: "rollback", to, line, restore };
+      const journal: DataJournal = {
+        op: "rollback",
+        home: paths.home,
+        data: paths.data,
+        to,
+        line,
+        restore,
+      };
       await writeFileAtomic(journalPath(root), JSON.stringify(journal) + "\n");
       await finishRollback(root, paths, journal, faultAt);
       log(

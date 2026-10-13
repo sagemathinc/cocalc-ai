@@ -114,6 +114,9 @@ export function parsePlusManifest(text: string): PlusReleaseManifest {
   for (const platform of Object.keys(tools) as CliPlatform[]) {
     if (app[platform] == null) fail(`tools for ${platform} have no app`);
   }
+  for (const platform of Object.keys(node.platforms) as CliPlatform[]) {
+    if (app[platform] == null) fail(`Node for ${platform} has no app`);
+  }
   if (Object.keys(app).length === 0) fail("no app platforms");
   return {
     schema: PLUS_MANIFEST_SCHEMA,

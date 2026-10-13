@@ -409,7 +409,7 @@ for (const point of [
       /injected fault/,
     );
     // Recovery (here: the next server start's) completes the rollback.
-    await withLock(f.root, () => recoverData(f.root, d.paths));
+    await withLock(f.root, () => recoverData(f.root));
     assert.equal(f.run().release, 90);
     assert.equal(d.read(), "from 90");
     assert.equal(
@@ -420,3 +420,121 @@ for (const point of [
     assert.equal(existsSync(join(f.root, "data-journal.json")), false);
   });
 }
+
+for (const point of [
+  "data-replaced",
+  "snapshot-restored",
+  "code-switched",
+] as DataFault[]) {
+  test(`a start after a rollback crash at ${point} never runs the release chosen before recovery`, async () => {
+    const f = fixture();
+    const d = dataFixture(f);
+    await f.install(f.release(110));
+    d.write("from 110");
+    await d.start();
+    await f.install(f.release(111));
+    await d.start();
+    d.write("from 111");
+    const line111 = d.activeLine();
+    await assert.rejects(
+      plusRollback({ root: f.root, paths: d.paths, faultAt: point }),
+      /injected fault/,
+    );
+    // The launcher had picked 111; recovery installs 110 under the lock, so
+    // the 111 process must not go on and open the data.
+    await assert.rejects(
+      prepareServer({ root: f.root, line: line111, paths: d.paths }),
+      /changed while starting/,
+    );
+    rmSync(join(f.root, "running", `${process.pid}`), { force: true });
+    assert.equal(f.run().release, 110);
+    assert.equal(d.read(), "from 110");
+    assert.equal(await d.start(), "unchanged");
+    assert.equal(d.read(), "from 110");
+  });
+}
+
+test("an update first finishes an interrupted rollback, and keeps what it needs", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  const r1 = f.release(120);
+  await f.install(r1);
+  d.write("from 120");
+  await d.start();
+  await f.install(f.release(121));
+  await d.start();
+  d.write("from 121");
+  await assert.rejects(
+    plusRollback({
+      root: f.root,
+      paths: d.paths,
+      faultAt: "snapshot-restored",
+    }),
+    /injected fault/,
+  );
+  await f.install(f.release(122));
+  assert.equal(existsSync(join(f.root, "data-journal.json")), false);
+  assert.ok(existsSync(join(f.root, "apps", r1.hash, ".complete")));
+  assert.equal(d.read(), "from 120");
+  assert.equal(f.run().release, 122);
+  // 122 starting snapshots 120's data, so 120 can still be rolled back to.
+  assert.equal(await d.start(), "snapshot");
+  assert.equal(
+    (await plusRollback({ root: f.root, paths: d.paths })).release,
+    120,
+  );
+  assert.equal(d.read(), "from 120");
+});
+
+test("a damaged data journal stops starts and updates and is kept", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  await f.install(f.release(130));
+  writeFileSync(join(f.root, "data-journal.json"), "{");
+  await assert.rejects(d.start(), /data journal/);
+  await assert.rejects(f.install(f.release(131)), /data journal/);
+  writeFileSync(
+    join(f.root, "data-journal.json"),
+    JSON.stringify({ op: "rollback", line: "v1 junk" }),
+  );
+  await assert.rejects(d.start(), /damaged/);
+  assert.ok(existsSync(join(f.root, "data-journal.json")));
+});
+
+test("an unreadable data path is not treated as empty", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  await f.install(f.release(140));
+  mkdirSync(d.paths.home, { recursive: true });
+  writeFileSync(d.paths.data, "not a directory");
+  await assert.rejects(d.start(), /not a directory/);
+});
+
+test("ownership does not carry over when the data moves", async () => {
+  const f = fixture();
+  const d = dataFixture(f);
+  await f.install(f.release(150));
+  d.write("from 150");
+  await d.start(); // 150 owns the data at the first path
+  await f.install(f.release(151));
+  // The same install, pointed at other data (COCALC_PLUS_HOME changed).
+  const other = {
+    home: join(f.dir, "other-home"),
+    data: join(f.dir, "other-home", "data"),
+  };
+  mkdirSync(other.data, { recursive: true });
+  writeFileSync(join(other.data, "hub.db"), "other data");
+  const line = d.activeLine();
+  assert.equal(
+    await prepareServer({ root: f.root, line, paths: other }),
+    "snapshot",
+  );
+  rmSync(join(f.root, "running", `${process.pid}`), { force: true });
+  // The other data's previous owner is unknown, so there is nothing to roll
+  // back to, and 150's code never runs on it.
+  await assert.rejects(
+    plusRollback({ root: f.root, paths: other }),
+    /no snapshot of your data/,
+  );
+  assert.equal(f.run().release, 151);
+});
