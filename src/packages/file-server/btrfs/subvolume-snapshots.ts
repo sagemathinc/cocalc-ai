@@ -97,6 +97,83 @@ function cleanupQuotaReliefBytes(): number {
   return DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES;
 }
 
+/**
+ * Run a Btrfs mutation of a subvolume's own tree, such as deleting or creating
+ * a snapshot inside it, with the subvolume's quota limit temporarily raised.
+ * Btrfs charges the metadata to the subvolume's qgroup, so at or over its limit
+ * the mutation fails with EDQUOT ("Disk quota exceeded"). Callers on the same
+ * subvolume run one at a time; the caller takes any Btrfs mutation lock inside
+ * `run`.
+ */
+export async function withSubvolumeQuotaRelief<T>({
+  subvolume,
+  operation,
+  run,
+}: {
+  subvolume: Subvolume;
+  operation: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  return await withCleanupChain(subvolume.path, async () => {
+    if (btrfsQuotasDisabled()) {
+      return await run();
+    }
+    const quota = await subvolume.quota.get();
+    if (!quota.size || quota.size <= 0) {
+      return await run();
+    }
+    const reliefSize =
+      Math.max(quota.size, quota.used) + cleanupQuotaReliefBytes();
+    const managedOverride =
+      subvolume.filesystem.opts.withTemporaryQuotaOverride?.({
+        subvolume_name: subvolume.name,
+        operation,
+        minimum_bytes: reliefSize,
+        current_size: quota.size,
+        current_used: quota.used,
+        run,
+      });
+    if (managedOverride != null) {
+      return await managedOverride;
+    }
+    let result: T;
+    let actionError: unknown;
+    logger.info("temporarily increasing quota for a snapshot change", {
+      operation,
+      subvolume: subvolume.name,
+      path: subvolume.path,
+      quotaSize: quota.size,
+      quotaUsed: quota.used,
+      reliefSize,
+    });
+    await subvolume.quota.set(reliefSize);
+    try {
+      result = await run();
+    } catch (err) {
+      actionError = err;
+    }
+    try {
+      await subvolume.quota.set(quota.size);
+    } catch (restoreError) {
+      logger.error("failed to restore quota after a snapshot change", {
+        operation,
+        subvolume: subvolume.name,
+        path: subvolume.path,
+        quotaSize: quota.size,
+        reliefSize,
+        restoreError,
+      });
+      if (actionError == null) {
+        throw restoreError;
+      }
+    }
+    if (actionError != null) {
+      throw actionError;
+    }
+    return result!;
+  });
+}
+
 export class SubvolumeSnapshots {
   public readonly snapshotsDir: string;
 
@@ -267,80 +344,16 @@ export class SubvolumeSnapshots {
     operation: string;
     run: () => Promise<T>;
   }): Promise<T> => {
-    return await withCleanupChain(this.subvolume.path, async () => {
-      return await this.withCleanupQuotaReliefUnlocked({ operation, run });
-    });
-  };
-
-  private withCleanupQuotaReliefUnlocked = async <T>({
-    operation,
-    run,
-  }: {
-    operation: string;
-    run: () => Promise<T>;
-  }): Promise<T> => {
-    const runLocked = async () =>
-      await withBtrfsMutationLock({
-        mount: this.subvolume.filesystem.opts.mount,
-        operation,
-        run,
-      });
-    if (btrfsQuotasDisabled()) {
-      return await runLocked();
-    }
-    const quota = await this.subvolume.quota.get();
-    if (!quota.size || quota.size <= 0) {
-      return await runLocked();
-    }
-    const reliefSize =
-      Math.max(quota.size, quota.used) + cleanupQuotaReliefBytes();
-    const managedOverride =
-      this.subvolume.filesystem.opts.withTemporaryQuotaOverride?.({
-        subvolume_name: this.subvolume.name,
-        operation,
-        minimum_bytes: reliefSize,
-        current_size: quota.size,
-        current_used: quota.used,
-        run: runLocked,
-      });
-    if (managedOverride != null) {
-      return await managedOverride;
-    }
-    let result: T;
-    let actionError: unknown;
-    logger.info("temporarily increasing quota for snapshot cleanup", {
+    return await withSubvolumeQuotaRelief({
+      subvolume: this.subvolume,
       operation,
-      subvolume: this.subvolume.name,
-      path: this.subvolume.path,
-      quotaSize: quota.size,
-      quotaUsed: quota.used,
-      reliefSize,
+      run: async () =>
+        await withBtrfsMutationLock({
+          mount: this.subvolume.filesystem.opts.mount,
+          operation,
+          run,
+        }),
     });
-    await this.subvolume.quota.set(reliefSize);
-    try {
-      result = await runLocked();
-    } catch (err) {
-      actionError = err;
-    }
-    try {
-      await this.subvolume.quota.set(quota.size);
-    } catch (restoreError) {
-      logger.error("failed to restore quota after snapshot cleanup", {
-        operation,
-        subvolume: this.subvolume.name,
-        path: this.subvolume.path,
-        quotaSize: quota.size,
-        reliefSize,
-        restoreError,
-      });
-      if (actionError == null) {
-        throw restoreError;
-      }
-    }
-    if (actionError != null) {
-      throw actionError;
-    }
-    return result!;
   };
 
   private setReadOnly = async (name: string, readOnly: boolean) => {
