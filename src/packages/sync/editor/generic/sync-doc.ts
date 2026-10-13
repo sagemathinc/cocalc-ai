@@ -585,36 +585,36 @@ export class SyncDoc extends EventEmitter {
 
   // A patch too large to load (e.g., a runaway notebook output saved as one
   // 500 MB patch) makes every open of this document fail with 413.  Rather
-  // than leave the user stuck, reset the history, as TimeTravel's "purge
-  // history" does -- open copies of the document see the new history epoch
-  // and close instead of writing stale state, and the persist server fences
-  // out writes from the old epoch -- but keep the old history aside, and tell
-  // the user.  The reset only happens if that patch is still there, so when
-  // several clients hit it at once only the first resets the history.  Only
-  // clients that can purge (browsers) do this, at most once per SyncDoc.
+  // than leave whoever is opening it stuck, reset the history through the
+  // document's own patch stream, keeping the old history aside: open copies
+  // of the document see the new history epoch and close instead of writing
+  // stale state, and the persist server fences out writes from the old epoch.
+  // The reset only happens if that patch is still there, so when several
+  // clients hit it at once only the first resets the history.  This only
+  // happens when a client opens the document, at most once per SyncDoc.
   private oversizedHistoryReset = false;
   private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
     const oversized_seq = (err as any)?.oversizedHistorySeq;
     if (
       typeof oversized_seq != "number" ||
       this.oversizedHistoryReset ||
-      typeof this.client.purgeHistory != "function"
+      typeof this.client.resetOversizedHistory != "function"
     ) {
       return false;
     }
     this.oversizedHistoryReset = true;
-    let result: { history_epoch: number; reset?: boolean };
+    let result: { history_epoch: number; reset: boolean };
     try {
-      result = await this.client.purgeHistory({
+      result = await this.client.resetOversizedHistory({
         project_id: this.project_id,
         path: this.syncPath,
         oversized_seq,
       });
-    } catch (purgeErr) {
+    } catch (resetErr) {
       // e.g., no permission or no connection: keep retrying the open, and
       // try the reset again next time
       this.oversizedHistoryReset = false;
-      this.dbg("resetOversizedHistory")(`failed -- ${purgeErr}`);
+      this.dbg("resetOversizedHistory")(`failed -- ${resetErr}`);
       return false;
     }
     // Open with the epoch now in effect -- from our reset, or from whoever
