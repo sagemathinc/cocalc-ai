@@ -581,6 +581,31 @@ describe("document history across bays", () => {
   });
 });
 
+describe("project moves across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, asks to move it or place it on a host. Both are routed to the
+  // project's bay. This cluster's workspace runtime supports neither, so the
+  // answer is that refusal: this checks the routed call comes back with the
+  // method's own error, not a routing or permission failure.
+  for (const [name, args, capability] of [
+    ["projects.moveProject", {}, "move"],
+    [
+      "projects.assignProjectHost",
+      { dest_host_id: randomUUID() },
+      "host placement",
+    ],
+  ]) {
+    it(`${name} reaches the method`, async () => {
+      await assert.rejects(
+        alice.client.call(name, { project_id: bob.project, ...args }),
+        new RegExp(
+          `${capability} is unsupported by the trusted workspace runtime`,
+        ),
+      );
+    });
+  }
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course
