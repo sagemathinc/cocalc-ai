@@ -673,7 +673,8 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     .command("export")
     .description("the notes this project sees as one Markdown document")
     .option("--namespace <namespace>", "only this namespace (or global)")
-    .option("--output <file>", "write the Markdown to this file")
+    // Not --output: that is the global output format option.
+    .option("--out <path>", "write the Markdown to this file")
     .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
       const result: any = await sendIdentityMessage(
@@ -684,11 +685,11 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
         },
         globals.api,
       );
-      if (opts.output) {
-        await writeFile(opts.output, result.markdown, { mode: 0o600 });
+      if (opts.out) {
+        await writeFile(opts.out, result.markdown, { mode: 0o600 });
         emitSuccess({ globals }, "project chat memory export", {
           notes: result.notes,
-          path: opts.output,
+          path: opts.out,
         });
       } else emitSuccess({ globals }, "project chat memory export", result);
     });

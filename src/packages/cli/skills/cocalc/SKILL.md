@@ -448,7 +448,7 @@ cocalc project chat memory write <name> --description "<one line>" --stdin
 cocalc project chat memory move <name> <namespace|global>
 cocalc project chat memory delete <name>
 cocalc project chat memory namespaces
-cocalc project chat memory export [--output notes.md]
+cocalc project chat memory export [--out notes.md]
 ```
 
 - Name notes `name`, `namespace/name` or `global/name`. An existing note is
