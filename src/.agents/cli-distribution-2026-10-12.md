@@ -114,7 +114,10 @@ TUF roles with an offline threshold root, the offline runtime role and its cerem
 ### Later, in any phase
 
 - **Windows:** its own native launcher (see below). Until then it keeps the signed SEA.
-- **Per-site bundles:** deferred until site and role binding is designed [R6].
+- **Per-site bundles:**
+  - In Phase A they are simply how it works: each site serves the CLI from its own build, modified or not, and its users trust that site.
+  - Phase B signs only the releases we publish. A site serving its own build keeps origin trust for the clients that installed from it.
+  - What stays deferred is *signed* per-site channels in Phase C, until site and role binding is designed [R6].
 
 ## Threat model (Phase C)
 
@@ -386,14 +389,15 @@ Developers should use it on development machines (or a separate OS user), never 
 3. **Version enforcement:** the hub's minimum-version check, plus the client message.
 4. **Computers:** the release record and `cocalc computer update` with the offline role.
 5. **Windows:** the native launcher, then retire the SEA everywhere.
-6. *(Deferred)* per-site bundles, once site and role binding is designed.
+6. *(Deferred)* signed per-site channels, once site and role binding is designed. Unsigned per-site bundles are Phase A.
 
 ## Open questions (for William)
 
-For Phase A (the one to build now):
-- **Node version:** Node 24 LTS or 26? Projects run 26 today.
+Decided (William, Oct 13):
+- **Node 26.** It has `node:sqlite` without the experimental warning (checked on 26.11.1), which the CLI needs, and projects already run 26.
+- **The default update source is the site you installed from**, not software.cocalc.ai. Self-hosted sites can build and serve their own modified CLI, and developers can test their builds without publishing rights anywhere.
 
-For later phases:
+Still open, for later phases:
 
 - **Root key holders (Phase C):** who holds the 2-of-3 offline root keys (e.g. YubiKeys)?
 - **The independent rebuilder for stable [S1] (Phase C):** whose machine, and is it worth the operational cost?
