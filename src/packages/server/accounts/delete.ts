@@ -12,9 +12,20 @@ import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
 } from "@cocalc/server/purchases/billing-authority/client";
+import { queueOAuthClientPurges } from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
-export default async function deleteAccount(account_id: string): Promise<void> {
+export interface DeleteAccountOptions {
+  // OAuth clients (e.g. Sagebrush) to ask to purge the account's data, from
+  // those the account approved. Undefined means all of them; the user's own
+  // deletion dialog can opt out.
+  purge_client_ids?: string[];
+}
+
+export default async function deleteAccount(
+  account_id: string,
+  opts: DeleteAccountOptions = {},
+): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw Error(`invalid account_id=${account_id}`);
   }
@@ -52,7 +63,7 @@ export default async function deleteAccount(account_id: string): Promise<void> {
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.
-  await markAccountDeleted(account_id);
+  await markAccountDeleted(account_id, opts);
   await deleteClusterAccountDirectoryEntry(account_id);
 }
 
@@ -70,7 +81,10 @@ TODO: Obviously, at some point we should permanently delete all PII from
 any deleted accounts, e.g., delete the email_address_before_delete field.
 */
 
-export async function markAccountDeleted(account_id: string): Promise<void> {
+export async function markAccountDeleted(
+  account_id: string,
+  { purge_client_ids }: DeleteAccountOptions = {},
+): Promise<void> {
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT email_address FROM accounts WHERE account_id=$1",
@@ -88,6 +102,13 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
         "UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL WHERE account_id=$2::UUID",
         [email_address_before_delete, account_id],
       );
+      // In the same transaction, so a deleted account always has its purge
+      // requests queued, and a failed deletion queues none.
+      await queueOAuthClientPurges({
+        db,
+        account_id,
+        client_ids: purge_client_ids,
+      });
     },
   });
 }

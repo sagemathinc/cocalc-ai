@@ -67,6 +67,7 @@ import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-
 import { startProjectApiKeyRevocationMaintenance } from "@cocalc/server/api/project-membership-maintenance";
 import { startApiKeyActionMaintenance } from "@cocalc/server/api/key-action-maintenance";
 import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
+import { startOAuthClientPurgeMaintenance } from "@cocalc/server/auth/oauth/purge";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
 import { startGrowthAnalyticsMaintenance } from "@cocalc/server/growth-analytics/maintenance";
 import { startFrontendAssetHealthMaintenance } from "@cocalc/server/monitoring/frontend-assets";
@@ -180,6 +181,9 @@ export function startConatApiBackgroundWorkers(): void {
   startAccountNotificationIndexProjectionMaintenance();
   startProjectFeedRemoteMaintenance();
   startNotificationEmailOutboxMaintenance();
+  if (isPrimaryBayWorker()) {
+    startOAuthClientPurgeMaintenance();
+  }
   startMembershipSideEffectsMaintenance();
   startSiteLicenseAffiliationReleaseMaintenance();
   startGlobalConfigMirrorRepairMaintenance();

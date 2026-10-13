@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Space, theme } from "antd";
+import { Button, Checkbox, Input, Modal, Space, theme } from "antd";
+import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import {
@@ -11,17 +12,29 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, Icon } from "@cocalc/frontend/components";
 
 interface Props {
-  confirm: () => void;
+  // purge_client_ids: the sites (e.g. Sagebrush) whose data to also delete;
+  // undefined means all of them.
+  confirm: (purge_client_ids?: string[]) => void;
   requiredText: string;
+}
+
+// A site the account signed in to with CoCalc, whose data can be deleted too.
+interface OAuthClientApproval {
+  client_id: string;
+  name: string;
 }
 
 interface ConfirmationProps {
   confirmationText: string;
   requiredText: string;
   setConfirmationText: (value: string) => void;
+  clients: OAuthClientApproval[];
+  keep: Set<string>;
+  setKeep: (keep: Set<string>) => void;
 }
 
 // Conscious choice to make them type their full name before confirming.
@@ -29,6 +42,9 @@ function DeleteAccountConfirmation({
   confirmationText,
   requiredText,
   setConfirmationText,
+  clients,
+  keep,
+  setKeep,
 }: ConfirmationProps) {
   const account_deletion_error = useTypedRedux(
     "account",
@@ -65,6 +81,27 @@ function DeleteAccountConfirmation({
           setConfirmationText((e.target as any).value);
         }}
       />
+      {clients.map(({ client_id, name }) => (
+        <Checkbox
+          key={client_id}
+          checked={!keep.has(client_id)}
+          onChange={(e) => {
+            const next = new Set(keep);
+            if (e.target.checked) {
+              next.delete(client_id);
+            } else {
+              next.add(client_id);
+            }
+            setKeep(next);
+          }}
+        >
+          <FormattedMessage
+            id="account.delete-account.purge-client"
+            defaultMessage="Also delete my {name} shared files"
+            values={{ name }}
+          />
+        </Checkbox>
+      ))}
       {render_error()}
     </Space>
   );
@@ -87,7 +124,30 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
   const { token } = theme.useToken();
   const [open, setOpen] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
+  // undefined until loaded; the purge then covers every client.
+  const [clients, setClients] = useState<OAuthClientApproval[] | undefined>();
+  // Clients whose data the user chose to keep.
+  const [keep, setKeep] = useState<Set<string>>(new Set());
   const canDeleteAccount = confirmationText === requiredText;
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setClients(undefined);
+    setKeep(new Set());
+    void (async () => {
+      try {
+        const result = await api("/accounts/oauth-client-approvals");
+        if (!cancelled) setClients(result?.clients ?? []);
+      } catch {
+        // Without the list the dialog shows no options and deletion purges
+        // every client's data, which is the default anyway.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   function close() {
     setOpen(false);
@@ -129,7 +189,11 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
             if (!canDeleteAccount) {
               return;
             }
-            confirm();
+            confirm(
+              clients
+                ?.map(({ client_id }) => client_id)
+                .filter((client_id) => !keep.has(client_id)),
+            );
           }}
           open
           styles={{
@@ -144,6 +208,9 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
             confirmationText={confirmationText}
             requiredText={requiredText}
             setConfirmationText={setConfirmationText}
+            clients={clients ?? []}
+            keep={keep}
+            setKeep={setKeep}
           />
         </Modal>
       ) : undefined}

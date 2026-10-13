@@ -356,6 +356,11 @@ export type SiteSettingsExtrasKeys =
   | "github_connector_app_url"
   | "cloudflare_connector_client_id"
   | "cloudflare_connector_client_secret"
+  | "sagebrush_heading"
+  | "sagebrush_client_secret"
+  | "sagebrush_redirect_uris"
+  | "sagebrush_purge_url"
+  | "sagebrush_purge_secret"
   | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
@@ -423,6 +428,19 @@ function connectorSetting(name: string, extra: Partial<Config> = {}): Config {
     tags: ["AI"],
     group: "AI & Agents",
     subgroup: "Agent Connectors",
+    ...extra,
+  };
+}
+
+function sagebrushSetting(name: string, extra: Partial<Config> = {}): Config {
+  return {
+    name,
+    desc: "",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["SSO"],
+    group: "Access & Identity",
+    subgroup: "Sagebrush",
     ...extra,
   };
 }
@@ -1016,6 +1034,27 @@ export const EXTRAS: SettingsExtras = {
     "Cloudflare OAuth Client Secret",
     { password: true },
   ),
+  sagebrush_heading: sagebrushSetting("Sagebrush", {
+    desc: "Sign in to sagebrush.space with CoCalc, its upload limits and purging its data when an account is deleted. See docs/sagebrush.md.",
+    type: "header",
+  }),
+  sagebrush_client_secret: sagebrushSetting("Sagebrush Client Secret", {
+    desc: "Shared with the Sagebrush Worker for the token exchange and the limits API. Blank turns off sign-in with CoCalc for Sagebrush.",
+    password: true,
+  }),
+  sagebrush_redirect_uris: sagebrushSetting("Sagebrush Redirect URIs", {
+    desc: "Redirect URIs the Sagebrush client may use, one per line, matched exactly.",
+    default: "https://sagebrush.space/auth/callback",
+    multiline: 3,
+  }),
+  sagebrush_purge_url: sagebrushSetting("Sagebrush Purge URL", {
+    desc: "Endpoint that deletes a deleted account's Sagebrush data. Blank turns off purge requests.",
+    default: "https://sagebrush.space/api/admin/purge",
+  }),
+  sagebrush_purge_secret: sagebrushSetting("Sagebrush Purge Key", {
+    desc: "HMAC-SHA256 key shared with the Sagebrush Worker for signing purge requests. Blank turns off purge requests.",
+    password: true,
+  }),
   openai_section: {
     name: "OpenAI / Codex Configuration",
     desc: "",

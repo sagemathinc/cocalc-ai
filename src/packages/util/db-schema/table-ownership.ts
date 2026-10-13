@@ -460,6 +460,37 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(["oauth_authorization_codes"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id: "Approving account, not account-home state.",
+    },
+    notes:
+      "One-time OAuth authorization codes, valid for 60 seconds, stored on the bay that served the authorize page, which is also the bay the client's token request reaches. Losing rows only makes the user sign in again.",
+    rebuild: "No rebuild: the client starts a new sign-in.",
+  }),
+
+  ...entries(["oauth_client_approvals"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Which OAuth clients an account has approved, recorded by the home bay when it issues the approval proof. Account deletion reads it on the home bay to offer and queue client data purges.",
+  }),
+
+  ...entries(["oauth_client_purge_requests"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id: "Deleted account whose client data must be purged.",
+    },
+    notes:
+      "Durable outbox of purge requests to OAuth clients, queued by account deletion on the account's home bay and delivered by that bay's worker until the client accepts them. The account is already deleted, so rows never move.",
+  }),
+
   ...entries(["agent_rpc_admission_state"], {
     ownership: "ephemeral",
     authority: "local",
