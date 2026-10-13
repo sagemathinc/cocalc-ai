@@ -4,7 +4,6 @@ Delete the account that the user is currently signed in using.
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import deleteAccount from "@cocalc/server/accounts/delete";
-import getParams from "@cocalc/http-api/lib/api/get-params";
 import isPost from "@cocalc/http-api/lib/api/is-post";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
@@ -33,9 +32,7 @@ async function handle(req, res) {
         account_id,
         action: "delete the account",
       });
-      await deleteAccount(account_id, {
-        keep_client_ids: keepClientIds(getParams(req).keep_client_ids),
-      });
+      await deleteAccount(account_id);
       await clearAuthCookies({ req, res });
       res.json(SuccessStatus);
     } else {
@@ -44,15 +41,6 @@ async function handle(req, res) {
   } catch (err) {
     res.json({ error: err.message });
   }
-}
-
-// The OAuth clients (e.g. Sagebrush) whose data the user chose to keep.
-function keepClientIds(value: unknown): string[] | undefined {
-  if (value == null) return undefined;
-  if (!Array.isArray(value) || value.some((id) => typeof id !== "string")) {
-    throw Error("keep_client_ids must be an array of client ids");
-  }
-  return value;
 }
 
 export default apiRoute({

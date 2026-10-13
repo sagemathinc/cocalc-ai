@@ -119,21 +119,12 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   // deletes the account and then locally tears down this signed-in session.
-  // keep_client_ids: the OAuth clients (e.g. Sagebrush) whose data the user
-  // chose to keep; every other one is asked to delete the account's data.
-  public async delete_account(
-    opts: { keep_client_ids?: string[] } = {},
-  ): Promise<void> {
+  public async delete_account(): Promise<void> {
     try {
       this.setState({ account_deletion_error: undefined });
       // actually request to delete the account
       // this should return {status: "success"}
-      await api(
-        "/accounts/delete",
-        opts.keep_client_ids?.length
-          ? { keep_client_ids: opts.keep_client_ids }
-          : undefined,
-      );
+      await api("/accounts/delete");
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {
         throw err;

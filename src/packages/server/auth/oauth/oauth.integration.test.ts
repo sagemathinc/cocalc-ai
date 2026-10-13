@@ -455,22 +455,19 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       return account_id;
     }
 
-    it("queues one request per enabled client, approved here or not, unless kept", async () => {
+    it("queues one request per target, whether or not this bay knows the account used it", async () => {
       const a = await approvedAccount();
-      const b = await approvedAccount();
       // No approval on this bay, e.g. it was recorded before a rehome.
       const c = await insertAccount();
-      const queue = (account_id: string, keep_client_ids?: string[]) =>
+      const queue = (account_id: string) =>
         queueOAuthClientPurges({
           db: getPool(),
           account_id,
           client_ids: ["sagebrush"],
-          keep_client_ids,
         });
       expect(await queue(a)).toEqual(["sagebrush"]);
       // A retried deletion queues nothing new.
       expect(await queue(a)).toEqual([]);
-      expect(await queue(b, ["sagebrush"])).toEqual([]);
       expect(await queue(c)).toEqual(["sagebrush"]);
     });
 

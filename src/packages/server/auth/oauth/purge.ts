@@ -134,24 +134,22 @@ export async function recordOAuthPurgeObligationsOnSeed({
 }
 
 /** Queue purge requests for a deleted account. Call it with the transaction
- * that marks the account deleted. Every enabled client gets one, whether or
- * not this bay knows the account approved it (an approval recorded before a
- * rehome stays on the old home bay), except those in `keep_client_ids`, whose
- * data the user chose to keep. The client answers 202 for an account it has
- * no data for. Clients that already have a request for this account are
- * skipped. */
+ * that marks the account deleted, and with getOAuthPurgeTargets(). Every
+ * target gets one, whether or not this bay knows the account used it (an
+ * approval recorded before a rehome stays on the old home bay); share links
+ * are deleted with the account, with no opt-out. The client answers 202 for
+ * an account it has no data for. Clients that already have a request for this
+ * account are skipped. */
 export async function queueOAuthClientPurges({
   db,
   account_id,
   client_ids,
-  keep_client_ids = [],
 }: {
   db: Queryable;
   account_id: string;
   client_ids: string[];
-  keep_client_ids?: string[];
 }): Promise<string[]> {
-  const ids = client_ids.filter((id) => !keep_client_ids.includes(id));
+  const ids = [...new Set(client_ids)];
   if (ids.length === 0) return [];
   const { rows } = await db.query<{ client_id: string }>(
     `INSERT INTO oauth_client_purge_requests(

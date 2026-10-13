@@ -207,8 +207,8 @@ type LocalAccountRow = {
   home_bay_id?: string | null;
 };
 
-// Approvals only decide whether the account deletion dialog offers to keep
-// the client's data; deletion purges every enabled client either way.
+// Approvals only decide whether the account deletion dialog mentions the
+// client; deletion purges every purge target either way.
 export async function recordOAuthClientApproval({
   db,
   account_id,

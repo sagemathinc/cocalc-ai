@@ -180,17 +180,18 @@ tier.
 
 ## 3. Deletion
 
-Every deleted CoCalc account is purged on Sagebrush, whether or not CoCalc knows
-it signed in there (an approval recorded before an account moved bays stays on
-the old bay), unless the user chose to keep their files. The Worker answers a
-normal 202 for an account it has no data for.
+Every deleted CoCalc account is purged on Sagebrush, however it is deleted (by
+the user, an admin, or an expired temporary account), and whether or not CoCalc
+knows it signed in there (an approval recorded before an account moved bays
+stays on the old bay). Share links belong to the account, so there is no
+opt-out. The Worker answers a normal 202 for an account it has no data for.
 
-The deletion dialog shows **Also delete my Sagebrush shared files**, checked by
-default, if the account's home bay has a record of a Sagebrush sign-in.
-Unchecking it is the only way to keep the files: CoCalc then sends nothing,
-their Sagebrush data belongs to an account id that can never sign in again, and
-`limits` answers 404. Accounts deleted by other means (an admin, or an expired
-temporary account) are always purged.
+If the account's home bay has a record of a Sagebrush sign-in, the deletion
+dialog says "Your files shared on Sagebrush are deleted too."
+
+Published versions (a planned Sagebrush feature: citable, indexed, under a
+license) will be kept when an account is deleted, with their own removal
+process. They are not part of this purge.
 
 ### The request
 
@@ -276,5 +277,5 @@ account's home bay sends the queued requests:
 - `src/packages/server/auth/oauth/purge.ts`: the purge queue, its signing and
   its worker.
 - The deletion dialog lists the approved clients through
-  `/api/v2/accounts/oauth-client-approvals`, and `/api/v2/accounts/delete`
-  takes `keep_client_ids`, the clients whose data the user chose to keep.
+  `/api/v2/accounts/oauth-client-approvals`, to say their shared files are
+  deleted too.

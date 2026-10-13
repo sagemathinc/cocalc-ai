@@ -216,29 +216,8 @@ describe("browser-session-only account security routes", () => {
       account_id: "acct-1",
       action: "delete the account",
     });
-    expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1", {
-      keep_client_ids: undefined,
-    });
+    expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1");
     expect(mockClearAuthCookies).toHaveBeenCalledWith({ req, res });
-  });
-
-  it("passes the sites whose data the user keeps to account deletion", async () => {
-    mockGetParams.mockReturnValue({ keep_client_ids: ["sagebrush"] });
-    const { req, res } = createMocks({ method: "POST" });
-    const { default: handler } = await import("./accounts/delete");
-    await handler(req, res);
-    expect(mockDeleteAccount).toHaveBeenCalledWith("acct-1", {
-      keep_client_ids: ["sagebrush"],
-    });
-
-    mockDeleteAccount.mockClear();
-    mockGetParams.mockReturnValue({ keep_client_ids: "sagebrush" });
-    const bad = createMocks({ method: "POST" });
-    await handler(bad.req, bad.res);
-    expect(bad.res._getJSONData()).toEqual({
-      error: "keep_client_ids must be an array of client ids",
-    });
-    expect(mockDeleteAccount).not.toHaveBeenCalled();
   });
 
   it("rejects API-key-only SSO unlinking", async () => {

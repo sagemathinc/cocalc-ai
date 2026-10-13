@@ -18,17 +18,7 @@ import {
 } from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
-export interface DeleteAccountOptions {
-  // OAuth clients (e.g. Sagebrush) whose data the user chose to keep in the
-  // deletion dialog. Every other enabled client is asked to purge the
-  // account's data.
-  keep_client_ids?: string[];
-}
-
-export default async function deleteAccount(
-  account_id: string,
-  opts: DeleteAccountOptions = {},
-): Promise<void> {
+export default async function deleteAccount(account_id: string): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw Error(`invalid account_id=${account_id}`);
   }
@@ -66,7 +56,7 @@ export default async function deleteAccount(
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.
-  await markAccountDeleted(account_id, opts);
+  await markAccountDeleted(account_id);
   await deleteClusterAccountDirectoryEntry(account_id);
 }
 
@@ -84,10 +74,7 @@ TODO: Obviously, at some point we should permanently delete all PII from
 any deleted accounts, e.g., delete the email_address_before_delete field.
 */
 
-export async function markAccountDeleted(
-  account_id: string,
-  { keep_client_ids }: DeleteAccountOptions = {},
-): Promise<void> {
+export async function markAccountDeleted(account_id: string): Promise<void> {
   const client_ids = await getOAuthPurgeTargets();
   const pool = getPool();
   const { rows } = await pool.query(
@@ -108,12 +95,7 @@ export async function markAccountDeleted(
       );
       // In the same transaction, so a deleted account always has its purge
       // requests queued, and a failed deletion queues none.
-      await queueOAuthClientPurges({
-        db,
-        account_id,
-        client_ids,
-        keep_client_ids,
-      });
+      await queueOAuthClientPurges({ db, account_id, client_ids });
     },
   });
 }

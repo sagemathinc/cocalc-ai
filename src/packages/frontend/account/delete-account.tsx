@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Input, Modal, Space, theme } from "antd";
+import { Button, Input, Modal, Space, theme } from "antd";
 import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -16,25 +16,16 @@ import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, Icon } from "@cocalc/frontend/components";
 
 interface Props {
-  // keep_client_ids: the sites (e.g. Sagebrush) whose data the user chose
-  // to keep; the others are asked to delete it.
-  confirm: (keep_client_ids: string[]) => void;
+  confirm: () => void;
   requiredText: string;
-}
-
-// A site the account signed in to with CoCalc, whose data can be deleted too.
-interface OAuthClientApproval {
-  client_id: string;
-  name: string;
 }
 
 interface ConfirmationProps {
   confirmationText: string;
   requiredText: string;
   setConfirmationText: (value: string) => void;
-  clients: OAuthClientApproval[];
-  keep: Set<string>;
-  setKeep: (keep: Set<string>) => void;
+  // Sites (e.g. Sagebrush) this account signed in to with CoCalc.
+  clientNames: string[];
 }
 
 // Conscious choice to make them type their full name before confirming.
@@ -42,9 +33,7 @@ function DeleteAccountConfirmation({
   confirmationText,
   requiredText,
   setConfirmationText,
-  clients,
-  keep,
-  setKeep,
+  clientNames,
 }: ConfirmationProps) {
   const account_deletion_error = useTypedRedux(
     "account",
@@ -65,6 +54,14 @@ function DeleteAccountConfirmation({
         defaultMessage={`You will immediately lose access to all of your projects,
             any subscriptions will be canceled, and all unspent credit will be lost.`}
       />
+      {clientNames.map((name) => (
+        <FormattedMessage
+          key={name}
+          id="account.delete-account.client-data"
+          defaultMessage="Your files shared on {name} are deleted too."
+          values={{ name }}
+        />
+      ))}
       <FormattedMessage
         id="account.delete-account.alert.enter-name"
         defaultMessage={`To delete your account enter "{required_text}" below:`}
@@ -81,27 +78,6 @@ function DeleteAccountConfirmation({
           setConfirmationText((e.target as any).value);
         }}
       />
-      {clients.map(({ client_id, name }) => (
-        <Checkbox
-          key={client_id}
-          checked={!keep.has(client_id)}
-          onChange={(e) => {
-            const next = new Set(keep);
-            if (e.target.checked) {
-              next.delete(client_id);
-            } else {
-              next.add(client_id);
-            }
-            setKeep(next);
-          }}
-        >
-          <FormattedMessage
-            id="account.delete-account.purge-client"
-            defaultMessage="Also delete my {name} shared files"
-            values={{ name }}
-          />
-        </Checkbox>
-      ))}
       {render_error()}
     </Space>
   );
@@ -124,25 +100,23 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
   const { token } = theme.useToken();
   const [open, setOpen] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
-  // The sites this account signed in to, which the user may choose to keep
-  // data on. Until loaded (or if loading fails) there is no choice, and every
-  // site is asked to delete the data.
-  const [clients, setClients] = useState<OAuthClientApproval[] | undefined>();
-  // Clients whose data the user chose to keep.
-  const [keep, setKeep] = useState<Set<string>>(new Set());
+  const [clientNames, setClientNames] = useState<string[]>([]);
   const canDeleteAccount = confirmationText === requiredText;
 
+  // Sites this account signed in to with CoCalc, whose shared files are
+  // deleted with the account.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setClients(undefined);
-    setKeep(new Set());
+    setClientNames([]);
     void (async () => {
       try {
         const result = await api("/accounts/oauth-client-approvals");
-        if (!cancelled) setClients(result?.clients ?? []);
+        if (!cancelled) {
+          setClientNames((result?.clients ?? []).map(({ name }) => name));
+        }
       } catch {
-        // Without the list the dialog offers no choice; see above.
+        // Only the sentence is missing; the deletion is the same.
       }
     })();
     return () => {
@@ -190,7 +164,7 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
             if (!canDeleteAccount) {
               return;
             }
-            confirm([...keep]);
+            confirm();
           }}
           open
           styles={{
@@ -205,9 +179,7 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
             confirmationText={confirmationText}
             requiredText={requiredText}
             setConfirmationText={setConfirmationText}
-            clients={clients ?? []}
-            keep={keep}
-            setKeep={setKeep}
+            clientNames={clientNames}
           />
         </Modal>
       ) : undefined}

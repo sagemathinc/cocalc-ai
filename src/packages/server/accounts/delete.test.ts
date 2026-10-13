@@ -173,19 +173,11 @@ describe("delete account", () => {
       await fn(db);
     });
     const { default: deleteAccount } = await import("./delete");
-    await deleteAccount(ACCOUNT_ID, { keep_client_ids: ["sagebrush"] });
+    await deleteAccount(ACCOUNT_ID);
     expect(queueOAuthClientPurgesMock).toHaveBeenCalledWith({
       db,
       account_id: ACCOUNT_ID,
       client_ids: ["sagebrush"],
-      keep_client_ids: ["sagebrush"],
-    });
-    await deleteAccount(ACCOUNT_ID);
-    expect(queueOAuthClientPurgesMock).toHaveBeenLastCalledWith({
-      db,
-      account_id: ACCOUNT_ID,
-      client_ids: ["sagebrush"],
-      keep_client_ids: undefined,
     });
   });
 
