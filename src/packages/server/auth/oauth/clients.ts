@@ -53,8 +53,11 @@ export const OAUTH_CLIENTS: Readonly<Record<string, OAuthClientDefinition>> = {
   },
 };
 
-/** Redirect URIs from a setting: whitespace or comma separated absolute http(s)
- * URLs without a fragment or credentials. Anything else is dropped. */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Redirect URIs from a setting: whitespace or comma separated absolute URLs
+ * without a fragment or credentials, https except for a loopback host (local
+ * development). Anything else is dropped. */
 export function parseRedirectUris(value: unknown): string[] {
   return `${value ?? ""}`
     .split(/[\s,]+/)
@@ -64,7 +67,8 @@ export function parseRedirectUris(value: unknown): string[] {
       try {
         const url = new URL(uri);
         return (
-          (url.protocol === "https:" || url.protocol === "http:") &&
+          (url.protocol === "https:" ||
+            (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))) &&
           !url.hash &&
           !url.username &&
           !url.password

@@ -27,6 +27,11 @@ jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: jest.fn(),
 }));
+const mockIsAllowedBrowserOrigin = jest.fn();
+jest.mock("@cocalc/server/bay-public-origin", () => ({
+  isAllowedBrowserOrigin: (...args: any[]) =>
+    mockIsAllowedBrowserOrigin(...args),
+}));
 jest.mock("@cocalc/server/auth/impersonation", () => ({
   assertNoImpersonationForSubjectSecurityAction: jest.fn(),
 }));
@@ -150,6 +155,52 @@ describe("GET /api/v2/sagebrush/limits", () => {
     expect(
       (await get({ account_id: ACCOUNT }, BASIC, "POST"))._getStatusCode(),
     ).toBe(405);
+  });
+});
+
+describe("POST /api/v2/auth/oauth/approval-token", () => {
+  async function post(headers: Record<string, string>) {
+    const { req, res } = createMocks({ method: "POST", headers, body: {} });
+    const { default: handler } = await import("./auth/oauth/approval-token");
+    await handler(req, res);
+    return res._getJSONData();
+  }
+
+  it("refuses a cross-site form post before looking at the session", async () => {
+    mockIsAllowedBrowserOrigin.mockResolvedValue(true);
+    expect(
+      await post({
+        "content-type": "application/x-www-form-urlencoded",
+        origin: "https://lite4b.cocalc.ai",
+      }),
+    ).toEqual({ error: "a JSON browser request is required" });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+  });
+
+  it("refuses an Origin outside this site and its bays", async () => {
+    mockIsAllowedBrowserOrigin.mockResolvedValue(false);
+    expect(
+      await post({
+        "content-type": "application/json",
+        origin: "https://evil.test",
+      }),
+    ).toEqual({ error: "browser request from this site required" });
+    expect(mockIsAllowedBrowserOrigin.mock.calls[0][0]).toBe(
+      "https://evil.test",
+    );
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+  });
+
+  it("accepts a JSON request from a bay of this site", async () => {
+    mockIsAllowedBrowserOrigin.mockResolvedValue(true);
+    mockGetAccountId.mockResolvedValue(undefined);
+    expect(
+      await post({
+        "content-type": "application/json",
+        origin: "https://bay-1-lite4b.cocalc.ai",
+      }),
+    ).toEqual({ error: "must be signed in" });
+    expect(mockGetAccountId).toHaveBeenCalled();
   });
 });
 

@@ -34,7 +34,8 @@ purge key or purge URL turns off deletion requests.
 ## 1. Sign in with CoCalc
 
 The client id is `sagebrush`. Its redirect URIs are the site setting
-`sagebrush_redirect_uris` (one per line), compared by exact string match:
+`sagebrush_redirect_uris` (one per line), compared by exact string match. They must be https, except
+`http` for a loopback host (`localhost`, `127.0.0.1`, `[::1]`):
 
 - production: `https://sagebrush.space/auth/callback`
 - dev server: also `https://dev.sagebrush.space/auth/callback` and

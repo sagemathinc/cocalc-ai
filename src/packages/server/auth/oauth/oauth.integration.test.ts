@@ -21,10 +21,13 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
-const mockDirectory = new Map<string, any>();
+// The real single-bay directory lookup, so deleted and banned accounts behave
+// as in production.
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: async (account_id: string) =>
-    mockDirectory.get(account_id) ?? null,
+    await jest
+      .requireActual("@cocalc/server/accounts/cluster-directory")
+      .getClusterAccountByIdDirect(account_id),
 }));
 const mockAlert = jest.fn();
 jest.mock("@cocalc/server/messages/admin-alert", () => ({
@@ -83,14 +86,6 @@ async function insertAccount({
       banned,
     ],
   );
-  mockDirectory.set(account_id, {
-    account_id,
-    email_address,
-    home_bay_id: "bay-0",
-    first_name: "Ada",
-    last_name: "Lovelace",
-    banned,
-  });
   return account_id;
 }
 
@@ -166,7 +161,7 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
     });
     expect(result).toEqual({
       account_id,
-      email: mockDirectory.get(account_id).email_address,
+      email: `${account_id.slice(0, 8)}@example.com`,
       email_verified: true,
       name: "Ada Lovelace",
     });
@@ -271,14 +266,36 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
     const account_id = await insertAccount();
     const { verifier, challenge } = pkce();
     const { code } = await authorize(account_id, challenge);
-    mockDirectory.set(account_id, {
-      ...mockDirectory.get(account_id),
-      email_address: "new@example.com",
-    });
+    await getPool().query(
+      "UPDATE accounts SET email_address = 'new@example.com' WHERE account_id = $1",
+      [account_id],
+    );
     await expectTokenError(
       exchange({ code, redirect_uri: REDIRECT, code_verifier: verifier }),
       "invalid_grant",
     );
+  });
+
+  it("refuses the token when the account was deleted or banned after approval", async () => {
+    for (const change of [
+      // Only the deleted flag, so the directory lookup itself must refuse.
+      "deleted = TRUE",
+      // What account deletion really does.
+      "deleted = TRUE, email_address = NULL",
+      "banned = TRUE",
+    ]) {
+      const account_id = await insertAccount();
+      const { verifier, challenge } = pkce();
+      const { code } = await authorize(account_id, challenge);
+      await getPool().query(
+        `UPDATE accounts SET ${change} WHERE account_id = $1`,
+        [account_id],
+      );
+      await expectTokenError(
+        exchange({ code, redirect_uri: REDIRECT, code_verifier: verifier }),
+        "invalid_grant",
+      );
+    }
   });
 
   it("never issues a code for an unverified email address or a banned account", async () => {

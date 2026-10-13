@@ -72,12 +72,24 @@ describe("OAuth client registry", () => {
     }
   });
 
-  it("drops redirect URIs that are not plain http(s) URLs", () => {
+  it("drops redirect URIs that are not plain https URLs", () => {
     expect(
       parseRedirectUris(
         "javascript:alert(1) https://a.test/cb#frag https://u:p@a.test/cb /relative https://ok.test/cb",
       ),
     ).toEqual(["https://ok.test/cb"]);
+  });
+
+  it("allows http only for a loopback host", () => {
+    expect(
+      parseRedirectUris(
+        "http://localhost:8787/cb http://127.0.0.1:8787/cb http://[::1]:8787/cb http://sagebrush.space/cb http://localhost.evil.test/cb",
+      ),
+    ).toEqual([
+      "http://localhost:8787/cb",
+      "http://127.0.0.1:8787/cb",
+      "http://[::1]:8787/cb",
+    ]);
   });
 
   it("parses Basic credentials, form-decoding the id and secret", () => {

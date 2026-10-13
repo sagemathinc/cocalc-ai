@@ -153,7 +153,11 @@ export function authorizeRequestInfo(
   };
 }
 
-/** Binds an approval proof to one authorize request. */
+/** Binds an approval proof to one authorize request. `state` is deliberately
+ * not part of it: it is opaque to CoCalc and only round-tripped, and the client
+ * checks it against its own session (CSRF protection is the client's side of
+ * the contract). PKCE's code challenge is what binds the code to the client's
+ * request. */
 export function authorizeRequestBinding(request: AuthorizeRequest): string {
   return createHash("sha256")
     .update(

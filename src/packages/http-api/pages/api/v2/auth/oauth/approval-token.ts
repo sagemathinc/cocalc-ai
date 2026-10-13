@@ -10,6 +10,7 @@ short-lived proof bound to this request. See server/auth/oauth/authorize.ts.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import assertClusterOriginMutation from "@cocalc/http-api/lib/api/assert-cluster-origin-mutation";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import isPost from "@cocalc/http-api/lib/api/is-post";
 import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
@@ -28,6 +29,9 @@ export default async function oauthApprovalToken(req, res) {
     if (req.header("Authorization")) {
       throw Error("API keys are not allowed to approve OAuth sign-ins");
     }
+    // The authorize page may be served by another bay, so this is a
+    // cross-origin call within the site; it also records the approval.
+    await assertClusterOriginMutation(req);
     const account_id = await getAccountId(req);
     if (!account_id || !getRememberMeHash(req)) {
       throw Error("must be signed in");
