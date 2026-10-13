@@ -20,7 +20,11 @@ jest.mock("./util", () => ({
   btrfs: (opts: any) => btrfsMock(opts),
 }));
 
-import { SubvolumeSnapshots } from "./subvolume-snapshots";
+import {
+  QuotaReliefUnavailableError,
+  SubvolumeSnapshots,
+  withSubvolumeQuotaRelief,
+} from "./subvolume-snapshots";
 
 function createSubvolume() {
   return {
@@ -35,6 +39,7 @@ function createSubvolume() {
       exists: jest.fn(async (value: string) => value === SNAPSHOTS),
       mkdir: jest.fn(async () => undefined),
       chmod: jest.fn(async () => undefined),
+      stat: jest.fn(async () => ({ mode: 0o40700 })),
       readdir: jest.fn(async () => []),
     },
     quota: {
@@ -55,6 +60,7 @@ function createSubvolumeWithSnapshots(snapshotNames: string[]) {
       exists: jest.fn(async (value: string) => existing.has(value)),
       mkdir: jest.fn(async () => undefined),
       chmod: jest.fn(async () => undefined),
+      stat: jest.fn(async () => ({ mode: 0o40700 })),
       readdir: jest.fn(async () => snapshotNames),
     },
   };
@@ -247,19 +253,32 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
 
   // On prod, scheduled snapshots of projects at their quota failed with
   // "Disk quota exceeded" on every attempt (68 in a row for one project).
-  it("retries a snapshot that hits the quota once with the quota raised", async () => {
-    btrfsMock.mockRejectedValueOnce(
-      new Error(
-        "ERROR: cannot snapshot '/mnt/test/project-1': Disk quota exceeded",
-      ),
+  const quotaError = (path = "/mnt/test/project-1/.snapshots/snap1") =>
+    new Error(
+      `command 'sudo' (args=-n /usr/local/sbin/cocalc-runtime-storage btrfs subvolume snapshot -r /mnt/test/project-1 ${path}) exited with nonzero code 1 -- stderr='ERROR: cannot snapshot '/mnt/test/project-1': Disk quota exceeded\n'`,
     );
+  const relief = (subvolume: any) =>
+    jest.fn(
+      async <T>(run: () => Promise<T>) =>
+        await withSubvolumeQuotaRelief({
+          subvolume,
+          operation: "test",
+          run,
+          reliefBytes: 7,
+        }),
+    );
+
+  it("retries a snapshot at the quota once inside the caller's quota relief", async () => {
+    btrfsMock.mockRejectedValueOnce(quotaError());
     const subvolume = createSubvolume() as any;
+    const quotaRelief = relief(subvolume);
     const snapshots = new SubvolumeSnapshots(subvolume);
 
-    await snapshots.create("snap1");
+    await snapshots.create("snap1", { quotaRelief });
 
+    expect(quotaRelief).toHaveBeenCalledTimes(1);
     expect(btrfsMock).toHaveBeenCalledTimes(2);
-    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
+    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 107);
     expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
     const raiseOrder = subvolume.quota.set.mock.invocationCallOrder[0];
     const retryOrder = btrfsMock.mock.invocationCallOrder[1];
@@ -268,37 +287,79 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     expect(retryOrder).toBeLessThan(restoreOrder);
   });
 
-  it("does not retry or touch the quota for other snapshot errors", async () => {
-    btrfsMock.mockRejectedValueOnce(new Error("Permission denied"));
+  it("never raises the quota without a quota relief from the caller", async () => {
+    btrfsMock.mockRejectedValueOnce(quotaError());
     const subvolume = createSubvolume() as any;
     const snapshots = new SubvolumeSnapshots(subvolume);
 
     await expect(snapshots.create("snap1")).rejects.toThrow(
-      "Permission denied",
+      "Disk quota exceeded",
     );
     expect(btrfsMock).toHaveBeenCalledTimes(1);
-    expect(subvolume.quota.get).not.toHaveBeenCalled();
     expect(subvolume.quota.set).not.toHaveBeenCalled();
   });
 
-  it("creates the snapshots directory with the quota raised when needed", async () => {
+  it("reports the quota error when the caller cannot give relief now", async () => {
+    btrfsMock.mockRejectedValueOnce(quotaError());
+    const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
+    const quotaRelief = jest.fn(async () => {
+      throw new QuotaReliefUnavailableError("project is running");
+    });
+
+    await expect(
+      snapshots.create("snap1", { quotaRelief: quotaRelief as any }),
+    ).rejects.toThrow("Disk quota exceeded");
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["another error", new Error("Permission denied")],
+    [
+      "a snapshot name that mentions the quota",
+      new Error(
+        "command 'sudo' (args=-n btrfs subvolume snapshot -r /mnt/test/project-1 /mnt/test/project-1/.snapshots/edquot-disk-quota-exceeded) exited with nonzero code 1 -- stderr='ERROR: target path already exists'",
+      ),
+    ],
+  ])("does not retry or touch the quota for %s", async (_label, error) => {
+    btrfsMock.mockRejectedValueOnce(error);
     const subvolume = createSubvolume() as any;
-    subvolume.fs.exists = jest.fn(async () => false);
-    subvolume.fs.mkdir = jest
+    const quotaRelief = relief(subvolume);
+    const snapshots = new SubvolumeSnapshots(subvolume);
+
+    await expect(snapshots.create("snap1", { quotaRelief })).rejects.toThrow(
+      error.message,
+    );
+    expect(quotaRelief).not.toHaveBeenCalled();
+    expect(btrfsMock).toHaveBeenCalledTimes(1);
+    expect(subvolume.quota.get).not.toHaveBeenCalled();
+  });
+
+  it("creates and restricts the snapshots directory with relief when needed", async () => {
+    const subvolume = createSubvolume() as any;
+    const quotaRelief = relief(subvolume);
+    let created = false;
+    subvolume.fs.exists = jest.fn(async () => created);
+    subvolume.fs.mkdir = jest.fn(async () => {
+      created = true;
+    });
+    subvolume.fs.stat = jest.fn(async () => ({ mode: 0o40755 }));
+    // mkdir succeeded, then restricting it hit the quota.
+    subvolume.fs.chmod = jest
       .fn()
       .mockRejectedValueOnce(
-        Object.assign(new Error("EDQUOT: disk quota exceeded, mkdir"), {
+        Object.assign(new Error("EDQUOT: disk quota exceeded, chmod"), {
           code: "EDQUOT",
         }),
       )
       .mockResolvedValue(undefined);
     const snapshots = new SubvolumeSnapshots(subvolume);
 
-    await snapshots.create("snap1");
+    await snapshots.create("snap1", { quotaRelief });
 
-    expect(subvolume.fs.mkdir).toHaveBeenCalledTimes(2);
-    expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 150);
-    expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
+    expect(subvolume.fs.mkdir).toHaveBeenCalledTimes(1);
+    expect(subvolume.fs.chmod).toHaveBeenCalledTimes(2);
+    expect(subvolume.fs.chmod).toHaveBeenLastCalledWith(".snapshots", "0700");
+    expect(quotaRelief).toHaveBeenCalledTimes(1);
     expect(btrfsMock).toHaveBeenCalledTimes(1);
   });
 

@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
+import {
+  resetProjectWriteFenceForTesting,
+  withProjectWriteFence,
+} from "./project-write-fence";
 import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constants";
 
 describe("file-server sandbox policy", () => {
@@ -204,5 +208,44 @@ describe("file-server sandbox policy", () => {
     ).rejects.toThrow(
       "Snapshots are read-only. Delete the snapshot '2026-04-28T19:27:16.282Z' instead of files inside it",
     );
+  });
+
+  // A project's quota may be raised for a moment (see project-write-fence);
+  // file API writes must not use that room.
+  it("holds writes, but not reads, while the project is fenced", async () => {
+    const base = await mkTempDir("cocalc-fs-fence-");
+    const home = join(base, "home");
+    await mkdir(home, { recursive: true });
+    const fs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs: join(base, "rootfs-missing"),
+      scratch: join(base, "scratch-missing"),
+    });
+    await fs.writeFile("before.txt", "before");
+    let open!: () => void;
+    const fence = withProjectWriteFence(
+      project_id,
+      async () => await new Promise<void>((resolve) => (open = resolve)),
+    );
+    try {
+      const write = fs.writeFile("during.txt", "during");
+      const stream = fs.createWriteStream("stream.txt");
+      expect(await fs.readFile("before.txt", "utf8")).toBe("before");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await expect(
+        readFile(join(home, "during.txt"), "utf8"),
+      ).rejects.toThrow();
+      open();
+      await fence;
+      await write;
+      (await stream).end("streamed");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await readFile(join(home, "during.txt"), "utf8")).toBe("during");
+      expect(await readFile(join(home, "stream.txt"), "utf8")).toBe("streamed");
+    } finally {
+      open?.();
+      resetProjectWriteFenceForTesting();
+    }
   });
 });

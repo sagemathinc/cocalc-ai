@@ -97,6 +97,29 @@ function cleanupQuotaReliefBytes(): number {
   return DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES;
 }
 
+// Only the failure itself: the error code, or the stderr of a btrfs command
+// (whose error message also lists its arguments, e.g. a snapshot name).
+function isQuotaExceededError(err: unknown): boolean {
+  if ((err as { code?: unknown })?.code === "EDQUOT") return true;
+  const message = `${(err as { message?: unknown })?.message ?? err}`;
+  const stderrAt = message.lastIndexOf(" -- stderr='");
+  if (stderrAt < 0) return false;
+  return message.slice(stderrAt).toLowerCase().includes("disk quota exceeded");
+}
+
+/**
+ * Thrown by a quota relief callback that cannot safely raise the quota now
+ * (e.g. the project is running); the original quota error is reported.
+ */
+export class QuotaReliefUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "QuotaReliefUnavailableError";
+  }
+}
+
+export type QuotaRelief = <T>(run: () => Promise<T>) => Promise<T>;
+
 /**
  * Run a Btrfs mutation of a subvolume's own tree, such as deleting or creating
  * a snapshot inside it, with the subvolume's quota limit temporarily raised.
@@ -105,20 +128,16 @@ function cleanupQuotaReliefBytes(): number {
  * subvolume run one at a time; the caller takes any Btrfs mutation lock inside
  * `run`.
  */
-function isQuotaExceededError(err: unknown): boolean {
-  const message =
-    `${(err as { message?: unknown })?.message ?? err}`.toLowerCase();
-  return message.includes("disk quota exceeded") || message.includes("edquot");
-}
-
 export async function withSubvolumeQuotaRelief<T>({
   subvolume,
   operation,
   run,
+  reliefBytes = cleanupQuotaReliefBytes(),
 }: {
   subvolume: Subvolume;
   operation: string;
   run: () => Promise<T>;
+  reliefBytes?: number;
 }): Promise<T> {
   return await withCleanupChain(subvolume.path, async () => {
     if (btrfsQuotasDisabled()) {
@@ -128,8 +147,7 @@ export async function withSubvolumeQuotaRelief<T>({
     if (!quota.size || quota.size <= 0) {
       return await run();
     }
-    const reliefSize =
-      Math.max(quota.size, quota.used) + cleanupQuotaReliefBytes();
+    const reliefSize = Math.max(quota.size, quota.used) + reliefBytes;
     const managedOverride =
       subvolume.filesystem.opts.withTemporaryQuotaOverride?.({
         subvolume_name: subvolume.name,
@@ -201,10 +219,16 @@ export class SubvolumeSnapshots {
     join(SNAPSHOTS, `.${assertValidSnapshotName(name)}.lock`);
 
   private makeSnapshotsDir = async () => {
-    if (await this.subvolume.fs.exists(SNAPSHOTS)) {
+    if (!(await this.subvolume.fs.exists(SNAPSHOTS))) {
+      await this.subvolume.fs.mkdir(SNAPSHOTS);
+    } else if (
+      ((await this.subvolume.fs.stat(SNAPSHOTS)).mode & 0o777) ===
+      0o700
+    ) {
       return;
     }
-    await this.subvolume.fs.mkdir(SNAPSHOTS);
+    // Also for an existing directory: an earlier attempt may have created it
+    // and then failed to restrict it.
     await this.subvolume.fs.chmod(SNAPSHOTS, "0700");
   };
 
@@ -214,19 +238,20 @@ export class SubvolumeSnapshots {
       limit,
       quotaMode = "sync",
       existingSnapshotNames,
+      quotaRelief,
     }: {
       limit?: number;
       quotaMode?: "sync" | "async" | "skip";
       existingSnapshotNames?: string[];
+      // How to retry once if the subvolume is at its quota. Without it a
+      // quota failure is final: only the caller knows when relief is safe.
+      quotaRelief?: QuotaRelief;
     } = {},
   ) => {
     name ??= new Date().toISOString();
     name = assertValidSnapshotName(name);
     logger.debug("create", { name, subvolume: this.subvolume.name });
-    await this.retryWithQuotaRelief(
-      "snapshot-dir-create",
-      this.makeSnapshotsDir,
-    );
+    await this.retryWithQuotaRelief(this.makeSnapshotsDir, quotaRelief);
 
     if (limit != null) {
       const existing = (existingSnapshotNames ?? (await this.readdir())).filter(
@@ -247,7 +272,6 @@ export class SubvolumeSnapshots {
     args.push(this.subvolume.path, snapshotPath);
 
     await this.retryWithQuotaRelief(
-      "snapshot-create",
       async () =>
         await withBtrfsMutationLock({
           mount: this.subvolume.filesystem.opts.mount,
@@ -258,6 +282,7 @@ export class SubvolumeSnapshots {
             invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
           },
         }),
+      quotaRelief,
     );
 
     if (quotaMode === "skip") {
@@ -352,28 +377,29 @@ export class SubvolumeSnapshots {
 
   // Creating a snapshot (or the .snapshots directory) adds entries to the
   // subvolume's own tree, which Btrfs charges to its qgroup, so a project at
-  // or over its quota gets EDQUOT and loses its scheduled snapshots. Retry
-  // such a failure once with the quota raised, as snapshot cleanup does; the
-  // common case pays nothing extra. Snapshot creation is atomic, so a failed
-  // attempt leaves nothing behind.
+  // or over its quota gets EDQUOT. Given a quotaRelief, retry such a failure
+  // once inside it; the common case pays nothing extra. Snapshot creation is
+  // atomic, so a failed attempt leaves nothing behind.
   private retryWithQuotaRelief = async <T>(
-    operation: string,
     run: () => Promise<T>,
+    quotaRelief?: QuotaRelief,
   ): Promise<T> => {
     try {
       return await run();
     } catch (err) {
-      if (!isQuotaExceededError(err)) throw err;
-      logger.info("retrying with temporary quota relief", {
-        operation,
-        subvolume: this.subvolume.name,
-        err: `${err}`,
-      });
-      return await withSubvolumeQuotaRelief({
-        subvolume: this.subvolume,
-        operation,
-        run,
-      });
+      if (quotaRelief == null || !isQuotaExceededError(err)) throw err;
+      try {
+        return await quotaRelief(run);
+      } catch (reliefErr) {
+        if (reliefErr instanceof QuotaReliefUnavailableError) {
+          logger.debug("snapshot quota relief unavailable", {
+            subvolume: this.subvolume.name,
+            reason: reliefErr.message,
+          });
+          throw err;
+        }
+        throw reliefErr;
+      }
     }
   };
 

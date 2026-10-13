@@ -181,6 +181,7 @@ import {
 } from "../sqlite/volume-quotas";
 import { getRecordedProjectVolumeIdentity } from "../sqlite/project-volumes";
 import { effectiveProjectVolumeQuotaBytes } from "../sqlite/volume-quota-overrides";
+import { withProjectWriteLease } from "../project-write-fence";
 
 const logger = getLogger("project-host:hub:projects");
 const CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS = 45_000;
@@ -2024,7 +2025,16 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return project_id;
   }
 
-  async function start({
+  // Starting a project writes into it (restores, pending copies, the
+  // runtime itself): see project-write-fence.
+  async function start(opts: Parameters<typeof startUnfenced>[0]) {
+    return await withProjectWriteLease(
+      opts.project_id,
+      async () => await startUnfenced(opts),
+    );
+  }
+
+  async function startUnfenced({
     project_id,
     authorized_keys,
     run_quota,

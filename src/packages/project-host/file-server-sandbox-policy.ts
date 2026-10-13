@@ -1,4 +1,5 @@
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { acquireProjectWriteLease } from "./project-write-fence";
 import {
   getSnapshotPathTarget,
   type SnapshotPathTarget,
@@ -113,5 +114,58 @@ export function createProjectSandboxFilesystem({
     }
     await baseRmdir(inputPath, options);
   };
+  holdWriteLeases(fs, project_id);
   return fs;
+}
+
+// Every method that can change files in the project. Each call holds a write
+// lease (see project-write-fence) until it settles, and a write stream until
+// it closes.
+const WRITE_METHODS = [
+  "appendFile",
+  "chmod",
+  "copyFile",
+  "cp",
+  "link",
+  "mkdir",
+  "move",
+  "ouch",
+  "rename",
+  "rm",
+  "rmdir",
+  "symlink",
+  "truncate",
+  "unlink",
+  "utimes",
+  "writeFile",
+  "writeFileDelta",
+] as const;
+
+function holdWriteLeases(fs: SandboxedFilesystem, project_id: string): void {
+  for (const method of WRITE_METHODS) {
+    const original = (fs as any)[method];
+    if (typeof original !== "function") continue;
+    const bound = original.bind(fs);
+    (fs as any)[method] = async (...args: any[]) => {
+      const release = await acquireProjectWriteLease(project_id);
+      try {
+        return await bound(...args);
+      } finally {
+        release();
+      }
+    };
+  }
+  const createWriteStream = fs.createWriteStream.bind(fs);
+  fs.createWriteStream = async (path: string) => {
+    const release = await acquireProjectWriteLease(project_id);
+    try {
+      const stream = await createWriteStream(path);
+      stream.once("close", release);
+      stream.once("error", release);
+      return stream;
+    } catch (err) {
+      release();
+      throw err;
+    }
+  };
 }

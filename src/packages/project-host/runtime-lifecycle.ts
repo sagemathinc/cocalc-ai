@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { withProjectWriteLease } from "./project-write-fence";
 import { getProject, upsertProject } from "./sqlite/projects";
 
 const lifecycleTails = new Map<string, Promise<void>>();
@@ -61,7 +62,8 @@ export async function withProjectRuntimeLifecycle<T>({
       });
       lifecycleRevisions.set(project_id, requested);
     }
-    return await fn();
+    // Starting (or creating) a project writes into it: see project-write-fence.
+    return await withProjectWriteLease(project_id, fn);
   } finally {
     release();
     if (lifecycleTails.get(project_id) === tail) {

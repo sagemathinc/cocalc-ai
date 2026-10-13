@@ -138,6 +138,8 @@ import {
   type OversizedFilesReport,
 } from "@cocalc/util/consts/backups";
 import { getProject } from "./sqlite/projects";
+import { acquireProjectWriteLease } from "./project-write-fence";
+import { stoppedProjectSnapshotQuotaRelief } from "./snapshot-quota-relief";
 import {
   acceptProjectVolumeQuotaDesired,
   bootstrapProjectVolumeQuotaLedger,
@@ -3093,6 +3095,28 @@ async function updateSnapshots({
   await vol.snapshots.update(counts, { limit, quotaMode });
 }
 
+// Every project this call writes into holds a write lease (see
+// project-write-fence) until it returns.
+function withProjectWriteLeases<A extends any[], R>(
+  projectIds: (...args: A) => Array<string | undefined>,
+  fn: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  return async (...args: A) => {
+    const ids = [
+      ...new Set(projectIds(...args).filter((id): id is string => !!id)),
+    ].sort();
+    const releases: Array<() => void> = [];
+    try {
+      for (const id of ids) {
+        releases.push(await acquireProjectWriteLease(id));
+      }
+      return await fn(...args);
+    } finally {
+      for (const release of releases) release();
+    }
+  };
+}
+
 export async function runScheduledSnapshotMaintenance({
   project_id,
   counts,
@@ -3130,6 +3154,7 @@ export async function runScheduledSnapshotMaintenance({
       const update = await vol.snapshots.update(counts, {
         limit,
         quotaMode: "async",
+        quotaRelief: stoppedProjectSnapshotQuotaRelief(project_id, vol),
         onStage: (stage: string, durationMs: number) => {
           stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
         },
@@ -5608,32 +5633,48 @@ export async function initFileServer({
     getUsage: reuseInFlight(getUsage),
     getQuota: reuseInFlight(getQuota),
     setQuota,
-    cp,
+    cp: withProjectWriteLeases(({ dest }) => [dest?.project_id], cp),
     getCopyCapabilities: async () => ({ exact_replace: true }),
     flushJupyterNotebooksToDisk: reuseInFlight((opts) =>
       flushJupyterNotebooksToDisk({ client, ...opts }),
     ),
     createPathCopyArchive: reuseInFlight(createPathCopyArchive),
-    applyPathCopyArchive: reuseInFlight(applyPathCopyArchive),
+    applyPathCopyArchive: reuseInFlight(
+      withProjectWriteLeases(
+        ({ dests }) => (dests ?? []).map((dest) => dest?.project_id),
+        applyPathCopyArchive,
+      ),
+    ),
     // backups
     createBackup: reuseInFlight(createBackup),
     getOversizedFiles,
     backupProjectToExternalRepository: reuseInFlight(
       backupProjectToExternalRepository,
     ),
-    restoreBackup: reuseInFlight(restoreBackup),
+    restoreBackup: reuseInFlight(
+      withProjectWriteLeases(({ project_id }) => [project_id], restoreBackup),
+    ),
     restoreProjectArchive: reuseInFlight(
-      legacyProjectArchiveHandlers.restoreProjectArchive,
+      withProjectWriteLeases(
+        ({ project_id }) => [project_id],
+        legacyProjectArchiveHandlers.restoreProjectArchive,
+      ),
     ),
     prepareLegacyProjectArchiveRemediation: reuseInFlight(
       legacyProjectArchiveHandlers.prepareLegacyProjectArchiveRemediation,
     ),
     applyLegacyProjectArchiveRemediation: reuseInFlight(
-      legacyProjectArchiveHandlers.applyLegacyProjectArchiveRemediation,
+      withProjectWriteLeases(
+        ({ project_id }) => [project_id],
+        legacyProjectArchiveHandlers.applyLegacyProjectArchiveRemediation,
+      ),
     ),
     beginRestoreStaging,
     ensureRestoreStaging,
-    finalizeRestoreStaging,
+    finalizeRestoreStaging: withProjectWriteLeases(
+      ({ handle }) => [handle?.project_id],
+      finalizeRestoreStaging,
+    ),
     releaseRestoreStaging,
     cleanupRestoreStaging,
     deleteBackup: reuseInFlight(deleteBackup),
@@ -5650,7 +5691,9 @@ export async function initFileServer({
     updateSnapshots,
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
-    restoreSnapshot: reuseInFlight(restoreSnapshot),
+    restoreSnapshot: reuseInFlight(
+      withProjectWriteLeases(({ project_id }) => [project_id], restoreSnapshot),
+    ),
     publishRootfsImage: reuseInFlight(publishRootfsImage),
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
