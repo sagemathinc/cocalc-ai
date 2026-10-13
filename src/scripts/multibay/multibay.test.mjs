@@ -596,6 +596,7 @@ describe("project moves across bays", () => {
     ],
   ]) {
     it(`${name} reaches the method`, async () => {
+      assert.ok(bob.project, "needs bob's project");
       await assert.rejects(
         alice.client.call(name, { project_id: bob.project, ...args }),
         new RegExp(
