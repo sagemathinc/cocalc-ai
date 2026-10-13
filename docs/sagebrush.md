@@ -41,6 +41,19 @@ configured Sagebrush sends no purge requests. To decommission Sagebrush, clear
 `sagebrush_purge_obligation` (one setting for the whole site), after Sagebrush
 confirms it holds no data of this site's accounts.
 
+### Decommissioning Sagebrush
+
+Clearing `sagebrush_purge_obligation` ends CoCalc's purges of Sagebrush data, so
+do it last, in this order:
+
+1. Stop Sagebrush from accepting uploads and end its sessions.
+2. Blank `sagebrush_client_secret`, so no new sign-ins start.
+3. Wait at least 10 minutes, so outstanding approval proofs (5 minutes) and
+   codes (60 seconds) expire on every bay.
+4. Confirm with Sagebrush that it holds no data of this site's accounts.
+5. Clear `sagebrush_purge_obligation`. Removing the Sagebrush entry from the
+   client registry in the code is only safe after this.
+
 ## 1. Sign in with CoCalc
 
 The client id is `sagebrush`. Its redirect URIs are the site setting
