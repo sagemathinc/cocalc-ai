@@ -2074,7 +2074,7 @@ describe("recoverDetachedWorkerStartupState", () => {
   it("resumes a harness turn in its session after worker loss", async () => {
     const request = {
       ...makeRequest(),
-      runtime: { version: 1, kind: "acp", profile: {} },
+      runtime: { version: 1, kind: "acp", profile: { id: "claude-code" } },
     };
     const job = enqueueAcpJob(request as any);
     claimNextQueuedAcpJobForThread({
@@ -2131,6 +2131,12 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(resumed.session_id).toBe("session-1");
     expect(resumed.prompt).toContain(
       "inspect what already completed and avoid duplicating side effects",
+    );
+    const notice = rows.find(
+      (row) => row.message_id === resumed.chat?.parent_message_id,
+    );
+    expect(JSON.stringify(notice)).toContain(
+      "CoCalc is automatically resuming this Claude session",
     );
   });
 
