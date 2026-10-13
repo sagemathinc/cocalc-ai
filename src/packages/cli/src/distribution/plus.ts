@@ -50,6 +50,7 @@ import {
   join,
   normalize,
   relative,
+  sep,
 } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createZstdDecompress } from "node:zlib";
@@ -640,9 +641,14 @@ export async function canonicalData(
  * The data directory and every path derived from it (the snapshot, its
  * temporary and old copies, the replaced data) must stay clear of the
  * CoCalc Plus install, in both directions: recovery renames and removes
- * them. Checked for every data path, including one read from a journal.
+ * them. Checked for every data path, including one read from a journal
+ * (with a snapshot journal's own temporary directory, `tempId`).
  */
-async function checkDataPaths(root: string, data: string): Promise<void> {
+async function checkDataPaths(
+  root: string,
+  data: string,
+  tempId?: string,
+): Promise<void> {
   if (data === "/" || !isAbsolute(data)) {
     throw new Error(`unusable data directory: ${data}`);
   }
@@ -652,6 +658,7 @@ async function checkDataPaths(root: string, data: string): Promise<void> {
     snapshotDir(data),
     snapshotOld(data),
     replacedDir(data),
+    ...(tempId == null ? [] : [snapshotTemp(data, tempId)]),
   ];
   for (const path of derived) {
     if (inside(path, install) || inside(install, path)) {
@@ -660,10 +667,16 @@ async function checkDataPaths(root: string, data: string): Promise<void> {
       );
     }
   }
-  // The temporary snapshots are ${data}.snapshot.tmp-<id>.
+  // Reserve the whole ${data}.* namespace (the temporary snapshots are
+  // ${data}.snapshot.tmp-<id>): the install may not be, or be below, any
+  // sibling of the data whose name starts with it.
+  const rel = relative(dirname(data), install);
+  const first = rel.split(sep)[0];
   if (
-    dirname(install) === dirname(data) &&
-    basename(install).startsWith(`${basename(data)}.`)
+    rel !== "" &&
+    !rel.startsWith("..") &&
+    !isAbsolute(rel) &&
+    first.startsWith(`${basename(data)}.`)
   ) {
     throw new Error(
       `the CoCalc Plus install ${install} sits among the data directory's own copies (${data}.*)`,
@@ -959,7 +972,11 @@ export async function recoverData(root: string): Promise<void> {
     );
   }
   try {
-    await checkDataPaths(root, journal.data);
+    await checkDataPaths(
+      root,
+      journal.data,
+      journal.op === "snapshot" ? journal.id : undefined,
+    );
   } catch (err) {
     throw new Error(
       `the data journal ${journalPath(root)} names unsafe paths (${err instanceof Error ? err.message : err}); it was kept. Fix or remove it by hand.`,

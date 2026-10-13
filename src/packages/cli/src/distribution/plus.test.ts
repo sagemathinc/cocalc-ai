@@ -813,6 +813,10 @@ test("the install may not sit among the data's derived paths", async () => {
     "data.replaced",
     "data.snapshot.old",
     "data.snapshot.tmp-0123456789abcdef",
+    // Nested below them too, e.g. inside a temporary snapshot's directory.
+    "data.snapshot.tmp-0123456789abcdef/install",
+    "data.snapshot/nested/install",
+    "data.anything/install",
   ]) {
     const f = fixture(rootName);
     const r = f.release(230);
@@ -826,24 +830,46 @@ test("the install may not sit among the data's derived paths", async () => {
     );
     // Nor may a journal name such data: recovery refuses before acting.
     const release = { manifest: r.hash, release: 230, version: "1.0.230" };
-    writeFileSync(
-      join(f.root, "data-journal.json"),
-      JSON.stringify({
+    const journals = [
+      {
         op: "rollback",
         data: paths.data,
         to: release,
         line,
         restore: "0123456789abcdef",
-      }),
-    );
-    await assert.rejects(
-      withLock(f.root, () => recoverData(f.root)),
-      /unsafe paths/,
-      rootName,
-    );
-    assert.ok(existsSync(join(f.root, "data-journal.json")));
-    assert.ok(existsSync(join(f.root, "active")));
+      },
+      // Its recovery removes ${data}.snapshot.tmp-<id>.
+      {
+        op: "snapshot",
+        data: paths.data,
+        id: "0123456789abcdef",
+        from: null,
+        to: release,
+      },
+    ];
+    for (const journal of journals) {
+      writeFileSync(join(f.root, "data-journal.json"), JSON.stringify(journal));
+      await assert.rejects(
+        withLock(f.root, () => recoverData(f.root)),
+        /unsafe paths/,
+        `${rootName} ${journal.op}`,
+      );
+      assert.ok(existsSync(join(f.root, "data-journal.json")));
+      assert.ok(existsSync(join(f.root, "active")));
+    }
   }
+  // A sibling that merely shares a prefix without the dot is fine.
+  const f = fixture("database/install");
+  await f.install(f.release(231));
+  const line = readFileSync(join(f.root, "active"), "utf8").trimEnd();
+  assert.equal(
+    await prepareServer({
+      root: f.root,
+      line,
+      paths: { home: f.dir, data: join(f.dir, "data") },
+    }),
+    "no-data",
+  );
 });
 
 /*

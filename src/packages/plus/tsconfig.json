@@ -19,5 +19,5 @@
     "**/*.test.ts",
     "jest.config.js"
   ],
-  "references": [{ "path": "../lite" }]
+  "references": [{ "path": "../lite" }, { "path": "../cli" }]
 }
