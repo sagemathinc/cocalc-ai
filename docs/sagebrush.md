@@ -31,7 +31,10 @@ A blank client secret turns off sign-in: the authorize page refuses the client
 and the token and limits endpoints answer `401 invalid_client`. It does not
 turn off purges. The first time the site has either secret set, the seed records
 a purge obligation in the site setting `sagebrush_purge_obligation`, which every
-bay receives, including bays added later. While it is set, every deleted account
+bay receives, including bays added later. Sign-in approvals are refused until the
+obligation is recorded, so no account can store data before it exists. Account
+deletion reads the obligation from the seed, and fails rather than skip the
+purge if the seed cannot answer. While it is set, every deleted account
 gets a purge request, even if both secrets are later blanked; requests wait, and
 admins are alerted, while the purge URL or key is missing. A site that never
 configured Sagebrush sends no purge requests. To decommission Sagebrush, clear

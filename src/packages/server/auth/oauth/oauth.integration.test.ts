@@ -21,6 +21,10 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  getConfiguredClusterSeedBayId: () => "bay-0",
+}));
 // The real single-bay directory lookup, so deleted and banned accounts behave
 // as in production.
 // A test can make the directory stale, as it is for a while after a remote
@@ -160,6 +164,7 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       sagebrush_redirect_uris: REDIRECT,
       sagebrush_purge_url: "https://sagebrush.test/api/admin/purge",
       sagebrush_purge_secret: "purge-key",
+      sagebrush_purge_obligation: "2026-10-13T00:00:00.000Z",
     };
     mockAlert.mockReset();
     mockStaleDirectory.clear();
@@ -363,6 +368,22 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       exchange({ code, redirect_uri: REDIRECT, code_verifier: verifier }),
       "invalid_grant",
     );
+  });
+
+  it("refuses approval until the client's purge obligation is recorded", async () => {
+    const account_id = await insertAccount();
+    const request = await validateAuthorizeRequest(
+      authorizeParams(pkce().challenge),
+    );
+    mockSettings.sagebrush_purge_obligation = "";
+    await expect(
+      issueAuthorizeApprovalProof({ account_id, request }),
+    ).rejects.toMatchObject({ code: "not_ready" });
+    expect(await listOAuthClientApprovals(account_id)).toEqual([]);
+    // So no account can store data with a client whose deletions would not
+    // be purged: once the seed records the obligation, approval works.
+    mockSettings.sagebrush_purge_obligation = "2026-10-13T00:00:00.000Z";
+    await issueAuthorizeApprovalProof({ account_id, request });
   });
 
   it("never issues a code for an unverified email address or a banned account", async () => {
@@ -580,9 +601,30 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       expect(await getOAuthPurgeTargets()).toEqual([]);
     });
 
+    it("takes the obligation from the seed when this bay's mirror missed it", async () => {
+      mockSettings = {};
+      expect(
+        await getOAuthPurgeTargets({
+          seedObligations: async (names) => {
+            expect(names).toEqual(["sagebrush_purge_obligation"]);
+            return new Set(["sagebrush_purge_obligation"]);
+          },
+        }),
+      ).toEqual(["sagebrush"]);
+      // If the seed cannot answer, deletion fails instead of skipping purges.
+      await expect(
+        getOAuthPurgeTargets({
+          seedObligations: async () => {
+            throw new Error("seed unreachable");
+          },
+        }),
+      ).rejects.toThrow("seed unreachable");
+    });
+
     it("keeps purging after both secrets are blanked, on any bay, until a decommission", async () => {
       // The seed's purge worker records the obligation as a site setting,
       // which every bay (including one added later) receives.
+      mockSettings.sagebrush_purge_obligation = "";
       const setSiteSettings = jest.fn(async (updates: any[]) => {
         for (const { name, value } of updates) mockSettings[name] = value;
       });

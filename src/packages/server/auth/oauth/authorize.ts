@@ -32,6 +32,7 @@ import { getOAuthAccountState, isCurrentEmailVerified } from "./account-state";
 import {
   authenticateOAuthClient,
   getOAuthClient,
+  getOAuthPurgeClientState,
   isRegisteredRedirectUri,
   type OAuthClient,
 } from "./clients";
@@ -248,6 +249,20 @@ export async function issueAuthorizeApprovalProof({
   account_id: string;
   request: AuthorizeRequest;
 }): Promise<{ token: string; home_bay_id: string; expires_at: number }> {
+  // No approval, and so no data stored with the client, before the client's
+  // purge obligation is recorded; the seed records it within about a minute
+  // of the client being configured.
+  const state = (await getOAuthPurgeClientState()).find(
+    ({ client_id }) => client_id === request.client.client_id,
+  );
+  if (!state?.obligated) {
+    throw Object.assign(
+      new Error(
+        `${request.client.name} sign-in is still being set up; try again in a minute`,
+      ),
+      { code: "not_ready" },
+    );
+  }
   // The account check and the approval record share one transaction under
   // the rehome fence, which also asserts this is the account's home bay.
   const row = await withAccountRehomeWriteFence({

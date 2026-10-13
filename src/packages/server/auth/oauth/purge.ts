@@ -64,14 +64,42 @@ export function signAdminRequest({
   return `sha256=${createHmac("sha256", secret).update(message, "utf8").digest("hex")}`;
 }
 
+/** The obligation settings that are set on the seed, which is authoritative
+ * for site settings. A bay's mirror of them can lag or miss an update, so
+ * account deletion asks the seed. Throws if the seed cannot answer, so the
+ * deletion fails rather than skipping a purge. */
+async function getSeedObligations(names: string[]): Promise<Set<string>> {
+  const seed = getConfiguredClusterSeedBayId();
+  if (names.length === 0 || getConfiguredBayId() === seed) return new Set();
+  const { getInterBayBridge } = await import("@cocalc/server/inter-bay/bridge");
+  const result = await getInterBayBridge()
+    .bayOps(seed, { timeout_ms: 15_000 })
+    .getSiteSettings({ names, source_bay_id: getConfiguredBayId() });
+  return new Set(
+    result.settings
+      .filter(({ value }) => `${value ?? ""}`.trim() !== "")
+      .map(({ name }) => name),
+  );
+}
+
 /** The clients every deleted account's data must be purged from: those
- * configured now and those whose purge obligation is recorded, even if both
- * their secrets have since been blanked. A site that never configured a
- * client has neither, and sends it nothing. The obligation is a site setting,
- * so it is the same on every bay, including bays added later. */
-export async function getOAuthPurgeTargets(): Promise<string[]> {
-  return (await getOAuthPurgeClientState())
-    .filter(({ configured, obligated }) => configured || obligated)
+ * configured now and those whose purge obligation is recorded, on this bay
+ * or on the seed, even if both their secrets have since been blanked. A site
+ * that never configured a client has neither, and sends it nothing. */
+export async function getOAuthPurgeTargets({
+  seedObligations = getSeedObligations,
+}: {
+  seedObligations?: (names: string[]) => Promise<Set<string>>;
+} = {}): Promise<string[]> {
+  const state = await getOAuthPurgeClientState();
+  const onSeed = await seedObligations(
+    state.map(({ obligation_setting }) => obligation_setting),
+  );
+  return state
+    .filter(
+      ({ configured, obligated, obligation_setting }) =>
+        configured || obligated || onSeed.has(obligation_setting),
+    )
     .map(({ client_id }) => client_id)
     .sort();
 }
