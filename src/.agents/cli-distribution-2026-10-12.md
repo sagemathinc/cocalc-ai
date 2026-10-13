@@ -1,6 +1,6 @@
 # CoCalc CLI distribution: pinned Node + JS bundle, served by the hub
 
-Status: revision 7 (Oct 13, 2026). Revision 6 phased the design, following William's point that the CLI shouldn't be held to a stricter standard than the hub's own release process. Revision 7 adds:
+Status: revision 8 (Oct 13, 2026): answers @lite1-review on 091cc355cb. Revision 7: Revision 6 phased the design, following William's point that the CLI shouldn't be held to a stricter standard than the hub's own release process. Revision 7 adds:
 - **William's rule:** every hub release is a CLI release, with automatic updates.
 - **@lite1-review's answers** on the honesty of the Phase A and B trust claims.
 
@@ -49,6 +49,14 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 - An **unsigned** `/cli/manifest.json`: the strict schema and size caps of the end state, pinning size and sha256 for the launcher, the bootstrap, the Node archive for each platform, and the bundle.
 - Each of those files, by hash.
 - For the `v1` pointer, **R is the sha256 of that manifest**, so the pointer and the shared update transaction cover every byte that executes.
+- **One origin-wide publication authority.** An origin with several bays, or a rolling deploy, must never have bays disagreeing about the current release. Otherwise clients would oscillate between releases or get a manifest whose files another bay lacks. So publishing is ordered:
+  1. Put all the immutable, content-addressed files on every serving bay, or in the shared store they all serve from.
+  2. Publish the manifest the same way.
+  3. Atomically flip a **single origin-level pointer** (in the database or shared store) that `/cli/site.json` on every bay reads.
+  4. Keep old files through the rollback and GC window (at least the previous few releases).
+- **The manifest carries a monotonic release number** (unsigned in Phase A).
+  - Automatic updates only move forward. A stale or lagging answer never downgrades anyone.
+  - A deliberate rollback by the site is published as a *new* release number whose contents are the older build.
 
 **Trust, stated plainly:**
 - **The origin is fully trusted.** You trust the exact site you install from, and every later update from it, with full code execution as your local user (above).
@@ -56,7 +64,7 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 - **No rollback protection** beyond the site's honesty. A malicious origin can do worse anyway.
 - **The origin is explicit and visible:**
   - The CLI records the install origin, and `install.sh`, `cocalc update` and `cocalc version` print it prominently.
-  - Updates fetch only from that exact origin. Cross-origin redirects are rejected, so a site's CDN is trusted only when it serves that same origin name (for cocalc.ai, Cloudflare in front of it, which is already true for the web app).
+  - Updates fetch only from that exact origin. Cross-origin redirects are rejected. A CDN that serves that same origin name is inside the trust boundary: for cocalc.ai that's Cloudflare in front of it, which is already true for the web app. Phase B is about distribution *off* the origin, not CDN use as such.
   - Changing the origin (`cocalc update --from <site>`) needs an explicit local confirmation at a TTY, or `--yes`, showing both origins.
 - **Node:** when the pinned version changes, the release job checks Node's signed `SHASUMS256` against the Node release keys. That is hygiene for an honest release, not protection for clients against a compromised site, which can pin any archive it likes.
 
@@ -71,18 +79,22 @@ Phase A therefore trusts whatever builds and deploys the site, says so plainly, 
 
 **Computers:**
 - **The record:** a computer's release record pins the exact manifest, so the Node, bootstrap and connector hashes it runs.
-- **No remote update operation:** the computers protocol has none. The record changes only through this machine's CLI.
-- **Persistent computers:** the daemon follows the automatic-update rule. When a new release is active and no jobs are running, it re-executes into it, keeping its key and session. That gives the origin nothing beyond what it has while the computer is connected, since the hub can already run commands there through tickets. The daemon enforces no local policy that an update could remove. **If we ever add local limits enforced by the daemon** (path or command allowlists, a read-only mode), automatic daemon updates must stop: those computers pin their release, and `cocalc computer update` is run at the local TTY.
-- **Time-limited computers** keep their release until they end, because restarting the process ends them.
+- **No remote update operation:** the computers protocol has none. But the origin can trigger an update **indirectly**: through the CLI's ordinary automatic update, followed by the idle re-exec described next. The doc counts that as origin power, not as something the pin prevents.
+- **Who changes the record:** only the local CLI's update transaction, under its lock and after `active` has swapped. It moves the record of each *eligible* computer (next bullet) to the new manifest. The daemon itself never fetches anything; it only notices the record changed and re-executes into the release the record names.
+- **Automatic replacement only for persistent direct-mode computers** (no time limit). Direct mode already gives every valid job arbitrary execution as the same user, so a job could replace the daemon anyway. Automatic replacement adds nothing the origin's tickets can't already do while the computer is connected. When such a computer is idle (no running jobs), its daemon re-executes into the new release, keeping its key and session.
+- **Everything else stays pinned** and changes only by `cocalc computer update` at the local TTY:
+  - **Isolated computers.** There the daemon and the OS enforce ceilings (the container, mounts, network and resource limits) that the origin must not be able to change silently.
+  - **Any computer whose daemon enforces a local ceiling** the origin must not change: the immutable ceiling and effective-policy bindings, floors, attestations and local timing it verifies today (`util/computers/protocol.ts`), and anything added later.
+  - **Time-limited computers.** Restarting the process ends them, so they keep their release until they end.
 - **Too-old daemons:** the hub's minimum version refuses a daemon that is too old, with a message saying how to update.
 - **What the pin is for:** it stops accidental drift and any remote protocol request from changing the code. It is no defense against a compromised site-served CLI or any other code running as the same user, which can rewrite the record whenever it runs. Phase B and C signatures authenticate release bytes, but don't change that either (see "Computers" below).
 - **The strict decision 27** (offline-signed updates, never automatic) is Phase C.
 
 **Windows** keeps the signed SEA.
 
-### Phase B: when release bytes come from somewhere other than the chosen hub (CDN, R2, Star mirrors)
+### Phase B: when release bytes are distributed off the origin (R2, a separate CDN host, Star mirrors)
 
-As soon as bytes come from a distributor the person didn't choose, sign what we publish. Automatic updates continue, now verified. One person's keys are enough:
+**When:** as soon as release bytes come from somewhere other than the origin the person chose, or we deliberately take the same-origin CDN out of the trust boundary. A CDN in front of the origin's own name is not the trigger. From then on we sign what we publish. Automatic updates continue, now verified. One person's keys are enough:
 - **Root key:** on a YubiKey, held by William. It's used rarely, to certify a release key for at most a year, and to revoke it.
 - **Release key:** in CI or a KMS, certified by the root. It signs every release manifest.
 - **The client** verifies, against the embedded root public key:
@@ -90,18 +102,30 @@ As soon as bytes come from a distributor the person didn't choose, sign what we 
   - the manifest signature and expiry;
   - a monotonic release sequence, with the two-state rollback rule (`highest_seen` versus `active`).
 - **Root and certificate metadata are rollback-protected** too: a monotonic version, and the client never accepts an older certificate or rotation than it has seen. A revocation supersedes the release-key sequence: once seen, no manifest signed by the revoked key is accepted, whatever its sequence.
-- **Withholding a revocation** is possible for a distributor. That is availability: the stale key works only until its certificate expires.
+- **Withholding a revocation** has two cases. They are different and must not be confused:
+  - **A distributor alone, without the release key:** it can only withhold new metadata, so it can freeze or replay *old, legitimately signed* releases. That is availability, bounded by manifest and certificate expiry.
+  - **A compromised release key, with a distributor that withholds the revocation** (or a client that simply hasn't seen it): the key is still a **code-signing authority**. It can sign a malicious automatic update, which means full code execution as the user. That lasts until the client observes the revocation or the certificate expires. This is why certificates are short-lived (at most a year, and shorter is better), and why the client fetches revocation status from the origin and from the distribution path.
 
 **The root of trust must be pinned before untrusted distribution enters the path.** If `install.sh` or the root key is itself fetched from a compromised CDN, R2 or mirror, that distributor can substitute its own root, and the signatures prove nothing. So Phase B protects only clients whose root was embedded:
 - by an already trusted Phase A launcher or update;
 - by an installer served directly by the trusted hub the person chose;
 - or by an authenticated out-of-band installer or package.
 
-**Then, honestly:**
-- **Protected:** a compromised CDN, R2 or mirror, or a site serving release bytes we never signed. They can only deny service or delay.
+**A durable trust mode per installation.** Phases A and B coexist: each installation (and so each origin it follows) is in one mode, not the whole world at one migration instant. The installation records its mode durably beside the pointer:
+- **`origin-trust`:** Phase A rules. The recorded origin is fully trusted.
+- **`signed`:** the embedded root, its rollback state and the channel.
+
+The rules:
+- **A `signed` installation never falls back to unsigned**, whatever its origin advertises. "This site has its own build" is not a reason to accept unsigned bytes.
+- **Moving from `signed` to `origin-trust` is an explicit local trust downgrade.** It happens only at the local TTY (or with an explicit flag in scripts), showing the origin and the full-code-execution warning. Never automatically.
+- **Moving from `origin-trust` to `signed`** is a normal update from a trusted origin, which embeds the root.
+- **A self-hosted site serving its own build** (see per-site bundles) serves `origin-trust` installations. Its users choose that when they install from it.
+
+**Then, honestly, for `signed` installations:**
+- **Protected:** a compromised R2, CDN or mirror, or a site serving release bytes we never signed. Without the release key they can only deny service, delay, or freeze and replay old signed releases until expiry.
 - **Not protected:**
   - a first install bootstrapped from the compromised distributor;
-  - a compromised release key, until the root revokes it or its certificate expires;
+  - a compromised release key, until the client observes the revocation or the certificate expires (full code execution, see above);
   - a compromised build pipeline;
   - a malicious release that already ran (full same-user compromise; recovery is out of band).
 
@@ -116,7 +140,7 @@ TUF roles with an offline threshold root, the offline runtime role and its cerem
 - **Windows:** its own native launcher (see below). Until then it keeps the signed SEA.
 - **Per-site bundles:**
   - In Phase A they are simply how it works: each site serves the CLI from its own build, modified or not, and its users trust that site.
-  - Phase B signs only the releases we publish. A site serving its own build keeps origin trust for the clients that installed from it.
+  - Phase B signs only the releases we publish. A site serving its own build serves `origin-trust` installations; a `signed` installation never accepts it without the explicit local downgrade.
   - What stays deferred is *signed* per-site channels in Phase C, until site and role binding is designed [R6].
 
 ## Threat model (Phase C)
