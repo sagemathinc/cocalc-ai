@@ -21,6 +21,12 @@
  *   node dist-release/publish-release.mjs [--build DIR]
  *     [--dir STORE | --prefix software/cli]   (R2 needs COCALC_R2_* env)
  *     [--min-release N|this|none] [--release N] [--dry-run]
+ *     [--public-url URL]   (CoCalc Plus: the store's public URL, which its
+ *                           install.sh downloads from; default
+ *                           https://software.cocalc.ai/<prefix>)
+ *
+ * The same command publishes a CoCalc Plus build (plus/dist-release); then the
+ * store also gets a generated install.sh, written last.
  *
  * The release number is max(current + 1, unix seconds), so it only grows.
  * --min-release keeps the store's current minimum unless given; "this"
@@ -53,6 +59,55 @@ const {
   parseManifest,
   parsePointer,
 } = require("@cocalc/util/cli-distribution/schema");
+const {
+  PLUS_MANIFEST_SCHEMA,
+  parsePlusManifest,
+} = require("@cocalc/util/cli-distribution/plus-schema");
+
+/*
+ * What a build directory describes. A CLI build.json (from
+ * dist-release/build-release.mjs) has the CLI fields; a build.json with a
+ * `schema` (CoCalc Plus, from plus/dist-release/build-release.mjs) carries
+ * its manifest fields and its file list explicitly.
+ */
+function product(build) {
+  if (build.schema === PLUS_MANIFEST_SCHEMA) {
+    return {
+      name: "CoCalc Plus",
+      prefix: "software/plus",
+      files: build.files,
+      manifest: (release) => ({
+        schema: PLUS_MANIFEST_SCHEMA,
+        release,
+        ...build.fields,
+      }),
+      parse: parsePlusManifest,
+      installScript: true,
+    };
+  }
+  const files = [build.launcher, build.bootstrap, build.bundle];
+  for (const archive of Object.values(build.node.platforms)) {
+    files.push(archive);
+  }
+  return {
+    name: "CoCalc CLI",
+    prefix: "software/cli",
+    files,
+    manifest: (release) => ({
+      schema: MANIFEST_SCHEMA,
+      release,
+      version: build.version,
+      git: build.git,
+      built_at: build.built_at,
+      launcher: build.launcher,
+      bootstrap: build.bootstrap,
+      bundle: build.bundle,
+      node: build.node,
+    }),
+    parse: parseManifest,
+    installScript: false,
+  };
+}
 
 const IMMUTABLE = "public, max-age=31536000, immutable";
 const POINTER_CACHE = "public, max-age=30";
@@ -243,25 +298,28 @@ async function main() {
       : join(cliRoot, "build", "cli-release"),
   );
   const build = JSON.parse(readFileSync(join(buildDir, "build.json"), "utf8"));
+  const kind = product(build);
+  const prefix = typeof args.prefix === "string" ? args.prefix : kind.prefix;
   const store =
     typeof args.dir === "string"
       ? dirStore(resolve(args.dir))
-      : r2Store(typeof args.prefix === "string" ? args.prefix : "software/cli");
+      : r2Store(prefix);
+  const publicUrl =
+    typeof args["public-url"] === "string"
+      ? args["public-url"].replace(/\/+$/, "")
+      : `https://software.cocalc.ai/${prefix}`;
   const dryRun = !!args["dry-run"];
   const release_ = store.acquire();
   try {
-    await publish({ args, build, buildDir, store, dryRun });
+    await publish({ args, kind, buildDir, store, dryRun, publicUrl });
   } finally {
     release_();
   }
 }
 
-async function publish({ args, build, buildDir, store, dryRun }) {
-  const files = [build.launcher, build.bootstrap, build.bundle];
-  for (const archive of Object.values(build.node.platforms))
-    files.push(archive);
-  process.stdout.write(`Publishing to ${store.describe}\n`);
-  for (const file of files) {
+async function publish({ args, kind, buildDir, store, dryRun, publicUrl }) {
+  process.stdout.write(`Publishing ${kind.name} to ${store.describe}\n`);
+  for (const file of kind.files) {
     const body = readFileSync(join(buildDir, "files", file.sha256));
     if (body.length !== file.size || sha256(body) !== file.sha256) {
       throw new Error(`build file ${file.sha256} does not match build.json`);
@@ -301,21 +359,8 @@ async function publish({ args, build, buildDir, store, dryRun }) {
     } else if (typeof args["min-release"] === "string") {
       minRelease = Number(args["min-release"]);
     }
-    const manifestText = canonicalJson(
-      {
-        schema: MANIFEST_SCHEMA,
-        release,
-        version: build.version,
-        git: build.git,
-        built_at: build.built_at,
-        launcher: build.launcher,
-        bootstrap: build.bootstrap,
-        bundle: build.bundle,
-        node: build.node,
-      },
-      true,
-    );
-    parseManifest(manifestText);
+    const manifestText = canonicalJson(kind.manifest(release), true);
+    kind.parse(manifestText);
     const manifestHash = sha256(Buffer.from(manifestText));
     const pointerText = canonicalJson(
       {
@@ -378,6 +423,26 @@ async function publish({ args, build, buildDir, store, dryRun }) {
     process.stdout.write(
       `Published: current.json -> release ${release}${minRelease ? `, min_release ${minRelease}` : ""}\n`,
     );
+    if (kind.installScript) {
+      // Written after the pointer: an install.sh never names a release
+      // that isn't published. An older one still installs a valid release.
+      const { plusInstallScript } =
+        await import("../../plus/dist-release/install-script.mjs");
+      await store.put(
+        "install.sh",
+        plusInstallScript({
+          origin: publicUrl,
+          manifestHash,
+          manifestSize: Buffer.byteLength(manifestText),
+          manifest: kind.parse(manifestText),
+        }),
+        {
+          contentType: "text/plain; charset=utf-8",
+          cacheControl: "public, max-age=60",
+        },
+      );
+      process.stdout.write(`Published: install.sh (from ${publicUrl})\n`);
+    }
     return;
   }
   throw new Error(

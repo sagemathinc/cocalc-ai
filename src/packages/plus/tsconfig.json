@@ -15,6 +15,7 @@
     "dist",
     "node_modules",
     "build",
+    "dist-release",
     "**/*.test.ts",
     "jest.config.js"
   ],

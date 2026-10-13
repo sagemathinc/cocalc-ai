@@ -30,6 +30,7 @@ function configureProcessMaxListeners() {
 function usage() {
   console.log(`Usage:
   cocalc-plus version
+  cocalc-plus update [--check | --rollback | --resume | --auto on|off]
   cocalc-plus cli [args...]
   cocalc-plus reflect --version
   cocalc-plus reflect-sync [args...]
@@ -337,6 +338,72 @@ function getPackageVersion() {
   return "unknown";
 }
 
+/*
+ * When this Lite was started by the installed launcher (distribution Phase
+ * A): pin this release as a running server, snapshot the data if a different
+ * release used it last, and check for updates in the background. Updates are
+ * installed but never applied to a running Lite: they take effect the next
+ * time it starts.
+ */
+async function prepareInstalledRelease(paths: {
+  root: string;
+  data: string;
+}): Promise<void> {
+  const line = process.env.COCALC_PLUS_ACTIVE;
+  const root = process.env.COCALC_PLUS_DIST_ROOT;
+  if (!line || !root) return;
+  const plus = await import("@cocalc/cli/distribution/plus");
+  const { updatePlusFromOrigin } =
+    await import("@cocalc/cli/distribution/plus-update");
+  const { readState } = await import("@cocalc/cli/distribution/local");
+  const otherServers = (await plus.livePins(root)).filter(
+    (pin) => pin.role === "server" && pin.pid !== process.pid,
+  );
+  await plus.markServerPin(root, line);
+  const pin = path.join(root, "running", `${process.pid}`);
+  process.on("exit", () => {
+    try {
+      if (JSON.parse(fs.readFileSync(pin, "utf8")).line === line) {
+        fs.unlinkSync(pin);
+      }
+    } catch {
+      // ignore
+    }
+  });
+  const manifestHash = line.split(" ")[1];
+  if (otherServers.length === 0) {
+    try {
+      const manifest = await plus.readPlusManifest(root, manifestHash);
+      const result = await plus.snapshotDataIfNewRelease(
+        { home: paths.root, data: paths.data },
+        {
+          manifest: manifestHash,
+          release: manifest.release,
+          version: manifest.version,
+        },
+      );
+      if (result === "snapshot") {
+        console.log(
+          `Saved a snapshot of your CoCalc Plus data before version ${manifest.version} first uses it (${paths.root}/data.snapshot).`,
+        );
+      }
+    } catch (err) {
+      console.error(`cocalc-plus: could not snapshot the data: ${err}`);
+    }
+  }
+  const state = await readState(root).catch(() => undefined);
+  if (state?.auto && process.env.COCALC_AUTO_UPDATE !== "0") {
+    const check = () =>
+      updatePlusFromOrigin({ root, explicit: false })
+        .then((outcome) => {
+          if (outcome.status === "updated") console.log(outcome.message);
+        })
+        .catch(() => {});
+    setTimeout(check, 60_000).unref();
+    setInterval(check, 6 * 60 * 60_000).unref();
+  }
+}
+
 function runCliCommand(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     let cliEntry: string;
@@ -418,6 +485,7 @@ async function runCli() {
     arg &&
     (arg.startsWith("-") ||
       arg === "cli" ||
+      arg === "update" ||
       arg === "ssh" ||
       arg === "star" ||
       arg === "version" ||
@@ -466,6 +534,17 @@ async function runCli() {
   }
   if (argv[0] === "cli") {
     await runCliCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "update") {
+    const { runPlusUpdateCommand } =
+      await import("@cocalc/cli/distribution/plus-update");
+    const { plusRoot } = await import("@cocalc/cli/distribution/plus");
+    const paths = plusRuntimePaths();
+    process.exitCode = await runPlusUpdateCommand(argv.slice(1), {
+      root: plusRoot(),
+      dataPaths: { home: paths.root, data: paths.data },
+    });
     return;
   }
   if (argv[0] === "reflect") {
@@ -571,7 +650,8 @@ async function runCli() {
     return;
   }
 
-  configurePlusRuntime();
+  const runtimePaths = configurePlusRuntime();
+  await prepareInstalledRelease(runtimePaths);
   await ensureLitePort();
 
   writeVersionInfo();

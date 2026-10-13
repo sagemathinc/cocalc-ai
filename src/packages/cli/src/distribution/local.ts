@@ -85,7 +85,7 @@ export async function sha256File(path: string): Promise<string> {
   return sha256(await readFile(path));
 }
 
-async function fsyncPath(path: string): Promise<void> {
+export async function fsyncPath(path: string): Promise<void> {
   let handle;
   try {
     handle = await open(path, "r");
@@ -119,7 +119,7 @@ export async function writeFileAtomic(
   await fsyncPath(dirname(path));
 }
 
-async function readText(path: string): Promise<string | undefined> {
+export async function readText(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8");
   } catch (err: any) {
@@ -275,7 +275,7 @@ export function checkRelease(
   }
 }
 
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -450,7 +450,7 @@ export async function recover(root: string): Promise<void> {
   await fsyncPath(root);
 }
 
-async function isDirectory(path: string): Promise<boolean> {
+export async function isDirectory(path: string): Promise<boolean> {
   try {
     const info = await lstat(path);
     return info.isDirectory() && !info.isSymbolicLink();
@@ -490,7 +490,7 @@ export async function pointerIntact(
 
 // Writes the journal, switches `active` (and the launcher, if it changed),
 // records `previous`, and clears the journal.
-async function switchActive(
+export async function switchActive(
   root: string,
   to: string,
   launcher?: { path: string; bytes: Buffer },
@@ -524,7 +524,7 @@ export type FaultPoint =
   | "after-launcher"
   | "after-active";
 
-function fault(at: FaultPoint | undefined, point: FaultPoint): void {
+export function fault(at: FaultPoint | undefined, point: FaultPoint): void {
   if (at === point) throw new Error(`injected fault: ${point}`);
 }
 
@@ -534,7 +534,7 @@ export type FetchFile = (
   size: number,
 ) => Promise<void>;
 
-async function nodeIntact(
+export async function nodeIntact(
   dir: string,
   binary: { sha256: string; size: number },
 ): Promise<boolean> {
@@ -549,10 +549,10 @@ async function nodeIntact(
   }
 }
 
-async function installNode(
+export async function installNode(
   root: string,
   staging: string,
-  manifest: CliReleaseManifest,
+  manifest: Pick<CliReleaseManifest, "release" | "node">,
   fetchFile: FetchFile,
 ): Promise<string> {
   const platform = currentPlatform();
@@ -600,7 +600,7 @@ async function installNode(
   return archive.sha256;
 }
 
-async function installTarget(
+export async function installTarget(
   root: string,
   staging: string,
   ref: { sha256: string; size: number },
