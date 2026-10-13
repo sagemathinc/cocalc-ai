@@ -40,6 +40,7 @@ const assertHost = jest.fn(async () => {});
 const deliverAgentRpcReport = jest.fn();
 const remoteDeliverReport = jest.fn();
 const enqueueExternal = jest.fn();
+const claimExecution = jest.fn();
 let remoteSender = false;
 
 jest.mock("./store", () => ({
@@ -97,6 +98,9 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   createHostControlClient: () => ({ deliverAgentRpcReport }),
 }));
 jest.mock("./admission-state", () => ({}));
+jest.mock("./rpc-report-executions", () => ({
+  claimAgentRpcReportExecution: (...args: unknown[]) => claimExecution(...args),
+}));
 
 import {
   agentRpcControl,
@@ -117,13 +121,18 @@ const member = (endpoint: typeof a, name: string) => ({
 });
 
 // The capability the hub minted when it sent the message.
-function signed<T extends { authorization: any }>(r: T): T {
+function signed<T extends { authorization: any }>(
+  r: T,
+  issued_at = Date.now(),
+): T {
   delete r.authorization.report_capability;
   r.authorization.report_capability = signAgentRpcReportCapability(
     r.authorization,
+    issued_at,
   );
   return r;
 }
+const WEEK = 7 * 24 * 60 * 60_000;
 
 function report(overrides: any = {}) {
   return signed({
@@ -154,6 +163,7 @@ function report(overrides: any = {}) {
 
 beforeEach(() => {
   remoteSender = false;
+  claimExecution.mockReset().mockResolvedValue(true);
   assertHost.mockClear();
   enqueueExternal.mockReset();
   remoteDeliverReport.mockReset().mockResolvedValue({ message_id: "remote" });
@@ -267,12 +277,14 @@ describe("B's host reports the failed turn", () => {
   test("never for a message the hub did not send exactly so", async () => {
     // Forged, or altered after signing (here: another network generation).
     const forged = report();
-    forged.authorization.report_capability = "A".repeat(43);
+    forged.authorization.report_capability = `${Date.now()}.${"A".repeat(43)}`;
     const altered = report();
     altered.authorization.network_generation = randomUUID();
     const unsigned = report();
     delete (unsigned.authorization as any).report_capability;
-    for (const r of [forged, altered]) {
+    // Or a week old: messages that old are no longer reported.
+    const old = signed(report(), Date.now() - WEEK - 60_000);
+    for (const r of [forged, altered, old]) {
       await expect(reportRpcTurnFailure(fromHost(r))).resolves.toEqual({
         not_sent: "the report does not match an admitted message",
       });
@@ -323,14 +335,47 @@ describe("the turn the report starts for A", () => {
   });
 
   test("is rechecked on A's host before it runs", async () => {
+    const r = report();
     await expect(
-      authorizeRpcReportExecution(execution()),
+      authorizeRpcReportExecution(execution(r)),
     ).resolves.toBeUndefined();
     expect(assertHost).toHaveBeenCalledWith({
       account_id: account,
       host_id: host,
       project_id: aProject,
     });
+    // Last of all, its one turn is recorded.
+    expect(claimExecution).toHaveBeenCalledWith({
+      attempt_id: attempt,
+      report_id: r.report_id,
+      account_id: account,
+      project_id: aProject,
+      host_id: host,
+      path: "/home/user/a.chat",
+      thread_id: "thread-a",
+    });
+  });
+
+  test("runs once: a report cannot be replayed into another turn", async () => {
+    claimExecution.mockResolvedValueOnce(false);
+    await expect(authorizeRpcReportExecution(execution())).rejects.toThrow(
+      "this delivery report already started a turn",
+    );
+  });
+
+  test("only with the hub's capability, as minted, within a week", async () => {
+    // A's host holds the report it wrote, but cannot make up another one.
+    const forged = report();
+    forged.authorization.report_capability = `${Date.now()}.${"A".repeat(43)}`;
+    const altered = report();
+    altered.authorization.network_generation = randomUUID();
+    const old = signed(report(), Date.now() - WEEK - 60_000);
+    for (const r of [forged, altered, old])
+      await expect(authorizeRpcReportExecution(execution(r))).rejects.toThrow(
+        "does not match an admitted message",
+      );
+    expect(assertHost).not.toHaveBeenCalled();
+    expect(claimExecution).not.toHaveBeenCalled();
   });
 
   test("not in another chat, nor once the message lost its authority", async () => {
@@ -341,6 +386,8 @@ describe("the turn the report starts for A", () => {
     ).rejects.toThrow("sender identity changed");
     checkNetwork.mockResolvedValueOnce({ denied: "network_paused" });
     await expect(authorizeRpcReportExecution(execution())).rejects.toThrow();
+    // A refused report spends nothing.
+    expect(claimExecution).not.toHaveBeenCalled();
     await expect(
       authorizeRpcReportExecution({ ...execution(), account_id: randomUUID() }),
     ).rejects.toThrow();

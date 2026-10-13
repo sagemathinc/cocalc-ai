@@ -30,6 +30,7 @@ import {
   validateAgentRpcTurnFailureReport,
   type AgentRpcExecution,
 } from "@cocalc/conat/agents/rpc-reports";
+import { claimAgentRpcReportExecution } from "./rpc-report-executions";
 import {
   signAgentRpcReportCapability,
   verifyAgentRpcReportCapability,
@@ -832,6 +833,9 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
     const message = report.authorization;
     if (message.principal_account_id !== account_id)
       throw new PersonalAgentAuthorizationError("principal_mismatch");
+    // Only a report of a message the hub sent, exactly as sent, recently.
+    if (!verifyAgentRpcReportCapability(message))
+      throw new Error("the report does not match an admitted message");
     if (isExternalAgentSource(message.source))
       throw new Error("an external sender has no turn to run");
     // The report runs as a turn of the message's sender, on its host.
@@ -849,6 +853,19 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
     const proof = await messageAuthority(message);
     if ("denied" in proof)
       throw new PersonalAgentAuthorizationError(proof.denied);
+    // Last, once everything else allowed it: one turn per reported message.
+    if (
+      !(await claimAgentRpcReportExecution({
+        attempt_id: report.attempt_id,
+        report_id: report.report_id,
+        account_id,
+        project_id: message.source.project_id,
+        host_id,
+        path: sender.path,
+        thread_id: sender.thread_id,
+      }))
+    )
+      throw new Error("this delivery report already started a turn");
   };
 
 async function submitExternalInbox(

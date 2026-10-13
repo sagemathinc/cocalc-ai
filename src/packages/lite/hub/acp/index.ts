@@ -9070,6 +9070,9 @@ async function enqueueFailureRecoveryContinuation({
   if (!directive) return undefined;
   // Codex error codes apply to Codex jobs; a harness only has its own.
   const failed = decodeAcpJobRequest(job);
+  // A delivery report starts one turn (the hub records it): a continuation
+  // would be refused, and the report stays in the chat regardless.
+  if (failed.chat?.agent_rpc_report) return undefined;
   const harnessJob = failed.runtime !== undefined;
   if (
     harnessJob !==

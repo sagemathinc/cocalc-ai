@@ -179,11 +179,13 @@ export async function deliverAgentRpcReport(
           continue;
         const rpc = row.agent_rpc;
         if (rpc?.delivery_report?.attempt_id === report.attempt_id) {
-          // A report whose admission was not confirmed is replaced below,
-          // unless its turn was queued after all (the acknowledgement was
-          // lost); any other is this report again.
+          // A report whose admission was never confirmed (it failed, or
+          // this process died first) is replaced below, unless its turn was
+          // queued after all (the acknowledgement was lost); any other is
+          // this report again.
           if (
-            rpc.delivery_report.admission === "failed" &&
+            (rpc.delivery_report.admission === "pending" ||
+              rpc.delivery_report.admission === "failed") &&
             !row.acp_state &&
             !getAcpJob({
               project_id,
@@ -241,29 +243,40 @@ export async function deliverAgentRpcReport(
         message_id: unadmitted.message_id,
         thread_id: unadmitted.thread_id,
       });
-    db.set({ ...prepared.message, agent_rpc });
+    // Pending on disk before the turn is admitted, so a crash in between
+    // leaves a report the retry replaces rather than a silent duplicate.
+    db.set({
+      ...prepared.message,
+      agent_rpc: {
+        ...agent_rpc,
+        delivery_report: { ...agent_rpc.delivery_report, admission: "pending" },
+      },
+    });
     db.commit();
     await db.save();
     await db.save_to_disk();
-    try {
-      await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
-    } catch (err) {
-      // Not confirmed: mark it, so the retry the hub's error causes replaces
-      // it instead of taking it for a delivered report.
-      db.set({
-        ...prepared.message,
-        agent_rpc: {
-          ...agent_rpc,
-          delivery_report: {
-            ...agent_rpc.delivery_report,
-            admission: "failed",
-          },
+    // If this throws, the row stays pending and the hub's error makes the
+    // recipient's host retry.
+    await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
+    const { event, date, sender_id, message_id, thread_id } =
+      prepared.message as any;
+    db.set({
+      event,
+      date,
+      sender_id,
+      message_id,
+      thread_id,
+      agent_rpc: {
+        ...agent_rpc,
+        delivery_report: {
+          ...agent_rpc.delivery_report,
+          admission: "admitted",
         },
-      });
-      db.commit();
-      await db.save();
-      throw err;
-    }
+      },
+    });
+    db.commit();
+    await db.save();
+    await db.save_to_disk();
     return { message_id: `${prepared.message.message_id ?? ""}` };
   } finally {
     await releaseChatSyncDB(project_id, delivery.path);

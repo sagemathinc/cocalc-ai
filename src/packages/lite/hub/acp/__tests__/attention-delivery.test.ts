@@ -1452,7 +1452,8 @@ describe("a failed turn another agent's message started", () => {
   it("is reported to the message's sender, once", async () => {
     const request = rpcTurnRequest(undefined);
     request.chat!.agent_rpc_execution!.attempt_id = attempt_id;
-    request.chat!.agent_rpc_execution!.report_capability = "c".repeat(43);
+    request.chat!.agent_rpc_execution!.report_capability =
+      "1791800000000." + "c".repeat(43);
     // The turn fails (here: before the model ran).
     mockAuthorizeRpcExecution.mockRejectedValue(
       new Error("You've hit your usage limit."),
@@ -1478,7 +1479,8 @@ describe("a failed turn another agent's message started", () => {
   const reportable = () => {
     const request = rpcTurnRequest(undefined);
     request.chat!.agent_rpc_execution!.attempt_id = attempt_id;
-    request.chat!.agent_rpc_execution!.report_capability = "c".repeat(43);
+    request.chat!.agent_rpc_execution!.report_capability =
+      "1791800000000." + "c".repeat(43);
     return request;
   };
 

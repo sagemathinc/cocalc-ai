@@ -39,7 +39,7 @@ function report(
       principal_account_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       guidance: false,
       attempt_id,
-      report_capability: "c".repeat(43),
+      report_capability: "1791800000000." + "c".repeat(43),
     },
     turn_started_at: 1_791_800_000_000,
     kind: "refused",
@@ -119,6 +119,16 @@ test.each<[string, () => AgentRpcTurnFailureReport]>([
     () =>
       report({
         authorization: { ...report().authorization, report_capability: "c=" },
+      }),
+  ],
+  [
+    "a capability without its mint time",
+    () =>
+      report({
+        authorization: {
+          ...report().authorization,
+          report_capability: "c".repeat(43),
+        },
       }),
   ],
   ["no start time", () => report({ turn_started_at: 0 })],

@@ -474,6 +474,21 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: callers must start a new explicit send attempt.",
   }),
 
+  ...entries(["agent_rpc_report_executions"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id: "Execution-principal binding, not account-home state.",
+      project_id: "Sender-project binding, not durable project state.",
+      host_id: "Executing-host binding, not host-owned state.",
+    },
+    notes:
+      "One row per reported message whose delivery report started a turn, kept until after the report's signed capability expired, so a report cannot be replayed into a second turn. Rows only deny.",
+    rebuild:
+      "No rebuild: a lost row allows at most one more report turn for a message reported in the last week.",
+  }),
+
   ...entries(["agent_memory_usage"], {
     ownership: "ephemeral",
     authority: "local",

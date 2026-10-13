@@ -7,7 +7,9 @@ import { randomUUID } from "node:crypto";
 
 // A (the sender) is on a-bay, B (whose turn failed) on b-bay. B's host
 // reports to b-bay's hub, which forwards over a real conat server to a-bay's
-// agent-messaging service, which writes into A's chat on A's host.
+// agent-messaging service, which writes into A's chat on A's host. One
+// process plays both bays here; src/scripts/multibay checks the same route
+// between two real bays.
 process.env.COCALC_CLUSTER_SHARED_SECRET = "test-cluster-secret";
 
 const aProject = randomUUID();
@@ -101,6 +103,7 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   }),
 }));
 jest.mock("./admission-state", () => ({}));
+jest.mock("./rpc-report-executions", () => ({}));
 
 import { after, before, client } from "@cocalc/server/test";
 import {
@@ -245,7 +248,7 @@ test("A's bay checks a call itself, whichever bay sent it", async () => {
     "stale agent RPC route",
   );
   const forged = report();
-  forged.authorization.report_capability = "A".repeat(43);
+  forged.authorization.report_capability = `${Date.now()}.${"A".repeat(43)}`;
   await expect(call({ report: forged })).rejects.toThrow(
     "does not match an admitted message",
   );

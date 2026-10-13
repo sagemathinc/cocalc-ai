@@ -25,7 +25,14 @@ jest.mock("@cocalc/chat/server", () => ({
 jest.mock("@cocalc/chat/send", () => ({
   prepareChatSend: (opts: any) => {
     prepared = {
-      message: { message_id: "m1", event: "chat", prompt: opts.prompt },
+      message: {
+        event: "chat",
+        date: "2026-10-12T20:02:00.000Z",
+        sender_id: opts.accountId,
+        message_id: "m1",
+        thread_id: "thread-a",
+        prompt: opts.prompt,
+      },
       request: { chat: {} as any, prompt: opts.prompt },
     };
     return prepared;
@@ -71,7 +78,7 @@ const execution = {
   principal_account_id: principal,
   guidance: false,
   attempt_id,
-  report_capability: "c".repeat(43),
+  report_capability: "1791800000000." + "c".repeat(43),
 };
 const STARTED = Date.parse("2026-10-12T20:00:00Z");
 const report = {
@@ -160,60 +167,100 @@ describe("the sender's host writes the report", () => {
     expect(admit).not.toHaveBeenCalled();
   });
 
-  describe("when its turn's admission was not confirmed", () => {
-    const unconfirmed = async () => {
-      admit.mockRejectedValueOnce(new Error("no acknowledgement"));
-      await expect(
-        deliverAgentRpcReport({} as any, delivery, running),
-      ).rejects.toThrow("no acknowledgement");
-      // Marked, so B's retry (the hub's error makes it retry) can tell.
-      const marked = syncdb.set.mock.calls.at(-1)![0];
-      expect(marked).toMatchObject({
-        message_id: "m1",
-        agent_rpc: { delivery_report: { attempt_id, admission: "failed" } },
-      });
-      syncdb.rows.push({
-        ...marked,
-        date: "2026-10-12T20:01:00Z",
-        sender_id: principal,
-        thread_id: "thread-a",
-      });
-      syncdb.set.mockClear();
-      admit.mockClear();
-    };
+  it("pending on disk before its turn is admitted, then admitted", async () => {
+    let onDisk: any;
+    syncdb.save_to_disk.mockImplementationOnce(async () => {
+      onDisk = syncdb.set.mock.calls.at(-1)![0];
+    });
+    admit.mockImplementationOnce(async () => {
+      // Admission happens only after the pending row reached the disk.
+      expect(onDisk?.agent_rpc.delivery_report.admission).toBe("pending");
+    });
+    await expect(
+      deliverAgentRpcReport({} as any, delivery, running),
+    ).resolves.toEqual({ message_id: "m1" });
+    // Then only the key and the marker are rewritten.
+    expect(syncdb.set.mock.calls.at(-1)![0]).toEqual({
+      event: "chat",
+      date: "2026-10-12T20:02:00.000Z",
+      sender_id: principal,
+      message_id: "m1",
+      thread_id: "thread-a",
+      agent_rpc: expect.objectContaining({
+        delivery_report: expect.objectContaining({ admission: "admitted" }),
+      }),
+    });
+    expect(syncdb.save_to_disk).toHaveBeenCalledTimes(2);
+  });
 
-    it("the retry replaces it, rather than taking it for delivered", async () => {
-      await unconfirmed();
-      await expect(
-        deliverAgentRpcReport({} as any, delivery, running),
-      ).resolves.toEqual({ message_id: "m1" });
-      expect(getAcpJob).toHaveBeenCalledWith({
-        project_id: A.project_id,
-        path: "/home/user/a.chat",
-        user_message_id: "m1",
-      });
-      expect(syncdb.delete).toHaveBeenCalledWith({
+  describe("when its turn's admission was not confirmed", () => {
+    // The row a crash, or a failed admission, leaves behind.
+    const leftBehind = (admission: string) =>
+      syncdb.rows.push({
         event: "chat",
         date: "2026-10-12T20:01:00Z",
         sender_id: principal,
         message_id: "m1",
         thread_id: "thread-a",
+        agent_rpc: {
+          source: B,
+          delivery_report: {
+            report_id: report.report_id,
+            attempt_id,
+            admission,
+          },
+        },
       });
-      expect(syncdb.set.mock.calls[0][0].agent_rpc.delivery_report).toEqual({
-        report_id: report.report_id,
-        attempt_id,
-        kind: "refused",
-      });
-      expect(admit).toHaveBeenCalledTimes(1);
+
+    it("a failed admission leaves it pending, and the hub's error retries", async () => {
+      admit.mockRejectedValueOnce(new Error("no acknowledgement"));
+      await expect(
+        deliverAgentRpcReport({} as any, delivery, running),
+      ).rejects.toThrow("no acknowledgement");
+      expect(syncdb.set).toHaveBeenCalledTimes(1);
+      expect(
+        syncdb.set.mock.calls[0][0].agent_rpc.delivery_report.admission,
+      ).toBe("pending");
     });
 
+    it.each(["pending", "failed"])(
+      "the retry replaces a %s report with no turn, rather than taking it for delivered",
+      async (admission) => {
+        leftBehind(admission);
+        await expect(
+          deliverAgentRpcReport({} as any, delivery, running),
+        ).resolves.toEqual({ message_id: "m1" });
+        expect(getAcpJob).toHaveBeenCalledWith({
+          project_id: A.project_id,
+          path: "/home/user/a.chat",
+          user_message_id: "m1",
+        });
+        expect(syncdb.delete).toHaveBeenCalledWith({
+          event: "chat",
+          date: "2026-10-12T20:01:00Z",
+          sender_id: principal,
+          message_id: "m1",
+          thread_id: "thread-a",
+        });
+        expect(admit).toHaveBeenCalledTimes(1);
+      },
+    );
+
     it("but not if its turn was queued after all (the ack was lost)", async () => {
-      await unconfirmed();
+      leftBehind("pending");
       getAcpJob.mockReturnValueOnce({ op_id: "queued" });
       await expect(
         deliverAgentRpcReport({} as any, delivery, running),
       ).resolves.toEqual({ skipped: "duplicate" });
       expect(syncdb.delete).not.toHaveBeenCalled();
+      expect(admit).not.toHaveBeenCalled();
+    });
+
+    it("nor an admitted one", async () => {
+      leftBehind("admitted");
+      await expect(
+        deliverAgentRpcReport({} as any, delivery, running),
+      ).resolves.toEqual({ skipped: "duplicate" });
       expect(admit).not.toHaveBeenCalled();
     });
   });

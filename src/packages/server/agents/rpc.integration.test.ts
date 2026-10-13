@@ -261,7 +261,9 @@ test("a queued message carries the hub's capability to report its failed turn", 
   try {
     await expect(submit()).resolves.toMatchObject({ outcome: "accepted" });
     const envelope = submitAgentRpc.mock.calls[0][0];
-    expect(envelope.report_capability).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(envelope.report_capability).toMatch(
+      /^[0-9]{13}\.[A-Za-z0-9_-]{43}$/,
+    );
     expect(
       verifyAgentRpcReportCapability({
         ...executionOfEnvelope(envelope),

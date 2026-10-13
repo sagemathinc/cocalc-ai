@@ -146,6 +146,9 @@ export function agentRpcReportBinding(value: AgentRpcExecution): string {
   ]);
 }
 
+/** "<issued at, ms>.<HMAC>", minted by the hub (server/agents/rpc-report-capability.ts). */
+export const AGENT_RPC_REPORT_CAPABILITY = /^[0-9]{13}\.[A-Za-z0-9_-]{43}$/;
+
 export function validateAgentRpcExecution(value: AgentRpcExecution): void {
   if (!value || typeof value !== "object" || value.version !== 3)
     throw new Error("invalid agent message authorization");
@@ -158,7 +161,7 @@ export function validateAgentRpcExecution(value: AgentRpcExecution): void {
   if (
     value.report_capability !== undefined &&
     (typeof value.report_capability !== "string" ||
-      !/^[A-Za-z0-9_-]{43}$/.test(value.report_capability))
+      !AGENT_RPC_REPORT_CAPABILITY.test(value.report_capability))
   )
     throw new Error("invalid report_capability");
   for (const key of ["target_path", "target_thread_id", "network_generation"])

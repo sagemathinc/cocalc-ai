@@ -9,6 +9,7 @@
 // ports, so this runs in CI and next to a developer's own dev hubs.
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -62,6 +63,8 @@ export class MultibayCluster {
       mkdtempSync(path.join(process.env.MULTIBAY_DIR ?? tmpdir(), "mb-"));
     this.home = path.join(this.dir, "home");
     this.procs = new Map();
+    // Every bay of a real cluster has the same one (bay-systemd installs it).
+    this.sharedSecret = randomBytes(32).toString("hex");
   }
 
   async init() {
@@ -144,6 +147,7 @@ export class MultibayCluster {
       COCALC_CLUSTER_BAY_IDS: ids,
       HUB_CLUSTER_BAY_IDS: ids,
       COCALC_CLUSTER_SEED_BAY_ID: bay.seedBayId,
+      COCALC_CLUSTER_SHARED_SECRET: this.sharedSecret,
     };
     if (bay.role === "seed") {
       env.COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE =
