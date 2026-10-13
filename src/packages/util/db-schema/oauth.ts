@@ -135,21 +135,3 @@ Table({
     },
   },
 });
-
-Table({
-  name: "oauth_client_purge_obligations",
-  rules: {
-    primary_key: "client_id",
-  },
-  fields: {
-    client_id: {
-      type: "string",
-      pg_type: "varchar(64)",
-      desc: "Registered OAuth client that may hold data of this site's accounts, so every deleted account must be purged from it.",
-    },
-    first_recorded: {
-      type: "timestamp",
-      desc: "When this bay first saw the client configured or approved. Removed only by an explicit decommission, after the client confirmed it deleted all data.",
-    },
-  },
-});

@@ -22,6 +22,9 @@ export interface OAuthClientDefinition {
     redirect_uris: string;
     purge_url: string;
     purge_secret: string;
+    // Set once the client was configured: deleted accounts must be purged
+    // from it until an admin clears it to decommission the client.
+    purge_obligation: string;
   };
   defaultRedirectUris: string[];
   defaultPurgeUrl: string;
@@ -38,6 +41,8 @@ export interface OAuthClient {
   purge?: { url: string; secret: string };
 }
 
+// Removing a client from this registry ends CoCalc's purges of its data: first
+// decommission it (see docs/sagebrush.md).
 export const OAUTH_CLIENTS: Readonly<Record<string, OAuthClientDefinition>> = {
   sagebrush: {
     client_id: "sagebrush",
@@ -48,6 +53,7 @@ export const OAUTH_CLIENTS: Readonly<Record<string, OAuthClientDefinition>> = {
       redirect_uris: "sagebrush_redirect_uris",
       purge_url: "sagebrush_purge_url",
       purge_secret: "sagebrush_purge_secret",
+      purge_obligation: "sagebrush_purge_obligation",
     },
     defaultRedirectUris: ["https://sagebrush.space/auth/callback"],
     defaultPurgeUrl: "https://sagebrush.space/api/admin/purge",
@@ -146,17 +152,25 @@ export async function getOAuthClientPurgeConfig(
 }
 
 /** The clients this site has configured right now, i.e. with a client secret
- * or a purge key. See getOAuthPurgeTargets in ./purge, which also counts
- * clients configured in the past. */
-export async function getConfiguredOAuthPurgeClients(): Promise<string[]> {
+ * or a purge key, and whether each has its purge obligation recorded. */
+export async function getOAuthPurgeClientState(): Promise<
+  {
+    client_id: string;
+    configured: boolean;
+    obligation_setting: string;
+    obligated: boolean;
+  }[]
+> {
   const settings = (await getServerSettings()) as Record<string, unknown>;
-  return Object.values(OAUTH_CLIENTS)
-    .filter(
-      (definition) =>
-        setting(settings, definition.settings.client_secret) ||
-        setting(settings, definition.settings.purge_secret),
-    )
-    .map((definition) => definition.client_id);
+  return Object.values(OAUTH_CLIENTS).map((definition) => ({
+    client_id: definition.client_id,
+    configured: !!(
+      setting(settings, definition.settings.client_secret) ||
+      setting(settings, definition.settings.purge_secret)
+    ),
+    obligation_setting: definition.settings.purge_obligation,
+    obligated: !!setting(settings, definition.settings.purge_obligation),
+  }));
 }
 
 /** All enabled clients. */

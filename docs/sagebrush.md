@@ -29,14 +29,14 @@ committed.
 
 A blank client secret turns off sign-in: the authorize page refuses the client
 and the token and limits endpoints answer `401 invalid_client`. It does not
-turn off purges. Once a bay has seen the client configured (its purge worker
-records this every minute in `oauth_client_purge_obligations`, and so does any
-approved sign-in), every deleted account on that bay gets a purge request, even
-if both secrets are later blanked; requests wait, and admins are alerted, while
-the purge URL or key is missing. A site that never configured Sagebrush sends
-no purge requests. To decommission the client, delete its row from
-`oauth_client_purge_obligations` on every bay, after Sagebrush confirms it holds
-no data.
+turn off purges. The first time the site has either secret set, the seed records
+a purge obligation in the site setting `sagebrush_purge_obligation`, which every
+bay receives, including bays added later. While it is set, every deleted account
+gets a purge request, even if both secrets are later blanked; requests wait, and
+admins are alerted, while the purge URL or key is missing. A site that never
+configured Sagebrush sends no purge requests. To decommission Sagebrush, clear
+`sagebrush_purge_obligation` (one setting for the whole site), after Sagebrush
+confirms it holds no data of this site's accounts.
 
 ## 1. Sign in with CoCalc
 

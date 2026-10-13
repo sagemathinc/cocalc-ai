@@ -361,6 +361,7 @@ export type SiteSettingsExtrasKeys =
   | "sagebrush_redirect_uris"
   | "sagebrush_purge_url"
   | "sagebrush_purge_secret"
+  | "sagebrush_purge_obligation"
   | "github_block"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
@@ -1052,8 +1053,11 @@ export const EXTRAS: SettingsExtras = {
     default: "https://sagebrush.space/api/admin/purge",
   }),
   sagebrush_purge_secret: sagebrushSetting("Sagebrush Purge Key", {
-    desc: "HMAC-SHA256 key shared with the Sagebrush Worker for signing purge requests. Blank turns off purge requests.",
+    desc: "HMAC-SHA256 key shared with the Sagebrush Worker for signing purge requests. While it or the purge URL is blank, purge requests wait and admins are alerted.",
     password: true,
+  }),
+  sagebrush_purge_obligation: sagebrushSetting("Sagebrush Purge Obligation", {
+    desc: "Set automatically the first time Sagebrush is configured. While set, every deleted account is purged from Sagebrush, even if the secrets above are blank. Clear it only to decommission Sagebrush, after it confirms it holds no data of this site's accounts.",
   }),
   openai_section: {
     name: "OpenAI / Codex Configuration",

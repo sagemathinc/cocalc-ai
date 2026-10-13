@@ -19,10 +19,11 @@ import { createHmac } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import {
-  getConfiguredOAuthPurgeClients,
   getOAuthClientPurgeConfig,
-  OAUTH_CLIENTS,
+  getOAuthPurgeClientState,
   type OAuthPurgeConfig,
 } from "./clients";
 
@@ -63,41 +64,45 @@ export function signAdminRequest({
   return `sha256=${createHmac("sha256", secret).update(message, "utf8").digest("hex")}`;
 }
 
-/** Record that deleted accounts must be purged from these clients. Removed
- * only by an explicit decommission (deleting the row on every bay) after the
- * client confirmed it deleted all data; blanking its secrets keeps it. */
-export async function recordOAuthPurgeObligations(
-  db: Queryable,
-  client_ids: string[],
-): Promise<void> {
-  if (client_ids.length === 0) return;
-  await db.query(
-    `INSERT INTO oauth_client_purge_obligations(client_id, first_recorded)
-     SELECT c, NOW() FROM unnest($1::TEXT[]) AS c
-     ON CONFLICT (client_id) DO NOTHING`,
-    [client_ids],
-  );
+/** The clients every deleted account's data must be purged from: those
+ * configured now and those whose purge obligation is recorded, even if both
+ * their secrets have since been blanked. A site that never configured a
+ * client has neither, and sends it nothing. The obligation is a site setting,
+ * so it is the same on every bay, including bays added later. */
+export async function getOAuthPurgeTargets(): Promise<string[]> {
+  return (await getOAuthPurgeClientState())
+    .filter(({ configured, obligated }) => configured || obligated)
+    .map(({ client_id }) => client_id)
+    .sort();
 }
 
-/** The clients every deleted account's data must be purged from: those
- * configured now and those this bay recorded as configured or approved
- * before, even if both their secrets have since been blanked. A site that
- * never set up a client has neither, and sends it nothing. */
-export async function getOAuthPurgeTargets(
-  db: Queryable = getPool(),
-): Promise<string[]> {
-  const configured = await getConfiguredOAuthPurgeClients();
-  await recordOAuthPurgeObligations(db, configured);
-  const { rows } = await db.query<{ client_id: string }>(
-    `SELECT client_id FROM oauth_client_purge_obligations ORDER BY client_id`,
+/** On the seed: record the purge obligation of every configured client that
+ * does not have it yet, as a site setting propagated to all bays. Only an
+ * admin clearing that setting (a decommission) removes it. */
+export async function recordOAuthPurgeObligationsOnSeed({
+  setSiteSettings,
+}: {
+  setSiteSettings?: (
+    settings: { name: string; value: string }[],
+  ) => Promise<unknown>;
+} = {}): Promise<string[]> {
+  const missing = (await getOAuthPurgeClientState()).filter(
+    ({ configured, obligated }) => configured && !obligated,
   );
-  return [
-    ...new Set([...configured, ...rows.map(({ client_id }) => client_id)]),
-  ]
-    .filter((client_id) =>
-      Object.prototype.hasOwnProperty.call(OAUTH_CLIENTS, client_id),
-    )
-    .sort();
+  if (missing.length === 0) return [];
+  const value = new Date().toISOString();
+  const settings = missing.map(({ obligation_setting }) => ({
+    name: obligation_setting,
+    value,
+  }));
+  if (setSiteSettings) {
+    await setSiteSettings(settings);
+  } else {
+    const { setSiteSettingsOnSeed } =
+      await import("@cocalc/server/conat/api/system");
+    await setSiteSettingsOnSeed({ settings });
+  }
+  return missing.map(({ client_id }) => client_id);
 }
 
 /** Queue purge requests for a deleted account. Call it with the transaction
@@ -360,9 +365,12 @@ export function startOAuthClientPurgeMaintenance({
   let timer: ReturnType<typeof setTimeout> | undefined;
   const run = async () => {
     try {
-      // Records the obligation for clients configured now, so it survives a
-      // later blanking of their secrets.
-      await getOAuthPurgeTargets();
+      if (getConfiguredBayId() === getConfiguredClusterSeedBayId()) {
+        const recorded = await recordOAuthPurgeObligationsOnSeed();
+        if (recorded.length > 0) {
+          logger.info("recorded OAuth client purge obligations", { recorded });
+        }
+      }
       const { accepted, failed } = await deliverDuePurgeRequests();
       if (accepted || failed) {
         logger.debug("delivered purge requests", { accepted, failed });

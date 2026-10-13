@@ -12,7 +12,7 @@ import {
   authenticateOAuthClient,
   getOAuthClient,
   getOAuthClientPurgeConfig,
-  getConfiguredOAuthPurgeClients,
+  getOAuthPurgeClientState,
   isRegisteredRedirectUri,
   parseBasicAuthorization,
   parseRedirectUris,
@@ -53,20 +53,34 @@ describe("OAuth client registry", () => {
     });
   });
 
-  it("finds purge configuration and targets independently of sign-in", async () => {
+  it("finds purge configuration independently of sign-in", async () => {
     mockSettings = { sagebrush_purge_secret: "k" };
     expect(await getOAuthClient("sagebrush")).toBeUndefined();
     expect(await getOAuthClientPurgeConfig("sagebrush")).toEqual({
       url: "https://sagebrush.space/api/admin/purge",
       secret: "k",
     });
-    expect(await getConfiguredOAuthPurgeClients()).toEqual(["sagebrush"]);
     mockSettings = { sagebrush_client_secret: "s" };
     expect(await getOAuthClientPurgeConfig("sagebrush")).toBeUndefined();
-    expect(await getConfiguredOAuthPurgeClients()).toEqual(["sagebrush"]);
-    mockSettings = {};
-    expect(await getConfiguredOAuthPurgeClients()).toEqual([]);
     expect(await getOAuthClientPurgeConfig("__proto__")).toBeUndefined();
+  });
+
+  it("reports whether a client is configured and has its purge obligation", async () => {
+    const state = async () =>
+      (await getOAuthPurgeClientState()).find(
+        ({ client_id }) => client_id === "sagebrush",
+      );
+    mockSettings = {};
+    expect(await state()).toEqual({
+      client_id: "sagebrush",
+      configured: false,
+      obligation_setting: "sagebrush_purge_obligation",
+      obligated: false,
+    });
+    mockSettings = { sagebrush_purge_secret: "k" };
+    expect((await state())?.configured).toBe(true);
+    mockSettings = { sagebrush_purge_obligation: "2026-10-13T00:00:00Z" };
+    expect(await state()).toMatchObject({ configured: false, obligated: true });
   });
 
   it("ignores a purge URL that is not https", async () => {

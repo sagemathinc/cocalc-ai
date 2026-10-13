@@ -29,7 +29,6 @@ import {
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getOAuthAccountState, isCurrentEmailVerified } from "./account-state";
-import { recordOAuthPurgeObligations } from "./purge";
 import {
   authenticateOAuthClient,
   getOAuthClient,
@@ -268,8 +267,6 @@ export async function issueAuthorizeApprovalProof({
         account_id,
         client_id: request.client.client_id,
       });
-      // Once an account may store data there, deletions must purge it.
-      await recordOAuthPurgeObligations(db, [request.client.client_id]);
       return row;
     },
   });

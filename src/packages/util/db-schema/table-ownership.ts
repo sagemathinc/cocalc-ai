@@ -480,14 +480,6 @@ export const TABLE_OWNERSHIP = {
       "Which OAuth clients an account has approved, recorded under the rehome fence by the home bay when it issues the approval proof. It only decides whether the deletion dialog offers to keep a client's data: deletion purges every enabled client regardless, so a row left on an old home bay by a rehome cannot skip a purge.",
   }),
 
-  ...entries(["oauth_client_purge_obligations"], {
-    ownership: "stable-bay",
-    authority: "local",
-    portability: "stable",
-    notes:
-      "Which OAuth clients this bay must purge deleted accounts from, recorded while a client is configured (site settings are global, so every bay records it) or when an account approves it. Blanking a client's secrets does not remove it; only an explicit decommission does.",
-  }),
-
   ...entries(["oauth_client_purge_requests"], {
     ownership: "stable-bay",
     authority: "local",

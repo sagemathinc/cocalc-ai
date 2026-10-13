@@ -61,6 +61,7 @@ import {
   deliverDuePurgeRequests,
   getOAuthPurgeTargets,
   queueOAuthClientPurges,
+  recordOAuthPurgeObligationsOnSeed,
 } from "./purge";
 import { getSagebrushLimits } from "@cocalc/server/sagebrush/limits";
 
@@ -150,7 +151,6 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       oauth_authorization_codes: SCHEMA.oauth_authorization_codes,
       oauth_client_approvals: SCHEMA.oauth_client_approvals,
       oauth_client_purge_requests: SCHEMA.oauth_client_purge_requests,
-      oauth_client_purge_obligations: SCHEMA.oauth_client_purge_obligations,
     });
   });
 
@@ -166,7 +166,6 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
     await getPool().query("DELETE FROM oauth_authorization_codes");
     await getPool().query("DELETE FROM oauth_client_approvals");
     await getPool().query("DELETE FROM oauth_client_purge_requests");
-    await getPool().query("DELETE FROM oauth_client_purge_obligations");
   });
 
   it("returns the verified account for a valid code, once", async () => {
@@ -581,11 +580,28 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
       expect(await getOAuthPurgeTargets()).toEqual([]);
     });
 
-    it("keeps purging after both secrets are blanked, until a decommission", async () => {
-      // Seen configured once (the purge worker records this every minute).
-      expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
+    it("keeps purging after both secrets are blanked, on any bay, until a decommission", async () => {
+      // The seed's purge worker records the obligation as a site setting,
+      // which every bay (including one added later) receives.
+      const setSiteSettings = jest.fn(async (updates: any[]) => {
+        for (const { name, value } of updates) mockSettings[name] = value;
+      });
+      expect(
+        await recordOAuthPurgeObligationsOnSeed({ setSiteSettings }),
+      ).toEqual(["sagebrush"]);
+      expect(mockSettings.sagebrush_purge_obligation).toBeTruthy();
+      // Already recorded: nothing more to write.
+      expect(
+        await recordOAuthPurgeObligationsOnSeed({ setSiteSettings }),
+      ).toEqual([]);
+      expect(setSiteSettings).toHaveBeenCalledTimes(1);
+
+      // Both secrets blanked; only the propagated obligation remains, as on a
+      // bay that never saw the client configured.
       const account_id = await insertAccount();
-      mockSettings = {};
+      mockSettings = {
+        sagebrush_purge_obligation: mockSettings.sagebrush_purge_obligation,
+      };
       expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
       await queueOAuthClientPurges({
         db: getPool(),
@@ -599,10 +615,9 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
         failed: 1,
       });
       // ...and is delivered once it is restored.
-      mockSettings = {
-        sagebrush_purge_url: "https://sagebrush.test/api/admin/purge",
-        sagebrush_purge_secret: "purge-key",
-      };
+      mockSettings.sagebrush_purge_url =
+        "https://sagebrush.test/api/admin/purge";
+      mockSettings.sagebrush_purge_secret = "purge-key";
       await getPool().query(
         "UPDATE oauth_client_purge_requests SET next_attempt_at = NOW()",
       );
@@ -610,16 +625,9 @@ describeDb("sign in with CoCalc (OAuth authorization code with PKCE)", () => {
         accepted: 1,
         failed: 0,
       });
-      // Only an explicit decommission removes the obligation.
-      await getPool().query("DELETE FROM oauth_client_purge_obligations");
-      mockSettings = {};
+      // Only clearing the obligation (a decommission) removes the target.
+      mockSettings = { sagebrush_purge_obligation: "" };
       expect(await getOAuthPurgeTargets()).toEqual([]);
-    });
-
-    it("records the obligation when an account approves a client", async () => {
-      await approvedAccount();
-      mockSettings = {};
-      expect(await getOAuthPurgeTargets()).toEqual(["sagebrush"]);
     });
 
     it("keeps a request queued while the purge is not configured", async () => {
