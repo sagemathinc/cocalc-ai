@@ -505,6 +505,9 @@ cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123 merged"
 cocalc sensor watch exit -- make test   # runs it in a project terminal
 ```
 
+Once it has fired (or given up), a watcher's status is `done`: it never runs
+again, and is removed a day later.
+
 **Watching over time? Propose a script sensor.** It is a small program a
 person approves once. It runs like a command in your turn: in this project's
 software, as the approving person, with the connectors its spec lists in

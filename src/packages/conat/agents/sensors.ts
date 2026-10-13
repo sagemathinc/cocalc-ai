@@ -136,7 +136,16 @@ export interface WatchSensorSpec extends SensorSpecBase {
 
 export type SensorSpec = ScriptSensorSpec | PromptSensorSpec | WatchSensorSpec;
 
-export type SensorStatus = "pending" | "active" | "paused" | "rejected";
+/**
+ * "done" is a watcher that fired or expired: it never runs again (stored as
+ * active with nothing scheduled, until it is cleaned up a day later).
+ */
+export type SensorStatus =
+  | "pending"
+  | "active"
+  | "paused"
+  | "rejected"
+  | "done";
 
 export interface AgentSensor {
   sensor_id: string;
