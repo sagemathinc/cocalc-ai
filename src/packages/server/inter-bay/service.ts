@@ -571,10 +571,7 @@ import {
   getCourseManagedProjectStatesLocal,
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
-import {
-  leaveOrDeleteProjectsForAccount,
-  transferProjectOwnershipExplicitly,
-} from "@cocalc/server/projects/ownership";
+import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   assertOwnershipRecipientLocal,
   getOwnershipUsageCountLocal,
@@ -2690,8 +2687,6 @@ async function startProjectCollabInviteService(): Promise<void> {
         account_id,
         project_ids,
       }),
-    transferProjectOwnership: async (opts) =>
-      await transferProjectOwnershipExplicitly(opts),
     setProjectsHidden: async ({ account_id, project_ids, hide }) =>
       await setLocalProjectsHidden({
         account_id,

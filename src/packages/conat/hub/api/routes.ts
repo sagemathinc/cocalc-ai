@@ -88,6 +88,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.listCollabInvites": projectFromOpts,
   "projects.respondCollabInvite": projectFromOpts,
   "projects.removeCollaborator": projectFromNestedOpts,
+  // Ownership lives with the project; fresh auth and admin status are asked
+  // of the caller's home bay.
+  "projects.transferProjectOwnership": projectFromOpts,
   "projects.copyEmailProjectInviteLink": collabInviteFromOpts,
   "projects.redeemEmailProjectInvite": collabInviteFromOpts,
   "projects.previewEmailProjectInvite": collabInviteFromOpts,

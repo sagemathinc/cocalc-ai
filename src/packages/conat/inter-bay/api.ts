@@ -2525,23 +2525,6 @@ export interface ProjectCourseManagedProjectState {
   env: ProjectEnv | null;
 }
 
-export interface ProjectOwnershipTransferRequest {
-  account_id: string;
-  project_id: string;
-  from_account_id: string;
-  to_account_id: string;
-  // Derived at the authenticated actor's home bay, never from public input.
-  trusted_admin: boolean;
-}
-
-export interface ProjectOwnershipTransferResult {
-  project_id: string;
-  from_account_id: string;
-  to_account_id: string;
-  usage_account_id: string | null;
-  runtime_sponsor_account_id: string | null;
-}
-
 export interface ProjectLeaveOrDeleteProjectsRequest {
   account_id: string;
   project_ids: string[];
@@ -2994,7 +2977,6 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "set-project-user-role"
   | "leave-or-delete-projects"
-  | "transfer-project-ownership"
   | "set-projects-hidden"
   | "set-project-metadata"
   | "set-manage-users-owner-only"
@@ -5014,9 +4996,6 @@ export interface InterBayProjectCollabInviteApi {
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
-  transferProjectOwnership: (
-    opts: ProjectOwnershipTransferRequest,
-  ) => Promise<ProjectOwnershipTransferResult>;
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
@@ -12296,15 +12275,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "get-course-managed-project-states",
     }),
   });
-  const transferProjectOwnershipClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "transfer-project-ownership",
-    }),
-  });
   const leaveOrDeleteProjectsClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
   >({
@@ -12348,8 +12318,6 @@ export function createInterBayProjectCollabInviteClient({
       ),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
-    transferProjectOwnership: async (opts) =>
-      await transferProjectOwnershipClient.transferProjectOwnership(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
     respond: async (opts) => await respondClient.respond(opts),
@@ -12505,20 +12473,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         leaveOrDeleteProjects: async (opts) =>
           await impl.leaveOrDeleteProjects(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "transfer-project-ownership",
-      }),
-      impl: {
-        transferProjectOwnership: async (opts) =>
-          await impl.transferProjectOwnership(opts),
       },
     }),
     createServiceHandler<
