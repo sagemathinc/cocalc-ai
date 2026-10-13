@@ -10222,6 +10222,10 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  // Every turn submitted here (a new message, or guidance that could not
+  // steer a running turn) is new; only the worker creates recovery
+  // continuations, and they bypass this function.
+  request = withoutRecoveryLineage(request);
   await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
   if (!request.chat) {
@@ -11626,11 +11630,10 @@ async function handleAcpControlRequest(
 
 export async function evaluate({
   stream,
-  ...submitted
+  ...request
 }: AcpRequest & {
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<void> {
-  const request = withoutRecoveryLineage(submitted);
   if (request.chat) {
     await enqueueChatAcpTurn({ request, stream });
     return;
