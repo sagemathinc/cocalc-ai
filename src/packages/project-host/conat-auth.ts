@@ -9,6 +9,7 @@ import type { GetTemporaryViewerReadPolicyResponse } from "@cocalc/conat/hub/api
 // src/packages/server/conat/socketio/auth.ts.
 // Both adapters share subject-level policy via
 // src/packages/conat/auth/subject-policy.ts.
+import { agentReplyPrefix } from "@cocalc/conat/auth/agent-reply-prefix";
 import {
   checkCommonPermissions,
   extractProjectSubject,
@@ -169,7 +170,22 @@ function userFromBearerToken({
     auth_iat_s: claims.iat,
     auth_actor: claims.auth_actor,
     ...(claims.auth_actor === "agent"
-      ? { auth_project_id: claims.project_id }
+      ? {
+          auth_project_id: claims.project_id,
+          // replies of its own, not the account's _INBOX.account-<id>; the
+          // same for the whole agent session, as on the bay, so refreshing
+          // the token does not replace the inbox
+          auth_api_key_reply_prefix: agentReplyPrefix(
+            claims.sid
+              ? [
+                  "agent-session",
+                  claims.sub,
+                  claims.project_id,
+                  claims.sid,
+                ].join("\0")
+              : claims.jti,
+          ),
+        }
       : {}),
   } satisfies CoCalcUser;
 }
@@ -426,12 +442,23 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         return false;
       }
       // The account's own subjects are not the agent's, as on the bay
-      // (server/conat/socketio/auth.ts): neither its hub API, whose embedded
-      // handler here knows the caller only from the subject -- so an agent
-      // publishing there would act as its account, in any project the account
-      // collaborates on -- nor its account services and streams.  This must
-      // come before the decision cache, which does not distinguish an agent
-      // from its account.
+      // (server/conat/socketio/auth.ts).  Decided here, before the decision
+      // cache:
+      // - Replies: it may publish to any inbox (to answer requests), but only
+      //   subscribe to its own reply prefix, not the account's
+      //   _INBOX.account-<id>, which carries replies meant for the human.
+      // - Neither the account's hub API -- whose embedded handler here knows
+      //   the caller only from the subject, so an agent publishing there would
+      //   act as its account, in any project the account collaborates on --
+      //   nor its account services and streams.
+      if (subject.startsWith("_INBOX.")) {
+        if (type === "pub") return true;
+        const replyPrefix = user.auth_api_key_reply_prefix;
+        return (
+          !!replyPrefix &&
+          (subject === replyPrefix || subject.startsWith(`${replyPrefix}.`))
+        );
+      }
       if (
         subject.startsWith("hub.") ||
         isAccountSubjectAllowed({ account_id: userId, subject })
@@ -467,7 +494,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         })
       );
     }
-    const cacheKey = `${userType}:${userId}:${type}:${subject}`;
+    // (an agent and its account share a user id, but not permissions)
+    const cacheKey = `${userType}:${user.auth_actor ?? ""}:${userId}:${type}:${subject}`;
     const cacheable = shouldCacheAuthDecision(subject);
     if (cacheable && authDecisionCache.has(cacheKey)) {
       return authDecisionCache.get(cacheKey)!;
