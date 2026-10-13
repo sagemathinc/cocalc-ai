@@ -23,7 +23,7 @@ beforeEach(() => {
   getRecoveryStatus.mockReset();
 });
 
-it("announces an overdue snapshot with the latest confirmed recovery point", async () => {
+it("explains snapshots paused by the storage quota, even when overdue", async () => {
   getRecoveryStatus.mockResolvedValue({
     project_id: "project-1",
     host_id: "host-1",
@@ -47,14 +47,40 @@ it("announces an overdue snapshot with the latest confirmed recovery point", asy
   );
   expect(
     await screen.findByText(
-      /Local snapshots: scheduled recovery point overdue/,
+      /Local snapshots: paused because the project is at its storage quota/,
     ),
   ).toBeVisible();
-  expect(
-    screen.getByText(/Storage quota is blocking maintenance/),
-  ).toBeVisible();
+  expect(screen.getByText(/delete files you no longer need/)).toBeVisible();
   expect(container.querySelector('[aria-live="assertive"]')).not.toBeNull();
   expect(getRecoveryStatus).toHaveBeenCalledWith({ project_id: "project-1" });
+});
+
+it("says why snapshots stopped as soon as the quota blocks one", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_changed: current(),
+    last_backup: null,
+    snapshot_due_at: new Date(Date.now() + 60_000).toISOString(),
+    backup_due_at: null,
+    snapshot_disabled: false,
+    backup_disabled: false,
+    snapshot: {
+      observed_at: current(),
+      outcome: "failed",
+      reason: "storage_quota_exceeded",
+      due_at: null,
+      latest_snapshot_at: "2026-09-20T00:00:00.000Z",
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="snapshot" />);
+  expect(
+    await screen.findByText(
+      /Local snapshots: paused because the project is at its storage quota/,
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/Existing snapshots are kept/)).toBeVisible();
 });
 
 it("shows unknown status when the host has stopped reporting", async () => {

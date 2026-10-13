@@ -29,6 +29,22 @@ function age(value: string | null | undefined): number | null {
   return Number.isFinite(timestamp) ? Date.now() - timestamp : null;
 }
 
+// A project at its storage quota cannot take new snapshots: Btrfs charges the
+// snapshot to the project, and raising the quota for it would let writes
+// exceed the quota. They resume once the project is back under its quota.
+export function isStorageQuotaBlocked(
+  reason: string | null | undefined,
+): boolean {
+  const text = `${reason ?? ""}`.toLowerCase();
+  return (
+    text.includes("storage_quota_exceeded") ||
+    text.includes("disk quota exceeded")
+  );
+}
+
+export const STORAGE_QUOTA_PAUSED_TEXT =
+  "This project is at its storage quota, so new snapshots cannot be taken. Existing snapshots are kept. To resume, delete files you no longer need (space that older snapshots still hold is freed when those snapshots are deleted) or increase the project's storage; snapshots then resume automatically.";
+
 function reasonText(reason: string | null | undefined): string | null {
   if (!reason) return null;
   const text = reason.toLowerCase();
@@ -71,8 +87,7 @@ function reasonText(reason: string | null | undefined): string | null {
     return "The off-host backup store is unavailable. Maintenance will retry.";
   if (text.includes("managed_backup_egress_policy_blocked"))
     return "Backup uploads are temporarily blocked by the account's upload allowance.";
-  if (text.includes("storage_quota_exceeded"))
-    return "Storage quota is blocking maintenance.";
+  if (isStorageQuotaBlocked(text)) return STORAGE_QUOTA_PAUSED_TEXT;
   if (text.includes("quota")) return "Storage quota is blocking maintenance.";
   if (text.includes("limit of") && text.includes("backup")) {
     return "The backup retention limit is blocking a new backup.";
@@ -174,6 +189,13 @@ export function ProjectRecoveryStatus({
         : "Maintenance reporting is missing or stale.";
     description = `Latest confirmed recovery point: ${formatted(latest)}. ${reportProblem}${overdue ? ` Scheduled recovery point was due ${formatted(dueAt)}.` : ""}${hostBlock ? ` ${hostBlock}` : ""}`;
     type = critical ? "error" : "warning";
+  } else if (
+    report?.outcome === "failed" &&
+    isStorageQuotaBlocked(report?.reason)
+  ) {
+    title = `${label}: paused because the project is at its storage quota`;
+    description = `${STORAGE_QUOTA_PAUSED_TEXT} Latest confirmed: ${formatted(latest)}.`;
+    type = "warning";
   } else if (overdue) {
     title = `${label}: scheduled recovery point overdue`;
     description = `Due ${formatted(dueAt)}. Latest confirmed: ${formatted(latest)}.${reason ? ` ${reason}` : ""}`;
