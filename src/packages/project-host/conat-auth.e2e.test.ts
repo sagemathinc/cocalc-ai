@@ -79,11 +79,11 @@ describe("a project-scoped agent's replies on a project host", () => {
   const clients: Client[] = [];
 
   // a client that takes its reply inbox from the server, as the CLI does
-  function client(bearer: string): Client {
+  function client(bearer: string, { reconnection = false } = {}): Client {
     const c = connect({
       address: server.address(),
       noCache: true,
-      reconnection: false,
+      reconnection,
       auth: (cb) => cb({ bearer }),
     });
     c.inboxPrefixHook = (info) =>
@@ -163,5 +163,48 @@ describe("a project-scoped agent's replies on a project host", () => {
     expect(eavesdropped).toEqual([]);
     // and it was told so, rather than silently subscribed
     expect(`${subscribeError ?? ""}`).not.toBe("");
+  });
+
+  it("keeps working after the server restarts and the agent reconnects", async () => {
+    const port = server.options.port;
+    const service = client("hub-token", { reconnection: true });
+    const agent = client("agent-token", { reconnection: true });
+    await service.waitUntilSignedIn();
+    await agent.waitUntilSignedIn();
+    const before = agent.info?.user?.auth_api_key_reply_prefix;
+    expect(before).toMatch(/^_INBOX\.api-key-/);
+
+    await server.close();
+    const auth = createProjectHostConatAuth({ host_id: HOST_ID });
+    server = await initConatServer({
+      port,
+      getUser: auth.getUser,
+      isAllowed: auth.isAllowed,
+    });
+
+    // retry until each client has reconnected (bounded)
+    const retry = async <T>(f: () => Promise<T>): Promise<T> => {
+      const start = Date.now();
+      for (;;) {
+        try {
+          return await f();
+        } catch (err) {
+          if (Date.now() - start > 20_000) throw err;
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
+    };
+    const sub = await retry(() => service.subscribe(subject));
+    (async () => {
+      for await (const mesg of sub) {
+        mesg.respondSync({ echo: mesg.data });
+      }
+    })();
+    const resp = await retry(() =>
+      agent.request(subject, "after", { timeout: 3_000 }),
+    );
+    expect(resp.data).toEqual({ echo: "after" });
+    // same inbox for the same agent session after reconnecting
+    expect(agent.info?.user?.auth_api_key_reply_prefix).toBe(before);
   });
 });
