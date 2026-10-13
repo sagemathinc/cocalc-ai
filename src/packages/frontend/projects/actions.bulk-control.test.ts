@@ -5,10 +5,15 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { MAX_BULK_PROJECT_CONTROL } from "@cocalc/conat/hub/api/projects";
 import { ProjectsActions } from "./actions";
 
+const mockProjectState = { value: "running" };
+
 jest.mock("./store", () => ({
   store: {
     get: jest.fn(() => ImmutableMap()),
-    getIn: jest.fn(() => "running"),
+    // Each project is in mockProjectState, and not being deleted.
+    getIn: jest.fn((path: string[]) =>
+      path.length > 2 ? mockProjectState.value : undefined,
+    ),
     get_state: jest.fn(),
     async_wait: jest.fn(),
     classify_project: jest.fn(() => ({})),
@@ -17,6 +22,11 @@ jest.mock("./store", () => ({
 
 jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
   ensureProjectReduxRuntime: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/frontend/projection-ack", () => ({
+  writeAndWaitForProjection: jest.fn(async ({ write }) => await write()),
+  isProjectionConvergenceError: jest.fn(() => false),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -28,6 +38,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         projects: {
           stopProjects: jest.fn(),
           restartProjects: jest.fn(),
+          restart: jest.fn(),
         },
       },
     },
@@ -139,5 +150,130 @@ describe("bulk stop and restart", () => {
     expect(projectActions[project_ids[1]].setState).toHaveBeenCalledWith({
       control_error: "Error restarting project -- no host",
     });
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+describe("overlapping restarts of a project", () => {
+  const project_id = ids(1)[0];
+  let projectActions: any;
+  let actions: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockProjectState.value = "running";
+    projectActions = { setState: jest.fn(), trackStartOp: jest.fn() };
+    jest
+      .spyOn(redux, "getProjectActions")
+      .mockImplementation(() => projectActions);
+    actions = new ProjectsActions("projects", redux as any) as any;
+    actions.project_log = jest.fn(async () => undefined);
+    actions.optimisticProjectStateUpdate = jest.fn();
+    actions.scheduleProjectLifecycleReconcile = jest.fn();
+    actions.projectedProjectStateMatches = jest.fn(() => true);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const errors = () =>
+    projectActions.setState.mock.calls
+      .map(([state]) => state)
+      .filter((state) => "control_error" in state)
+      .map((state) => state.control_error);
+
+  it("shows the restart as requested, as a single restart does", async () => {
+    hub.restartProjects.mockResolvedValue([
+      { project_id, ok: true, op_id: "op-1" },
+    ]);
+    await actions.restart_projects([project_id]);
+    const [{ restart_request }] = projectActions.setState.mock.calls.find(
+      ([state]) => state.restart_request,
+    );
+    expect(restart_request.get("token")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(actions.optimisticProjectStateUpdate).toHaveBeenCalledWith(
+      project_id,
+      "starting",
+    );
+  });
+
+  it("bulk then bulk: an older bulk restart finishing last changes nothing", async () => {
+    const older = deferred<any>();
+    hub.restartProjects
+      .mockReturnValueOnce(older.promise)
+      .mockResolvedValueOnce([{ project_id, ok: false, error: "boom" }]);
+    const first = actions.restart_projects([project_id]);
+    await actions.restart_projects([project_id]);
+    expect(errors()).toEqual(["Error restarting project -- boom"]);
+    older.resolve([{ project_id, ok: true, op_id: "older-op" }]);
+    await first;
+    expect(projectActions.trackStartOp).not.toHaveBeenCalled();
+    expect(errors()).toEqual(["Error restarting project -- boom"]);
+  });
+
+  it("bulk then single: the older bulk failure does not undo the newer restart", async () => {
+    const older = deferred<any>();
+    hub.restartProjects.mockReturnValueOnce(older.promise);
+    hub.restart.mockResolvedValueOnce({
+      op_id: "single-op",
+      scope_type: "project",
+      scope_id: project_id,
+    });
+    const first = actions.restart_projects([project_id]);
+    await actions.restart_project(project_id);
+    expect(projectActions.trackStartOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op_id: "single-op" }),
+    );
+    actions.optimisticProjectStateUpdate.mockClear();
+    older.resolve([{ project_id, ok: false, error: "late failure" }]);
+    await first;
+    expect(errors()).not.toContain("Error restarting project -- late failure");
+    expect(actions.optimisticProjectStateUpdate).not.toHaveBeenCalled();
+  });
+
+  it("single then bulk: the older single restart finishing last is not tracked", async () => {
+    const older = deferred<any>();
+    hub.restart.mockReturnValueOnce(older.promise);
+    hub.restartProjects.mockResolvedValueOnce([
+      { project_id, ok: true, op_id: "bulk-op" },
+    ]);
+    const first = actions.restart_project(project_id);
+    await actions.restart_projects([project_id]);
+    older.resolve({
+      op_id: "single-op",
+      scope_type: "project",
+      scope_id: project_id,
+    });
+    await first;
+    expect(
+      projectActions.trackStartOp.mock.calls.map(([op]) => op.op_id),
+    ).toEqual(["bulk-op"]);
+  });
+
+  it("restores the state from before the first of overlapping restarts", async () => {
+    const older = deferred<any>();
+    hub.restartProjects
+      .mockReturnValueOnce(older.promise)
+      .mockResolvedValueOnce([{ project_id, ok: false, error: "boom" }]);
+    const first = actions.restart_projects([project_id]);
+    // Once the first restart has been sent, the second one sees its
+    // optimistic state.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(hub.restartProjects).toHaveBeenCalledTimes(1);
+    mockProjectState.value = "starting";
+    await actions.restart_projects([project_id]);
+    // "running" from before the first restart, not its optimistic "starting".
+    expect(actions.optimisticProjectStateUpdate).toHaveBeenLastCalledWith(
+      project_id,
+      "running",
+    );
+    older.resolve([]);
+    await first;
   });
 });
