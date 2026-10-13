@@ -7,6 +7,10 @@ import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import {
+  drainAgentRpcReports,
+  noteAgentMessageTurnFailed,
+} from "./agent-rpc-report";
+import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
 } from "./agent-delivery-authorization";
@@ -8754,7 +8758,8 @@ async function prepareQueuedUserMessageForExecution({
         request &&
         (request.runtime ||
           request.chat?.agent_rpc_execution ||
-          request.chat?.sensor_wake)
+          request.chat?.sensor_wake ||
+          request.chat?.agent_rpc_report)
       ) {
         const queued = queuedConversationSession(syncdb, request);
         currentAgentConfig = queued.config;
@@ -9065,6 +9070,9 @@ async function enqueueFailureRecoveryContinuation({
   if (!directive) return undefined;
   // Codex error codes apply to Codex jobs; a harness only has its own.
   const failed = decodeAcpJobRequest(job);
+  // A delivery report starts one turn (the hub records it): a continuation
+  // would be refused, and the report stays in the chat regardless.
+  if (failed.chat?.agent_rpc_report) return undefined;
   const harnessJob = failed.runtime !== undefined;
   if (
     harnessJob !==
@@ -9121,7 +9129,7 @@ async function recoverPendingFailureRecoveryIntents({
   let recovered = 0;
   for (const job of listAcpJobsWithRecoveryIntent(limit)) {
     try {
-      await enqueueFailureRecoveryContinuation({
+      const resumed = await enqueueFailureRecoveryContinuation({
         client,
         job,
         recoveryCode: job.recovery_code as CodexAcpRecoveryErrorCode,
@@ -9129,6 +9137,13 @@ async function recoverPendingFailureRecoveryIntents({
       });
       clearAcpJobRecoveryIntent(job.op_id);
       recovered += 1;
+      // Declined: the turn is over after all.
+      if (!resumed)
+        reportFailedAgentMessageTurn(
+          job,
+          decodeAcpJobRequest(job),
+          job.error ?? undefined,
+        );
     } catch (err) {
       logger.warn("failed recovering persisted ACP failure intent", {
         op_id: job.op_id,
@@ -9302,6 +9317,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     if (
       request.chat?.agent_rpc_execution ||
       request.chat?.sensor_wake ||
+      request.chat?.agent_rpc_report ||
       request.runtime
     ) {
       if (request.runtime)
@@ -9323,7 +9339,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   if (
     request.runtime ||
     request.chat?.agent_rpc_execution ||
-    request.chat?.sensor_wake
+    request.chat?.sensor_wake ||
+    request.chat?.agent_rpc_report
   ) {
     refreshedRequest.config = currentAgentConfig;
     refreshedRequest.session_id = currentAgentSessionId;
@@ -9352,9 +9369,11 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       recovery_detail:
         result.terminalState === "error" ? result.recoveryDetail : undefined,
     });
+    let resumed: AcpJobRow | undefined;
+    let recoveryPending = false;
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
-        await enqueueFailureRecoveryContinuation({
+        resumed = await enqueueFailureRecoveryContinuation({
           client: conatClient,
           job: getAcpJobByOpId(job.op_id) ?? job,
           recoveryCode: result.recoveryCode,
@@ -9362,6 +9381,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         });
         clearAcpJobRecoveryIntent(job.op_id);
       } catch (err) {
+        // The persisted intent stays: the recovery poll decides later.
+        recoveryPending = true;
         logger.warn("failed to enqueue ACP failure recovery continuation", {
           op_id: job.op_id,
           recovery_code: result.recoveryCode,
@@ -9369,6 +9390,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         });
       }
     }
+    // A turn that is (or may still be) retried is not over; the others are
+    // reported to the agent whose message started them.
+    if (result.terminalState === "error" && !resumed && !recoveryPending)
+      reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
@@ -9386,7 +9411,36 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
+    reportFailedAgentMessageTurn(job, request, message);
   }
+}
+
+/** Tell the agent whose message started this failed turn (best effort). */
+function reportFailedAgentMessageTurn(
+  job: AcpJobRow,
+  request: AcpRequest,
+  error?: string,
+): void {
+  // A recovery continuation carries the same message: the turn began when
+  // the first of them started, and a reply from any of them counts.
+  let started = job.started_at;
+  let parent = job.recovery_parent_op_id;
+  for (let hops = 0; parent && hops < 20; hops++) {
+    const row = getAcpJobByOpId(parent);
+    if (!row) break;
+    if (row.started_at != null) started = row.started_at;
+    parent = row.recovery_parent_op_id;
+  }
+  const report = noteAgentMessageTurnFailed({
+    op_id: job.op_id,
+    request,
+    error: `${error ?? ""}`.trim() || "The turn ended with an error.",
+    turn_started_at: started,
+  });
+  if (report)
+    void drainAgentRpcReports(hubApi.agent).catch((err) =>
+      logger.debug("delivery report drain failed", { err: `${err}` }),
+    );
 }
 
 async function pumpQueuedAcpJobsForThread({
@@ -11096,8 +11150,14 @@ async function reconcilePendingCodexActions(
 function startCodexActionReconcilePoller(client: ConatClient): void {
   if (codexActionReconcileTimer != null) return;
   void reconcilePendingCodexActions(client);
+  let ticks = 0;
   codexActionReconcileTimer = setInterval(() => {
     void reconcilePendingCodexActions(client);
+    // Delivery reports the hub could not take yet (about once a minute).
+    if (++ticks % 6 === 0)
+      void drainAgentRpcReports(hubApi.agent).catch((err) =>
+        logger.debug("delivery report drain failed", { err: `${err}` }),
+      );
   }, CODEX_ACTION_RECONCILE_MS);
   codexActionReconcileTimer.unref?.();
 }
@@ -12283,6 +12343,7 @@ export const acpTestInternals = {
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,
   failureRecoveryDirective,
+  recoverPendingFailureRecoveryIntents,
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,

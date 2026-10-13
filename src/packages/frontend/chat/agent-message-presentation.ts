@@ -24,7 +24,8 @@ export type AgentRpcPresentationMetadata = {
 };
 
 type AgentMessageEvidence = {
-  direction?: "incoming" | "outgoing";
+  // "report": CoCalc's delivery report about that agent, not its words.
+  direction?: "incoming" | "outgoing" | "report";
   agent_network_id?: string;
   attempt_id?: string;
   source_label?: string;

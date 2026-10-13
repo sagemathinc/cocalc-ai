@@ -63,6 +63,8 @@ export async function manageAgentMemory(opts: {
   return await agentMemory().owner(account_id, request);
 }
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
+export const reportRpcTurnFailure = rpc.reportRpcTurnFailure;
+export const authorizeRpcReportExecution = rpc.authorizeRpcReportExecution;
 export const listSensors = sensors.listSensors;
 export const manageSensor = sensors.manageSensor;
 export const createScheduledPrompt = sensors.createScheduledPrompt;

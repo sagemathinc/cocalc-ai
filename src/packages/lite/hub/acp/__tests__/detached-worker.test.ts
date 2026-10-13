@@ -1008,6 +1008,35 @@ describe("terminal failure recovery", () => {
     }
   });
 
+  it("never resumes a delivery report's turn (a report starts one turn)", async () => {
+    const request = makeRequest();
+    (request.chat as any).agent_rpc_report = { attempt_id: "attempt" };
+    const queued = enqueueAcpJob(request as any);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat",
+          date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          generating: false,
+          history: [],
+        },
+      ]),
+    );
+    await expect(
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...queued, started_at: Date.now() },
+        recoveryCode: "codex_model_capacity",
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
+    ).toHaveLength(0);
+  });
+
   it("persists a bounded 15-minute model-capacity continuation", async () => {
     const request = makeRequest();
     const queued = enqueueAcpJob(request as any);
