@@ -12,6 +12,7 @@
 // The first version kept all notes in one encrypted external-credential
 // record. It is moved here, once, the first time the account is used.
 
+import { createHash } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
@@ -72,14 +73,16 @@ export type AgentMemoryDeps = {
   encrypt(aad: string, text: string): Promise<string>;
   decrypt(aad: string, text: string): Promise<string>;
   /**
-   * The first version's single record. Absorbed whenever it exists (hubs
-   * still running the first version may write it during a rolling upgrade),
-   * then removed if it has not changed since it was read.
+   * The first version's single record. Hubs still running the first version
+   * may write it during a rolling upgrade, so it is absorbed whenever its
+   * content changes and is not deleted here (except by "delete all"): a
+   * first-version writer that read it before a deletion would lose its
+   * write without noticing. A later release deletes these records once no
+   * first-version hub can be running.
    */
   legacy: {
     get(account_id: string): Promise<LegacyRecord | undefined>;
-    /** Without a version, removes it whatever it holds (delete all). */
-    remove(account_id: string, version?: string): Promise<void>;
+    remove(account_id: string): Promise<void>;
   };
   assertWritable(db: MemoryDb, account_id: string): Promise<void>;
   /** Rate limits for agent operations; the owner is never charged. */
@@ -92,7 +95,7 @@ export type AgentMemoryDeps = {
 
 export type LegacyRecord = {
   payload: string;
-  /** Changes whenever the record is written. */
+  /** A hash of the content: changes whenever the content does. */
   version: string;
 };
 
@@ -121,23 +124,18 @@ export const defaultAgentMemoryDeps: AgentMemoryDeps = {
       return row && !row.revoked
         ? {
             payload: row.payload,
-            version: `${row.id}@${new Date(row.updated).toISOString()}`,
+            version: createHash("sha256").update(row.payload).digest("hex"),
           }
         : undefined;
     },
-    async remove(account_id, version) {
-      // Deleted, not revoked: the notes now live in agent_memory_notes, and
-      // deleting memory must not leave an encrypted copy behind. With a
-      // version, only that exact record: a first-version hub may have
-      // written it again since, and that write is absorbed next time.
-      const [id, updated] = version?.split("@") ?? [];
+    async remove(account_id) {
+      // Deleted, not revoked: deleting memory must not leave an encrypted
+      // copy behind.
       await getPool().query(
         `DELETE FROM external_credentials
           WHERE provider='cocalc' AND kind='agent-memory' AND scope='account'
-            AND owner_account_id=$1
-            AND ($2::uuid IS NULL OR (id=$2::uuid
-              AND date_trunc('milliseconds', updated)=$3::timestamptz))`,
-        [account_id, id ?? null, updated ?? null],
+            AND owner_account_id=$1`,
+        [account_id],
       );
     },
   },
@@ -262,18 +260,24 @@ export function createAgentMemory(
   ) => deps.decrypt(aad(account_id, row.namespace, row.name, field), value);
 
   /**
-   * Absorbs the first version's single record into rows. It runs whenever
-   * that record exists: on first use, and again if a hub still running the
-   * first version wrote it during a rolling upgrade (a note it changed later
-   * than its row wins; a note it deleted is not deleted here). The record is
-   * then deleted, unless it changed since it was read, in which case the
-   * next use absorbs it again. Accounts that never used memory get no row
-   * until the owner changes a setting.
+   * Absorbs the first version's single record into rows whenever its content
+   * changed since it was last absorbed: on first use, and again whenever a
+   * hub still running the first version writes it during a rolling upgrade.
+   * The first time takes every note; later times only notes written since
+   * (so a note deleted here does not come back), and a note wins only if it
+   * is newer than its row. A note an old hub deleted is not deleted here.
+   * Accounts that never used memory get no row until the owner changes a
+   * setting.
    */
   async function absorb(
     account_id: string,
     legacy: LegacyRecord,
   ): Promise<AgentMemorySettings | undefined> {
+    const { rows: seen } = await pool().query(
+      "SELECT legacy_version FROM agent_memory_accounts WHERE account_id=$1",
+      [account_id],
+    );
+    if (seen[0]?.legacy_version === legacy.version) return undefined;
     let record: LegacyAgentMemoryRecord;
     try {
       record = parseAgentMemoryRecord(legacy.payload);
@@ -298,18 +302,34 @@ export function createAgentMemory(
         )),
       })),
     );
-    const settings = await transaction(account_id, async (db) => {
+    return await transaction(account_id, async (db) => {
+      const { rows } = await db.query(
+        `SELECT enabled, namespaces, projects, legacy_version, legacy_absorbed_at
+           FROM agent_memory_accounts WHERE account_id=$1`,
+        [account_id],
+      );
+      const row = rows[0];
+      if (row?.legacy_version === legacy.version)
+        return parseAgentMemorySettings(row);
       await deps.assertWritable(db, account_id);
-      let current = await loadSettings(db, account_id);
-      if (!current) {
-        current = { enabled: record.enabled, namespaces: [], projects: {} };
+      // Notes changed since the last absorb, with a minute's slack for the
+      // clocks of the hubs that wrote them.
+      const since =
+        row?.legacy_absorbed_at == null
+          ? undefined
+          : new Date(row.legacy_absorbed_at).getTime() - 60_000;
+      const settings: AgentMemorySettings = row
+        ? parseAgentMemorySettings(row)
+        : { enabled: record.enabled, namespaces: [], projects: {} };
+      if (!row)
         await db.query(
           `INSERT INTO agent_memory_accounts (account_id, enabled, namespaces, projects, migrated_at, updated_at)
            VALUES ($1, $2, '[]'::jsonb, '{}'::jsonb, now(), now())`,
           [account_id, record.enabled],
         );
-      }
-      for (const { note, description, body } of encrypted)
+      for (const { note, description, body } of encrypted) {
+        if (since !== undefined && Date.parse(note.updated_at) <= since)
+          continue;
         await db.query(
           `INSERT INTO agent_memory_notes
              (account_id, namespace, name, description, body, bytes, created_at, updated_at)
@@ -328,15 +348,14 @@ export function createAgentMemory(
             note.updated_at,
           ],
         );
-      return current;
+      }
+      await db.query(
+        `UPDATE agent_memory_accounts SET legacy_version=$2, legacy_absorbed_at=now()
+          WHERE account_id=$1`,
+        [account_id, legacy.version],
+      );
+      return settings;
     });
-    await deps.legacy.remove(account_id, legacy.version).catch((err) =>
-      logger.warn("first-version agent memory not removed after absorbing it", {
-        account_id,
-        err: `${err}`,
-      }),
-    );
-    return settings;
   }
 
   async function settingsOf(account_id: string): Promise<AgentMemorySettings> {

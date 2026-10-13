@@ -438,7 +438,14 @@ Table({
       pg_default: "'{}'::jsonb",
     },
     migrated_at: timestamp(
-      "When notes of the first version's single record were moved here.",
+      "When notes of the first version's single record were first moved here.",
+    ),
+    legacy_version: {
+      type: "string",
+      desc: "Hash of the first version's record as last absorbed (rolling upgrades).",
+    },
+    legacy_absorbed_at: timestamp(
+      "When the first version's record was last absorbed.",
     ),
     updated_at: created("Last settings change."),
   },

@@ -52,10 +52,8 @@ function setup() {
     },
     legacy: {
       get: async (account_id) => legacy.records.get(account_id),
-      remove: async (account_id, version) => {
-        const record = legacy.records.get(account_id);
-        if (record && (version == null || record.version === version))
-          legacy.records.delete(account_id);
+      remove: async (account_id) => {
+        legacy.records.delete(account_id);
       },
     },
     assertWritable: writable,
@@ -162,34 +160,28 @@ describeDb("agent memory", () => {
     expect(await names(memory, account, P1)).toEqual([]);
   });
 
-  test("the first version's record moves into rows once, then is deleted", async () => {
+  test("the first version's record is absorbed into rows and kept for now", async () => {
     const { memory, legacy } = setup();
     const account = randomUUID();
+    const prefs = {
+      name: "prefs",
+      description: "Preferences",
+      body: "Be brief.",
+      updated_at: "2026-10-01T00:00:00.000Z",
+    };
+    const deploy = {
+      name: "deploy",
+      description: "Deploy",
+      body: "Use a terminal.",
+      updated_at: "2026-10-02T00:00:00.000Z",
+    };
     legacy.set(
       account,
-      JSON.stringify({
-        version: 1,
-        enabled: true,
-        notes: [
-          {
-            name: "prefs",
-            description: "Preferences",
-            body: "Be brief.",
-            updated_at: "2026-10-01T00:00:00.000Z",
-          },
-          {
-            name: "deploy",
-            description: "Deploy",
-            body: "Use a terminal.",
-            updated_at: "2026-10-02T00:00:00.000Z",
-          },
-        ],
-      }),
+      JSON.stringify({ version: 1, enabled: true, notes: [prefs, deploy] }),
     );
     const index = await memory.turnIndex(account, P1);
     expect(index?.notes).toBe(2);
     expect(index?.index).toContain("- deploy: Deploy");
-    expect(legacy.has(account)).toBe(false);
     const read: any = await memory.agent(account, P1, {
       action: "memory",
       op: "read",
@@ -200,63 +192,73 @@ describeDb("agent memory", () => {
       body: "Be brief.",
       updated_at: "2026-10-01T00:00:00.000Z",
     });
-    // A record written again (by a hub still on the first version) is
-    // absorbed too; the owner's on/off setting here stays as it is.
-    legacy.set(
-      account,
-      JSON.stringify({
-        version: 1,
-        enabled: false,
-        notes: [
-          {
-            name: "late",
-            description: "Written by an old hub",
-            body: "after the move",
-            updated_at: "2026-10-12T00:00:00.000Z",
-          },
-        ],
-      }),
-    );
-    expect(await memory.owner(account, { op: "status" })).toMatchObject({
-      enabled: true,
-      notes: 3,
-    });
-    expect(legacy.has(account)).toBe(false);
+    // Kept: a hub still on the first version may write it, and deleting it
+    // under such a writer would lose that write.
+    expect(legacy.has(account)).toBe(true);
+    // A note deleted here does not come back from the unchanged record.
+    await memory.owner(account, { op: "delete", name: "deploy" });
+    expect((await memory.owner(account, { op: "status" })).notes).toBe(1);
   });
 
-  test("rolling upgrade: an old hub's write during the move is not lost", async () => {
-    const { memory, legacy, onceBeforeCharge } = setup();
+  test("rolling upgrade: an old hub's write after the move is absorbed", async () => {
+    const { memory, legacy } = setup();
     const account = randomUUID();
-    const record = (body: string, updated_at: string) =>
-      JSON.stringify({
-        version: 1,
-        enabled: true,
-        notes: [{ name: "deploy", description: "Deploy", body, updated_at }],
-      });
-    legacy.set(account, record("before", "2026-10-01T00:00:00.000Z"));
-    // The record changes after it was read, before it would be deleted.
-    const get = legacy.records.get.bind(legacy.records);
-    let raced = false;
-    legacy.records.get = (key: string) => {
-      const value = get(key);
-      if (!raced && value) {
-        raced = true;
-        legacy.set(account, record("after", "2026-10-02T00:00:00.000Z"));
-      }
-      return value;
+    const record = (notes: any[]) =>
+      JSON.stringify({ version: 1, enabled: true, notes });
+    const old = {
+      name: "old",
+      description: "Old",
+      body: "from before",
+      updated_at: "2026-10-01T00:00:00.000Z",
     };
-    onceBeforeCharge(async () => {});
+    legacy.set(
+      account,
+      record([
+        old,
+        { ...old, name: "deploy", description: "Deploy", body: "before" },
+      ]),
+    );
     await memory.turnIndex(account, P1);
-    // Moved as read; the newer record was not deleted...
-    expect(legacy.has(account)).toBe(true);
-    // ...and the next use absorbs it, the newer note winning.
-    const note: any = await memory.agent(account, P1, {
+    await memory.owner(account, { op: "delete", name: "old" });
+    // An old hub, having read the record before, writes it: it changes
+    // deploy and adds a note; the note deleted here is still in it.
+    const now = new Date().toISOString();
+    legacy.set(
+      account,
+      record([
+        old,
+        {
+          ...old,
+          name: "deploy",
+          description: "Deploy",
+          body: "after",
+          updated_at: now,
+        },
+        {
+          ...old,
+          name: "late",
+          description: "Late",
+          body: "new",
+          updated_at: now,
+        },
+      ]),
+    );
+    const notes = (await memory.owner(account, { op: "list" })).notes_list
+      .map((n: any) => n.name)
+      .sort();
+    expect(notes).toEqual(["deploy", "late"]);
+    const deploy: any = await memory.agent(account, P1, {
       action: "memory",
       op: "read",
       name: "deploy",
     });
-    expect(note.body).toBe("after");
-    expect(legacy.has(account)).toBe(false);
+    expect(deploy.body).toBe("after");
+    // The owner's on/off setting here is not taken from a later record.
+    legacy.set(
+      account,
+      JSON.stringify({ version: 1, enabled: false, notes: [] }),
+    );
+    expect((await memory.owner(account, { op: "status" })).enabled).toBe(true);
   });
 
   test("a note changed here after the move is not overwritten by an older record", async () => {
