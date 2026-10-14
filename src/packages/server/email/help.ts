@@ -1,12 +1,12 @@
-/* Returns the configured help email address.
-   Cached with "long" TTL so doesn't put load on database
-   even if called frequently.
+/* Returns the configured help email address (also the fallback From address
+   of outgoing mail). Not cached: an admin who changes it and sends a test
+   message should see the new address.
 */
 
-import { getCachedReadPool } from "@cocalc/database/pool";
+import getPool from "@cocalc/database/pool";
 
 export default async function getHelpEmail(): Promise<string> {
-  const pool = getCachedReadPool("long");
+  const pool = getPool();
   const { rows } = await pool.query(
     "SELECT value FROM server_settings WHERE name='help_email'",
   );

@@ -16,7 +16,7 @@ jest.mock("@cocalc/database/pool", () => ({
   }),
 }));
 
-const tables = ["agent_rpc_admission_state"];
+const tables = ["agent_rpc_admission_state", "agent_rpc_report_executions"];
 const schema = Object.fromEntries(tables.map((name) => [name, SCHEMA[name]]));
 
 describe("agent runtime and admission schema", () => {

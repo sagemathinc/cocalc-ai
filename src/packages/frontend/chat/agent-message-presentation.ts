@@ -24,7 +24,8 @@ export type AgentRpcPresentationMetadata = {
 };
 
 type AgentMessageEvidence = {
-  direction?: "incoming" | "outgoing";
+  // "report": CoCalc's delivery report about that agent, not its words.
+  direction?: "incoming" | "outgoing" | "report";
   agent_network_id?: string;
   attempt_id?: string;
   source_label?: string;
@@ -165,12 +166,20 @@ export function sensorWakePresentation(
   value: string,
   title: string,
 ):
-  | { kind: "wake" | "prompt" | "reminder"; title: string; summary: string }
+  | {
+      kind: "wake" | "prompt" | "reminder";
+      title: string;
+      summary: string;
+      at?: string;
+    }
   | undefined {
   const text = value.trimStart();
   if (text.startsWith("[Sensor wake]")) {
     const summary = text.match(/^Summary: (.*)$/m)?.[1]?.trim() ?? "";
-    return { kind: "wake", title, summary };
+    const at = text
+      .split("\n", 1)[0]
+      .match(/ ran at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.$/)?.[1];
+    return { kind: "wake", title, summary, ...(at ? { at } : {}) };
   }
   if (text.startsWith("[Scheduled prompt]")) {
     const lines = text.split("\n").slice(1);

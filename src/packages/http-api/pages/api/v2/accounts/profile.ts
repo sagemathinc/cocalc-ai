@@ -24,7 +24,7 @@ async function handle(req, res) {
     if (account_id == null) {
       res.json({ profile: await getPrivate(req, noCache) });
     } else {
-      res.json({ profile: await getProfile(account_id, noCache) });
+      res.json({ profile: await getProfile(account_id) });
     }
   } catch (err) {
     res.json({ error: err.message });
@@ -38,7 +38,7 @@ async function getPrivate(req, noCache) {
   if (account_id == null) {
     return {};
   }
-  return await getPrivateProfile(account_id, noCache);
+  return await getPrivateProfile(account_id);
 }
 
 async function getPrivateAccountIdFromApiKey(req): Promise<string | undefined> {

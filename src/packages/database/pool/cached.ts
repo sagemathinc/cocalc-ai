@@ -20,6 +20,14 @@ finds the name unset, sets it and tries again sees the page at once.
 Never use it for permission, membership, entitlement or billing checks: a
 cached answer can be up to the cache time out of date in either direction.
 Use getPool() for those, and for anything that writes.
+
+Nothing clears these caches when the data changes (a hub may run several
+processes, and each has its own cache), so don't cache a read whose result
+someone may just have changed and expects to see, e.g. their own profile or
+an admin's view of an account they just banned. Indexed single-row lookups
+are cheap enough to run uncached. Each call site passes a label, and
+cocalc_database_cached_reads_total{label,outcome} counts hits and misses, so
+whether a cache pays for itself can be measured.
 */
 
 import LRU from "lru-cache";
@@ -30,12 +38,20 @@ import {
   type QueryResultRow,
 } from "pg";
 import getLogger from "@cocalc/backend/logger";
+import { newCounter } from "@cocalc/backend/metrics";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
 import { isCacheableQuery } from "./cacheable-query";
 import getPool, { shouldSkipEnsureExists } from "./pool";
 
 const L = getLogger("db:pool:cached");
+
+const cachedReads = newCounter(
+  "database",
+  "cached_reads_total",
+  "Reads through getCachedReadPool by call site; outcome is hit, miss or uncached (not a plain read)",
+  ["label", "outcome"],
+);
 
 const MAX_AGE_S = {
   short: 5, // just to avoid a very rapid fire sequence of re-requests
@@ -115,7 +131,6 @@ const cachedQuery = reuseInFlight(
   },
 );
 
-/** Reads served from a per-process query-result cache. */
 /**
  * The promise forms of pg's query(): what a cached read pool supports. A pg
  * Pool or PoolClient also fits, so read-only helpers can take either.
@@ -139,15 +154,27 @@ const warned = new Set<string>();
  * (display, catalogs, analytics), never for access, entitlement or spend
  * checks (server/query-cache-policy.test.ts enforces that for those paths).
  *
+ * Do not cache what someone may just have changed and expect to see (see
+ * the top of this file): nothing clears the cache on a change.
+ *
  * A query that is not a plain read (see cacheable-query.ts) is a bug here:
  * it throws outside production, and in production runs uncached and logs.
  */
 export function getCachedReadPool(
   cacheTime: CacheTime,
-  { ensureExists = !shouldSkipEnsureExists() }: { ensureExists?: boolean } = {},
+  options: {
+    // Names the call site in cocalc_database_cached_reads_total.
+    label: string;
+    ensureExists?: boolean;
+  },
 ): CachedReadPool {
-  if (!cacheTime || caches[cacheTime] == null) {
+  const { label, ensureExists = !shouldSkipEnsureExists() } = options ?? {};
+  const cache = caches[cacheTime];
+  if (!cacheTime || cache == null) {
     throw Error(`invalid cache "${cacheTime}"`);
+  }
+  if (!label) {
+    throw Error("getCachedReadPool: a label is required");
   }
   return {
     query: async (...args: any[]) => {
@@ -158,6 +185,7 @@ export function getCachedReadPool(
         if (STRICT) {
           throw Error(`getCachedReadPool: not a plain read: ${text}`);
         }
+        cachedReads.labels(label, "uncached").inc();
         if (!warned.has(text)) {
           warned.add(text);
           L.warn("getCachedReadPool: not a plain read; running uncached", {
@@ -168,6 +196,9 @@ export function getCachedReadPool(
           ...(args as Parameters<Pool["query"]>),
         );
       }
+      cachedReads
+        .labels(label, cache.has(JSON.stringify(args)) ? "hit" : "miss")
+        .inc();
       const result = await cachedQuery(
         cacheTime,
         ensureExists,

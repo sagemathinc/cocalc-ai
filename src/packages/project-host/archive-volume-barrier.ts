@@ -8,7 +8,10 @@ import {
   getSubvolumeField,
   type Subvolume,
 } from "@cocalc/file-server/btrfs/subvolume";
-import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
+import {
+  getGeneration,
+  withSubvolumeQuotaRelief,
+} from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { withBtrfsMutationLock } from "@cocalc/file-server/btrfs/operation-cache";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
@@ -136,6 +139,20 @@ async function deleteSnapshot(path: string): Promise<void> {
     err_on_exit: true,
     verbose: false,
   });
+}
+
+// Moving snapshots out of, or back into, the project's .snapshots directory
+// changes the project subvolume's own tree, which Btrfs charges to the
+// project's qgroup. An idle project due for archiving is often at or over its
+// quota, and Btrfs then refuses with EDQUOT ("Disk quota exceeded"), so the
+// project's limit is raised for the duration, as for any snapshot cleanup.
+async function withProjectQuotaRelief<T>(
+  volume: Subvolume,
+  operation: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!(await exists(volume.path))) return await run();
+  return await withSubvolumeQuotaRelief({ subvolume: volume, operation, run });
 }
 
 async function finishStagingSnapshot({
@@ -269,17 +286,19 @@ export async function freezeVolumeForArchiveBackup(
   volume: Subvolume,
 ): Promise<ArchiveVolumeFreeze> {
   let alreadyReadonly = false;
-  await withBtrfsMutationLock({
-    mount: volume.filesystem.opts.mount,
-    operation: "archive-volume-freeze",
-    run: async () => {
-      if (await isSubvolumeReadonly(volume.path)) {
-        alreadyReadonly = true;
-        return;
-      }
-      await stageLocalSnapshotsUnlocked(volume);
-      await setSubvolumeReadonlyUnlocked(volume.path, true);
-    },
+  await withProjectQuotaRelief(volume, "archive-volume-freeze", async () => {
+    await withBtrfsMutationLock({
+      mount: volume.filesystem.opts.mount,
+      operation: "archive-volume-freeze",
+      run: async () => {
+        if (await isSubvolumeReadonly(volume.path)) {
+          alreadyReadonly = true;
+          return;
+        }
+        await stageLocalSnapshotsUnlocked(volume);
+        await setSubvolumeReadonlyUnlocked(volume.path, true);
+      },
+    });
   });
   return { alreadyReadonly };
 }
@@ -287,23 +306,28 @@ export async function freezeVolumeForArchiveBackup(
 export async function releaseArchiveVolumeFreeze(
   volume: Subvolume,
 ): Promise<"absent" | "already-writable" | "released"> {
-  return await withBtrfsMutationLock({
-    mount: volume.filesystem.opts.mount,
-    operation: "archive-volume-unfreeze",
-    run: async () => {
-      if (!(await exists(volume.path))) {
-        await deleteStagedArchiveSnapshotsUnlocked(volume);
-        return "absent" as const;
-      }
-      if (await isSubvolumeReadonly(volume.path)) {
-        await setSubvolumeReadonlyUnlocked(volume.path, false);
-        await restoreLocalSnapshotsUnlocked(volume);
-        return "released" as const;
-      }
-      await restoreLocalSnapshotsUnlocked(volume);
-      return "already-writable" as const;
-    },
-  });
+  return await withProjectQuotaRelief(
+    volume,
+    "archive-volume-unfreeze",
+    async () =>
+      await withBtrfsMutationLock({
+        mount: volume.filesystem.opts.mount,
+        operation: "archive-volume-unfreeze",
+        run: async () => {
+          if (!(await exists(volume.path))) {
+            await deleteStagedArchiveSnapshotsUnlocked(volume);
+            return "absent" as const;
+          }
+          if (await isSubvolumeReadonly(volume.path)) {
+            await setSubvolumeReadonlyUnlocked(volume.path, false);
+            await restoreLocalSnapshotsUnlocked(volume);
+            return "released" as const;
+          }
+          await restoreLocalSnapshotsUnlocked(volume);
+          return "already-writable" as const;
+        },
+      }),
+  );
 }
 
 export async function releaseArchiveVolumeFreezeIfGenerationMatches({
@@ -313,29 +337,36 @@ export async function releaseArchiveVolumeFreezeIfGenerationMatches({
   volume: Subvolume;
   expectedGeneration: number;
 }): Promise<"absent" | "already-writable" | "released"> {
-  return await withBtrfsMutationLock({
-    mount: volume.filesystem.opts.mount,
-    operation: "archive-volume-unfreeze",
-    run: async () => {
-      if (!(await exists(volume.path))) {
-        await deleteStagedArchiveSnapshotsUnlocked(volume);
-        return "absent";
-      }
-      if (!(await isSubvolumeReadonly(volume.path))) {
-        await restoreLocalSnapshotsUnlocked(volume);
-        return "already-writable";
-      }
-      const generation = await getGeneration(volume.path, { cache: false });
-      if (generation !== expectedGeneration) {
-        throw new Error(
-          `refusing to release archive freeze at generation ${generation}; expected ${expectedGeneration}`,
-        );
-      }
-      await setSubvolumeReadonlyUnlocked(volume.path, false);
-      await restoreLocalSnapshotsUnlocked(volume);
-      return "released";
-    },
-  });
+  return await withProjectQuotaRelief(
+    volume,
+    "archive-volume-unfreeze",
+    async () =>
+      await withBtrfsMutationLock({
+        mount: volume.filesystem.opts.mount,
+        operation: "archive-volume-unfreeze",
+        run: async () => {
+          if (!(await exists(volume.path))) {
+            await deleteStagedArchiveSnapshotsUnlocked(volume);
+            return "absent";
+          }
+          if (!(await isSubvolumeReadonly(volume.path))) {
+            await restoreLocalSnapshotsUnlocked(volume);
+            return "already-writable";
+          }
+          const generation = await getGeneration(volume.path, {
+            cache: false,
+          });
+          if (generation !== expectedGeneration) {
+            throw new Error(
+              `refusing to release archive freeze at generation ${generation}; expected ${expectedGeneration}`,
+            );
+          }
+          await setSubvolumeReadonlyUnlocked(volume.path, false);
+          await restoreLocalSnapshotsUnlocked(volume);
+          return "released";
+        },
+      }),
+  );
 }
 
 export async function assertFrozenVolumeMatchesBackup({

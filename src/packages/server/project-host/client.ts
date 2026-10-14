@@ -54,6 +54,9 @@ export async function getRoutedHostControlClient({
       deliverAgentSensorWake: async () => {
         throw new Error("sensors must route through the project owner");
       },
+      deliverAgentRpcReport: async () => {
+        throw new Error("agent RPC must route through the target owner");
+      },
       probePublicRouteOrigin: async () =>
         await bridge.probePublicRouteOrigin({ host_id }),
       restartCloudflared: async (restart) =>

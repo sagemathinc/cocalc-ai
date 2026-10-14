@@ -200,7 +200,9 @@ async function listPayments(
 
 export async function getSiteLicenseRevenueAnalytics({
   request = { reason: "site license revenue analytics" },
-  client = getCachedReadPool("medium"),
+  client = getCachedReadPool("medium", {
+    label: "site-license-revenue-analytics",
+  }),
   now = new Date(),
 }: {
   request?: SiteLicenseRevenueAnalyticsRequest;

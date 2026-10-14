@@ -225,6 +225,7 @@ describe("hub API argument transforms", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "agent.authorizeRpcAdmission",
       "agent.authorizeRpcExecution",
+      "agent.authorizeRpcReportExecution",
       "agent.authorizeSensorExecution",
       "agent.beginCliConnectorTurn",
       "agent.beginCocalcConnectorTurn",
@@ -233,6 +234,7 @@ describe("hub API argument transforms", () => {
       "agent.getMentionIdentity",
       "agent.issueIdentity",
       "agent.renewCocalcConnectorTurn",
+      "agent.reportRpcTurnFailure",
       "agent.reportRuntime",
       "agent.resolvePaymentSelection",
       "aiSessions.upsertProjectHostSession",

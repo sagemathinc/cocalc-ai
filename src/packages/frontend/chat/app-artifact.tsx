@@ -41,6 +41,7 @@ import {
   SharedBrowserViewer,
 } from "@cocalc/frontend/frame-editors/browser-editor/viewer/viewer";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
+import { appOutputText } from "./app-output-text";
 import {
   SHARED_BROWSER_APP_ID,
   sharedBrowserAppSpec,
@@ -470,7 +471,7 @@ function StartScreenUntilReady({
 async function appFailureDetail(api, id: string): Promise<string> {
   try {
     const status = await api.apps.statusApp(id);
-    const stderr = `${status?.stderr ?? ""}`.trim();
+    const stderr = appOutputText(status?.stderr).trim();
     return stderr.length > 600 ? `...${stderr.slice(-600)}` : stderr;
   } catch {
     return "";

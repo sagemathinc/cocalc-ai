@@ -123,6 +123,10 @@ import {
   type DisposableRestoreWorkerResult,
 } from "./disposable-gcp";
 import { refreshSqliteMirror } from "./sqlite-mirror";
+import {
+  formatRecoveryTargetTimeForPostgres,
+  normalizeRecoveryTargetTime,
+} from "./recovery-target-time";
 
 const logger = getLogger("server:bay-backup");
 const execFile = promisify(execFile0);
@@ -1570,31 +1574,6 @@ function shellQuote(arg: string): string {
 
 function postgresQuote(arg: string): string {
   return `'${arg.replace(/'/g, "''")}'`;
-}
-
-function normalizeRecoveryTargetTime(value?: string): string | null {
-  const trimmed = `${value ?? ""}`.trim();
-  if (trimmed === "") {
-    return null;
-  }
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
-      trimmed,
-    )
-  ) {
-    throw new Error(
-      "target_time must be an RFC3339 timestamp with an explicit timezone, e.g. 2026-04-07T15:37:57Z",
-    );
-  }
-  const normalized = new Date(trimmed);
-  if (Number.isNaN(normalized.getTime())) {
-    throw new Error(`invalid target_time '${trimmed}'`);
-  }
-  return normalized.toISOString();
-}
-
-function formatRecoveryTargetTimeForPostgres(value: string): string {
-  return value.replace("T", " ").replace("Z", "+00");
 }
 
 const WAL_SEGMENT_NAME_RE = /^[0-9A-F]{24}(?:\.partial)?$/;
@@ -4245,11 +4224,7 @@ function mapRestoreReadiness({
   const last_pitr_test_remote_only = state.last_pitr_test_remote_only ?? null;
 
   let latest_backup_restore_test_status:
-    | "no-backup"
-    | "not-run"
-    | "stale"
-    | "passed"
-    | "failed";
+    "no-backup" | "not-run" | "stale" | "passed" | "failed";
   let latest_backup_pitr_test_status:
     | "no-backup"
     | "not-recovery-ready"
@@ -5627,14 +5602,15 @@ async function preparePitrRestoreSentinel({
     `INSERT INTO ${RESTORE_TEST_PITR_TABLE} (run_id, phase, note) VALUES ($1, 'pre', $2)`,
     [run_id, note],
   );
-  const { rows } = await getPool().query<{ target_time: string | Date }>(
-    "SELECT clock_timestamp() AS target_time",
+  // As text with microseconds: node-postgres would return a Date, rounded
+  // down to the millisecond, which can fall before the "pre" commit above
+  // when both happen within the same millisecond. The drill then recovers to
+  // a point with neither sentinel.
+  const { rows } = await getPool().query<{ target_time: string }>(
+    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS target_time`,
   );
-  const rawTargetTime = rows[0]?.target_time;
   const target_time = normalizeRecoveryTargetTime(
-    rawTargetTime instanceof Date
-      ? rawTargetTime.toISOString()
-      : `${rawTargetTime ?? ""}`,
+    `${rows[0]?.target_time ?? ""}`,
   );
   if (!target_time) {
     throw new Error("failed to record PITR target_time");

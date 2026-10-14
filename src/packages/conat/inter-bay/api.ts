@@ -440,36 +440,10 @@ export interface ProjectControlSetUsageAccountResponse {
   updated: boolean;
 }
 
-export interface ProjectControlAssignHostRequest {
-  project_id: string;
-  account_id: string;
-  dest_host_id: string;
-  epoch?: number;
-}
-
 export interface ProjectControlAddressRequest {
   project_id: string;
   account_id: string;
   epoch?: number;
-}
-
-export interface ProjectControlMoveRequest {
-  project_id: string;
-  account_id: string;
-  session_hash?: string | null;
-  dest_host_id?: string;
-  allow_offline?: boolean;
-  backup_region_cutover?: boolean;
-  allow_oversized_skip?: boolean;
-  epoch?: number;
-}
-
-export interface ProjectControlMoveResponse {
-  op_id: string;
-  scope_type: "project";
-  scope_id: string;
-  service: string;
-  stream_name: string;
 }
 
 export interface ProjectControlRehomeRequest {
@@ -1046,6 +1020,26 @@ export interface AccountLocalRevokeMembershipGrantRequest {
 export interface AccountLocalGetMembershipRequest {
   account_id: string;
 }
+
+export interface AccountLocalGetOAuthAccountStateRequest {
+  account_id: string;
+  // Also resolve the account's membership in the same call.
+  include_membership?: boolean;
+}
+
+// An account's state for an OAuth client (e.g. Sagebrush), read from the
+// primary on the account's home bay: "missing" is unknown, deleted or banned;
+// "moved" means this bay is not the home bay (e.g. after a rehome).
+export type AccountLocalOAuthAccountState =
+  | {
+      state: "live";
+      email_address: string;
+      email_verified: boolean;
+      display_name: string;
+      membership?: MembershipResolution;
+    }
+  | { state: "missing" }
+  | { state: "moved"; home_bay_id: string };
 
 export interface AccountLocalGetArchiveLifecycleStatusesRequest {
   account_ids: string[];
@@ -2551,23 +2545,6 @@ export interface ProjectCourseManagedProjectState {
   env: ProjectEnv | null;
 }
 
-export interface ProjectOwnershipTransferRequest {
-  account_id: string;
-  project_id: string;
-  from_account_id: string;
-  to_account_id: string;
-  // Derived at the authenticated actor's home bay, never from public input.
-  trusted_admin: boolean;
-}
-
-export interface ProjectOwnershipTransferResult {
-  project_id: string;
-  from_account_id: string;
-  to_account_id: string;
-  usage_account_id: string | null;
-  runtime_sponsor_account_id: string | null;
-}
-
 export interface ProjectLeaveOrDeleteProjectsRequest {
   account_id: string;
   project_ids: string[];
@@ -2604,9 +2581,7 @@ export type ProjectControlMethod =
   | "set-rootfs-image"
   | "hard-delete-status"
   | "set-usage-account"
-  | "assign-host"
   | "address"
-  | "move"
   | "rehome"
   | "accept-rehome"
   | "active-op"
@@ -2856,6 +2831,7 @@ export type AccountLocalMethod =
   | "upsert-membership-grant"
   | "revoke-membership-grant"
   | "get-membership"
+  | "get-oauth-account-state"
   | "get-archive-lifecycle-statuses"
   | "get-membership-details"
   | "get-account-usage-overview"
@@ -3022,7 +2998,6 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "set-project-user-role"
   | "leave-or-delete-projects"
-  | "transfer-project-ownership"
   | "set-projects-hidden"
   | "set-project-metadata"
   | "set-manage-users-owner-only"
@@ -3150,11 +3125,7 @@ export interface InterBayProjectControlApi {
   setUsageAccount: (
     opts: ProjectControlSetUsageAccountRequest,
   ) => Promise<ProjectControlSetUsageAccountResponse>;
-  assignHost: (opts: ProjectControlAssignHostRequest) => Promise<void>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
-  move: (
-    opts: ProjectControlMoveRequest,
-  ) => Promise<ProjectControlMoveResponse>;
   rehome: (
     opts: ProjectControlRehomeRequest,
   ) => Promise<ProjectControlRehomeResponse>;
@@ -4589,6 +4560,9 @@ export interface InterBayAccountLocalApi
   getMembership: (
     opts: AccountLocalGetMembershipRequest,
   ) => Promise<MembershipResolution>;
+  getOAuthAccountState: (
+    opts: AccountLocalGetOAuthAccountStateRequest,
+  ) => Promise<AccountLocalOAuthAccountState>;
   getArchiveLifecycleStatuses: (
     opts: AccountLocalGetArchiveLifecycleStatusesRequest,
   ) => Promise<AccountLocalArchiveLifecycleStatus[]>;
@@ -5046,9 +5020,6 @@ export interface InterBayProjectCollabInviteApi {
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
-  transferProjectOwnership: (
-    opts: ProjectOwnershipTransferRequest,
-  ) => Promise<ProjectOwnershipTransferResult>;
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
@@ -5791,26 +5762,11 @@ export function createInterBayProjectControlClient({
       method: "set-usage-account",
     }),
   });
-  const assignHostClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "assignHost">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({
-      dest_bay,
-      method: "assign-host",
-    }),
-  });
   const addressClient = createServiceClient<
     Pick<InterBayProjectControlApi, "address">
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "address" }),
-  });
-  const moveClient = createServiceClient<
-    Pick<InterBayProjectControlApi, "move">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectControlSubject({ dest_bay, method: "move" }),
   });
   const rehomeClient = createServiceClient<
     Pick<InterBayProjectControlApi, "rehome">
@@ -5857,9 +5813,7 @@ export function createInterBayProjectControlClient({
       await hardDeleteStatusClient.hardDeleteStatus(opts),
     setUsageAccount: async (opts) =>
       await setUsageAccountClient.setUsageAccount(opts),
-    assignHost: async (opts) => await assignHostClient.assignHost(opts),
     address: async (opts) => await addressClient.address(opts),
-    move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
@@ -7478,6 +7432,15 @@ export function createInterBayAccountLocalClient({
       method: "get-membership",
     }),
   });
+  const getOAuthAccountStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getOAuthAccountState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-oauth-account-state",
+    }),
+  });
   const getArchiveLifecycleStatusesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getArchiveLifecycleStatuses">
   >({
@@ -8616,6 +8579,8 @@ export function createInterBayAccountLocalClient({
       await revokeMembershipGrantClient.revokeMembershipGrant(opts),
     getMembership: async (opts) =>
       await getMembershipClient.getMembership(opts),
+    getOAuthAccountState: async (opts) =>
+      await getOAuthAccountStateClient.getOAuthAccountState(opts),
     getArchiveLifecycleStatuses: async (opts) =>
       await getArchiveLifecycleStatusesClient.getArchiveLifecycleStatuses(opts),
     getMembershipDetails: async (opts) =>
@@ -9771,6 +9736,20 @@ export function createInterBayAccountLocalHandler({
         getMembership: async (opts) => await impl.getMembership(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getOAuthAccountState">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "get-oauth-account-state",
+        }),
+        impl: {
+          getOAuthAccountState: async (opts) =>
+            await impl.getOAuthAccountState(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getArchiveLifecycleStatuses">
     >({
@@ -12345,15 +12324,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "get-course-managed-project-states",
     }),
   });
-  const transferProjectOwnershipClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "transfer-project-ownership",
-    }),
-  });
   const leaveOrDeleteProjectsClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
   >({
@@ -12397,8 +12367,6 @@ export function createInterBayProjectCollabInviteClient({
       ),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
-    transferProjectOwnership: async (opts) =>
-      await transferProjectOwnershipClient.transferProjectOwnership(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
     respond: async (opts) => await respondClient.respond(opts),
@@ -12554,20 +12522,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         leaveOrDeleteProjects: async (opts) =>
           await impl.leaveOrDeleteProjects(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "transferProjectOwnership">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "transfer-project-ownership",
-      }),
-      impl: {
-        transferProjectOwnership: async (opts) =>
-          await impl.transferProjectOwnership(opts),
       },
     }),
     createServiceHandler<
@@ -12874,45 +12828,6 @@ export function createInterBayProjectControlSetUsageAccountHandler({
     }),
     impl: {
       setUsageAccount: async (opts) => await impl.setUsageAccount(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlAssignHostHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayProjectControlApi, "assignHost">>({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({
-      dest_bay: bay_id,
-      method: "assign-host",
-    }),
-    impl: {
-      assignHost: async (opts) => await impl.assignHost(opts),
-    },
-  });
-}
-
-export function createInterBayProjectControlMoveHandler({
-  bay_id,
-  impl,
-  ...options
-}: ServiceHandlerOptions & {
-  bay_id: string;
-  impl: InterBayProjectControlApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayProjectControlApi, "move">>({
-    ...options,
-    service: "inter-bay-project-control",
-    subject: projectControlSubject({ dest_bay: bay_id, method: "move" }),
-    impl: {
-      move: async (opts) => await impl.move(opts),
     },
   });
 }

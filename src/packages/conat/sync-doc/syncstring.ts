@@ -29,5 +29,7 @@ export function syncstring({
       project_id: opts.project_id,
     });
   const syncClient = new SyncClient(client);
-  return new SyncString({ ...opts, fs, client: syncClient });
+  const doc = new SyncString({ ...opts, fs, client: syncClient });
+  doc.once("closed", syncClient.release);
+  return doc;
 }

@@ -1,4 +1,4 @@
-import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
+import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import {
   countCreatedAcpJobsForAccountSince,
@@ -231,6 +231,27 @@ function denied({
     path,
     thread_id,
   };
+}
+
+/**
+ * Only the worker assigns recovery lineage, when it resumes an interrupted
+ * turn; a turn submitted by a client never continues another one.
+ */
+export function withoutRecoveryLineage<T extends AcpRequest>(request: T): T {
+  const {
+    recovery_parent_op_id: _parent,
+    recovery_reason: _reason,
+    recovery_count: _count,
+    ...rest
+  } = request;
+  if (rest.chat == null) return rest as T;
+  const {
+    recovery_parent_op_id: _chatParent,
+    recovery_reason: _chatReason,
+    recovery_count: _chatCount,
+    ...chat
+  } = rest.chat;
+  return { ...rest, chat } as T;
 }
 
 function recoveryParentId(request: AcpJobRequest): string {

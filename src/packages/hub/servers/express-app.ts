@@ -33,6 +33,7 @@ import { resolveStaticPath, servePublicShell } from "./app/public-shell";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initProjectHostSoftware from "./app/project-host-software";
+import initCliDistribution from "./app/cli-distribution";
 import initSelfHostConnector from "./app/self-host-connector";
 import initStripeWebhook from "./app/stripe-webhook";
 import initCrmOutreach from "./app/crm-outreach";
@@ -332,6 +333,7 @@ export default async function init(opts: Options): Promise<{
   initAppRedirect(router, { includeAuth: false });
   initProjectHostBootstrap(router);
   initProjectHostSoftware(router);
+  initCliDistribution(router);
   initSelfHostConnector(router);
   initStripeWebhook(router);
   initCrmOutreach(router);

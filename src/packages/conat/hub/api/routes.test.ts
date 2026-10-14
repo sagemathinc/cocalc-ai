@@ -30,6 +30,14 @@ describe("hub API routes", () => {
         { opts: { project_id: PROJECT } },
       ]),
     ).toBe(PROJECT);
+    // a document's edit history lives with its project
+    for (const name of ["sync.history", "sync.purgeHistory"]) {
+      expect(
+        hubApiRouteKey(getHubApiRoute(name)!, [
+          { project_id: PROJECT, path: "a.txt" },
+        ]),
+      ).toBe(PROJECT);
+    }
   });
 
   it("treats malformed keys as unroutable", () => {

@@ -22,6 +22,7 @@ import type {
   HostExamState,
 } from "@cocalc/conat/hub/api/hosts";
 import {
+  deleteHostnameDns,
   ensureHostnameCnameDns,
   ensureProxiedAddressDns,
 } from "@cocalc/server/cloud/dns";
@@ -862,6 +863,12 @@ async function ensureExamDns({
   if (ensure_public_ingress) {
     await ensureExamPublicIngress({ host, route });
   }
+  // Record the target before writing the record, so that a crash between the
+  // two still leaves a trace for cleanup to find the record by hostname.
+  await getPool().query(
+    `UPDATE ${CONFIG_TABLE} SET dns_target=$2 WHERE host_id=$1`,
+    [host.id, route.target],
+  );
   const { record_id } =
     route.type === "A"
       ? await ensureProxiedAddressDns({
@@ -879,12 +886,21 @@ async function ensureExamDns({
     `
       UPDATE ${CONFIG_TABLE}
       SET dns_record_id=$2, dns_target=$3, updated_at=NOW()
-      WHERE host_id=$1
+      WHERE host_id=$1 AND generation=$4 AND enabled=TRUE
       RETURNING *
     `,
-    [host.id, record_id, route.target],
+    [host.id, record_id, route.target, config.generation],
   );
-  return mapConfig(rows[0]);
+  if (rows[0]) return mapConfig(rows[0]);
+  // The configuration changed while the record was written. A newer enabled
+  // configuration uses the same hostname and adopts the record; a disabled or
+  // retired one must not leave it live and unrecorded.
+  const current = await loadConfig(host.id);
+  if (current?.enabled) return current;
+  await deleteHostnameDns({ hostname: config.hostname, record_id });
+  throw new Error(
+    "exam mode was disabled while its DNS record was being updated",
+  );
 }
 
 export async function setExamConfigLocal({
@@ -1555,26 +1571,124 @@ function assertExamHostRunningForCleanup(host: ExamHostRow): void {
   );
 }
 
+// An off host's ephemeral address has been released, and deprovisioning
+// removes its tunnel, so an exam hostname must not keep routing there.
+const NO_ROUTE_HOST_STATUSES = new Set(["off", "deprovisioned"]);
+
+type ExamDnsAction = "ensure" | "retire" | "retire-and-disable" | "skip";
+
+function examDnsAction(row: {
+  enabled?: boolean;
+  dns_record_id?: string | null;
+  dns_target?: string | null;
+  status?: string | null;
+  host_deleted?: boolean;
+}): ExamDnsAction {
+  const hasDns = row.dns_record_id != null || row.dns_target != null;
+  if (row.host_deleted) {
+    return row.enabled || hasDns ? "retire-and-disable" : "skip";
+  }
+  if (!row.enabled) return hasDns ? "retire" : "skip";
+  if (row.status === "running") return "ensure";
+  if (NO_ROUTE_HOST_STATUSES.has(`${row.status ?? ""}`)) {
+    return hasDns ? "retire" : "skip";
+  }
+  // Starting, stopping, restarting, ...: the route is about to change, and the
+  // next pass sees where it settles.
+  return "skip";
+}
+
+// Remove the exam hostname's DNS, then forget it, but only if the
+// configuration is still the one that was read: a concurrent save keeps its
+// own state (and the next pass reconciles it). A deleted host's configuration
+// is also disabled so that it is not revisited.
+async function retireExamDns({
+  config,
+  disable,
+}: {
+  config: HostExamConfig;
+  disable: boolean;
+}): Promise<void> {
+  await deleteHostnameDns({
+    hostname: config.hostname,
+    record_id: config.dns_record_id ?? undefined,
+  });
+  const { rowCount } = await getPool().query(
+    `
+      UPDATE ${CONFIG_TABLE}
+      SET dns_record_id=NULL, dns_target=NULL,
+        enabled = enabled AND NOT $3::BOOLEAN, updated_at=NOW()
+      WHERE host_id=$1 AND generation=$2
+    `,
+    [config.host_id, config.generation, disable],
+  );
+  logger.info(
+    rowCount
+      ? "removed the exam DNS record of a host without a live route"
+      : "removed exam DNS; the configuration changed meanwhile and is kept",
+    { host_id: config.host_id, hostname: config.hostname, disable },
+  );
+}
+
+// c.* has the config's host_id; ExamHostRow needs the host's own id, and
+// publicIp() reads the address from its metadata. A host row that is gone
+// counts as deleted.
+async function loadExamDnsRow(host_id: string): Promise<any | undefined> {
+  const { rows } = await getPool().query(
+    `
+      SELECT c.*, h.id, h.name, h.status, h.public_url, h.metadata,
+        (h.id IS NULL OR h.deleted IS NOT NULL) AS host_deleted
+      FROM ${CONFIG_TABLE} c
+      LEFT JOIN project_hosts h ON h.id=c.host_id
+      WHERE c.host_id=$1
+    `,
+    [host_id],
+  );
+  return rows[0];
+}
+
+async function applyExamDnsAction(
+  row: any,
+  action: Exclude<ExamDnsAction, "skip">,
+): Promise<void> {
+  if (action === "ensure") {
+    await ensureExamDns({ host: row as ExamHostRow, config: mapConfig(row) });
+  } else {
+    await retireExamDns({
+      config: mapConfig(row),
+      disable: action === "retire-and-disable",
+    });
+  }
+}
+
 export async function reconcileExamDnsOnce(): Promise<void> {
   await ensureSchema();
   const { rows } = await getPool().query(
     `
-      SELECT c.*, h.public_url, h.metadata, h.status, h.name
-      FROM ${CONFIG_TABLE} c
-      JOIN project_hosts h ON h.id=c.host_id
-      WHERE c.enabled=TRUE AND h.deleted IS NULL
+      SELECT host_id FROM ${CONFIG_TABLE}
+      WHERE enabled OR dns_record_id IS NOT NULL OR dns_target IS NOT NULL
     `,
   );
-  for (const row of rows) {
+  for (const { host_id } of rows) {
+    let action: ExamDnsAction = "skip";
     try {
-      await ensureExamDns({
-        host: row as ExamHostRow,
-        config: mapConfig(row),
-      });
+      // Read the host's state just before acting on it, and again after: a
+      // host that started or stopped meanwhile gets what its new state needs
+      // right away rather than on the next pass.
+      const row = await loadExamDnsRow(host_id);
+      action = row ? examDnsAction(row) : "skip";
+      if (action === "skip") continue;
+      await applyExamDnsAction(row, action);
+      const after = await loadExamDnsRow(host_id);
+      const next = after ? examDnsAction(after) : "skip";
+      if (next !== "skip" && next !== action) {
+        action = next;
+        await applyExamDnsAction(after, next);
+      }
     } catch (err) {
       logger.warn("exam DNS reconciliation failed", {
-        host_id: row.host_id,
-        hostname: row.hostname,
+        host_id,
+        action,
         err: `${err}`,
       });
     }
@@ -1751,6 +1865,7 @@ export function startExamHostMaintenance(): void {
 
 export const __test__ = {
   DEFAULT_EXAM_CONFIG,
+  examDnsAction,
   ensureSchema,
   examHostnameForHost,
   examDnsRoute,

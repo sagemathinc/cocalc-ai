@@ -496,6 +496,37 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(["oauth_authorization_codes"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id: "Approving account, not account-home state.",
+    },
+    notes:
+      "One-time OAuth authorization codes, valid for 60 seconds, stored on the bay that served the authorize page, which is also the bay the client's token request reaches. Losing rows only makes the user sign in again.",
+    rebuild: "No rebuild: the client starts a new sign-in.",
+  }),
+
+  ...entries(["oauth_client_approvals"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Which OAuth clients an account has approved, recorded under the rehome fence by the home bay when it issues the approval proof. It only decides whether the deletion dialog offers to keep a client's data: deletion purges every enabled client regardless, so a row left on an old home bay by a rehome cannot skip a purge.",
+  }),
+
+  ...entries(["oauth_client_purge_requests"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id: "Deleted account whose client data must be purged.",
+    },
+    notes:
+      "Durable outbox of purge requests to OAuth clients, queued by account deletion on the account's home bay and delivered by that bay's worker until the client accepts them. The account is already deleted, so rows never move.",
+  }),
+
   ...entries(["agent_rpc_admission_state"], {
     ownership: "ephemeral",
     authority: "local",
@@ -508,6 +539,33 @@ export const TABLE_OWNERSHIP = {
     notes:
       "Short-lived bay-local RPC permits and single-use attachment preparations shared by load-balanced hubs. Losing rows safely rejects the attempt; rows never authorize retries.",
     rebuild: "No rebuild: callers must start a new explicit send attempt.",
+  }),
+
+  ...entries(["agent_rpc_report_executions"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id: "Execution-principal binding, not account-home state.",
+      project_id: "Sender-project binding, not durable project state.",
+      host_id: "Executing-host binding, not host-owned state.",
+    },
+    notes:
+      "One row per reported message whose delivery report started a turn, kept until after the report's signed capability expired, so a report cannot be replayed into a second turn. Rows only deny.",
+    rebuild:
+      "No rebuild: a lost row allows at most one more report turn for a message reported in the last week.",
+  }),
+
+  ...entries(["agent_memory_accounts", "agent_memory_notes"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Where a note was written, or which projects see a namespace: ranking and visibility of the account's own memory, not project state.",
+    },
+    notes:
+      "Account-scoped agent memory (settings and one row per encrypted note), authoritative on the account home bay; every caller routes to it. Like the encrypted credential record it replaces, it does not move on account rehome.",
   }),
 
   ...entries(["agent_memory_usage"], {

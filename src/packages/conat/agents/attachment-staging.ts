@@ -8,6 +8,11 @@ type ProjectFilesystem = Pick<
   "mkdir" | "writeFile" | "chmod" | "rm"
 >;
 
+/** How a delivered message lists its staged snapshots (in /tmp: a project
+ * restart removes them). */
+export const AGENT_SNAPSHOTS_PROMPT_HEADING =
+  "Attached file snapshots in this project";
+
 export interface StagedAgentAttachments {
   directory: string;
   manifest_path: string;

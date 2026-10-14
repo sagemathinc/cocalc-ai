@@ -17,6 +17,8 @@
     "build": "pnpm exec tsc --build && node bin/add-shebang.js",
     "test": "pnpm exec jest --config jest.config.js",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo sea/sea-prep.blob build",
+    "build:release": "node ./dist-release/build-release.mjs",
+    "release:plus": "node ./dist-release/build-release.mjs && node ../cli/dist-release/publish-release.mjs --build ./build/plus-release",
     "build:static": "cd sea && ./build-static.sh",
     "build:bundle": "pnpm build:static && cd sea && ./build-bundle.sh",
     "build:bundle:windows": "COCALC_PLUS_TARGET_OS=windows COCALC_PLUS_TARGET_ARCH=x64 ./sea/build-bundle.sh",
