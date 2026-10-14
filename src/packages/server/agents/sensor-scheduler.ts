@@ -767,6 +767,11 @@ async function finishRun(
     recorded[0]?.status === "paused"
   ) {
     logger.info("sensor paused", { sensor_id: row.sensor_id, pause });
+    // A watcher cannot be resumed, so a paused one would only hold its place
+    // in the account's budget until it expires (e.g. a ci watcher whose
+    // agent has no GitHub connector).
+    if (row.spec.kind === "watch")
+      await releaseWatcher(row.approved_by, row.sensor_id);
     // The person it runs as should know, or a broken sensor goes unnoticed.
     await notifySensorPausedBestEffort({
       account_id: row.approved_by,

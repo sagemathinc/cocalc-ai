@@ -186,6 +186,12 @@ export function normalizeMembershipEffectiveLimits(
     sensor_max_wakes_per_day: normalizeNonNegativeInteger(
       usageLimits?.sensor_max_wakes_per_day,
     ),
+    sensor_max_active_watchers: normalizeNonNegativeInteger(
+      usageLimits?.sensor_max_active_watchers,
+    ),
+    sensor_max_active_watchers_per_agent: normalizeNonNegativeInteger(
+      usageLimits?.sensor_max_active_watchers_per_agent,
+    ),
     blob_account_total_bytes: normalizeNonNegativeInteger(
       usageLimits?.blob_account_total_bytes,
     ),

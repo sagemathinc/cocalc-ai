@@ -39,7 +39,10 @@ export const SENSOR_LIMITS = {
   /** Sensors (any status) per agent, to bound proposals. */
   maxSensorsPerAgent: 20,
   maxPromptBytes: 8_000,
-  /** Active built-in watchers per account. */
+  /**
+   * Active built-in watchers per account when the membership tier does not
+   * set usage_limits.sensor_max_active_watchers.
+   */
   maxWatchersPerAccount: 5,
   /** How often a ci or file watcher checks. */
   watchIntervalMinutes: 3,

@@ -278,6 +278,21 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Most agent turns your sensors and watchers may start in any 24 hours.",
     },
+    sensor_max_active_watchers: {
+      label: "Active watchers per account",
+      unit: "watchers",
+      adminDescription:
+        "Most built-in watchers (one-shot checks such as CI, file and reminder watchers) all of one account's agents may have active at once. Unset: 5.",
+      userDescription:
+        "Most watchers all of your agents may have active at once.",
+    },
+    sensor_max_active_watchers_per_agent: {
+      label: "Active watchers per agent",
+      unit: "watchers",
+      adminDescription:
+        "Most built-in watchers one agent may have active at once, so a busy agent cannot use up the account's watchers. Unset: no separate limit (the account limit applies).",
+      userDescription: "Most watchers one of your agents may have active at once.",
+    },
     blob_account_total_bytes: {
       label: "Blob storage per account",
       unit: "GB",
