@@ -205,6 +205,24 @@ test("startup script supports checkpoint-only snapshot recovery", () => {
   expect(compiled.status).toBe(0);
 });
 
+test("the worker gets the PITR target with its microseconds", () => {
+  // Rounding to milliseconds could put the target before the "pre" sentinel
+  // committed in the same millisecond (staging2, 2026-10-13).
+  const script = buildDisposableRestoreStartupScript({
+    ...pgBackRestConfig(),
+    target_time: "2026-10-13T05:28:46.602731Z",
+  });
+  const [encodedConfig, workerSource] = decodedStartupBlocks(script);
+  expect(JSON.parse(encodedConfig).target_time).toBe(
+    "2026-10-13 05:28:46.602731+00",
+  );
+  // Promoted without the pre sentinel: fail at once instead of waiting for
+  // the worker deadline.
+  expect(workerSource).toContain(
+    "PITR recovery ended at the target without the pre-target sentinel",
+  );
+});
+
 test("startup script supports pgBackRest PITR and independent SQLite restore", () => {
   const script = buildDisposableRestoreStartupScript(pgBackRestConfig());
   expect(script).not.toContain("pgbackrest-password");
