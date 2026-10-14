@@ -41,7 +41,10 @@ import {
   MAX_EXEC_OUTPUT_BYTES,
   type OperationRequest,
 } from "@cocalc/util/computers/operations";
-import type { ComputerTicket } from "@cocalc/util/computers/protocol";
+import type {
+  ComputerControlReason,
+  ComputerTicket,
+} from "@cocalc/util/computers/protocol";
 import { admit, RateLimiter, type AdmissionInput } from "./admission";
 import {
   systemBootClock,
@@ -118,6 +121,11 @@ export type DaemonEvent =
   | { kind: "job"; job: Job };
 
 const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
+
+const CONTROL_REASON_TEXT: Record<ComputerControlReason, string> = {
+  revoked: "this computer was disconnected in CoCalc",
+  replaced: "this computer was connected again in CoCalc, as a new computer",
+};
 
 export class ComputerDaemon {
   readonly ledger: Ledger;
@@ -522,6 +530,18 @@ export class ComputerDaemon {
       );
     }
     return { raised, cancelled, killed };
+  }
+
+  /**
+   * A signed control message from the home bay: "end" means this computer
+   * was disconnected or replaced in CoCalc. Every job is stopped and the
+   * session ends for good (the connector stops reconnecting).
+   */
+  applyControl(envelope: unknown): { ended: boolean } {
+    const hubNow = this.deps.hubClock.now() ?? this.deps.clocks.wall();
+    const control = this.deps.store.verifyControl(envelope, hubNow);
+    this.endSession(CONTROL_REASON_TEXT[control.reason]);
+    return { ended: true };
   }
 
   /** A job's deadline, on the wall clock and on this boot's clock. */

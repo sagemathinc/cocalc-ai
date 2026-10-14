@@ -41,6 +41,8 @@ import {
   computerSubjectAllowed,
   isSubjectToken,
   type ComputerOpMessage,
+  type ComputerPush,
+  type ComputerPushAck,
   type ComputerReplyMessage,
 } from "@cocalc/conat/computers/subjects";
 import { connect, type Client } from "@cocalc/conat/core/client";
@@ -689,7 +691,7 @@ async function oneSession({
     io.log(`connected (@${connection.name})`);
     onSession?.(session_id);
     for await (const mesg of sub) {
-      void answer({
+      const work = answer({
         client,
         daemon,
         hubClock,
@@ -697,12 +699,43 @@ async function oneSession({
         session_id,
         data: mesg.data,
       }).catch((err) => io.log(`answer: ${err}`));
+      // A push is applied before the next message; after "end" the session
+      // is over for good.
+      if ((mesg.data as Partial<ComputerOpMessage> | null)?.push != null) {
+        await work;
+        if (daemon.sessionEnded) break;
+      }
     }
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", end);
     sub?.close();
     client.close();
+  }
+}
+
+/**
+ * Apply a signed push from the home bay. Anything that doesn't verify is
+ * refused and changes nothing.
+ */
+export function applyPush(
+  daemon: ComputerDaemon,
+  push: ComputerPush,
+): ComputerPushAck {
+  try {
+    if (push != null && typeof push === "object" && "control" in push) {
+      return { ok: true, ...daemon.applyControl(push.control) };
+    }
+    if (push != null && typeof push === "object" && "floors" in push) {
+      const { raised } = daemon.applyFloors(push.floors);
+      return { ok: true, raised };
+    }
+    return { ok: false, error: "unknown push" };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `${(err as Error)?.message ?? err}`.slice(0, 300),
+    };
   }
 }
 
@@ -732,13 +765,24 @@ async function answer({
     // correlation (conat auth refuses anything else anyway).
     !computerSubjectAllowed(computer_id, session_id, op.reply_subject, "pub") ||
     !op.reply_subject.endsWith(`.${op.correlation}`) ||
-    op.message == null
+    (op.message == null) === (op.push == null)
   ) {
     return;
   }
   if (typeof op.hub_now === "number") {
     hubClock.observe(op.hub_now - systemClocks.wall());
   }
+  if (op.push != null) {
+    const ack = applyPush(daemon, op.push);
+    const out: ComputerReplyMessage = {
+      v: 1,
+      correlation: op.correlation,
+      reply: ack,
+    };
+    await client.publish(op.reply_subject, out);
+    return;
+  }
+  if (op.message == null) return;
   const reply = await daemon.handle({
     ticket: op.message.ticket,
     proof: op.message.proof,

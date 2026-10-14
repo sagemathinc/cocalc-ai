@@ -15,10 +15,12 @@ import type { KeyObject } from "node:crypto";
 import {
   mergeFloors,
   parseComputerCertificate,
+  parseComputerControl,
   parseComputerFloors,
   parseSignedEnvelope,
   SIGNED_KINDS,
   type ComputerCertificate,
+  type ComputerControl,
   type ComputerFloors,
   type DaemonState,
   type SignedEnvelope,
@@ -208,6 +210,29 @@ export class DaemonStore {
       this.save();
     }
     return { raised };
+  }
+
+  /**
+   * A control message from the home bay, verified: signed by a current key
+   * of the home bay, and for this computer. The caller acts on it.
+   */
+  verifyControl(envelope: unknown, hubNow: number): ComputerControl {
+    const env = parseSignedEnvelope(envelope, parseComputerControl, "control");
+    const key = this.trustedKey(env.kid, this.state.home_bay_id, hubNow);
+    if (
+      key == null ||
+      !verifyEnvelope(SIGNED_KINDS.control, env, (kid) =>
+        kid === env.kid ? key : undefined,
+      )
+    ) {
+      throw new DaemonStateError(
+        "the control message is not signed by the home bay",
+      );
+    }
+    if (env.payload.computer_id !== this.state.computer_id) {
+      throw new DaemonStateError("the control message is for another computer");
+    }
+    return env.payload;
   }
 
   /**

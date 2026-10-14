@@ -25,6 +25,7 @@ export const SIGNED_KINDS = {
   attestation: "project-attestation",
   ticket: "computer-ticket",
   floors: "computer-floors",
+  control: "computer-control",
   key_endorsement: "signing-key-endorsement",
   login: "computer-login",
   challenge_request: "computer-challenge-request",
@@ -663,6 +664,49 @@ export function parseComputerFloors(input: unknown): ComputerFloors {
     computer_epoch: epoch(o.computer_epoch, "floors.computer_epoch"),
     projects,
     issued_at: time(o.issued_at, "floors.issued_at"),
+  };
+}
+
+/** Why the home bay ended a computer for good. */
+export const COMPUTER_CONTROL_REASONS = ["revoked", "replaced"] as const;
+export type ComputerControlReason = (typeof COMPUTER_CONTROL_REASONS)[number];
+
+/**
+ * Signed by the computer's home bay: this computer is done. Its daemon stops
+ * every job and its connector stops reconnecting. Permanent for the computer
+ * id (a revoked or replaced computer never comes back), so replaying it
+ * changes nothing. Pushed to a live session, or answered to a login
+ * challenge request signed by the computer's own key.
+ */
+export interface ComputerControl {
+  type: "cocalc-computer-control";
+  version: 1;
+  computer_id: string;
+  action: "end";
+  reason: ComputerControlReason;
+  issued_at: number;
+}
+
+export function parseComputerControl(input: unknown): ComputerControl {
+  const o = record(input, "control");
+  onlyKeys(
+    o,
+    ["type", "version", "computer_id", "action", "reason", "issued_at"],
+    "control",
+  );
+  literal(o.type, "cocalc-computer-control", "control.type");
+  version(o.version);
+  literal(o.action, "end", "control.action");
+  if (!COMPUTER_CONTROL_REASONS.includes(o.reason as ComputerControlReason)) {
+    throw new ProtocolError("control.reason is not a known reason");
+  }
+  return {
+    type: "cocalc-computer-control",
+    version: 1,
+    computer_id: uuid(o.computer_id, "control.computer_id"),
+    action: "end",
+    reason: o.reason as ComputerControlReason,
+    issued_at: time(o.issued_at, "control.issued_at"),
   };
 }
 

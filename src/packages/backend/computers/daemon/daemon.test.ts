@@ -24,6 +24,7 @@ import {
 } from "@cocalc/util/computers/policy";
 import {
   parseComputerCertificate,
+  parseComputerControl,
   parseComputerFloors,
   parseComputerTicket,
   parseProjectAttestation,
@@ -541,6 +542,53 @@ describe("the computer daemon (direct mode)", () => {
           description: "test job",
           own: false,
         }),
+      ]);
+    });
+
+    it("a signed end from the home bay stops every job; a forged one changes nothing", async () => {
+      const started = ok(await daemon.handle(message("run", run("sleep 30"))));
+      const job_id = (started.result as any).job_id;
+      const control = (
+        overrides: Record<string, unknown> = {},
+        signer = homeKey,
+      ) =>
+        signEnvelope(
+          SIGNED_KINDS.control,
+          parseComputerControl({
+            type: "cocalc-computer-control",
+            version: 1,
+            computer_id,
+            action: "end",
+            reason: "revoked",
+            issued_at: Date.now(),
+            ...overrides,
+          }),
+          signer,
+        );
+      expect(() => daemon.applyControl(control({}, strangerKey))).toThrow(
+        /not signed by the home bay/,
+      );
+      expect(() =>
+        daemon.applyControl(control({ computer_id: randomUUID() })),
+      ).toThrow(/another computer/);
+      // A floors envelope is not a control message, even when signed.
+      expect(() =>
+        daemon.applyControl(
+          signEnvelope(SIGNED_KINDS.floors, control().payload, homeKey),
+        ),
+      ).toThrow();
+      expect(daemon.sessionEnded).toBe(false);
+      expect(daemon.jobs.get(job_id)?.state).toBe("running");
+
+      expect(daemon.applyControl(control())).toEqual({ ended: true });
+      expect(daemon.sessionEnded).toBe(true);
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      const reply = await daemon.handle(message("exec", exec("true")));
+      expect((reply as any).refused).toEqual([
+        "the session on this computer has ended",
       ]);
     });
 

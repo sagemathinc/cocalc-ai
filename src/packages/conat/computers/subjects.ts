@@ -87,11 +87,28 @@ export interface ComputerOpMessage {
   reply_subject: string;
   /** Hub time when sent (the daemon's estimate of hub time follows it). */
   hub_now: number;
-  /** Ticket, proof of possession and request, exactly as the agent sent. */
-  message: { ticket: unknown; proof: unknown; request: unknown };
+  /**
+   * Ticket, proof of possession and request, exactly as the agent sent.
+   * Absent when this is a push.
+   */
+  message?: { ticket: unknown; proof: unknown; request: unknown };
+  /**
+   * A signed push from the home bay instead of an operation: raised floors,
+   * or a control message ("end": this computer was disconnected). The
+   * daemon verifies the signature and answers with an acknowledgement.
+   */
+  push?: ComputerPush;
   /** So key rotation reaches the daemon (only a newer generation applies). */
   directory?: ComputerDirectory;
 }
+
+/** A signed push: exactly one of the two envelopes. */
+export type ComputerPush = { floors: unknown } | { control: unknown };
+
+/** How the daemon answers a push (in ComputerReplyMessage.reply). */
+export type ComputerPushAck =
+  | { ok: true; raised?: boolean; ended?: boolean }
+  | { ok: false; error: string };
 
 /** What the daemon publishes on the reply subject. */
 export interface ComputerReplyMessage {
