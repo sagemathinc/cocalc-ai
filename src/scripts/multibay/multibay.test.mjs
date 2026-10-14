@@ -654,6 +654,56 @@ describe("project moves across bays", () => {
   }
 });
 
+describe("bulk project stop across bays", () => {
+  // carol, homed on the seed, stops a project on each bay in one call. Each
+  // project's stop is its own call, forwarded to the project's bay when it is
+  // not this one; that bay records each forwarded call it runs. This cluster
+  // has no project hosts, so the stops themselves do not finish here: the
+  // test checks only where each one runs, with accounts and projects of its
+  // own (the hung stops then affect nothing else).
+  let carol;
+  let dave;
+  const forwardedStops = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.stop' AND source_bay_id=$1 AND account_id=$2",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(carol.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("sends the other bay's project's stop to that bay", async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "bulk-stopper",
+    });
+    carol.client = await client(carol);
+    dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "bulk-owner",
+    });
+    dave.client = await client(dave);
+    const local = await createProject(carol.client, "bulk-stop-seed");
+    const remote = await createProject(dave.client, "bulk-stop-attached");
+    await invite(dave, carol, remote);
+    assert.equal(await owningBay(local), SEED);
+    assert.equal(await owningBay(remote), ATTACHED);
+    const before = await forwardedStops();
+    const pending = carol.client
+      .call("projects.stopProjects", { project_ids: [local, remote] })
+      .catch(() => undefined);
+    await eventually(async () => (await forwardedStops()) === before + 1, {
+      what: "the attached bay to run the forwarded stop",
+    });
+    // Only the attached bay's project was forwarded.
+    await sleep(2000);
+    assert.equal(await forwardedStops(), before + 1);
+    void pending;
+  });
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course
