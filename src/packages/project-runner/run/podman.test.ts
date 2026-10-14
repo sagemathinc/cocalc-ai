@@ -924,6 +924,96 @@ describe("project-runner podman orphan fallback", () => {
     );
   });
 
+  describe("checking that a started container is running", () => {
+    const runningFormat =
+      "{{.State.Running}}|{{.State.Pid}}|{{.State.ConmonPid}}|{{.NetworkSettings.SandboxKey}}";
+    let skew = 0;
+    let dateNowSpy: jest.SpyInstance;
+    beforeEach(() => {
+      skew = 0;
+      const realNow = Date.now.bind(Date);
+      dateNowSpy = jest
+        .spyOn(Date, "now")
+        .mockImplementation(() => realNow() + skew);
+    });
+    afterEach(() => dateNowSpy.mockRestore());
+
+    const startProject = () =>
+      start({
+        project_id: project1,
+        localPath: async () => ({
+          home: `/tmp/project-${project1}`,
+          quota_applied: true,
+        }),
+        config: {
+          image: "docker.io/library/ubuntu:latest",
+          ssh_port: 30123,
+          http_port: 45123,
+        },
+      });
+
+    it("reports podman not answering in time, not an exited container", async () => {
+      mockProjectStartPodman(project1);
+      const defaultPodman = mockPodman.getMockImplementation()!;
+      const inspectTimeouts: number[] = [];
+      mockPodman.mockImplementation(async (args: string[], opts?: any) => {
+        if (args[0] === "inspect" && args.includes(runningFormat)) {
+          inspectTimeouts.push(opts?.timeout);
+          skew += 61_000;
+          throw Error("timeout");
+        }
+        return await defaultPodman(args);
+      });
+
+      await expect(startProject()).rejects.toThrow(
+        `podman did not report whether project container project-${project1} is running within 60s`,
+      );
+      expect(inspectTimeouts).toEqual([60]);
+      expect(mockPodman).toHaveBeenCalledWith(
+        ["rm", "-f", "-t", "0", `project-${project1}`],
+        { timeout: 10 },
+      );
+    });
+
+    it("gives a retried inspect only what is left of one deadline", async () => {
+      mockProjectStartPodman(project1);
+      const defaultPodman = mockPodman.getMockImplementation()!;
+      const inspectTimeouts: number[] = [];
+      mockPodman.mockImplementation(async (args: string[], opts?: any) => {
+        if (args[0] === "inspect" && args.includes(runningFormat)) {
+          inspectTimeouts.push(opts?.timeout);
+          if (inspectTimeouts.length === 1) {
+            // Slow, and not running yet, though its conmon is alive.
+            skew += 50_000;
+            mockGetConmonContainerProcessLists.mockResolvedValue(
+              new Map([
+                [
+                  `project-${project1}`,
+                  [
+                    {
+                      name: `project-${project1}`,
+                      project_id: project1,
+                      conmon_pid: 4241,
+                      child_pids: [4242],
+                    },
+                  ],
+                ],
+              ]),
+            );
+            return { stdout: "false|0|0|\n" };
+          }
+        }
+        return await defaultPodman(args);
+      });
+
+      await expect(startProject()).resolves.toMatchObject({
+        state: "running",
+      });
+      expect(inspectTimeouts[0]).toBe(60);
+      expect(inspectTimeouts[1]).toBeLessThanOrEqual(10);
+    });
+  });
+
   it("does not set project quota twice when localPath already applied it", async () => {
     mockProjectStartPodman(project1);
     const { setQuota } = jest.requireMock("./filesystem");
