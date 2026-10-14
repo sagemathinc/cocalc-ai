@@ -1176,14 +1176,103 @@ describe("commercial Stripe invoices", () => {
           commercial_invoice_id: "ci_1",
           order_number: "AR-2026-000001",
           cocalc_site: SITE,
+          commercial_payment_settings: "bank-transfer-v1",
         }),
       }),
       expect.objectContaining({
-        idempotencyKey: expect.stringContaining(":metadata"),
+        idempotencyKey: expect.stringContaining(":metadata:bank-transfer-v1"),
       }),
     );
     expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
       expect.objectContaining({ event_type: "existing-invoice-linked" }),
+    );
+
+    // Once linked with the current settings, losing bank transfer is drift.
+    const linkedMetadata = stripe.invoices.update.mock.calls[0][1].metadata;
+    const linked = invoiceFixture({ status: "draft" });
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ invoices: [linked] }),
+    );
+    mockGetCommercialInvoice.mockResolvedValue(linked);
+    stripe.invoices.retrieve.mockResolvedValue(
+      stripeInvoiceFixture({
+        metadata: linkedMetadata,
+        payment_settings: { payment_method_types: ["card", "us_bank_account"] },
+      }),
+    );
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Send linked invoice",
+      }),
+    ).rejects.toThrow("payment settings");
+    expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("links a card + ACH invoice as legacy, without the settings marker", async () => {
+    jest.useFakeTimers({ now: new Date("2026-10-01T00:00:00.000Z") });
+    const prepared = stripeInvoiceFixture({
+      payment_settings: { payment_method_types: ["card", "us_bank_account"] },
+      metadata: {
+        flow: "commercial_order",
+        commercial_order_id: "co_1",
+        order_number: "AR-2026-000001",
+        cocalc_site: SITE,
+      },
+    });
+    const { commercial_payment_settings: _marker, ...linkedMetadata } =
+      stripeInvoiceFixture().metadata;
+    stripe.invoices.retrieve
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(
+        stripeInvoiceFixture({
+          payment_settings: prepared.payment_settings,
+          metadata: linkedMetadata,
+        }),
+      );
+
+    await linkExistingStripeCommercialInvoice({
+      id: "co_1",
+      provider_invoice_id: "in_1",
+      account_id: "admin-1",
+      expected_version: 4,
+      reason: "Link the reviewed institutional invoice",
+    });
+
+    const metadata = stripe.invoices.update.mock.calls[0][1].metadata;
+    expect(metadata.commercial_invoice_id).toBe("ci_1");
+    expect(metadata).not.toHaveProperty("commercial_payment_settings");
+  });
+
+  it("recovers rather than duplicates when an older create used the same key", async () => {
+    stripe.invoices.create.mockRejectedValue(
+      Object.assign(
+        Error(
+          "Keys for idempotent requests can only be used with the same parameters",
+        ),
+        {
+          type: "StripeIdempotencyError",
+          rawType: "idempotency_error",
+        },
+      ),
+    );
+
+    await expect(
+      createStripeCommercialInvoiceDraft({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Retry invoice creation after deploy",
+      }),
+    ).rejects.toThrow("retry in a minute to recover it");
+    expect(stripe.invoices.create).toHaveBeenCalledTimes(1);
+    expect(stripe.invoiceItems.create).not.toHaveBeenCalled();
+    expect(mockSetCommercialProviderOperationStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "indeterminate" }),
     );
   });
 

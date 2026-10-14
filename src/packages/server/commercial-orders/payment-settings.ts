@@ -21,7 +21,7 @@ const BANK_TRANSFER_TYPE = "us_bank_transfer";
 // legacy set: a current invoice that lost bank transfer is drift.
 const LEGACY_PAYMENT_METHOD_TYPES = ["card", "us_bank_account"] as const;
 export const PAYMENT_SETTINGS_METADATA_KEY = "commercial_payment_settings";
-const PAYMENT_SETTINGS_VERSION = "bank-transfer-v1";
+export const PAYMENT_SETTINGS_VERSION = "bank-transfer-v1";
 
 export function commercialInvoicePaymentSettings() {
   return {
@@ -49,19 +49,34 @@ function sameMethods(actual: unknown, expected: readonly string[]): boolean {
   );
 }
 
+/** True if a Stripe invoice has exactly the current payment settings. */
+export function hasCurrentPaymentSettings(stripeInvoice: any): boolean {
+  const settings = stripeInvoice?.payment_settings;
+  if (!sameMethods(settings?.payment_method_types, PAYMENT_METHOD_TYPES)) {
+    return false;
+  }
+  const balance = settings?.payment_method_options?.customer_balance;
+  return (
+    balance?.funding_type === FUNDING_TYPE &&
+    balance?.bank_transfer?.type === BANK_TRANSFER_TYPE
+  );
+}
+
 /** True if a Stripe invoice still has the payment settings we created it with. */
 export function hasApprovedPaymentSettings(stripeInvoice: any): boolean {
-  const settings = stripeInvoice?.payment_settings;
-  const types = settings?.payment_method_types;
-  if (sameMethods(types, PAYMENT_METHOD_TYPES)) {
-    const balance = settings?.payment_method_options?.customer_balance;
-    return (
-      balance?.funding_type === FUNDING_TYPE &&
-      balance?.bank_transfer?.type === BANK_TRANSFER_TYPE
-    );
-  }
+  if (hasCurrentPaymentSettings(stripeInvoice)) return true;
   return (
-    sameMethods(types, LEGACY_PAYMENT_METHOD_TYPES) &&
-    stripeInvoice?.metadata?.[PAYMENT_SETTINGS_METADATA_KEY] == null
+    sameMethods(
+      stripeInvoice?.payment_settings?.payment_method_types,
+      LEGACY_PAYMENT_METHOD_TYPES,
+    ) && stripeInvoice?.metadata?.[PAYMENT_SETTINGS_METADATA_KEY] == null
+  );
+}
+
+/** Stripe rejected a reused idempotency key sent with different parameters. */
+export function isStripeIdempotencyError(err: any): boolean {
+  return (
+    err?.type === "StripeIdempotencyError" ||
+    err?.rawType === "idempotency_error"
   );
 }

@@ -38,6 +38,7 @@ import { recordCommercialProviderFailure } from "../observability";
 import {
   commercialInvoicePaymentMetadata,
   commercialInvoicePaymentSettings,
+  PAYMENT_SETTINGS_VERSION,
 } from "../payment-settings";
 import {
   buildCommercialQuotePreview,
@@ -1133,7 +1134,11 @@ async function normalizeAcceptedInvoice(opts: {
         cocalc_site: await currentStripeSite(),
       },
     } as any,
-    { idempotencyKey: `${opts.keyPrefix}:invoice:normalize` },
+    // Versioned: the payload changed with the payment settings, and Stripe
+    // rejects a reused key with different parameters.
+    {
+      idempotencyKey: `${opts.keyPrefix}:invoice:normalize:${PAYMENT_SETTINGS_VERSION}`,
+    },
   );
   const lineResult = await opts.stripe.invoices.listLineItems(invoice.id, {
     limit: 100,
