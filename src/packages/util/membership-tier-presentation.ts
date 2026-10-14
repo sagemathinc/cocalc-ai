@@ -435,6 +435,19 @@ function buildMembershipTierDetailGroups({
     label: "Sensor wakes per day",
     value: formatLimitCount(usageLimits.sensor_max_wakes_per_day),
   });
+  add({
+    group: "ai-automation",
+    key: "sensor_max_active_watchers",
+    label: "Active watchers per account",
+    value: formatLimitCount(usageLimits.sensor_max_active_watchers),
+  });
+  if (usageLimits.sensor_max_active_watchers_per_agent != null)
+    add({
+      group: "ai-automation",
+      key: "sensor_max_active_watchers_per_agent",
+      label: "Active watchers per agent",
+      value: formatLimitCount(usageLimits.sensor_max_active_watchers_per_agent),
+    });
 
   add({
     group: "collaboration",

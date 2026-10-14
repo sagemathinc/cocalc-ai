@@ -358,7 +358,8 @@ async function createWatcher(
 ) {
   const limits = await sensorLimits(run.account_id);
   // Watchers replace polling: any membership that allows wakes has them,
-  // limited by maxWatchersPerAccount and the wake budget, not maxActive.
+  // limited by the tier's active watchers (per account and per agent) and
+  // the wake budget, not maxActive.
   if (limits.maxWakesPerDay === 0) throw new Error(NO_SENSORS);
   const spec = validateSensorWatch(request.watch, { hours: request.hours });
   if (!(await projectHasInternet(agent.project_id)))
@@ -657,19 +658,24 @@ export async function sensorControlLocal(
          status=CASE WHEN spec IS NULL THEN 'rejected' ELSE status END`,
         [],
       );
-    case "pause":
+    case "pause": {
       if (toSensor(row).status === "done")
         throw new Error("this watcher is done; delete it instead");
       if (row.status !== "active") throw new Error("sensor is not active");
       // The scheduler finishes a watcher without changing its revision, so
       // "not done" is checked again in the update itself.
-      return await update(
+      const paused = await update(
         "status='paused', pause_reason='Paused by a person'",
         [],
         undefined,
         false,
         NOT_DONE_WATCHER,
       );
+      // A paused watcher can never be resumed: give back its place.
+      if (row.spec?.kind === "watch")
+        await releaseWatcher(row.approved_by, row.sensor_id);
+      return paused;
+    }
     case "resume": {
       if (row.status !== "paused" || !row.spec)
         throw new Error("only a paused, approved sensor can be resumed");

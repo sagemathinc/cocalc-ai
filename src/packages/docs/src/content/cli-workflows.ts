@@ -415,9 +415,12 @@ output.
 
 Watchers are CoCalc's own one-shot checks, so they need no approval. The agent
 ends its turn and gets exactly one turn when it happens, or when the watcher
-gives up (after 24 hours unless \`--hours\` says otherwise). One person's
-agents may have five watchers at a time in total, and watchers count toward
-the same daily wake budget as sensors.
+gives up (after 24 hours unless \`--hours\` says otherwise). The membership
+sets how many watchers one person's agents may have at a time in total
+(unset: five) and, optionally, how many one agent may have. Watchers count
+toward the same daily wake budget as sensors. A paused watcher can never
+resume, so it no longer counts; delete watchers you no longer need with
+\`cocalc sensor delete <id>\`.
 
 ## Watch over time: propose a script
 

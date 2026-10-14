@@ -1008,6 +1008,99 @@ describeDb("agent sensors", () => {
     await expect(make()).rejects.toThrow(/at most 5 watchers may be active/);
   });
 
+  const fileWatch = (r: any = run, a: any = agent) =>
+    agentSensorRequest(r, a, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    }) as any;
+
+  const secondAgent = async () => {
+    const other_id = randomUUID();
+    await getPool().query(
+      `INSERT INTO agent_identities (agent_id, project_id, path, thread_id, name, created_by)
+       VALUES ($1, $2, '/home/user/b.chat', 't2', 'second', $3)`,
+      [other_id, project_id, owner],
+    );
+    const otherAgent = (
+      await getPool().query(
+        "SELECT * FROM agent_identities WHERE agent_id=$1",
+        [other_id],
+      )
+    ).rows[0];
+    return {
+      otherAgent,
+      otherRun: { ...run, agent_id: other_id, run_id: randomUUID() },
+    };
+  };
+
+  test("the membership tier sets how many watchers an account may have", async () => {
+    limits.sensor_max_active_watchers = 2;
+    const first = (await fileWatch()).sensor;
+    await fileWatch();
+    // The error names the watchers holding the places, and how to free one.
+    await expect(fileWatch()).rejects.toThrow(
+      new RegExp(
+        `at most 2 watchers may be active at once for this account.*Active: ${first.sensor_id} \\(agent ${agent_id}.*cocalc sensor delete`,
+      ),
+    );
+    limits.sensor_max_active_watchers = 0;
+    await expect(fileWatch()).rejects.toThrow(/does not include agent sensors/);
+  });
+
+  test("a per-agent limit keeps one agent from using all of the account's watchers", async () => {
+    limits.sensor_max_active_watchers = 3;
+    limits.sensor_max_active_watchers_per_agent = 2;
+    await fileWatch();
+    await fileWatch();
+    await expect(fileWatch()).rejects.toThrow(
+      /at most 2 watchers may be active at once for this agent/,
+    );
+    const { otherAgent, otherRun } = await secondAgent();
+    await fileWatch(otherRun, otherAgent);
+    // The account limit still holds across agents.
+    await expect(fileWatch(otherRun, otherAgent)).rejects.toThrow(
+      /at most 3 watchers may be active at once for this account/,
+    );
+  });
+
+  test("a watcher paused because its connector is off gives back its place", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+    })) as any;
+    await expect(fileWatch()).rejects.toThrow(/at most 1 watchers/);
+    lease.missing = ["github"];
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({ status: "paused" });
+    expect(rows[0].pause_reason).toMatch(/uses GitHub/);
+    // A watcher can never be resumed, so its place is free again.
+    lease.missing = [];
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a watcher paused by a person gives back its place", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const first = (await fileWatch()).sensor;
+    await expect(fileWatch()).rejects.toThrow(/at most 1 watchers/);
+    await sensorControlLocal(owner, project_id, {
+      op: "pause",
+      sensor_id: first.sensor_id,
+    });
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
   test("a fired watcher whose wake is still queued cannot be deleted out from under it", async () => {
     const watched = (await agentSensorRequest(run, agent, {
       action: "sensor",
