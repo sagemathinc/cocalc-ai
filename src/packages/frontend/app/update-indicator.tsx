@@ -8,10 +8,12 @@
 // longer the update waits. Clicking it says what is new and offers the update.
 // Users can shrink it to an icon; that choice is an account setting.
 
-import { Button, Popover, theme } from "antd";
+import { Button, Modal, Popover, theme } from "antd";
 import { useEffect, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { lite } from "@cocalc/frontend/lite";
 import { version } from "@cocalc/util/smc-version";
 import {
   reloadForFrontendBuild,
@@ -206,6 +208,93 @@ function usePrimaryMounted(primary: boolean): boolean {
   return primaries > 0;
 }
 
+const PLUS_CHECK_MS = 10 * 60 * 1000;
+
+/*
+ * CoCalc Plus installs updates in the background but never restarts itself,
+ * since that would stop running notebooks and terminals. When a newer
+ * release is installed than the one running, say so; it applies when Plus is
+ * started again.
+ */
+export function usePlusRestartToUpdate():
+  | { version: string; since: number }
+  | undefined {
+  const [pending, setPending] = useState<
+    { version: string; since: number } | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!lite) return;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const base = appBasePath === "/" ? "" : appBasePath;
+        const response = await fetch(`${base}/plus/update-status`);
+        if (!response.ok) return;
+        const status = await response.json();
+        if (stopped) return;
+        if (status?.restartToApply && status.installed?.version) {
+          setPending((current) =>
+            current?.version === status.installed.version
+              ? current
+              : { version: status.installed.version, since: Date.now() },
+          );
+        } else {
+          setPending(undefined);
+        }
+      } catch {
+        // Not running as installed CoCalc Plus, or offline: no notice.
+      }
+    };
+    void check();
+    const timer = setInterval(check, PLUS_CHECK_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, []);
+  return pending;
+}
+
+export function PlusRestartIndicator() {
+  const pending = usePlusRestartToUpdate();
+  const [howTo, setHowTo] = useState(false);
+  if (!pending) return null;
+  const close = () => setHowTo(false);
+  return (
+    <>
+      <UpdatePill
+        level="recommended"
+        since={pending.since}
+        label="Restart to update"
+        description={`CoCalc Plus ${pending.version} is installed. It takes effect the next time CoCalc Plus starts. Restart it when it suits you: running notebooks and terminals stop when CoCalc Plus stops.`}
+        actionLabel="How to restart"
+        onAction={() => setHowTo(true)}
+      />
+      <Modal
+        open={howTo}
+        title="Restart CoCalc Plus"
+        onCancel={close}
+        footer={
+          <Button type="primary" onClick={close}>
+            OK
+          </Button>
+        }
+      >
+        <p>
+          Save your work, then stop CoCalc Plus: press Control-C in the terminal
+          running it, or, if it runs in the background, run{" "}
+          <code>cocalc-plus --daemon-stop</code> with your pidfile. Then start
+          it again with <code>cocalc-plus</code>.
+        </p>
+        <p>
+          Your data from the previous version is kept as a snapshot, and{" "}
+          <code>cocalc-plus update --rollback</code> goes back to it.
+        </p>
+      </Modal>
+    </>
+  );
+}
+
 export function BrowserUpdateIndicator({
   fallback = false,
 }: {
@@ -214,7 +303,8 @@ export function BrowserUpdateIndicator({
 }) {
   const update = useBrowserUpdate();
   const primaryMounted = usePrimaryMounted(!fallback);
-  if (!update || (fallback && primaryMounted)) return null;
+  if (fallback && primaryMounted) return null;
+  if (!update) return lite ? <PlusRestartIndicator /> : null;
   const required = update.level === "required";
   return (
     <UpdatePill

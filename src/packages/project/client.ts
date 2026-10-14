@@ -500,7 +500,10 @@ export class Client extends EventEmitter implements ProjectClientInterface {
   };
 
   pubsub_conat = async ({ path, name }: { path?: string; name: string }) => {
-    return await pubsub({ path, name });
+    const channel = pubsub({ path, name });
+    // Report a denied subscription as a failed open (see SyncDoc cursors).
+    await channel.ready;
+    return channel;
   };
 
   callConatService: CallConatServiceFunction = async (options) => {

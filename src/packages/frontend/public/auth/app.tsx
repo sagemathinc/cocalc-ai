@@ -38,6 +38,7 @@ import {
   PublicSignInForm,
   PublicSignUpForm,
 } from "./forms";
+import { PublicOAuthAuthorizeView } from "./oauth-authorize-view";
 import PublicAuthPageShell from "./page-shell";
 import {
   getPublicAuthRouteFromPath,
@@ -73,6 +74,8 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Approve sign-in for ${siteName}`;
     case "auth-cli-elevate":
       return `Approve CLI security action for ${siteName}`;
+    case "auth-oauth-authorize":
+      return `Sign in with ${siteName}`;
     case "auth-second-factor":
       return "Verify your second factor";
     case "auth-password-reset-done":
@@ -117,6 +120,8 @@ function subtitleForRoute(
       return `Approve a sign-in request for ${siteName}`;
     case "auth-cli-elevate":
       return `Verify a terminal security action for ${siteName}`;
+    case "auth-oauth-authorize":
+      return `Use your ${siteName} account on another site`;
     case "auth-second-factor":
       return `Finish signing in to ${siteName}`;
     case "auth-password-reset-done":
@@ -141,6 +146,7 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
       return "min(900px, 96vw)";
     case "auth-cli-login":
     case "auth-cli-elevate":
+    case "auth-oauth-authorize":
     case "auth-password-reset-redeem":
     case "auth-password-reset-done":
     case "auth-verify-email":
@@ -169,6 +175,7 @@ function routeForcesCookieConsent(
     emailAuthenticationMode === "email_first" &&
     (route.kind === "auth-cli-login" ||
       route.kind === "auth-cli-elevate" ||
+      route.kind === "auth-oauth-authorize" ||
       route.kind === "project-invite")
   );
 }
@@ -509,6 +516,32 @@ export default function PublicAuthApp({
             <PublicCliElevateApprovalView
               challengeId={route.challengeId}
               isAuthenticated={!!resolvedConfig?.is_authenticated}
+            />
+            {!resolvedConfig?.is_authenticated ? (
+              <ConfiguredSignInForm
+                cookieBannerEnabled={!!resolvedConfig?.cookie_banner_enabled}
+                emailAuthenticationMode={
+                  resolvedConfig?.email_authentication_mode
+                }
+                initialSSOStrategies={ssoStrategies}
+                onNavigate={onNavigate}
+                redirectToPath={() =>
+                  window.location.pathname + window.location.search
+                }
+              />
+            ) : null}
+          </>
+        )}
+        {route.kind === "auth-oauth-authorize" && (
+          <>
+            <PublicOAuthAuthorizeView
+              search={route.search}
+              isAuthenticated={!!resolvedConfig?.is_authenticated}
+              accountDisplayName={resolvedConfig?.account_display_name}
+              accountEmailAddress={resolvedConfig?.account_email_address}
+              accountEmailAddressVerified={
+                resolvedConfig?.account_email_address_verified
+              }
             />
             {!resolvedConfig?.is_authenticated ? (
               <ConfiguredSignInForm

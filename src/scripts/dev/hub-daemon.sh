@@ -512,9 +512,10 @@ load_config() {
 }
 
 configure_cluster_shared_secret() {
+  # Always provision it for a cluster: more than retry tokens sign with it
+  # (e.g. agent delivery report capabilities), even when those have their own.
   if [ "${HUB_CLUSTER_BAY_COUNT:-0}" -le 1 ] ||
-    [ -n "${COCALC_CLUSTER_SHARED_SECRET:-}" ] ||
-    [ -n "${COCALC_HOME_BAY_RETRY_TOKEN_SECRET:-}" ]; then
+    [ -n "${COCALC_CLUSTER_SHARED_SECRET:-}" ]; then
     return 0
   fi
 

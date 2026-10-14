@@ -6,7 +6,7 @@ Search for users.
 - by partial match on display_name, first_name and last_name
 */
 
-import { getCachedReadPool } from "@cocalc/database/pool";
+import getPool, { getCachedReadPool } from "@cocalc/database/pool";
 import {
   cmp,
   isValidUUID,
@@ -171,8 +171,7 @@ const FIELDS =
 async function getUserByEmailAddress(
   email_address: string,
 ): Promise<DBUser | undefined> {
-  // query-cache-ok: display: account search results
-  const pool = getCachedReadPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address=$1`,
     [email_address.toLowerCase()],
@@ -183,8 +182,7 @@ async function getUserByEmailAddress(
 async function getUserByAccountId(
   account_id: string,
 ): Promise<DBUser | undefined> {
-  // query-cache-ok: display: account search results
-  const pool = getCachedReadPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE account_id=$1`,
     [account_id.toLowerCase()],
@@ -194,8 +192,7 @@ async function getUserByAccountId(
 
 // only for admin search
 async function getCollaborators(project_id: string): Promise<DBUser[]> {
-  // query-cache-ok: display: account search results
-  const pool = getCachedReadPool("medium");
+  const pool = getPool();
   let subQuery = `SELECT jsonb_object_keys(users) AS account_id FROM projects WHERE project_id=$1`;
   const queryParams = [project_id];
   const fields = FIELDS.split(",")
@@ -216,8 +213,7 @@ async function getUsersByEmailAddresses(
   logger.debug("getUsersByEmailAddresses", email_queries);
   if (email_queries.length == 0 || limit <= 0) return [];
 
-  // query-cache-ok: display: account search results
-  const pool = getCachedReadPool("medium");
+  const pool = getPool();
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM accounts WHERE email_address = ANY($1::TEXT[]) AND deleted IS NULL`,
     [email_queries],
@@ -272,8 +268,12 @@ async function getUsersByStringQueries(
   i += 1;
   params.push(limit);
 
-  // query-cache-ok: display: account search results
-  const pool = getCachedReadPool("medium");
+  // Substring matches with a leading wildcard scan the table, so ordinary
+  // users' searches are cached briefly. Admins search right after changing
+  // an account (banning it, making it an admin), so theirs are not.
+  // query-cache-ok: display: account search results (non-admin only)
+  const cached = getCachedReadPool("medium", { label: "account-search" });
+  const pool = admin ? getPool() : cached;
   const { rows } = await pool.query(query, params);
   return rows;
 }

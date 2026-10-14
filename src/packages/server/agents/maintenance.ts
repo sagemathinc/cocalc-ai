@@ -43,6 +43,13 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
     );
     await remove(
       db,
+      "report_executions",
+      `DELETE FROM agent_rpc_report_executions WHERE attempt_id IN
+       (SELECT attempt_id FROM agent_rpc_report_executions WHERE expires_at<now() LIMIT $1)`,
+      result,
+    );
+    await remove(
+      db,
       "runs",
       `DELETE FROM agent_identity_runs WHERE (agent_id,run_id) IN
        (SELECT agent_id,run_id FROM agent_identity_runs

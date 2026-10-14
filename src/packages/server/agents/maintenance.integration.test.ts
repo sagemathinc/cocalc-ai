@@ -11,6 +11,7 @@ describeDb("Agent Network retention", () => {
   const db = new AgentStore();
   const tables = [
     "agent_rpc_admission_state",
+    "agent_rpc_report_executions",
     "agent_network_mutations",
     "agent_network_activity",
     "agent_network_proposals",
@@ -58,7 +59,22 @@ describeDb("Agent Network retention", () => {
         [],
       ],
     );
+    await db.query(
+      `INSERT INTO agent_rpc_report_executions
+       (attempt_id,report_id,account_id,project_id,host_id,path,thread_id,expires_at)
+       VALUES($1,$2,$3,$4,$5,'a.chat','t',now()-interval '1 minute'),
+             ($6,$2,$3,$4,$5,'a.chat','t',now()+interval '1 day')`,
+      [
+        randomUUID(),
+        randomUUID(),
+        account,
+        randomUUID(),
+        randomUUID(),
+        randomUUID(),
+      ],
+    );
     const result = await cleanupAgentMessagingHistory();
+    expect(result.report_executions).toBe(1);
     expect(result.network_mutations).toBe(1);
     expect(result.network_proposals).toBe(1);
   });

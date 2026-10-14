@@ -4,8 +4,6 @@ Get first and last name for a list of account_id's.
 The output is an object {names:{[account_id]:{first_name:string;last_name:string}}},
 where the value for a given account_id is not given if that account does not
 exist or was deleted (instead of an error).
-
-There is about 30s of caching if you call this with the same input twice.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";

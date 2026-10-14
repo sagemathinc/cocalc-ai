@@ -1,0 +1,84 @@
+name: Release CoCalc CLI (bundle)
+
+# Distribution Phase A (src/.agents/cli-distribution-2026-10-12.md): build the
+# CLI bundle, launcher and bootstrap from this commit, pin Node (checked against
+# Node's signed SHASUMS256.txt), and publish to the release store that every
+# hub serves at <site>/cli/*. One click; the SEA workflow stays for Windows.
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_release:
+        description: "Minimum CLI release the sites require: keep the current one, make this release the minimum, or none"
+        required: true
+        default: keep
+        type: choice
+        options:
+          - keep
+          - this
+          - none
+      smoke_site:
+        description: "Optional: after publishing, install from this site (e.g. https://cocalc.ai) in a clean container"
+        required: false
+        type: string
+
+concurrency:
+  group: cocalc-cli-bundle-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    environment: cocalc-cli-release
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm -C src/packages install --frozen-lockfile
+
+      - name: Build the release
+        run: node src/packages/cli/dist-release/build-release.mjs
+
+      - name: Publish the release
+        env:
+          COCALC_R2_ACCOUNT_ID: ${{ secrets.COCALC_R2_ACCOUNT_ID }}
+          COCALC_R2_ACCESS_KEY_ID: ${{ secrets.COCALC_R2_ACCESS_KEY_ID }}
+          COCALC_R2_SECRET_ACCESS_KEY: ${{ secrets.COCALC_R2_SECRET_ACCESS_KEY }}
+          COCALC_R2_BUCKET: ${{ secrets.COCALC_R2_BUCKET }}
+          MIN_RELEASE: ${{ inputs.min_release }}
+        run: |
+          set -Eeuo pipefail
+          args=()
+          if [[ "$MIN_RELEASE" != keep ]]; then
+            args=(--min-release "$MIN_RELEASE")
+          fi
+          node src/packages/cli/dist-release/publish-release.mjs ${args[@]+"${args[@]}"}
+
+      - name: Install from a site in a clean container
+        if: inputs.smoke_site != ''
+        env:
+          SITE: ${{ inputs.smoke_site }}
+        run: |
+          set -Eeuo pipefail
+          docker run --rm -e SITE ubuntu:24.04 bash -c '
+            set -Eeuo pipefail
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+            curl -fsSL "$SITE/cli/install.sh" | sh
+            ~/.local/bin/cocalc --version
+            ~/.local/bin/cocalc update --check
+          '

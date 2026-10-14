@@ -54,7 +54,17 @@ if (!cliDebugEnabled) {
   process.env.DEBUG_FILE ??= "";
 }
 
-import("./main").catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// An installed CLI asks its site, at most every 10 minutes, whether there is
+// a newer (or required) release before running the command.
+const beforeCommand = process.env.COCALC_CLI_ROOT
+  ? import("../distribution/auto")
+      .then(({ beforeCommand }) => beforeCommand())
+      .catch(() => {})
+  : Promise.resolve();
+
+beforeCommand
+  .then(() => import("./main"))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

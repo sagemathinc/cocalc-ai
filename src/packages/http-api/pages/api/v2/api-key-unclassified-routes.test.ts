@@ -201,7 +201,7 @@ describe("previously unclassified API-key route scope", () => {
       },
     });
     expect(mockGetAccountId).not.toHaveBeenCalled();
-    expect(mockGetPrivateProfile).toHaveBeenCalledWith("acct-1", undefined);
+    expect(mockGetPrivateProfile).toHaveBeenCalledWith("acct-1");
   });
 
   it("requires account:read for API-key account name lookup", async () => {

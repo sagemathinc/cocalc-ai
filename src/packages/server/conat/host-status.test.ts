@@ -487,6 +487,121 @@ describe("listHostProjectMaintenanceSchedules", () => {
     },
   );
 
+  // On prod, 613 course payer ids that never became accounts were looked up
+  // (and logged) on every pass of every host: about 4,850 warnings an hour.
+  it("remembers a course payer that does not exist instead of retrying every pass", async () => {
+    queryMock.mockImplementation(async (sql) => ({
+      rows: sql.includes("SELECT id FROM project_hosts")
+        ? [{ id: "host-1" }]
+        : [
+            {
+              project_id: "proj-1",
+              owner_account_id: "owner-1",
+              course: { type: "student", account_id: "missing-sponsor" },
+            },
+          ],
+    }));
+    resolveRuntimeMembershipMock.mockImplementation(async (id) => {
+      if (id === "missing-sponsor") {
+        throw Error(`account '${id}' not found`);
+      }
+      return { class: "member" };
+    });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    const logger = (await import("@cocalc/backend/logger")).getLogger.mock
+      .results[0].value;
+    const first = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    const second = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    for (const [row] of [first, second]) {
+      expect(row).toMatchObject({
+        storage_account_id: "missing-sponsor",
+        storage_service_class: "unclassified",
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
+      });
+    }
+    const lookups = (id: string) =>
+      resolveRuntimeMembershipMock.mock.calls.filter(([a]) => a === id).length;
+    expect(lookups("missing-sponsor")).toBe(1);
+    expect(lookups("owner-1")).toBe(2);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("forgets a missing payer once it resolves, e.g. as an owner on another page", async () => {
+    const payerRow = {
+      project_id: "proj-1",
+      owner_account_id: "owner-1",
+      course: { type: "student", account_id: "sponsor-1" },
+    };
+    const ownerRow = { project_id: "proj-2", owner_account_id: "sponsor-1" };
+    let page = [payerRow];
+    queryMock.mockImplementation(async (sql) => ({
+      rows: sql.includes("SELECT id FROM project_hosts")
+        ? [{ id: "host-1" }]
+        : page,
+    }));
+    let exists = false;
+    resolveRuntimeMembershipMock.mockImplementation(async (id) => {
+      if (id === "sponsor-1" && !exists) {
+        throw Error("account 'sponsor-1' not found");
+      }
+      return { class: "member" };
+    });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    await listHostProjectMaintenanceSchedules({ host_id: "host-1" });
+    exists = true;
+    page = [ownerRow];
+    await listHostProjectMaintenanceSchedules({ host_id: "host-1" });
+    page = [payerRow];
+    const [row] = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    expect(row.storage_service_class).toBe("paying");
+  });
+
+  it.each([
+    ["an owner that does not exist", "owner-1", "account 'owner-1' not found"],
+    [
+      "a payer whose home bay is unavailable",
+      "sponsor-1",
+      "home bay unavailable",
+    ],
+    [
+      "a payer with another not-found error",
+      "sponsor-1",
+      "account directory entry not found for a peer bay",
+    ],
+  ])("still resolves %s on every pass", async (_label, failing, error) => {
+    queryMock.mockImplementation(async (sql) => ({
+      rows: sql.includes("SELECT id FROM project_hosts")
+        ? [{ id: "host-1" }]
+        : [
+            {
+              project_id: "proj-1",
+              owner_account_id: "owner-1",
+              course: { type: "student", account_id: "sponsor-1" },
+            },
+          ],
+    }));
+    resolveRuntimeMembershipMock.mockImplementation(async (id) => {
+      if (id === failing) throw Error(error);
+      return { class: "member" };
+    });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    await listHostProjectMaintenanceSchedules({ host_id: "host-1" });
+    await listHostProjectMaintenanceSchedules({ host_id: "host-1" });
+    expect(
+      resolveRuntimeMembershipMock.mock.calls.filter(([a]) => a === failing),
+    ).toHaveLength(2);
+  });
+
   it("retries an unresolved owner on the next inventory without changing stored schedules", async () => {
     const project = {
       project_id: "proj-1",

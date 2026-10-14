@@ -53,6 +53,31 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
+// One project's outcome in stopProjects or restartProjects.
+export interface BulkProjectControlResult {
+  project_id: string;
+  ok: boolean;
+  error?: string;
+  // The error's code, e.g. "OUTCOME_UNKNOWN" if its bay did not answer.
+  code?: string | number;
+  // restartProjects: the project's restart operation.
+  op_id?: string;
+}
+
+export const MAX_BULK_PROJECT_CONTROL = 100;
+// Stops run three at a time and one takes up to about 15 s on its host.
+export const BULK_PROJECT_CONTROL_CONCURRENCY = 3;
+const BULK_PROJECT_STOP_MS_PER_PROJECT = 15_000;
+
+/** A client timeout for stopProjects or restartProjects of n projects. */
+export function bulkProjectControlTimeout(n: number): number {
+  return (
+    30_000 +
+    Math.ceil(Math.max(0, n) / BULK_PROJECT_CONTROL_CONCURRENCY) *
+      BULK_PROJECT_STOP_MS_PER_PROJECT
+  );
+}
+
 export interface ProjectOwnershipTransferRequest {
   project_id: string;
   // Expected current owner; rejects stale confirmations and retries.
@@ -1315,8 +1340,10 @@ export const projects = {
   start: authFirstRequireAccount,
   startFromHost: authFirstRequireHostWithAccountTarget,
   stop: authFirstRequireAccount,
+  stopProjects: authFirstRequireAccount,
   status: authFirstRequireAccountOrBoundAgentProject,
   restart: authFirstRequireAccount,
+  restartProjects: authFirstRequireAccount,
   archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
@@ -2361,6 +2388,24 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+  // Stop several projects (at most MAX_BULK_PROJECT_CONTROL), each with its
+  // own ordinary stop, a few at a time. Resolves when all have finished, so
+  // allow about BULK_PROJECT_STOP_MS_PER_PROJECT per project (see
+  // bulkProjectControlTimeout).
+  stopProjects: (opts: {
+    account_id?: string;
+    project_ids: string[];
+    timeout?: number;
+  }) => Promise<BulkProjectControlResult[]>;
+  // Restart several projects. Each restart is queued as its own operation
+  // (as restart with wait: false), so this returns once all are queued.
+  // request_id is stable across retries of this one bulk action.
+  restartProjects: (opts: {
+    account_id?: string;
+    project_ids: string[];
+    request_id: string;
+    timeout?: number;
+  }) => Promise<BulkProjectControlResult[]>;
   archiveProject: (opts: {
     account_id?: string;
     project_id: string;

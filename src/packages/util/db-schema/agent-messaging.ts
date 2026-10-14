@@ -68,6 +68,36 @@ Table({
 });
 
 Table({
+  name: "agent_rpc_report_executions",
+  rules: {
+    primary_key: "attempt_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_rpc_report_executions_expiry",
+        query: "(expires_at)",
+      },
+    ],
+  },
+  fields: {
+    attempt_id: required(
+      "uuid",
+      "The reported message: a delivery report starts at most one turn.",
+    ),
+    report_id: required("uuid", "The report whose turn ran."),
+    account_id: required("uuid", "Execution principal binding."),
+    project_id: required("uuid", "The sender's project, where the turn ran."),
+    host_id: required("uuid", "The host that ran it."),
+    path: required("string", "The sender's chat."),
+    thread_id: required("string", "The sender's thread."),
+    created_at: created("When the report's turn was authorized."),
+    expires_at: {
+      ...timestamp("Kept until after the report's capability expired."),
+      not_null: true,
+    },
+  },
+});
+
+Table({
   name: "agent_message_project_fences",
   rules: {
     primary_key: "project_id",
@@ -380,6 +410,87 @@ Table({
     ended_at: timestamp("Explicit lifecycle revocation time."),
     created_at: created("Turn credential issuance time."),
     renewed_at: created("Last successful renewal time."),
+  },
+});
+
+// Agent memory, in the account's home bay: one row per account (on/off,
+// namespaces and which projects see them) and one row per note. Descriptions
+// and bodies are encrypted with the site's secret-storage key.
+Table({
+  name: "agent_memory_accounts",
+  rules: {
+    primary_key: "account_id",
+  },
+  fields: {
+    account_id: required("uuid", "Account whose agent memory this is."),
+    enabled: {
+      ...required("boolean", "Whether agents may use the memory."),
+      pg_default: "false",
+    },
+    namespaces: {
+      ...required("map", "Namespaces: [{name, description?}]."),
+      pg_type: "JSONB",
+      pg_default: "'[]'::jsonb",
+    },
+    projects: {
+      ...required("map", "project_id -> attached namespace names."),
+      pg_type: "JSONB",
+      pg_default: "'{}'::jsonb",
+    },
+    migrated_at: timestamp(
+      "When notes of the first version's single record were first moved here.",
+    ),
+    legacy_version: {
+      type: "string",
+      desc: "Hash of the first version's record as last absorbed (rolling upgrades).",
+    },
+    legacy_notes: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Fingerprint of each note in that record, so only notes an old hub changed are absorbed again.",
+    },
+    legacy_absorbed_at: timestamp(
+      "When the first version's record was last absorbed.",
+    ),
+    updated_at: created("Last settings change."),
+  },
+});
+
+Table({
+  name: "agent_memory_notes",
+  rules: {
+    primary_key: ["account_id", "namespace", "name"],
+    pg_custom_indexes: [
+      {
+        name: "agent_memory_notes_recent",
+        query: "(account_id,namespace,updated_at)",
+      },
+    ],
+  },
+  fields: {
+    account_id: required("uuid", "Account whose note this is."),
+    namespace: required(
+      "string",
+      "'global' or one of the account's namespaces.",
+    ),
+    name: required("string", "Kebab-case name, unique in its namespace."),
+    description: required("string", "Encrypted one-line description."),
+    body: required("string", "Encrypted note text."),
+    bytes: {
+      ...required("integer", "Plain-text bytes of description and body."),
+      pg_default: "0",
+    },
+    project_id: {
+      type: "uuid",
+      desc: "Project the note was last written from; ranks it first there.",
+    },
+    created_at: created("When the note was first saved."),
+    updated_at: created("Last write."),
+    last_read_at: timestamp("Last time an agent read the note."),
+    read_count: {
+      ...required("integer", "Times an agent read the note."),
+      pg_default: "0",
+    },
   },
 });
 

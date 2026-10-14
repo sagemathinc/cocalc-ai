@@ -13,8 +13,21 @@ import { projectApiClient } from "@cocalc/conat/project/api";
 import { base64ToBuffer } from "@cocalc/util/base64";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { getLogger } from "@cocalc/conat/logger";
+import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 
 const logger = getLogger("conat:sync-doc:sync-client");
+
+// The browser app registers how to tell the user something (a toast) at
+// startup; other clients (projects, backends) leave it unset.
+export interface SyncClientHooks {
+  alert_message?: (opts: any) => void;
+}
+
+let hooks: SyncClientHooks = {};
+
+export function setSyncClientHooks(next: SyncClientHooks): void {
+  hooks = { ...hooks, ...next };
+}
 
 export class SyncClient extends EventEmitter implements Client0 {
   private client: ConatClient;
@@ -28,9 +41,16 @@ export class SyncClient extends EventEmitter implements Client0 {
   }
 
   close = () => {
+    this.client?.removeListener("closed", this.close);
     this.emit("closed");
     // @ts-ignore
     delete this.client;
+  };
+
+  // Each document gets its own SyncClient, but the conat client outlives
+  // them; stop listening to it once the document using this one closes.
+  release = () => {
+    this.client?.removeListener("closed", this.close);
   };
 
   is_project = (): boolean => false;
@@ -103,7 +123,11 @@ export class SyncClient extends EventEmitter implements Client0 {
   };
 
   pubsub_conat = async (opts): Promise<PubSub> => {
-    return new PubSub({ client: this.client, ...opts });
+    const channel = new PubSub({ client: this.client, ...opts });
+    // A denied subscription is a failed open (the channel closes itself),
+    // not a channel that looks open and later goes dead.
+    await channel.ready;
+    return channel;
   };
 
   // account_id or project_id for this signed-in conat client.
@@ -117,6 +141,39 @@ export class SyncClient extends EventEmitter implements Client0 {
 
   server_time = (): Date => {
     return new Date();
+  };
+
+  // The document's history holds the patch oversized_seq, too large to load
+  // (413), so it cannot be opened: reset its history through the patch stream
+  // this client already writes to, keeping the old history aside.  The persist
+  // server only resets if that patch is still there, all in one transaction.
+  resetOversizedHistory = async ({
+    project_id,
+    path,
+    oversized_seq,
+  }: {
+    project_id: string;
+    path: string;
+    oversized_seq: number;
+  }): Promise<{ history_epoch: number; reset: boolean }> => {
+    const stream = this.client.sync.astream({
+      project_id,
+      name: patchesStreamName({ path }),
+      noInventory: true,
+    });
+    try {
+      const { history_epoch, reset } = await stream.resetHistory({
+        ifOversizedSeq: oversized_seq,
+        archive: true,
+        settings: {
+          history_purged_at: Date.now(),
+          history_purged_by: this.accountId() ?? null,
+        },
+      });
+      return { history_epoch, reset };
+    } finally {
+      stream.close();
+    }
   };
 
   ipywidgetsGetBuffer = async ({
@@ -143,7 +200,9 @@ export class SyncClient extends EventEmitter implements Client0 {
   // EVERYTHING BELOW: TO REMOVE?
   mark_file = (_): void => {};
 
-  alert_message = (_): void => {};
+  alert_message = (opts): void => {
+    hooks.alert_message?.(opts);
+  };
 
   sage_session = (_): void => {};
 

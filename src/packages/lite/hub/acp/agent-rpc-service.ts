@@ -9,6 +9,7 @@ import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
 import { AgentAttachmentReservations } from "@cocalc/conat/agents/attachment-reservations";
 import { agentSourceProjectPhrase } from "@cocalc/conat/agents/source-project";
 import {
+  AGENT_SNAPSHOTS_PROMPT_HEADING,
   stageAgentAttachments,
   discardAgentAttachments,
   type StagedAgentAttachments,
@@ -256,7 +257,7 @@ export function createAgentRpcService(
                 ? `\n\nAttached same-project file references (live files, not snapshots; availability may change):\n${JSON.stringify(e.file_references)}`
                 : "") +
               (staged
-                ? `\n\nAttached file snapshots in this project (temporary; copy into the project home to retain across restart):\n${JSON.stringify(staged)}`
+                ? `\n\n${AGENT_SNAPSHOTS_PROMPT_HEADING} (temporary; copy into the project home to retain across restart):\n${JSON.stringify(staged)}`
                 : "");
             prepareChatSend({
               projectId: e.target.project_id,
@@ -322,6 +323,10 @@ export function createAgentRpcService(
               configured_delivery: e.configured_delivery,
               principal_account_id: e.account_id,
               guidance: e.guidance === true,
+              attempt_id: e.attempt_id,
+              ...(e.report_capability
+                ? { report_capability: e.report_capability }
+                : {}),
             };
             chatEffect = "unknown";
             db.set({

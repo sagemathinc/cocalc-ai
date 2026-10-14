@@ -41,7 +41,11 @@ import {
   decode,
 } from "@cocalc/conat/core/client";
 import { storagePath, type User } from "./core-stream";
-import { type Configuration } from "@cocalc/conat/persist/storage";
+import {
+  type Configuration,
+  type ResetHistoryOptions,
+  type ResetHistoryResult,
+} from "@cocalc/conat/persist/storage";
 
 export class AStream<T = any> {
   private storage: StorageOptions;
@@ -195,6 +199,14 @@ export class AStream<T = any> {
       return { messageData: messageData(mesg) };
     });
     return await this.stream.setMany(ops);
+  };
+
+  // atomically reset a sync document's history; see
+  // PersistentStream.resetHistory
+  resetHistory = async (
+    opts: ResetHistoryOptions,
+  ): Promise<ResetHistoryResult> => {
+    return await this.stream.resetHistory(opts);
   };
 
   config = async (

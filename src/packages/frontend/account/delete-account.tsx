@@ -4,6 +4,7 @@
  */
 
 import { Button, Input, Modal, Space, theme } from "antd";
+import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import {
@@ -11,6 +12,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, Icon } from "@cocalc/frontend/components";
 
 interface Props {
@@ -22,6 +24,8 @@ interface ConfirmationProps {
   confirmationText: string;
   requiredText: string;
   setConfirmationText: (value: string) => void;
+  // Sites (e.g. Sagebrush) this account signed in to with CoCalc.
+  clientNames: string[];
 }
 
 // Conscious choice to make them type their full name before confirming.
@@ -29,6 +33,7 @@ function DeleteAccountConfirmation({
   confirmationText,
   requiredText,
   setConfirmationText,
+  clientNames,
 }: ConfirmationProps) {
   const account_deletion_error = useTypedRedux(
     "account",
@@ -49,6 +54,14 @@ function DeleteAccountConfirmation({
         defaultMessage={`You will immediately lose access to all of your projects,
             any subscriptions will be canceled, and all unspent credit will be lost.`}
       />
+      {clientNames.map((name) => (
+        <FormattedMessage
+          key={name}
+          id="account.delete-account.client-data"
+          defaultMessage="Your files shared on {name} are deleted too."
+          values={{ name }}
+        />
+      ))}
       <FormattedMessage
         id="account.delete-account.alert.enter-name"
         defaultMessage={`To delete your account enter "{required_text}" below:`}
@@ -87,7 +100,29 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
   const { token } = theme.useToken();
   const [open, setOpen] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
+  const [clientNames, setClientNames] = useState<string[]>([]);
   const canDeleteAccount = confirmationText === requiredText;
+
+  // Sites this account signed in to with CoCalc, whose shared files are
+  // deleted with the account.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setClientNames([]);
+    void (async () => {
+      try {
+        const result = await api("/accounts/oauth-client-approvals");
+        if (!cancelled) {
+          setClientNames((result?.clients ?? []).map(({ name }) => name));
+        }
+      } catch {
+        // Only the sentence is missing; the deletion is the same.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   function close() {
     setOpen(false);
@@ -144,6 +179,7 @@ export function DeleteAccountButton({ confirm, requiredText }: Props) {
             confirmationText={confirmationText}
             requiredText={requiredText}
             setConfirmationText={setConfirmationText}
+            clientNames={clientNames}
           />
         </Modal>
       ) : undefined}

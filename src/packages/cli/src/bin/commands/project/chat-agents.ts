@@ -6,7 +6,7 @@ import type {
 } from "@cocalc/conat/agents/personal";
 import type { ProjectCommandDeps } from "../project";
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
 import { resolveBroadcastTargets } from "../../core/agent-destination";
@@ -16,6 +16,7 @@ import {
   removeNamedAgent,
 } from "../../core/agent-create";
 import { akv } from "@cocalc/conat/sync/akv";
+import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
 import {
   agentSendExitCode,
@@ -553,7 +554,7 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   const memory = chat
     .command("memory")
     .description(
-      "account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials",
+      `account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials. Notes are global (every project) or in a namespace the owner attached to this project; name them <name>, <namespace>/<name> or global/<name>. Memory keeps up to ${AGENT_MEMORY_LIMITS.maxNotes} notes, ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} per namespace (the global notes count as one)`,
     );
   const stdinText = async () => {
     let value = "";
@@ -570,17 +571,26 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   };
   memory
     .command("list")
-    .description("list saved notes (name, description, last update)")
-    .action(async (_opts, cmd) =>
+    .description(
+      "list the notes this project sees (name, description, last update)",
+    )
+    .option("--namespace <namespace>", "only this namespace (or global)")
+    .action(async (opts, cmd) =>
       memoryRequest(
         cmd,
-        { action: "memory", op: "list" },
+        {
+          action: "memory",
+          op: "list",
+          ...(opts.namespace ? { namespace: opts.namespace } : {}),
+        },
         "project chat memory list",
       ),
     );
   memory
     .command("read <name>")
-    .description("read one note")
+    .description(
+      "read one note, with its revision (for write --expect-revision)",
+    )
     .action(async (name: string, _opts, cmd) =>
       memoryRequest(
         cmd,
@@ -589,12 +599,42 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
       ),
     );
   memory
+    .command("search <words...>")
+    .description(
+      "find notes containing all of these words (name, description or text)",
+    )
+    .option("--limit <n>", "at most this many results (1-20)", (v) =>
+      Number.parseInt(v, 10),
+    )
+    .action(async (words: string[], opts, cmd) =>
+      memoryRequest(
+        cmd,
+        {
+          action: "memory",
+          op: "search",
+          query: words.join(" "),
+          ...(opts.limit ? { limit: opts.limit } : {}),
+        },
+        "project chat memory search",
+      ),
+    );
+  memory
     .command("write <name> [body...]")
     .description(
-      "create or replace a note: one durable fact, never secrets (use --stdin for multiline bodies)",
+      "create or replace a note: one durable fact, never secrets (use --stdin for multiline bodies). An existing note is updated where it is; a new one goes to the project's namespace unless named global/<name> or <namespace>/<name>",
     )
-    .requiredOption("--description <text>", "one line used in the index")
-    .option("--stdin", "read the body from standard input")
+    .requiredOption(
+      "--description <text>",
+      `one line used in the index (at most ${AGENT_MEMORY_LIMITS.maxDescriptionBytes} bytes)`,
+    )
+    .option(
+      "--stdin",
+      `read the body (at most ${AGENT_MEMORY_LIMITS.maxBodyBytes} bytes) from standard input`,
+    )
+    .option(
+      "--expect-revision <revision>",
+      "only replace the note if it is unchanged since a read returned this revision",
+    )
     .action(async (name: string, body: string[], opts, cmd) =>
       memoryRequest(
         cmd,
@@ -604,8 +644,23 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
           name,
           description: opts.description,
           body: opts.stdin ? await stdinText() : body.join(" "),
+          ...(opts.expectRevision
+            ? { expected_revision: opts.expectRevision }
+            : {}),
         },
         "project chat memory write",
+      ),
+    );
+  memory
+    .command("move <name> <namespace>")
+    .description(
+      "move a note to another namespace this project sees, or to global",
+    )
+    .action(async (name: string, to: string, _opts, cmd) =>
+      memoryRequest(
+        cmd,
+        { action: "memory", op: "move", name, to },
+        "project chat memory move",
       ),
     );
   memory
@@ -618,6 +673,42 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
         "project chat memory delete",
       ),
     );
+  memory
+    .command("namespaces")
+    .description(
+      "the namespaces this project sees, with descriptions, note counts and the limits",
+    )
+    .action(async (_opts, cmd) =>
+      memoryRequest(
+        cmd,
+        { action: "memory", op: "namespaces" },
+        "project chat memory namespaces",
+      ),
+    );
+  memory
+    .command("export")
+    .description("the notes this project sees as one Markdown document")
+    .option("--namespace <namespace>", "only this namespace (or global)")
+    // Not --output: that is the global output format option.
+    .option("--out <path>", "write the Markdown to this file")
+    .action(async (opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const result: any = await sendIdentityMessage(
+        {
+          action: "memory",
+          op: "export",
+          ...(opts.namespace ? { namespace: opts.namespace } : {}),
+        },
+        globals.api,
+      );
+      if (opts.out) {
+        await writeFile(opts.out, result.markdown, { mode: 0o600 });
+        emitSuccess({ globals }, "project chat memory export", {
+          notes: result.notes,
+          path: opts.out,
+        });
+      } else emitSuccess({ globals }, "project chat memory export", result);
+    });
 }
 
 export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {

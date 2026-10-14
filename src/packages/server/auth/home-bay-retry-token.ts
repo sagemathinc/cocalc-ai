@@ -39,7 +39,8 @@ export interface HomeBayRetryClaims {
     | "impersonate"
     | "cli-login"
     | "password-reset"
-    | "email-auth";
+    | "email-auth"
+    | "oauth-authorize";
 }
 
 function base64UrlEncode(input: Buffer | string): string {
@@ -138,7 +139,8 @@ export function issueHomeBayRetryToken({
     | "impersonate"
     | "cli-login"
     | "password-reset"
-    | "email-auth";
+    | "email-auth"
+    | "oauth-authorize";
   ttl_seconds?: number;
   token_id?: string;
   now_ms?: number;
@@ -158,13 +160,16 @@ export function issueHomeBayRetryToken({
     purpose === "impersonate" ||
     purpose === "password-reset" ||
     purpose === "cli-login" ||
-    purpose === "email-auth"
+    purpose === "email-auth" ||
+    purpose === "oauth-authorize"
   ) {
     if (!normalizedAccountId) {
       throw new Error("account_id is required");
     }
     if (
-      (purpose === "cli-login" || purpose === "email-auth") &&
+      (purpose === "cli-login" ||
+        purpose === "email-auth" ||
+        purpose === "oauth-authorize") &&
       !normalizedChallengeId
     ) {
       throw new Error("challenge_id is required");
@@ -224,7 +229,8 @@ export function verifyHomeBayRetryToken({
     | "impersonate"
     | "cli-login"
     | "password-reset"
-    | "email-auth";
+    | "email-auth"
+    | "oauth-authorize";
   now_ms?: number;
 }): HomeBayRetryClaims {
   const { header, claims, signingInput, signature } = parseClaims(token);

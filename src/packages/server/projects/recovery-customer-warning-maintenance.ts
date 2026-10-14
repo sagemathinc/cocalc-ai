@@ -5,12 +5,8 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { createNotificationEventGraph } from "@cocalc/database/postgres/notifications-core";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import {
-  getSingleBayInfo,
-  resolveAccountHomeBay,
-} from "@cocalc/server/bay-directory";
+import { getSingleBayInfo } from "@cocalc/server/bay-directory";
 import siteUrl from "@cocalc/server/hub/site-url";
 import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
 import {
@@ -27,7 +23,8 @@ import {
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
 import { isValidUUID } from "@cocalc/util/misc";
-import { v5 as uuidv5 } from "uuid";
+import { deliverProjectAccountNotice } from "./project-account-notice";
+import { runProjectSnapshotQuotaNoticeCheck } from "./snapshot-quota-notice";
 import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryStatusLocal,
@@ -39,7 +36,6 @@ const logger = getLogger("server:projects:recovery-customer-warnings");
 const CHECK_INTERVAL_MS = 5 * 60_000;
 const PAGE_SIZE = 500;
 const MAX_PROJECTS_PER_CHECK = 5000;
-const NOTICE_EVENT_NAMESPACE = "56cde593-74c2-4a98-8cca-3b27e51b6d0e";
 const SCAN_STALE_MS = 15 * 60_000;
 const FULL_SCAN_STALE_MS = 60 * 60_000;
 
@@ -233,61 +229,23 @@ async function deliverWarning({
   kind: Kind;
   due: string;
 }): Promise<boolean> {
-  const eventId = uuidv5(
-    `${projectId}:${kind}:${due}:${recipient}`,
-    NOTICE_EVENT_NAMESPACE,
-  );
-  const existing = await getPool().query(
-    "SELECT event_id FROM notification_events WHERE event_id=$1",
-    [eventId],
-  );
-  if (existing.rows.length) return false;
-  const { home_bay_id } = await resolveAccountHomeBay({
-    account_id: recipient,
-    user_account_id: recipient,
-  });
-  if (!home_bay_id) throw Error("recipient account home unavailable");
   const message = await notice({ projectId, kind, due });
-  const action_link = `/projects/${projectId}/settings#recovery`;
-  const summary = {
-    title: message.subject,
-    body_markdown: message.body,
-    severity: "warning",
-    notice_type: "project_recovery_warning",
-    origin_label: "Project Recovery",
-    action_link,
-    action_label: "Review recovery status",
-  };
-  try {
-    await createNotificationEventGraph({
-      event_id: eventId,
-      kind: "account_notice",
-      source_bay_id: bayId,
-      source_project_id: projectId,
-      origin_kind: "project",
-      payload_json: summary,
-      targets: [
-        {
-          target_account_id: recipient,
-          target_home_bay_id: home_bay_id,
-          dedupe_key: `project-recovery-warning:${eventId}`,
-          summary_json: summary,
-        },
-      ],
-    });
-    return true;
-  } catch (err) {
-    // A retiring primary worker can overlap its replacement. The event's
-    // primary key makes this race harmless without dropping another failure.
-    if ((err as { code?: string })?.code === "23505") {
-      const { rows } = await getPool().query(
-        "SELECT event_id FROM notification_events WHERE event_id=$1",
-        [eventId],
-      );
-      if (rows.length) return false;
-    }
-    throw err;
-  }
+  return await deliverProjectAccountNotice({
+    bayId,
+    projectId,
+    recipient,
+    eventKey: `${projectId}:${kind}:${due}:${recipient}`,
+    dedupePrefix: "project-recovery-warning",
+    summary: {
+      title: message.subject,
+      body_markdown: message.body,
+      severity: "warning",
+      notice_type: "project_recovery_warning",
+      origin_label: "Project Recovery",
+      action_link: `/projects/${projectId}/settings#recovery`,
+      action_label: "Review recovery status",
+    },
+  });
 }
 
 let timer: NodeJS.Timeout | undefined;
@@ -483,6 +441,12 @@ export function startProjectRecoveryCustomerWarningMaintenance(): void {
     void runProjectRecoveryCustomerWarningCheck()
       .catch((err) =>
         logger.warn("project recovery customer warning check failed", {
+          err: `${err}`,
+        }),
+      )
+      .then(() => runProjectSnapshotQuotaNoticeCheck())
+      .catch((err) =>
+        logger.warn("project snapshot quota notice check failed", {
           err: `${err}`,
         }),
       )
