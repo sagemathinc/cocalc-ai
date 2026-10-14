@@ -1,238 +1,259 @@
 # Computers: revocation that stops running work (stage-1 release gate)
 
-Implementation note, Oct 14 2026, **revision 2**: answers lite1-review's
-review of 321bf7e5d3. Plan: `computers-plan-2026-10-11.md` ("Revocation
+Implementation note, Oct 14 2026. **Revision 3** answers lite1-review's
+re-review of revision 2. Plan: `computers-plan-2026-10-11.md` ("Revocation
 semantics", "The computer principal and the data path", "Multi-bay,
 rehoming, deletion"). This is the first open release gate from #1036: *the
 signed floors/control push and the epoch-close outbox (revocation must also
 stop running work)*.
 
-## What exists (main at cf65310d75, plus c78782b65b on this branch)
+Daemon-side pieces already on `feat/computers-revocation`:
+- the signed `computer-control` "end" (c78782b65b), and pushes on the op
+  channel;
+- the `deleted` reason;
+- certificate expiry ending the daemon;
+- the policy update (60fc3f9bf8), which is narrow-only against the current
+  effective policy and the ceiling (f824ecc768).
 
-- **What withdraws authority today.** Every withdrawal bumps
-  `account_computers.epoch`, in one of four transactions:
-  - `revokeComputer`;
-  - the tombstone when a computer is paired again (`requests.ts`);
-  - `bumpComputersForNetwork` (a member removed, a network paused or closed);
-  - `bumpComputersForAccount` (account pause, or revoke-all).
-
-  `setEffectivePolicy` bumps `policy_epoch`. Nothing ever sends the daemon
-  the new policy, so its tickets would all be refused afterwards (no UI calls
-  it yet).
-- **Sessions.** The router revalidates each computer session every 15 s and
-  closes it after an epoch bump. `currentSession()` and `sessionIsCurrent()`
-  accept only a session at the computer's current epoch.
-- **The daemon:**
-  - `applyFloors` (pushed floors);
-  - `endSession`;
-  - since c78782b65b, `applyControl`, which verifies a signed
-    `computer-control` "end" and stops every job;
-  - pushes ride on the op channel and are acknowledged on the reply subject.
-- **The hub has `signing-key-endorsement`.** Each new bay key is endorsed by
-  its predecessor. The daemon takes a directory only from its authenticated
-  channel (`applyDirectory`, newer generation only).
+`setEffectivePolicy` is refused until delivery exists. Revision 3 folds the
+separate kinds into one **state snapshot** (§1). The code follows once this
+note is approved.
 
 ## Invariants
 
-1. **Every daemon that could be running work for a computer applies every
-   push, or ends.** "Every" includes:
-   - each pre-bump session;
-   - any future session of that computer;
-   - a daemon that is offline today.
-2. **A push gives a session nothing.** Its receipt grants no operation,
-   report or subscription authority after a bump.
-3. **Delivery is at least once.** Applying a push again is harmless:
+1. **Every daemon that may be running work applies the computer's current
+   state, or ends.** That covers each open session at any epoch, every
+   future session, and an offline daemon at its next login attempt.
+2. **No operation reaches a session that hasn't applied the current state.**
+   Readiness is structural (§3).
+3. **Receiving a snapshot grants nothing:** no operation, report or
+   subscription authority beyond the exact receipt (§4).
+4. **Delivery is at least once.** Applying again is harmless:
    - floors are componentwise maxima;
-   - a policy applies only if its epoch is newer;
-   - "end" is permanent.
-4. **Only signed pushes act.** Unsigned errors (the site switch, outages,
-   rate limits) never end a daemon.
+   - a policy applies only with a newer epoch and only if it narrows;
+   - "ended" is terminal.
+5. **Only signed state acts.** Unsigned errors (the site switch, outages)
+   never end a daemon.
+6. **Restrictions need only the home bay's signature.** Floors, a narrowed
+   policy and "ended" only ever restrict, so the home bay may decide them
+   from its own evidence (§6). Admission keeps requiring the project bay's
+   attestation.
 
-## 1. Pushes
+## 1. One signed state snapshot
 
-Three signed kinds, all signed by the home bay with a key the daemon can
-trust:
-- **`computer-floors`** (exists): `{ computer_id, home_epoch,
-  computer_epoch, projects: { [project_id]: privacy_epoch }, issued_at }`.
-- **`computer-control`** (in c78782b65b): `{ computer_id, action: "end",
-  reason, issued_at }`, with reason one of:
-  - `revoked`: disconnected by the owner, or revoke-all;
-  - `replaced`: tombstoned when paired again;
-  - `deleted`: the account was deleted (new).
-- **`computer-policy`** (new; this answers MEDIUM 1): `{ computer_id,
-  policy_epoch, policy, issued_at }`. The daemon applies it only if:
-  - `policy_epoch` is greater than its own;
-  - the policy is within its local ceiling P0 (the existing partial order).
+A single new kind, `computer-state`, replaces separate pushes:
 
-  It then sets `effective_policy` and `policy_epoch` durably. Queued work
-  with an older policy epoch is cancelled; running jobs continue, as the
-  plan documents. `setEffectivePolicy` stays refused (it returns a clear
-  error) until this lands, so main never has an effective-policy change
-  that can't reach the daemon.
+```
+{ type: "cocalc-computer-state", version: 1, computer_id,
+  state_version,                       // the hub's counter for this computer
+  home_epoch, computer_epoch,          // floors
+  project_floors: { [project_id]: privacy_epoch },   // at most 500 (§5)
+  policy_epoch, policy,                // the current effective policy
+  ended: null | { reason: "revoked" | "replaced" | "deleted" },
+  issued_at }
+```
 
-The hub builds every payload from typed columns and checks `computer_id`
-before signing, never from stored JSON.
+- **Signing.** The home bay signs it with a key the daemon trusts (§4). It
+  builds it from typed columns and checks `computer_id`, never stored JSON.
+- **Applying.** The daemon verifies it, then applies it **atomically, in
+  one durable write**:
+  1. floors are merged by maximum;
+  2. a policy is applied only if `policy_epoch` is newer and the policy is
+     at most the current effective policy and the ceiling;
+  3. `ended` comes last: if set, every job is stopped and the connector
+     stops.
+- **The ack** comes only after the write: `{ ok: true, state_version,
+  envelope_hash }`. If verification fails, the ack is `{ ok: false, error }`
+  and nothing changes.
+- **Replaces earlier kinds.** It supersedes `computer-floors`,
+  `computer-control` and `computer-policy` as pushes; their parsers stay for
+  the unit tests. `ComputerPush` becomes `{ state }`.
 
-## 2. Durable state, not one message per change
+## 2. Durable state at the home bay
 
-The hub keeps, per computer, **what every daemon of it must have applied**.
-It is the source of every push:
-- `account_computers.epoch` (exists): computer floor;
-- `account_computers.policy_epoch` and `effective_policy` (exist);
-- **`account_computer_project_floors`** (new; computer_id, project_id,
-  privacy_epoch, updated_at): project floors, raised only, never lowered;
-- **ended**: `revoked_at`, `tombstoned_at`, and the account's deletion.
-  Deletion writes `ended_reason = 'deleted'` on each computer (new column)
-  inside `markAccountDeleted`'s fenced transaction, before `deleted=true`
-  makes account authority unavailable (HIGH 2).
+All of these are account-home tables carrying `account_id`, added to
+`COMPUTER_STATE_TABLES` (rehoming stays blocked while computer state exists).
+- **`account_computers`** gets:
+  - `state_version` (bigint), bumped by every change below;
+  - `ended_reason`, for deletion.
 
-A push to any daemon is "the current snapshot of that state", signed now. So
-coalescing is automatic: there are no superseded rows, and no componentwise
-merges of stored pushes (MEDIUM 3).
+  Every change locks the computer row (`FOR UPDATE`); a login locks it too
+  (§3):
+  - revoke and tombstone;
+  - `bumpComputersForNetwork` and `bumpComputersForAccount`;
+  - policy (once enabled);
+  - a project floor raise;
+  - deletion, which is written inside `markAccountDeleted`'s fenced
+    transaction, before `deleted=true`.
+- **`account_computer_project_floors`** `(account_id, computer_id,
+  project_id, privacy_epoch, updated_at)`: raised only. GC is in §5.
+- **`account_computer_session_targets`** `(account_id, computer_id,
+  session_id, generation, state_version, reply_subject, claimed_by_hub,
+  attempt_token, lease_until, last_error)`:
+  - one row per open session, created or raised by the change transaction
+    for **every** open session of the computer (`closed_at IS NULL`,
+    whatever its epoch);
+  - raising it clears `attempt_token`, `lease_until` and the claim.
 
-## 3. Delivery targets: every session, then every future session
+## 3. Readiness: no operation before the snapshot
 
-- **`account_computer_push_targets`** (new): `(computer_id, session_id,
-  generation, state_version, attempt_token, lease_until, acked_at,
-  last_error)`.
-  - `state_version` is a counter on the computer, bumped by every change in
-    §2: epoch, policy epoch, project floor, ended.
-  - A change, inside the same transaction, inserts or raises a target for
-    **every open session of the computer** (`closed_at IS NULL`, whatever
-    its epoch). `currentSession()` is not used (HIGH 1).
-- **Delivery** (any hub process):
-  1. **Claim** a target with a short lease and a fresh `attempt_token`
-     (`UPDATE ... RETURNING`), then commit. No lock is held across I/O
-     (MEDIUM 3).
-  2. **Read** the snapshot and sign it.
-  3. **Publish** on `computer.<id>.<session>.op.v1` with `correlation =
-     attempt_token`.
-  4. **Wait** for the ack.
-  5. **Finalize** with `UPDATE ... WHERE attempt_token = $1 AND
-     state_version = $2`. A stale ack can't complete a newer version.
-- **The receipt grace path** (HIGH 1). `isComputerAllowed` keeps refusing
-  everything a stale or revoked session publishes, with one exception: a
-  publication to exactly `computer.<id>.<session>.reply.<hub>.<correlation>`
-  where an unexpired target row matches all of:
-  - this exact `session_id`;
-  - this exact `generation`;
-  - this exact `attempt_token`.
+- **A session starts not ready.** `account_computer_sessions` gets
+  `ready_version` (bigint, null at login).
+- **Ordinary authority requires readiness.** `currentSession()`, the relay
+  commit and `sessionIsCurrent()` all require
+  `ready_version >= account_computers.state_version`.
+- **Two capabilities before ready:**
+  - the subscription to its own op subject;
+  - the exact snapshot receipt (§4).
+- **Login.** The login transaction locks the computer row, inserts the
+  session (`ready_version` null) and its target at the current
+  `state_version`.
+- **Every state change** locks the same row, bumps `state_version`, and
+  raises the targets of all open sessions. A login can't miss an
+  enumeration, and a session can't believe an old version is enough.
+- **Promotion** happens only through the finalize CAS (§4):
+  `ready_version := acked version`. If the state moved on meanwhile, the
+  session stays not ready until the newer target is acked.
 
-  That grants the single ack and nothing else: no operations, no reports, no
-  other subject. Revalidation still closes the socket; the grace path only
-  covers the window before that.
-- **When a target is done:** when it is acked at its `state_version`, or
-  when its session is closed (`closed_at` is set). A closed session's daemon
-  either:
-  - logs in again, and every new session gets the full snapshot as its first
-    message, delivered and acknowledged the same way, before any operation
-    is relayed; or
-  - is refused at the challenge (§4).
+## 4. Delivery, receipt and keys
 
-  So a lost push is healed by reconnect, and two simultaneous sessions are
-  each served.
+- **Claim.** `UPDATE targets SET attempt_token=$new, claimed_by_hub=$me,
+  lease_until=now()+30s, reply_subject=$exact WHERE ... AND (lease_until IS
+  NULL OR lease_until < now()) RETURNING`, then commit. No lock is held
+  across I/O. Here `$exact` is
+  `hub.computer.<id>.reply.v1.<session>.<me>.<attempt_token>`.
+- **Publish** the signed snapshot on `computer.<id>.<session>.op.v1`,
+  `{ v: 1, correlation: attempt_token, reply_subject: $exact, push: {
+  state } }`, and wait for the ack.
+- **The ack is parsed strictly.** `ok: true`, with `state_version` and
+  `envelope_hash` equal to what was sent, finalizes:
+  - `UPDATE targets ... WHERE attempt_token=$t AND state_version=$v`;
+  - then the session's `ready_version`, by CAS.
 
-## 4. A computer that is ended, while it is offline or the site is off
+  `ok: false` never finalizes; it records `last_error` and backs off.
+- **The receipt grace path.** `isComputerAllowed` keeps refusing a stale or
+  not-ready session, with one exception: publishing to exactly the
+  `reply_subject` of a target with an unexpired lease, the same `session_id`
+  and `generation`, and `claimed_by_hub`. That is the only pre-ready or
+  post-bump capability.
+- **A closed session.** The router's revalidation still closes stale
+  sessions. A target whose session closed is deleted. Its daemon logs in
+  again (and gets the snapshot as its first message, before any operation),
+  or is answered "ended" at the challenge.
+- **Ended at the challenge, offline or with the switch off.**
+  - The challenge endpoint first verifies the exact signed challenge request
+    against the stored key and its bindings: site, cluster, home, account,
+    computer. This holds for revoked, tombstoned and deleted computers too.
+  - For an ended computer it answers `{ state: <signed snapshot with ended>,
+    keys }`, **before** `assertComputersEnabled`.
+  - `keys` is the home bay's key chain with `signing-key-endorsement`
+    envelopes. The daemon trusts a new key only through an endorsement by a
+    key it already trusts, of the same bay. So a computer offline across a
+    rotation still verifies "ended".
+  - Computer rows and keys are kept until the certificate's `not_after`.
 
-- **The challenge endpoint verifies first.** It verifies the exact
-  challenge-request envelope against the stored computer key, before
-  anything else:
-  - site, cluster, home bay, account and computer bindings, as today;
-  - the check holds for revoked, tombstoned and deleted computers.
-- **For an ended computer** it answers `{ ended: <signed computer-control>,
-  keys: [...] }`, where `keys` carries the home bay's key chain with its
-  `signing-key-endorsement` envelopes. A daemon that knows only its pairing
-  directory can still verify a key that has been rotated since (MEDIUM 2).
-  - The daemon accepts a new key only through an endorsement by a key it
-    already trusts, of the same bay.
-  - It then verifies "end", stops every job, and the connector stops.
-- **This happens before `assertComputersEnabled`.** A computer revoked while
-  the site switch is off still learns that it is ended (HIGH 2). Live
-  computers keep getting the "Computers are turned off" error.
-- **Retention:** the computer row, key and ended state are kept until the
-  certificate's `not_after`, so the answer can be signed and its request
-  verified.
-- **Backstop:** once the certificate has expired, the daemon treats that as
-  terminal. Its tick ends the session (killing every job) at `not_after`,
-  so a purged computer can't retry forever (HIGH 2).
+## 5. Bounded project floors
 
-## 4b. Certificate renewal (needed by §4's backstop)
+- **`account_computer_active_projects`** `(account_id, computer_id,
+  project_id, possibly_active_until, next_check_at, lease_until,
+  claimed_by_hub)` is written by the ticket transaction:
+  - a run: open-ended until reports exist (gate 3);
+  - an exec: issue time plus 1 h plus a margin;
+  - put/get: the stream's maximum.
+- **An admission bound keeps the snapshot bounded.** A ticket for a new
+  project is refused while the computer has 500 possibly-active projects
+  ("this computer is serving too many projects at once").
+- **GC is safe.** A project floor row and its active row are deleted once
+  both of these have passed:
+  - `possibly_active_until`;
+  - the last ticket's `start_by` for that project.
 
-- **The gap.** A computer without a time limit gets a 30-day certificate
-  (`CERTIFICATE_LIFETIME_MS`). Login refuses an expired one, and the comment
-  promises renewal "before this runs out", but nothing renews it yet.
-- **What changes.** With the daemon ending itself at `not_after`, renewal is
-  required:
-  - the hub pushes a renewed certificate (`computer-certificate`, signed
-    like the original, same key and ceiling hash, a later `not_after`) as a
-    fourth push kind, from day 20;
-  - every new session also gets it in its first snapshot.
-- **The daemon** accepts a renewed certificate only if all hold:
-  - it verifies against a trusted home-bay key;
-  - it names the same computer, key, account, home bay and ceiling hash;
-  - its `not_after` is later than the current one.
-- **Time-limited computers** keep a certificate that ends at their maximum
-  deadline, and are never renewed.
+  After that, no job, stream or admissible ticket of that project can
+  exist on that computer, so the floor has nothing left to stop. The
+  daemon's own floors map only grows, and that's harmless. Test: 1001
+  lifetime projects across reconnects.
 
-## 5. A project that stops being private
+## 6. Project ineligibility, every kind
 
-- **The project floor.** The home bay re-attests the projects that may have
-  active work on a computer, and raises that computer's project floor when
-  the project's privacy epoch rises.
-- **"May have active work"** is a durable index (HIGH 3):
-  `account_computer_active_projects (computer_id, project_id,
-  possibly_active_until)`, upserted by the ticket transaction itself:
-  - a run: `infinity` until reports exist (gate 3 will clear it);
-  - an exec: issue time plus its maximum runtime (1 h) plus a margin;
-  - future put/get: the stream's maximum duration.
-- **The poller.** Every 30 s it takes a bounded batch:
-  - at most 200 (computer, project) pairs per pass;
-  - at most 8 concurrent attestations per hub;
-  - chosen with an index on `(possibly_active_until, last_attested_at)`.
+- **Soft delete and undelete bump the epoch.** The trigger bumps
+  `runtime_authority_revision` on `UPDATE OF users, deleted`, so they get a
+  new epoch like a collaborator change. (Today it fires on `users` only.)
+  - Eligibility is a function of the row at a revision. An ineligible
+    attestation at epoch `e` means no ticket at `e` was ever valid, so the
+    floor is `e`.
+  - Undelete bumps again, so later tickets sit above that floor.
+- **Hard delete raises a terminal floor.** Re-attestation then finds no
+  project: the bay directory has no owner, or the owning bay answers
+  definitively "no such project". The home bay sets the floor to
+  `TERMINAL` (`2^53 - 1`) and signs it in the next snapshot (invariant 6).
+  Project ids are UUIDs and never reused. Transient errors only retry.
+- **The poller** is a due-work queue:
+  - hubs continuously claim due rows (`next_check_at <= now()`, lease,
+    `SKIP LOCKED`, 50 per claim);
+  - at most 8 attestations in flight per hub, each with a 10 s timeout;
+  - it verifies each returned attestation's signature and bindings:
+    project, account, attesting bay;
+  - it reschedules `next_check_at` to 30 s after success, or later with
+    backoff after an error.
+- **Worst-case latency, documented:** detection is
+  `due rows / (hubs × 8 / mean attestation time)` plus delivery. With the
+  admission bound (500 per computer) and the queue, a backlog drains
+  instead of growing. The 30 s attestation lease only bounds new admission.
 
-  It verifies each returned attestation's signature and bindings (project,
-  account, attesting bay) before raising a floor.
-- **Timing, as documented:** detection within one poll interval, then
-  delivery as in §3. The 30 s attestation lease only bounds new admission.
+## 7. Certificates
 
-## 6. The revocation table, row by row
+**Pending William's decision** (asked Oct 14):
+- **(a)** stage 1 gives computers without a time limit a 1-year
+  certificate. They must pair again after it, and Settings → Computers
+  shows the expiry. Renewal comes later.
+- **(b)** a renewal rollover protocol now:
+  - keep the current and prior certificates, and accept either at login
+    through the prior one's `not_after`;
+  - the renewed payload equals the current one except `not_after` and
+    `not_before`, with a bounded lifetime;
+  - never renew ended or time-limited computers.
+
+Either way, the daemon ends at its own certificate's `not_after`. That is
+already implemented.
+
+## 8. The revocation table, row by row
 
 | Action | This gate |
 |---|---|
-| Revoke / disconnect | `revoked_at`, epoch: end to every session; ended at the challenge |
-| Re-pair (tombstone) | end (`replaced`) the same way |
-| Account deleted | end (`deleted`), written inside `markAccountDeleted`'s transaction |
-| Network narrowed, account paused | floors (computer epoch): queued work cancelled, running continues (documented) |
-| Project becomes ineligible | project floor via §5: its queued and running jobs stopped |
-| Effective policy narrowed | policy push: queued work with the old epoch cancelled, running continues |
+| Revoke / disconnect | `ended: revoked` to every session; ended at the challenge |
+| Re-pair (tombstone) | `ended: replaced` |
+| Account deleted | `ended: deleted`, written in `markAccountDeleted`'s transaction |
+| Network narrowed, account paused | computer floor: queued work cancelled, running continues (documented) |
+| Project ineligible (collaborator, soft delete) | project floor at the new epoch: its queued and running work stopped |
+| Project hard-deleted | terminal project floor |
+| Effective policy narrowed | policy in the snapshot (enabled with this gate): queued work with the old epoch cancelled |
 | Time limit | local (exists) |
-| Per-agent stop | deferred: stage 1 has no per-agent grants beyond network membership |
+| Per-agent stop | deferred: no per-agent grants beyond network membership in stage 1 |
 
-## 7. Tests
+## 9. Tests
 
 - **e2e, with a real conat server and connector:**
-  - revoke during a running job, with one and with two simultaneous sessions:
-    every session acks through the grace path, and every job is killed;
-  - revoke while offline: the next challenge answers ended, and the jobs are
+  - revoke during a running job, with one session and with two simultaneous
+    sessions: every session acks through the grace path, and every job is
     killed;
-  - the same with the site switch off;
-  - the same after a key rotation: the chain verifies;
-  - account deletion while connected and while offline;
-  - a project gains a collaborator during a run and during a 50-minute
-    exec: killed within one poll; other projects' jobs continue;
-  - an ack lost after application: redelivery is harmless (idempotent), and
-    a stale attempt's ack can't finalize a newer version;
-  - the grace path refuses anything but the matching ack subject (ops,
-    reports, other correlations, another session).
+  - revoke while offline, with the site switch off, and across a key
+    rotation;
+  - account deletion, connected and offline;
+  - a collaborator added, a soft delete and a hard delete, during a run and
+    during a 50-minute exec: killed within one poll; other projects
+    continue; an undelete admits new tickets again;
+  - **the initial session:** an operation relayed before the first snapshot
+    is acked is refused;
+  - a login racing each kind of bump, and a relay racing initial delivery;
+  - an ack lost after application: redelivery is harmless; a stale
+    attempt's or another hub's ack can't finalize; `ok: false` never
+    finalizes;
+  - the grace path refuses everything but the exact reply subject;
+  - 1001 lifetime projects across reconnects;
+  - more than 200 due pairs, and a slow or unavailable project bay.
 - **Unit tests:**
-  - the daemon:
-    - policy apply (newer only, within P0);
-    - expired-certificate termination;
-    - endorsement-chain verification (an unknown or other-bay endorser is
-      refused);
-  - the targets:
-    - a target row in the same transaction as each change (rolled back
-      together);
-    - lease, claim and finalize under concurrent hubs;
-  - the poller: batch and concurrency bounds, and verification of the
-    attestation it gets back.
+  - the snapshot is applied atomically, `ended` last;
+  - the policy narrows only;
+  - endorsement chains (an unknown or other-bay endorser is refused);
+  - targets: same-transaction writes, lease and claim under concurrent
+    hubs, readiness promotion only by CAS.
