@@ -1,7 +1,7 @@
 # Computers: revocation that stops running work (stage-1 release gate)
 
-Implementation note, Oct 14 2026. **Revision 3** answers lite1-review's
-re-review of revision 2. Plan: `computers-plan-2026-10-11.md` ("Revocation
+Implementation note, Oct 14 2026. **Revision 4** answers lite1-review's
+review of revision 3. Revision 3 answered the re-review of revision 2. Plan: `computers-plan-2026-10-11.md` ("Revocation
 semantics", "The computer principal and the data path", "Multi-bay,
 rehoming, deletion"). This is the first open release gate from #1036: *the
 signed floors/control push and the epoch-close outbox (revocation must also
@@ -62,8 +62,24 @@ A single new kind, `computer-state`, replaces separate pushes:
      at most the current effective policy and the ceiling;
   3. `ended` comes last: if set, every job is stopped and the connector
      stops.
-- **The ack** comes only after the write: `{ ok: true, state_version,
-  envelope_hash }`. If verification fails, the ack is `{ ok: false, error }`
+- **The daemon reconciles, it doesn't react.** Applying state and
+  enforcing it are separate, idempotent steps. After **every** application
+  (a first delivery or a replay), and **at every daemon start**, the daemon
+  reconciles all queued and running jobs against its durable state:
+  - `ended` (persisted as terminal state): refuse all work, and re-drive
+    `killAll` before any reconnect or admission;
+  - project floors: cancel or kill every job whose authorization is below
+    its project's floor;
+  - policy epoch: cancel queued work authorized under an older epoch.
+
+  Kill and cancel requests are recorded durably by the existing job and
+  cleanup machinery before anything else happens. A crash between the state
+  write and a side effect is repaired by the next replay or start, so a
+  replay that "raises nothing" still enforces.
+- The ack comes only after the write **and** the reconciliation have been
+  recorded: `{ ok: true, state_version, envelope_hash }`.
+- **`state_version` on the wire** is a decimal string (PostgreSQL bigint),
+  compared exactly as a string. It never passes through a JS number. If verification fails, the ack is `{ ok: false, error }`
   and nothing changes.
 - **Replaces earlier kinds.** It supersedes `computer-floors`,
   `computer-control` and `computer-policy` as pushes; their parsers stay for
@@ -111,9 +127,16 @@ All of these are account-home tables carrying `account_id`, added to
 - **Every state change** locks the same row, bumps `state_version`, and
   raises the targets of all open sessions. A login can't miss an
   enumeration, and a session can't believe an old version is enough.
-- **Promotion** happens only through the finalize CAS (§4):
-  `ready_version := acked version`. If the state moved on meanwhile, the
-  session stays not ready until the newer target is acked.
+- **Promotion** is one transaction with finalization (§4). It locks the
+  computer row, then, only while `account_computers.state_version = acked
+  state_version`, deletes the exact target (session, generation, token) and
+  sets that session's `ready_version`. Otherwise it changes nothing, and the
+  newer target stays pending.
+- **A not-ready session isn't closed for lagging.** Router revalidation
+  keeps closing a session for its epoch, `closed_at`, lease or deadline, but
+  not because `ready_version` lags before delivery. The pre-ready session
+  keeps only its op subscription and the exact receipt, for its own
+  `session_id` and `generation`.
 
 ## 4. Delivery, receipt and keys
 
@@ -126,11 +149,10 @@ All of these are account-home tables carrying `account_id`, added to
   `{ v: 1, correlation: attempt_token, reply_subject: $exact, push: {
   state } }`, and wait for the ack.
 - **The ack is parsed strictly.** `ok: true`, with `state_version` and
-  `envelope_hash` equal to what was sent, finalizes:
-  - `UPDATE targets ... WHERE attempt_token=$t AND state_version=$v`;
-  - then the session's `ready_version`, by CAS.
-
-  `ok: false` never finalizes; it records `last_error` and backs off.
+  `envelope_hash` equal to what was sent, finalizes in the single
+  transaction described in §3: target and readiness together, only while the
+  computer's `state_version` still equals the acked one. `ok: false` never
+  finalizes; it records `last_error` and backs off.
 - **The receipt grace path.** `isComputerAllowed` keeps refusing a stale or
   not-ready session, with one exception: publishing to exactly the
   `reply_subject` of a target with an unexpired lease, the same `session_id`
@@ -147,9 +169,20 @@ All of these are account-home tables carrying `account_id`, added to
   - For an ended computer it answers `{ state: <signed snapshot with ended>,
     keys }`, **before** `assertComputersEnabled`.
   - `keys` is the home bay's key chain with `signing-key-endorsement`
-    envelopes. The daemon trusts a new key only through an endorsement by a
-    key it already trusts, of the same bay. So a computer offline across a
-    rotation still verifies "ended".
+    envelopes. The daemon validates the chain **historically**:
+    - each endorsement was issued by the same bay's predecessor key, while
+      that predecessor was valid (`issued_at` within the predecessor's
+      `not_before`..`not_after`), in increasing order;
+    - the chain starts at a key the daemon trusts (even one that has since
+      expired);
+    - it ends at a currently valid key.
+
+    The result is used **only** to verify a terminal `ended` state. Expired
+    keys are never revived for tickets, floors or policy. So a computer
+    offline across a rotation, even past its old key's `not_after` (keys
+    rotate at 300 days and expire at 365), still verifies "ended". Test:
+    pair just before a rotation, stay offline past the old key's expiry,
+    then verify a signed ended snapshot.
   - Computer rows and keys are kept until the certificate's `not_after`.
 
 ## 5. Bounded project floors
@@ -160,9 +193,20 @@ All of these are account-home tables carrying `account_id`, added to
   - a run: open-ended until reports exist (gate 3);
   - an exec: issue time plus 1 h plus a margin;
   - put/get: the stream's maximum.
+- **The exact margin invariant:** `possibly_active_until` is at least the
+  ticket's `start_by` (the last moment it can be admitted) plus the
+  operation's maximum execution or stream lifetime, plus clock skew.
+  Examples: exec, `start_by` + 1 h + 5 min; put/get, `start_by` + the
+  maximum stream duration + 5 min.
 - **An admission bound keeps the snapshot bounded.** A ticket for a new
   project is refused while the computer has 500 possibly-active projects
   ("this computer is serving too many projects at once").
+- **Runs, until gate 3.** A run is open-ended until computer→hub reports
+  exist (gate 3, also a release gate). So until then, a computer can serve
+  at most **500 distinct projects with runs over its lifetime**. This gate
+  accepts and documents that cap; gate 3's run-ended reports make run rows
+  eligible for GC. The "1001 lifetime projects" test uses exec only, plus a
+  separate test of the 500 run-project cap.
 - **GC is safe.** A project floor row and its active row are deleted once
   both of these have passed:
   - `possibly_active_until`;
@@ -182,11 +226,20 @@ All of these are account-home tables carrying `account_id`, added to
     attestation at epoch `e` means no ticket at `e` was ever valid, so the
     floor is `e`.
   - Undelete bumps again, so later tickets sit above that floor.
-- **Hard delete raises a terminal floor.** Re-attestation then finds no
-  project: the bay directory has no owner, or the owning bay answers
-  definitively "no such project". The home bay sets the floor to
-  `TERMINAL` (`2^53 - 1`) and signs it in the next snapshot (invariant 6).
-  Project ids are UUIDs and never reused. Transient errors only retry.
+- **Hard delete raises a terminal floor, only on evidence.**
+  `TERMINAL` (`2^53 - 1`) is irreversible, so it's raised only on
+  authenticated, durable evidence: the owning bay's hard-delete tombstone
+  (`deleted_projects`, written by `server/projects/hard-delete.ts`). The
+  project bay answers re-attestation for a tombstoned project with a signed
+  `deleted` attestation that binds the project, the account, the bay and
+  `deleted_at`. Only that raises `TERMINAL`. All of these just retry:
+  - an unknown owner, or a routing failure;
+  - a plain missing projects row (a rehome in progress, a stale directory);
+  - the rollbacks in `create.ts`, which delete a project that never had
+    tickets.
+
+  Test: a directory miss or rehome race, against a real hard-delete
+  tombstone.
 - **The poller** is a due-work queue:
   - hubs continuously claim due rows (`next_check_at <= now()`, lease,
     `SKIP LOCKED`, 50 per claim);
@@ -195,10 +248,16 @@ All of these are account-home tables carrying `account_id`, added to
     project, account, attesting bay;
   - it reschedules `next_check_at` to 30 s after success, or later with
     backoff after an error.
-- **Worst-case latency, documented:** detection is
-  `due rows / (hubs × 8 / mean attestation time)` plus delivery. With the
-  admission bound (500 per computer) and the queue, a backlog drains
-  instead of growing. The 30 s attestation lease only bounds new admission.
+- **Worst-case latency, documented, not promised:** detection is
+  `due rows / (hubs × 8 / mean attestation time)` plus delivery. The bound
+  is per computer, so global due rows can grow. At the 10 s timeout, the
+  worst case is 0.8 attestations per second per hub.
+  - **Observability:** an operational metric exports the age of the oldest
+    due row (queue age), with an admin alert above 5 minutes.
+  - **"Within one poll"** is asserted only in bounded test fixtures.
+  - If a release latency target is set later, capacity or admission must
+    enforce it.
+  - The 30 s attestation lease only bounds new admission.
 
 ## 7. Certificates
 
@@ -244,6 +303,9 @@ already implemented.
     continue; an undelete admits new tickets again;
   - **the initial session:** an operation relayed before the first snapshot
     is acked is refused;
+  - **crash points:** after the state save, before each side effect, and
+    before the ack; then reopen and replay or start: every job that should
+    stop is stopped;
   - a login racing each kind of bump, and a relay racing initial delivery;
   - an ack lost after application: redelivery is harmless; a stale
     attempt's or another hub's ack can't finalize; `ok: false` never
