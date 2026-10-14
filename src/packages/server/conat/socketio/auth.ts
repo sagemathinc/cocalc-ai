@@ -82,6 +82,10 @@ import {
   sessionIsCurrent,
 } from "@cocalc/server/computers/sessions";
 import {
+  COMPUTERS_DISABLED,
+  computersEnabled,
+} from "@cocalc/server/computers/enabled";
+import {
   ensureAccountSecurityStateReady,
   getAccountRevokedBeforeCached,
   isAccountBannedCached,
@@ -333,6 +337,9 @@ async function isComputerAllowed(
   type: "sub" | "pub",
 ): Promise<boolean> {
   try {
+    // The site's computers switch: off closes every computer session at its
+    // next check.
+    if (!(await computersEnabled())) return false;
     // "" is the server's periodic check of the session itself.
     if (
       subject !== "" &&
@@ -371,6 +378,7 @@ export async function getUser(
   if (computerLogin != null) {
     // A single-use login: never re-run (revalidation rechecks the session).
     if (options?.revalidation) throw Error("computer logins are single use");
+    if (!(await computersEnabled())) throw Error(COMPUTERS_DISABLED);
     const s = await loginComputer(computerLogin);
     const user: ComputerUser = {
       computer_id: s.computer_id,

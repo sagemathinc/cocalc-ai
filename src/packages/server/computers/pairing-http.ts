@@ -153,6 +153,7 @@ export async function sessionChallenge(
 ): Promise<PairingResult<LoginChallenge>> {
   try {
     admit(address, "submit", now);
+    await assertComputersEnabled();
     return await createLoginChallenge(params.request, now);
   } catch (err) {
     return publicError(err);
