@@ -190,8 +190,8 @@ turn this on (the Sagebrush origin site setting), its code running in
 Sagebrush's sandboxed frame; edits made there are not saved to the file.
 Showing it sends that site the file's complete text and name.
 Agents learn the board format, and what a board's code can use, from
-https://sagebrush.space/llms.txt, and check their code with the Sagebrush
-command line before publishing.
+https://sagebrush.space/llms.txt, and check their code before publishing with
+the Sagebrush command line pinned (version and digest) in the CoCalc skill.
 
 The [CLI](/docs/cli/use-cocalc-cli) exposes the publication workflow through
 \`project chat artifact publish --help\`. Runtime instructions supply the exact
