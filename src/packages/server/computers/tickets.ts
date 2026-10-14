@@ -52,6 +52,7 @@ import {
 import { computersSite } from "./site";
 import { assertComputersAuthority, lockAgentControls } from "./authority";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { ActiveProjectsError, admitActiveProject, SKEW_MS } from "./recheck";
 
 /** Tickets start within this long of issue (and never after the attestation). */
 export const TICKET_START_WINDOW_MS = 60 * 1000;
@@ -299,6 +300,33 @@ export async function issueComputerTicket(
         ],
       );
     }
+    const start_by = Math.min(
+      now + TICKET_START_WINDOW_MS,
+      attestation.envelope.payload.not_after,
+      input.run_expires_at,
+    );
+    // The project may have work there until start_by plus the operation's
+    // longest life plus skew (a job: open-ended until reports exist). It is
+    // re-checked at its bay meanwhile; at most 500 such projects at once.
+    try {
+      await admitActiveProject(client, {
+        computer_id: computer.computer_id,
+        account_id: input.account_id,
+        project_id: input.source_project_id,
+        possibly_active_until:
+          operation.operation === "run"
+            ? null
+            : start_by + maxRuntimeMs(operation) + SKEW_MS,
+        start_by,
+        attesting_bay_id: attestation.envelope.payload.project_bay_id,
+        now,
+      });
+    } catch (err) {
+      if (err instanceof ActiveProjectsError) {
+        throw new TicketError(err.message);
+      }
+      throw err;
+    }
     await client.query(
       `INSERT INTO account_computer_ticket_log
          (ticket_id, account_id, computer_id, run_id, issued_at)
@@ -317,11 +345,6 @@ export async function issueComputerTicket(
       [computer.computer_id, new Date(now - TICKET_LOG_RETENTION_MS)],
     );
 
-    const start_by = Math.min(
-      now + TICKET_START_WINDOW_MS,
-      attestation.envelope.payload.not_after,
-      input.run_expires_at,
-    );
     const payload = parseComputerTicket({
       type: "cocalc-computer-ticket",
       version: 1,

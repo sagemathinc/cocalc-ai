@@ -29,8 +29,10 @@ import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-reho
 import {
   MAX_ATTESTATION_MS,
   parseProjectAttestation,
+  parseProjectDeleted,
   SIGNED_KINDS,
   type ProjectAttestation,
+  type ProjectDeleted,
   type SignedEnvelope,
 } from "@cocalc/util/computers/protocol";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -171,4 +173,102 @@ export async function explainProjectIneligibility({
     return "computers can only be used from a project whose only collaborator is you (create a private project for this agent)";
   }
   return null;
+}
+
+/** What a bay says when a computer's home bay re-checks a project. */
+export type ProjectRecheck =
+  | { kind: "attestation"; attestation: SignedEnvelope<ProjectAttestation> }
+  | { kind: "deleted"; evidence: SignedEnvelope<ProjectDeleted> }
+  | { kind: "unknown" };
+
+/**
+ * The re-check of a project a computer may still be serving (design
+ * src/.agents/computers-revocation-gate-2026-10-14.md, §6): a fresh
+ * attestation if this bay owns it; its signed hard-delete tombstone if this
+ * bay deleted it; otherwise "unknown" (a rehome in progress, a stale
+ * directory), which never raises anything.
+ */
+export async function recheckProjectLocal(opts: {
+  project_id: string;
+  account_id: string;
+  home_bay_id: string;
+  now?: number;
+}): Promise<ProjectRecheck> {
+  const { project_id, account_id } = opts;
+  if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
+    throw new Error("invalid project or account id");
+  }
+  const { rows } = await getPool().query(
+    "SELECT 1 FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  if (rows.length > 0) {
+    try {
+      return {
+        kind: "attestation",
+        attestation: await attestProjectLocal(opts),
+      };
+    } catch {
+      // Owned elsewhere now, or being rehomed: ask again later.
+      return { kind: "unknown" };
+    }
+  }
+  return await projectHardDeleteEvidenceLocal(opts);
+}
+
+/**
+ * This bay's signed hard-delete tombstone for the project, from its durable
+ * deleted_projects row, if it hard-deleted it and the account owned it.
+ */
+export async function projectHardDeleteEvidenceLocal({
+  project_id,
+  account_id,
+  now = Date.now(),
+}: {
+  project_id: string;
+  account_id: string;
+  now?: number;
+}): Promise<
+  | { kind: "deleted"; evidence: SignedEnvelope<ProjectDeleted> }
+  | { kind: "unknown" }
+> {
+  if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
+    throw new Error("invalid project or account id");
+  }
+  const table = (
+    await getPool().query(
+      "SELECT to_regclass('public.deleted_projects')::text AS name",
+    )
+  ).rows[0]?.name;
+  if (!table) return { kind: "unknown" };
+  const live = await getPool().query(
+    "SELECT 1 FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  if (live.rows.length > 0) return { kind: "unknown" };
+  const row = (
+    await getPool().query(
+      `SELECT owner_account_id, deleted_at FROM deleted_projects
+        WHERE project_id=$1`,
+      [project_id],
+    )
+  ).rows[0];
+  if (row == null || row.owner_account_id !== account_id) {
+    return { kind: "unknown" };
+  }
+  const payload = parseProjectDeleted({
+    type: "cocalc-project-deleted",
+    version: 1,
+    site: await computersSite(),
+    cluster_id: getConfiguredClusterId(),
+    project_id,
+    account_id,
+    project_bay_id: getConfiguredBayId(),
+    deleted_at: new Date(row.deleted_at).valueOf(),
+    issued_at: now,
+  });
+  return {
+    kind: "deleted",
+    evidence: await signAsBay(SIGNED_KINDS.project_deleted, payload),
+  };
 }

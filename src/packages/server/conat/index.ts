@@ -75,6 +75,7 @@ import { startProjectArchiveLifecycleMaintenance } from "@cocalc/server/projects
 import { startCommercialReceivablesMaintenance } from "@cocalc/server/commercial-orders/maintenance";
 import { startCrmOutreachWorker } from "@cocalc/server/crm/outreach/worker";
 import { startComputerStateDelivery } from "@cocalc/server/computers/delivery";
+import { startProjectRecheck } from "@cocalc/server/computers/recheck";
 
 export { loadConatConfiguration };
 
@@ -136,8 +137,10 @@ export function startConatApiBackgroundWorkers(): void {
     );
   }
   startMoveLroWorker();
-  // Signed state (revocation, floors, policy) to connected computers.
+  // Signed state (revocation, floors, policy) to connected computers, and
+  // the re-checks of projects they may be doing work for.
   startComputerStateDelivery();
+  startProjectRecheck();
   startBackgroundAutoGrowMaintenance();
   startDedicatedHostSpendMaintenance();
   startHostAvailabilityMaintenance();

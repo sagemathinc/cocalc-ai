@@ -24,6 +24,7 @@ export const SIGNED_KINDS = {
   transcript: "pairing-transcript",
   certificate: "computer-certificate",
   attestation: "project-attestation",
+  project_deleted: "project-deleted",
   ticket: "computer-ticket",
   floors: "computer-floors",
   state: "computer-state",
@@ -494,6 +495,62 @@ export function parseProjectAttestation(input: unknown): ProjectAttestation {
     home_bay_id: bayId(o.home_bay_id),
     issued_at,
     not_after,
+  };
+}
+
+/**
+ * A project's floor once it is hard-deleted: no ticket for it can ever
+ * be admitted again, whatever its epoch.
+ */
+export const TERMINAL_PRIVACY_EPOCH = Number.MAX_SAFE_INTEGER;
+
+/**
+ * The owning bay's signed hard-delete tombstone (from its durable
+ * deleted_projects row): the only evidence that raises a terminal floor.
+ */
+export interface ProjectDeleted {
+  type: "cocalc-project-deleted";
+  version: 1;
+  site: string;
+  cluster_id: string;
+  project_id: string;
+  /** The project's owner when it was deleted. */
+  account_id: string;
+  /** The bay that hard-deleted it (and signs this). */
+  project_bay_id: string;
+  deleted_at: number;
+  issued_at: number;
+}
+
+export function parseProjectDeleted(input: unknown): ProjectDeleted {
+  const o = record(input, "project-deleted");
+  onlyKeys(
+    o,
+    [
+      "type",
+      "version",
+      "site",
+      "cluster_id",
+      "project_id",
+      "account_id",
+      "project_bay_id",
+      "deleted_at",
+      "issued_at",
+    ],
+    "project-deleted",
+  );
+  literal(o.type, "cocalc-project-deleted", "project-deleted.type");
+  version(o.version);
+  return {
+    type: "cocalc-project-deleted",
+    version: 1,
+    site: site(o.site),
+    cluster_id: clusterId(o.cluster_id),
+    project_id: uuid(o.project_id, "project_id"),
+    account_id: uuid(o.account_id, "account_id"),
+    project_bay_id: bayId(o.project_bay_id),
+    deleted_at: time(o.deleted_at, "deleted_at"),
+    issued_at: time(o.issued_at, "issued_at"),
   };
 }
 

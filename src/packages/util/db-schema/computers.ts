@@ -545,6 +545,46 @@ Table({
   },
 });
 
+// Account home: projects a computer may be doing work for (written by the
+// ticket transaction), re-checked at their project's bay until no work of
+// theirs can remain; their floors live in account_computer_project_floors.
+Table({
+  name: "account_computer_active_projects",
+  rules: {
+    primary_key: ["computer_id", "project_id"],
+    pg_custom_indexes: [
+      {
+        name: "account_computer_active_projects_due",
+        query: "(next_check_at)",
+      },
+    ],
+  },
+  fields: {
+    computer_id: required("uuid", "Computer."),
+    project_id: required("uuid", "Project."),
+    account_id: required("uuid", "Owning account."),
+    possibly_active_until: timestamp(
+      "Until when work of this project may run there (null: a job, open-ended until reports exist).",
+    ),
+    last_start_by: {
+      ...timestamp("The latest start_by of its tickets."),
+      not_null: true,
+    },
+    last_attesting_bay_id: required(
+      "string",
+      "The bay that last attested it (asked for its tombstone when the directory has no owner).",
+    ),
+    next_check_at: {
+      ...timestamp("When to re-check it next."),
+      not_null: true,
+    },
+    lease_until: timestamp("Claimed by a hub's re-check until."),
+    claimed_by_hub: optional("string", "Hub process re-checking it."),
+    attempts: counter("Failed re-checks since the last success."),
+    last_error: optional("string", "Last re-check failure."),
+  },
+});
+
 // Account home: per-project privacy floors for a computer, raised only. A
 // daemon refuses and stops work authorized below its project's floor.
 Table({

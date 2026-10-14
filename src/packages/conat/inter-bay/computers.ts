@@ -24,6 +24,7 @@ import type {
 import type {
   ComputerCertificate,
   ProjectAttestation,
+  ProjectDeleted,
   SignedEnvelope,
 } from "@cocalc/util/computers/protocol";
 import type {
@@ -144,6 +145,29 @@ export interface InterBayComputersApi {
     project_id: string;
     account_id: string;
   }): Promise<string | null>;
+
+  // At a bay that owned the project: re-check a project a computer may
+  // still be serving (an attestation, a signed hard-delete tombstone, or
+  // unknown).
+  recheckProject(opts: {
+    project_id: string;
+    account_id: string;
+    home_bay_id: string;
+  }): Promise<
+    | { kind: "attestation"; attestation: SignedEnvelope<ProjectAttestation> }
+    | { kind: "deleted"; evidence: SignedEnvelope<ProjectDeleted> }
+    | { kind: "unknown" }
+  >;
+
+  // At any configured bay: its signed hard-delete tombstone for the
+  // project, if it hard-deleted it (only from its durable deleted_projects).
+  projectHardDeleteEvidence(opts: {
+    project_id: string;
+    account_id: string;
+  }): Promise<
+    | { kind: "deleted"; evidence: SignedEnvelope<ProjectDeleted> }
+    | { kind: "unknown" }
+  >;
 }
 
 function subject(bay_id: string): string {

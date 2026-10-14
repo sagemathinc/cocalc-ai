@@ -168,10 +168,21 @@ export async function computerStateSnapshot(
       await client.query("COMMIT");
       return undefined;
     }
+    // Only floors of projects whose work may remain there: a pair past
+    // both its possibly-active time and its last start_by has nothing left
+    // to stop (recheck.ts), so the snapshot stays within the admission
+    // bound whatever the asynchronous GC is doing.
     const floors = (
       await client.query(
-        `SELECT project_id, privacy_epoch FROM account_computer_project_floors
-          WHERE computer_id=$1 ORDER BY project_id LIMIT $2`,
+        `SELECT f.project_id, f.privacy_epoch
+           FROM account_computer_project_floors f
+           JOIN account_computer_active_projects a
+             ON a.computer_id=f.computer_id AND a.project_id=f.project_id
+          WHERE f.computer_id=$1
+            AND NOT (a.possibly_active_until IS NOT NULL
+                     AND a.possibly_active_until < now()
+                     AND a.last_start_by < now())
+          ORDER BY f.project_id LIMIT $2`,
         [computer_id, MAX_STATE_PROJECT_FLOORS + 1],
       )
     ).rows;

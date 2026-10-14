@@ -56,6 +56,7 @@ const tables = [
   "account_computers",
   "account_computer_session_targets",
   "account_computer_project_floors",
+  "account_computer_active_projects",
   "account_computer_requests",
   "account_computer_challenges",
   "account_computer_sessions",

@@ -60,6 +60,7 @@ const tables = [
   "account_computer_sessions",
   "account_computer_session_targets",
   "account_computer_project_floors",
+  "account_computer_active_projects",
   "account_computer_requests",
   "account_computer_challenges",
   "account_computer_relays",
@@ -529,6 +530,14 @@ describeDb("a computer's signed state", () => {
     const { computerStateSnapshot } = await import("./state");
     const c = await pairedComputer();
     const p = randomUUID();
+    // A project it may be doing work for, with a raised floor.
+    await db().query(
+      `INSERT INTO account_computer_active_projects
+         (computer_id, project_id, account_id, possibly_active_until,
+          last_start_by, last_attesting_bay_id, next_check_at)
+       VALUES ($1,$2,$3,now() + interval '1 hour',now(),'bay-0',now())`,
+      [c.computer_id, p, account],
+    );
     await db().query(
       `INSERT INTO account_computer_project_floors
          (computer_id, project_id, account_id, privacy_epoch)

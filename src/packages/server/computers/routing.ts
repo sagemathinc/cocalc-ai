@@ -18,7 +18,12 @@ import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
-import { attestProjectLocal, explainProjectIneligibility } from "./attestation";
+import {
+  attestProjectLocal,
+  explainProjectIneligibility,
+  projectHardDeleteEvidenceLocal,
+  recheckProjectLocal,
+} from "./attestation";
 import {
   extendComputer,
   getComputerByRef,
@@ -105,6 +110,9 @@ export const computersAtThisBay: InterBayComputersApi = {
   attestProject: async (opts) => await attestProjectLocal(opts),
   explainProjectIneligibility: async (opts) =>
     await explainProjectIneligibility(opts),
+  recheckProject: async (opts) => await recheckProjectLocal(opts),
+  projectHardDeleteEvidence: async (opts) =>
+    await projectHardDeleteEvidenceLocal(opts),
 };
 
 /**

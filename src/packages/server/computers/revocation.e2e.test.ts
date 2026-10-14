@@ -77,6 +77,7 @@ const tables = [
   "account_computer_sessions",
   "account_computer_session_targets",
   "account_computer_project_floors",
+  "account_computer_active_projects",
   "account_computer_requests",
   "account_computer_operations",
   "account_computer_challenges",
@@ -86,6 +87,7 @@ const tables = [
   "agent_personal_controls",
   "agent_networks",
   "agent_network_members",
+  "projects",
   "accounts",
   "server_settings",
 ];
@@ -198,12 +200,23 @@ describeDb("revoking a computer stops its work", () => {
        VALUES ($1,$2,'lab','active','queued',$3,$2)`,
       [network, account, randomUUID()],
     );
-    await db().query(
-      `INSERT INTO agent_network_members
-         (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by)
-       VALUES ($1,'registered',$2,$2,$3,$4)`,
-      [network, agent, project, account],
-    );
+    // Two private projects, each with an agent in the network.
+    const other = { agent: randomUUID(), project: randomUUID() };
+    for (const [a, p] of [
+      [agent, project],
+      [other.agent, other.project],
+    ]) {
+      await db().query(
+        `INSERT INTO agent_network_members
+           (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by)
+         VALUES ($1,'registered',$2,$2,$3,$4)`,
+        [network, a, p, account],
+      );
+      await db().query(
+        "INSERT INTO projects (project_id, users) VALUES ($1,$2)",
+        [p, JSON.stringify({ [account]: { group: "owner" } })],
+      );
+    }
     const r = await import("./requests");
     const { request_id } = await r.createComputerRequest({
       account_id: account,
@@ -319,8 +332,16 @@ describeDb("revoking a computer stops its work", () => {
       );
     }
 
-    /** A ticket and its operation row, as issueComputerTicket records them. */
-    async function ticketFor(operation: "exec" | "run", raw: unknown) {
+    /**
+     * A ticket and its operation row, as issueComputerTicket records them
+     * (with the project's current privacy epoch, and the project recorded
+     * as possibly active there).
+     */
+    async function ticketFor(
+      operation: "exec" | "run",
+      raw: unknown,
+      who: { agent: string; project: string } = { agent, project },
+    ) {
       const { getBaySigningKey } = await import("./signing-keys");
       const signer = await getBaySigningKey();
       const now = Date.now();
@@ -332,10 +353,17 @@ describeDb("revoking a computer stops its work", () => {
           version: 1,
           site: "https://cocalc.ai",
           cluster_id: getConfiguredClusterId(),
-          project_id: project,
+          project_id: who.project,
           project_bay_id: getConfiguredBayId(),
           eligible: true,
-          privacy_epoch: 1,
+          privacy_epoch: Number(
+            (
+              await db().query(
+                "SELECT runtime_authority_revision FROM projects WHERE project_id=$1",
+                [who.project],
+              )
+            ).rows[0].runtime_authority_revision ?? 0,
+          ),
           account_id: account,
           home_bay_id: getConfiguredBayId(),
           issued_at: now,
@@ -367,9 +395,9 @@ describeDb("revoking a computer stops its work", () => {
           computer_id,
           computer_key: c.signing_key,
           account_id: account,
-          agent_id: agent,
+          agent_id: who.agent,
           agent_network_id: network,
-          source_project_id: project,
+          source_project_id: who.project,
           attestation,
           computer_epoch: Number(c.epoch),
           policy_epoch: Number(c.policy_epoch),
@@ -385,6 +413,24 @@ describeDb("revoking a computer stops its work", () => {
         signer,
       );
       const t = ticket.payload;
+      const tx = await db().connect();
+      try {
+        await tx.query("BEGIN");
+        await (
+          await import("./recheck")
+        ).admitActiveProject(tx, {
+          computer_id,
+          account_id: account,
+          project_id: who.project,
+          possibly_active_until: operation === "run" ? null : now + 600_000,
+          start_by: t.start_by,
+          attesting_bay_id: getConfiguredBayId(),
+          now,
+        });
+        await tx.query("COMMIT");
+      } finally {
+        tx.release();
+      }
       await db().query(
         `INSERT INTO account_computer_operations
            (computer_id, operation_id, account_id, agent_id, run_id,
@@ -395,9 +441,9 @@ describeDb("revoking a computer stops its work", () => {
           computer_id,
           operation_id,
           account,
-          agent,
+          who.agent,
           run,
-          project,
+          who.project,
           operation,
           t.request_hash,
           t.ticket_id,
@@ -411,13 +457,17 @@ describeDb("revoking a computer stops its work", () => {
       };
     }
 
-    async function relay(t: { ticket; proof; request }, waitMs?: number) {
+    async function relay(
+      t: { ticket; proof; request },
+      waitMs?: number,
+      who: { agent: string; project: string } = { agent, project },
+    ) {
       const { relayToComputer } = await import("./relay");
       return await relayToComputer({
         account_id: account,
-        agent_id: agent,
+        agent_id: who.agent,
         run_id: run,
-        source_project_id: project,
+        source_project_id: who.project,
         ticket: t.ticket,
         proof: t.proof,
         request: t.request,
@@ -429,25 +479,34 @@ describeDb("revoking a computer stops its work", () => {
      * Start a detached job and a foreground exec that each record their pid
      * and then sleep (ignoring SIGTERM, so only SIGKILL stops them).
      */
-    async function startWork() {
-      const pidFile = (what: string) => join(dir, `${what}.pid`);
+    async function startWork(
+      who: { agent: string; project: string } = { agent, project },
+    ) {
+      const pidFile = (what: string) => join(dir, `${who.project}-${what}.pid`);
       const body = (what: string) =>
         `trap '' TERM; echo $$ > ${pidFile(what)}; sleep 60`;
       const job: any = await relay(
-        await ticketFor("run", {
-          command: body("job"),
-          cwd: null,
-          description: "a long job",
-          name: "long",
-          exclusive: false,
-          nice: false,
-        }),
+        await ticketFor(
+          "run",
+          {
+            command: body("job"),
+            cwd: null,
+            description: "a long job",
+            name: null,
+            exclusive: false,
+            nice: false,
+          },
+          who,
+        ),
+        undefined,
+        who,
       );
       expect(job).toMatchObject({ answered: true, reply: { ok: true } });
       // The exec's answer only comes when it ends: don't wait for it.
       const exec = relay(
-        await ticketFor("exec", { command: body("exec") }),
+        await ticketFor("exec", { command: body("exec") }, who),
         1000,
+        who,
       );
       let pids: { job: number; exec: number } | undefined;
       await until(() => {
@@ -471,6 +530,8 @@ describeDb("revoking a computer stops its work", () => {
 
     return {
       account,
+      project,
+      other,
       computer_id,
       dir,
       start,
@@ -563,5 +624,38 @@ describeDb("revoking a computer stops its work", () => {
     expect(alive(pids.job)).toBe(false);
     expect(alive(pids.exec)).toBe(false);
     expect(w.endedOnDisk()).toEqual({ reason: "deleted" });
+  });
+
+  it("a collaborator added to a project: its job and exec are killed within one re-check; another project's work continues", async () => {
+    const w = await world();
+    const c = w.start();
+    await w.ready(c);
+    const mine = await w.startWork();
+    const theirs = await w.startWork(w.other);
+    await db().query("UPDATE projects SET users=$2 WHERE project_id=$1", [
+      w.project,
+      JSON.stringify({
+        [w.account]: { group: "owner" },
+        [randomUUID()]: { group: "collaborator" },
+      }),
+    ]);
+    // One re-check pass, through the real directory and project bay.
+    await db().query(
+      "UPDATE account_computer_active_projects SET next_check_at=now() - interval '1 second' WHERE computer_id=$1",
+      [w.computer_id],
+    );
+    const { recheckDueProjects } = await import("./recheck");
+    expect(await recheckDueProjects()).toBeGreaterThanOrEqual(2);
+    await until(() => !alive(mine.job) && !alive(mine.exec), 30_000);
+    expect(alive(theirs.job)).toBe(true);
+    expect(alive(theirs.exec)).toBe(true);
+    expect(c.finished).toBe(false);
+    // The other project still gets new work done.
+    const r: any = await w.relay(
+      await w.ticketFor("exec", { command: "echo still" }, w.other),
+      undefined,
+      w.other,
+    );
+    expect(r.reply.result.stdout).toBe("still\n");
   });
 });
