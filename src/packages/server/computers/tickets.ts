@@ -24,6 +24,7 @@ import {
   type OperationRequest,
 } from "@cocalc/util/computers/operations";
 import {
+  DEFAULT_AGENT_CONCURRENCY,
   OPERATION_KINDS,
   parseComputerTicket,
   parseProjectAttestation,
@@ -352,7 +353,7 @@ export async function issueComputerTicket(
           operation.operation === "put" || operation.operation === "get"
             ? operation.request.bytes
             : null,
-        concurrency: 1,
+        concurrency: DEFAULT_AGENT_CONCURRENCY,
       },
     });
     // The audit row is committed before the ticket leaves the hub.

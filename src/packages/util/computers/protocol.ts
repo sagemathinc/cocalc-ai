@@ -50,6 +50,9 @@ export const OPERATION_KINDS = [
 ] as const;
 export type OperationKind = (typeof OPERATION_KINDS)[number];
 
+/** The hub's default for limits.concurrency (see ComputerTicket). */
+export const DEFAULT_AGENT_CONCURRENCY = 4;
+
 /** A ticket must be started within this long after it was issued. */
 export const MAX_START_WINDOW_MS = 2 * 60 * 1000;
 /** ... and within this long after the daemon received it (its own clock). */
@@ -174,7 +177,16 @@ export interface ComputerTicket {
   issued_at: number;
   start_by: number;
   max_runtime_ms: number;
-  limits: { max_bytes: number | null; concurrency: number };
+  limits: {
+    max_bytes: number | null;
+    /**
+     * How many of this agent's operations may be active on the computer at
+     * once, this one included: execs running, plus jobs starting, running
+     * or queued (queued jobs count, so they can't pile up behind the limit).
+     * The daemon enforces the smaller of this and its own hard limits.
+     */
+    concurrency: number;
+  };
 }
 
 // ---------------------------------------------------------------- parsers
@@ -459,6 +471,95 @@ export function parseComputerTicket(input: unknown): ComputerTicket {
 }
 
 // ------------------------------------------------------- daemon admission
+
+/**
+ * Signed by the computer's home bay and pushed on every change: the epochs
+ * below which the daemon must refuse tickets. The daemon keeps the maximum of
+ * each floor, so replaying an old push changes nothing.
+ */
+export interface ComputerFloors {
+  type: "cocalc-computer-floors";
+  version: 1;
+  computer_id: string;
+  home_epoch: number;
+  computer_epoch: number;
+  /** Privacy epoch floor per project id. */
+  projects: Record<string, number>;
+  issued_at: number;
+}
+
+/** At most this many per-project floors in one push. */
+export const MAX_PROJECT_FLOORS = 1000;
+
+export function parseComputerFloors(input: unknown): ComputerFloors {
+  const o = record(input, "floors");
+  onlyKeys(
+    o,
+    [
+      "type",
+      "version",
+      "computer_id",
+      "home_epoch",
+      "computer_epoch",
+      "projects",
+      "issued_at",
+    ],
+    "floors",
+  );
+  literal(o.type, "cocalc-computer-floors", "floors.type");
+  version(o.version);
+  const projectsIn = record(o.projects, "floors.projects");
+  const entries = Object.entries(projectsIn);
+  if (entries.length > MAX_PROJECT_FLOORS) {
+    throw new ProtocolError(
+      `floors.projects has more than ${MAX_PROJECT_FLOORS} entries`,
+    );
+  }
+  const projects: Record<string, number> = {};
+  for (const [project_id, value] of entries) {
+    projects[uuid(project_id, "floors.projects key")] = epoch(
+      value,
+      `floors.projects.${project_id}`,
+    );
+  }
+  return {
+    type: "cocalc-computer-floors",
+    version: 1,
+    computer_id: uuid(o.computer_id, "floors.computer_id"),
+    home_epoch: epoch(o.home_epoch, "floors.home_epoch"),
+    computer_epoch: epoch(o.computer_epoch, "floors.computer_epoch"),
+    projects,
+    issued_at: time(o.issued_at, "floors.issued_at"),
+  };
+}
+
+/**
+ * Raise the daemon's floors to a push: each floor becomes the larger of the
+ * two, never smaller. `raised` says whether anything went up (queued work is
+ * then cancelled and re-authorized).
+ */
+export function mergeFloors(
+  current: DaemonState["floors"],
+  pushed: Pick<ComputerFloors, "home_epoch" | "computer_epoch" | "projects">,
+): { floors: DaemonState["floors"]; raised: boolean } {
+  let raised = false;
+  const up = (a: number, b: number) => {
+    if (b > a) raised = true;
+    return Math.max(a, b);
+  };
+  const projects = { ...current.projects };
+  for (const [project_id, value] of Object.entries(pushed.projects)) {
+    projects[project_id] = up(projects[project_id] ?? 0, value);
+  }
+  return {
+    floors: {
+      home_epoch: up(current.home_epoch, pushed.home_epoch),
+      computer_epoch: up(current.computer_epoch, pushed.computer_epoch),
+      projects,
+    },
+    raised,
+  };
+}
 
 /** What the daemon persisted about itself; floors only ever increase. */
 export interface DaemonState {
