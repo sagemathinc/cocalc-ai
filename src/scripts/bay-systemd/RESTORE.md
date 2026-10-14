@@ -248,7 +248,21 @@ the hosts and in project backups.
      sudo tar -xz -C /usr/local/bin rustic
    ```
 
-8. **Restore and start the bay:**
+8. **Make sure the old bay is down, then restore and start the bay.** The new
+   VM runs the same Cloudflare tunnel as the old one. If both run it,
+   Cloudflare spreads requests over two separate bays, and both archive into
+   the same backup repository. So if the old VM still exists, stop it first
+   and confirm that it is stopped:
+
+   ```sh
+   gcloud compute instances stop prod-bay-0 --project=projecthosts --zone=us-south1-a
+   gcloud compute instances describe prod-bay-0 --project=projecthosts \
+     --zone=us-south1-a --format='value(status)'   # must print TERMINATED
+   ```
+
+   If the old VM cannot be reached (for example, its zone is down), ask the
+   human to confirm in the Cloudflare dashboard that the tunnel shows no
+   connectors before you go on. Then:
 
    ```sh
    sudo /usr/local/libexec/cocalc-bay/bay-restore restore --latest --yes
@@ -258,14 +272,15 @@ the hosts and in project backups.
    its newest snapshot, moves any freshly initialized data aside, and starts
    the bay, with the frontdoor and the tunnel (enabled bay services outside
    `cocalc-bay.target`). Traffic reaches the new VM through the Cloudflare
-   tunnel, whose credentials came from the escrow; DNS does not change.
+   tunnel, whose credentials came from the escrow; DNS does not change. If
+   the restore fails, or with `--no-cutover`, the frontdoor and the tunnel
+   stay down: the new VM's empty bay never takes traffic.
 
 9. **Afterwards:**
    - confirm the site works;
    - enable the backup timers listed in README.md ("Activation Order") and
      `cocalc-bay-config-escrow.timer`;
-   - stop or delete the old VM if it still exists, so two bays never run the
-     same tunnel or archive into the same repository;
+   - keep the old VM stopped; delete it and its disks once you are satisfied;
    - run a disposable drill:
      `cocalc bay restore-test bay-0 --disposable-gcp`. The new VM has no
      record of a SQLite backup yet, so the drill refuses to run until the
@@ -285,7 +300,11 @@ the hosts and in project backups.
   - the bay is stopped, and its processes are gone, before the engine runs;
   - the bay restarts on its old data after a failure or with `--no-cutover`;
   - the cutover order, the unhealthy case and the backup warning are right;
-  - on a fresh VM the enabled frontdoor and tunnel start with the bay;
+  - on a fresh VM the enabled frontdoor and tunnel start with the restored
+    bay, and stay down after a failure or with `--no-cutover`;
+  - `--target-time` keeps its microseconds.
+- `libexec/bay-restore-engine.test.sh` checks the engine's PITR sentinel
+  verdict, and that a missed target fails the drill at once.
   - copies and work directories the bay account could change are refused.
 - `test/bay-restore-e2e.sh` runs `bay-restore` end to end on a disposable
   Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore, a

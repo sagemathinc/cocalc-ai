@@ -154,12 +154,12 @@ make_work_dir() {
 }
 
 # Stop everything of the bay's, recording what to restart in
-# DIR/stopped-timers and DIR/stopped-services: timers first, so nothing new
-# starts; then any backup, prune or status job already running, which is not
-# part of cocalc-bay.target and could otherwise read the data directories;
-# then the target, then every bay service still running outside it (the
-# frontdoor and the tunnel are started by multi-user.target and restart
-# themselves); then any process of the bay account that is left.
+# DIR/stopped-timers, DIR/stopped-target and DIR/stopped-services: timers
+# first, so nothing new starts; then any backup, prune or status job already
+# running, which is not part of cocalc-bay.target and could otherwise read the
+# data directories; then the target, then every bay service still running
+# outside it (the frontdoor and the tunnel are started by multi-user.target
+# and restart themselves); then any process of the bay account that is left.
 stop_bay() {
   local work_dir="$1" timers jobs unit services
   timers="$(systemctl list-units --type=timer --state=active --no-legend --plain 'cocalc-bay-*' | awk '{print $1}')"
@@ -178,6 +178,11 @@ stop_bay() {
       die "${unit} did not stop; nothing was changed. Timers stopped: ${work_dir}/stopped-timers"
     fi
   done
+  if systemctl is-active --quiet cocalc-bay.target; then
+    echo active > "${work_dir}/stopped-target"
+  else
+    echo inactive > "${work_dir}/stopped-target"
+  fi
   systemctl stop cocalc-bay.target
   systemctl stop cocalc-bay-postgres.service || true
   if systemctl is-active --quiet cocalc-bay-postgres.service; then
@@ -213,20 +218,20 @@ kill_bay_processes() {
   die "processes of ${COCALC_BAY_USER} keep running (is a unit restarting them?); nothing was changed"
 }
 
-# Start the bay: its target, the services stop_bay stopped outside it, and
-# every enabled bay service outside it. The frontdoor and the tunnel are
-# wanted by multi-user.target, not the target, so on a freshly built VM (mode
-# B) nothing has started them and stop_bay recorded none. Oneshot units (the
-# backup jobs) are left alone: they run from their timers, which stay stopped
-# until the bay is healthy. Safe to repeat.
+# The bay's ingress, wanted by multi-user.target rather than cocalc-bay.target.
+INGRESS_UNITS=(cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service)
+
+# Start the bay on restored data, after the cutover: its target, the services
+# stop_bay stopped outside it, and the ingress units that are enabled. On a
+# freshly built VM (mode B) nothing has started the ingress, so stop_bay
+# recorded none; it starts only now that the restored data is in place. Safe
+# to repeat.
 start_bay() {
   local work_dir="$1" unit enabled=()
   systemctl start cocalc-bay.target || true
   start_stopped_services "$work_dir" || true
-  for unit in $(systemctl list-unit-files --no-legend --plain --state=enabled 'cocalc-bay*.service' | awk '{print $1}'); do
-    [[ "$unit" != *@.service ]] || continue
-    [[ "$(systemctl show -p Type --value "$unit" 2>/dev/null)" != oneshot ]] || continue
-    enabled+=("$unit")
+  for unit in "${INGRESS_UNITS[@]}"; do
+    ! systemctl is-enabled --quiet "$unit" 2>/dev/null || enabled+=("$unit")
   done
   [[ "${#enabled[@]}" == 0 ]] || systemctl start "${enabled[@]}" || true
 }
@@ -239,13 +244,19 @@ start_stopped_services() {
   [[ -z "$services" ]] || systemctl start $services
 }
 
-# After a failed restore or with --no-cutover: the bay's data is unchanged.
+# After a failed restore or with --no-cutover: the bay's data is unchanged, so
+# only what was running before the restore is started again. On a fresh VM
+# that is nothing: its empty bay must not take the tunnel's traffic.
 restart_bay() {
   local work_dir="$1" timers
   echo "bay-restore: restarting the bay on its unchanged data"
   # Nothing the restore ran as the bay account may live on into the bay.
   kill_bay_processes
-  start_bay "$work_dir"
+  # A work directory from before stopped-target was recorded: start it.
+  if [[ "$(cat "${work_dir}/stopped-target" 2>/dev/null || echo active)" == active ]]; then
+    systemctl start cocalc-bay.target || true
+  fi
+  start_stopped_services "$work_dir" || true
   timers="$(cat "${work_dir}/stopped-timers" 2>/dev/null || true)"
   # shellcheck disable=SC2086
   [[ -z "$timers" ]] || systemctl start $timers || true
@@ -271,8 +282,12 @@ cmd_restore() {
     die "choose exactly one of --latest or --target-time TIME"
   fi
   if [[ -n "$target_time" ]]; then
-    target_time="$(date -u -d "$target_time" '+%Y-%m-%d %H:%M:%S+00')" ||
+    # With microseconds: rounding down to the second would restore up to a
+    # second early, before a transaction the operator meant to keep. %N is
+    # nanoseconds (not every date honors a %6N width): keep six digits.
+    target_time="$(date -u -d "$target_time" '+%Y-%m-%d %H:%M:%S.%N')" ||
       die "cannot parse --target-time"
+    target_time="${target_time:0:26}+00"
   fi
   for name in COCALC_BAY_ID COCALC_BAY_ROOT COCALC_BAY_POSTGRES_DATA_DIR \
     COCALC_BAY_PGBACKREST_S3_BUCKET COCALC_BAY_PGBACKREST_S3_ENDPOINT \
