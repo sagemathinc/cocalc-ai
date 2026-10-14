@@ -11,10 +11,15 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import * as authApi from "@cocalc/frontend/auth/api";
 import {
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_INTRO,
+  PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
   UNPUBLISHED_TEAM_PROFILE_SLUGS,
@@ -291,7 +296,8 @@ describe("PublicApp", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "About CoCalc",
+        level: 1,
+        name: PUBLIC_ABOUT_HEADLINE,
       }),
     ).not.toBeNull();
   });
@@ -323,27 +329,107 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "About CoCalc" }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: /Make serious computational work easy to share/i,
+    // The company statement is the page's only H1, in the hero, as in the
+    // crawler fallback; the browser title still reads "About CoCalc".
+    const hero = screen.getByRole("region", {
+      name: "SageMath, Inc. and CoCalc",
+    });
+    expect(screen.getAllByRole("heading", { level: 1 })).toEqual([
+      within(hero).getByRole("heading", {
+        level: 1,
+        name: PUBLIC_ABOUT_HEADLINE,
       }),
-    ).not.toBeNull();
+    ]);
+    expect(document.title).toBe("About CoCalc");
     expect(
-      screen.getByText("SageMath, Inc. · The company behind CoCalc"),
+      within(hero).getByText("SageMath, Inc. · The company behind CoCalc"),
     ).not.toBeNull();
-    expect(screen.getByText("Incorporated 2016")).not.toBeNull();
-    expect(screen.getByText("SOC 2")).not.toBeNull();
+    expect(within(hero).getByText(PUBLIC_ABOUT_INTRO)).not.toBeNull();
+
+    const principles = screen.getByRole("region", { name: "How we build" });
+    expect(
+      within(principles).getByRole("heading", { level: 2 }).textContent,
+    ).toBe(PUBLIC_ABOUT_PRINCIPLES_HEADLINE);
+    expect(
+      within(principles)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(PUBLIC_ABOUT_PRINCIPLES.map(({ title }) => title));
+    expect(PUBLIC_ABOUT_PRINCIPLES).toHaveLength(3);
+
+    // Main's trust and events links stay.
+    expect(screen.getByRole("link", { name: /SOC 2/ })).toHaveAttribute(
+      "href",
+      publicPath("policies/trust"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Trust and compliance" }),
+    ).toHaveAttribute("href", publicPath("policies/trust"));
+    expect(screen.getByRole("link", { name: "Events" })).toHaveAttribute(
+      "href",
+      publicPath("about/events"),
+    );
     expect(
       screen.getByRole("heading", { name: "Leadership and team" }),
     ).not.toBeNull();
     expect(screen.queryByText("Upcoming events")).toBeNull();
-    // The "since 2013" trust statistic is retired, in the hero and the facts.
+    // The "since 2013" trust statistic is retired, in the hero and the facts,
+    // and the page gives no incorporation year.
     expect(document.body.textContent).not.toMatch(
-      /since 2013|goes online|Collaborative computing online/i,
+      /since 2013|goes online|Collaborative computing online|Incorporated/i,
     );
+  });
+
+  // Vendor names stay out of the H1 and the title; the lead names Codex and
+  // Claude, never the Claude Code product name or a maturity label.
+  it("keeps the About statement within the naming rules", () => {
+    expect(PUBLIC_ABOUT_HEADLINE).not.toMatch(
+      /Codex|Claude|OpenAI|Anthropic|ChatGPT/,
+    );
+    expect(PUBLIC_ABOUT_INTRO).toMatch(/Codex is built in/);
+    expect(PUBLIC_ABOUT_INTRO).toMatch(/Claude is available where the site/);
+    for (const text of [
+      PUBLIC_ABOUT_HEADLINE,
+      PUBLIC_ABOUT_INTRO,
+      PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+      ...PUBLIC_ABOUT_PRINCIPLES.flatMap(({ body, title }) => [body, title]),
+    ]) {
+      expect(text).not.toMatch(
+        /Claude Code|experimental|preview|beta|alpha|workspace|open source|source-available|licen[cs]e/i,
+      );
+    }
+  });
+
+  it("lets keyboard users move from the About hero to its sections", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={aboutRoute({ view: "about" })}
+      />,
+    );
+
+    const hero = screen.getByRole("region", {
+      name: "SageMath, Inc. and CoCalc",
+    });
+    const howWeBuild = within(hero).getByRole("link", {
+      name: "How we build",
+    });
+    const meetTeam = within(hero).getByRole("link", { name: "Meet the team" });
+    expect(howWeBuild).toHaveAttribute("href", "#how-we-build");
+    expect(document.getElementById("how-we-build")).toBe(
+      screen.getByRole("region", { name: "How we build" }),
+    );
+    expect(meetTeam).toHaveAttribute("href", publicPath("about/team"));
+
+    howWeBuild.focus();
+    await user.tab();
+    expect(meetTeam).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(howWeBuild).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(window.location.hash).toBe("#how-we-build");
+    window.history.replaceState({}, "", "/");
   });
 
   it("renders and updates managed public-route head metadata", async () => {
@@ -372,7 +458,7 @@ describe("PublicApp", () => {
       expect(canonicalHref()).toBe("https://cocalc.ai/about"),
     );
     expect(headMeta('meta[name="description"]')).toContain(
-      "mission, history, people, and operating principles behind CoCalc",
+      "the agent platform where your agents work alongside your team",
     );
   });
 
@@ -2582,7 +2668,10 @@ describe("feature configuration loading", () => {
     global.fetch = jest.fn(() => customize.promise) as typeof fetch;
     render(<PublicApp initialRoute={aboutRoute({ view: "about" })} />);
     expect(
-      await screen.findByRole("heading", { name: "About CoCalc" }),
+      await screen.findByRole("heading", {
+        level: 1,
+        name: PUBLIC_ABOUT_HEADLINE,
+      }),
     ).not.toBeNull();
     expectNoCompute();
   });

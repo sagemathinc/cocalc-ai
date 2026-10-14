@@ -3,33 +3,37 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// The About page's company statement and principles. The React page and the
+// crawler fallback in hub/servers/app/public-prerender.ts both render these
+// strings, so the two stay word for word the same.
+
 export const PUBLIC_ABOUT_HEADLINE =
-  "Building the future of collaborative computation.";
+  "We build the agent platform where your agents work alongside your team.";
 
 export const PUBLIC_ABOUT_INTRO =
-  "CoCalc gives researchers, educators, technical teams, and AI agents a persistent place to work together using the open-source tools they trust.";
-
-export const PUBLIC_ABOUT_MISSION =
-  "Make serious computational work easy to share, reproduce, and advance, by people and AI.";
+  "You start an agent with a request, and it works in a persistent, shared CoCalc project with your files, installed software, terminals, and a web browser. Share the agent with colleagues, and they can review what it delivers and continue the work. Codex is built in, and Claude is available where the site enables it.";
 
 export const PUBLIC_ABOUT_REASON =
   "Important technical work should not depend on one laptop, one installation, or context trapped in a chat window. The environment itself should be durable, collaborative, inspectable, and ready for whoever works next.";
 
+export const PUBLIC_ABOUT_PRINCIPLES_HEADLINE =
+  "Three principles behind the agent platform.";
+
 export const PUBLIC_ABOUT_PRINCIPLES = [
   {
-    body: "Persistent Linux projects keep software, data, processes, and context available for the next person or agent.",
+    body: "Each agent works in a CoCalc project with your files, installed software, and terminals. When a task needs a web browser, the agent drives one in the project while you watch, and you can take over at any moment, then hand it back.",
     icon: "server",
-    title: "Durable environments",
+    title: "Agents need a real place to work.",
   },
   {
-    body: "People and AI work with the same files, notebooks, terminals, documents, and project history.",
+    body: "Named agents stay in your Agents list. Share one with colleagues, and they join the same conversation and project to review what it delivers, guide it, and continue the work. Each person's turns use their own payment choice.",
     icon: "users",
-    title: "Shared context",
+    title: "Agents belong to the team.",
   },
   {
-    body: "Researchers use the languages and open-source software their work actually requires.",
-    icon: "linux",
-    title: "Open tools",
+    body: "An agent has full access to its own project. To let it work in other projects, give it CoCalc access to the ones you choose, read-only or full, without creating an API key. That access ends when its turn does.",
+    icon: "key",
+    title: "People decide what agents can reach.",
   },
 ] as const;
 

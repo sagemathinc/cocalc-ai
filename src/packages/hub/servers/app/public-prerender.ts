@@ -29,8 +29,8 @@ import {
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
   PUBLIC_ABOUT_INTRO,
-  PUBLIC_ABOUT_MISSION,
   PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
@@ -591,11 +591,11 @@ function renderAboutOverview(basePath: string): string {
   <p>${htmlEscape(PUBLIC_ABOUT_INTRO)}</p>
 </header>
 <section>
-  <h2>Our mission</h2>
-  <p>${htmlEscape(PUBLIC_ABOUT_MISSION)}</p>
+  <p>How we build</p>
+  <h2>${htmlEscape(PUBLIC_ABOUT_PRINCIPLES_HEADLINE)}</h2>
   <p>${htmlEscape(PUBLIC_ABOUT_REASON)}</p>
+  <ul>${principles}</ul>
 </section>
-<section><h2>How we build</h2><ul>${principles}</ul></section>
 <section><h2>Who we serve</h2><ul>${audiences}</ul></section>
 <section><h2>Meet the team</h2><ul>${team}</ul><p>${publicLink(
     basePath,

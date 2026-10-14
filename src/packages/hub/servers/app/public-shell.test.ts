@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 import {
+  PUBLIC_ABOUT_HEADLINE,
   PUBLIC_TEAM_MEMBERS,
   UNPUBLISHED_TEAM_PROFILE_SLUGS,
 } from "@cocalc/util/public-about-content";
@@ -220,7 +221,7 @@ describe("public shell rendering", () => {
 
   it.each([
     ["/guides", "guides", "Durable collaborative projects"],
-    ["/about", "about", "Building the future of collaborative computation."],
+    ["/about", "about", PUBLIC_ABOUT_HEADLINE],
     ["/about/team", "about-team", "Blaec Bejarano, CSO"],
     ["/about/team/william-stein", "about-team-member", "William Stein"],
     ["/support", "support", "Find the right next step"],

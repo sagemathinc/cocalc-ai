@@ -8,6 +8,11 @@ import {
   UNSUPPORTED_CAPABILITY_TERMS,
 } from "@cocalc/util/public-copy-guards";
 import {
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_INTRO,
+  PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+  PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
   UNPUBLISHED_TEAM_PROFILE_SLUGS,
@@ -406,11 +411,8 @@ describe("core landing page initial HTML", () => {
         basePath,
       );
       expect(about).toContain('data-cocalc-public-prerender="about"');
-      expect(about).toContain(
-        "Building the future of collaborative computation.",
-      );
-      expect(about).toContain("Make serious computational work easy");
       expect(about).toContain(`href="${prefix}/about/team/william-stein"`);
+      expect(about).toContain(`href="${prefix}/about/events"`);
       expect(about).not.toMatch(/since 2013/i);
 
       const support = renderPublicRoutePrerender(
@@ -422,6 +424,40 @@ describe("core landing page initial HTML", () => {
       expect(support).toContain(`href="${prefix}/support/community"`);
     },
   );
+
+  // The React page renders the same constants (frontend/public/__tests__/
+  // app.test.tsx), so crawlers read the company statement word for word.
+  it("renders the About statement and principles from the shared content", () => {
+    const about = renderPublicRoutePrerender(
+      { section: "about", route: { view: "about" } },
+      "/",
+    );
+    const header = about.slice(
+      about.indexOf("<header>"),
+      about.indexOf("</header>"),
+    );
+    expect(
+      [...header.matchAll(/<(p|h1)>([^<]+)<\/\1>/g)].map(
+        ([, tag, text]) => `${tag}: ${text}`,
+      ),
+    ).toEqual([
+      "p: SageMath, Inc. · The company behind CoCalc",
+      `h1: ${PUBLIC_ABOUT_HEADLINE}`,
+      `p: ${PUBLIC_ABOUT_INTRO}`,
+    ]);
+    expect(about.match(/<h1>/g)).toHaveLength(1);
+    expect(about).toContain(
+      `<p>How we build</p>\n  <h2>${PUBLIC_ABOUT_PRINCIPLES_HEADLINE}</h2>\n  <p>${PUBLIC_ABOUT_REASON}</p>`,
+    );
+    expect(about).toContain(
+      PUBLIC_ABOUT_PRINCIPLES.map(
+        ({ body, title }) => `<li><h3>${title}</h3><p>${body}</p></li>`,
+      ).join(""),
+    );
+    expect(about).not.toMatch(
+      /Claude Code|experimental preview|Incorporated|Our mission/i,
+    );
+  });
 
   it("uses shared team and community records for detail discovery", () => {
     const team = renderPublicRoutePrerender(

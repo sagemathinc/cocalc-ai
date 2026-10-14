@@ -11,8 +11,8 @@ import {
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
   PUBLIC_ABOUT_INTRO,
-  PUBLIC_ABOUT_MISSION,
   PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_BILLING_CONTACT,
 } from "@cocalc/util/public-about-content";
@@ -80,6 +80,10 @@ const ABOUT_PAGE_CSS = `
     padding-bottom: 20px;
   }
 
+  .cocalc-about-index > section {
+    scroll-margin-top: var(--cocalc-public-anchor-offset);
+  }
+
   .cocalc-about-hero {
     background:
       radial-gradient(circle at 88% 18%, ${alpha(PUBLIC_COLORS.accent, 0.22)}, transparent 28%),
@@ -93,7 +97,6 @@ const ABOUT_PAGE_CSS = `
     position: relative;
   }
 
-  .cocalc-about-mission-grid,
   .cocalc-about-founder {
     display: grid;
     gap: 32px;
@@ -109,20 +112,14 @@ const ABOUT_PAGE_CSS = `
     gap: 16px;
   }
 
-  .cocalc-about-principles {
+  .cocalc-about-principles,
+  .cocalc-about-facts,
+  .cocalc-about-timeline {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .cocalc-about-audiences {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .cocalc-about-facts {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .cocalc-about-timeline {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .cocalc-about-team-preview {
@@ -140,19 +137,13 @@ const ABOUT_PAGE_CSS = `
   }
 
   @media (max-width: 900px) {
-    .cocalc-about-mission-grid,
     .cocalc-about-founder {
       grid-template-columns: 1fr;
     }
 
     .cocalc-about-audiences,
-    .cocalc-about-facts,
     .cocalc-about-team-preview {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .cocalc-about-timeline {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
 
@@ -172,7 +163,6 @@ const ABOUT_PAGE_CSS = `
 `;
 
 const COMPANY_FACTS = [
-  { detail: "SageMath, Inc.", value: "Incorporated 2016" },
   {
     detail: "Independent security audit",
     href: publicPath("policies/trust"),
@@ -188,23 +178,15 @@ const COMPANY_FACTS = [
 
 const COMPANY_TIMELINE = [
   {
-    body: "William Stein starts SageMath to build a viable open alternative for mathematical computation.",
-    year: "2004",
-  },
-  {
     body: "SageMathCloud launches, bringing open technical software into a collaborative browser workspace.",
     year: "2013",
-  },
-  {
-    body: "SageMath, Inc. is incorporated in Delaware to sustain and grow CoCalc for the long term.",
-    year: "2016",
   },
   {
     body: "William leaves his full professorship to focus on SageMath, Inc. and CoCalc full-time.",
     year: "2019",
   },
   {
-    body: "CoCalc connects people and AI in durable computational environments across cloud and private deployments.",
+    body: "CoCalc is rebuilt with agents at its core: they work in the same persistent, shared projects as the people who direct them.",
     year: "Today",
   },
 ];
@@ -270,13 +252,13 @@ function AboutOverview() {
           </div>
           <div>
             <Title
-              level={2}
+              level={1}
               style={{
                 color: PUBLIC_COLORS.onPrimary,
                 fontSize: "clamp(36px, 5vw, 58px)",
                 lineHeight: 1.04,
                 margin: 0,
-                maxWidth: 720,
+                maxWidth: 820,
               }}
             >
               {PUBLIC_ABOUT_HEADLINE}
@@ -287,15 +269,15 @@ function AboutOverview() {
                 fontSize: PUBLIC_TYPE.lead,
                 lineHeight: 1.65,
                 margin: "22px 0 0",
-                maxWidth: 700,
+                maxWidth: 760,
               }}
             >
               {PUBLIC_ABOUT_INTRO}
             </Paragraph>
           </div>
           <Flex gap={12} wrap>
-            <Button href="#mission" size="large" type="primary">
-              Our mission
+            <Button href="#how-we-build" size="large" type="primary">
+              How we build
             </Button>
             <Button ghost href={publicPath("about/team")} size="large">
               Meet the team
@@ -304,73 +286,22 @@ function AboutOverview() {
         </Flex>
       </section>
 
-      <section
-        aria-label="CoCalc mission"
-        className="cocalc-about-mission-grid"
-        id="mission"
-      >
-        <div
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PUBLIC_RADIUS.media,
-            boxShadow: PUBLIC_ELEVATION.panel,
-            padding: "clamp(26px, 4vw, 44px)",
-          }}
-        >
-          <Eyebrow>Our mission</Eyebrow>
-          <Title
-            level={2}
-            style={{
-              fontSize: "clamp(30px, 4vw, 46px)",
-              lineHeight: 1.12,
-              margin: "14px 0 18px",
-            }}
-          >
-            {PUBLIC_ABOUT_MISSION}
+      <section aria-label="How we build" id="how-we-build">
+        <Flex gap={10} style={{ marginBottom: 22 }} vertical>
+          <Eyebrow>How we build</Eyebrow>
+          <Title level={2} style={{ margin: 0 }}>
+            {PUBLIC_ABOUT_PRINCIPLES_HEADLINE}
           </Title>
           <Paragraph
             style={{
               color: PUBLIC_COLORS.mutedText,
               fontSize: PUBLIC_TYPE.lead,
-              lineHeight: 1.65,
               margin: 0,
-            }}
-          >
-            CoCalc turns that mission into persistent, backed-up environments
-            where computation, communication, and review stay connected.
-          </Paragraph>
-        </div>
-        <div
-          style={{
-            alignContent: "center",
-            background: PUBLIC_COLORS.brandTint,
-            border: `1px solid ${PUBLIC_COLORS.brandSubtle}`,
-            borderRadius: PUBLIC_RADIUS.media,
-            display: "grid",
-            gap: 18,
-            padding: "clamp(24px, 4vw, 38px)",
-          }}
-        >
-          <Eyebrow>Why CoCalc exists</Eyebrow>
-          <Paragraph
-            style={{
-              fontSize: PUBLIC_TYPE.lead,
-              lineHeight: 1.65,
-              margin: 0,
+              maxWidth: "72ch",
             }}
           >
             {PUBLIC_ABOUT_REASON}
           </Paragraph>
-        </div>
-      </section>
-
-      <section aria-label="How CoCalc fulfills its mission">
-        <Flex gap={10} style={{ marginBottom: 22 }} vertical>
-          <Eyebrow>How we build</Eyebrow>
-          <Title level={2} style={{ margin: 0 }}>
-            Open tools inside durable shared projects.
-          </Title>
         </Flex>
         <div className="cocalc-about-principles">
           {PUBLIC_ABOUT_PRINCIPLES.map((principle) => (
@@ -398,7 +329,7 @@ function AboutOverview() {
         <Flex gap={10} style={{ marginBottom: 22 }} vertical>
           <Eyebrow>Built for the long term</Eyebrow>
           <Title level={2} style={{ margin: 0 }}>
-            A mature company behind critical computational work.
+            A mature company behind your team and its agents.
           </Title>
           <Paragraph
             style={{
@@ -981,7 +912,12 @@ export default function PublicAboutApp({
   }, [title]);
 
   return (
-    <PublicSectionShell active="about" config={config} title={title}>
+    <PublicSectionShell
+      active="about"
+      config={config}
+      // The overview's hero carries the page's H1, as in the crawler fallback.
+      title={initialRoute.view === "about" ? undefined : title}
+    >
       {initialRoute.view === "about-events" ? (
         <AboutEventsPage />
       ) : initialRoute.view === "about-team" ? (
@@ -993,7 +929,7 @@ export default function PublicAboutApp({
           <AboutOverview />
           <PublicNextStep
             authenticated={!!config?.is_authenticated}
-            heading="Bring your next computational project to CoCalc."
+            heading="Start your next project with an agent."
           />
         </>
       )}

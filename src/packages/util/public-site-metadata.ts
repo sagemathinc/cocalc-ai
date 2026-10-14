@@ -817,7 +817,7 @@ function aboutRouteMetadata(
       return {
         canonicalPath: publicPath("about/team", options),
         description:
-          "Meet the SageMath, Inc. team building CoCalc for collaborative technical work.",
+          "Meet the SageMath, Inc. team building CoCalc, the agent platform where your agents work alongside your team.",
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
         title: pageTitle(`${siteName} Team`, siteName),
       };
@@ -841,7 +841,7 @@ function aboutRouteMetadata(
       return {
         canonicalPath: publicPath("about", options),
         description:
-          "Learn about SageMath, Inc., the mission, history, people, and operating principles behind CoCalc.",
+          "SageMath, Inc. builds CoCalc, the agent platform where your agents work alongside your team. Read how we build it and meet the people behind it.",
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
         title: pageTitle(`About ${siteName}`, siteName),
       };
