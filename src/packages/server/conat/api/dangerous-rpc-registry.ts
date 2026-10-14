@@ -23,6 +23,42 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "computers.approveComputerRequest": {
+    decision: "fresh-auth-required",
+    reason:
+      "lets agents run commands on the paired machine; checked at the account home bay with a second factor",
+  },
+  "computers.extendComputer": {
+    decision: "fresh-auth-required",
+    reason:
+      "keeps agent access to a machine open longer (within the ceiling the machine enforces)",
+  },
+  "computers.createComputerRequest": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "only a request; nothing is allowed until a pairing is approved with fresh auth",
+  },
+  "computers.declineComputerRequest": {
+    decision: "fresh-auth-not-required",
+    reason: "narrowing: closes an open request",
+  },
+  "computers.revokeComputer": {
+    decision: "fresh-auth-not-required",
+    reason: "narrowing: disconnects a computer and bumps its epoch",
+  },
+  "computers.renameComputer": {
+    decision: "fresh-auth-not-required",
+    reason: "changes only the alias; grants no access",
+  },
+  "computers.setComputerNotes": {
+    decision: "fresh-auth-not-required",
+    reason: "owner-edited notes; agents treat them as data",
+  },
+  "computers.setComputerEffectivePolicy": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "narrowing only: refused unless at most the approved ceiling, which the machine also enforces",
+  },
   "agent.createAgentNetwork": {
     decision: "fresh-auth-required",
     reason:

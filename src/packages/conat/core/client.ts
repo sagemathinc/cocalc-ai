@@ -362,6 +362,11 @@ interface Options {
   // The server authenticates every reconnect, so revocation still holds.
   // Leave this unset for clients that a server disconnects on purpose.
   reconnectAfterServerDisconnect?: boolean;
+  // Never subscribe to a reply inbox (and so never make requests). For
+  // principals that may not subscribe to _INBOX at all, e.g. a connected
+  // computer, which only receives on its own subject and publishes replies
+  // to subjects it is given.
+  disableInbox?: boolean;
 }
 
 export type ClientOptions = Options & {
@@ -804,9 +809,8 @@ export class Client extends EventEmitter {
       const prefixChanged =
         this.initializedInboxPrefix !== this.getInboxPrefix();
       if (
-        firstTime ||
-        prefixChanged ||
-        this.inboxConnectionId !== this.conn.id
+        !this.options.disableInbox &&
+        (firstTime || prefixChanged || this.inboxConnectionId !== this.conn.id)
       ) {
         void this.initInbox({ preserve: !prefixChanged }).catch((err) => {
           if (this.isClosed()) {
@@ -1189,6 +1193,11 @@ export class Client extends EventEmitter {
   };
 
   private getInbox = reuseInFlight(async (): Promise<EventEmitter> => {
+    if (this.options.disableInbox) {
+      throw new ConatError("this client has no inbox (disableInbox)", {
+        code: 400,
+      });
+    }
     if (this.inbox == null) {
       if (this.isClosed()) {
         throw Error("closed");

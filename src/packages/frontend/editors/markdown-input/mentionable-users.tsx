@@ -30,6 +30,14 @@ import {
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
+import { serializeComputerMention } from "@cocalc/util/computer-mentions";
+import { useComputers } from "@cocalc/frontend/account/use-computers";
+import { useComputersEnabled } from "@cocalc/frontend/account/computers-enabled";
+import {
+  computerState,
+  isListed,
+  STATE_LABEL,
+} from "@cocalc/frontend/account/computer-state";
 import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 
 interface Opts {
@@ -52,6 +60,8 @@ export function useMentionableUsers(): (
   const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);
+  const computersEnabled = useComputersEnabled() && enabled;
+  const computers = useComputers(computersEnabled);
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
@@ -127,7 +137,36 @@ export function useMentionableUsers(): (
                 ),
               }))
           : [];
+      const now = Date.now();
+      const computerItems: Item[] = computersEnabled
+        ? computers
+            .filter((c) => isListed(c, now))
+            .filter((c) => c.name.includes(query) || c.hostname.includes(query))
+            .slice(0, 20)
+            .map((c) => ({
+              value: serializeComputerMention({
+                version: 1,
+                computer_id: c.computer_id,
+                name: c.name,
+              }),
+              group: "Computers",
+              search: `${c.name} ${c.hostname}`.toLowerCase(),
+              label: (
+                <span title="Reference your computer; the agent's access is checked when it runs something there">
+                  <strong>@{c.name}</strong>
+                  <div style={{ fontSize: "0.9em" }}>
+                    {c.machine_user}@{c.hostname} ·{" "}
+                    {STATE_LABEL[computerState(c, now)]}
+                    {computerState(c, now) !== "ended" && c.deadline != null
+                      ? ` until ${new Date(c.deadline).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                      : ""}
+                  </div>
+                </span>
+              ),
+            }))
+        : [];
       return [
+        ...computerItems,
         ...artifacts,
         ...agents,
         ...(enabled && !query && !expanded
@@ -160,6 +199,8 @@ export function useMentionableUsers(): (
     selectedNetworkId,
     settings,
     artifactNames,
+    computers,
+    computersEnabled,
     expanded,
     postOnly,
   ]);

@@ -72,6 +72,8 @@ describeDb("account-home Agent Networks", () => {
     "agent_personal_controls",
     "agent_personal_names",
     "agent_networks",
+    "account_computers",
+    "account_computer_requests",
     "agent_network_members",
     "agent_network_mutations",
     "agent_network_activity",
@@ -849,6 +851,99 @@ describeDb("account-home Agent Networks", () => {
     ).rejects.toThrow("network_paused");
     await store.setControls(account, { action: "revoke_all" });
     expect((await store.networks(account)).active_count).toBe(0);
+  });
+
+  test("narrowing a network bumps the epochs of the computers it serves, widening does not", async () => {
+    const create = async (title: string) =>
+      await store.createNetwork(
+        account,
+        {
+          request_id: randomUUID(),
+          title,
+          members: [
+            { kind: "registered", endpoint: source },
+            { kind: "registered", endpoint: peer },
+          ],
+        },
+        8,
+      );
+    const lab = await create("Lab");
+    const other = await create("Other");
+    const computer = async (agent_network_id: string, name: string) => {
+      const computer_id = randomUUID();
+      // Only the columns that matter here are meaningful.
+      await db.query(
+        `INSERT INTO account_computers
+           (computer_id, account_id, name, agent_network_id, epoch,
+            hostname, os, arch, machine_user, mode, policy_ceiling,
+            ceiling_hash, effective_policy, policy_epoch, home_bay_id,
+            home_epoch, signing_key, signing_public_key, agreement_key,
+            transcript_hash, certificate, request_id, origin, notes,
+            notes_revision, notes_locked, notes_history, created_at,
+            updated_at)
+         VALUES ($1,$2,$3,$4,0,'h','linux','x64','u','isolated','{}','x',
+                 '{}',0,'bay-0',0,$5,$5,$5,$5,'{}',$5,'user','',0,
+                 false,'[]',now(),now())`,
+        [computer_id, account, name, agent_network_id, `key-${computer_id}`],
+      );
+      return computer_id;
+    };
+    const labComputer = await computer(lab.agent_network_id, "lab");
+    const otherComputer = await computer(other.agent_network_id, "other");
+    const epoch = async (computer_id: string) =>
+      Number(
+        (
+          await db.query(
+            "SELECT epoch FROM account_computers WHERE computer_id=$1",
+            [computer_id],
+          )
+        ).rows[0].epoch,
+      );
+    const update = async (options: any, fresh = false) =>
+      await store.updateNetwork(
+        account,
+        {
+          request_id: randomUUID(),
+          agent_network_id: lab.agent_network_id,
+          ...options,
+        },
+        8,
+        fresh,
+      );
+
+    await update({ action: "set-title", title: "Lab 2" });
+    // A computer serves this network: adding a member needs fresh auth.
+    const add = {
+      action: "add-member",
+      member: { kind: "registered", endpoint: secondPeer },
+    };
+    await expect(update(add)).rejects.toThrow("fresh_auth_required");
+    await update(add, true);
+    expect(await epoch(labComputer)).toBe(0);
+
+    await update({
+      action: "remove-member",
+      member: { kind: "registered", endpoint: secondPeer },
+    });
+    expect(await epoch(labComputer)).toBe(1);
+    await update({ action: "pause" });
+    expect(await epoch(labComputer)).toBe(2);
+    await expect(update({ action: "resume" })).rejects.toThrow(
+      "fresh_auth_required",
+    );
+    await update({ action: "resume" }, true);
+    expect(await epoch(labComputer)).toBe(2);
+    await update({ action: "close" });
+    expect(await epoch(labComputer)).toBe(3);
+    expect(await epoch(otherComputer)).toBe(0);
+
+    await store.setControls(account, { action: "pause" });
+    expect(await epoch(otherComputer)).toBe(1);
+    await store.setControls(account, { action: "resume" });
+    expect(await epoch(otherComputer)).toBe(1);
+    await store.setControls(account, { action: "revoke_all" });
+    expect(await epoch(otherComputer)).toBe(2);
+    expect(await epoch(labComputer)).toBe(5);
   });
 
   test("agent proposals are inert, bounded, and human-resolved", async () => {

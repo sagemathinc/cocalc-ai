@@ -7,12 +7,19 @@ import { fromJS } from "immutable";
 import { renderHook } from "@testing-library/react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
+import { parseComputerMention } from "@cocalc/util/computer-mentions";
 
 const mockGetStore = jest.fn();
 const mockUseNamedAgents = jest.fn();
 let mockAllowAgentMentions = false;
 const mockProjectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let mockArtifactNames: any[] = [];
+
+let mockComputers: any[] = [];
+jest.mock("@cocalc/frontend/account/use-computers", () => ({
+  ...jest.requireActual("@cocalc/frontend/account/use-computers"),
+  useComputers: (enabled: boolean) => (enabled ? mockComputers : []),
+}));
 
 jest.mock("@cocalc/frontend/agents/artifact-names", () => ({
   useArtifactNames: () => ({ names: mockArtifactNames }),
@@ -144,6 +151,54 @@ describe("mentionableUsers", () => {
       name: "nb1",
     });
     expect(items.some((item) => item.search === "elsewhere")).toBe(false);
+  });
+
+  it("offers the account's computers (with their state) in agent composers only", () => {
+    mockStores(jest.fn());
+    const computer = (name: string, extra: object = {}) => ({
+      computer_id: `1a057860-889d-461a-9073-4b8c69d6512${name.length}`,
+      name,
+      hostname: "studio.local",
+      machine_user: "sage",
+      deadline: null,
+      revoked_at: null,
+      connected: false,
+      ...extra,
+    });
+    mockComputers = [
+      computer("m1", { deadline: Date.now() + 3_600_000, connected: true }),
+      computer("ended", { deadline: Date.now() - 1000 }),
+      computer("old", { revoked_at: Date.now() - 2 * 24 * 3_600_000 }),
+    ];
+    mockAllowAgentMentions = true;
+    // The site's computers switch, off: no computers are offered.
+    const off = renderHook(() => useMentionableUsers());
+    expect(
+      off.result.current("").some((item) => item.group === "Computers"),
+    ).toBe(false);
+    jest
+      .mocked(useTypedRedux)
+      .mockImplementation(((store: string, key: string) =>
+        store === "customize" && key === "computers_enabled"
+          ? true
+          : undefined) as any);
+    const { result } = renderHook(() => useMentionableUsers());
+    const offered = result
+      .current("")
+      .filter((item) => item.group === "Computers");
+    // Ended a moment ago: still offered (to reconnect); ended days ago: not.
+    expect(
+      offered.map((item) => parseComputerMention(item.value)?.name),
+    ).toEqual(["m1", "ended"]);
+    expect(result.current("studio").some((i) => i.group === "Computers")).toBe(
+      true,
+    );
+    mockAllowAgentMentions = false;
+    const plain = renderHook(() => useMentionableUsers());
+    expect(
+      plain.result.current("").some((item) => item.group === "Computers"),
+    ).toBe(false);
+    mockComputers = [];
   });
 
   it("keeps unresolved collaborators visible while their names hydrate", () => {

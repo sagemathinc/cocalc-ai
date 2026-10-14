@@ -18,6 +18,7 @@ import { type ArtifactCatalogApi, artifactCatalog } from "./artifact-catalog";
 import { type PersonalLibraryApi, personalLibrary } from "./personal-library";
 import { type PeopleApi, people } from "./people";
 import { type PersonalUrlsApi, personalUrls } from "./personal-urls";
+import { type ComputersApi, computers } from "./computers";
 import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
 import { type AdminDbApi, adminDb } from "./admin-db";
@@ -59,6 +60,7 @@ export interface HubApi {
   personalLibrary: PersonalLibraryApi;
   people: PeopleApi;
   personalUrls: PersonalUrlsApi;
+  computers: ComputersApi;
   notifications: Notifications;
   adminData: AdminData;
   adminDb: AdminDbApi;
@@ -100,6 +102,7 @@ const HubApiStructure = {
   personalLibrary,
   people,
   personalUrls,
+  computers,
   notifications,
   adminData,
   adminDb,

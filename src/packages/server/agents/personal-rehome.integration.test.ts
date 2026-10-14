@@ -3,6 +3,7 @@ import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { AgentStore } from "./store";
 import {
+  COMPUTER_STATE_TABLES,
   EXTERNAL_AGENT_STATE_TABLES,
   PERSONAL_AGENT_STATE_TABLES,
   assertNoPersonalStateForRehome,
@@ -16,6 +17,7 @@ describeDb("Agent Network account rehome fence", () => {
   const tables = [
     ...PERSONAL_AGENT_STATE_TABLES,
     ...EXTERNAL_AGENT_STATE_TABLES,
+    ...COMPUTER_STATE_TABLES,
   ];
   beforeAll(async () => {
     await syncSchema(
@@ -34,6 +36,32 @@ describeDb("Agent Network account rehome fence", () => {
     );
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
       "Account rehome is unavailable",
+    );
+  });
+
+  test("computers, their pairing requests and their audit block rehome", async () => {
+    const queried: string[] = [];
+    await assertNoPersonalStateForRehome(
+      {
+        query: async (sql: string, values?: unknown[]) => {
+          queried.push(sql);
+          return await db.query(sql, values);
+        },
+      },
+      randomUUID(),
+    );
+    for (const table of COMPUTER_STATE_TABLES) {
+      expect(queried.some((sql) => sql.includes(`"${table}"`))).toBe(true);
+    }
+    const account = randomUUID();
+    await db.query(
+      `INSERT INTO account_computer_requests
+         (request_id, account_id, name, requested_policy, state, server_nonce, expires_at, agent_network_id)
+       VALUES ('R-REHOME0001', $1, 'mac', '{}', 'declined', 'n', now(), $2)`,
+      [account, randomUUID()],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "computers",
     );
   });
 

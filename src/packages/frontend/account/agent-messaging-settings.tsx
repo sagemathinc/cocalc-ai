@@ -13,12 +13,34 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 
-export function AgentMessagingSettings() {
+/**
+ * The account-wide kill switch (pause all, revoke all) and, unless shown
+ * elsewhere, the external agent installations.
+ */
+export function AgentMessagingSettings({
+  installations = true,
+  onChanged,
+}: {
+  installations?: boolean;
+  onChanged?: () => void;
+}) {
   const accountId = useTypedRedux("account", "account_id");
-  return accountId ? <AccountAgentMessaging key={accountId} /> : null;
+  return accountId ? (
+    <AccountAgentMessaging
+      key={accountId}
+      installations={installations}
+      onChanged={onChanged}
+    />
+  ) : null;
 }
 
-function AccountAgentMessaging() {
+function AccountAgentMessaging({
+  installations,
+  onChanged,
+}: {
+  installations: boolean;
+  onChanged?: () => void;
+}) {
   const { directory, error: directoryError } = useNamedAgents();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -50,6 +72,7 @@ function AccountAgentMessaging() {
       );
       refreshNamedAgents();
       setRevision((value) => value + 1);
+      onChanged?.();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -65,8 +88,8 @@ function AccountAgentMessaging() {
       style={{ width: "100%", maxWidth: 1000, minWidth: 0 }}
     >
       <p style={{ marginBottom: 0 }}>
-        These account-wide controls affect all Agent Networks and external agent
-        installations.
+        These account-wide controls affect all Agent Networks, the computers
+        they use, and external agent installations.
       </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <Button
@@ -109,7 +132,7 @@ function AccountAgentMessaging() {
       {directory?.controls?.paused && (
         <Alert type="warning" title="All agent messaging is paused" />
       )}
-      <ExternalAgentInstallations revision={revision} />
+      {installations && <ExternalAgentInstallations revision={revision} />}
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
