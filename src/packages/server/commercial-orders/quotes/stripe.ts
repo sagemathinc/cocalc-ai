@@ -35,6 +35,7 @@ import {
   resolveCommercialStripeCustomer,
 } from "../invoices/stripe";
 import { recordCommercialProviderFailure } from "../observability";
+import { commercialInvoicePaymentSettings } from "../payment-settings";
 import {
   buildCommercialQuotePreview,
   commercialIdempotencyKey,
@@ -59,7 +60,6 @@ import { registerCommercialOrderBillingAccount } from "../billing-authority";
 const logger = getLogger("server:commercial-orders:stripe-quotes");
 const FLOW = "commercial_quote";
 const MAX_PDF_BYTES = 2_097_152;
-const PAYMENT_METHOD_TYPES = ["card", "us_bank_account"] as const;
 
 type StripeConnection = Awaited<ReturnType<typeof getConn>>;
 
@@ -1118,9 +1118,7 @@ async function normalizeAcceptedInvoice(opts: {
       automatic_tax: {
         enabled: commercialTaxPolicy(opts.order.terms_snapshot).enabled,
       },
-      payment_settings: {
-        payment_method_types: [...PAYMENT_METHOD_TYPES],
-      },
+      payment_settings: commercialInvoicePaymentSettings(),
       metadata: {
         ...(invoice.metadata ?? {}),
         flow: "commercial_order",

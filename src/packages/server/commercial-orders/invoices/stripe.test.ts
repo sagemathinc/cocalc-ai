@@ -210,7 +210,7 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
     description: "Example University: AR-2026-000001",
     automatic_tax: { enabled: false },
     payment_settings: {
-      payment_method_types: ["card", "us_bank_account"],
+      payment_method_types: ["card", "us_bank_account", "customer_balance"],
     },
     subtotal: 390000,
     total: 390000,
@@ -340,7 +340,13 @@ describe("commercial Stripe invoices", () => {
         customer: "cus_1",
         days_until_due: 30,
         payment_settings: {
-          payment_method_types: ["card", "us_bank_account"],
+          payment_method_types: ["card", "us_bank_account", "customer_balance"],
+          payment_method_options: {
+            customer_balance: {
+              funding_type: "bank_transfer",
+              bank_transfer: { type: "us_bank_transfer" },
+            },
+          },
         },
         metadata: expect.objectContaining({
           flow: "commercial_order",
@@ -1398,6 +1404,38 @@ describe("commercial Stripe invoices", () => {
     );
   });
 
+  it("still finalizes a draft created before bank transfer was offered", async () => {
+    const legacy = {
+      payment_settings: { payment_method_types: ["us_bank_account", "card"] },
+    };
+    const invoice = invoiceFixture({ status: "draft" });
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ invoices: [invoice] }),
+    );
+    mockGetCommercialInvoice.mockResolvedValue(invoice);
+    stripe.invoices.retrieve.mockResolvedValue(stripeInvoiceFixture(legacy));
+    stripe.invoices.finalizeInvoice.mockResolvedValue(
+      stripeInvoiceFixture({ ...legacy, status: "open" }),
+    );
+    stripe.invoices.sendInvoice.mockResolvedValue(
+      stripeInvoiceFixture({
+        ...legacy,
+        status: "open",
+        hosted_invoice_url: "https://invoice.test/in_1",
+      }),
+    );
+
+    await sendStripeCommercialInvoice({
+      id: "co_1",
+      commercial_invoice_id: "ci_1",
+      account_id: "admin-1",
+      expected_version: 4,
+      reason: "Send approved invoice",
+    });
+
+    expect(stripe.invoices.sendInvoice).toHaveBeenCalled();
+  });
+
   it("finalizes an invoice whose description is the approved invoice memo", async () => {
     const memo = "University PO 5874860; campus adoption pilot.";
     const invoice = invoiceFixture({ status: "draft" });
@@ -1506,6 +1544,15 @@ describe("commercial Stripe invoices", () => {
     [
       "payment methods",
       { payment_settings: { payment_method_types: ["card"] } },
+      "payment settings",
+    ],
+    [
+      "bank transfer without ACH",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "customer_balance"],
+        },
+      },
       "payment settings",
     ],
   ])(

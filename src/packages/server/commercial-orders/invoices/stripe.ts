@@ -62,11 +62,13 @@ import {
   requireReason,
 } from "../state";
 import { registerCommercialOrderBillingAccount } from "../billing-authority";
+import {
+  commercialInvoicePaymentSettings,
+  isApprovedPaymentMethodSet,
+} from "../payment-settings";
 
 const logger = getLogger("server:commercial-orders:stripe");
 const FLOW = "commercial_order";
-const PAYMENT_METHOD_TYPES = ["card", "us_bank_account"] as const;
-
 function dueAt(order: CommercialOrder, from = new Date()): string {
   const date = new Date(from.getTime());
   date.setUTCDate(
@@ -764,10 +766,6 @@ function sortedCustomFields(value: unknown): Array<{
     );
 }
 
-function sortedPaymentMethods(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(String).sort() : [];
-}
-
 async function assertInvoiceDeliveryMatchesOrder(opts: {
   stripe: Awaited<ReturnType<typeof getConn>>;
   stripeInvoice: any;
@@ -823,11 +821,9 @@ function assertInvoiceDeliveryConfiguration(
   }
   assertCommercialAutomaticTax(stripeInvoice, order);
   if (
-    JSON.stringify(
-      sortedPaymentMethods(
-        stripeInvoice.payment_settings?.payment_method_types,
-      ),
-    ) !== JSON.stringify([...PAYMENT_METHOD_TYPES].sort())
+    !isApprovedPaymentMethodSet(
+      stripeInvoice.payment_settings?.payment_method_types,
+    )
   ) {
     throw Error(
       "Stripe invoice payment settings do not match the approved order",
@@ -1053,9 +1049,7 @@ export async function createStripeCommercialInvoiceDraft(
           automatic_tax: {
             enabled: commercialTaxPolicy(order.terms_snapshot).enabled,
           },
-          payment_settings: {
-            payment_method_types: [...PAYMENT_METHOD_TYPES],
-          },
+          payment_settings: commercialInvoicePaymentSettings(),
         },
         { idempotencyKey: `${keyPrefix}:invoice` },
       );
