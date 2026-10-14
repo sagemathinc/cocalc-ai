@@ -45,6 +45,7 @@ import {
   configureLiteSiteSettingsFreshAuth,
 } from "./site-settings-fresh-auth";
 import { trimSlashes } from "@cocalc/util/linear-text";
+import { plusUpdateStatus } from "./plus-update-status";
 
 const logger = getLogger("lite:static");
 
@@ -207,6 +208,11 @@ export async function initApp({
   } else {
     logger.warn("public assets not found");
   }
+
+  // CoCalc Plus: is a newer release installed (it applies on restart)?
+  app.get("/plus/update-status", async (_, res) => {
+    res.json(await plusUpdateStatus());
+  });
 
   app.get("/customize", async (_, res) => {
     const payload = await getCustomizePayload();

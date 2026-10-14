@@ -30,6 +30,7 @@ function configureProcessMaxListeners() {
 function usage() {
   console.log(`Usage:
   cocalc-plus version
+  cocalc-plus update [--check | --rollback | --resume | --auto on|off]
   cocalc-plus cli [args...]
   cocalc-plus reflect --version
   cocalc-plus reflect-sync [args...]
@@ -337,6 +338,70 @@ function getPackageVersion() {
   return "unknown";
 }
 
+/*
+ * When this Lite was started by the installed launcher (distribution Phase
+ * A), before it opens any data: under the update lock, refuse if another
+ * Lite server already owns the data, revalidate this release, pin this
+ * process as its server, and snapshot the data if a different release used
+ * it last. Any failure stops the start. Then check for updates in the
+ * background: they install but never apply to a running Lite; they take
+ * effect the next time it starts.
+ */
+async function prepareInstalledRelease(paths: {
+  root: string;
+  data: string;
+}): Promise<void> {
+  const line = process.env.COCALC_PLUS_ACTIVE;
+  const root = process.env.COCALC_PLUS_DIST_ROOT;
+  if (!line || !root) return;
+  const plus = await import("@cocalc/cli/distribution/plus");
+  const { updatePlusFromOrigin } =
+    await import("@cocalc/cli/distribution/plus-update");
+  const { readState } = await import("@cocalc/cli/distribution/local");
+  const pin = path.join(root, "running", `${process.pid}`);
+  process.on("exit", () => {
+    try {
+      if (JSON.parse(fs.readFileSync(pin, "utf8")).line === line) {
+        fs.unlinkSync(pin);
+      }
+    } catch {
+      // ignore
+    }
+  });
+  try {
+    const result = await plus.prepareServer({
+      root,
+      line,
+      paths: { home: paths.root, data: paths.data },
+    });
+    if (result === "snapshot") {
+      console.log(
+        `Saved a snapshot of your CoCalc Plus data before this version first uses it (${paths.data}.snapshot).`,
+      );
+    } else if (result === "no-snapshot") {
+      console.log(
+        `Your CoCalc Plus data directory (${paths.data}) is a mount point, so no snapshot was taken; a rollback won't be able to restore older data.`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `cocalc-plus: not starting: ${err instanceof Error ? err.message : err}`,
+    );
+    process.exit(1);
+  }
+  const state = await readState(root).catch(() => undefined);
+  if (state?.auto && process.env.COCALC_AUTO_UPDATE !== "0") {
+    const check = () =>
+      updatePlusFromOrigin({ root, explicit: false })
+        .then((outcome) => {
+          if (outcome.status === "updated") console.log(outcome.message);
+        })
+        .catch(() => {});
+    setTimeout(check, 60_000).unref();
+    setInterval(check, 6 * 60 * 60_000).unref();
+  }
+}
+
 function runCliCommand(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     let cliEntry: string;
@@ -418,6 +483,7 @@ async function runCli() {
     arg &&
     (arg.startsWith("-") ||
       arg === "cli" ||
+      arg === "update" ||
       arg === "ssh" ||
       arg === "star" ||
       arg === "version" ||
@@ -466,6 +532,17 @@ async function runCli() {
   }
   if (argv[0] === "cli") {
     await runCliCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "update") {
+    const { runPlusUpdateCommand } =
+      await import("@cocalc/cli/distribution/plus-update");
+    const { plusRoot } = await import("@cocalc/cli/distribution/plus");
+    const paths = plusRuntimePaths();
+    process.exitCode = await runPlusUpdateCommand(argv.slice(1), {
+      root: plusRoot(),
+      dataPaths: { home: paths.root, data: paths.data },
+    });
     return;
   }
   if (argv[0] === "reflect") {
@@ -571,7 +648,8 @@ async function runCli() {
     return;
   }
 
-  configurePlusRuntime();
+  const runtimePaths = configurePlusRuntime();
+  await prepareInstalledRelease(runtimePaths);
   await ensureLitePort();
 
   writeVersionInfo();

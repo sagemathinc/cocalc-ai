@@ -623,6 +623,9 @@ describe("project-host bearer account auth", () => {
       auth_iat_s: 100,
       auth_exp_s: 1000,
       auth_token_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      auth_api_key_reply_prefix: expect.stringMatching(
+        /^_INBOX\.api-key-[0-9a-f-]{36}$/,
+      ),
     });
     expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
     expect(isAccountBannedCachedMock).toHaveBeenCalledWith(account_id);
@@ -707,6 +710,10 @@ describe("project-host bearer account auth", () => {
     const first = (await getUser(makeSocket("first"))) as any;
     const refreshed = (await getUser(makeSocket("second"))) as any;
     expect(refreshed.auth_token_fingerprint).toBe(first.auth_token_fingerprint);
+    // so a refreshed token keeps the same reply inbox
+    expect(refreshed.auth_api_key_reply_prefix).toBe(
+      first.auth_api_key_reply_prefix,
+    );
     expect(refreshed.auth_iat_s).toBe(500);
   });
 
@@ -1045,6 +1052,50 @@ describe("file-server management authorization", () => {
         subject: `hub.agent.${account_id}.${project_id}.${fingerprint}.100.1000.api`,
       }),
     ).resolves.toBe(false);
+  });
+
+  it("gives an agent session replies of its own, not its account's", async () => {
+    verifyProjectHostAuthTokenMock.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      aud: `project-host:${host_id}`,
+      iat: 100,
+      exp: 1000,
+      jti: "00000000-0000-4000-8000-000000000097",
+      auth_actor: "agent",
+      project_id,
+    });
+    const agent = (await getUser({
+      handshake: {
+        auth: { bearer: projectHostBearerToken("agent-replies") },
+        headers: {},
+      },
+    })) as any;
+    const own = agent.auth_api_key_reply_prefix;
+    expect(own).toMatch(/^_INBOX\.api-key-[0-9a-f-]{36}$/);
+    const accountInbox = `_INBOX.account-${account_id}`;
+    for (const subject of [accountInbox, `${accountInbox}.abc.>`, "_INBOX.>"]) {
+      await expect(
+        isAllowed({ user: agent, type: "sub", subject }),
+      ).resolves.toBe(false);
+    }
+    for (const subject of [own, `${own}.abc.>`]) {
+      await expect(
+        isAllowed({ user: agent, type: "sub", subject }),
+      ).resolves.toBe(true);
+    }
+    // it can still answer requests, including its account's
+    await expect(
+      isAllowed({ user: agent, type: "pub", subject: `${accountInbox}.abc.1` }),
+    ).resolves.toBe(true);
+    // and the account itself still gets its own inbox
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "sub",
+        subject: `${accountInbox}.abc.>`,
+      }),
+    ).resolves.toBe(true);
   });
 });
 

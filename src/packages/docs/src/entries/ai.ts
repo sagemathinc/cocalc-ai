@@ -63,7 +63,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     slug: "ai/agent-memory",
     status: "ready",
     searchKeywords:
-      "memory remember forget notes saved notes index persistent preferences Codex Claude project chat memory",
+      "memory remember forget notes saved notes index persistent preferences namespaces search export Codex Claude project chat memory",
     summary:
       "Let Codex and Claude Code keep short notes across sessions and projects: turn it on, see what agents see, and manage notes.",
     title: "Agent memory",

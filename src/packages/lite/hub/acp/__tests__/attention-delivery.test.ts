@@ -21,6 +21,7 @@ import {
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
 import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
+import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
 import {
   claimAcpSteer,
   decodeAcpSteerRequest,
@@ -1433,4 +1434,139 @@ it("does not switch to another payer when the answer's selected subscription is 
     }),
   ).rejects.toThrow("Selected subscription revoked");
   expect(listQueuedAcpJobs()).toEqual([]);
+});
+
+describe("a failed turn another agent's message started", () => {
+  const attempt_id = "55555555-5555-4555-8555-555555555555";
+  let reportRpcTurnFailure: jest.Mock;
+  const original = hubApi.agent.reportRpcTurnFailure;
+  beforeEach(() => {
+    reportRpcTurnFailure = jest.fn(async () => ({ message_id: "report" }));
+    hubApi.agent.reportRpcTurnFailure = reportRpcTurnFailure;
+  });
+  afterEach(() => {
+    if (original === undefined) delete hubApi.agent.reportRpcTurnFailure;
+    else hubApi.agent.reportRpcTurnFailure = original;
+  });
+
+  it("is reported to the message's sender, once", async () => {
+    const request = rpcTurnRequest(undefined);
+    request.chat!.agent_rpc_execution!.attempt_id = attempt_id;
+    request.chat!.agent_rpc_execution!.report_capability =
+      "1791800000000." + "c".repeat(43);
+    // The turn fails (here: before the model ran).
+    mockAuthorizeRpcExecution.mockRejectedValue(
+      new Error("You've hit your usage limit."),
+    );
+    const job = startRunningTurn(request);
+    await acpTestInternals.runQueuedAcpJob(job);
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("error");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportRpcTurnFailure).toHaveBeenCalledTimes(1);
+    expect(reportRpcTurnFailure.mock.calls[0][0]).toMatchObject({
+      account_id: accountId,
+      report: {
+        attempt_id,
+        kind: "limit",
+        turn_started_at: job.started_at,
+        authorization: request.chat!.agent_rpc_execution,
+      },
+    });
+    // Delivered: nothing left to send.
+    expect(listDueAgentRpcReports(Date.now() + 3_600_000)).toHaveLength(0);
+  });
+
+  const reportable = () => {
+    const request = rpcTurnRequest(undefined);
+    request.chat!.agent_rpc_execution!.attempt_id = attempt_id;
+    request.chat!.agent_rpc_execution!.report_capability =
+      "1791800000000." + "c".repeat(43);
+    return request;
+  };
+
+  it("when the recovery poll declines a retry still pending", async () => {
+    const job = startRunningTurn(reportable());
+    // The turn failed with a recoverable error whose retry was not queued
+    // yet: the persisted intent stands for "maybe not over".
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error: "The harness was killed.",
+      recovery_code: "acp_harness_killed",
+      recovery_detail: "killed",
+    });
+    // The recovery poll declines it (a Codex job is not a harness job).
+    await acpTestInternals.recoverPendingFailureRecoveryIntents({
+      client: {} as Client,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportRpcTurnFailure).toHaveBeenCalledTimes(1);
+    expect(reportRpcTurnFailure.mock.calls[0][0].report).toMatchObject({
+      attempt_id,
+      detail: "The harness was killed.",
+      turn_started_at: job.started_at,
+    });
+  });
+
+  it("from when the first of its recovery continuations started", async () => {
+    const first = startRunningTurn(reportable());
+    setAcpJobState({ op_id: first.op_id, state: "error", error: "capacity" });
+    const continuation = reportable();
+    continuation.recovery_parent_op_id = first.op_id;
+    continuation.chat = {
+      ...continuation.chat!,
+      parent_message_id: "recovery-user",
+      message_id: "recovery-assistant",
+      recovery_parent_op_id: first.op_id,
+    };
+    // Later, so a reply sent during the first turn still counts.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const resumed = startRunningTurn(continuation);
+    expect(resumed.started_at).toBeGreaterThan(first.started_at!);
+    mockAuthorizeRpcExecution.mockRejectedValue(
+      new Error("You've hit your usage limit."),
+    );
+    await acpTestInternals.runQueuedAcpJob(resumed);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportRpcTurnFailure.mock.calls[0][0].report).toMatchObject({
+      attempt_id,
+      turn_started_at: first.started_at,
+    });
+  });
+
+  it("but a person's failed turn is not reported", async () => {
+    mockAuthorizeRpcExecution.mockRejectedValue(new Error("unused"));
+    const job = startRunningTurn(turnRequest(undefined));
+    await acpTestInternals.runQueuedAcpJob(job);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportRpcTurnFailure).not.toHaveBeenCalled();
+  });
+});
+
+it("guidance that falls back to a new turn carries no client recovery lineage", async () => {
+  const request = {
+    ...turnRequest({ paymentSource: "site-api-key" }),
+    recovery_parent_op_id: "client-chosen-op",
+    recovery_reason: "server restart",
+    recovery_count: 1,
+  } as AcpSteerRequest;
+  request.chat = {
+    ...request.chat!,
+    recovery_parent_op_id: "client-chosen-op",
+    recovery_reason: "server restart",
+    recovery_count: 1,
+  } as any;
+  mockSteer.mockResolvedValue({ state: "missing" });
+  const { state } = await acpTestInternals.handleAcpSteerRequest(request);
+  expect(["queued", "running"]).toContain(state);
+  const jobs = getAcpDatabase()
+    .prepare("SELECT * FROM acp_jobs")
+    .all() as any[];
+  expect(jobs).toHaveLength(1);
+  const [job] = jobs;
+  expect(job.recovery_parent_op_id ?? null).toBeNull();
+  const queued = decodeAcpJobRequest(job);
+  expect(queued).not.toHaveProperty("recovery_parent_op_id");
+  expect(queued.chat).not.toHaveProperty("recovery_parent_op_id");
+  expect(queued.chat).not.toHaveProperty("recovery_count");
 });

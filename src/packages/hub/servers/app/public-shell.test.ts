@@ -8,7 +8,7 @@ import {
   PUBLIC_STATIC_BASE_PLACEHOLDER,
 } from "@cocalc/util/public-site-metadata";
 import { renderPublicFooterPrerender } from "./public-prerender";
-import { renderPublicShell } from "./public-shell";
+import { renderPublicShell, servePublicShell } from "./public-shell";
 
 // Public site fixtures model Launchpad explicitly; an unset product defaults
 // to Plus, whose smaller docs catalog intentionally excludes these pages.
@@ -1112,5 +1112,82 @@ describe("footer page links in the initial HTML", () => {
       ["/prefix/docs", "/prefix/guides", "/prefix/support"],
       ["/prefix/about", "/prefix/news"],
     ]);
+  });
+});
+
+describe("public shell framing headers", () => {
+  function serve(target: string): Promise<Record<string, string>> {
+    return new Promise((resolve) => {
+      const headers: Record<string, string> = {};
+      const res: any = {
+        setHeader: (name: string, value: string) => {
+          headers[name.toLowerCase()] = value;
+        },
+        vary: () => {},
+        redirect: () => resolve(headers),
+        status: () => res,
+        type: () => res,
+        send: () => resolve(headers),
+      };
+      servePublicShell(request("/static/public.html", { target }), res);
+    });
+  }
+
+  it.each([
+    "/auth/oauth/authorize?response_type=code&client_id=sagebrush",
+    "/auth/x/../oauth/authorize?response_type=code&client_id=sagebrush",
+    "/auth/sign-in",
+    "/invites/abc123",
+    "/sso/google",
+  ])("denies framing for %s", async (target) => {
+    const headers = await serve(target);
+    expect(headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+    expect(headers["x-frame-options"]).toBe("DENY");
+  });
+
+  it("denies framing for an auth page served at its own path", async () => {
+    const headers = await new Promise<Record<string, string>>((resolve) => {
+      const headers: Record<string, string> = {};
+      const res: any = {
+        setHeader: (name: string, value: string) => {
+          headers[name.toLowerCase()] = value;
+        },
+        vary: () => {},
+        redirect: () => resolve(headers),
+        status: () => res,
+        type: () => res,
+        send: () => resolve(headers),
+      };
+      servePublicShell(request("/auth/sign-in"), res);
+    });
+    expect(headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+    expect(headers["x-frame-options"]).toBe("DENY");
+  });
+
+  it.each(["/sso/google", "/invites/abc123", "/redeem/xyz"])(
+    "denies framing for %s served at its own path",
+    async (path) => {
+      const headers = await new Promise<Record<string, string>>((resolve) => {
+        const headers: Record<string, string> = {};
+        const res: any = {
+          setHeader: (name: string, value: string) => {
+            headers[name.toLowerCase()] = value;
+          },
+          vary: () => {},
+          redirect: () => resolve(headers),
+          status: () => res,
+          type: () => res,
+          send: () => resolve(headers),
+        };
+        servePublicShell(request(path), res);
+      });
+      expect(headers["x-frame-options"]).toBe("DENY");
+    },
+  );
+
+  it("leaves other public pages as they were", async () => {
+    const headers = await serve("/features/jupyter-notebook");
+    expect(headers["content-security-policy"]).toBeUndefined();
+    expect(headers["x-frame-options"]).toBeUndefined();
   });
 });

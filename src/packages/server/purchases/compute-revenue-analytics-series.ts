@@ -64,7 +64,9 @@ interface UsageResult extends Omit<
 export async function getComputeRevenueSeriesLocal({
   query = {},
   // query-cache-ok: admin analytics: compute revenue series
-  client = getCachedReadPool("medium"),
+  client = getCachedReadPool("medium", {
+    label: "compute-revenue-analytics-series",
+  }),
 }: {
   query?: ComputeRevenueSeriesQuery;
   client?: Queryable;

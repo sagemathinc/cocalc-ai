@@ -134,6 +134,12 @@ export interface AgentRpcControlApi {
   ): Promise<
     import("@cocalc/conat/agents/external").ExternalAgentControlResult
   >;
+  /** Agent memory, run on the account's home bay (server/agents/memory-home.ts). */
+  memory(opts: {
+    account_id: string;
+    home_bay_id: string;
+    request: import("@cocalc/conat/agents/memory").AgentMemoryHomeRequest;
+  }): Promise<any>;
   personal(opts: {
     account_id: string;
     home_bay_id: string;
@@ -165,6 +171,19 @@ export interface AgentRpcControlApi {
   inspect(
     opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcAttempt },
   ): Promise<AgentRpcOutcome>;
+  /**
+   * Trusted fabric only, at the message sender's project bay: write a
+   * delivery report into the sender's chat (the reporting bay rechecked it).
+   */
+  deliverReport(
+    opts: RpcRoute & {
+      account_id: string;
+      report: import("@cocalc/conat/agents/rpc-reports").AgentRpcTurnFailureReport;
+      target_label: string;
+    },
+  ): Promise<
+    import("@cocalc/conat/agents/rpc-reports").AgentRpcReportDeliveryResult
+  >;
 }
 function subject(bay: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(bay)) throw new Error("invalid bay");

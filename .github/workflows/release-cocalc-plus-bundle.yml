@@ -1,0 +1,72 @@
+name: Release CoCalc Plus (bundle)
+
+# Distribution Phase A for CoCalc Plus (cocalc-lite): build Lite for each
+# platform (with its native modules), the frontend, the tools and a pinned
+# Node, and publish them to software.cocalc.ai/software/plus, where
+# `curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh` and
+# every installed CoCalc Plus get them. One click.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Platforms to build"
+        required: true
+        default: linux-x64,linux-arm64,darwin-arm64
+        type: string
+
+concurrency:
+  group: cocalc-plus-bundle-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    environment: cocalc-cli-release
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm -C src/packages install --frozen-lockfile
+
+      - name: Build the workspace (including the frontend)
+        run: cd src && pnpm build
+
+      - name: Build the release
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: node src/packages/plus/dist-release/build-release.mjs --platforms "$PLATFORMS"
+
+      - name: Publish the release
+        env:
+          COCALC_R2_ACCOUNT_ID: ${{ secrets.COCALC_R2_ACCOUNT_ID }}
+          COCALC_R2_ACCESS_KEY_ID: ${{ secrets.COCALC_R2_ACCESS_KEY_ID }}
+          COCALC_R2_SECRET_ACCESS_KEY: ${{ secrets.COCALC_R2_SECRET_ACCESS_KEY }}
+          COCALC_R2_BUCKET: ${{ secrets.COCALC_R2_BUCKET }}
+        run: node src/packages/cli/dist-release/publish-release.mjs --build src/packages/plus/build/plus-release
+
+      - name: Install it in a clean container
+        run: |
+          set -Eeuo pipefail
+          docker run --rm ubuntu:24.04 bash -c '
+            set -Eeuo pipefail
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+            curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh
+            ~/.local/bin/cocalc-plus version
+            ~/.local/bin/cocalc-plus update --check
+          '

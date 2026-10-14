@@ -182,6 +182,176 @@ describe("routing by ownership", () => {
   });
 });
 
+describe("agent delivery reports across bays", () => {
+  // The seed forwards a report about a message to the bay that owns the
+  // sender's project, over the real fabric; only that bay may write it, and
+  // only with the capability a hub of this cluster minted for the message.
+  async function deliverFromSeed({ project_id, forged = false }) {
+    const report = {
+      version: 1,
+      report_id: randomUUID(),
+      attempt_id: randomUUID(),
+      turn_started_at: Date.now() - 60_000,
+      kind: "error",
+    };
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { resolveProjectBay } = server("inter-bay/directory.js");
+       const { signAgentRpcReportCapability } = server("agents/rpc-report-capability.js");
+       const { createAgentRpcControlClient } = require("@cocalc/conat/inter-bay/agent-rpc");
+       const report = ${JSON.stringify(report)};
+       const project_id = ${JSON.stringify(project_id)};
+       report.authorization = {
+         version: 3,
+         source: { project_id, agent_id: ${JSON.stringify(randomUUID())} },
+         source_run_id: ${JSON.stringify(randomUUID())},
+         target: { project_id: ${JSON.stringify(alice.project)}, agent_id: ${JSON.stringify(randomUUID())} },
+         target_path: "/home/user/b.chat",
+         target_thread_id: "thread-b",
+         agent_network_id: ${JSON.stringify(randomUUID())},
+         network_generation: ${JSON.stringify(randomUUID())},
+         account_generation: 1,
+         configured_delivery: "queued",
+         principal_account_id: ${JSON.stringify(bob.account_id)},
+         guidance: false,
+         attempt_id: report.attempt_id,
+       };
+       report.authorization.report_capability = ${forged}
+         ? Date.now() + "." + "A".repeat(43)
+         : signAgentRpcReportCapability(report.authorization);
+       const route = await resolveProjectBay(project_id);
+       try {
+         await createAgentRpcControlClient(getInterBayFabricClient(), ${JSON.stringify(ATTACHED)}).deliverReport({
+           project_id,
+           route: { bay_id: ${JSON.stringify(ATTACHED)}, epoch: route.epoch },
+           account_id: ${JSON.stringify(bob.account_id)},
+           report,
+           target_label: "@reviewer",
+         });
+         return "delivered";
+       } catch (err) {
+         return String(err?.message ?? err);
+       }`,
+    );
+  }
+
+  it("refuses a report for a project the bay does not own", async () => {
+    assert.match(
+      await deliverFromSeed({ project_id: alice.project }),
+      /stale agent RPC route/,
+    );
+  });
+
+  it("refuses a report without a capability this cluster minted", async () => {
+    assert.match(
+      await deliverFromSeed({ project_id: bob.project, forged: true }),
+      /does not match an admitted message/,
+    );
+  });
+
+  it("accepts the seed's capability and looks the sender up where it lives", async () => {
+    // No agent is registered in this cluster: reaching the owning bay's own
+    // identity lookup means routing and the capability were accepted.
+    assert.match(
+      await deliverFromSeed({ project_id: bob.project }),
+      /agent not found/,
+    );
+  });
+});
+
+describe("agent memory on the account's home bay", () => {
+  // The seed handles a memory request for bob, whose home is the attached
+  // bay: it must run there, over the real fabric, with real encryption.
+  const fromSeed = (kind, request, extra = {}) =>
+    runInBay(
+      cluster,
+      SEED,
+      `const { withMemoryHome } = server("agents/memory-home.js");
+       return await withMemoryHome(${JSON.stringify(bob.account_id)}, {
+         kind: ${JSON.stringify(kind)},
+         ${extra.project_id ? `project_id: ${JSON.stringify(extra.project_id)},` : ""}
+         request: ${JSON.stringify(request)},
+       });`,
+    );
+  const rowsIn = (bay, table) =>
+    runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT * FROM ${table} WHERE account_id=$1",
+         [${JSON.stringify(bob.account_id)}]);
+       return rows;`,
+    );
+
+  it("settings and notes written through the seed are stored on bob's home bay", async () => {
+    assert.ok(bob.project, "bob's project from routing by ownership");
+    await fromSeed("owner", { op: "set-enabled", enabled: true });
+    await fromSeed("owner", {
+      op: "namespace-save",
+      name: "multibay",
+      description: "Two-bay test notes",
+    });
+    await fromSeed("owner", {
+      op: "set-project-namespaces",
+      project_id: bob.project,
+      namespaces: ["multibay"],
+    });
+    const saved = await fromSeed(
+      "agent",
+      {
+        action: "memory",
+        op: "write",
+        name: "crossing",
+        description: "Saved through the seed",
+        body: "This text must be stored encrypted.",
+      },
+      { project_id: bob.project },
+    );
+    const { revision, ...rest } = saved;
+    assert.deepEqual(rest, {
+      name: "multibay/crossing",
+      namespace: "multibay",
+      saved: "created",
+    });
+    assert.match(revision, /^[0-9a-f]{16}$/);
+    const notes = await rowsIn(ATTACHED, "agent_memory_notes");
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].namespace, "multibay");
+    assert.ok(!notes[0].body.includes("stored encrypted"));
+    assert.equal((await rowsIn(ATTACHED, "agent_memory_accounts")).length, 1);
+    assert.equal((await rowsIn(SEED, "agent_memory_notes")).length, 0);
+    assert.equal((await rowsIn(SEED, "agent_memory_accounts")).length, 0);
+  });
+
+  it("the turn index and search come back across the bays", async () => {
+    const index = await fromSeed("turn-index", undefined, {
+      project_id: bob.project,
+    });
+    assert.equal(index.notes, 1);
+    assert.match(index.index, /- multibay: Two-bay test notes/);
+    assert.match(index.index, /- multibay\/crossing: Saved through the seed/);
+    const found = await fromSeed(
+      "agent",
+      { action: "memory", op: "search", query: "encrypted" },
+      { project_id: bob.project },
+    );
+    assert.deepEqual(
+      found.results.map((r) => r.name),
+      ["multibay/crossing"],
+    );
+    // Another of bob's projects does not see the namespace.
+    const elsewhere = await fromSeed(
+      "agent",
+      { action: "memory", op: "list" },
+      { project_id: alice.project },
+    );
+    assert.deepEqual(elsewhere.notes, []);
+  });
+});
+
 describe("cross-bay collaboration", () => {
   it("lists a seed-owned project for a collaborator homed on the attached bay", async () => {
     await invite(alice, bob, alice.project);
@@ -323,6 +493,41 @@ describe("a project managed from the other bay", () => {
     await assert.rejects(rename(alice.client, project, "viewer rename"));
     assert.equal((await listed(bob.client, project))?.title, "renamed by bob");
   });
+
+  it("lets the new owner on the other bay transfer ownership back", async () => {
+    // A transfer runs on the project's bay, which records each call
+    // forwarded to it; fresh auth and admin status come from bob's home bay.
+    const forwardedTransfers = async () =>
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.transferProjectOwnership' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(ATTACHED)}, ${JSON.stringify(bob.account_id)}]);
+         return rows[0].n;`,
+      );
+    await bob.client.call("projects.setProjectUserRole", {
+      opts: {
+        project_id: project,
+        target_account_id: alice.account_id,
+        role: "collaborator",
+      },
+    });
+    const before = await forwardedTransfers();
+    await bob.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: bob.account_id,
+      to_account_id: alice.account_id,
+    });
+    assert.equal(await forwardedTransfers(), before + 1);
+    await eventually(
+      async () =>
+        (await listed(alice.client, project))?.users_summary?.[alice.account_id]
+          ?.group === "owner",
+      { what: "alice to be the owner again in her list" },
+    );
+  });
 });
 
 describe("project secrets across bays", () => {
@@ -444,6 +649,149 @@ describe("project control across bays", () => {
       project_id: bob.project,
     });
     assert.ok(op === null || op?.project_id === bob.project);
+  });
+});
+
+describe("document history across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, reads and purges a document's edit history (TimeTravel), which
+  // lives with the project.
+  const path = "history.txt";
+
+  it("reads and purges the history on the project's bay", async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { conat } = require("@cocalc/backend/conat");
+       const { patchesStreamName } = require("@cocalc/conat/sync/synctable-stream");
+       const stream = conat().sync.astream({
+         project_id: ${JSON.stringify(bob.project)},
+         name: patchesStreamName({ path: ${JSON.stringify(path)} }),
+         noInventory: true,
+       });
+       for (let i = 0; i < 3; i++) {
+         const time = Date.now() + i;
+         await stream.publish({ time, wall: time, patch: "[]", user_id: 0, parents: [] });
+       }
+       stream.close();`,
+    );
+    const history = await alice.client.call("sync.history", {
+      project_id: bob.project,
+      path,
+    });
+    assert.equal(history.patches.length, 3);
+    const result = await alice.client.call("sync.purgeHistory", {
+      project_id: bob.project,
+      path,
+    });
+    assert.deepEqual(result, { deleted: 3, history_epoch: 1, reset: true });
+    const purged = await alice.client.call("sync.history", {
+      project_id: bob.project,
+      path,
+    });
+    assert.equal(purged.patches.length, 0);
+  });
+
+  it("refuses a non-member on the other bay", async () => {
+    const hana = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "hana",
+    });
+    hana.client = await client(hana);
+    await assert.rejects(
+      hana.client.call("sync.history", { project_id: bob.project, path }),
+    );
+    await assert.rejects(
+      hana.client.call("sync.purgeHistory", { project_id: bob.project, path }),
+    );
+  });
+});
+
+describe("project moves across bays", () => {
+  // bob's project lives on the attached bay; alice, a collaborator homed on
+  // the seed, asks to move it or place it on a host. Both are routed to the
+  // project's bay, which records each forwarded call it runs. (This
+  // cluster's workspace runtime supports neither, so the method's answer is
+  // that refusal.)
+  const forwardedCalls = async (name) =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND account_id=$3 AND finished IS NOT NULL",
+         [${JSON.stringify(name)}, ${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+  for (const [name, args, capability] of [
+    ["projects.moveProject", {}, "move"],
+    [
+      "projects.assignProjectHost",
+      { dest_host_id: randomUUID() },
+      "host placement",
+    ],
+  ]) {
+    it(`${name} runs on the project's bay`, async () => {
+      assert.ok(bob.project, "needs bob's project");
+      const before = await forwardedCalls(name);
+      await assert.rejects(
+        alice.client.call(name, { project_id: bob.project, ...args }),
+        new RegExp(
+          `${capability} is unsupported by the trusted workspace runtime`,
+        ),
+      );
+      assert.equal(await forwardedCalls(name), before + 1);
+    });
+  }
+});
+
+describe("bulk project stop across bays", () => {
+  // carol, homed on the seed, stops a project on each bay in one call. Each
+  // project's stop is its own call, forwarded to the project's bay when it is
+  // not this one; that bay records each forwarded call it runs. This cluster
+  // has no project hosts, so the stops themselves do not finish here: the
+  // test checks only where each one runs, with accounts and projects of its
+  // own (the hung stops then affect nothing else).
+  let carol;
+  let dave;
+  const forwardedStops = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.stop' AND source_bay_id=$1 AND account_id=$2",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(carol.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("sends the other bay's project's stop to that bay", async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "bulk-stopper",
+    });
+    carol.client = await client(carol);
+    dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "bulk-owner",
+    });
+    dave.client = await client(dave);
+    const local = await createProject(carol.client, "bulk-stop-seed");
+    const remote = await createProject(dave.client, "bulk-stop-attached");
+    await invite(dave, carol, remote);
+    assert.equal(await owningBay(local), SEED);
+    assert.equal(await owningBay(remote), ATTACHED);
+    const before = await forwardedStops();
+    const pending = carol.client
+      .call("projects.stopProjects", { project_ids: [local, remote] })
+      .catch(() => undefined);
+    await eventually(async () => (await forwardedStops()) === before + 1, {
+      what: "the attached bay to run the forwarded stop",
+    });
+    // Only the attached bay's project was forwarded.
+    await sleep(2000);
+    assert.equal(await forwardedStops(), before + 1);
+    void pending;
   });
 });
 

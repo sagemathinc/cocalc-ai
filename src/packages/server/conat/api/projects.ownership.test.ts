@@ -1,9 +1,7 @@
 const fresh = jest.fn();
 const admin = jest.fn();
-const resolve = jest.fn();
+const owned = jest.fn();
 const local = jest.fn();
-const remote = jest.fn();
-const bridge = jest.fn(() => ({ transferProjectOwnership: remote }));
 jest.mock("./dangerous-session-auth", () => ({
   requireDangerousSessionAuth: (...args) => fresh(...args),
 }));
@@ -11,18 +9,13 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args) => admin(...args),
 }));
-jest.mock("@cocalc/server/inter-bay/directory", () => ({
-  resolveProjectBay: (...args) => resolve(...args),
-}));
-jest.mock("@cocalc/server/inter-bay/bridge", () => ({
-  getInterBayBridge: () => ({ projectCollabInvite: bridge }),
-}));
-jest.mock("@cocalc/server/bay-config", () => ({
-  getConfiguredBayId: () => "home",
+jest.mock("@cocalc/server/inter-bay/project-control", () => ({
+  assertCurrentProjectOwnership: (...args) => owned(...args),
 }));
 jest.mock("@cocalc/server/projects/ownership", () => ({
   transferProjectOwnershipExplicitly: (...args) => local(...args),
 }));
+import { getHubApiRoute } from "@cocalc/conat/hub/api/routes";
 import { transferProjectOwnership } from "./projects";
 
 const opts = {
@@ -37,47 +30,47 @@ beforeEach(() => {
   jest.clearAllMocks();
   fresh.mockResolvedValue(undefined);
   admin.mockResolvedValue(false);
-  resolve.mockResolvedValue({ bay_id: "home" });
+  owned.mockResolvedValue(undefined);
 });
-it("requires fresh auth before dispatch, even for admins", async () => {
+it("is routed to the project's owning bay", () => {
+  expect(getHubApiRoute("projects.transferProjectOwnership")?.key([opts])).toBe(
+    opts.project_id,
+  );
+});
+it("requires fresh auth before anything else, even for admins", async () => {
   admin.mockResolvedValue(true);
   fresh.mockRejectedValue(new Error("fresh auth required"));
   await expect(transferProjectOwnership(opts)).rejects.toThrow(
     "fresh auth required",
   );
+  expect(owned).not.toHaveBeenCalled();
   expect(local).not.toHaveBeenCalled();
-  expect(remote).not.toHaveBeenCalled();
 });
-it.each(["home", "owner-bay"])(
-  "rejects impersonated ownership transfers before dispatch to %s",
-  async (bay_id) => {
-    resolve.mockResolvedValue({ bay_id });
-    fresh.mockImplementationOnce(async ({ allow_actor_impersonation }) => {
-      if (allow_actor_impersonation === false) {
-        throw Object.assign(new Error("impersonation blocked"), {
-          code: "impersonation_blocked",
-        });
-      }
-    });
-    await expect(transferProjectOwnership(opts)).rejects.toMatchObject({
-      code: "impersonation_blocked",
-    });
-    expect(fresh).toHaveBeenCalledWith({
-      account_id: opts.account_id,
-      browser_id: opts.browser_id,
-      session_hash: opts.session_hash,
-      require_second_factor: "if_enabled",
-      allow_actor_impersonation: false,
-    });
-    expect(admin).not.toHaveBeenCalled();
-    expect(resolve).not.toHaveBeenCalled();
-    expect(local).not.toHaveBeenCalled();
-    expect(remote).not.toHaveBeenCalled();
-  },
-);
-it("dispatches locally only after resolving owning bay and ignores public admin flags", async () => {
+it("rejects impersonated ownership transfers", async () => {
+  fresh.mockImplementationOnce(async ({ allow_actor_impersonation }) => {
+    if (allow_actor_impersonation === false) {
+      throw Object.assign(new Error("impersonation blocked"), {
+        code: "impersonation_blocked",
+      });
+    }
+  });
+  await expect(transferProjectOwnership(opts)).rejects.toMatchObject({
+    code: "impersonation_blocked",
+  });
+  expect(fresh).toHaveBeenCalledWith({
+    account_id: opts.account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+  expect(admin).not.toHaveBeenCalled();
+  expect(owned).not.toHaveBeenCalled();
+  expect(local).not.toHaveBeenCalled();
+});
+it("transfers here once this bay owns the project, ignoring public admin flags", async () => {
   await transferProjectOwnership({ ...opts, trusted_admin: true } as any);
-  expect(resolve).toHaveBeenCalledWith(opts.project_id);
+  expect(owned).toHaveBeenCalledWith({ project_id: opts.project_id });
   expect(local).toHaveBeenCalledWith({
     account_id: opts.account_id,
     project_id: opts.project_id,
@@ -85,24 +78,19 @@ it("dispatches locally only after resolving owning bay and ignores public admin 
     to_account_id: opts.to_account_id,
     trusted_admin: false,
   });
-  expect(remote).not.toHaveBeenCalled();
 });
-it("routes to the owning bay without forwarding session credentials", async () => {
-  resolve.mockResolvedValue({ bay_id: "owner-bay" });
+it("takes admin status from isAdmin, which asks the actor's home bay", async () => {
   admin.mockResolvedValue(true);
   await transferProjectOwnership(opts);
-  expect(bridge).toHaveBeenCalledWith("owner-bay");
-  expect(remote).toHaveBeenCalledWith({
-    account_id: opts.account_id,
-    project_id: opts.project_id,
-    from_account_id: opts.from_account_id,
-    to_account_id: opts.to_account_id,
-    trusted_admin: true,
-  });
-  expect(local).not.toHaveBeenCalled();
+  expect(admin).toHaveBeenCalledWith(opts.account_id);
+  expect(local).toHaveBeenCalledWith(
+    expect.objectContaining({ trusted_admin: true }),
+  );
 });
-it("does not fall back to local data when ownership cannot be resolved", async () => {
-  resolve.mockResolvedValue(null);
-  await expect(transferProjectOwnership(opts)).rejects.toThrow("not found");
+it("refuses on a bay that does not own the project", async () => {
+  owned.mockRejectedValue(new Error("stale project routing"));
+  await expect(transferProjectOwnership(opts)).rejects.toThrow(
+    "stale project routing",
+  );
   expect(local).not.toHaveBeenCalled();
 });

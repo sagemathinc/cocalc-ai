@@ -26,7 +26,8 @@ import {
 
 export interface AgentMessage extends SlateElement {
   type: "agent-message";
-  direction?: "incoming" | "outgoing";
+  /** "report": CoCalc's delivery report about that agent, not its words. */
+  direction?: "incoming" | "outgoing" | "report";
   agent_network_id?: string;
   attempt_id?: string;
   source_label?: string;
@@ -103,10 +104,14 @@ export function agentMessageFromMarkdownFence({
   let source_label: string | undefined;
   let source_agent_id: string | undefined;
   let source_project_id: string | undefined;
-  let direction: "incoming" | "outgoing" | undefined;
+  let direction: "incoming" | "outgoing" | "report" | undefined;
   for (const token of tokens) {
-    if (token === "direction=incoming" || token === "direction=outgoing") {
-      direction = token.slice(10) as "incoming" | "outgoing";
+    if (
+      token === "direction=incoming" ||
+      token === "direction=outgoing" ||
+      token === "direction=report"
+    ) {
+      direction = token.slice(10) as "incoming" | "outgoing" | "report";
     } else if (token.startsWith("from=") || token.startsWith("to=")) {
       try {
         source_label = decodeURIComponent(
@@ -153,7 +158,13 @@ export function AgentMessageElement({
   const message = element as AgentMessage;
   const direction = message.direction ?? "incoming";
   const outgoing = direction === "outgoing";
-  const directionColor = outgoing ? UI_COLORS.success : UI_COLORS.info;
+  const report = direction === "report";
+  const directionColor = outgoing
+    ? UI_COLORS.success
+    : report
+      ? UI_COLORS.warning
+      : UI_COLORS.info;
+  const directionWord = outgoing ? "To" : report ? "About" : "From";
   const { directory } = useNamedAgents(!!message.source_agent_id);
   const namedSource =
     message.source_agent_id && message.source_project_id
@@ -234,11 +245,11 @@ export function AgentMessageElement({
             }}
             label={sourceLabel}
           >
-            {outgoing ? "To" : "From"} {sourceLabel}
+            {directionWord} {sourceLabel}
           </PeerAgentLink>
         ) : (
           <>
-            {outgoing ? "To" : "From"} {sourceLabel}
+            {directionWord} {sourceLabel}
           </>
         )}
       </span>

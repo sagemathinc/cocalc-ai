@@ -2992,8 +2992,13 @@ export async function getAgentMemoryContext({
     project_id,
     owner_account_id,
   });
-  const { agentMemory } = await import("@cocalc/server/agents/memory");
-  return (await agentMemory().turnIndex(owner_account_id)) ?? null;
+  const { withMemoryHome } = await import("@cocalc/server/agents/memory-home");
+  return (
+    (await withMemoryHome(owner_account_id, {
+      kind: "turn-index",
+      project_id,
+    })) ?? null
+  );
 }
 
 export async function getExternalCredential({

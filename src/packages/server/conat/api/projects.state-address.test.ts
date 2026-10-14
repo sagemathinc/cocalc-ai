@@ -5,8 +5,7 @@ let resolveProjectBayMock: jest.Mock;
 let interBayStateMock: jest.Mock;
 let interBayAddressMock: jest.Mock;
 let interBayActiveOpMock: jest.Mock;
-let interBayMoveMock: jest.Mock;
-let interBayAssignHostMock: jest.Mock;
+let assertCurrentProjectOwnershipMock: jest.Mock;
 let reconcileProjectRehomeMock: jest.Mock;
 let drainProjectRehomeMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
@@ -103,8 +102,6 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       state: (...args: any[]) => interBayStateMock(...args),
       address: (...args: any[]) => interBayAddressMock(...args),
       activeOp: (...args: any[]) => interBayActiveOpMock(...args),
-      move: (...args: any[]) => interBayMoveMock(...args),
-      assignHost: (...args: any[]) => interBayAssignHostMock(...args),
     })),
   })),
 }));
@@ -116,6 +113,8 @@ jest.mock("@cocalc/server/inter-bay/project-control", () => ({
   handleProjectControlAddress: (...args: any[]) => interBayAddressMock(...args),
   handleProjectControlActiveOperation: (...args: any[]) =>
     interBayActiveOpMock(...args),
+  assertCurrentProjectOwnership: (...args: any[]) =>
+    assertCurrentProjectOwnershipMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/copy-db", () => ({
@@ -247,14 +246,7 @@ describe("projects.getProjectState / getProjectAddress", () => {
       started_at: new Date("2026-04-08T10:00:00Z"),
       updated_at: new Date("2026-04-08T10:00:01Z"),
     }));
-    interBayMoveMock = jest.fn(async () => ({
-      op_id: "move-op-1",
-      scope_type: "project",
-      scope_id: "proj-1",
-      service: "persist-service",
-      stream_name: "lro.move-op-1",
-    }));
-    interBayAssignHostMock = jest.fn(async () => undefined);
+    assertCurrentProjectOwnershipMock = jest.fn(async () => undefined);
     reconcileProjectRehomeMock = jest.fn(async () => ({
       op_id: "reconcile-op-1",
       scope_type: "project",
@@ -407,7 +399,20 @@ describe("projects.getProjectState / getProjectAddress", () => {
     expect(getRoutedHostControlClientMock).not.toHaveBeenCalled();
   });
 
-  it("routes project move requests through the owning bay", async () => {
+  it("routes moves and host assignment to the owning bay", async () => {
+    const { getHubApiRoute } = await import("@cocalc/conat/hub/api/routes");
+    expect(
+      getHubApiRoute("projects.moveProject")?.key([{ project_id: "p" }]),
+    ).toBe("p");
+    expect(
+      getHubApiRoute("projects.assignProjectHost")?.key([{ project_id: "p" }]),
+    ).toBe("p");
+  });
+
+  it("refuses a move on a bay that does not own the project", async () => {
+    assertCurrentProjectOwnershipMock = jest.fn(async () => {
+      throw new Error("stale project routing for proj-1");
+    });
     const { moveProject } = await import("./projects");
     await expect(
       moveProject({
@@ -417,27 +422,18 @@ describe("projects.getProjectState / getProjectAddress", () => {
         dest_host_id: "host-1",
         allow_offline: true,
       }),
-    ).resolves.toEqual({
-      op_id: "move-op-1",
-      scope_type: "project",
-      scope_id: "proj-1",
-      service: "persist-service",
-      stream_name: "lro.move-op-1",
-    });
-    expect(interBayMoveMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      account_id: "acct-1",
-      session_hash: "session-1",
-      dest_host_id: "host-1",
-      allow_offline: true,
-      epoch: 7,
-    });
+    ).rejects.toThrow("stale project routing");
+    // Fresh auth is checked first, for the caller's own session.
     expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       browser_id: undefined,
       session_hash: "session-1",
-      internalAuth: undefined,
     });
+    expect(assertCurrentProjectOwnershipMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
+    expect(reserveProjectRuntimeSlotMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
   });
 
   it("requires dangerous auth before reconciling project rehome operations", async () => {
@@ -484,7 +480,10 @@ describe("projects.getProjectState / getProjectAddress", () => {
     expect(drainProjectRehomeMock).not.toHaveBeenCalled();
   });
 
-  it("routes initial host assignment through the owning bay without fresh auth", async () => {
+  it("refuses initial host assignment on a bay that does not own the project", async () => {
+    assertCurrentProjectOwnershipMock = jest.fn(async () => {
+      throw new Error("stale project routing for proj-1");
+    });
     const { assignProjectHost } = await import("./projects");
     await expect(
       assignProjectHost({
@@ -492,23 +491,11 @@ describe("projects.getProjectState / getProjectAddress", () => {
         project_id: "proj-1",
         dest_host_id: "host-1",
       }),
-    ).resolves.toBeUndefined();
-
-    expect(interBayAssignHostMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      account_id: "acct-1",
-      dest_host_id: "host-1",
-      epoch: 7,
-    });
-    expect(requireDangerousProjectMutationAuthMock).not.toHaveBeenCalled();
+    ).rejects.toThrow("stale project routing");
     expect(savePlacementMock).not.toHaveBeenCalled();
   });
 
   it("assigns a local unassigned project host without fresh auth", async () => {
-    resolveProjectBayMock = jest.fn(async () => ({
-      bay_id: "bay-0",
-      epoch: 7,
-    }));
     poolQueryMock = jest.fn(async () => ({
       rows: [{ host_id: null }],
     }));
@@ -528,14 +515,13 @@ describe("projects.getProjectState / getProjectAddress", () => {
     expect(savePlacementMock).toHaveBeenCalledWith("proj-1", {
       host_id: "host-1",
     });
+    expect(assertCurrentProjectOwnershipMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
     expect(requireDangerousProjectMutationAuthMock).not.toHaveBeenCalled();
   });
 
   it("reserves a runtime sponsor slot before creating a local move LRO", async () => {
-    resolveProjectBayMock = jest.fn(async () => ({
-      bay_id: "bay-0",
-      epoch: 7,
-    }));
     const { moveProject } = await import("./projects");
 
     await expect(

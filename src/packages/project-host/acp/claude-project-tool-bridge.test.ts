@@ -423,6 +423,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "project_edit_file",
       "project_write_file",
       "memory_list",
+      "memory_search",
       "memory_read",
       "memory_write",
       "memory_delete",
@@ -444,14 +445,20 @@ test("trusted MCP helper executes only through the scoped project socket", async
     expect(execute.mock.calls.at(-1)?.[0]).toContain(
       "project chat memory list",
     );
+    // The CLI reports a failure as JSON on stderr; the tool gives just the
+    // message.
     execute.mockImplementationOnce(async () => ({
       code: 1,
       cleanupConfirmed: true,
-      stdout: JSON.stringify({
+      stdout: "",
+      stderr: JSON.stringify({
         ok: false,
-        error: { message: "Agent memory is off for this account." },
+        command: "cocalc",
+        error: {
+          code: "command_failed",
+          message: "Agent memory is off for this account.",
+        },
       }),
-      stderr: "",
     }));
     const wrote = await request(31, "tools/call", {
       name: "memory_write",
@@ -462,9 +469,78 @@ test("trusted MCP helper executes only through the scoped project socket", async
       },
     });
     expect(wrote.result.isError).toBe(true);
+    expect(JSON.parse(wrote.result.content[0].text)).toEqual({
+      error: "Agent memory is off for this account.",
+    });
     const script = execute.mock.calls.at(-1)?.[0] as string;
     expect(script).toContain("project chat memory write 'deploy'");
     expect(script).not.toContain("$(x)");
+    // Notes in a namespace, and search with words that could be shell.
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: JSON.stringify({ ok: true, data: { name: "dev/deploy" } }),
+      stderr: "",
+    }));
+    await request(32, "tools/call", {
+      name: "memory_read",
+      arguments: { name: "dev/deploy" },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toContain(
+      "project chat memory read 'dev/deploy'",
+    );
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: JSON.stringify({ ok: true, data: { results: [] } }),
+      stderr: "",
+    }));
+    const searched = await request(33, "tools/call", {
+      name: "memory_search",
+      arguments: { query: "deploy; $(rm -rf ~)", limit: 3 },
+    });
+    expect(JSON.parse(searched.result.content[0].text)).toEqual({
+      results: [],
+    });
+    const search = execute.mock.calls.at(-1)?.[0] as string;
+    expect(search).toContain("project chat memory search --limit 3 -- ");
+    expect(search).not.toContain("rm -rf");
+    const bad = await request(34, "tools/call", {
+      name: "memory_read",
+      arguments: { name: "dev/../x" },
+    });
+    expect(bad.result?.isError ?? !!bad.error).toBe(true);
+    // A write that must not replace a change made since the read.
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: JSON.stringify({ ok: true, data: { saved: "updated" } }),
+      stderr: "",
+    }));
+    await request(35, "tools/call", {
+      name: "memory_write",
+      arguments: {
+        name: "deploy",
+        description: "d",
+        body: "b",
+        expected_revision: "0123456789abcdef",
+      },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toMatch(
+      /memory write 'deploy' .* --stdin --expect-revision '0123456789abcdef'$/,
+    );
+    const calls = execute.mock.calls.length;
+    const badRevision = await request(36, "tools/call", {
+      name: "memory_write",
+      arguments: {
+        name: "deploy",
+        description: "d",
+        body: "b",
+        expected_revision: "x'; rm -rf ~; '",
+      },
+    });
+    expect(badRevision.result?.isError ?? !!badRevision.error).toBe(true);
+    expect(execute.mock.calls.length).toBe(calls);
     const called = await request(3, "tools/call", {
       name: "project_exec",
       arguments: { script: "pwd", cwd: "/home/user" },
@@ -570,7 +646,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(5);
+    expect(execute).toHaveBeenCalledTimes(8);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

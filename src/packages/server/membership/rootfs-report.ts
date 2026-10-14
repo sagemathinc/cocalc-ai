@@ -108,7 +108,9 @@ async function loadUsageRows({
       : "total_storage_bytes DESC, count DESC";
 
   // query-cache-ok: admin report: RootFS usage
-  const { rows } = await getCachedReadPool("medium").query(
+  const { rows } = await getCachedReadPool("medium", {
+    label: "rootfs-report",
+  }).query(
     `SELECT
         img.owner_id AS account_id,
         COUNT(*)::int AS count,

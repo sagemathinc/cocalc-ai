@@ -42,6 +42,29 @@ import {
 
 const logger = getLogger("server:conat:host-status");
 
+// Storage payers that do not exist, such as the account id recorded for a
+// student who never signed up. Every inventory pass of every host would look
+// them up again and log the same failure, so they are remembered for a while.
+// Owners are never cached: their entitlements decide retention.
+const MISSING_PAYER_TTL_MS = 60 * 60 * 1000;
+const MAX_MISSING_PAYERS = 10_000;
+const missingPayers = new Map<string, number>();
+
+function isKnownMissingPayer(account_id: string): boolean {
+  const expires = missingPayers.get(account_id);
+  if (expires == null) return false;
+  if (expires > Date.now()) return true;
+  missingPayers.delete(account_id);
+  return false;
+}
+
+// Only the account directory's own answer for this exact account (see
+// getAccountRow in server/bay-directory.ts), not any error that mentions it.
+function isAccountNotFoundError(err: unknown, account_id: string): boolean {
+  const message = `${(err as { message?: unknown })?.message ?? err}`;
+  return message === `account '${account_id}' not found`;
+}
+
 export async function listHostProjectMaintenanceSchedules({
   host_id,
   limit,
@@ -219,13 +242,21 @@ export async function listHostProjectMaintenanceSchedules({
     string,
     { service_class: "paying" | "free"; priority: number }
   >();
+  const ownerIds = new Set(
+    rows.map((row) => `${row.owner_account_id ?? ""}`.trim()).filter(Boolean),
+  );
   // Resolve independently: a stale course payer must not poison the inventory
   // for every project on this host. Keep account-home routing authoritative.
   for (let offset = 0; offset < accountIds.length; offset += 16) {
     await Promise.all(
       accountIds.slice(offset, offset + 16).map(async (account_id) => {
+        const payerOnly = !ownerIds.has(account_id);
+        if (payerOnly && isKnownMissingPayer(account_id)) return;
         try {
           const resolution = await resolveRuntimeMembership(account_id);
+          // It exists now (e.g. created or rehomed since), whatever an earlier
+          // pass found.
+          missingPayers.delete(account_id);
           const limits = getEffectiveMembershipUsageLimits(resolution);
           limitsByOwner.set(account_id, {
             max_snapshots_per_project:
@@ -239,6 +270,15 @@ export async function listHostProjectMaintenanceSchedules({
             priority: limits.shared_compute_priority ?? 0,
           });
         } catch (err) {
+          if (payerOnly && isAccountNotFoundError(err, account_id)) {
+            if (missingPayers.size >= MAX_MISSING_PAYERS) missingPayers.clear();
+            missingPayers.set(account_id, Date.now() + MISSING_PAYER_TTL_MS);
+            logger.debug(
+              "maintenance inventory storage payer does not exist; storage priority is unclassified",
+              { host_id, account_id },
+            );
+            return;
+          }
           logger.warn("maintenance inventory account resolution failed", {
             host_id,
             account_id,
