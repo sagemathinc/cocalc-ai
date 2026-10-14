@@ -12,9 +12,16 @@ with an opaque origin. The protocol (Sagebrush's design/frame.md):
 - this page:                   { sagebrush: "board", version: 1, text, name }
 - the frame, for a bad text:   { sagebrush: "error", version: 1, message }
 
-Only messages from the frame's own window count. The frame has an opaque
-origin, so posts to it use "*"; the text is the saved file this user can
-already read. Edits in the frame stay there: the file is not changed.
+Only messages from the frame's own window count. That window object outlives
+navigation: if the frame's document were replaced, the new document would
+pass the same test. So the board is posted once per frame element, in answer
+to its first "ready", and the frame is mounted only after the text has been
+read; Refresh reads the file again and mounts a new frame. A later document in
+the same frame gets nothing.
+
+The frame has an opaque origin, so posts to it use "*". Showing a board sends
+its complete text and name to the configured origin, as the card says. Edits
+in the frame stay there: the file is not changed.
 */
 
 import { useEffect, useRef, useState } from "react";
@@ -43,32 +50,44 @@ export default function BoardArtifact({
   const compact = onToolbarActions !== undefined;
   const { actions } = useProjectContext();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [text, setText] = useState<string>();
+  // The text read for one frame: `id` is that frame's key.
+  const [board, setBoard] = useState<{ id: number; text: string }>();
   const [error, setError] = useState("");
   const [frameError, setFrameError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const readyRef = useRef(false);
-  const textRef = useRef<string | undefined>(undefined);
-  textRef.current = text;
+  const boardRef = useRef(board);
+  boardRef.current = board;
+  // The frame (by key) that has been sent its board.
+  const answeredRef = useRef<number | undefined>(undefined);
   const name = path.split("/").pop() ?? path;
+  const site = new URL(frameUrl).host;
 
   useEffect(() => {
     let cancelled = false;
     setError("");
+    setFrameError("");
+    setBoard(undefined);
     setLoading(true);
     void (async () => {
       try {
         const fs = actions?.fs();
         if (!fs) throw Error("Project filesystem unavailable");
+        const tooLarge = Error(
+          `The board exceeds the ${BOARD_PREVIEW_LIMIT / 1024 / 1024} MiB preview limit. Open the file to see it.`,
+        );
         const stat = await fs.stat(path);
-        if (stat.size > BOARD_PREVIEW_LIMIT)
-          throw Error(
-            `The board exceeds the ${BOARD_PREVIEW_LIMIT / 1024 / 1024} MiB preview limit. Open the file to see it.`,
-          );
-        const raw = await fs.readFile(path, "utf8");
-        const content = typeof raw === "string" ? raw : raw.toString();
-        if (!cancelled) setText(content);
+        if (stat.size > BOARD_PREVIEW_LIMIT) throw tooLarge;
+        // The file can grow between stat and read: check what was read.
+        const raw = await fs.readFile(path);
+        const bytes =
+          typeof raw === "string"
+            ? new TextEncoder().encode(raw)
+            : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+        if (bytes.byteLength > BOARD_PREVIEW_LIMIT) throw tooLarge;
+        const text =
+          typeof raw === "string" ? raw : new TextDecoder().decode(bytes);
+        if (!cancelled) setBoard({ id: refresh, text });
       } catch (err) {
         if (!cancelled) setError(String(err));
       } finally {
@@ -80,29 +99,26 @@ export default function BoardArtifact({
     };
   }, [actions, path, refresh]);
 
-  const post = () => {
-    const target = frameRef.current?.contentWindow;
-    const value = textRef.current;
-    if (!target || !readyRef.current || value == null) return;
-    setFrameError("");
-    target.postMessage(
-      { sagebrush: "board", version: 1, text: value, name },
-      "*",
-    );
-  };
-
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const frame = frameRef.current?.contentWindow;
-      if (!frame || event.source !== frame) return;
+      const current = boardRef.current;
+      if (!frame || !current || event.source !== frame) return;
       const data = event.data;
       if (data == null || typeof data !== "object" || data.version !== 1)
         return;
       if (data.sagebrush === "ready") {
-        // Also after the frame reloads.
-        readyRef.current = true;
-        post();
-      } else if (data.sagebrush === "error") {
+        // Only the frame's first document, the one its src loaded.
+        if (answeredRef.current === current.id) return;
+        answeredRef.current = current.id;
+        frame.postMessage(
+          { sagebrush: "board", version: 1, text: current.text, name },
+          "*",
+        );
+      } else if (
+        data.sagebrush === "error" &&
+        answeredRef.current === current.id
+      ) {
         setFrameError(
           `${data.message ?? "The board could not be shown."}`.slice(0, 500),
         );
@@ -111,11 +127,6 @@ export default function BoardArtifact({
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [name]);
-
-  // A new saved text replaces the board shown.
-  useEffect(() => {
-    post();
-  }, [text]);
 
   const openInProject = () => {
     void actions?.open_file({ path }).catch((err) => setError(String(err)));
@@ -194,22 +205,26 @@ export default function BoardArtifact({
           description={frameError}
         />
       )}
-      <iframe
-        ref={frameRef}
-        src={frameUrl}
-        sandbox={BOARD_FRAME_SANDBOX}
-        title={`Sagebrush board: ${name}`}
-        style={{
-          flex: "1 1 0",
-          minHeight: 420,
-          width: "100%",
-          border: `1px solid ${UI_COLORS.border}`,
-          borderRadius: 4,
-        }}
-      />
+      {board && (
+        <iframe
+          key={board.id}
+          ref={frameRef}
+          src={frameUrl}
+          sandbox={BOARD_FRAME_SANDBOX}
+          title={`Sagebrush board: ${name}`}
+          style={{
+            flex: "1 1 0",
+            minHeight: 420,
+            width: "100%",
+            border: `1px solid ${UI_COLORS.border}`,
+            borderRadius: 4,
+          }}
+        />
+      )}
       <div role="note" style={{ flexShrink: 0, marginTop: 6, fontSize: "85%" }}>
-        Runs in Sagebrush, sandboxed. Changes made here are not saved to the
-        file.
+        Runs on {site} in a sandboxed frame: showing it sends {site} this
+        file&apos;s complete text and name. Changes made there are not saved to
+        the file.
       </div>
     </KeyboardBoundary>
   );

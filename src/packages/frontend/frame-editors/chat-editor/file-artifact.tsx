@@ -175,7 +175,10 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
   const boardFrameUrl = useBoardFrameUrl();
   const path = props.artifact.file?.path ?? "";
   // A Sagebrush board runs live in Sagebrush's sandboxed frame; with the
-  // sagebrush_origin site setting blank it is shown as text.
+  // sagebrush_origin site setting blank it is shown as text. Until the site's
+  // settings arrive, neither: the setting decides where the file may go.
+  if (boardFrameUrl === undefined && isBoardPath(path))
+    return <div role="status">Loading board preview...</div>;
   if (boardFrameUrl && isBoardPath(path))
     return (
       <Suspense fallback={<div role="status">Loading board preview...</div>}>

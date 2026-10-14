@@ -7,6 +7,7 @@
 // from board-artifact.tsx, which is loaded only when a board is shown.
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { is_https_or_loopback_url } from "@cocalc/util/db-schema/site-defaults";
 
 // Boards embed their pictures, so they are larger than other text previews.
 export const BOARD_PREVIEW_LIMIT = 16 * 1024 * 1024;
@@ -19,21 +20,20 @@ export function isBoardPath(path: string): boolean {
 }
 
 /** The frame page on the configured Sagebrush origin, or undefined if the
- * setting is blank or not an http(s) URL. */
+ * setting is blank or not https (http only for localhost). */
 export function boardFrameUrl(origin: unknown): string | undefined {
   const value = `${origin ?? ""}`.trim();
-  if (!value) return;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return;
-    return `${url.origin}/frame/board/`;
-  } catch {
-    return;
-  }
+  if (!value || !is_https_or_loopback_url(value)) return;
+  return `${new URL(value).origin}/frame/board/`;
 }
 
-/** The configured frame page, if live board previews are on. */
-export function useBoardFrameUrl(): string | undefined {
+/** The configured frame page; null when live boards are off; undefined until
+ * the site's settings have arrived. Before then the customize store holds
+ * only the public defaults, which may not be this site's choice, and a board
+ * must not be sent anywhere on their say-so. */
+export function useBoardFrameUrl(): string | null | undefined {
+  const configured = useTypedRedux("customize", "_is_configured");
   const origin = useTypedRedux("customize", "sagebrush_origin");
-  return boardFrameUrl(origin ?? "https://sagebrush.space");
+  if (!configured) return undefined;
+  return boardFrameUrl(origin) ?? null;
 }
