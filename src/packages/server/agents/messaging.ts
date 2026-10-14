@@ -16,8 +16,9 @@ import { agentStore } from "./store";
 import { assertAgent, assertRun } from "./access";
 import { startAgentMessagingMaintenance } from "./maintenance";
 import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
-import { agentMemory } from "./memory";
+import { withMemoryHome } from "./memory-home";
 import { agentSensorRequest } from "./sensors";
+import { agentComputerRequest } from "@cocalc/server/computers/agent";
 import { startSensorScheduler } from "./sensor-scheduler";
 
 const logger = getLogger("agents:messaging");
@@ -38,8 +39,13 @@ export async function acceptAgentMessage(
   await assertAgent(source);
   if (request.action === "memory") {
     // Memory always belongs to the account this turn runs as, from the
-    // authenticated run, never from the request.
-    return await agentMemory().agent(run.account_id, request);
+    // authenticated run, never from the request; the identity's project
+    // decides which namespaces the turn sees.
+    return await withMemoryHome(run.account_id, {
+      kind: "agent",
+      project_id: source.project_id,
+      request,
+    });
   }
   if (request.action === "sensor") {
     // Sensors belong to this identity; proposals use the run's account
@@ -50,6 +56,10 @@ export async function acceptAgentMessage(
       request,
     )) as AgentInspectionResult;
   }
+  if (request.action === "computer") {
+    // Computers belong to the run's account; the project must be private.
+    return (await agentComputerRequest(run, request)) as AgentInspectionResult;
+  }
   return {
     identity: source,
     run_id,
@@ -59,6 +69,7 @@ export async function acceptAgentMessage(
       "whoami",
       "memory",
       "sensor",
+      "computer",
       "destinations",
       "send",
       "broadcast",

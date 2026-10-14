@@ -90,6 +90,9 @@ export interface MembershipUsageLimits {
   rootfs_total_storage_gb?: number;
   rootfs_max_storage_gb?: number;
   rootfs_oci_images?: boolean;
+  sagebrush_storage_bytes?: number;
+  sagebrush_max_file_bytes?: number;
+  sagebrush_private_links?: boolean;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}

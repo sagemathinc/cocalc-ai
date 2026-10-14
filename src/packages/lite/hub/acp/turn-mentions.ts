@@ -3,6 +3,10 @@ import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type { ArtifactCatalogApi } from "@cocalc/conat/hub/api/artifact-catalog";
 import { extractArtifactMentions } from "@cocalc/util/artifact-mentions";
 import {
+  computerMentionsNote,
+  extractComputerMentions,
+} from "@cocalc/util/computer-mentions";
+import {
   agentMentionReferenceMap,
   extractAgentMentions,
 } from "@cocalc/util/agent-mentions";
@@ -81,4 +85,15 @@ export async function resolveHumanTurnArtifactMentions(
     });
   }
   return result;
+}
+
+/**
+ * What a human turn's @computer mentions tell the agent. Identity only: the
+ * agent's use of a computer is checked when it asks for a ticket.
+ */
+export function humanTurnComputerNote(request: AcpRequest): string {
+  if (request.chat?.agent_message) return "";
+  return computerMentionsNote(
+    extractComputerMentions(request.chat?.user_message_content ?? ""),
+  );
 }

@@ -215,6 +215,15 @@ export function normalizeMembershipEffectiveLimits(
       usageLimits?.rootfs_max_storage_gb,
     ),
     rootfs_oci_images: normalizeBoolean(usageLimits?.rootfs_oci_images),
+    sagebrush_storage_bytes: normalizeNonNegativeInteger(
+      usageLimits?.sagebrush_storage_bytes,
+    ),
+    sagebrush_max_file_bytes: normalizeNonNegativeInteger(
+      usageLimits?.sagebrush_max_file_bytes,
+    ),
+    sagebrush_private_links: normalizeBoolean(
+      usageLimits?.sagebrush_private_links,
+    ),
   };
 }
 

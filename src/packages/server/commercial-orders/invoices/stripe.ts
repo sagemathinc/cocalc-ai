@@ -62,11 +62,17 @@ import {
   requireReason,
 } from "../state";
 import { registerCommercialOrderBillingAccount } from "../billing-authority";
+import {
+  commercialInvoicePaymentMetadata,
+  commercialInvoicePaymentSettings,
+  hasApprovedPaymentSettings,
+  hasCurrentPaymentSettings,
+  isStripeIdempotencyError,
+  PAYMENT_SETTINGS_VERSION,
+} from "../payment-settings";
 
 const logger = getLogger("server:commercial-orders:stripe");
 const FLOW = "commercial_order";
-const PAYMENT_METHOD_TYPES = ["card", "us_bank_account"] as const;
-
 function dueAt(order: CommercialOrder, from = new Date()): string {
   const date = new Date(from.getTime());
   date.setUTCDate(
@@ -764,10 +770,6 @@ function sortedCustomFields(value: unknown): Array<{
     );
 }
 
-function sortedPaymentMethods(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(String).sort() : [];
-}
-
 async function assertInvoiceDeliveryMatchesOrder(opts: {
   stripe: Awaited<ReturnType<typeof getConn>>;
   stripeInvoice: any;
@@ -822,13 +824,7 @@ function assertInvoiceDeliveryConfiguration(
     );
   }
   assertCommercialAutomaticTax(stripeInvoice, order);
-  if (
-    JSON.stringify(
-      sortedPaymentMethods(
-        stripeInvoice.payment_settings?.payment_method_types,
-      ),
-    ) !== JSON.stringify([...PAYMENT_METHOD_TYPES].sort())
-  ) {
+  if (!hasApprovedPaymentSettings(stripeInvoice)) {
     throw Error(
       "Stripe invoice payment settings do not match the approved order",
     );
@@ -1034,31 +1030,43 @@ export async function createStripeCommercialInvoiceDraft(
         invoice,
         keyPrefix,
       });
-      stripeInvoice = await stripe.invoices.create(
-        {
-          customer,
-          auto_advance: false,
-          collection_method: "send_invoice",
-          // Relative terms remain valid after local DB work or a delayed retry.
-          // Stripe calculates the authoritative due timestamp when it creates
-          // the invoice, including for due-on-receipt (zero-day) invoices.
-          days_until_due: preview.payment_terms_days,
-          currency: preview.currency,
-          custom_fields: customFields(order),
-          description: invoiceDescription(order),
-          metadata: {
-            ...preview.metadata,
-            commercial_invoice_id: invoice.id,
+      try {
+        stripeInvoice = await stripe.invoices.create(
+          {
+            customer,
+            auto_advance: false,
+            collection_method: "send_invoice",
+            // Relative terms remain valid after local DB work or a delayed retry.
+            // Stripe calculates the authoritative due timestamp when it creates
+            // the invoice, including for due-on-receipt (zero-day) invoices.
+            days_until_due: preview.payment_terms_days,
+            currency: preview.currency,
+            custom_fields: customFields(order),
+            description: invoiceDescription(order),
+            metadata: {
+              ...preview.metadata,
+              ...commercialInvoicePaymentMetadata(),
+              commercial_invoice_id: invoice.id,
+            },
+            automatic_tax: {
+              enabled: commercialTaxPolicy(order.terms_snapshot).enabled,
+            },
+            payment_settings: commercialInvoicePaymentSettings(),
           },
-          automatic_tax: {
-            enabled: commercialTaxPolicy(order.terms_snapshot).enabled,
-          },
-          payment_settings: {
-            payment_method_types: [...PAYMENT_METHOD_TYPES],
-          },
-        },
-        { idempotencyKey: `${keyPrefix}:invoice` },
-      );
+          { idempotencyKey: `${keyPrefix}:invoice` },
+        );
+      } catch (err) {
+        // A create sent by the code before bank transfer used this same key
+        // with other payment settings, so Stripe rejects this one. That
+        // invoice exists; invoice search is eventually consistent, so a retry
+        // finds and recovers it rather than creating a second one.
+        if (isStripeIdempotencyError(err)) {
+          throw Error(
+            "an earlier attempt already created this Stripe invoice; retry in a minute to recover it",
+          );
+        }
+        throw err;
+      }
     } else {
       assertStripeMode(stripe, stripeInvoice);
       await assertStripeLinkIdentity(stripeInvoice, invoice);
@@ -1183,6 +1191,11 @@ export async function linkExistingStripeCommercialInvoice(
       {
         metadata: {
           ...metadata,
+          // A linked invoice with the current settings must keep them; one
+          // with card + ACH only stays legacy.
+          ...(hasCurrentPaymentSettings(stripeInvoice)
+            ? commercialInvoicePaymentMetadata()
+            : {}),
           flow: FLOW,
           commercial_order_id: order.id,
           commercial_invoice_id: invoice.id,
@@ -1190,7 +1203,7 @@ export async function linkExistingStripeCommercialInvoice(
           cocalc_site: await currentStripeSite(),
         },
       },
-      { idempotencyKey: `${keyPrefix}:metadata` },
+      { idempotencyKey: `${keyPrefix}:metadata:${PAYMENT_SETTINGS_VERSION}` },
     );
     stripeInvoice = await stripe.invoices.retrieve(stripeInvoice.id, {
       expand: ["payments.data.payment.payment_intent"],

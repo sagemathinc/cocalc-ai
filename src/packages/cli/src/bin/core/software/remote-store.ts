@@ -626,11 +626,13 @@ export async function publishHostCompatibilityArtifact({
     !["project-host", "container-runtime", "project", "tools"].includes(
       artifact,
     ) ||
-    (artifact !== "tools" && entry.files.length !== 1) ||
+    (artifact !== "tools" &&
+      artifact !== "container-runtime" &&
+      entry.files.length !== 1) ||
     entry.files.length < 1
   ) {
     throw new Error(
-      `software host compatibility publish expected project-host/container-runtime/project to have one file and tools to have one or more files in ${entry.artifact_id}`,
+      `software host compatibility publish expected project-host/project to have one file and tools/container-runtime to have one or more per-architecture files in ${entry.artifact_id}`,
     );
   }
   const urls: string[] = [];

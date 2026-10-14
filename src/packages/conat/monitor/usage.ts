@@ -43,7 +43,13 @@ export class UsageMonitor extends EventEmitter {
 
   private toJson = (user: JSONValue) => {
     if (user != null && typeof user === "object" && !Array.isArray(user)) {
-      for (const field of ["account_id", "project_id", "hub_id", "host_id"]) {
+      for (const field of [
+        "account_id",
+        "project_id",
+        "hub_id",
+        "host_id",
+        "computer_id",
+      ]) {
         const id = user[field];
         if (typeof id === "string" && id) {
           return `${field}:${id}`;

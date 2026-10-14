@@ -195,6 +195,26 @@ export function setSensorDispatchHookForTests(
   beforeDispatchHook = hook;
 }
 
+/**
+ * Issuing a wake first rewrites its sensor row: only while this run's lease is
+ * live, which it renews. Locking the row would not be enough: a delete that
+ * waits behind a lock proceeds once it is released unless the row changed. A
+ * delete that waits behind this update re-checks the new row, sees the live
+ * lease and refuses; a run whose lease ran out cannot issue at all.
+ */
+export const ISSUE_HOLD_SQL = `UPDATE agent_sensors
+     SET lease_until=GREATEST(lease_until, now() + interval '5 minutes')
+   WHERE sensor_id=$1 AND lease_id=$2 AND lease_until > now()
+   RETURNING sensor_id`;
+
+let beforeIssueHook: (() => Promise<void>) | undefined;
+/** Tests only: run something between the last dispatch check and issuing a wake. */
+export function setSensorIssueHookForTests(
+  hook: (() => Promise<void>) | undefined,
+) {
+  beforeIssueHook = hook;
+}
+
 function errorText(error: unknown): string {
   const text = error instanceof Error ? error.message : `${error}`;
   return text.length > 500 ? `${text.slice(0, 499)}…` : text;
@@ -434,13 +454,27 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     // A one-time secret for exactly this wake: the turn it starts must run
     // this prompt, in this thread, as the approver. Only its hash is kept.
     const permit = randomBytes(32).toString("base64url");
+    await beforeIssueHook?.();
+    let gone = false;
     try {
       await db.transaction(async (client) => {
-        await client.query(
+        // Still this run's sensor, under a live lease (see ISSUE_HOLD_SQL):
+        // a delete either happened already (then nothing is sent) or
+        // refuses, now and once this commits.
+        const { rows: held } = await client.query(ISSUE_HOLD_SQL, [
+          row.sensor_id,
+          row.lease_id,
+        ]);
+        if (held.length !== 1) {
+          gone = true;
+          throw new Error("the sensor changed before its wake was issued");
+        }
+        const { rows: issued } = await client.query(
           `UPDATE agent_sensor_runs SET wake_permit_hash=$2,
              wake_prompt_sha256=$3, wake_account_id=$4, wake_path=$5,
              wake_thread_id=$6, wake_state='issued'
-           WHERE run_id=$1`,
+           WHERE run_id=$1
+           RETURNING run_id`,
           [
             run_id,
             sensorPermitHash(permit),
@@ -450,6 +484,10 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
             agent.thread_id,
           ],
         );
+        if (issued.length !== 1) {
+          gone = true;
+          throw new Error("the run changed before its wake was issued");
+        }
         // The held wakes this one carries, durably before it is sent, so a
         // later run can never choose them again.
         if (combinedRuns.length > 0) {
@@ -465,6 +503,10 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     } catch (err) {
       // Nothing was sent, so the wake is unused.
       await sensorBudget.releaseWake(budget).catch(() => undefined);
+      if (gone) {
+        await changed();
+        return;
+      }
       throw err;
     }
     let delivered;

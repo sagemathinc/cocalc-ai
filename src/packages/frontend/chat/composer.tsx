@@ -36,8 +36,10 @@ import "./composer.css";
 import { DictateButton } from "./audio/dictate-button";
 import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
+import { useComputerMentionCheck } from "@cocalc/frontend/agents/computer-access";
 import { NameAgent } from "@cocalc/frontend/agents/name-agent";
 import { extractAgentMentions } from "@cocalc/util/agent-mentions";
+import { extractComputerMentions } from "@cocalc/util/computer-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import {
   hasUnboundAgentName,
@@ -454,6 +456,21 @@ export function ChatRoomComposer({
     }),
     restoreFocus: refocusComposerInput,
   });
+  // Mentioned computers that aren't connected, or this agent can't use: a
+  // dialog guides the fixes before the message goes out.
+  const computerCheck = useComputerMentionCheck({
+    projectId: project_id,
+    path,
+    threadId: selectedThread?.key,
+    agentLabel: agentMentions.namedAgent
+      ? `@${agentMentions.namedAgent.name}`
+      : "This agent",
+    enabled: allowAgentMentionsInComposer({
+      agentKind: threadMetadata?.agent_kind,
+      hasSelectedThread: selectedThread != null,
+      isNewThreadCodex,
+    }),
+  });
   const pendingPreparation = useRef<
     | { reference?: AgentMentionReference; value?: string; immediate?: boolean }
     | undefined
@@ -481,6 +498,37 @@ export function ChatRoomComposer({
       preparationLock.current = false;
     }
   }
+  /**
+   * Every send goes through the same checks: mentioned computers, then
+   * mentioned agents, then that the draft is still the one approved.
+   */
+  function sendChecked(effective: string, immediate: boolean) {
+    return computerCheck.preflight(effective, () =>
+      agentMentions.preflight(`${effective}\n${acpPrompt}`, () => {
+        if (
+          !approvedDraftIsCurrent({
+            approvedDraft: effective,
+            editorDraft: chatInputControlRef.current?.getValue?.(),
+          })
+        )
+          throw new Error(
+            "The draft changed during approval. Review it and press Send again.",
+          );
+        return (immediate ? (on_send_immediately ?? on_send) : on_send)(
+          effective,
+        );
+      }),
+    );
+  }
+  /** A first message naming agents or computers needs its agent first. */
+  function needsAgentThread(effective: string) {
+    return (
+      !selectedThread &&
+      isNewThreadCodex &&
+      (extractAgentMentions(`${effective}\n${acpPrompt}`).length > 0 ||
+        extractComputerMentions(effective).length > 0)
+    );
+  }
   useEffect(() => {
     if (!selectedThread || !pendingPreparation.current) return;
     const pending = pendingPreparation.current;
@@ -488,11 +536,7 @@ export function ChatRoomComposer({
     setNameAfterPreparation(false);
     if (pending.reference) agentMentions.context.onSelect(pending.reference);
     else if (pending.value)
-      void agentMentions.preflight(`${pending.value}\n${acpPrompt}`, () =>
-        (pending.immediate ? (on_send_immediately ?? on_send) : on_send)(
-          pending.value,
-        ),
-      );
+      void sendChecked(pending.value, pending.immediate === true);
   }, [
     selectedThread?.key,
     agentMentions.context.onSelect,
@@ -518,26 +562,11 @@ export function ChatRoomComposer({
         chatInputControlRef.current?.getValue?.() ??
         (typeof value === "string" ? value : input);
       if (!effective || !effective.trim()) return;
-      if (
-        !selectedThread &&
-        isNewThreadCodex &&
-        extractAgentMentions(`${effective}\n${acpPrompt}`).length
-      ) {
+      if (needsAgentThread(effective)) {
         void prepareAgentThread({ value: effective });
         return;
       }
-      void agentMentions.preflight(`${effective}\n${acpPrompt}`, () => {
-        if (
-          !approvedDraftIsCurrent({
-            approvedDraft: effective,
-            editorDraft: chatInputControlRef.current?.getValue?.(),
-          })
-        )
-          throw new Error(
-            "The draft changed during approval. Review it and press Send again.",
-          );
-        return on_send(effective);
-      });
+      void sendChecked(effective, false);
       setIsInputFocused(true);
       refocusComposerInput();
       if (isZenMode) {
@@ -551,6 +580,7 @@ export function ChatRoomComposer({
       refocusComposerInput,
       toggleZenMode,
       agentMentions.preflight,
+      computerCheck.preflight,
       selectedThread,
       isNewThreadCodex,
       acpPrompt,
@@ -564,30 +594,11 @@ export function ChatRoomComposer({
         chatInputControlRef.current?.getValue?.() ??
         (typeof value === "string" ? value : input);
       if (!effective || !effective.trim()) return;
-      if (
-        !selectedThread &&
-        isNewThreadCodex &&
-        extractAgentMentions(`${effective}\n${acpPrompt}`).length
-      ) {
+      if (needsAgentThread(effective)) {
         void prepareAgentThread({ value: effective, immediate: true });
         return;
       }
-      void agentMentions.preflight(`${effective}\n${acpPrompt}`, () => {
-        if (
-          !approvedDraftIsCurrent({
-            approvedDraft: effective,
-            editorDraft: chatInputControlRef.current?.getValue?.(),
-          })
-        )
-          throw new Error(
-            "The draft changed during approval. Review it and press Send again.",
-          );
-        if (on_send_immediately) {
-          return on_send_immediately(effective);
-        } else {
-          return on_send(effective);
-        }
-      });
+      void sendChecked(effective, true);
       setIsInputFocused(true);
       refocusComposerInput();
       if (isZenMode) {
@@ -604,6 +615,7 @@ export function ChatRoomComposer({
       refocusComposerInput,
       toggleZenMode,
       agentMentions.preflight,
+      computerCheck.preflight,
       selectedThread,
       isNewThreadCodex,
       acpPrompt,
@@ -808,6 +820,7 @@ export function ChatRoomComposer({
               </div>
             )}
             {agentMentions.ui}
+            {computerCheck.ui}
             {(hasAgentControls || isNewThreadCodex) &&
               agentMentions.agents
                 .filter((agent) => hasUnboundAgentName(input, agent.name))

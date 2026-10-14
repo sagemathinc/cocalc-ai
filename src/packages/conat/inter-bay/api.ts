@@ -1,4 +1,8 @@
 import type {
+  DirectorySigningKey,
+  PublishedSigningKey,
+} from "@cocalc/util/computers/api";
+import type {
   LiveVoiceRequest,
   LiveVoiceResult,
 } from "@cocalc/conat/hub/api/live-voice";
@@ -1020,6 +1024,26 @@ export interface AccountLocalRevokeMembershipGrantRequest {
 export interface AccountLocalGetMembershipRequest {
   account_id: string;
 }
+
+export interface AccountLocalGetOAuthAccountStateRequest {
+  account_id: string;
+  // Also resolve the account's membership in the same call.
+  include_membership?: boolean;
+}
+
+// An account's state for an OAuth client (e.g. Sagebrush), read from the
+// primary on the account's home bay: "missing" is unknown, deleted or banned;
+// "moved" means this bay is not the home bay (e.g. after a rehome).
+export type AccountLocalOAuthAccountState =
+  | {
+      state: "live";
+      email_address: string;
+      email_verified: boolean;
+      display_name: string;
+      membership?: MembershipResolution;
+    }
+  | { state: "missing" }
+  | { state: "moved"; home_bay_id: string };
 
 export interface AccountLocalGetArchiveLifecycleStatusesRequest {
   account_ids: string[];
@@ -2097,6 +2121,15 @@ export interface BayRegistryRegisterRequest {
   public_target_kind?: string | null;
   accepts_project_ownership?: boolean;
   project_ownership_note?: string | null;
+  /**
+   * This bay's public keys for computers (see server/computers/signing-keys).
+   * source_bay_id must be the authenticated calling bay (typed services
+   * enforce that), so a bay can only publish keys for itself.
+   */
+  computer_signing_keys?: {
+    source_bay_id: string;
+    keys: PublishedSigningKey[];
+  };
 }
 
 export interface BayRegistryListRequest {}
@@ -2811,6 +2844,7 @@ export type AccountLocalMethod =
   | "upsert-membership-grant"
   | "revoke-membership-grant"
   | "get-membership"
+  | "get-oauth-account-state"
   | "get-archive-lifecycle-statuses"
   | "get-membership-details"
   | "get-account-usage-overview"
@@ -2917,7 +2951,7 @@ export type AuthTokenMethod =
   | "redeem"
   | "disable"
   | "delete";
-export type BayRegistryMethod = "register" | "list";
+export type BayRegistryMethod = "register" | "list" | "computer-signing-keys";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
@@ -4539,6 +4573,9 @@ export interface InterBayAccountLocalApi
   getMembership: (
     opts: AccountLocalGetMembershipRequest,
   ) => Promise<MembershipResolution>;
+  getOAuthAccountState: (
+    opts: AccountLocalGetOAuthAccountStateRequest,
+  ) => Promise<AccountLocalOAuthAccountState>;
   getArchiveLifecycleStatuses: (
     opts: AccountLocalGetArchiveLifecycleStatusesRequest,
   ) => Promise<AccountLocalArchiveLifecycleStatus[]>;
@@ -4846,6 +4883,10 @@ export interface InterBayBayRegistryApi {
     opts: BayRegistryRegisterRequest,
   ) => Promise<BayRegistryRegisterResult>;
   list: (opts: BayRegistryListRequest) => Promise<BayRegistryEntry[]>;
+  /** The seed's directory of bays' public keys for computers. */
+  computerSigningKeys: (
+    opts: Record<string, never>,
+  ) => Promise<DirectorySigningKey[]>;
 }
 
 export interface InterBayBayOpsApi {
@@ -7408,6 +7449,15 @@ export function createInterBayAccountLocalClient({
       method: "get-membership",
     }),
   });
+  const getOAuthAccountStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getOAuthAccountState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-oauth-account-state",
+    }),
+  });
   const getArchiveLifecycleStatusesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getArchiveLifecycleStatuses">
   >({
@@ -8546,6 +8596,8 @@ export function createInterBayAccountLocalClient({
       await revokeMembershipGrantClient.revokeMembershipGrant(opts),
     getMembership: async (opts) =>
       await getMembershipClient.getMembership(opts),
+    getOAuthAccountState: async (opts) =>
+      await getOAuthAccountStateClient.getOAuthAccountState(opts),
     getArchiveLifecycleStatuses: async (opts) =>
       await getArchiveLifecycleStatusesClient.getArchiveLifecycleStatuses(opts),
     getMembershipDetails: async (opts) =>
@@ -9701,6 +9753,20 @@ export function createInterBayAccountLocalHandler({
         getMembership: async (opts) => await impl.getMembership(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getOAuthAccountState">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "get-oauth-account-state",
+        }),
+        impl: {
+          getOAuthAccountState: async (opts) =>
+            await impl.getOAuthAccountState(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getArchiveLifecycleStatuses">
     >({
@@ -11135,9 +11201,17 @@ export function createInterBayBayRegistryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayRegistrySubject({ method: "list" }),
   });
+  const keysClient = createServiceClient<
+    Pick<InterBayBayRegistryApi, "computerSigningKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayRegistrySubject({ method: "computer-signing-keys" }),
+  });
   return {
     register: async (opts) => await registerClient.register(opts),
     list: async (opts) => await listClient.list(opts),
+    computerSigningKeys: async (opts) =>
+      await keysClient.computerSigningKeys(opts),
   };
 }
 
@@ -11603,6 +11677,15 @@ export function createInterBayBayRegistryHandlers({
       subject: bayRegistrySubject({ method: "list" }),
       impl: {
         list: async (opts) => await impl.list(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayRegistryApi, "computerSigningKeys">>({
+      ...options,
+      service: "inter-bay-bay-registry",
+      subject: bayRegistrySubject({ method: "computer-signing-keys" }),
+      impl: {
+        computerSigningKeys: async (opts) =>
+          await impl.computerSigningKeys(opts),
       },
     }),
   ];

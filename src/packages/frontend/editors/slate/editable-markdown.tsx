@@ -33,6 +33,8 @@ import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { createAgentMention } from "./elements/agent-mention";
 import { createArtifactMention } from "./elements/artifact-mention";
+import { createComputerMention } from "./elements/computer-mention";
+import { parseComputerMention } from "@cocalc/util/computer-mentions";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
 import {
   EditorFunctions,
@@ -1143,6 +1145,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     isVisible,
     editor,
     insertMention: (editor, account_id) => {
+      const computerReference = parseComputerMention(account_id);
+      if (computerReference) {
+        Transforms.insertNodes(editor, [
+          createComputerMention(computerReference),
+          { text: " " },
+        ]);
+        return;
+      }
       const artifactReference = parseArtifactMention(account_id);
       if (artifactReference) {
         Transforms.insertNodes(editor, [
