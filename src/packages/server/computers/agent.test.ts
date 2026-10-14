@@ -18,6 +18,10 @@ jest.mock("@cocalc/server/bay-directory", () => ({
   resolveProjectOwningBay: async () => ({ owning_bay_id: "bay-0" }),
 }));
 jest.mock("./relay", () => ({ relayToComputer: jest.fn() }));
+// The site's computers switch is on (see enabled.test.ts for off).
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: async () => ({ computers_enabled: true }),
+}));
 
 import { agentComputerRequest } from "./agent";
 

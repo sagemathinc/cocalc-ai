@@ -30,6 +30,7 @@ import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-networ
 import { AgentMessagingSettings } from "./agent-messaging-settings";
 import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import { ComputersPanel } from "./computers-panel";
+import { useComputersEnabled } from "./computers-enabled";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -229,6 +230,7 @@ function ToggleCell({
 function AgentNetworksSection() {
   const { directory, error } = useAgentNetworks();
   const actions = useAgentNetworkActions();
+  const computersEnabled = useComputersEnabled();
   const networks = (directory?.networks ?? []).filter(
     ({ state }) => state !== "closed",
   );
@@ -333,7 +335,7 @@ function AgentNetworksSection() {
           />
         </>
       )}
-      <ComputersPanel />
+      {computersEnabled && <ComputersPanel />}
       <div style={{ marginTop: 24 }}>
         <ExternalAgentInstallations revision={revision} />
       </div>

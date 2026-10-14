@@ -26,6 +26,7 @@ import {
   createLoginChallenge,
   type LoginChallenge,
 } from "./sessions";
+import { assertComputersEnabled } from "./enabled";
 
 const logger = getLogger("server:computers:pairing-http");
 
@@ -94,6 +95,7 @@ export async function pairingView(
 ): Promise<PairingResult<PairingView>> {
   try {
     admit(address, "read", now);
+    await assertComputersEnabled();
     return await getPairingView(`${params.request_id ?? ""}`, now);
   } catch (err) {
     return publicError(err);
@@ -112,6 +114,7 @@ export async function pairingSubmit(
 ): Promise<PairingResult<{ pairing_phrase: string; transcript_hash: string }>> {
   try {
     admit(address, "submit", now);
+    await assertComputersEnabled();
     return await submitPairing({
       request_id: `${params.request_id ?? ""}`,
       transcript: params.transcript,
@@ -131,6 +134,7 @@ export async function pairingStatus(
 ): Promise<PairingResult<PairingStatus>> {
   try {
     admit(address, "read", now);
+    await assertComputersEnabled();
     return await getPairingStatus({
       request_id: `${params.request_id ?? ""}`,
       transcript_hash: `${params.transcript_hash ?? ""}`,
@@ -149,6 +153,7 @@ export async function sessionChallenge(
 ): Promise<PairingResult<LoginChallenge>> {
   try {
     admit(address, "submit", now);
+    await assertComputersEnabled();
     return await createLoginChallenge(params.request, now);
   } catch (err) {
     return publicError(err);

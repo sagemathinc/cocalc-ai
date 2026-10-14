@@ -108,6 +108,7 @@ export interface CustomizeState {
   agent_openai_codex_enabled: boolean;
   codex_notification_toast_enabled: boolean;
   codex_notification_browser_enabled: boolean;
+  computers_enabled?: boolean;
   browser_raw_exec_policy?: string;
   google_vertexai_enabled: boolean;
   mistral_enabled: boolean;

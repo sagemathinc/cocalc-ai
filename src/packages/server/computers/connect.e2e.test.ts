@@ -65,6 +65,12 @@ jest.mock("@cocalc/database/settings/secret-settings", () => ({
     ).toString(),
     needsMigration: false,
   }),
+  // Plain site settings (the computers switch) pass through unchanged.
+  decryptSettingValue: async (_name: string, value: string) => ({
+    value,
+    needsMigration: false,
+  }),
+  encryptSettingValue: async (_name: string, value: string) => value,
 }));
 jest.mock("@cocalc/database/settings/site-url", () => ({
   __esModule: true,
@@ -87,6 +93,7 @@ const tables = [
   "agent_networks",
   "agent_network_members",
   "accounts",
+  "server_settings",
 ];
 
 async function until(
@@ -131,6 +138,20 @@ describeDb("a computer connected over conat", () => {
   let address: string;
   const inboxChecks: string[] = [];
 
+  async function setComputersEnabled(on: boolean) {
+    await db().query(
+      "DELETE FROM server_settings WHERE name='computers_enabled'",
+    );
+    if (on) {
+      await db().query(
+        "INSERT INTO server_settings (name, value) VALUES ('computers_enabled','yes')",
+      );
+    }
+    const { resetServerSettingsCache } =
+      await import("@cocalc/database/settings/server-settings");
+    resetServerSettingsCache();
+  }
+
   async function session(): Promise<string> {
     await until(() => sessions.length > 0);
     return sessions[sessions.length - 1];
@@ -138,6 +159,7 @@ describeDb("a computer connected over conat", () => {
 
   beforeAll(async () => {
     await syncSchema(Object.fromEntries(tables.map((t) => [t, SCHEMA[t]])));
+    await setComputersEnabled(true);
     await db().query(
       `INSERT INTO agent_networks
          (agent_network_id, account_id, title, state, delivery_mode, generation, created_by)
@@ -836,6 +858,33 @@ describeDb("a computer connected over conat", () => {
         throw err;
       }
     }, 15_000);
+  });
+
+  it("turning the site's computers switch off cuts the session and refuses new logins; turned on again, the computer comes back", async () => {
+    const before = await session();
+    const count = sessions.length;
+    await setComputersEnabled(false);
+    // The router's next check closes the session...
+    await until(async () => {
+      const { rows } = await db().query(
+        "SELECT closed_at FROM account_computer_sessions WHERE session_id=$1",
+        [before],
+      );
+      return rows[0]?.closed_at != null;
+    }, 15_000);
+    // ...a challenge is refused, and the connector's retries don't get in.
+    const { sessionChallenge } = await import("./pairing-http");
+    const { COMPUTERS_DISABLED } = await import("./enabled");
+    expect(
+      await sessionChallenge(
+        { request: signChallengeRequest({ certificate, key: computerKey }) },
+        "198.51.100.20",
+      ),
+    ).toEqual({ error: COMPUTERS_DISABLED });
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(sessions.length).toBe(count);
+    await setComputersEnabled(true);
+    await until(async () => (await session()) !== before, 30_000);
   });
 
   it("an agent removed from the network can't relay, even with a current ticket", async () => {
