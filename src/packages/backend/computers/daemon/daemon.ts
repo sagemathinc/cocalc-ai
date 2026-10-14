@@ -124,6 +124,7 @@ const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 
 const CONTROL_REASON_TEXT: Record<ComputerControlReason, string> = {
   revoked: "this computer was disconnected in CoCalc",
+  deleted: "the CoCalc account of this computer was deleted",
   replaced: "this computer was connected again in CoCalc, as a new computer",
 };
 
@@ -544,6 +545,24 @@ export class ComputerDaemon {
     return { ended: true };
   }
 
+  /**
+   * A signed policy update from the home bay. When it applies, queued work
+   * authorized under the old policy epoch is cancelled (it would be refused
+   * at dispatch anyway); running jobs continue, as documented.
+   */
+  applyPolicy(envelope: unknown): { applied: boolean; cancelled: string[] } {
+    const hubNow = this.deps.hubClock.now();
+    if (hubNow == null) throw new Error("no hub time yet");
+    const { applied } = this.deps.store.applyPolicy(envelope, hubNow);
+    if (!applied) return { applied, cancelled: [] };
+    const epoch = this.deps.store.state.policy_epoch;
+    const cancelled = this.jobs.cancelQueued(
+      "the computer's policy changed before it started",
+      (job: Job) => job.auth.policy_epoch !== epoch,
+    );
+    return { applied, cancelled };
+  }
+
   /** A job's deadline, on the wall clock and on this boot's clock. */
   private jobDeadline(ms: number): {
     deadline_at: number | null;
@@ -618,6 +637,15 @@ export class ComputerDaemon {
   tick(now = Date.now()): void {
     if (!this.ended && this.deps.session.ended())
       this.endSession("time limit reached");
+    // Past its certificate this computer can never log in again (and its
+    // revocation could no longer be signed): stop for good.
+    if (
+      !this.ended &&
+      this.deps.store.certificate.payload.not_after <=
+        (this.deps.hubClock.now() ?? this.deps.clocks.wall())
+    ) {
+      this.endSession("this computer's certificate expired");
+    }
     this.jobs.refresh(now);
     this.cleanups.drive(now);
   }

@@ -156,6 +156,24 @@ merges of stored pushes (MEDIUM 3).
   terminal. Its tick ends the session (killing every job) at `not_after`,
   so a purged computer can't retry forever (HIGH 2).
 
+## 4b. Certificate renewal (needed by §4's backstop)
+
+- **The gap.** A computer without a time limit gets a 30-day certificate
+  (`CERTIFICATE_LIFETIME_MS`). Login refuses an expired one, and the comment
+  promises renewal "before this runs out", but nothing renews it yet.
+- **What changes.** With the daemon ending itself at `not_after`, renewal is
+  required:
+  - the hub pushes a renewed certificate (`computer-certificate`, signed
+    like the original, same key and ceiling hash, a later `not_after`) as a
+    fourth push kind, from day 20;
+  - every new session also gets it in its first snapshot.
+- **The daemon** accepts a renewed certificate only if all hold:
+  - it verifies against a trusted home-bay key;
+  - it names the same computer, key, account, home bay and ceiling hash;
+  - its `not_after` is later than the current one.
+- **Time-limited computers** keep a certificate that ends at their maximum
+  deadline, and are never renewed.
+
 ## 5. A project that stops being private
 
 - **The project floor.** The home bay re-attests the projects that may have

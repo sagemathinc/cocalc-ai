@@ -16,6 +16,7 @@ import {
   mergeFloors,
   parseComputerCertificate,
   parseComputerControl,
+  parseComputerPolicyUpdate,
   parseComputerFloors,
   parseSignedEnvelope,
   SIGNED_KINDS,
@@ -27,6 +28,7 @@ import {
 } from "@cocalc/util/computers/protocol";
 import {
   parseComputerPolicy,
+  policyWideningReasons,
   type ComputerPolicy,
 } from "@cocalc/util/computers/policy";
 import {
@@ -233,6 +235,48 @@ export class DaemonStore {
       throw new DaemonStateError("the control message is for another computer");
     }
     return env.payload;
+  }
+
+  /**
+   * A new effective policy from the home bay: signed by a current key of the
+   * home bay, for this computer, with a newer policy epoch, and within this
+   * computer's own ceiling (checked here, never taken from the hub). An
+   * older or equal epoch changes nothing.
+   */
+  applyPolicy(envelope: unknown, hubNow: number): { applied: boolean } {
+    const env = parseSignedEnvelope(
+      envelope,
+      parseComputerPolicyUpdate,
+      "policy update",
+    );
+    const key = this.trustedKey(env.kid, this.state.home_bay_id, hubNow);
+    if (
+      key == null ||
+      !verifyEnvelope(SIGNED_KINDS.policy, env, (kid) =>
+        kid === env.kid ? key : undefined,
+      )
+    ) {
+      throw new DaemonStateError(
+        "the policy update is not signed by the home bay",
+      );
+    }
+    const update = env.payload;
+    if (update.computer_id !== this.state.computer_id) {
+      throw new DaemonStateError("the policy update is for another computer");
+    }
+    if (update.policy_epoch <= this.state.policy_epoch) {
+      return { applied: false };
+    }
+    const widening = policyWideningReasons(update.policy, this.data.ceiling);
+    if (widening.length > 0) {
+      throw new DaemonStateError(
+        `the policy update exceeds this computer's ceiling: ${widening.join("; ")}`,
+      );
+    }
+    this.data.state = { ...this.state, policy_epoch: update.policy_epoch };
+    this.data.effective_policy = update.policy;
+    this.save();
+    return { applied: true };
   }
 
   /**

@@ -14,6 +14,7 @@
 // so a daemon never acts on something newer than it understands.
 
 import { UNSAFE_LINE_CHARS } from "./canonical";
+import { parseComputerPolicy, type ComputerPolicy } from "./policy";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export const COMPUTER_PROTOCOL_VERSION = 1;
@@ -26,6 +27,7 @@ export const SIGNED_KINDS = {
   ticket: "computer-ticket",
   floors: "computer-floors",
   control: "computer-control",
+  policy: "computer-policy",
   key_endorsement: "signing-key-endorsement",
   login: "computer-login",
   challenge_request: "computer-challenge-request",
@@ -668,7 +670,11 @@ export function parseComputerFloors(input: unknown): ComputerFloors {
 }
 
 /** Why the home bay ended a computer for good. */
-export const COMPUTER_CONTROL_REASONS = ["revoked", "replaced"] as const;
+export const COMPUTER_CONTROL_REASONS = [
+  "revoked",
+  "replaced",
+  "deleted",
+] as const;
 export type ComputerControlReason = (typeof COMPUTER_CONTROL_REASONS)[number];
 
 /**
@@ -707,6 +713,42 @@ export function parseComputerControl(input: unknown): ComputerControl {
     action: "end",
     reason: o.reason as ComputerControlReason,
     issued_at: time(o.issued_at, "control.issued_at"),
+  };
+}
+
+/**
+ * Signed by the computer's home bay: the computer's new effective policy.
+ * The daemon applies it only if its epoch is newer than its own and the
+ * policy is within its local ceiling (it computes that itself), so a replay
+ * or a widening changes nothing.
+ */
+export interface ComputerPolicyUpdate {
+  type: "cocalc-computer-policy";
+  version: 1;
+  computer_id: string;
+  policy_epoch: number;
+  policy: ComputerPolicy;
+  issued_at: number;
+}
+
+export function parseComputerPolicyUpdate(
+  input: unknown,
+): ComputerPolicyUpdate {
+  const o = record(input, "policy update");
+  onlyKeys(
+    o,
+    ["type", "version", "computer_id", "policy_epoch", "policy", "issued_at"],
+    "policy update",
+  );
+  literal(o.type, "cocalc-computer-policy", "policy update.type");
+  version(o.version);
+  return {
+    type: "cocalc-computer-policy",
+    version: 1,
+    computer_id: uuid(o.computer_id, "policy update.computer_id"),
+    policy_epoch: epoch(o.policy_epoch, "policy update.policy_epoch"),
+    policy: parseComputerPolicy(o.policy),
+    issued_at: time(o.issued_at, "policy update.issued_at"),
   };
 }
 

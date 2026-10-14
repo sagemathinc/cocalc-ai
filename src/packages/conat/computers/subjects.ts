@@ -103,11 +103,14 @@ export interface ComputerOpMessage {
 }
 
 /** A signed push: exactly one of the two envelopes. */
-export type ComputerPush = { floors: unknown } | { control: unknown };
+export type ComputerPush =
+  | { floors: unknown }
+  | { control: unknown }
+  | { policy: unknown };
 
 /** How the daemon answers a push (in ComputerReplyMessage.reply). */
 export type ComputerPushAck =
-  | { ok: true; raised?: boolean; ended?: boolean }
+  | { ok: true; raised?: boolean; ended?: boolean; applied?: boolean }
   | { ok: false; error: string };
 
 /** What the daemon publishes on the reply subject. */

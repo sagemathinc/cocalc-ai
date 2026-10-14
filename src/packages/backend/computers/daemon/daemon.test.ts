@@ -25,6 +25,7 @@ import {
 import {
   parseComputerCertificate,
   parseComputerControl,
+  parseComputerPolicyUpdate,
   parseComputerFloors,
   parseComputerTicket,
   parseProjectAttestation,
@@ -416,6 +417,69 @@ describe("the computer daemon (direct mode)", () => {
         computer_epoch: 5,
         projects: { [project_id]: 2 },
       });
+    });
+
+    it("applies a signed policy update only if newer and within the ceiling", async () => {
+      const update = (
+        policy_epoch: number,
+        policy: Record<string, unknown>,
+        signer = homeKey,
+      ) =>
+        signEnvelope(
+          SIGNED_KINDS.policy,
+          parseComputerPolicyUpdate({
+            type: "cocalc-computer-policy",
+            version: 1,
+            computer_id,
+            policy_epoch,
+            policy,
+            issued_at: Date.now(),
+          }),
+          signer,
+        );
+      const narrower = {
+        ...ceiling,
+        duration: { initial_seconds: 3600, max_seconds: 7200 },
+      };
+      const widened = { ...ceiling, agent_network_id: randomUUID() };
+      expect(() =>
+        daemon.applyPolicy(update(1, narrower, strangerKey)),
+      ).toThrow(/not signed by the home bay/);
+      expect(() => daemon.applyPolicy(update(1, widened))).toThrow(
+        /exceeds this computer's ceiling/,
+      );
+      expect(store.state.policy_epoch).toBe(0);
+      expect(daemon.applyPolicy(update(1, narrower)).applied).toBe(true);
+      expect(store.effectivePolicy.duration?.max_seconds).toBe(7200);
+      // A replay, or an older epoch, changes nothing.
+      expect(daemon.applyPolicy(update(1, ceiling)).applied).toBe(false);
+      expect(store.effectivePolicy.duration?.max_seconds).toBe(7200);
+      const old = await daemon.handle(message("exec", exec("true")));
+      expect((old as any).refused).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/another effective policy/),
+        ]),
+      );
+      ok(
+        await daemon.handle(
+          message("exec", exec("true"), { ticket: { policy_epoch: 1 } }),
+        ),
+      );
+      const reopened = DaemonStore.open(join(dir, "state"))!;
+      expect(reopened.state.policy_epoch).toBe(1);
+      expect(reopened.effectivePolicy.duration?.max_seconds).toBe(7200);
+    });
+
+    it("ends for good once its certificate has expired", () => {
+      const t = { wall: Date.now(), continuous: 0 };
+      clocks = { wall: () => t.wall, continuous: () => t.continuous };
+      daemon = makeDaemon();
+      daemon.tick();
+      expect(daemon.sessionEnded).toBe(false);
+      t.wall += 86_400_000 + 1000;
+      t.continuous += 86_400_000 + 1000;
+      daemon.tick();
+      expect(daemon.sessionEnded).toBe(true);
     });
 
     it("refuses everything once the session has ended", async () => {

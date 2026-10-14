@@ -726,6 +726,10 @@ export function applyPush(
     if (push != null && typeof push === "object" && "control" in push) {
       return { ok: true, ...daemon.applyControl(push.control) };
     }
+    if (push != null && typeof push === "object" && "policy" in push) {
+      const { applied } = daemon.applyPolicy(push.policy);
+      return { ok: true, applied };
+    }
     if (push != null && typeof push === "object" && "floors" in push) {
       const { raised } = daemon.applyFloors(push.floors);
       return { ok: true, raised };
