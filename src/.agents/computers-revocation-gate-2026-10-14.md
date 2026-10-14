@@ -334,7 +334,11 @@ All of these are account-home tables carrying `account_id`, added to
 
 ## 7. Certificates
 
-**Pending William's decision** (asked Oct 14):
+**William chose (a) on Oct 14:** "1-year certificate, pair again after;
+renewal later". With §4's rule, that means up to a year: a computer without a
+time limit gets a certificate until `min(issue + 365 days, signing key's
+not_after)`. Settings → Computers shows the date, and the computer must be
+paired again after it. Renewal is a later stage. The options, as asked:
 - **(a)** stage 1 gives computers without a time limit a 1-year
   certificate. They must pair again after it, and Settings → Computers
   shows the expiry. Renewal comes later.

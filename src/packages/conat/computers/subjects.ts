@@ -93,24 +93,24 @@ export interface ComputerOpMessage {
    */
   message?: { ticket: unknown; proof: unknown; request: unknown };
   /**
-   * A signed push from the home bay instead of an operation: raised floors,
-   * or a control message ("end": this computer was disconnected). The
-   * daemon verifies the signature and answers with an acknowledgement.
+   * A signed push from the home bay instead of an operation: the
+   * computer's current state snapshot (floors, policy, ended). The daemon
+   * verifies, applies, reconciles, then acknowledges.
    */
   push?: ComputerPush;
   /** So key rotation reaches the daemon (only a newer generation applies). */
   directory?: ComputerDirectory;
 }
 
-/** A signed push: exactly one of the two envelopes. */
-export type ComputerPush =
-  | { floors: unknown }
-  | { control: unknown }
-  | { policy: unknown };
+/** A signed push: the computer's current state snapshot. */
+export type ComputerPush = { state: unknown };
 
-/** How the daemon answers a push (in ComputerReplyMessage.reply). */
+/**
+ * How the daemon answers a push (in ComputerReplyMessage.reply): only
+ * after the state is durably applied and every job reconciled.
+ */
 export type ComputerPushAck =
-  | { ok: true; raised?: boolean; ended?: boolean; applied?: boolean }
+  | { ok: true; state_version: string; envelope_hash: string }
   | { ok: false; error: string };
 
 /** What the daemon publishes on the reply subject. */

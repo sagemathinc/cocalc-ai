@@ -15,14 +15,14 @@ import type { KeyObject } from "node:crypto";
 import {
   mergeFloors,
   parseComputerCertificate,
-  parseComputerControl,
-  parseComputerPolicyUpdate,
   parseComputerFloors,
+  parseComputerState,
   parseSignedEnvelope,
   SIGNED_KINDS,
   type ComputerCertificate,
-  type ComputerControl,
+  type ComputerEndReason,
   type ComputerFloors,
+  type ComputerState,
   type DaemonState,
   type SignedEnvelope,
 } from "@cocalc/util/computers/protocol";
@@ -32,6 +32,7 @@ import {
   type ComputerPolicy,
 } from "@cocalc/util/computers/policy";
 import {
+  canonicalHash,
   fingerprintOf,
   policyHash,
   signingPublicKeyFromDer,
@@ -53,6 +54,8 @@ export interface PersistedDaemon {
   effective_policy: ComputerPolicy;
   certificate: SignedEnvelope<ComputerCertificate>;
   directory: { generation: number; keys: TrustedKey[] };
+  /** Set (for good) when the home bay ended this computer. */
+  ended?: { reason: ComputerEndReason } | null;
 }
 
 export class DaemonStateError extends Error {}
@@ -214,72 +217,73 @@ export class DaemonStore {
     return { raised };
   }
 
-  /**
-   * A control message from the home bay, verified: signed by a current key
-   * of the home bay, and for this computer. The caller acts on it.
-   */
-  verifyControl(envelope: unknown, hubNow: number): ComputerControl {
-    const env = parseSignedEnvelope(envelope, parseComputerControl, "control");
-    const key = this.trustedKey(env.kid, this.state.home_bay_id, hubNow);
-    if (
-      key == null ||
-      !verifyEnvelope(SIGNED_KINDS.control, env, (kid) =>
-        kid === env.kid ? key : undefined,
-      )
-    ) {
-      throw new DaemonStateError(
-        "the control message is not signed by the home bay",
-      );
-    }
-    if (env.payload.computer_id !== this.state.computer_id) {
-      throw new DaemonStateError("the control message is for another computer");
-    }
-    return env.payload;
+  /** The home bay ended this computer for good (persisted), or null. */
+  get ended(): PersistedDaemon["ended"] {
+    return this.data.ended ?? null;
   }
 
   /**
-   * A new effective policy from the home bay: signed by a current key of the
-   * home bay, for this computer, with a newer policy epoch, and never wider
-   * than the current effective policy nor the ceiling (checked here, never
-   * taken from the hub). An older or equal epoch changes nothing.
+   * A state snapshot from the home bay (signed by a current key of the home
+   * bay, for this computer), applied in ONE durable write:
+   * - floors are raised to the componentwise maximum;
+   * - `ended` is terminal;
+   * - the policy applies only with a newer epoch and only if it is at most
+   *   both the current effective policy and the ceiling (computed here).
+   * Restrictions always apply. A widening policy is refused (an error after
+   * the write), so a bad policy can never block a revocation. The caller
+   * then reconciles every job against the result, whether or not anything
+   * changed: a crash between this write and the side effects is repaired by
+   * the next replay or start.
    */
-  applyPolicy(envelope: unknown, hubNow: number): { applied: boolean } {
-    const env = parseSignedEnvelope(
-      envelope,
-      parseComputerPolicyUpdate,
-      "policy update",
-    );
+  applyState(
+    envelope: unknown,
+    hubNow: number,
+  ): { state: ComputerState; envelope_hash: string } {
+    const env = parseSignedEnvelope(envelope, parseComputerState, "state");
     const key = this.trustedKey(env.kid, this.state.home_bay_id, hubNow);
     if (
       key == null ||
-      !verifyEnvelope(SIGNED_KINDS.policy, env, (kid) =>
+      !verifyEnvelope(SIGNED_KINDS.state, env, (kid) =>
         kid === env.kid ? key : undefined,
       )
     ) {
-      throw new DaemonStateError(
-        "the policy update is not signed by the home bay",
-      );
+      throw new DaemonStateError("the state is not signed by the home bay");
     }
-    const update = env.payload;
-    if (update.computer_id !== this.state.computer_id) {
-      throw new DaemonStateError("the policy update is for another computer");
+    const state = env.payload;
+    if (state.computer_id !== this.state.computer_id) {
+      throw new DaemonStateError("the state is for another computer");
     }
-    if (update.policy_epoch <= this.state.policy_epoch) {
-      return { applied: false };
+    const { floors } = mergeFloors(this.state.floors, {
+      home_epoch: state.home_epoch,
+      computer_epoch: state.computer_epoch,
+      projects: state.project_floors,
+    });
+    let widening: string[] = [];
+    let policy = this.data.effective_policy;
+    let policy_epoch = this.state.policy_epoch;
+    if (state.policy_epoch > policy_epoch) {
+      widening = [
+        ...policyWideningReasons(state.policy, this.data.effective_policy),
+        ...policyWideningReasons(state.policy, this.data.ceiling),
+      ];
+      if (widening.length === 0) {
+        policy = state.policy;
+        policy_epoch = state.policy_epoch;
+      }
     }
-    const widening = [
-      ...policyWideningReasons(update.policy, this.data.effective_policy),
-      ...policyWideningReasons(update.policy, this.data.ceiling),
-    ];
+    this.data = {
+      ...this.data,
+      state: { ...this.state, floors, policy_epoch },
+      effective_policy: policy,
+      ended: this.data.ended ?? state.ended ?? null,
+    };
+    this.save();
     if (widening.length > 0) {
       throw new DaemonStateError(
-        `the policy update would widen this computer's policy: ${widening.join("; ")}`,
+        `the state's policy would widen this computer's policy: ${widening.join("; ")}`,
       );
     }
-    this.data.state = { ...this.state, policy_epoch: update.policy_epoch };
-    this.data.effective_policy = update.policy;
-    this.save();
-    return { applied: true };
+    return { state, envelope_hash: canonicalHash(envelope) };
   }
 
   /**

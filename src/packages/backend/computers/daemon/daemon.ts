@@ -42,7 +42,7 @@ import {
   type OperationRequest,
 } from "@cocalc/util/computers/operations";
 import type {
-  ComputerControlReason,
+  ComputerEndReason,
   ComputerTicket,
 } from "@cocalc/util/computers/protocol";
 import { admit, RateLimiter, type AdmissionInput } from "./admission";
@@ -122,11 +122,28 @@ export type DaemonEvent =
 
 const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 
-const CONTROL_REASON_TEXT: Record<ComputerControlReason, string> = {
+const END_REASON_TEXT: Record<ComputerEndReason, string> = {
   revoked: "this computer was disconnected in CoCalc",
   deleted: "the CoCalc account of this computer was deleted",
   replaced: "this computer was connected again in CoCalc, as a new computer",
 };
+
+/** What authorized an exec: kept while it runs and in its ledger entry. */
+export interface ExecAuth {
+  source_project_id: string;
+  computer_epoch: number;
+  privacy_epoch: number;
+  policy_epoch: number;
+}
+
+function execAuth(ticket: ComputerTicket): ExecAuth {
+  return {
+    source_project_id: ticket.source_project_id,
+    computer_epoch: ticket.computer_epoch,
+    privacy_epoch: ticket.attestation.payload.privacy_epoch,
+    policy_epoch: ticket.policy_epoch,
+  };
+}
 
 export class ComputerDaemon {
   readonly ledger: Ledger;
@@ -134,7 +151,7 @@ export class ComputerDaemon {
   readonly cleanups: Cleanups;
   private running = new Map<
     string,
-    { controller: AbortController; agent_id: string }
+    { controller: AbortController; agent_id: string; auth: ExecAuth }
   >();
   private ended = false;
   private timer?: ReturnType<typeof setInterval>;
@@ -176,6 +193,9 @@ export class ComputerDaemon {
       if (entry != null) this.report({ kind: "operation", entry });
     }
     this.jobs.refresh();
+    // Whatever the durable state says (ended, floors, policy) holds from
+    // the first moment, before any reconnect or admission.
+    this.reconcile();
   }
 
   /** One message from an agent: ticket, proof and request. */
@@ -228,6 +248,7 @@ export class ComputerDaemon {
         ticket_id: ticket.ticket_id,
         agent_id: ticket.agent_id,
         source_project_id: ticket.source_project_id,
+        auth: execAuth(ticket),
       });
     } catch (err) {
       if (err instanceof LedgerConflict)
@@ -344,7 +365,11 @@ export class ComputerDaemon {
           this.pruneExecOutput();
           this.ledger.update(id, { state: "running" });
           const controller = new AbortController();
-          this.running.set(id, { controller, agent_id });
+          this.running.set(id, {
+            controller,
+            agent_id,
+            auth: execAuth(ticket),
+          });
           // The least of what was asked, what the ticket allows, and what is
           // left of the session.
           const timeout_ms = Math.max(
@@ -488,12 +513,8 @@ export class ComputerDaemon {
   }
 
   /**
-   * Raise floors from a signed push.
-   * - The computer epoch rose (revoked, or its network narrowed): queued
-   *   work can't be re-authorized here, so it is cancelled; running jobs
-   *   continue until the hub says more (revocation ends the session).
-   * - A project's privacy epoch rose (it is no longer private): that
-   *   project's queued jobs are cancelled and its running jobs stopped.
+   * Raise floors from a signed floors envelope (the older, single-purpose
+   * push; the hub sends state snapshots). Enforcement is reconcile's.
    */
   applyFloors(envelope: unknown): {
     raised: boolean;
@@ -502,65 +523,99 @@ export class ComputerDaemon {
   } {
     const hubNow = this.deps.hubClock.now();
     if (hubNow == null) throw new Error("no hub time yet");
-    const before = this.deps.store.state.floors;
     const { raised } = this.deps.store.applyFloors(envelope, hubNow);
-    const after = this.deps.store.state.floors;
+    return { raised, ...this.reconcile() };
+  }
+
+  /**
+   * A signed state snapshot from the home bay: applied durably in one
+   * write, then every job and running exec is reconciled against the
+   * result, whether or not anything changed. Only then is it acknowledged.
+   * A policy that would widen is refused, but its floors and `ended` (which
+   * only restrict) are applied and enforced anyway.
+   */
+  applyState(envelope: unknown): {
+    state_version: string;
+    envelope_hash: string;
+  } {
+    // Hub time when known; a daemon told it is ended at its login challenge
+    // may not have it yet (the state only ever restricts).
+    const hubNow = this.deps.hubClock.now() ?? this.deps.clocks.wall();
+    let applied: ReturnType<DaemonStore["applyState"]>;
+    try {
+      applied = this.deps.store.applyState(envelope, hubNow);
+    } finally {
+      this.reconcile();
+    }
+    return {
+      state_version: applied.state.state_version,
+      envelope_hash: applied.envelope_hash,
+    };
+  }
+
+  /**
+   * Bring every queued job, running job and running exec in line with the
+   * durable state. Idempotent: called after every state application (first
+   * or replayed), after floors, and at every start, so a crash between a
+   * state write and its side effects is always repaired.
+   * - ended: the session ends for good and every job is killed (re-driven);
+   * - below the computer floor: queued work is cancelled (running work
+   *   continues, as documented);
+   * - an older policy epoch: queued work is cancelled;
+   * - below its project's floor: queued and running jobs and running execs
+   *   are stopped. An exec's verified-pid cleanup is recorded durably before
+   *   it is aborted.
+   */
+  reconcile(): { cancelled: string[]; killed: string[] } {
     const cancelled: string[] = [];
     const killed: string[] = [];
-    if (!raised) return { raised, cancelled, killed };
-    const changedProjects = new Set(
-      Object.keys(after.projects).filter(
-        (p) => (after.projects[p] ?? 0) > (before.projects[p] ?? 0),
+    const store = this.deps.store;
+    const ended = store.ended;
+    if (ended != null) {
+      const reason = END_REASON_TEXT[ended.reason];
+      if (!this.ended) this.endSession(reason);
+      else this.jobs.killAll(reason);
+      return { cancelled, killed };
+    }
+    const { floors, policy_epoch } = store.state;
+    const belowProject = (project_id: string, privacy_epoch: number) =>
+      privacy_epoch < (floors.projects[project_id] ?? 0);
+    cancelled.push(
+      ...this.jobs.cancelQueued(
+        "authorization changed before it started",
+        (job: Job) => job.auth.computer_epoch < floors.computer_epoch,
+      ),
+      ...this.jobs.cancelQueued(
+        "the computer's policy changed before it started",
+        (job: Job) => job.auth.policy_epoch !== policy_epoch,
       ),
     );
-    if (after.computer_epoch > before.computer_epoch) {
-      cancelled.push(
-        ...this.jobs.cancelQueued("authorization changed before it started"),
-      );
-    }
-    if (changedProjects.size > 0) {
-      const affected = (job: Job) => changedProjects.has(job.source_project_id);
-      cancelled.push(
-        ...this.jobs.cancelQueued(
-          "its project is no longer eligible",
-          affected,
-        ),
-      );
-      killed.push(
-        ...this.jobs.killWhere(affected, "its project is no longer eligible"),
-      );
-    }
-    return { raised, cancelled, killed };
-  }
-
-  /**
-   * A signed control message from the home bay: "end" means this computer
-   * was disconnected or replaced in CoCalc. Every job is stopped and the
-   * session ends for good (the connector stops reconnecting).
-   */
-  applyControl(envelope: unknown): { ended: boolean } {
-    const hubNow = this.deps.hubClock.now() ?? this.deps.clocks.wall();
-    const control = this.deps.store.verifyControl(envelope, hubNow);
-    this.endSession(CONTROL_REASON_TEXT[control.reason]);
-    return { ended: true };
-  }
-
-  /**
-   * A signed policy update from the home bay. When it applies, queued work
-   * authorized under the old policy epoch is cancelled (it would be refused
-   * at dispatch anyway); running jobs continue, as documented.
-   */
-  applyPolicy(envelope: unknown): { applied: boolean; cancelled: string[] } {
-    const hubNow = this.deps.hubClock.now();
-    if (hubNow == null) throw new Error("no hub time yet");
-    const { applied } = this.deps.store.applyPolicy(envelope, hubNow);
-    if (!applied) return { applied, cancelled: [] };
-    const epoch = this.deps.store.state.policy_epoch;
-    const cancelled = this.jobs.cancelQueued(
-      "the computer's policy changed before it started",
-      (job: Job) => job.auth.policy_epoch !== epoch,
+    const ineligible = (job: Job) =>
+      belowProject(job.source_project_id, job.auth.privacy_epoch);
+    cancelled.push(
+      ...this.jobs.cancelQueued(
+        "its project is no longer eligible",
+        ineligible,
+      ),
     );
-    return { applied, cancelled };
+    killed.push(
+      ...this.jobs.killWhere(ineligible, "its project is no longer eligible"),
+    );
+    for (const [id, exec] of this.running) {
+      if (!belowProject(exec.auth.source_project_id, exec.auth.privacy_epoch)) {
+        continue;
+      }
+      const r = this.ledger.get(id)?.result as {
+        pid?: number;
+        pid_start?: string;
+      } | null;
+      if (r?.pid != null && r.pid_start != null) {
+        this.cleanups.add(id, r.pid, r.pid_start);
+      }
+      exec.controller.abort();
+      killed.push(id);
+    }
+    return { cancelled, killed };
   }
 
   /** A job's deadline, on the wall clock and on this boot's clock. */
@@ -610,7 +665,9 @@ export class ComputerDaemon {
 
   /** Why a queued job may no longer start, or null. */
   private jobRefusal(job: Job): string | null {
-    if (this.ended) return "the session on this computer has ended";
+    if (this.ended || this.deps.store.ended != null) {
+      return "the session on this computer has ended";
+    }
     const state = this.deps.store.state;
     if (job.auth.computer_epoch < state.floors.computer_epoch) {
       return "authorization changed before it started";

@@ -26,8 +26,7 @@ export const SIGNED_KINDS = {
   attestation: "project-attestation",
   ticket: "computer-ticket",
   floors: "computer-floors",
-  control: "computer-control",
-  policy: "computer-policy",
+  state: "computer-state",
   key_endorsement: "signing-key-endorsement",
   login: "computer-login",
   challenge_request: "computer-challenge-request",
@@ -670,85 +669,101 @@ export function parseComputerFloors(input: unknown): ComputerFloors {
 }
 
 /** Why the home bay ended a computer for good. */
-export const COMPUTER_CONTROL_REASONS = [
-  "revoked",
-  "replaced",
-  "deleted",
-] as const;
-export type ComputerControlReason = (typeof COMPUTER_CONTROL_REASONS)[number];
+export const COMPUTER_END_REASONS = ["revoked", "replaced", "deleted"] as const;
+export type ComputerEndReason = (typeof COMPUTER_END_REASONS)[number];
+
+/** At most this many project floors in one state snapshot. */
+export const MAX_STATE_PROJECT_FLOORS = 500;
+
+/** A state version on the wire: a canonical decimal (PostgreSQL bigint). */
+export const STATE_VERSION_PATTERN = /^(0|[1-9][0-9]{0,18})$/;
 
 /**
- * Signed by the computer's home bay: this computer is done. Its daemon stops
- * every job and its connector stops reconnecting. Permanent for the computer
- * id (a revoked or replaced computer never comes back), so replaying it
- * changes nothing. Pushed to a live session, or answered to a login
- * challenge request signed by the computer's own key.
+ * Signed by the computer's home bay: everything a daemon of this computer
+ * must have applied (revocation gate, computers-revocation-gate-2026-10-14).
+ * One snapshot, applied in one durable write and acknowledged as a whole:
+ * floors only rise, the policy applies only with a newer epoch and only if
+ * it narrows, and `ended` is terminal. So a replay changes nothing, and an
+ * older snapshot can't undo a newer one.
  */
-export interface ComputerControl {
-  type: "cocalc-computer-control";
+export interface ComputerState {
+  type: "cocalc-computer-state";
   version: 1;
   computer_id: string;
-  action: "end";
-  reason: ComputerControlReason;
-  issued_at: number;
-}
-
-export function parseComputerControl(input: unknown): ComputerControl {
-  const o = record(input, "control");
-  onlyKeys(
-    o,
-    ["type", "version", "computer_id", "action", "reason", "issued_at"],
-    "control",
-  );
-  literal(o.type, "cocalc-computer-control", "control.type");
-  version(o.version);
-  literal(o.action, "end", "control.action");
-  if (!COMPUTER_CONTROL_REASONS.includes(o.reason as ComputerControlReason)) {
-    throw new ProtocolError("control.reason is not a known reason");
-  }
-  return {
-    type: "cocalc-computer-control",
-    version: 1,
-    computer_id: uuid(o.computer_id, "control.computer_id"),
-    action: "end",
-    reason: o.reason as ComputerControlReason,
-    issued_at: time(o.issued_at, "control.issued_at"),
-  };
-}
-
-/**
- * Signed by the computer's home bay: the computer's new effective policy.
- * The daemon applies it only if its epoch is newer than its own and the
- * policy is within its local ceiling (it computes that itself), so a replay
- * or a widening changes nothing.
- */
-export interface ComputerPolicyUpdate {
-  type: "cocalc-computer-policy";
-  version: 1;
-  computer_id: string;
+  /** The hub's counter for this computer, as a canonical decimal string. */
+  state_version: string;
+  home_epoch: number;
+  computer_epoch: number;
+  /** Privacy epoch floor per project id. */
+  project_floors: Record<string, number>;
   policy_epoch: number;
   policy: ComputerPolicy;
+  ended: null | { reason: ComputerEndReason };
   issued_at: number;
 }
 
-export function parseComputerPolicyUpdate(
-  input: unknown,
-): ComputerPolicyUpdate {
-  const o = record(input, "policy update");
+export function parseComputerState(input: unknown): ComputerState {
+  const o = record(input, "state");
   onlyKeys(
     o,
-    ["type", "version", "computer_id", "policy_epoch", "policy", "issued_at"],
-    "policy update",
+    [
+      "type",
+      "version",
+      "computer_id",
+      "state_version",
+      "home_epoch",
+      "computer_epoch",
+      "project_floors",
+      "policy_epoch",
+      "policy",
+      "ended",
+      "issued_at",
+    ],
+    "state",
   );
-  literal(o.type, "cocalc-computer-policy", "policy update.type");
+  literal(o.type, "cocalc-computer-state", "state.type");
   version(o.version);
+  if (
+    typeof o.state_version !== "string" ||
+    !STATE_VERSION_PATTERN.test(o.state_version)
+  ) {
+    throw new ProtocolError("state.state_version is not a canonical decimal");
+  }
+  const floorsIn = record(o.project_floors, "state.project_floors");
+  const entries = Object.entries(floorsIn);
+  if (entries.length > MAX_STATE_PROJECT_FLOORS) {
+    throw new ProtocolError(
+      `state.project_floors has more than ${MAX_STATE_PROJECT_FLOORS} entries`,
+    );
+  }
+  const project_floors: Record<string, number> = {};
+  for (const [project_id, value] of entries) {
+    project_floors[uuid(project_id, "state.project_floors key")] = epoch(
+      value,
+      `state.project_floors.${project_id}`,
+    );
+  }
+  let ended: ComputerState["ended"] = null;
+  if (o.ended != null) {
+    const e = record(o.ended, "state.ended");
+    onlyKeys(e, ["reason"], "state.ended");
+    if (!COMPUTER_END_REASONS.includes(e.reason as ComputerEndReason)) {
+      throw new ProtocolError("state.ended.reason is not a known reason");
+    }
+    ended = { reason: e.reason as ComputerEndReason };
+  }
   return {
-    type: "cocalc-computer-policy",
+    type: "cocalc-computer-state",
     version: 1,
-    computer_id: uuid(o.computer_id, "policy update.computer_id"),
-    policy_epoch: epoch(o.policy_epoch, "policy update.policy_epoch"),
+    computer_id: uuid(o.computer_id, "state.computer_id"),
+    state_version: o.state_version,
+    home_epoch: epoch(o.home_epoch, "state.home_epoch"),
+    computer_epoch: epoch(o.computer_epoch, "state.computer_epoch"),
+    project_floors,
+    policy_epoch: epoch(o.policy_epoch, "state.policy_epoch"),
     policy: parseComputerPolicy(o.policy),
-    issued_at: time(o.issued_at, "policy update.issued_at"),
+    ended,
+    issued_at: time(o.issued_at, "state.issued_at"),
   };
 }
 
