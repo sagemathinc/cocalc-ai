@@ -65,34 +65,54 @@ const NOT_DONE_WATCHER =
   "NOT (spec->>'kind' = 'watch' AND next_run_at IS NULL)";
 
 /**
- * A watcher that fired but whose wake has not started yet (the agent was
- * busy, so the host queued it). Deleting it would delete the run that holds
- * the wake's one-time permit (agent_sensor_runs cascades), and the queued
- * turn would then fail with "sensor not found". It already gave back its
- * place in the watcher budget and is removed a day after it fired, so there
- * is nothing to gain by deleting it early.
+ * A watcher must not be deleted while its wake is being issued or is queued
+ * (the agent was busy, so the host holds the turn): deleting it deletes the
+ * run that holds the wake's one-time permit (agent_sensor_runs cascades), and
+ * the turn then fails with "sensor not found". While the scheduler holds the
+ * watcher's lease it may be issuing a wake; once issued, the run says so until
+ * the turn starts. A fired watcher already gave back its place in the watcher
+ * budget and is removed a day after it fired, so waiting costs nothing.
  */
+const WATCHER_RUNNING = `(spec->>'kind' = 'watch' AND lease_id IS NOT NULL
+  AND lease_until > now())`;
 const WATCHER_WAKE_QUEUED = `(spec->>'kind' = 'watch' AND EXISTS (
   SELECT 1 FROM agent_sensor_runs r
    WHERE r.sensor_id = agent_sensors.sensor_id
      AND r.wake_state IN ('issued', 'deferred', 'combining')
      AND r.started_at > now() - interval '1 day'))`;
 
+const WATCHER_RUNNING_ERROR =
+  "This watcher is checking right now and may be waking the agent; try again in a minute.";
 const WATCHER_WAKE_QUEUED_ERROR =
-  "This watcher already fired and its wake is still queued for the agent; deleting it now would make that turn fail. It no longer counts toward the watcher limit and is removed automatically a day after it fired. To drop the wake, cancel the queued turn in the chat instead.";
+  "This watcher already fired and its wake is still queued for the agent; deleting it now would make that turn fail. It no longer counts toward the watcher limit and is removed automatically a day after it fired. Cancelling the queued turn in the chat stops that turn; the watcher then stays, inert and uncounted, until it is removed.";
 
-/** Why a delete matched no row: the sensor is missing, or its wake is queued. */
-async function deleteRefusal(
+/**
+ * Delete one sensor (matched by `where`) unless it is a watcher whose wake is
+ * being issued or is queued. If nothing was deleted, say why; when the state
+ * changed in between (e.g. the wake started), try once more.
+ */
+async function deleteSensorGuarded(
   where: string,
   values: unknown[],
-): Promise<Error> {
-  const { rows } = await agentStore().query(
-    `SELECT ${WATCHER_WAKE_QUEUED} AS queued FROM agent_sensors WHERE ${where}`,
-    values,
-  );
-  return new Error(
-    rows[0]?.queued ? WATCHER_WAKE_QUEUED_ERROR : "sensor not found",
-  );
+): Promise<{ approved_by: string | null; kind: string | null }> {
+  for (let attempt = 0; ; attempt++) {
+    const { rows } = await agentStore().query(
+      `DELETE FROM agent_sensors WHERE ${where}
+         AND NOT ${WATCHER_RUNNING} AND NOT ${WATCHER_WAKE_QUEUED}
+       RETURNING approved_by, spec->>'kind' AS kind`,
+      values,
+    );
+    if (rows[0]) return rows[0];
+    const { rows: state } = await agentStore().query(
+      `SELECT ${WATCHER_RUNNING} AS running, ${WATCHER_WAKE_QUEUED} AS queued
+         FROM agent_sensors WHERE ${where}`,
+      values,
+    );
+    if (!state[0]) throw new Error("sensor not found");
+    if (state[0].queued) throw new Error(WATCHER_WAKE_QUEUED_ERROR);
+    if (state[0].running) throw new Error(WATCHER_RUNNING_ERROR);
+    if (attempt >= 1) throw new Error(WATCHER_RUNNING_ERROR);
+  }
 }
 
 export function toSensor(row: any): AgentSensor {
@@ -242,19 +262,12 @@ export async function agentSensorRequest(
     return { sensor: toSensor(rows[0]) };
   }
   if (request.op === "delete") {
-    const { rows } = await db.query(
-      `DELETE FROM agent_sensors WHERE sensor_id=$1 AND agent_id=$2
-         AND NOT ${WATCHER_WAKE_QUEUED}
-       RETURNING approved_by, spec->>'kind' AS kind`,
-      [request.sensor_id, agent.agent_id],
-    );
-    if (!rows[0])
-      throw await deleteRefusal("sensor_id=$1 AND agent_id=$2", [
-        request.sensor_id,
-        agent.agent_id,
-      ]);
-    if (rows[0].kind === "watch")
-      await releaseWatcher(rows[0].approved_by, request.sensor_id);
+    const deleted = await deleteSensorGuarded("sensor_id=$1 AND agent_id=$2", [
+      request.sensor_id,
+      agent.agent_id,
+    ]);
+    if (deleted.kind === "watch")
+      await releaseWatcher(deleted.approved_by, request.sensor_id);
     return { deleted: request.sensor_id };
   }
   // Code running in a sensor run never sets up sensors: no chains of
@@ -696,17 +709,10 @@ export async function sensorControlLocal(
       return requested;
     }
     case "delete": {
-      const { rows: deleted } = await db.query(
-        `DELETE FROM agent_sensors WHERE sensor_id=$1 AND project_id=$2
-           AND NOT ${WATCHER_WAKE_QUEUED}
-         RETURNING sensor_id`,
-        [row.sensor_id, project_id],
-      );
-      if (!deleted[0])
-        throw await deleteRefusal("sensor_id=$1 AND project_id=$2", [
-          row.sensor_id,
-          project_id,
-        ]);
+      await deleteSensorGuarded("sensor_id=$1 AND project_id=$2", [
+        row.sensor_id,
+        project_id,
+      ]);
       if (row.spec?.kind === "watch")
         await releaseWatcher(row.approved_by, row.sensor_id);
       return { deleted: row.sensor_id };
