@@ -32,6 +32,7 @@ import {
   PUBLIC_ABOUT_MISSION,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
 } from "@cocalc/util/public-about-content";
 import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
@@ -616,6 +617,11 @@ function renderAboutTeam(basePath: string): string {
   return `<main data-cocalc-public-prerender="about-team" style="${ARTICLE_STYLE}">
 <header><p>SageMath, Inc.</p><h1>Meet the people behind CoCalc</h1></header>
 <ul>${members}</ul>
+<p>${htmlEscape(PUBLIC_TEAM_BILLING_CONTACT.text)} ${publicLink(
+    basePath,
+    PUBLIC_TEAM_BILLING_CONTACT.path,
+    PUBLIC_TEAM_BILLING_CONTACT.label,
+  )}.</p>
 <p>${publicLink(basePath, "about", "About CoCalc")}</p>
 </main>`;
 }

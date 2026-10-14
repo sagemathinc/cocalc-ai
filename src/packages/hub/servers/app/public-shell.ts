@@ -26,6 +26,7 @@ import {
   getPublicImageDimensions,
   getPublicMarketingSiteName,
   getPublicMetadataRouteFromPath,
+  getPublicPermanentRedirectPath,
   getPublicRouteMetadata,
   pageTitle,
   parseNewsIdFromSlug,
@@ -417,7 +418,12 @@ async function buildHead(req: Request): Promise<{
   metadata = await resolveNewsMetadata(req, route, metadata);
   metadata = await resolveRootfsMetadata(req, route, metadata);
   const pricingTiers = await resolvePricingTiers(route, config);
-  const redirectPath = newsRedirectPath(req, route, metadata, path);
+  // A URL that moved for good, such as a team profile that is no longer
+  // published, redirects permanently. Unlike the news aliases, this includes
+  // static-shell requests: the old page is not served at any URL.
+  const redirectPath =
+    getPublicPermanentRedirectPath(path, { basePath }) ??
+    newsRedirectPath(req, route, metadata, path);
   const canonicalUrl = absolutePublicUrl(req, metadata.canonicalPath);
   const imageUrl = absolutePublicUrl(req, metadata.imagePath);
   const imageDimensions = getPublicImageDimensions(metadata.imagePath);

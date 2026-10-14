@@ -89,28 +89,6 @@ export const PUBLIC_TEAM_MEMBERS = [
     slug: "blaec-bejarano",
     title: "CSO",
   },
-  {
-    cardText:
-      "Harald is CoCalc's CTO and a long-time SageMath contributor. He works across front-end development, UI design, Linux operations, deployment infrastructure, and the large open-source software stack available in CoCalc projects.",
-    imageAlt: "Harald Schilly with his dog.",
-    imageSrc: "/public/about/harald-schilly.jpg",
-    metadataDescription:
-      "Meet Harald Schilly, CTO of SageMath, Inc. and a long-time SageMath contributor working across CoCalc engineering and infrastructure.",
-    name: "Harald Schilly",
-    slug: "harald-schilly",
-    title: "CTO",
-  },
-  {
-    cardText:
-      "Andrey went through graduate school as a student and then an instructor in Russia, USA, and Canada. With an interest in software development starting with early childhood experience on Soviet ES EVM, he used SageMath extensively both in his Ph.D. research and teaching and now oversees day-to-day operations at SageMath, Inc.",
-    imageAlt: "A portrait of Andrey Novoseltsev smiling.",
-    imageSrc: "/public/about/andrey-novoseltsev.jpeg",
-    metadataDescription:
-      "Meet Andrey Novoseltsev, COO of SageMath, Inc., SageMath developer, educator, and maintainer of SageMathCell.",
-    name: "Andrey Novoseltsev",
-    slug: "andrey-novoseltsev",
-    title: "COO",
-  },
 ] as const satisfies readonly PublicTeamMemberSummary[];
 
 export function getPublicTeamMember(
@@ -118,3 +96,25 @@ export function getPublicTeamMember(
 ): PublicTeamMemberSummary | undefined {
   return PUBLIC_TEAM_MEMBERS.find((member) => member.slug === slug);
 }
+
+// Team profiles that are no longer published. Their URLs redirect
+// permanently to the team page (getPublicPermanentRedirectPath in
+// public-site-metadata.ts), on the server and in the client router, so
+// existing links keep working.
+export const UNPUBLISHED_TEAM_PROFILE_SLUGS: readonly string[] = [
+  "andrey-novoseltsev",
+  "harald-schilly",
+];
+
+export function isUnpublishedTeamProfile(slug?: string): boolean {
+  return slug != null && UNPUBLISHED_TEAM_PROFILE_SLUGS.includes(slug);
+}
+
+// Quotes, purchase orders, and invoices go to the site's support page rather
+// than to one person's address. The team page and its crawler fallback both
+// show this line.
+export const PUBLIC_TEAM_BILLING_CONTACT = {
+  label: "contact support",
+  path: "support",
+  text: "For quotes, purchase orders, and invoices,",
+} as const;

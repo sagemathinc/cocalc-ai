@@ -11,6 +11,7 @@ import {
 } from "./public-feature-pages";
 import {
   getPublicTeamMember,
+  isUnpublishedTeamProfile,
   PUBLIC_TEAM_MEMBERS,
 } from "./public-about-content";
 import { SITE_NAME } from "./theme";
@@ -463,6 +464,26 @@ function authRoute(parts: string[]): PublicMetadataRoute {
     }
   }
   return { route: { kind: "auth-other" }, section: "auth" };
+}
+
+// Where a public URL that moved for good now lives, or undefined. A team
+// profile that is no longer published leads to the team page. The hub
+// answers these URLs with a permanent redirect, and the client router
+// replaces the address the same way, so a link never reaches a missing
+// profile.
+export function getPublicPermanentRedirectPath(
+  pathname: string,
+  options?: PublicRouteMetadataOptions,
+): string | undefined {
+  const parts = routeParts(pathname, options);
+  if (
+    parts[0] === "about" &&
+    parts[1] === "team" &&
+    isUnpublishedTeamProfile(parts[2])
+  ) {
+    return publicPath("about/team", options);
+  }
+  return undefined;
 }
 
 export function getPublicMetadataRouteFromPath(

@@ -14,6 +14,11 @@ import {
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import * as authApi from "@cocalc/frontend/auth/api";
+import {
+  PUBLIC_TEAM_BILLING_CONTACT,
+  PUBLIC_TEAM_MEMBERS,
+  UNPUBLISHED_TEAM_PROFILE_SLUGS,
+} from "@cocalc/util/public-about-content";
 import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
 import {
   membershipPriceDisplay,
@@ -33,6 +38,7 @@ import { getNewsRouteFromPath } from "../news/routes";
 import type { PublicPoliciesRoute } from "../policies/routes";
 import { getPoliciesRouteFromPath } from "../policies/routes";
 import {
+  getPublicRedirectPath,
   getPublicRouteFromPath,
   isPublicTarget,
   preservePublicTargetFragment,
@@ -235,6 +241,35 @@ describe("section route parsers", () => {
     expect(getPublicRouteFromPath("/does-not-exist")).toEqual({
       section: "not-found",
     });
+  });
+
+  // The hub answers these URLs with a 301 (hub/servers/app/public-shell.ts);
+  // the client router sends in-app links to the same place.
+  it.each(UNPUBLISHED_TEAM_PROFILE_SLUGS)(
+    "sends the unpublished team profile %s to the team page",
+    (slug) => {
+      expect(getPublicRedirectPath(publicPath(`about/team/${slug}`))).toBe(
+        publicPath("about/team"),
+      );
+      expect(getPublicRedirectPath(publicPath(`about/team/${slug}/`))).toBe(
+        publicPath("about/team"),
+      );
+    },
+  );
+
+  it("leaves published team profiles and other pages where they are", () => {
+    for (const path of [
+      "about",
+      "about/team",
+      ...PUBLIC_TEAM_MEMBERS.map(({ slug }) => `about/team/${slug}`),
+      "about/team/not-a-person",
+      "features/ai",
+    ]) {
+      expect({ path, to: getPublicRedirectPath(publicPath(path)) }).toEqual({
+        path,
+        to: undefined,
+      });
+    }
   });
 });
 
@@ -995,7 +1030,36 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("William Stein, Founder and CEO")).not.toBeNull();
-    expect(screen.getByText("Harald Schilly, CTO")).not.toBeNull();
+    // One card per published profile, and nothing else links to a profile.
+    const profileLinks = screen
+      .getAllByRole("link")
+      .filter((link) =>
+        link.getAttribute("href")?.startsWith(publicPath("about/team/")),
+      );
+    expect(profileLinks.map((link) => link.getAttribute("href"))).toEqual(
+      PUBLIC_TEAM_MEMBERS.map(({ slug }) => publicPath(`about/team/${slug}`)),
+    );
+    expect(PUBLIC_TEAM_MEMBERS.map(({ slug }) => slug)).toEqual([
+      "william-stein",
+      "blaec-bejarano",
+    ]);
+  });
+
+  it("sends quotes and invoices to the site's support page from the team page", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={aboutRoute({ view: "about-team" })}
+      />,
+    );
+
+    const contact = screen.getByRole("link", {
+      name: PUBLIC_TEAM_BILLING_CONTACT.label,
+    });
+    expect(contact).toHaveAttribute("href", publicPath("support"));
+    expect(contact.parentElement?.textContent).toBe(
+      `${PUBLIC_TEAM_BILLING_CONTACT.text} ${PUBLIC_TEAM_BILLING_CONTACT.label}.`,
+    );
   });
 
   it("renders an individual team profile", async () => {

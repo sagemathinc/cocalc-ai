@@ -1,7 +1,10 @@
 /** @jest-environment jsdom */
 
+import { UNPUBLISHED_TEAM_PROFILE_SLUGS } from "@cocalc/util/public-about-content";
+
 import {
   attachPublicNavigationInterceptor,
+  navigatePublic,
   setPublicNavigationListener,
 } from "./navigation";
 import { isPublicTarget } from "./routes";
@@ -31,6 +34,48 @@ describe("public navigation", () => {
     expect(window.location.search).toBe("?x=1");
     expect(seen).toEqual([["/about", "?x=1"]]);
     detach();
+  });
+
+  it("follows a permanent redirect before adding the address to the history", () => {
+    window.history.replaceState({}, "", "/about");
+    const before = window.history.length;
+    const seen: Array<[string, string]> = [];
+    setPublicNavigationListener((pathname, search) => {
+      seen.push([pathname, search]);
+    });
+    const detach = attachPublicNavigationInterceptor();
+    document.body.innerHTML = `<a href="/about/team/${UNPUBLISHED_TEAM_PROFILE_SLUGS[0]}?x=1#top">Profile</a>`;
+
+    const link = document.querySelector("a")!;
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+    });
+    link.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(window.location.pathname).toBe("/about/team");
+    expect(window.location.search).toBe("?x=1");
+    expect(window.location.hash).toBe("#top");
+    expect(window.history.length).toBe(before + 1);
+    expect(seen).toEqual([["/about/team", "?x=1"]]);
+    detach();
+  });
+
+  it("follows a permanent redirect when replacing the current address", () => {
+    window.history.replaceState({}, "", "/about");
+    const before = window.history.length;
+    const seen: Array<[string, string]> = [];
+    setPublicNavigationListener((pathname, search) => {
+      seen.push([pathname, search]);
+    });
+
+    navigatePublic(`/about/team/${UNPUBLISHED_TEAM_PROFILE_SLUGS[0]}`, true);
+
+    expect(window.location.pathname).toBe("/about/team");
+    expect(window.history.length).toBe(before);
+    expect(seen).toEqual([["/about/team", ""]]);
   });
 
   it("intercepts the internal guides bridge page", () => {

@@ -8,6 +8,11 @@ import {
   UNSUPPORTED_CAPABILITY_TERMS,
 } from "@cocalc/util/public-copy-guards";
 import {
+  PUBLIC_TEAM_BILLING_CONTACT,
+  PUBLIC_TEAM_MEMBERS,
+  UNPUBLISHED_TEAM_PROFILE_SLUGS,
+} from "@cocalc/util/public-about-content";
+import {
   getPublicFeaturePage,
   PUBLIC_FEATURE_PAGES,
 } from "@cocalc/util/public-feature-pages";
@@ -425,19 +430,29 @@ describe("core landing page initial HTML", () => {
     expect(team).toContain('data-cocalc-public-prerender="about-team"');
     expect(team).toContain("William Stein, Founder and CEO");
     expect(team).toContain("Blaec Bejarano, CSO");
+    // One entry per published profile, and the billing contact goes to the
+    // site's support page, as on the React page.
+    expect(
+      [...team.matchAll(/href="\/about\/team\/([^"]+)"/g)].map(
+        ([, slug]) => slug,
+      ),
+    ).toEqual(PUBLIC_TEAM_MEMBERS.map(({ slug }) => slug));
+    expect(team).toContain(
+      `<p>${PUBLIC_TEAM_BILLING_CONTACT.text} <a href="/support">${PUBLIC_TEAM_BILLING_CONTACT.label}</a>.</p>`,
+    );
 
     const profile = renderPublicRoutePrerender(
       {
         section: "about",
-        route: { view: "about-team-member", teamSlug: "harald-schilly" },
+        route: { view: "about-team-member", teamSlug: "blaec-bejarano" },
       },
       "/",
     );
     expect(profile).toContain(
       'data-cocalc-public-prerender="about-team-member"',
     );
-    expect(profile).toContain("<h1>Harald Schilly</h1>");
-    expect(profile).toContain("long-time SageMath contributor");
+    expect(profile).toContain("<h1>Blaec Bejarano</h1>");
+    expect(profile).toContain("leads sales and partnerships");
 
     const community = renderPublicRoutePrerender(
       { section: "support", route: { view: "community" } },
@@ -461,6 +476,11 @@ describe("core landing page initial HTML", () => {
         section: "about",
         route: { view: "about-team-member", teamSlug: "not-a-person" },
       },
+      // The hub redirects these to the team page before rendering.
+      ...UNPUBLISHED_TEAM_PROFILE_SLUGS.map((teamSlug) => ({
+        section: "about",
+        route: { view: "about-team-member", teamSlug },
+      })),
       { section: "news" },
       { section: "rootfs", route: { view: "index" } },
     ]) {

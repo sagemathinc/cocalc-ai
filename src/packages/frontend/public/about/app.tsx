@@ -14,6 +14,7 @@ import {
   PUBLIC_ABOUT_MISSION,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_TEAM_BILLING_CONTACT,
 } from "@cocalc/util/public-about-content";
 import type { NewsItem } from "@cocalc/util/types/news";
 
@@ -137,7 +138,7 @@ const ABOUT_PAGE_CSS = `
   }
 
   .cocalc-about-team-preview {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cocalc-about-founder-photo {
@@ -734,45 +735,54 @@ function AboutOverview() {
 
 function AboutTeamPage() {
   return (
-    <PublicGrid columns={2}>
-      {TEAM_MEMBERS.map((member) => (
-        <PublicCard
-          href={publicPath(`about/team/${member.slug}`)}
-          key={member.email}
-          title={`${member.name}, ${member.title}`}
-        >
-          <div
-            style={{
-              alignContent: "start",
-              display: "grid",
-              gap: 12,
-              height: "100%",
-            }}
+    <>
+      <PublicGrid columns={2}>
+        {TEAM_MEMBERS.map((member) => (
+          <PublicCard
+            href={publicPath(`about/team/${member.slug}`)}
+            key={member.email}
+            title={`${member.name}, ${member.title}`}
           >
             <div
               style={{
-                alignItems: "start",
+                alignContent: "start",
                 display: "grid",
-                gap: 24,
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+                gap: 12,
+                height: "100%",
               }}
             >
-              <Paragraph>{member.cardText}</Paragraph>
-              <img
-                alt={member.imageAlt}
-                src={member.imageSrc}
+              <div
                 style={{
-                  borderRadius: PUBLIC_RADIUS.media,
-                  objectFit: "cover",
-                  width: "100%",
+                  alignItems: "start",
+                  display: "grid",
+                  gap: 24,
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
                 }}
-              />
+              >
+                <Paragraph>{member.cardText}</Paragraph>
+                <img
+                  alt={member.imageAlt}
+                  src={member.imageSrc}
+                  style={{
+                    borderRadius: PUBLIC_RADIUS.media,
+                    objectFit: "cover",
+                    width: "100%",
+                  }}
+                />
+              </div>
             </div>
-          </div>
-        </PublicCard>
-      ))}
-    </PublicGrid>
+          </PublicCard>
+        ))}
+      </PublicGrid>
+      <Paragraph style={{ margin: 0, textAlign: "center" }}>
+        {PUBLIC_TEAM_BILLING_CONTACT.text}{" "}
+        <a href={publicPath(PUBLIC_TEAM_BILLING_CONTACT.path)}>
+          {PUBLIC_TEAM_BILLING_CONTACT.label}
+        </a>
+        .
+      </Paragraph>
+    </>
   );
 }
 
