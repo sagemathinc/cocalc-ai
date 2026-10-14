@@ -230,6 +230,84 @@ describe("project runtime authority revision", () => {
     await pool.query("DELETE FROM projects WHERE project_id=$1", [projectId]);
   });
 
+  it("soft delete and undelete advance the revision too (a computer's privacy epoch)", async () => {
+    const pool = getPool();
+    const projectId = uuid();
+    await pool.query(
+      "INSERT INTO projects (project_id, users) VALUES ($1, $2::jsonb)",
+      [projectId, JSON.stringify({ [uuid()]: { group: "owner" } })],
+    );
+    const revision = async () =>
+      (
+        await pool.query(
+          "SELECT runtime_authority_revision::text AS r, api_key_membership_pending AS p FROM projects WHERE project_id=$1",
+          [projectId],
+        )
+      ).rows[0];
+    try {
+      expect((await revision()).r).toBe("0");
+      await pool.query("UPDATE projects SET deleted=true WHERE project_id=$1", [
+        projectId,
+      ]);
+      expect((await revision()).r).toBe("1");
+      // The same value again is no change.
+      await pool.query("UPDATE projects SET deleted=true WHERE project_id=$1", [
+        projectId,
+      ]);
+      expect((await revision()).r).toBe("1");
+      await pool.query(
+        "UPDATE projects SET deleted=false WHERE project_id=$1",
+        [projectId],
+      );
+      expect((await revision()).r).toBe("2");
+      // No membership barrier from a deletion.
+      expect((await revision()).p).not.toBe(true);
+    } finally {
+      await pool.query("DELETE FROM projects WHERE project_id=$1", [projectId]);
+    }
+  });
+
+  it("upgrades a trigger that fired on users only", async () => {
+    const pool = getPool();
+    const client = await pool.connect();
+    const projectId = uuid();
+    try {
+      await client.query(
+        `DROP TRIGGER ${PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER} ON projects`,
+      );
+      await client.query(
+        `CREATE TRIGGER ${PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER}
+           BEFORE UPDATE OF users ON projects FOR EACH ROW
+           EXECUTE FUNCTION projects_bump_runtime_authority_revision()`,
+      );
+      expect(await projectRuntimeAuthorityRevisionSchemaNeedsSync(client)).toBe(
+        true,
+      );
+      await ensureProjectRuntimeAuthorityRevisionSchema(client);
+      expect(await projectRuntimeAuthorityRevisionSchemaNeedsSync(client)).toBe(
+        false,
+      );
+      await client.query(
+        "INSERT INTO projects (project_id, users) VALUES ($1, '{}'::jsonb)",
+        [projectId],
+      );
+      await client.query(
+        "UPDATE projects SET deleted=true WHERE project_id=$1",
+        [projectId],
+      );
+      const { rows } = await client.query(
+        "SELECT runtime_authority_revision::text AS r FROM projects WHERE project_id=$1",
+        [projectId],
+      );
+      expect(rows[0].r).toBe("1");
+    } finally {
+      await client.query("DELETE FROM projects WHERE project_id=$1", [
+        projectId,
+      ]);
+      client.release();
+    }
+  });
+
   it("rolls back function installation when trigger creation fails", async () => {
     const pool = getPool();
     const projectId = uuid();
