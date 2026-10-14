@@ -310,11 +310,13 @@ describe("agent memory on the account's home bay", () => {
       },
       { project_id: bob.project },
     );
-    assert.deepEqual(saved, {
+    const { revision, ...rest } = saved;
+    assert.deepEqual(rest, {
       name: "multibay/crossing",
       namespace: "multibay",
       saved: "created",
     });
+    assert.match(revision, /^[0-9a-f]{16}$/);
     const notes = await rowsIn(ATTACHED, "agent_memory_notes");
     assert.equal(notes.length, 1);
     assert.equal(notes[0].namespace, "multibay");
@@ -330,7 +332,7 @@ describe("agent memory on the account's home bay", () => {
     });
     assert.equal(index.notes, 1);
     assert.match(index.index, /- multibay: Two-bay test notes/);
-    assert.match(index.index, /- crossing: Saved through the seed/);
+    assert.match(index.index, /- multibay\/crossing: Saved through the seed/);
     const found = await fromSeed(
       "agent",
       { action: "memory", op: "search", query: "encrypted" },

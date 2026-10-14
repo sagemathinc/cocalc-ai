@@ -44,7 +44,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: { account_id: "me" },
 }));
-jest.mock("@cocalc/frontend/components", () => ({
+jest.mock("@cocalc/frontend/components/loading", () => ({
   Loading: () => <div>Loading</div>,
 }));
 

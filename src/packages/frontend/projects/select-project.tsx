@@ -8,7 +8,9 @@
 import { Checkbox, Select } from "antd";
 import { CSS, useMemo, useState, useTypedRedux } from "../app-framework";
 import { webapp_client } from "../webapp-client";
-import { Loading } from "../components";
+// Not the components index: it would load far more than this needs (e.g.
+// into the agent memory settings that chat imports).
+import { Loading } from "../components/loading";
 
 type ProjectSelectionList = { id: string; title: string }[];
 
