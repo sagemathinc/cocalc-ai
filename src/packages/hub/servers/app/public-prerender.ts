@@ -46,7 +46,6 @@ import {
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_INTRO,
   PUBLIC_HOME_SECONDARY_CTA,
-  PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
 import { getDocsEntry } from "@cocalc/docs";
 import {
@@ -161,7 +160,6 @@ function renderHome(
   <ul>${getPublicHomeHighlights(config)
     .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
     .join("")}</ul>
-  <p>${htmlEscape(PUBLIC_HOME_TRUST_LINE)}</p>
 </header>
 <section>
   <h2>Agents work where your project lives.</h2>

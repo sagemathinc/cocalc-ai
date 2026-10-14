@@ -30,7 +30,6 @@ import {
   PUBLIC_HOME_HIGHLIGHTS,
   PUBLIC_HOME_INTRO,
   PUBLIC_HOME_SECONDARY_CTA,
-  PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
 import {
   getPublicFeaturesTasks,
@@ -133,13 +132,14 @@ describe("home first screen initial HTML", () => {
         ([, tag, text]) => `${tag}: ${text}`,
       );
 
+      // The first screen has no trust line, as on the React page.
       expect(texts).toEqual([
         `p: ${PUBLIC_HOME_EYEBROW}`,
         `h1: ${PUBLIC_HOME_HEADLINE}`,
         `p: ${PUBLIC_HOME_INTRO}`,
         ...PUBLIC_HOME_HIGHLIGHTS.map((highlight) => `li: ${highlight}`),
-        `p: ${PUBLIC_HOME_TRUST_LINE}`,
       ]);
+      expect(html).not.toMatch(/Developed by|since 2013/i);
       expect(header).toContain(
         `<a href="${prefix}/auth/sign-up">Start on CoCalc.ai</a> <a href="${prefix}/${PUBLIC_HOME_SECONDARY_CTA.href}">${PUBLIC_HOME_SECONDARY_CTA.label}</a>`,
       );
@@ -411,6 +411,7 @@ describe("core landing page initial HTML", () => {
       );
       expect(about).toContain("Make serious computational work easy");
       expect(about).toContain(`href="${prefix}/about/team/william-stein"`);
+      expect(about).not.toMatch(/since 2013/i);
 
       const support = renderPublicRoutePrerender(
         { section: "support", route: { view: "index" } },

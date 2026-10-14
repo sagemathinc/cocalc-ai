@@ -88,24 +88,9 @@ const ABOUT_PAGE_CSS = `
     border-radius: ${PUBLIC_RADIUS.media}px;
     box-shadow: ${PUBLIC_ELEVATION.lg};
     color: ${PUBLIC_COLORS.footerText};
-    display: grid;
-    gap: 48px;
-    grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.55fr);
     overflow: hidden;
     padding: clamp(28px, 5vw, 58px);
     position: relative;
-  }
-
-  .cocalc-about-hero-proof {
-    align-self: stretch;
-    background: ${alpha(PUBLIC_COLORS.onPrimary, 0.1)};
-    border: 1px solid ${alpha(PUBLIC_COLORS.onPrimary, 0.2)};
-    border-radius: ${PUBLIC_RADIUS.media}px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 280px;
-    padding: 26px;
   }
 
   .cocalc-about-mission-grid,
@@ -132,7 +117,10 @@ const ABOUT_PAGE_CSS = `
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .cocalc-about-facts,
+  .cocalc-about-facts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .cocalc-about-timeline {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
@@ -152,22 +140,17 @@ const ABOUT_PAGE_CSS = `
   }
 
   @media (max-width: 900px) {
-    .cocalc-about-hero,
     .cocalc-about-mission-grid,
     .cocalc-about-founder {
       grid-template-columns: 1fr;
     }
 
-    .cocalc-about-hero-proof {
-      min-height: 0;
-    }
-
     .cocalc-about-audiences,
+    .cocalc-about-facts,
     .cocalc-about-team-preview {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .cocalc-about-facts,
     .cocalc-about-timeline {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
@@ -189,7 +172,6 @@ const ABOUT_PAGE_CSS = `
 `;
 
 const COMPANY_FACTS = [
-  { detail: "Collaborative computing online", value: "Since 2013" },
   { detail: "SageMath, Inc.", value: "Incorporated 2016" },
   {
     detail: "Independent security audit",
@@ -320,47 +302,6 @@ function AboutOverview() {
             </Button>
           </Flex>
         </Flex>
-        <div className="cocalc-about-hero-proof">
-          <div>
-            <div
-              style={{
-                color: PUBLIC_COLORS.accent,
-                fontSize: "clamp(48px, 7vw, 78px)",
-                fontWeight: PUBLIC_WEIGHT.bold,
-                letterSpacing: "-0.05em",
-                lineHeight: 1,
-              }}
-            >
-              2013
-            </div>
-            <div
-              style={{
-                color: PUBLIC_COLORS.onPrimary,
-                fontSize: PUBLIC_TYPE.lead,
-                marginTop: 8,
-              }}
-            >
-              CoCalc goes online
-            </div>
-          </div>
-          <Flex gap={8} wrap>
-            {["Persistent Linux", "Shared projects", "People + AI"].map(
-              (label) => (
-                <Tag
-                  key={label}
-                  style={{
-                    background: alpha(PUBLIC_COLORS.onPrimary, 0.1),
-                    borderColor: alpha(PUBLIC_COLORS.onPrimary, 0.22),
-                    color: PUBLIC_COLORS.onPrimary,
-                    margin: 0,
-                  }}
-                >
-                  {label}
-                </Tag>
-              ),
-            )}
-          </Flex>
-        </div>
       </section>
 
       <section

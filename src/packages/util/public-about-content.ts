@@ -7,7 +7,7 @@ export const PUBLIC_ABOUT_HEADLINE =
   "Building the future of collaborative computation.";
 
 export const PUBLIC_ABOUT_INTRO =
-  "Since 2013, CoCalc has given researchers, educators, technical teams, and AI agents a persistent place to work together using the open-source tools they trust.";
+  "CoCalc gives researchers, educators, technical teams, and AI agents a persistent place to work together using the open-source tools they trust.";
 
 export const PUBLIC_ABOUT_MISSION =
   "Make serious computational work easy to share, reproduce, and advance, by people and AI.";

@@ -340,6 +340,10 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Leadership and team" }),
     ).not.toBeNull();
     expect(screen.queryByText("Upcoming events")).toBeNull();
+    // The "since 2013" trust statistic is retired, in the hero and the facts.
+    expect(document.body.textContent).not.toMatch(
+      /since 2013|goes online|Collaborative computing online/i,
+    );
   });
 
   it("renders and updates managed public-route head metadata", async () => {
