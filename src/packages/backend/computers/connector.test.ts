@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   parseComputerCertificate,
+  parseComputerState,
   SIGNED_KINDS,
 } from "@cocalc/util/computers/protocol";
 import { parseComputerPolicy } from "@cocalc/util/computers/policy";
@@ -30,7 +31,7 @@ import {
   signEnvelope,
   transcriptHash,
 } from "./crypto";
-import { pairComputer, parsePairingUrl } from "./connector";
+import { pairComputer, parsePairingUrl, runConnector } from "./connector";
 import { DaemonStore } from "./daemon/state";
 
 const SITE = "https://cocalc.example";
@@ -338,6 +339,78 @@ describe("pairing as the machine", () => {
     await expect(
       pairComputer({ url: `${SITE}/c/${REQUEST}`, io: io(), pollMs: 1 }),
     ).rejects.toThrow(/already paired here/);
+  });
+
+  describe("a site that answers the login challenge with an ended state", () => {
+    async function paired() {
+      site((submitted) => ({
+        state: "approved",
+        certificate: certificateFor(submitted),
+        directory: directory(),
+      }));
+      return await pairComputer({
+        url: `${SITE}/c/${REQUEST}`,
+        io: io(),
+        pollMs: 1,
+      });
+    }
+
+    const ended = (computer_id: string, signer = bayKey) =>
+      signEnvelope(
+        SIGNED_KINDS.state,
+        parseComputerState({
+          type: "cocalc-computer-state",
+          version: 1,
+          computer_id,
+          state_version: "1",
+          home_epoch: 0,
+          computer_epoch: 0,
+          project_floors: {},
+          policy_epoch: 0,
+          policy: parseComputerPolicy(requested),
+          ended: { reason: "revoked" },
+          issued_at: Date.now(),
+        }),
+        signer,
+      );
+
+    it("a signed one ends the computer for good without logging in", async () => {
+      const connection = await paired();
+      let opened = false;
+      await runConnector({
+        connection,
+        io: io(),
+        challenge: async () => ({ ended: ended(connection.computer_id) }),
+        openConat: () => {
+          opened = true;
+          throw new Error("must not log in");
+        },
+      });
+      expect(opened).toBe(false);
+      const store = DaemonStore.open(join(connection.dir, "state"))!;
+      expect(store.ended).toEqual({ reason: "revoked" });
+    });
+
+    it("a forged one changes nothing and the connector keeps trying", async () => {
+      const connection = await paired();
+      const stranger = generateSigningKey();
+      const stop = new AbortController();
+      let asked = 0;
+      logs.length = 0;
+      await runConnector({
+        connection,
+        io: io(),
+        signal: stop.signal,
+        challenge: async () => {
+          if (++asked == 2) stop.abort();
+          return { ended: ended(connection.computer_id, stranger) };
+        },
+      });
+      expect(asked).toBe(2);
+      expect(logs.join("\n")).toMatch(/not signed by the home bay/);
+      const store = DaemonStore.open(join(connection.dir, "state"))!;
+      expect(store.ended ?? null).toBe(null);
+    }, 15_000);
   });
 });
 

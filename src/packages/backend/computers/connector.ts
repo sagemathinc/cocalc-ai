@@ -61,6 +61,8 @@ import {
 import {
   signChallengeRequest,
   signComputerLogin,
+  isLoginEnded,
+  type LoginChallengeAnswer,
   type LoginChallengeView,
 } from "./login";
 import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
@@ -563,7 +565,7 @@ export interface RunOptions {
   io: ConnectorIO;
   signal?: AbortSignal;
   /** Tests: how to get a challenge and open a conat connection. */
-  challenge?: () => Promise<LoginChallengeView>;
+  challenge?: () => Promise<LoginChallengeAnswer>;
   openConat?: (auth: object) => Client;
   /** Log in again this long before the lease (15 min) ends. */
   sessionMs?: number;
@@ -604,7 +606,7 @@ export async function runConnector(opts: RunOptions): Promise<void> {
   const challenge =
     opts.challenge ??
     (() =>
-      post<LoginChallengeView>(
+      post<LoginChallengeAnswer>(
         connection.origin,
         "session/challenge",
         {
@@ -667,10 +669,19 @@ async function oneSession({
   store: DaemonStore;
   daemon: ComputerDaemon;
   hubClock: HubClock;
-  challenge: () => Promise<LoginChallengeView>;
+  challenge: () => Promise<LoginChallengeAnswer>;
   openConat: (auth: object) => Client;
 }): Promise<void> {
-  const c = await challenge();
+  const opening = await challenge();
+  if (isLoginEnded(opening)) {
+    // The home bay ended this computer while it was away. Only a signed
+    // state acts (it throws otherwise, and the loop retries); once applied,
+    // every job is stopped and the connector stops for good.
+    daemon.applyState(opening.ended);
+    if (daemon.sessionEnded) return;
+    throw new TransientError("the site answered without a login challenge");
+  }
+  const c: LoginChallengeView = opening;
   const login = signComputerLogin({
     challenge: c,
     certificate: store.certificate,
