@@ -105,6 +105,7 @@ import "./notification-events";
 import "./notification-email-outbox";
 import "./notification-target-outbox";
 import "./notification-targets";
+import "./oauth";
 import "./organizations";
 import "./password-reset";
 import "./pg-system";

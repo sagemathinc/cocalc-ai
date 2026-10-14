@@ -27,6 +27,7 @@ export default function initPublicAuth(router: Router): void {
     "/auth/cli-elevate/*rest",
     "/auth/email/continue",
     "/auth/email/continue/*rest",
+    "/auth/oauth/authorize",
     "/auth/sign-up/*rest",
     "/auth/password-reset",
     "/auth/password-reset/*rest",

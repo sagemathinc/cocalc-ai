@@ -4,7 +4,12 @@ import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 
 export async function authorizeAgentDeliveryExecution(
   request: AcpRequest,
-  api: Pick<AgentApi, "authorizeRpcExecution" | "authorizeSensorExecution">,
+  api: Pick<
+    AgentApi,
+    | "authorizeRpcExecution"
+    | "authorizeSensorExecution"
+    | "authorizeRpcReportExecution"
+  >,
 ): Promise<void> {
   const chat = request.chat;
   if (chat?.sensor_wake) {
@@ -34,6 +39,15 @@ export async function authorizeAgentDeliveryExecution(
     });
     // Consumed: nothing downstream (writers, leases, logs) needs the secret.
     chat.sensor_wake = { ...chat.sensor_wake, permit: REDACTED };
+    return;
+  }
+  if (chat?.agent_rpc_report) {
+    // A delivery report CoCalc wrote for the sender of a failed message.
+    await api.authorizeRpcReportExecution({
+      account_id: chat.agent_rpc_report.authorization.principal_account_id,
+      report: chat.agent_rpc_report,
+      delivery: { path: chat.path, thread_id: `${chat.thread_id ?? ""}` },
+    });
     return;
   }
   if (chat?.agent_rpc_execution) {

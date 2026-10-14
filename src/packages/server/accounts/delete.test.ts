@@ -16,6 +16,7 @@ const executeBillingAuthorityCommandMock = jest.fn();
 const setBillingAccountFrozenMock = jest.fn();
 const deleteClusterAccountDirectoryEntryMock = jest.fn();
 const cleanupSiteLicenseAccessForAccountDeletionMock = jest.fn();
+const queueOAuthClientPurgesMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -82,6 +83,13 @@ jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
     setBillingAccountFrozenMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/oauth/purge", () => ({
+  __esModule: true,
+  queueOAuthClientPurges: (...args: any[]) =>
+    queueOAuthClientPurgesMock(...args),
+  getOAuthPurgeTargets: async () => ["sagebrush"],
+}));
+
 jest.mock("./cluster-directory", () => ({
   __esModule: true,
   deleteClusterAccountDirectoryEntry: (...args: any[]) =>
@@ -104,6 +112,7 @@ describe("delete account", () => {
     cancelEverythingMock.mockReset();
     deleteClusterAccountDirectoryEntryMock.mockReset();
     cleanupSiteLicenseAccessForAccountDeletionMock.mockReset();
+    queueOAuthClientPurgesMock.mockReset().mockResolvedValue([]);
     cancelEverythingMock.mockResolvedValue(undefined);
     executeBillingAuthorityCommandMock
       .mockReset()
@@ -156,6 +165,27 @@ describe("delete account", () => {
       cleanupSiteLicenseAccessForAccountDeletionMock,
     ).toHaveBeenCalledTimes(2);
     expect(deleteClusterAccountDirectoryEntryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues client data purges in the transaction that marks the account deleted", async () => {
+    const db = { query: jest.fn(async () => ({ rows: [], rowCount: 1 })) };
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      await fn(db);
+    });
+    const { default: deleteAccount } = await import("./delete");
+    await deleteAccount(ACCOUNT_ID);
+    expect(queueOAuthClientPurgesMock).toHaveBeenCalledWith({
+      db,
+      account_id: ACCOUNT_ID,
+      client_ids: ["sagebrush"],
+    });
+  });
+
+  it("queues no purges when marking the account deleted fails", async () => {
+    withAccountRehomeWriteFenceMock.mockRejectedValue(new Error("fenced"));
+    const { default: deleteAccount } = await import("./delete");
+    await expect(deleteAccount(ACCOUNT_ID)).rejects.toThrow("fenced");
+    expect(queueOAuthClientPurgesMock).not.toHaveBeenCalled();
   });
 
   it("disposes owned projects before marking the account deleted", async () => {

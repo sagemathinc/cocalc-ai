@@ -43,9 +43,28 @@ const loadCached = async ({ production = false } = {}) => {
     };
   });
 
+  // cocalc_database_cached_reads_total, as "label outcome" -> count
+  const counts: Record<string, number> = {};
+  jest.doMock("@cocalc/backend/metrics", () => ({
+    __esModule: true,
+    newCounter: () => ({
+      labels: (label: string, outcome: string) => ({
+        inc: () => {
+          const key = `${label} ${outcome}`;
+          counts[key] = (counts[key] ?? 0) + 1;
+        },
+      }),
+    }),
+  }));
+
   const cachedModule = (await import("./cached")) as CachedModule;
   process.env.NODE_ENV = nodeEnv;
-  return { getCachedReadPool: cachedModule.getCachedReadPool, getPool, pool };
+  return {
+    getCachedReadPool: cachedModule.getCachedReadPool,
+    getPool,
+    pool,
+    counts,
+  };
 };
 
 describe("getCachedReadPool", () => {
@@ -53,7 +72,10 @@ describe("getCachedReadPool", () => {
     const { getCachedReadPool, getPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-    const cached = getCachedReadPool("short", { ensureExists: false });
+    const cached = getCachedReadPool("short", {
+      label: "test",
+      ensureExists: false,
+    });
     await cached.query("SELECT 1");
 
     expect(getPool).toHaveBeenCalledWith({ ensureExists: false });
@@ -64,7 +86,7 @@ describe("getCachedReadPool", () => {
     const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     await cached.query("SELECT 1");
     await cached.query("SELECT 1");
 
@@ -75,7 +97,7 @@ describe("getCachedReadPool", () => {
     const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValue({ rows: [] });
 
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     await cached.query("SELECT 1");
     await cached.query("SELECT 1");
 
@@ -84,7 +106,7 @@ describe("getCachedReadPool", () => {
 
   it("refuses a write outside production", async () => {
     const { getCachedReadPool, pool } = await loadCached();
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     await expect(
       cached.query("UPDATE t SET n = n + 1 WHERE id=$1 RETURNING n", ["a"]),
     ).rejects.toThrow("not a plain read");
@@ -95,7 +117,7 @@ describe("getCachedReadPool", () => {
     const { getCachedReadPool, pool } = await loadCached({ production: true });
     pool.query.mockResolvedValue({ rows: [{ count: 1 }] });
 
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     const write =
       "UPDATE email_counter SET count = count + 1 WHERE id=$1 RETURNING count";
     // Concurrent identical calls each reach the database...
@@ -128,14 +150,14 @@ describe("getCachedReadPool", () => {
     // Outside production it is refused...
     const strict = await loadCached();
     await expect(
-      strict.getCachedReadPool("medium").query(query, ["x"]),
+      strict.getCachedReadPool("medium", { label: "test" }).query(query, ["x"]),
     ).rejects.toThrow("not a plain read");
     expect(strict.pool.query).not.toHaveBeenCalled();
 
     // ...and in production it runs, uncached.
     const { getCachedReadPool, pool } = await loadCached({ production: true });
     pool.query.mockResolvedValue({ rows: [{ a: 1 }] });
-    const cached = getCachedReadPool("medium");
+    const cached = getCachedReadPool("medium", { label: "test" });
     await cached.query(query, ["x"]);
     await cached.query(query, ["x"]);
     expect(pool.query).toHaveBeenCalledTimes(2);
@@ -153,7 +175,7 @@ describe("getCachedReadPool", () => {
     const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValue({ rows: [{ a: 1 }] });
 
-    const cached = getCachedReadPool("medium");
+    const cached = getCachedReadPool("medium", { label: "test" });
     await cached.query(query, ["x"]);
     await cached.query(query, ["x"]);
 
@@ -168,7 +190,7 @@ describe("getCachedReadPool", () => {
       ],
     });
 
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     const { rows } = await cached.query("SELECT 1");
 
     expect(Object.isFrozen(rows[0])).toBe(true);
@@ -183,7 +205,7 @@ describe("getCachedReadPool", () => {
     const { getCachedReadPool, pool } = await loadCached();
     pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     const first = await cached.query("SELECT 1");
     first.rows.unshift({ id: 0 });
     first.rows.sort((a, b) => b.id - a.id);
@@ -201,9 +223,34 @@ describe("getCachedReadPool", () => {
     expect(() => getCachedReadPool("" as any)).toThrow("invalid cache");
   });
 
+  it("requires a label", async () => {
+    const { getCachedReadPool } = await loadCached();
+    expect(() => getCachedReadPool("short", { label: "" })).toThrow(
+      "a label is required",
+    );
+    expect(() => getCachedReadPool("short")).toThrow("a label is required");
+  });
+
+  it("counts hits, misses and uncached reads by label", async () => {
+    const { getCachedReadPool, pool, counts } = await loadCached();
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    const names = getCachedReadPool("short", { label: "names" });
+    await names.query("SELECT 1");
+    await names.query("SELECT 1");
+    await names.query("SELECT 1");
+    expect(counts).toEqual({ "names miss": 1, "names hit": 2 });
+
+    const prod = await loadCached({ production: true });
+    prod.pool.query.mockResolvedValue({ rows: [{ n: 1 }] });
+    await prod
+      .getCachedReadPool("short", { label: "oops" })
+      .query("UPDATE t SET n = n + 1 RETURNING n");
+    expect(prod.counts).toEqual({ "oops uncached": 1 });
+  });
+
   it("offers only query(), not a pool", async () => {
     const { getCachedReadPool, pool } = await loadCached();
-    const cached = getCachedReadPool("short");
+    const cached = getCachedReadPool("short", { label: "test" });
     expect(cached).not.toBe(pool);
     expect(Object.keys(cached)).toEqual(["query"]);
   });

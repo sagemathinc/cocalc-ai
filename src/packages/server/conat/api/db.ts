@@ -51,7 +51,7 @@ export async function getLegacyTimeTravelInfo({
   project_id: string;
   path: string;
 }): Promise<{ uuid: string; users?: string[] }> {
-  const pool = getCachedReadPool("long");
+  const pool = getCachedReadPool("long", { label: "legacy-timetravel-info" });
   const D = db();
   const string_id = D.sha1(project_id, path);
   const { rows } = await pool.query(

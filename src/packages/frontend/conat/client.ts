@@ -113,6 +113,7 @@ import {
   waitForExamModeConfiguration,
 } from "@cocalc/frontend/customize/exam-mode";
 import { registerSyncDocLoader } from "@cocalc/conat/sync-doc/factories";
+import { setSyncClientHooks } from "@cocalc/conat/sync-doc/sync-client";
 
 registerSyncDocLoader(async () => {
   await import("@cocalc/conat/sync-doc/install");
@@ -431,6 +432,17 @@ export class ConatClient extends EventEmitter {
     this.setMaxListeners(100);
     this.client = client;
     this.hub = initHubApi(this.callHub);
+    if (!this.remote) {
+      // Let documents tell the user things, e.g., that a history too large
+      // to load was reset (see SyncDoc.resetOversizedHistory).
+      setSyncClientHooks({
+        alert_message: (opts) => {
+          void import("@cocalc/frontend/alerts").then(({ alert_message }) =>
+            alert_message(opts),
+          );
+        },
+      });
+    }
     this.browserSessionAutomation = createBrowserSessionAutomation({
       client: this.client,
       hub: this.hub,
@@ -2788,6 +2800,12 @@ export class ConatClient extends EventEmitter {
         forceNew: true,
         auth: (cb) => cb({ browser_id: this.client.browser_id }),
       }),
+    };
+    // Reply on the inbox this connection's server assigns, as the main
+    // connection does: an agent-scoped session gets one of its own, not the
+    // account's.
+    state.client.inboxPrefixHook = (info) => {
+      return info?.user ? inboxPrefix(info.user) : undefined;
     };
     state.client.on("connected", () => {
       logProjectHostRoutingDiagnostic("socket-connected", {

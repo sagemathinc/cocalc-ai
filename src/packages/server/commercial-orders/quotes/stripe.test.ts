@@ -1082,7 +1082,7 @@ describe("commercial Stripe quotes", () => {
       }),
       expect.objectContaining({
         idempotencyKey:
-          "cocalc:test.cocalc.ai:commercial-quote:cq_1:v1:invoice:normalize",
+          "cocalc:test.cocalc.ai:commercial-quote:cq_1:v1:invoice:normalize:bank-transfer-v1",
       }),
     );
     expect(stripe.invoices.updateLineItem).toHaveBeenCalledTimes(1);

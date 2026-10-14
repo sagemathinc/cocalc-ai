@@ -15,6 +15,8 @@ import type {
   StreamCheckpoints,
   CheckpointUpdate,
   StreamCheckpoint,
+  ResetHistoryOptions,
+  ResetHistoryResult,
 } from "./storage";
 export { StoredMessage, StorageOptions };
 import { persistSubject, SERVICE, type User } from "./util";
@@ -969,6 +971,22 @@ class PersistStreamClient extends EventEmitter {
     );
   };
 
+  // atomically reset a sync document's history; see PersistentStream.resetHistory
+  resetHistory = async (
+    opts: ResetHistoryOptions,
+    { timeout }: { timeout?: number } = {},
+  ): Promise<ResetHistoryResult> => {
+    return this.checkForError(
+      await this.socket.request(opts, {
+        headers: {
+          cmd: "resetHistory",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
   getCheckpoints = async ({
     timeout,
   }: {
@@ -1119,9 +1137,7 @@ class PersistStreamClient extends EventEmitter {
         if (this.isClosed() || this.socket.state === "closed")
           throw Error("closed");
         if (headers?.error) {
-          throw new ConatError(`${headers.error}`, {
-            code: headers.code as string | number,
-          });
+          throw errorFromHeaders(headers);
         }
         // Completion frames participate in sequencing too. A dropped first or
         // last data frame must not turn into an empty successful bootstrap.
@@ -1382,7 +1398,7 @@ class PersistStreamClient extends EventEmitter {
     if (mesg.headers != null) {
       const { error, code } = mesg.headers;
       if (error || code) {
-        throw new ConatError(error ?? "error", { code });
+        throw errorFromHeaders(mesg.headers);
       }
     }
     if (!noReturn) {
@@ -1480,3 +1496,15 @@ const assertHasWritePermission = ({ user, storage, service }) => {
   const subject = persistSubject({ ...user, service });
   assertHasWritePermission0({ subject, path: storage.path, service });
 };
+
+// An error response from the persist server.  oversized_seq says which stored
+// message was too large to read (code 413).
+function errorFromHeaders(headers): ConatError {
+  const err = new ConatError(`${headers.error ?? "error"}`, {
+    code: headers.code as string | number,
+  });
+  if (typeof headers.oversized_seq == "number") {
+    (err as any).oversizedSeq = headers.oversized_seq;
+  }
+  return err;
+}

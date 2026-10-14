@@ -1456,6 +1456,24 @@ export async function startMasterRegistration({
         }),
       );
     },
+    async deliverAgentRpcReport(opts) {
+      await awaitReadyForControl("deliverAgentRpcReport", waitUntilReady);
+      if (!controlClient)
+        return { not_sent: "host messaging transport unavailable" };
+      const projectId = opts.report.authorization.source.project_id;
+      if (!projectId) return { not_sent: "the sender is not a project agent" };
+      const { deliverAgentRpcReport } =
+        await import("@cocalc/lite/hub/acp/agent-rpc-report");
+      const { ensureProjectContainerRunning } =
+        await import("./codex/codex-project");
+      return await deliverAgentRpcReport(controlClient, opts, () =>
+        ensureProjectContainerRunning({
+          projectId,
+          accountId: opts.account_id,
+          timeout: 120_000,
+        }),
+      );
+    },
     async applyExamRun(opts) {
       await awaitReadyForControl("applyExamRun", waitUntilReady);
       return await applyExamRunLocal(opts);

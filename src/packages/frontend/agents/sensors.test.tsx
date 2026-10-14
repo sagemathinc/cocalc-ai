@@ -359,7 +359,8 @@ test("a watcher shows what it waits for, and is done once it fired", () => {
       onClose={() => {}}
       sensors={[
         sensor({
-          status: "active",
+          // The server reports a fired watcher as done.
+          status: "done",
           pending_spec: null,
           spec: {
             kind: "watch",

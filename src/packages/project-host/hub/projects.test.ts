@@ -1682,6 +1682,72 @@ describe("project host start ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
   });
 
+  it("replaces a stuck synthetic runtime probe and names where it is stuck", async () => {
+    // Real time plus a jump, so time-based waits elsewhere still advance.
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    jest.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    const gates: Array<(value: { state: string }) => void> = [];
+    const runnerApi = {
+      start: jest.fn(
+        async () =>
+          await new Promise<{ state: string }>((resolve) => {
+            gates.push(resolve);
+          }),
+      ),
+      status: jest.fn(async () => ({ state: "running" })),
+      stop: jest.fn(async () => ({ state: "opened" })),
+    } as any;
+    sandboxExec.mockImplementation(async ({ script }: { script: string }) => {
+      const marker = script.match(/printf '%s' '([^']+)'/)?.[1];
+      return { stdout: marker ?? "", stderr: "", code: 0 };
+    });
+    deleteVolume.mockResolvedValue(undefined);
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+    const run = () => (hubApi.projects as any).runSyntheticRuntimeProbe();
+    const startCalls = async (n: number) => {
+      for (let i = 0; i < 100 && runnerApi.start.mock.calls.length < n; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(runnerApi.start).toHaveBeenCalledTimes(n);
+    };
+
+    const first = run();
+    void first.catch(() => {});
+    await startCalls(1);
+    skew += 120_000;
+    await expect(run()).rejects.toThrow(
+      /already in progress for 12\d{4}ms at stage=create project_id=[0-9a-f-]{36}/,
+    );
+    expect(runnerApi.start).toHaveBeenCalledTimes(1);
+
+    // Stuck past the stale limit: a new probe decides the host's health.
+    skew += 400_000;
+    const second = run();
+    void second.catch(() => {});
+    await startCalls(2);
+
+    // The new probe sticks too, but only one stuck probe is left running.
+    skew += 400_000;
+    await expect(run()).rejects.toThrow("already in progress");
+    expect(runnerApi.start).toHaveBeenCalledTimes(2);
+
+    // A replaced probe finishing late does not release the newer one. (Undo
+    // the clock jump first: the probes' storage reservations are timed.)
+    skew = 0;
+    gates[0]({ state: "running" });
+    await expect(first).resolves.toMatchObject({
+      project_id: expect.any(String),
+    });
+    await expect(run()).rejects.toThrow("already in progress");
+    gates[1]({ state: "running" });
+    await expect(second).resolves.toMatchObject({
+      project_id: expect.any(String),
+    });
+  });
+
   it("preserves explicit rootfs image names on createProject", async () => {
     const runnerApi = {
       start: jest.fn(async () => ({

@@ -61,6 +61,10 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.getProjectState": projectFromOpts,
   "projects.getProjectAddress": projectFromOpts,
   "projects.getProjectActiveOperation": projectFromOpts,
+  // Host placement and moves run where the project, its runtime slot and its
+  // operations live; fresh auth for a move asks the caller's home bay.
+  "projects.moveProject": projectFromOpts,
+  "projects.assignProjectHost": projectFromOpts,
   "projects.setProjectMetadata": projectFromOpts,
   "projects.setProjectDeletionProtection": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
@@ -84,6 +88,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.listCollabInvites": projectFromOpts,
   "projects.respondCollabInvite": projectFromOpts,
   "projects.removeCollaborator": projectFromNestedOpts,
+  // Ownership lives with the project; fresh auth and admin status are asked
+  // of the caller's home bay.
+  "projects.transferProjectOwnership": projectFromOpts,
   "projects.copyEmailProjectInviteLink": collabInviteFromOpts,
   "projects.redeemEmailProjectInvite": collabInviteFromOpts,
   "projects.previewEmailProjectInvite": collabInviteFromOpts,
@@ -110,6 +117,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.startCourseSecretCleanup": courseProjectFromOpts,
   "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
   "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
+  // A document's edit history (TimeTravel) lives with its project.
+  "sync.history": projectFromOpts,
+  "sync.purgeHistory": projectFromOpts,
   // Admin overrides apply where the project is; isAdmin asks the admin's
   // home bay (#904).
   "projects.getAdminProjectEntitlementOverride": projectFromOpts,

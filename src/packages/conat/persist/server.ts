@@ -208,6 +208,7 @@ export function server({
     let error = "";
     let errorCode: any = undefined;
     let changefeed = false;
+    let stopChangefeed: (() => void) | undefined;
     let storage: undefined | StorageOptions = undefined;
     let stream: undefined | PersistentStream = undefined;
     let user = "";
@@ -259,7 +260,12 @@ export function server({
           error = "";
           errorCode = undefined;
           if (changefeed) {
-            startChangefeed({ socket, stream, messagesThresh });
+            stopChangefeed?.();
+            stopChangefeed = startChangefeed({
+              socket,
+              stream,
+              messagesThresh,
+            });
           }
         } catch (err) {
           error = `${err}`;
@@ -317,6 +323,8 @@ export function server({
     socket.on("closed", () => {
       log("socket closed", id, socket.subject);
       closed = true;
+      stopChangefeed?.();
+      stopChangefeed = undefined;
       for (const abort of replays) abort.abort();
       replays.clear();
       storage = undefined;
@@ -395,6 +403,8 @@ export function server({
           mesg.respondSync(stream.setMetadata(mesg.data));
         } else if (request.cmd == "patchMetadata") {
           mesg.respondSync(stream.patchMetadata(mesg.data));
+        } else if (request.cmd == "resetHistory") {
+          mesg.respondSync(stream.resetHistory(mesg.data ?? {}));
         } else if (request.cmd == "checkpoints") {
           mesg.respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
@@ -432,7 +442,12 @@ export function server({
           log("getAll", { subject: socket.subject, request });
           if (request.changefeed && !changefeed) {
             changefeed = true;
-            startChangefeed({ socket, stream, messagesThresh });
+            stopChangefeed?.();
+            stopChangefeed = startChangefeed({
+              socket,
+              stream,
+              messagesThresh,
+            });
           }
           // getAll uses requestMany which responds with all matching messages,
           // so no call to mesg.respond here.
@@ -460,7 +475,12 @@ export function server({
           log("changefeed", changefeed);
           if (!changefeed) {
             changefeed = true;
-            startChangefeed({ socket, stream, messagesThresh });
+            stopChangefeed?.();
+            stopChangefeed = startChangefeed({
+              socket,
+              stream,
+              messagesThresh,
+            });
           }
           mesg.respondSync("created");
         } else {
@@ -469,10 +489,14 @@ export function server({
           });
         }
       } catch (err) {
+        const oversizedSeq = (err as any)?.oversizedSeq;
         mesg.respondSync(null, {
           headers: {
             error: `${err}`,
             code: (err as any)?.code ?? classifyPersistStorageErrorCode(err),
+            ...(typeof oversizedSeq == "number"
+              ? { oversized_seq: oversizedSeq }
+              : {}),
           },
         });
       }
@@ -836,7 +860,7 @@ function startChangefeed({ socket, stream, messagesThresh }) {
     { leading: true, trailing: true },
   );
 
-  stream.on("change", (message) => {
+  const onChange = (message) => {
     if (socket.state == "closed") {
       return;
     }
@@ -844,5 +868,14 @@ function startChangefeed({ socket, stream, messagesThresh }) {
     // logger.debug("changefeed got message", message, socket.state);
     unsentMessages.push(message);
     sendAllUnsentMessages();
-  });
+  };
+  stream.on("change", onChange);
+  // The stream is shared by every socket on this subject and can stay open
+  // for days while one of them does; a listener left behind by a closed
+  // socket would keep that socket, and anything it queued, until then.
+  return () => {
+    stream.removeListener("change", onChange);
+    sendAllUnsentMessages.cancel();
+    unsentMessages.length = 0;
+  };
 }

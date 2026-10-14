@@ -80,7 +80,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: { account_id: "account-1" },
 }));
 
-jest.mock("@cocalc/frontend/components", () => ({
+jest.mock("@cocalc/frontend/components/loading", () => ({
   Loading: () => <div>Loading</div>,
 }));
 

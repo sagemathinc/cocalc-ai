@@ -27,7 +27,7 @@ jest.mock("@cocalc/chat/send", () => ({
   admitPreparedChatSend: (...args: any[]) => (admit as any)(...args),
 }));
 
-import { deliverSensorWake } from "./sensor-wake";
+import { deliverSensorWake } from "../sensor-wake";
 
 const wake = {
   account_id: "00000000-0000-4000-8000-000000000001",

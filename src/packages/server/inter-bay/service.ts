@@ -73,8 +73,6 @@ import {
   createInterBayProjectControlCreateHandler,
   createInterBayProjectControlAcceptRehomeHandler,
   createInterBayProjectControlSetUsageAccountHandler,
-  createInterBayProjectControlAssignHostHandler,
-  createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
   createInterBayProjectControlSetEntitlementOverrideHandler,
@@ -233,6 +231,7 @@ import {
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
+import { getOAuthAccountStateLocal } from "@cocalc/server/auth/oauth/account-state";
 import { getMembershipTierUsageReport as getMembershipTierUsageReportLocal } from "@cocalc/database/postgres/membership-tiers";
 import {
   backfillMembershipAnalyticsPurchaseEvents,
@@ -430,8 +429,6 @@ import {
   handleProjectControlGetRootfsStates,
   handleProjectControlHardDeleteStatus,
   handleProjectControlSetUsageAccount,
-  handleProjectControlAssignHost,
-  handleProjectControlMove,
   handleProjectControlRehome,
   handleProjectControlRestart,
   handleProjectControlSetEntitlementOverride,
@@ -578,10 +575,7 @@ import {
   getCourseManagedProjectStatesLocal,
   reconcileCourseManagedProjectLocal,
 } from "@cocalc/server/projects/course/reconcile-managed-project";
-import {
-  leaveOrDeleteProjectsForAccount,
-  transferProjectOwnershipExplicitly,
-} from "@cocalc/server/projects/ownership";
+import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   assertOwnershipRecipientLocal,
   getOwnershipUsageCountLocal,
@@ -1576,6 +1570,7 @@ async function startAccountLocalService(): Promise<void> {
     listProjectSummaries: listProjectSummariesLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
+    getOAuthAccountState: async (opts) => await getOAuthAccountStateLocal(opts),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>
       await getArchiveLifecycleAccountStatusesLocal({ account_ids }),
     getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
@@ -2380,9 +2375,7 @@ async function startProjectControlStartService(): Promise<void> {
       await handleProjectControlHardDeleteStatus(opts),
     setUsageAccount: async (opts) =>
       await handleProjectControlSetUsageAccount(opts),
-    assignHost: async (opts) => await handleProjectControlAssignHost(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
-    move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
     acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
@@ -2456,18 +2449,6 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlSetUsageAccountHandler({
-      client,
-      bay_id,
-      parallel: true,
-      impl,
-    }),
-    createInterBayProjectControlAssignHostHandler({
-      client,
-      bay_id,
-      parallel: true,
-      impl,
-    }),
-    createInterBayProjectControlMoveHandler({
       client,
       bay_id,
       parallel: true,
@@ -2716,8 +2697,6 @@ async function startProjectCollabInviteService(): Promise<void> {
         account_id,
         project_ids,
       }),
-    transferProjectOwnership: async (opts) =>
-      await transferProjectOwnershipExplicitly(opts),
     setProjectsHidden: async ({ account_id, project_ids, hide }) =>
       await setLocalProjectsHidden({
         account_id,

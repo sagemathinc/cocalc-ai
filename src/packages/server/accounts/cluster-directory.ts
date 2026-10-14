@@ -519,8 +519,11 @@ async function searchDirectoryAccounts({
     return [];
   }
   await ensureClusterAccountDirectorySchema();
-  // query-cache-ok: display: directory search results
-  const pool = getCachedReadPool("medium");
+  // Admins search right after changing an account (banning it, say), so
+  // only ordinary users' searches are cached.
+  // query-cache-ok: display: directory search results (non-admin only)
+  const cached = getCachedReadPool("medium", { label: "directory-search" });
+  const pool = admin ? getPool() : cached;
 
   if (isValidUUID(normalizedQuery)) {
     const direct = await getDirectoryAccountById(normalizedQuery);

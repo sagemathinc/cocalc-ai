@@ -256,3 +256,7 @@ src/log*
 src/g.sh
 src/packages/project-host/tmp/stress-build-bundle/**
 tmp/
+
+# Release workflows download their tested artifacts here before recording
+# them; untracked files would mark the recorded artifact as dirty.
+/release-assets/

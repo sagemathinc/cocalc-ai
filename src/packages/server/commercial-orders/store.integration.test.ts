@@ -2441,4 +2441,47 @@ describePglite("commercial order store", () => {
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
   });
+
+  it("fences a new exclusive operation while one of the same kind is unresolved", async () => {
+    const created = await store.createCommercialOrder(request());
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve exclusive provision fixture",
+    });
+    const first = {
+      order_id: approved.id,
+      expected_version: approved.version,
+      operation: "provision-site-license",
+      idempotency_key: `provision-a-${randomUUID()}`,
+      request: { existing_site_license_id: "license-a" },
+      exclusive: true,
+    };
+    const reserved = await store.reserveCommercialProviderOperation(first);
+    await store.setCommercialProviderOperationStatus({
+      id: reserved.operation.id,
+      status: "indeterminate",
+    });
+    await expect(
+      store.reserveCommercialProviderOperation({
+        ...first,
+        idempotency_key: `provision-b-${randomUUID()}`,
+        request: { existing_site_license_id: "license-b" },
+      }),
+    ).rejects.toThrow(
+      "provision-site-license is blocked while another provision-site-license operation is indeterminate",
+    );
+    // An exact replay still reaches the unresolved operation.
+    const replay = await store.reserveCommercialProviderOperation(first);
+    expect(replay.operation.id).toBe(reserved.operation.id);
+    // Other operation kinds are not fenced by it.
+    await expect(
+      store.reserveCommercialProviderOperation({
+        ...first,
+        operation: "end-site-license",
+        idempotency_key: `end-${randomUUID()}`,
+      }),
+    ).resolves.toBeDefined();
+  });
 });

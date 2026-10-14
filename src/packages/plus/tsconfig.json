@@ -15,8 +15,9 @@
     "dist",
     "node_modules",
     "build",
+    "dist-release",
     "**/*.test.ts",
     "jest.config.js"
   ],
-  "references": [{ "path": "../lite" }]
+  "references": [{ "path": "../lite" }, { "path": "../cli" }]
 }

@@ -12,6 +12,10 @@ import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
 } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  getOAuthPurgeTargets,
+  queueOAuthClientPurges,
+} from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
@@ -71,6 +75,7 @@ any deleted accounts, e.g., delete the email_address_before_delete field.
 */
 
 export async function markAccountDeleted(account_id: string): Promise<void> {
+  const client_ids = await getOAuthPurgeTargets();
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT email_address FROM accounts WHERE account_id=$1",
@@ -88,6 +93,9 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
         "UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL WHERE account_id=$2::UUID",
         [email_address_before_delete, account_id],
       );
+      // In the same transaction, so a deleted account always has its purge
+      // requests queued, and a failed deletion queues none.
+      await queueOAuthClientPurges({ db, account_id, client_ids });
     },
   });
 }
