@@ -1,7 +1,7 @@
 # Computers: revocation that stops running work (stage-1 release gate)
 
-Implementation note, Oct 14 2026. **Revision 4** answers lite1-review's
-review of revision 3. Revision 3 answered the re-review of revision 2. Plan: `computers-plan-2026-10-11.md` ("Revocation
+Implementation note, Oct 14 2026. **Revision 5** answers lite1-review's
+review of revision 4. Earlier revisions answered the earlier reviews. Plan: `computers-plan-2026-10-11.md` ("Revocation
 semantics", "The computer principal and the data path", "Multi-bay,
 rehoming, deletion"). This is the first open release gate from #1036: *the
 signed floors/control push and the epoch-close outbox (revocation must also
@@ -72,14 +72,28 @@ A single new kind, `computer-state`, replaces separate pushes:
     its project's floor;
   - policy epoch: cancel queued work authorized under an older epoch.
 
+  - **Foreground `exec` too, not just JobManager jobs:**
+    - each exec's full authorization vector (`computer_epoch`,
+      `privacy_epoch` with `source_project_id`, `policy_epoch`) is persisted
+      in its ledger entry before the release handshake, and kept in the
+      in-memory running record;
+    - reconciliation decides each exec on its own vector. It kills only
+      execs below their project's floor, so an exec admitted later, above an
+      already-persisted floor, keeps running;
+    - for an affected live exec, its verified-pid cleanup is durably added
+      or marked before any abort or signal, and before the ack;
+    - at restart, a terminal `ended` still kills everything.
+
   Kill and cancel requests are recorded durably by the existing job and
   cleanup machinery before anything else happens. A crash between the state
   write and a side effect is repaired by the next replay or start, so a
   replay that "raises nothing" still enforces.
 - The ack comes only after the write **and** the reconciliation have been
   recorded: `{ ok: true, state_version, envelope_hash }`.
-- **`state_version` on the wire** is a decimal string (PostgreSQL bigint),
-  compared exactly as a string. It never passes through a JS number. If verification fails, the ack is `{ ok: false, error }`
+- **`state_version` on the wire** is a canonical decimal string (PostgreSQL
+  bigint): it must match `^(0|[1-9][0-9]*)$`, with no sign and no leading
+  zeros, and is compared exactly as a string. It never passes through a JS
+  number. If verification fails, the ack is `{ ok: false, error }`
   and nothing changes.
 - **Replaces earlier kinds.** It supersedes `computer-floors`,
   `computer-control` and `computer-policy` as pushes; their parsers stay for
@@ -168,28 +182,30 @@ All of these are account-home tables carrying `account_id`, added to
     computer. This holds for revoked, tombstoned and deleted computers too.
   - For an ended computer it answers `{ state: <signed snapshot with ended>,
     keys }`, **before** `assertComputersEnabled`.
-  - `keys` is the home bay's key chain with `signing-key-endorsement`
-    envelopes. The daemon validates the chain **historically**:
-    - each endorsement was issued by the same bay's predecessor key, while
-      that predecessor was valid (`issued_at` within the predecessor's
-      `not_before`..`not_after`), in increasing order;
-    - the chain starts at a key the daemon trusts (even one that has since
-      expired);
-    - it ends at a currently valid key.
-
-    The result is used **only** to verify a terminal `ended` state. Expired
-    keys are never revived for tickets, floors or policy. So a computer
-    offline across a rotation, even past its old key's `not_after` (keys
-    rotate at 300 days and expire at 365), still verifies "ended". Test:
-    pair just before a rotation, stay offline past the old key's expiry,
-    then verify a signed ended snapshot.
+  - **A key the daemon still trusts signs it; no historical chains.** A
+    certificate never outlives the bay key that signed it: `not_after` is
+    at most that key's `not_after`, enforced when the certificate is issued
+    (and at any renewal, §7).
+    - The `ended` answer is signed with the **certificate's own issuing
+      key**. The hub keeps that private key until its `not_after`, which is
+      never before the certificate's.
+    - So any computer that can still ask (its certificate is unexpired)
+      verifies "ended" with a key from its pairing directory.
+    - A computer offline past its certificate ends itself locally, at
+      `not_after` (implemented). No expired key is ever trusted, and no
+      `issued_at` has to be believed.
+    - Test: pair just before a rotation, stay offline until after the
+      rotation (but within the certificate), then verify ended; past the
+      certificate, the daemon has already ended itself.
   - Computer rows and keys are kept until the certificate's `not_after`.
 
 ## 5. Bounded project floors
 
 - **`account_computer_active_projects`** `(account_id, computer_id,
-  project_id, possibly_active_until, next_check_at, lease_until,
-  claimed_by_hub)` is written by the ticket transaction:
+  project_id, possibly_active_until, last_attesting_bay_id, next_check_at,
+  lease_until, claimed_by_hub)` is written by the ticket transaction (from
+  the verified attestation's bay), and `last_attesting_bay_id` is updated on
+  each verified eligible poll:
   - a run: open-ended until reports exist (gate 3);
   - an exec: issue time plus 1 h plus a margin;
   - put/get: the stream's maximum.
@@ -198,9 +214,20 @@ All of these are account-home tables carrying `account_id`, added to
   operation's maximum execution or stream lifetime, plus clock skew.
   Examples: exec, `start_by` + 1 h + 5 min; put/get, `start_by` + the
   maximum stream duration + 5 min.
-- **An admission bound keeps the snapshot bounded.** A ticket for a new
-  project is refused while the computer has 500 possibly-active projects
-  ("this computer is serving too many projects at once").
+- **An admission bound keeps the snapshot bounded, exactly.** The bound
+  is over the snapshot's own set: the union of possibly-active pairs and
+  project floors not yet eligible for GC.
+  - Under the per-computer serialization (the computer row lock, §3), the
+    ticket transaction and snapshot construction first **synchronously**
+    delete or filter safely expired pairs: past both
+    `possibly_active_until` and the last `start_by`.
+  - Only then does the ticket transaction count.
+  - A ticket for a project outside that set is refused while the set has
+    500 entries ("this computer is serving too many projects at once"). So
+    a snapshot never carries more than 500 project floors, whatever the
+    asynchronous GC is doing.
+  - Test: 500 floor-bearing expired exec projects with GC delayed, then 500
+    new active projects, then an initial-session snapshot.
 - **Runs, until gate 3.** A run is open-ended until computer→hub reports
   exist (gate 3, also a release gate). So until then, a computer can serve
   at most **500 distinct projects with runs over its lifetime**. This gate
@@ -238,8 +265,16 @@ All of these are account-home tables carrying `account_id`, added to
   - the rollbacks in `create.ts`, which delete a project that never had
     tickets.
 
-  Test: a directory miss or rehome race, against a real hard-delete
-  tombstone.
+  **Which bay to ask:** the active row's `last_attesting_bay_id`. When
+  directory resolution has no owner (after a hard delete the directory entry
+  may be gone), the poller asks only that last verified bay for hard-delete
+  evidence:
+  - the actual last owner signs its tombstone;
+  - a bay the project moved away from answers "unknown", which just retries.
+
+  Tests: a hard delete after the directory entry is already removed; a
+  rehome where the stored old bay answers "unknown"; a directory miss or
+  rehome race against a real hard-delete tombstone.
 - **The poller** is a due-work queue:
   - hubs continuously claim due rows (`next_check_at <= now()`, lease,
     `SKIP LOCKED`, 50 per claim);
@@ -272,8 +307,14 @@ All of these are account-home tables carrying `account_id`, added to
     `not_before`, with a bounded lifetime;
   - never renew ended or time-limited computers.
 
-Either way, the daemon ends at its own certificate's `not_after`. That is
-already implemented.
+Either way, the daemon ends at its own certificate's `not_after` (already
+implemented), and a certificate's `not_after` is at most its signing key's
+`not_after` (§4). Bay keys rotate at 300 days and expire at 365, so a
+certificate issued just before a rotation can't last a full year. Option (a)
+therefore means "as long as the signing key allows, up to a year", or
+longer-lived bay keys. Option (b) renews only over a live session; the
+renewed certificate is signed by the current key, and the new directory
+comes with it.
 
 ## 8. The revocation table, row by row
 
@@ -304,8 +345,10 @@ already implemented.
   - **the initial session:** an operation relayed before the first snapshot
     is acked is refused;
   - **crash points:** after the state save, before each side effect, and
-    before the ack; then reopen and replay or start: every job that should
-    stop is stopped;
+    before the ack; then reopen and replay or start: every job **and every
+    foreground exec** that should stop is stopped. This includes a 50-minute
+    exec, and the replay of an old snapshot while a newer-authorized exec
+    runs (it keeps running);
   - a login racing each kind of bump, and a relay racing initial delivery;
   - an ack lost after application: redelivery is harmless; a stale
     attempt's or another hub's ack can't finalize; `ok: false` never
