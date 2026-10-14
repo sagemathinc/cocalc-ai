@@ -51,6 +51,7 @@ import chunkStatsPlugin from "./plugins/chunk-stats";
 import cleanPlugin from "./plugins/clean";
 import defineConstantsPlugin from "./plugins/define-constants";
 import frontendBuildManifestPlugin from "./plugins/frontend-build-manifest";
+import serverOnlyTablesPlugin from "./plugins/server-only-tables";
 import { javascriptOutputFilenames } from "./output-filenames";
 
 const logger = getLogger("rspack.config");
@@ -161,6 +162,8 @@ export default function getConfig(): Configuration {
     CDN_VERSIONS,
     "process.env": {}, // the util polyfill assumes this is defined.
   });
+
+  serverOnlyTablesPlugin(registerPlugin);
 
   registerPlugin(
     "define React",
