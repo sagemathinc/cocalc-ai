@@ -373,9 +373,52 @@ cocalc project chat artifact publish --github-pr 123 --repo /home/user/worktree
 cocalc project chat artifact publish --file proposal.json
 ```
 
-To answer with a live Sagebrush board (text, pictures, flowcharts and Python
-that runs), write `foo.board.json` and publish it with `--source`. The card runs
-it in Sagebrush's sandboxed frame; edits made there are not saved to the file.
+To answer with a live Sagebrush board (notes with Markdown and math, flowcharts,
+pictures, and code that runs), write `foo.board.json` and publish it with
+`--source`. The card runs it in Sagebrush's sandboxed frame; edits made there
+are not saved to the file.
+
+Sagebrush changes often, so do not write a board from memory. First read
+https://sagebrush.space/llms.txt. It links the board format, says which
+languages a board's code can use (Python, Sage, Magma, MATLAB: one per board,
+each a subset of its ecosystem) and names the version of the Sagebrush command
+line that matches the site. That command installs in seconds and then works
+locally, so check as much as you like:
+
+- find functions: `npx sagebrush@VERSION --search "elliptic curve rank"`;
+- run every code item before putting it on the board:
+  `npx sagebrush@VERSION --sage -c '...'` (or `--magma`, `--matlab`, nothing for
+  Python). Sagebrush raises an error for anything it does not implement, so
+  code that runs is supported;
+- check the finished board as llms.txt describes.
+
+If the project cannot reach sagebrush.space, start from this minimal board.
+Notes are Markdown with `$...$` math; a note with `code` runs Python and shows
+its result; the `graph` layout places the notes along the edges.
+
+```json
+{
+  "format": "sagebrush-board",
+  "version": 1,
+  "title": "Primes that are sums of two squares",
+  "layout": "graph",
+  "nodes": [
+    { "id": "q", "text": "Which primes $p < 60$ have $p \\equiv 1 \\pmod 4$?" },
+    {
+      "id": "c",
+      "code": "[p for p in range(3, 60) if all(p % d for d in range(2, p)) and p % 4 == 1]"
+    },
+    {
+      "id": "a",
+      "text": "Exactly these are sums of two squares, $p = a^2 + b^2$."
+    }
+  ],
+  "edges": [
+    { "from": "q", "to": "c" },
+    { "from": "c", "to": "a", "label": "Fermat" }
+  ]
+}
+```
 
 JSON contains `title`, `markdown`, and optionally one of `file`, `actions`,
 `github_pr`, `commit`, plus optional `theme`. No message/operation/artifact IDs

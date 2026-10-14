@@ -187,6 +187,9 @@ previews show the current saved file, not a historical snapshot; a pinned commit
 is the appropriate artifact for a fixed code revision. A Sagebrush board
 (\`foo.board.json\`) published as a file shows live in the card, its code running
 in Sagebrush's sandboxed frame; edits made there are not saved to the file.
+Agents learn the board format, and what a board's code can use, from
+https://sagebrush.space/llms.txt, and check their code with the Sagebrush
+command line before publishing.
 
 The [CLI](/docs/cli/use-cocalc-cli) exposes the publication workflow through
 \`project chat artifact publish --help\`. Runtime instructions supply the exact
