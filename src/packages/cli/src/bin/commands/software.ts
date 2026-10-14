@@ -972,7 +972,7 @@ function softwareComponentDescription(
     case "project-host":
       return "Project-host is the host agent/runtime that supervises projects, host services, RootFS operations, and host-side deployment state. Deploy it when project-host control logic changes.";
     case "container-runtime":
-      return "Container-runtime is the separately versioned Podman, conmon, and crun stack used by project hosts. It installs under /opt/cocalc and leaves the operating system Podman untouched.";
+      return "Container-runtime is the separately versioned Podman, conmon, crun, netavark, aardvark-dns and pasta stack used by project hosts, published per Linux CPU architecture (a release built by the Release container runtime workflow holds amd64 and arm64). It installs under /opt/cocalc and leaves the operating system Podman untouched.";
     case "project":
       return "Project is the runtime bundle that runs inside user projects and provides project daemons and project-level services. Deploy it when project behavior changes independently of the host agent.";
     case "tools":
@@ -1360,6 +1360,19 @@ const CLI_RELEASE_FILE_SUFFIXES = [
   "arm64-darwin",
   "x86_64-windows.exe",
 ] as const;
+
+// One container runtime release holds a bundle per host architecture; a host
+// downloads container-runtime-linux-<its arch>.tar.xz from the version.
+const CONTAINER_RUNTIME_RELEASE_ARCHES = ["amd64", "arm64"] as const;
+
+function containerRuntimeReleaseSourceFiles(
+  directory: string,
+): Array<{ source: string; name: string }> {
+  return CONTAINER_RUNTIME_RELEASE_ARCHES.map((arch) => {
+    const name = `container-runtime-linux-${arch}.tar.xz`;
+    return { source: join(resolve(directory), name), name };
+  });
+}
 
 function cliReleaseSourceFiles({
   directory,
@@ -2817,24 +2830,27 @@ async function buildFromFile({
     );
   }
   if (opts.fromDirectory) {
-    if (component !== "cli") {
+    if (component !== "cli" && component !== "container-runtime") {
       throw new Error(
-        "--from-directory is currently supported only for cli releases",
+        "--from-directory is currently supported only for cli and container-runtime releases",
       );
     }
     if (!opts.artifactId) {
       throw new Error(
-        "software build cli --from-directory requires --artifact-id",
+        `software build ${component} --from-directory requires --artifact-id`,
       );
     }
     if (opts.artifactName) {
       throw new Error("--artifact-name cannot be used with --from-directory");
     }
-    sourceFiles = cliReleaseSourceFiles({
-      directory: opts.fromDirectory,
-      artifactId,
-    });
-    commandText = `record CLI release directory ${resolve(opts.fromDirectory)}`;
+    sourceFiles =
+      component === "cli"
+        ? cliReleaseSourceFiles({
+            directory: opts.fromDirectory,
+            artifactId,
+          })
+        : containerRuntimeReleaseSourceFiles(opts.fromDirectory);
+    commandText = `record ${component === "cli" ? "CLI" : "container runtime"} release directory ${resolve(opts.fromDirectory)}`;
   }
   if (sourceFile) {
     sourceFiles = [{ source: sourceFile, name: artifactName }];
