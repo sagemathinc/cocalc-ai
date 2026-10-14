@@ -81,7 +81,7 @@ describe("pairing as the machine", () => {
           cluster_id: "c1",
           request_id: body.request_id,
           account_id: account,
-          account_label: "Ada ‮Lovelace\u0007",
+          account_label: "Ada \u202eLovelace\u0007",
           name: "m1",
           requested_policy: requested,
           why: "tests",
@@ -200,7 +200,7 @@ describe("pairing as the machine", () => {
     const store = DaemonStore.open(join(c.dir, "state"))!;
     expect(store.state.agent_network_id).toBe(network);
     // Shown text is cleaned of control and bidi characters.
-    expect(logs.join("\n")).not.toMatch(/[‮\u0007]/);
+    expect(logs.join("\n")).not.toMatch(/[\u202e\u0007]/);
     // The phrase is computed locally, not taken from the server.
     expect(logs.join("\n")).not.toMatch(/whatever the server says/);
     expect(existsSync(join(c.dir, "key.pem"))).toBe(true);
