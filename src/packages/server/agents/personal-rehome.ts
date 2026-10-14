@@ -34,6 +34,8 @@ export const COMPUTER_STATE_TABLES = [
   "account_computer_challenges",
   "account_computer_sessions",
   "account_computer_relays",
+  "account_computer_session_targets",
+  "account_computer_project_floors",
 ] as const;
 
 export type PersonalAuthorityDb = {

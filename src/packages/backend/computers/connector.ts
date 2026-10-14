@@ -649,6 +649,14 @@ export async function runConnector(opts: RunOptions): Promise<void> {
       await new Promise((r) => setTimeout(r, backoff * (0.5 + Math.random())));
     }
   } finally {
+    // Ended: every job was told to stop; see them gone (SIGKILL after the
+    // grace period) before this process may exit. The rest is re-driven at
+    // the next start.
+    if (daemon.sessionEnded && !(await daemon.drain())) {
+      io.log(
+        "some jobs had not stopped yet; they are stopped at the next start",
+      );
+    }
     daemon.stop();
   }
   if (daemon.sessionEnded) io.log("this computer's session has ended");

@@ -87,11 +87,11 @@ export const REPLY_RECEIVE_LIMITS: ReceiveLimits = {
 };
 
 /** This hub process: replies are addressed to it alone. */
-const HUB_PROCESS = randomBytes(12).toString("base64url");
+export const HUB_PROCESS = randomBytes(12).toString("base64url");
 let waiters = 0;
 
 let client: Client | undefined;
-function hubClient(): Client {
+export function hubClient(): Client {
   client ??= conat();
   return client;
 }
@@ -336,26 +336,30 @@ async function authorizeRelay(opts: {
     ) {
       throw new ComputerRelayError("invalid proof of possession");
     }
-    // The exact live session: open, at this epoch, seen recently, and with
-    // a lease that covers the whole wait. Times are taken now, after every
-    // lock wait, not when the call began.
+    // The exact live session: open, at this epoch, seen recently, ready
+    // (its daemon applied the computer's current state), and with a lease
+    // that covers the whole wait. Times are taken now, after every lock
+    // wait, not when the call began.
     const lockedNow = Math.max(now, Date.now());
     const session = (
       await db.query(
         `SELECT session_id, lease_until FROM account_computer_sessions
           WHERE computer_id=$1 AND closed_at IS NULL AND epoch=$2
-            AND lease_until > $3 AND last_seen > $4
+            AND lease_until > $3 AND last_seen > $4 AND ready_version >= $5
           ORDER BY last_seen DESC, connected_at DESC LIMIT 1 FOR SHARE`,
         [
           t.computer_id,
           Number(computer.epoch),
           new Date(lockedNow + opts.waitMs),
           new Date(lockedNow - SESSION_LIVENESS_MS),
+          `${computer.state_version}`,
         ],
       )
     ).rows[0];
     if (session == null) {
-      throw new ComputerRelayError("this computer is not connected");
+      throw new ComputerRelayError(
+        "this computer is not connected (or is still catching up); try again",
+      );
     }
     await db.query(
       `UPDATE account_computer_relays SET state='expired'
@@ -444,18 +448,19 @@ async function authorizeRelay(opts: {
 /**
  * After COMMIT returned: mark this exact reservation activated (a CAS on the
  * database's clock), only if it is still open and its session still covers
- * the wait. Its expiry stays the session's lease through the subscribe,
+ * the wait and is still ready (no state change since). Its expiry stays the session's lease through the subscribe,
  * publish and wait, however long those take; the outcome then closes it
  * explicitly (answered or expired). A crash leaves it until that lease.
  */
 async function activate(a: Authorized, waitMs: number): Promise<void> {
   const { rows } = await getPool().query(
     `UPDATE account_computer_relays r SET activated_at=clock_timestamp()
-       FROM account_computer_sessions s
+       FROM account_computer_sessions s, account_computers c
       WHERE r.correlation=$1 AND r.state='dispatched' AND r.activated_at IS NULL
         AND r.expires_at > clock_timestamp()
         AND s.session_id=r.session_id AND s.closed_at IS NULL
         AND s.lease_until > clock_timestamp() + make_interval(secs => $2::float8 / 1000)
+        AND c.computer_id=s.computer_id AND s.ready_version >= c.state_version
       RETURNING r.correlation`,
     [a.correlation, waitMs],
   );

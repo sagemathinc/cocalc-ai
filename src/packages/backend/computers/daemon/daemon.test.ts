@@ -524,6 +524,25 @@ describe("the computer daemon (direct mode)", () => {
       ]);
     });
 
+    it("once ended, drain sees every job and exec gone, SIGKILL included, before the daemon may exit", async () => {
+      // SIGTERM is ignored by the shell and (inherited) by its sleep.
+      const stubborn = "trap '' TERM; sleep 30";
+      const started = ok(await daemon.handle(message("run", runJob(stubborn))));
+      const job_id = (started.result as any).job_id;
+      const execDone = daemon.handle(message("exec", exec(stubborn)));
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "running";
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      daemon.applyState(stateEnvelope({ ended: { reason: "revoked" } }));
+      expect(await daemon.drain(10_000, 50)).toBe(true);
+      expect(daemon.jobs.get(job_id)?.state).toBe("killed");
+      expect(daemon.jobs.liveCount()).toBe(0);
+      expect(daemon.cleanups.pending()).toEqual([]);
+      await execDone;
+    });
+
     it("a state's policy only narrows; a widening one is refused but its floors still apply", async () => {
       const narrower = {
         ...ceiling,

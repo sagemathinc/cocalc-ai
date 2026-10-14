@@ -62,6 +62,8 @@ const tables = [
   "agent_external_installations",
   "agent_external_inbox",
   "account_computers",
+  "account_computer_session_targets",
+  "account_computer_project_floors",
   "account_computer_requests",
   "account_computer_operations",
   "account_computer_jobs",
@@ -338,13 +340,14 @@ describeReal("computers: races on real PostgreSQL", () => {
         transcript_hash,
         agent_network_generation: await generation(),
       });
-      // A live session (the conat login is tested elsewhere).
+      // A live, ready session (the conat login and state delivery are
+      // tested elsewhere).
       await pool.query(
         `INSERT INTO account_computer_sessions
            (session_id, computer_id, account_id, slot, epoch, generation,
-            router, lease_until, connected_at, last_seen)
+            router, lease_until, connected_at, last_seen, ready_version)
          SELECT $1, computer_id, account_id, 1, epoch, 1, 'test',
-                now() + interval '10 minutes', now(), now()
+                now() + interval '10 minutes', now(), now(), state_version
            FROM account_computers WHERE computer_id=$2`,
         [randomUUID(), computer_id],
       );

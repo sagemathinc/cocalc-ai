@@ -56,6 +56,8 @@ import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import { getBaySigningKey, listSigningKeyDirectory } from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority } from "./authority";
+import { endComputers } from "./state";
+import { kickComputerStateDelivery } from "./delivery";
 import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
 
 /**
@@ -597,6 +599,8 @@ export async function approveComputerRequest({
           WHERE computer_id=$1`,
         [old.computer_id, new Date(now)],
       );
+      // Its daemon, if it still runs anything, stops for good.
+      await endComputers(client, [old.computer_id], "replaced");
     }
     const count = await client.query(
       `SELECT count(*)::int AS n FROM account_computers
@@ -690,6 +694,7 @@ export async function approveComputerRequest({
       ],
     );
     await client.query("COMMIT");
+    if (taken.rows.length > 0) void kickComputerStateDelivery();
     return { computer_id, certificate, policy };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});

@@ -72,6 +72,8 @@ export const MAX_ACTIVE_OPERATIONS = 16;
 export const MAX_ACTIVE_OPERATIONS_PER_AGENT = 4;
 /** How often the daemon enforces deadlines on its own, without traffic. */
 export const ENFORCEMENT_INTERVAL_MS = 1000;
+/** How long an ended daemon keeps enforcing kills before it exits. */
+export const DRAIN_MS = 30_000;
 /** How often the timer forgets old records. */
 export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 /**
@@ -117,8 +119,7 @@ export interface DaemonDeps {
 }
 
 export type DaemonEvent =
-  | { kind: "operation"; entry: LedgerEntry }
-  | { kind: "job"; job: Job };
+  { kind: "operation"; entry: LedgerEntry } | { kind: "job"; job: Job };
 
 const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 
@@ -605,17 +606,22 @@ export class ComputerDaemon {
       if (!belowProject(exec.auth.source_project_id, exec.auth.privacy_epoch)) {
         continue;
       }
-      const r = this.ledger.get(id)?.result as {
-        pid?: number;
-        pid_start?: string;
-      } | null;
-      if (r?.pid != null && r.pid_start != null) {
-        this.cleanups.add(id, r.pid, r.pid_start);
-      }
-      exec.controller.abort();
+      this.stopExec(id, exec.controller);
       killed.push(id);
     }
     return { cancelled, killed };
+  }
+
+  /** Record the exec's verified-pid cleanup durably, then abort it. */
+  private stopExec(id: string, controller: AbortController): void {
+    const r = this.ledger.get(id)?.result as {
+      pid?: number;
+      pid_start?: string;
+    } | null;
+    if (r?.pid != null && r.pid_start != null) {
+      this.cleanups.add(id, r.pid, r.pid_start);
+    }
+    controller.abort();
   }
 
   /** A job's deadline, on the wall clock and on this boot's clock. */
@@ -719,8 +725,31 @@ export class ComputerDaemon {
   endSession(reason: string): void {
     this.ended = true;
     // The enforcement timer keeps running: killed jobs still need SIGKILL.
-    for (const { controller } of this.running.values()) controller.abort();
+    for (const [id, { controller }] of this.running) {
+      this.stopExec(id, controller);
+    }
     this.jobs.killAll(reason);
+  }
+
+  /**
+   * After the session ended: keep enforcing until every killed job is gone
+   * and every exec cleanup is done (SIGKILL follows SIGTERM after the grace
+   * period), or until maxMs. Whatever is left is re-driven at the next start.
+   */
+  async drain(maxMs = DRAIN_MS, pollMs = 250): Promise<boolean> {
+    const until = Date.now() + maxMs;
+    for (;;) {
+      this.tick();
+      if (
+        this.running.size === 0 &&
+        this.jobs.liveCount() === 0 &&
+        this.cleanups.pending().length === 0
+      ) {
+        return true;
+      }
+      if (Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
   }
 
   get sessionEnded(): boolean {

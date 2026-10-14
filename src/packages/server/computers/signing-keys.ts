@@ -457,8 +457,39 @@ export async function signAsBay<T>(
   return signEnvelope(kind, payload, await getBaySigningKey());
 }
 
+const byKid = new Map<string, KeyPair>();
+
+/**
+ * Sign with one exact key of this bay, retired or not, while it is still
+ * valid: a computer's state is signed with its certificate's issuing key,
+ * which the daemon trusts at least as long as the certificate. Undefined if
+ * this bay no longer has that key (past its not_after).
+ */
+export async function signWithBayKey<T>(
+  kid: string,
+  kind: string,
+  payload: T,
+): Promise<SignedEnvelope<T> | undefined> {
+  const { rows } = await getPool().query(
+    `SELECT encrypted_private_key FROM bay_computer_signing_keys
+      WHERE kid=$1 AND not_after > now()`,
+    [kid],
+  );
+  if (rows[0] == null) {
+    byKid.delete(kid);
+    return undefined;
+  }
+  let key = byKid.get(kid);
+  if (key == null) {
+    key = await decryptKey(kid, rows[0].encrypted_private_key);
+    byKid.set(kid, key);
+  }
+  return signEnvelope(kind, payload, key);
+}
+
 /** For tests: forget the cached key. */
 export function resetSigningKeyCacheForTesting(): void {
   cached = undefined;
   directoryCache = undefined;
+  byKid.clear();
 }

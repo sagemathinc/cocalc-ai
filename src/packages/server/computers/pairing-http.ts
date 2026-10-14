@@ -25,6 +25,7 @@ import {
   ComputerSessionError,
   createLoginChallenge,
   type LoginChallenge,
+  type LoginEnded,
 } from "./sessions";
 import { assertComputersEnabled } from "./enabled";
 
@@ -145,16 +146,20 @@ export async function pairingStatus(
   }
 }
 
-/** A connected computer asks for a login challenge (see sessions.ts). */
+/**
+ * A connected computer asks for a login challenge (see sessions.ts). An
+ * ended computer is told so (signed) even with the site's switch off.
+ */
 export async function sessionChallenge(
   params: { request?: unknown },
   address: string,
   now = Date.now(),
-): Promise<PairingResult<LoginChallenge>> {
+): Promise<PairingResult<LoginChallenge | LoginEnded>> {
   try {
     admit(address, "submit", now);
-    await assertComputersEnabled();
-    return await createLoginChallenge(params.request, now);
+    return await createLoginChallenge(params.request, now, {
+      assertEnabled: assertComputersEnabled,
+    });
   } catch (err) {
     return publicError(err);
   }

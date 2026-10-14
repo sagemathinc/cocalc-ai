@@ -54,6 +54,8 @@ const describeDb =
 
 const tables = [
   "account_computers",
+  "account_computer_session_targets",
+  "account_computer_project_floors",
   "account_computer_requests",
   "account_computer_challenges",
   "account_computer_sessions",
@@ -160,6 +162,31 @@ describeDb("computer sessions", () => {
     return signChallengeRequest({ certificate: c.certificate, key: c.key });
   }
 
+  /**
+   * What delivery does on the daemon's exact ack (delivery.ts finalize):
+   * the session becomes ready.
+   */
+  async function ready(s: {
+    computer_id: string;
+    session_id: string;
+    generation: number;
+  }) {
+    const { finalize } = await import("./delivery");
+    const t = (
+      await db().query(
+        "SELECT state_version FROM account_computer_session_targets WHERE session_id=$1",
+        [s.session_id],
+      )
+    ).rows[0];
+    await db().query(
+      "UPDATE account_computer_session_targets SET attempt_token='t1' WHERE session_id=$1",
+      [s.session_id],
+    );
+    expect(
+      await finalize({ ...s, attempt_token: "t1" }, `${t.state_version}`),
+    ).toBe(true);
+  }
+
   async function login(c: Awaited<ReturnType<typeof pairedComputer>>) {
     const { createLoginChallenge, loginComputer } = await import("./sessions");
     const challenge = await createLoginChallenge(ask(c));
@@ -185,6 +212,15 @@ describeDb("computer sessions", () => {
     });
     expect(session.lease_until - Date.now()).toBeLessThanOrEqual(15 * 60_000);
     expect(await sessionIsCurrent(session)).toBe(true);
+    // Not ready: no operation goes to it before its daemon has the state.
+    expect(
+      await sessionIsCurrent(session, Date.now(), { requireReady: true }),
+    ).toBe(false);
+    expect(await currentSession(c.computer_id)).toBeUndefined();
+    await ready(session);
+    expect(
+      await sessionIsCurrent(session, Date.now(), { requireReady: true }),
+    ).toBe(true);
     expect((await currentSession(c.computer_id))?.session_id).toBe(
       session.session_id,
     );
@@ -281,16 +317,27 @@ describeDb("computer sessions", () => {
     const s3 = (await login(c)).session;
     await revokeComputer({ account_id: account, computer_id: c.computer_id });
     expect(await sessionIsCurrent(s3)).toBe(false);
-    // And a revoked computer gets no challenge.
-    await expect(createLoginChallenge(ask(c))).rejects.toThrow(
-      /no such computer/,
-    );
+    // A revoked computer gets no challenge: it is told, signed with its
+    // certificate's own key, that it has ended.
+    const answer: any = await createLoginChallenge(ask(c));
+    expect(answer.challenge_id).toBeUndefined();
+    expect(answer.ended.kid).toBe(c.certificate.kid);
+    expect(answer.ended.payload).toMatchObject({
+      computer_id: c.computer_id,
+      ended: { reason: "revoked" },
+    });
+    // Only for a request signed by its own key.
+    const stranger = generateSigningKey();
+    await expect(
+      createLoginChallenge(
+        signEnvelope(SIGNED_KINDS.challenge_request, ask(c).payload, stranger),
+      ),
+    ).rejects.toThrow(/no such computer/);
   });
 
   it("a computer shows as connected while it has a live session, with its heartbeat as last seen", async () => {
-    const { closeComputerSession, sessionIsCurrent } = await import(
-      "./sessions"
-    );
+    const { closeComputerSession, sessionIsCurrent } =
+      await import("./sessions");
     const { getComputer, listComputers } = await import("./computers");
     const c = await pairedComputer();
     expect((await getComputer(account, c.computer_id)).connected).toBe(false);
@@ -411,6 +458,8 @@ describeDb("computer sessions", () => {
     const c = await pairedComputer();
     const older = (await login(c)).session;
     const newer = (await login(c)).session;
+    await ready(older);
+    await ready(newer);
     expect((await currentSession(c.computer_id))?.session_id).toBe(
       newer.session_id,
     );

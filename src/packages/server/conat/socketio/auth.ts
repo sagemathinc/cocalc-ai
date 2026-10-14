@@ -78,6 +78,7 @@ import {
 } from "@cocalc/conat/computers/principal";
 import {
   closeComputerSession,
+  isStateReceipt,
   loginComputer,
   sessionIsCurrent,
 } from "@cocalc/server/computers/sessions";
@@ -352,17 +353,21 @@ async function isComputerAllowed(
     ) {
       return false;
     }
-    return await sessionIsCurrent(
-      {
-        computer_id: user.computer_id,
-        session_id: user.computer_session_id,
-        generation: user.computer_generation,
-        epoch: user.computer_epoch,
-      },
-      Date.now(),
+    const session = {
+      computer_id: user.computer_id,
+      session_id: user.computer_session_id,
+      generation: user.computer_generation,
+      epoch: user.computer_epoch,
+    };
+    // Publishing (answers) needs a session whose daemon applied the
+    // computer's current state, except the ack of that state itself.
+    const publish = type === "pub" && subject !== "";
+    if (publish && (await isStateReceipt(session, subject))) return true;
+    return await sessionIsCurrent(session, Date.now(), {
       // The router's periodic check of the session records it alive.
-      { touch: subject === "" },
-    );
+      touch: subject === "",
+      requireReady: publish,
+    });
   } catch (err) {
     logger.error("failed closed while checking a computer session", err);
     return false;

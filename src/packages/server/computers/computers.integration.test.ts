@@ -56,6 +56,8 @@ const describeDb =
 
 const tables = [
   "account_computers",
+  "account_computer_session_targets",
+  "account_computer_project_floors",
   "account_computer_requests",
   "account_computer_sessions",
   "account_computer_operations",
@@ -720,18 +722,16 @@ describeDb("computers store", () => {
     });
 
     it("narrows the effective policy but never widens it", async () => {
-      const { setEffectivePolicy, setPolicyUpdatesDeliveredForTesting } =
-        await import("./computers");
+      const { setEffectivePolicy } = await import("./computers");
       const { computer_id, resolved } = await approvedComputer();
-      // Refused until the hub can deliver policy updates to the daemon.
-      await expect(
-        setEffectivePolicy({
-          account_id: account,
-          computer_id,
-          policy: resolved,
-        }),
-      ).rejects.toThrow(/isn't available yet/);
-      setPolicyUpdatesDeliveredForTesting(true);
+      const version = async () =>
+        (
+          await db().query(
+            "SELECT state_version FROM account_computers WHERE computer_id=$1",
+            [computer_id],
+          )
+        ).rows[0].state_version;
+      expect(`${await version()}`).toBe("0");
       const narrower = {
         ...resolved,
         network: "off",
@@ -746,6 +746,8 @@ describeDb("computers store", () => {
           })
         ).policy_epoch,
       ).toBe(1);
+      // The narrower policy goes out in the next state snapshot.
+      expect(`${await version()}`).toBe("1");
       await expect(
         setEffectivePolicy({
           account_id: account,
@@ -768,7 +770,7 @@ describeDb("computers store", () => {
           policy: resolved,
         }),
       ).rejects.toThrow(/widen/);
-      setPolicyUpdatesDeliveredForTesting(false);
+      expect(`${await version()}`).toBe("1");
     });
 
     it("extends within the maximum only", async () => {

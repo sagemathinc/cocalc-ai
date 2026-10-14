@@ -52,6 +52,9 @@ const describeDb =
 
 const tables = [
   "account_computers",
+  "account_computer_sessions",
+  "account_computer_session_targets",
+  "account_computer_project_floors",
   "account_computer_requests",
   "cluster_computer_signing_keys",
   "bay_computer_signing_keys",
@@ -245,6 +248,56 @@ describeDb("computer pairing endpoints", () => {
     );
     expect(revoked.state).toBe("revoked");
     expect(revoked.certificate).toBeUndefined();
+  });
+
+  it("with the switch off, a live computer gets no challenge, and an ended one is still told, signed, that it ended", async () => {
+    const { pairingStatus, sessionChallenge } = await import("./pairing-http");
+    const { approveComputerRequest } = await import("./requests");
+    const { revokeComputer } = await import("./computers");
+    const { COMPUTERS_DISABLED } = await import("./enabled");
+    const { signChallengeRequest } =
+      await import("@cocalc/backend/computers/login");
+    const { request_id } = await newRequest();
+    const { submitted, signing } = await claim(request_id);
+    const { transcript_hash } = unwrap(submitted);
+    const { computer_id } = await approveComputerRequest({
+      agent_network_generation: await networkGeneration(),
+      account_id: account,
+      request_id,
+      transcript_hash,
+    });
+    const { certificate } = unwrap(
+      await pairingStatus({ request_id, transcript_hash }, "x"),
+    );
+    const ask = () => signChallengeRequest({ certificate, key: signing });
+    await setComputersEnabled(false);
+    expect(await sessionChallenge({ request: ask() }, "x")).toEqual({
+      error: COMPUTERS_DISABLED,
+    });
+    await revokeComputer({ account_id: account, computer_id });
+    const answer: any = await sessionChallenge({ request: ask() }, "x");
+    expect(answer.challenge_id).toBeUndefined();
+    const { trustedSigningKeys } = await import("./signing-keys");
+    const keys = await trustedSigningKeys();
+    expect(answer.ended.kid).toBe(certificate!.kid);
+    expect(
+      verifyEnvelope(SIGNED_KINDS.state, answer.ended, (kid) => keys.get(kid)),
+    ).toBe(true);
+    expect(answer.ended.payload.ended).toEqual({ reason: "revoked" });
+    // Anyone else, for that computer, gets nothing.
+    const stranger = generateSigningKey();
+    expect(
+      await sessionChallenge(
+        {
+          request: signEnvelope(
+            SIGNED_KINDS.challenge_request,
+            ask().payload,
+            stranger,
+          ),
+        },
+        "x",
+      ),
+    ).toEqual({ error: "no such computer" });
   });
 
   it("answers nobody without the transcript hash, the same as for no request", async () => {

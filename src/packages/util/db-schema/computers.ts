@@ -61,6 +61,12 @@ Table({
         type: "check",
         expression: "origin = 'user' OR origin LIKE 'provider:%'",
       },
+      {
+        name: "account_computers_ended_reason_check",
+        type: "check",
+        expression:
+          "ended_reason IS NULL OR ended_reason IN ('revoked','replaced','deleted')",
+      },
     ],
     pg_custom_indexes: [
       {
@@ -147,6 +153,13 @@ Table({
     revoked_at: timestamp("Disconnected or revoked; no new tickets."),
     tombstoned_at: timestamp(
       "Deleted: kept until its certificate can no longer be valid.",
+    ),
+    state_version: counter(
+      "Bumped by every change of the signed state snapshot daemons apply (floors, policy, ended).",
+    ),
+    ended_reason: optional(
+      "string",
+      "Set once, for good: revoked, replaced or deleted. Daemons stop all work.",
     ),
   },
 });
@@ -483,6 +496,71 @@ Table({
     connected_at: created("Login time."),
     last_seen: timestamp("Last revalidation."),
     closed_at: timestamp("Closed (disconnect, revoke, reclaim)."),
+    ready_version: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "The state_version this session's daemon acknowledged; no operation reaches it before it is current.",
+    },
+  },
+});
+
+// Account home: a state snapshot owed to one open session. Raised (and its
+// claim cleared) by every state change, in the change's own transaction;
+// deleted, with the session's ready_version set, when the daemon acks
+// exactly that version.
+Table({
+  name: "account_computer_session_targets",
+  rules: {
+    primary_key: "session_id",
+    pg_custom_indexes: [
+      { name: "account_computer_session_targets_due", query: "(lease_until)" },
+      {
+        name: "account_computer_session_targets_computer",
+        query: "(computer_id)",
+      },
+    ],
+  },
+  fields: {
+    session_id: required("uuid", "The open session."),
+    account_id: required("uuid", "Owning account."),
+    computer_id: required("uuid", "Computer."),
+    generation: required("integer", "The session's generation."),
+    state_version: {
+      type: "integer",
+      pg_type: "BIGINT",
+      not_null: true,
+      desc: "The state_version to deliver.",
+    },
+    reply_subject: optional(
+      "string",
+      "The exact subject the daemon acks on (the claimed attempt).",
+    ),
+    claimed_by_hub: optional("string", "Hub process delivering it."),
+    attempt_token: optional("string", "The claimed attempt (128 random bits)."),
+    lease_until: timestamp(
+      "Claimed until (or, after a failure, retried after); null: due now.",
+    ),
+    attempts: counter("Delivery attempts since the last raise."),
+    last_error: optional("string", "Last refusal or failure."),
+  },
+});
+
+// Account home: per-project privacy floors for a computer, raised only. A
+// daemon refuses and stops work authorized below its project's floor.
+Table({
+  name: "account_computer_project_floors",
+  rules: { primary_key: ["computer_id", "project_id"] },
+  fields: {
+    computer_id: required("uuid", "Computer."),
+    project_id: required("uuid", "Project."),
+    account_id: required("uuid", "Owning account."),
+    privacy_epoch: {
+      type: "integer",
+      pg_type: "BIGINT",
+      not_null: true,
+      desc: "Lowest privacy epoch still valid for this project.",
+    },
+    updated_at: created("Last raise."),
   },
 });
 
