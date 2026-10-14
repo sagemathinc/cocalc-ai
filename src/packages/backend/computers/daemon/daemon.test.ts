@@ -446,13 +446,17 @@ describe("the computer daemon (direct mode)", () => {
         daemon.applyPolicy(update(1, narrower, strangerKey)),
       ).toThrow(/not signed by the home bay/);
       expect(() => daemon.applyPolicy(update(1, widened))).toThrow(
-        /exceeds this computer's ceiling/,
+        /would widen this computer's policy/,
       );
       expect(store.state.policy_epoch).toBe(0);
       expect(daemon.applyPolicy(update(1, narrower)).applied).toBe(true);
       expect(store.effectivePolicy.duration?.max_seconds).toBe(7200);
       // A replay, or an older epoch, changes nothing.
       expect(daemon.applyPolicy(update(1, ceiling)).applied).toBe(false);
+      // A newer epoch may not widen a narrowed policy back toward the ceiling.
+      expect(() => daemon.applyPolicy(update(2, ceiling))).toThrow(
+        /would widen this computer's policy/,
+      );
       expect(store.effectivePolicy.duration?.max_seconds).toBe(7200);
       const old = await daemon.handle(message("exec", exec("true")));
       expect((old as any).refused).toEqual(

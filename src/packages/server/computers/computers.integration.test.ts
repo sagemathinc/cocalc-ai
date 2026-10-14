@@ -720,8 +720,18 @@ describeDb("computers store", () => {
     });
 
     it("narrows the effective policy but never widens it", async () => {
-      const { setEffectivePolicy } = await import("./computers");
+      const { setEffectivePolicy, setPolicyUpdatesDeliveredForTesting } =
+        await import("./computers");
       const { computer_id, resolved } = await approvedComputer();
+      // Refused until the hub can deliver policy updates to the daemon.
+      await expect(
+        setEffectivePolicy({
+          account_id: account,
+          computer_id,
+          policy: resolved,
+        }),
+      ).rejects.toThrow(/isn't available yet/);
+      setPolicyUpdatesDeliveredForTesting(true);
       const narrower = {
         ...resolved,
         network: "off",
@@ -750,6 +760,15 @@ describeDb("computers store", () => {
           policy: { ...resolved, images: { kind: "any" } },
         }),
       ).rejects.toThrow(/image/);
+      // Not even back to the approved ceiling: narrowing is one-way.
+      await expect(
+        setEffectivePolicy({
+          account_id: account,
+          computer_id,
+          policy: resolved,
+        }),
+      ).rejects.toThrow(/widen/);
+      setPolicyUpdatesDeliveredForTesting(false);
     });
 
     it("extends within the maximum only", async () => {

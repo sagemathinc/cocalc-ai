@@ -239,9 +239,9 @@ export class DaemonStore {
 
   /**
    * A new effective policy from the home bay: signed by a current key of the
-   * home bay, for this computer, with a newer policy epoch, and within this
-   * computer's own ceiling (checked here, never taken from the hub). An
-   * older or equal epoch changes nothing.
+   * home bay, for this computer, with a newer policy epoch, and never wider
+   * than the current effective policy nor the ceiling (checked here, never
+   * taken from the hub). An older or equal epoch changes nothing.
    */
   applyPolicy(envelope: unknown, hubNow: number): { applied: boolean } {
     const env = parseSignedEnvelope(
@@ -267,10 +267,13 @@ export class DaemonStore {
     if (update.policy_epoch <= this.state.policy_epoch) {
       return { applied: false };
     }
-    const widening = policyWideningReasons(update.policy, this.data.ceiling);
+    const widening = [
+      ...policyWideningReasons(update.policy, this.data.effective_policy),
+      ...policyWideningReasons(update.policy, this.data.ceiling),
+    ];
     if (widening.length > 0) {
       throw new DaemonStateError(
-        `the policy update exceeds this computer's ceiling: ${widening.join("; ")}`,
+        `the policy update would widen this computer's policy: ${widening.join("; ")}`,
       );
     }
     this.data.state = { ...this.state, policy_epoch: update.policy_epoch };

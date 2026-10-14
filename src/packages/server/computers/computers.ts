@@ -399,9 +399,21 @@ export async function extendComputer({
 }
 
 /**
- * Narrow the effective policy. It must be at most the ceiling, field by
- * field (the daemon checks the same thing itself).
+ * Narrow the effective policy: never widen. It must be at most the current
+ * effective policy and at most the ceiling, field by field (the daemon
+ * checks the same itself). Widening back needs a new pairing.
+ *
+ * Refused until policy updates can reach the daemon (the revocation gate's
+ * signed policy push): before that, a new policy epoch would only make the
+ * daemon refuse every later ticket.
  */
+/** Turned on once the hub delivers signed policy updates to daemons. */
+let policyUpdatesDelivered = false;
+
+export function setPolicyUpdatesDeliveredForTesting(on: boolean): void {
+  policyUpdatesDelivered = on;
+}
+
 export async function setEffectivePolicy({
   account_id,
   computer_id,
@@ -418,8 +430,17 @@ export async function setEffectivePolicy({
     account_id,
     computer_id,
     async (client, row) => {
+      if (!policyUpdatesDelivered) {
+        throw new ComputerError(
+          "changing a computer's policy isn't available yet; disconnect it and connect it again with the policy you want",
+        );
+      }
       const ceiling = parseComputerPolicy(row.policy_ceiling);
-      const reasons = policyWideningReasons(effective, ceiling);
+      const current = parseComputerPolicy(row.effective_policy);
+      const reasons = [
+        ...policyWideningReasons(effective, current),
+        ...policyWideningReasons(effective, ceiling),
+      ];
       if (reasons.length > 0) {
         throw new ComputerError(
           `that would widen the approved policy: ${reasons.join("; ")}`,
