@@ -38,6 +38,7 @@ import "./cloud-vm-work";
 import "./commercial-orders";
 import "./compute-egress-meter-intervals";
 import "./compute-funding";
+import "./computers";
 import "./compute-resource-events";
 import "./compute-resource-work";
 import "./compute-revenue-analytics-state";
