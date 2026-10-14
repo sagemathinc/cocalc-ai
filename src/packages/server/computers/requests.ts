@@ -53,7 +53,11 @@ import type {
 } from "@cocalc/util/computers/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
-import { getBaySigningKey, listSigningKeyDirectory } from "./signing-keys";
+import {
+  getBaySigningKey,
+  listSigningKeyDirectory,
+  signingKeyNotAfter,
+} from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority } from "./authority";
 import { endComputers } from "./state";
@@ -68,8 +72,12 @@ import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
 export const REQUEST_LIFETIME_MS = 60 * 60 * 1000;
 export const MAX_OPEN_REQUESTS_PER_ACCOUNT = 10;
 export const MAX_COMPUTERS_PER_ACCOUNT = 20;
-/** Without a time limit, a certificate is renewed before this runs out. */
-export const CERTIFICATE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * A certificate lasts at most a year (and never past the bay key that signs
+ * it, so that key can still sign its revocation); then the computer is
+ * paired again. Renewal comes later.
+ */
+export const CERTIFICATE_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 const MAX_WHY_LENGTH = 1000;
 
 const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -517,6 +525,10 @@ export async function approveComputerRequest({
   requireUuid(account_id, "account_id");
   // Get the signing key before the transaction: it may need its own query.
   const signer = await getBaySigningKey();
+  const signerNotAfter = await signingKeyNotAfter(signer.fingerprint);
+  if (signerNotAfter == null || signerNotAfter <= now) {
+    throw new ComputerRequestError("this site can't sign certificates now");
+  }
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -641,7 +653,10 @@ export async function approveComputerRequest({
         transcript_hash: row.transcript_hash,
         ceiling_hash: policyHash(policy),
         not_before: now,
-        not_after: max_deadline ?? now + CERTIFICATE_LIFETIME_MS,
+        not_after: Math.min(
+          max_deadline ?? now + CERTIFICATE_LIFETIME_MS,
+          signerNotAfter,
+        ),
       }),
       signer,
     );

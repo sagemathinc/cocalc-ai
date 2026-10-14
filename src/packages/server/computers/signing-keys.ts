@@ -457,6 +457,17 @@ export async function signAsBay<T>(
   return signEnvelope(kind, payload, await getBaySigningKey());
 }
 
+/** Until when this bay's key may be trusted (undefined: not ours). */
+export async function signingKeyNotAfter(
+  kid: string,
+): Promise<number | undefined> {
+  const { rows } = await getPool().query(
+    "SELECT not_after FROM bay_computer_signing_keys WHERE kid=$1",
+    [kid],
+  );
+  return rows[0] == null ? undefined : new Date(rows[0].not_after).valueOf();
+}
+
 const byKid = new Map<string, KeyPair>();
 
 /**

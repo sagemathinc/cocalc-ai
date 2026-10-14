@@ -53,6 +53,7 @@ const m1 = {
   agent_network_id: "n1",
   connected: false,
   revoked_at: null,
+  certificate_not_after: null,
   deadline: Date.now() + 1_800_000,
   effective_policy: {
     version: 1,

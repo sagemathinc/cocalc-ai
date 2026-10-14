@@ -78,8 +78,14 @@ function summary(row: any): ComputerSummary {
     connected:
       row.live === true &&
       row.revoked_at == null &&
-      (row.deadline == null || new Date(row.deadline).valueOf() > Date.now()),
+      (row.deadline == null || new Date(row.deadline).valueOf() > Date.now()) &&
+      !(Number(row.certificate?.payload?.not_after) <= Date.now()),
     revoked_at: t(row.revoked_at),
+    certificate_not_after: Number.isFinite(
+      Number(row.certificate?.payload?.not_after),
+    )
+      ? Number(row.certificate.payload.not_after)
+      : null,
     origin: row.origin,
   };
 }

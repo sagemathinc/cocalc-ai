@@ -287,6 +287,10 @@ export function ComputersPanel() {
                   </span>
                 ) : c.deadline ? (
                   <TimeAgo date={c.deadline} />
+                ) : c.certificate_not_after ? (
+                  <span title="Its certificate ends then: connect it again to keep using it.">
+                    <TimeAgo date={c.certificate_not_after} />
+                  </span>
                 ) : (
                   "no limit"
                 ),

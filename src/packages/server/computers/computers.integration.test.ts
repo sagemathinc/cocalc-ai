@@ -650,7 +650,7 @@ describeDb("computers store", () => {
   });
 
   describe("computers", () => {
-    async function approvedComputer() {
+    async function approvedComputer(overrides: object = {}) {
       const {
         createComputerRequest,
         getPairingView,
@@ -668,6 +668,7 @@ describeDb("computers store", () => {
         images: { kind: "allow", refs: ["ubuntu:24.04", "python:3.13"] },
         scratch_bytes: 2 ** 30,
         limits: { cpu_millis: 4000, memory_bytes: 2 ** 32, pids: 1000 },
+        ...overrides,
       });
       const { request_id } = await createComputerRequest({
         account_id: account,
@@ -706,6 +707,41 @@ describeDb("computers store", () => {
         resolved,
       };
     }
+
+    it("a certificate lasts a year at most, and never past the key that signs it", async () => {
+      const { getComputer, revokeComputer } = await import("./computers");
+      const DAY = 24 * 60 * 60 * 1000;
+      const a = await approvedComputer({ duration: null });
+      const keyNotAfter = async () =>
+        new Date(
+          (
+            await db().query(
+              "SELECT not_after FROM bay_computer_signing_keys WHERE kid=$1",
+              [a.certificate.kid],
+            )
+          ).rows[0].not_after,
+        ).valueOf();
+      const { not_before, not_after } = a.certificate.payload;
+      expect(not_after - not_before).toBeLessThanOrEqual(365 * DAY);
+      expect(not_after - not_before).toBeGreaterThan(364 * DAY);
+      expect(not_after).toBeLessThanOrEqual(await keyNotAfter());
+      // Shown to the owner: after it, the computer is paired again.
+      expect(
+        (await getComputer(account, a.computer_id)).certificate_not_after,
+      ).toBe(not_after);
+      await revokeComputer({ account_id: account, computer_id: a.computer_id });
+      // A key with ten days left: the certificate ends with it.
+      await db().query(
+        "UPDATE bay_computer_signing_keys SET not_after=now() + interval '10 days' WHERE kid=$1",
+        [a.certificate.kid],
+      );
+      const b = await approvedComputer({ duration: null });
+      expect(b.certificate.kid).toBe(a.certificate.kid);
+      expect(b.certificate.payload.not_after).toBe(await keyNotAfter());
+      expect(b.certificate.payload.not_after - Date.now()).toBeLessThan(
+        10 * DAY + 1000,
+      );
+    });
 
     it("revoking bumps the epoch once", async () => {
       const { revokeComputer, getComputer } = await import("./computers");
