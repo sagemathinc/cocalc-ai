@@ -217,7 +217,7 @@ test("the worker gets the PITR target with its microseconds", () => {
     "2026-10-13 05:28:46.602731+00",
   );
   // Promoted without the pre sentinel: fail at once instead of waiting for
-  // the worker deadline.
+  // the worker deadline (behavior: libexec/bay-restore-engine.test.sh).
   expect(workerSource).toContain(
     "PITR recovery ended at the target without the pre-target sentinel",
   );
@@ -304,8 +304,9 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
     'sql_quote(CONFIG["pitr_run_id"]), log=False)',
   );
   expect(workerSource).toContain('"pg_catalog.pg_is_in_recovery()::text "');
+  // The verdict itself is tested in libexec/bay-restore-engine.test.sh.
   expect(workerSource).toContain(
-    'if counts == (1, 0) and recovery_text == "false"',
+    "if sentinels is not None and pitr_sentinels_reached(*sentinels):",
   );
   expect(workerSource).toContain(
     "SQLite quick_check progress {quick_passed}/{len(db_files)}",

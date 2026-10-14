@@ -333,6 +333,28 @@ def archive_get_state(container):
             state[key] = value
     return state or None
 
+class PitrSentinelError(RuntimeError):
+    """The PITR drill missed its target; retrying cannot change that."""
+
+def pitr_sentinels_reached(pre, post, in_recovery):
+    """Whether recovery stopped between the drill's sentinel transactions.
+
+    False while recovery may still reach the "pre" transaction; raises
+    PitrSentinelError when the result is final and wrong.
+    """
+    if (pre, post) == (1, 1):
+        raise PitrSentinelError("PITR crossed the requested target transaction")
+    if in_recovery:
+        return False
+    if (pre, post) == (1, 0):
+        return True
+    # Recovery is over and promoted, so no more WAL will be replayed.
+    raise PitrSentinelError(
+        "PITR recovery ended at the target without the pre-target sentinel "
+        "(counts=" + str((pre, post)) + "); the target time precedes the "
+        "transaction it was meant to follow"
+    )
+
 def parse_time(value):
     """ISO or pgBackRest time ("2026-10-08 03:00:00+00") as an aware datetime."""
     text = str(value).strip().replace(" ", "T", 1)
@@ -1001,6 +1023,7 @@ curl "${common[@]}" --fail "$base" -o "$destination"
         deadline = STARTED + worker_timeout - 300
     last_error = "PostgreSQL unavailable"
     while time.time() < deadline:
+        sentinels = None
         try:
             if use_sentinels:
                 value = psql(container,
@@ -1014,19 +1037,7 @@ curl "${common[@]}" --fail "$base" -o "$destination"
                 if recovery_text not in ("true", "false"):
                     raise RuntimeError("invalid pg_is_in_recovery result: " + recovery_text)
                 counts = (pre, post)
-                if counts == (1, 0) and recovery_text == "false":
-                    postgres_ready = True
-                    break
-                if counts == (1, 1):
-                    raise RuntimeError("PITR crossed the requested target transaction")
-                if recovery_text == "false":
-                    # Recovery is over and promoted, so no more WAL will be
-                    # replayed: waiting cannot change the outcome.
-                    raise RuntimeError(
-                        "PITR recovery ended at the target without the pre-target sentinel "
-                        "(counts=" + str(counts) + "); the target time precedes the "
-                        "transaction it was meant to follow"
-                    )
+                sentinels = (pre, post, recovery_text == "true")
             elif CONFIG["restore_mode"] == "pitr":
                 if psql(container, "SELECT pg_catalog.pg_is_in_recovery()::text", log=False) == "false":
                     postgres_ready = True
@@ -1041,6 +1052,11 @@ curl "${common[@]}" --fail "$base" -o "$destination"
                     "PostgreSQL exited before readiness: " +
                     last_error + " logs=" + postgres_diagnostics(container)
                 )
+        # Outside the try above: a missed target is final, not a transient
+        # query failure to retry until the deadline.
+        if sentinels is not None and pitr_sentinels_reached(*sentinels):
+            postgres_ready = True
+            break
         if (
             CONFIG["restore_mode"] == "pitr" and
             REPOSITORY_TYPE == "pgbackrest" and
