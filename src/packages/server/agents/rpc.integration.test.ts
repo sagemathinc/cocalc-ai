@@ -96,7 +96,13 @@ jest.mock("./admission-state", () => ({
   hashAgentRpcAdmissionBinding: () => "binding",
 }));
 
-import { acceptAgentRpc, agentRpcControl, authorizeRpcExecution } from "./rpc";
+import {
+  acceptAgentRpc,
+  agentRpcControl,
+  authorizeRpcExecution,
+  executionOfEnvelope,
+} from "./rpc";
+import { verifyAgentRpcReportCapability } from "./rpc-report-capability";
 import { agentMessagingSubject } from "@cocalc/conat/agents/protocol";
 
 const source = { project_id: sourceProject, agent_id: sourceAgent };
@@ -233,6 +239,43 @@ test("cross-bay submission does not require the source identity in the target ba
   } finally {
     identities.set(sourceAgent, sourceIdentity);
   }
+});
+
+test("a queued message carries the hub's capability to report its failed turn", async () => {
+  const submit = () =>
+    agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "hello",
+      },
+    });
+  process.env.COCALC_CLUSTER_SHARED_SECRET = "test-cluster-secret";
+  try {
+    await expect(submit()).resolves.toMatchObject({ outcome: "accepted" });
+    const envelope = submitAgentRpc.mock.calls[0][0];
+    expect(envelope.report_capability).toMatch(
+      /^[0-9]{13}\.[A-Za-z0-9_-]{43}$/,
+    );
+    expect(
+      verifyAgentRpcReportCapability({
+        ...executionOfEnvelope(envelope),
+        report_capability: envelope.report_capability,
+      }),
+    ).toBe(true);
+  } finally {
+    delete process.env.COCALC_CLUSTER_SHARED_SECRET;
+  }
+  // Without a secret to sign with, the message still goes, unreportable.
+  await expect(submit()).resolves.toMatchObject({ outcome: "accepted" });
+  expect(submitAgentRpc.mock.calls[1][0].report_capability).toBeUndefined();
 });
 
 test("broadcast snapshot skips redundant pre-submit network materialization", async () => {

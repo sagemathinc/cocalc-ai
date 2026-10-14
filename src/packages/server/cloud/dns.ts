@@ -752,6 +752,71 @@ export async function deleteHostDns(opts: {
   }
 }
 
+const ROUTE_RECORD_TYPES = new Set(["A", "AAAA", "CNAME"]);
+
+/**
+ * Remove every A, AAAA and CNAME record for exactly this hostname, including
+ * one whose id was never saved or has gone stale, and fail unless none is
+ * left. Use it when a hostname must stop resolving, e.g. because the address
+ * or tunnel it points to has been released.
+ */
+export async function deleteHostnameDns(opts: {
+  hostname: string;
+  record_id?: string;
+}): Promise<void> {
+  const hostname = `${opts.hostname ?? ""}`.trim().toLowerCase();
+  if (!hostname) throw new Error("hostname required to delete DNS");
+  const { token, zoneId } = await getZoneClientForHostname(hostname);
+  const remove = async (record_id: string) => {
+    try {
+      await cloudflareRequest(
+        token,
+        "DELETE",
+        `zones/${zoneId}/dns_records/${record_id}`,
+      );
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+  };
+  const routeRecords = async () =>
+    (await listDnsRecordsByName(token, zoneId, hostname)).filter(
+      (record) =>
+        record.id &&
+        `${record.name ?? ""}`.trim().toLowerCase() === hostname &&
+        ROUTE_RECORD_TYPES.has(`${record.type ?? ""}`.trim().toUpperCase()),
+    );
+  // A saved id is only trusted while it still names a route record for this
+  // exact hostname; the name-filtered pass below finds the rest.
+  if (opts.record_id) {
+    let saved: DnsRecord | undefined;
+    try {
+      saved = await cloudflareRequest<DnsRecord>(
+        token,
+        "GET",
+        `zones/${zoneId}/dns_records/${opts.record_id}`,
+      );
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+    if (
+      saved?.id &&
+      `${saved.name ?? ""}`.trim().toLowerCase() === hostname &&
+      ROUTE_RECORD_TYPES.has(`${saved.type ?? ""}`.trim().toUpperCase())
+    ) {
+      await remove(saved.id);
+    }
+  }
+  for (const record of await routeRecords()) {
+    await remove(record.id!);
+  }
+  const left = await routeRecords();
+  if (left.length > 0) {
+    throw new Error(
+      `${left.length} DNS record(s) for '${hostname}' remain after deletion`,
+    );
+  }
+}
+
 export async function ensureHostnameCnameDns(opts: {
   hostname: string;
   target_hostname: string;

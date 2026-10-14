@@ -2,7 +2,7 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
-import getPool, { getCachedReadPool } from "@cocalc/database/pool";
+import getPool from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
 import { getFrontendSourceFingerprint as getFrontendSourceFingerprint0 } from "@cocalc/backend/frontend-build-fingerprint";
 import {
@@ -4645,7 +4645,7 @@ function boolSetting(value: unknown): boolean {
 }
 
 async function getProjectHostSetupCount(): Promise<number> {
-  const { rows } = await getCachedReadPool("medium").query<{ count: number }>(
+  const { rows } = await getPool().query<{ count: number }>(
     `
       SELECT COUNT(*)::INTEGER AS count
         FROM project_hosts
@@ -4660,7 +4660,7 @@ async function getProviderCatalogSetupCount(
   providers: string[],
 ): Promise<number> {
   if (!providers.length) return 0;
-  const { rows } = await getCachedReadPool("medium").query<{ count: number }>(
+  const { rows } = await getPool().query<{ count: number }>(
     `
       SELECT COUNT(DISTINCT provider)::INTEGER AS count
         FROM cloud_catalog_cache
@@ -4675,7 +4675,7 @@ async function getRootfsSetupCounts(): Promise<{
   official: number;
   prepull: number;
 }> {
-  const { rows } = await getCachedReadPool("medium").query<{
+  const { rows } = await getPool().query<{
     official: number;
     prepull: number;
   }>(

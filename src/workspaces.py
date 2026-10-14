@@ -273,9 +273,9 @@ def all_packages() -> List[str]:
         'packages/lite',
         'packages/project-runner',
         'packages/project-host',
-        'packages/plus',
         'packages/export',
         'packages/cli',
+        'packages/plus',  # imports @cocalc/cli/distribution (built above)
         'packages/launchpad',
         'packages/cloud',
         'packages/server',

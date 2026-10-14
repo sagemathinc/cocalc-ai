@@ -11,14 +11,11 @@ import type {
   ProjectReference,
   ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
-  ProjectControlAssignHostRequest,
   ProjectControlAcceptRehomeRequest,
   ProjectControlBackupRequest,
   ProjectControlGetRootfsStatesRequest,
   ProjectControlHardDeleteStatusRequest,
   ProjectControlHardDeleteStatusResponse,
-  ProjectControlMoveRequest,
-  ProjectControlMoveResponse,
   ProjectControlRehomeRequest,
   ProjectControlRehomeResponse,
   ProjectControlRestartRequest,
@@ -45,9 +42,6 @@ import { backfillRunningProjectVersions } from "@cocalc/server/project-host/cont
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { getProjectRecoveryStatusLocal } from "@cocalc/server/projects/maintenance-status";
-import { moveProject as moveProjectLocal } from "@cocalc/server/conat/api/projects";
-import { assignProjectHost as assignProjectHostLocal } from "@cocalc/server/conat/api/projects";
-import { PROJECT_DANGEROUS_INTERNAL_AUTH } from "@cocalc/server/conat/api/project-dangerous-auth";
 import {
   clearProjectActiveOperation,
   getProjectActiveOperation,
@@ -148,7 +142,12 @@ function staleRoutingError({
   );
 }
 
-async function assertCurrentProjectOwnership({
+/**
+ * Refuse unless this bay owns the project (and, given an epoch, still at that
+ * epoch): a stale routing error otherwise, which callers retry after
+ * re-resolving the owner.
+ */
+export async function assertCurrentProjectOwnership({
   project_id,
   epoch,
 }: {
@@ -647,21 +646,6 @@ export async function handleProjectControlSetUsageAccount(
   };
 }
 
-export async function handleProjectControlAssignHost(
-  req: ProjectControlAssignHostRequest,
-): Promise<void> {
-  await assertCurrentProjectOwnership({
-    project_id: req.project_id,
-    epoch: req.epoch,
-  });
-  await assignProjectHostLocal({
-    account_id: req.account_id,
-    project_id: req.project_id,
-    dest_host_id: req.dest_host_id,
-    skip_owner_route: true,
-  });
-}
-
 export async function handleProjectControlAddress(
   req: ProjectControlAddressRequest,
 ) {
@@ -672,25 +656,6 @@ export async function handleProjectControlAddress(
   const project = await getProject(req.project_id);
   return await project.address({
     account_id: req.account_id,
-  });
-}
-
-export async function handleProjectControlMove(
-  req: ProjectControlMoveRequest,
-): Promise<ProjectControlMoveResponse> {
-  await assertCurrentProjectOwnership({
-    project_id: req.project_id,
-    epoch: req.epoch,
-  });
-  return await moveProjectLocal({
-    account_id: req.account_id,
-    session_hash: req.session_hash,
-    internalAuth: PROJECT_DANGEROUS_INTERNAL_AUTH,
-    project_id: req.project_id,
-    dest_host_id: req.dest_host_id,
-    allow_offline: req.allow_offline,
-    backup_region_cutover: req.backup_region_cutover,
-    allow_oversized_skip: req.allow_oversized_skip,
   });
 }
 
@@ -950,13 +915,6 @@ export async function dispatchProjectControlRpc(
     return await handleProjectControlAddress(
       payload as ProjectControlAddressRequest,
     );
-  }
-  const moveExpected = projectControlSubject({
-    dest_bay: getConfiguredBayId(),
-    method: "move",
-  });
-  if (subject === moveExpected) {
-    return await handleProjectControlMove(payload as ProjectControlMoveRequest);
   }
   const rehomeExpected = projectControlSubject({
     dest_bay: getConfiguredBayId(),

@@ -1,5 +1,9 @@
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
-import { type Patch, type HistoryInfo } from "@cocalc/conat/hub/api/sync";
+import {
+  type Patch,
+  type HistoryInfo,
+  type PurgeHistoryResult,
+} from "@cocalc/conat/hub/api/sync";
 import { client_db } from "@cocalc/util/db-schema/client-db";
 
 type AssertAccessFn = (opts: {
@@ -77,20 +81,39 @@ export async function history({
   }
 }
 
+// Reset a document's edit history (TimeTravel's "purge history").  The patch
+// stream does it in one transaction -- fence out writes of older epochs,
+// publish the new history_epoch in its metadata (open copies of the document
+// then close), and delete the old patches -- so concurrent purges and writers
+// cannot interleave.
+//
+// With oversized_seq, this is the automatic reset of a history holding a
+// patch too large to load (the 413 from opening the document says which):
+// it only happens if that patch is still there, and the old history is kept
+// in the stream rather than deleted.  So when several clients hit the same
+// oversized patch at once, only the first resets the history.
 export async function purgeHistory({
   account_id,
   project_id,
   path,
+  oversized_seq,
   client,
   assertAccess,
 }: {
   account_id?: string;
   project_id: string;
   path: string;
+  oversized_seq?: number;
   client?: any;
   assertAccess?: AssertAccessFn;
-}): Promise<{ deleted: number; history_epoch: number }> {
+}): Promise<PurgeHistoryResult> {
   await assertAccess?.({ account_id, project_id });
+  if (
+    oversized_seq != null &&
+    !(typeof oversized_seq == "number" && Number.isSafeInteger(oversized_seq))
+  ) {
+    throw new Error("oversized_seq must be an integer");
+  }
 
   const conatClient = requireExplicitConatClient(client);
   const string_id = client_db.sha1(project_id, path);
@@ -136,41 +159,47 @@ export async function purgeHistory({
   }) as Record<string, any>;
 
   const settings = (current.settings ?? {}) as Record<string, any>;
-  const history_epoch =
-    typeof settings.history_epoch === "number" &&
-    Number.isFinite(settings.history_epoch)
-      ? settings.history_epoch + 1
-      : 1;
   const stream = conatClient.sync.astream({
     name,
     project_id,
     noInventory: true,
   });
   try {
-    await stream.config({
-      required_headers: { history_epoch },
+    const history_purged_at = Date.now();
+    const history_purged_by = account_id ?? null;
+    const result = await stream.resetHistory({
+      // an epoch recorded only in the legacy syncstrings table still counts
+      minEpoch:
+        typeof settings.history_epoch === "number" &&
+        Number.isFinite(settings.history_epoch)
+          ? settings.history_epoch
+          : 0,
+      settings: { history_purged_at, history_purged_by },
+      ...(oversized_seq != null
+        ? { ifOversizedSeq: oversized_seq, archive: true }
+        : {}),
     });
-    const deleted = await stream.delete({ all: true });
-    const nextSettings = {
-      ...settings,
-      history_epoch,
-      history_purged_at: Date.now(),
-      history_purged_by: account_id ?? null,
-    };
-    syncstrings.set({
-      ...current,
-      string_id,
-      project_id,
-      path,
-      last_snapshot: null,
-      last_seq: null,
-      settings: nextSettings,
-    });
-    await syncstrings.save();
-
+    if (result.reset) {
+      syncstrings.set({
+        ...current,
+        string_id,
+        project_id,
+        path,
+        last_snapshot: null,
+        last_seq: null,
+        settings: {
+          ...settings,
+          history_epoch: result.history_epoch,
+          history_purged_at,
+          history_purged_by,
+        },
+      });
+      await syncstrings.save();
+    }
     return {
-      deleted: deleted.seqs?.length ?? 0,
-      history_epoch,
+      deleted: result.reset ? result.count : 0,
+      history_epoch: result.history_epoch,
+      reset: result.reset,
     };
   } finally {
     stream.close();

@@ -1008,6 +1008,35 @@ describe("terminal failure recovery", () => {
     }
   });
 
+  it("never resumes a delivery report's turn (a report starts one turn)", async () => {
+    const request = makeRequest();
+    (request.chat as any).agent_rpc_report = { attempt_id: "attempt" };
+    const queued = enqueueAcpJob(request as any);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat",
+          date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          generating: false,
+          history: [],
+        },
+      ]),
+    );
+    await expect(
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...queued, started_at: Date.now() },
+        recoveryCode: "codex_model_capacity",
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
+    ).toHaveLength(0);
+  });
+
   it("persists a bounded 15-minute model-capacity continuation", async () => {
     const request = makeRequest();
     const queued = enqueueAcpJob(request as any);
@@ -1056,6 +1085,39 @@ describe("terminal failure recovery", () => {
         recovery_parent_op_id: queued.op_id,
       }),
     ).toHaveLength(1);
+  });
+
+  it("resumes another agent's message as that message, not a user request", async () => {
+    const request = makeRequest();
+    request.prompt =
+      "Message from @builder (agent a in project p).\nAgent Network: Review.\n\nPlease review.\n\nAttached file snapshots in this project (temporary; copy into the project home to retain across restart):\n{}";
+    (request.chat as any).agent_message = true;
+    const queued = enqueueAcpJob(request as any);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat",
+          date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          generating: false,
+          history: [],
+        },
+      ]),
+    );
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_model_capacity",
+    });
+    const { prompt, chat } = decodeAcpJobRequest(resumed!);
+    expect(prompt).toContain(
+      `Original message (delivered by CoCalc; its header says who it is from):\n${request.prompt}`,
+    );
+    expect(prompt).not.toContain("Original user request");
+    expect(prompt).toContain("check that each listed path still exists");
+    expect(chat?.agent_message).toBe(true);
   });
 
   it("schedules delayed recovery before fallible chat projection", async () => {
@@ -2012,7 +2074,7 @@ describe("recoverDetachedWorkerStartupState", () => {
   it("resumes a harness turn in its session after worker loss", async () => {
     const request = {
       ...makeRequest(),
-      runtime: { version: 1, kind: "acp", profile: {} },
+      runtime: { version: 1, kind: "acp", profile: { id: "claude-code" } },
     };
     const job = enqueueAcpJob(request as any);
     claimNextQueuedAcpJobForThread({
@@ -2069,6 +2131,12 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(resumed.session_id).toBe("session-1");
     expect(resumed.prompt).toContain(
       "inspect what already completed and avoid duplicating side effects",
+    );
+    const notice = rows.find(
+      (row) => row.message_id === resumed.chat?.parent_message_id,
+    );
+    expect(JSON.stringify(notice)).toContain(
+      "CoCalc is automatically resuming this Claude session",
     );
   });
 

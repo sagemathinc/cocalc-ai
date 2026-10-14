@@ -41,7 +41,8 @@ export function applyQueuedUserMessageEditToRequest<
   }
   // CoCalc wrote a sensor wake for an approved sensor, and its permit binds
   // that exact prompt. Collaborators can edit chat rows; never run their edit.
-  if (request.chat?.sensor_wake) return request;
+  if (request.chat?.sensor_wake || request.chat?.agent_rpc_report)
+    return request;
   // The visible chat message can intentionally differ from the prompt sent to
   // ACP (for example, agent modals store detailed instructions in acp_prompt).
   // Only replace that hidden prompt when the persisted visible message changed.

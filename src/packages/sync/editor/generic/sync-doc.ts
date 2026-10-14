@@ -328,6 +328,11 @@ export class SyncDoc extends EventEmitter {
   private updateHasUnsavedChangesDebounced?: ReturnType<typeof debounce>;
   private patchflowStore?: PatchflowPatchStore;
   private patchflowCodec?: DocCodec;
+  // One cursor channel per document, closed with it. Its subscription is
+  // shared by every document on this path in the process, so an unclosed
+  // channel keeps this closed document (and its patch history) alive.
+  private cursorPresenceAdapter?: Promise<PatchflowPresenceAdapter | undefined>;
+  private cursorPubSub?: { close: () => void };
 
   private last: Document;
   private doc: Document;
@@ -545,6 +550,16 @@ export class SyncDoc extends EventEmitter {
           if (this.isClosed()) {
             return true;
           }
+          if (await this.resetOversizedHistory(err)) {
+            // the history was reset, so open again right away
+            try {
+              await this.initAll();
+              this.emitOpenPhase("init_attempt_done", { attempt });
+              return true;
+            } catch (retryErr) {
+              err = retryErr;
+            }
+          }
           const m = `WARNING: problem initializing ${this.path} -- ${err}`;
           log(m);
           if (DEBUG || true) {
@@ -572,6 +587,66 @@ export class SyncDoc extends EventEmitter {
     }
     this.emit_change(); // from nothing to something.
   });
+
+  // A patch too large to load (e.g., a runaway notebook output saved as one
+  // 500 MB patch) makes every open of this document fail with 413.  Rather
+  // than leave whoever is opening it stuck, reset the history through the
+  // document's own patch stream, keeping the old history aside: open copies
+  // of the document see the new history epoch and close instead of writing
+  // stale state, and the persist server fences out writes from the old epoch.
+  // The reset only happens if that patch is still there, so when several
+  // clients hit it at once only the first resets the history.  This only
+  // happens when a client opens the document, at most once per SyncDoc.
+  private oversizedHistoryReset = false;
+  private resetOversizedHistory = async (err: unknown): Promise<boolean> => {
+    const oversized_seq = (err as any)?.oversizedHistorySeq;
+    if (
+      typeof oversized_seq != "number" ||
+      this.oversizedHistoryReset ||
+      typeof this.client.resetOversizedHistory != "function"
+    ) {
+      return false;
+    }
+    this.oversizedHistoryReset = true;
+    let result: { history_epoch: number; reset: boolean };
+    try {
+      result = await this.client.resetOversizedHistory({
+        project_id: this.project_id,
+        path: this.syncPath,
+        oversized_seq,
+      });
+    } catch (resetErr) {
+      // e.g., no permission or no connection: keep retrying the open, and
+      // try the reset again next time
+      this.oversizedHistoryReset = false;
+      this.dbg("resetOversizedHistory")(`failed -- ${resetErr}`);
+      return false;
+    }
+    // Open with the epoch now in effect -- from our reset, or from whoever
+    // reset the history first -- rather than close, as this document would
+    // when it sees the epoch change.
+    this.history_epoch = result.history_epoch;
+    if (result.reset) {
+      this.client.alert_message?.({
+        type: "info",
+        title: "Edit history reset",
+        message: `The edit history (TimeTravel) of ${this.path} contained an entry too large to load, most likely a huge output, so its edit history was reset and the file opened normally. CoCalc kept a copy of the old history; contact support if you need it.`,
+        block: true,
+      });
+    }
+    return true;
+  };
+
+  // A 413 while loading the patches means the edit history itself holds a
+  // patch too large to load (see resetOversizedHistory), as opposed to some
+  // other stream this document uses.
+  private markOversizedHistory = (err: unknown): unknown => {
+    const seq = (err as any)?.oversizedSeq;
+    if ((err as any)?.code == 413 && typeof seq == "number") {
+      (err as any).oversizedHistorySeq = seq;
+    }
+    return err;
+  };
 
   private resolveCanonicalSyncIdentityPath = async (
     path: string,
@@ -1461,6 +1536,8 @@ export class SyncDoc extends EventEmitter {
     cancel_scheduled(this.updateHasUnsavedChangesDebounced);
 
     this.patchflowSession?.close();
+    this.cursorPubSub?.close();
+    this.cursorPubSub = undefined;
 
     try {
       await this.closeTables();
@@ -1904,7 +1981,11 @@ export class SyncDoc extends EventEmitter {
         this.patch_table_query(this.useConat ? undefined : this.last_snapshot),
       ],
     };
-    this.patches_table = await this.synctable(query, [], this.patch_interval);
+    try {
+      this.patches_table = await this.synctable(query, [], this.patch_interval);
+    } catch (err) {
+      throw this.markOversizedHistory(err);
+    }
     this.registerTableConnectionState(this.patches_table);
     this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
@@ -1955,7 +2036,10 @@ export class SyncDoc extends EventEmitter {
     this.patchflowCodec = this.buildPatchflowCodec();
     this.patchflowStore = this.createPatchflowStore();
     const presenceAdapter = await this.getCursorPresenceAdapter();
-    this.patchflowSession = new PatchflowSession({
+    // close() only closes a session that already exists, so one created
+    // after it would outlive the document.
+    if (this.isClosed()) throw Error("closed while opening");
+    const session = new PatchflowSession({
       codec: this.patchflowCodec,
       patchStore: this.patchflowStore,
       clock: () => this.client?.server_time().valueOf() ?? Date.now(),
@@ -1963,20 +2047,27 @@ export class SyncDoc extends EventEmitter {
       docId: this.string_id,
       presenceAdapter,
     });
+    this.patchflowSession = session;
     if (this.cursors) {
-      this.patchflowSession.on("cursors", this.handlePatchflowCursors);
+      session.on("cursors", this.handlePatchflowCursors);
     }
-    this.patchflowSession.on("patch", this.handlePatchflowPatch);
-    this.patchflowSession.on("change", this.handlePatchflowChange);
-    this.patchflowSession.on("inconsistency", this.handleInconsistency);
+    session.on("patch", this.handlePatchflowPatch);
+    session.on("change", this.handlePatchflowChange);
+    session.on("inconsistency", this.handleInconsistency);
     try {
-      await this.patchflowSession.init();
+      await session.init();
     } catch (err) {
-      this.patchflowSession.close();
+      session.close();
       this.patchflowSession = undefined;
       this.patchflowStore = undefined;
       this.patchflowCodec = undefined;
       throw err;
+    }
+    if (this.isClosed()) {
+      // close() ran during init, which can subscribe even after the
+      // session was closed; close it again now that init is done.
+      session.close();
+      throw Error("closed while opening");
     }
     dbg("patchflow session initialized");
 
@@ -1992,29 +2083,41 @@ export class SyncDoc extends EventEmitter {
     this.emit("patchflow-ready");
   });
 
-  private getCursorPresenceAdapter = reuseInFlight(
-    async (): Promise<PatchflowPresenceAdapter | undefined> => {
-      if (!this.cursors) {
-        return;
-      }
-      this.emitOpenPhase("cursor_presence_start");
-      try {
-        return await this.createCursorPresenceAdapter();
-      } catch (err) {
-        // Cursor presence is optional.  In particular, an otherwise valid
-        // document session may not have permission to subscribe to cursors.
-        // Editing and Patchflow must still initialize in that case.
-        logger.warn("cursor presence unavailable; continuing without it", {
-          err: `${err}`,
-          project_id: this.project_id,
-          path: this.path,
-        });
-        return;
-      } finally {
-        this.emitOpenPhase("cursor_presence_done");
-      }
-    },
-  );
+  // The open prewarms this and the patchflow session uses it later, so
+  // remember the adapter: creating another would open a second channel.
+  private getCursorPresenceAdapter = (): Promise<
+    PatchflowPresenceAdapter | undefined
+  > => {
+    this.cursorPresenceAdapter ??= this.openCursorPresenceAdapter();
+    return this.cursorPresenceAdapter;
+  };
+
+  private openCursorPresenceAdapter = async (): Promise<
+    PatchflowPresenceAdapter | undefined
+  > => {
+    if (!this.cursors) {
+      return;
+    }
+    this.emitOpenPhase("cursor_presence_start");
+    try {
+      return await this.createCursorPresenceAdapter();
+    } catch (err) {
+      // Cursor presence is optional.  In particular, an otherwise valid
+      // document session may not have permission to subscribe to cursors.
+      // Editing and Patchflow must still initialize in that case.
+      logger.warn("cursor presence unavailable; continuing without it", {
+        err: `${err}`,
+        project_id: this.project_id,
+        path: this.path,
+      });
+      // A later call (e.g. the patchflow session after a failed prewarm)
+      // may try again.
+      this.cursorPresenceAdapter = undefined;
+      return;
+    } finally {
+      this.emitOpenPhase("cursor_presence_done");
+    }
+  };
 
   init_ipywidgets = reuseInFlight(async () => {
     if (this.ipywidgets_state != null) {
@@ -2624,6 +2727,11 @@ export class SyncDoc extends EventEmitter {
         path: this.syncPath,
         name: "cursors",
       });
+      if (this.state == "closed") {
+        table.close();
+        return;
+      }
+      this.cursorPubSub = table;
       const listeners: Array<(state: unknown, clientId: string) => void> = [];
       table.on("change", (obj: any) => {
         const account_id = this.cursorStateAccountId(obj);

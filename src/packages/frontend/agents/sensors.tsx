@@ -53,6 +53,7 @@ const STATUS_COLOR: Record<AgentSensor["status"], string> = {
   active: "green",
   paused: "default",
   rejected: "red",
+  done: "default",
 };
 
 const OUTCOME: Record<string, string> = {
@@ -378,8 +379,6 @@ function SensorCard({
   const [logOpen, setLogOpen] = useState(false);
   const spec = sensor.spec ?? sensor.pending_spec!;
   const kind = kindOf(spec);
-  const done =
-    kind === "watch" && sensor.status === "active" && !sensor.next_run_at;
   const act = async (op: SensorManageOp) => {
     setBusy(op);
     setError("");
@@ -442,9 +441,7 @@ function SensorCard({
       <Space wrap style={{ marginBottom: 8 }}>
         <strong>{spec.title}</strong>
         <Tag>{KIND_LABEL[kind]}</Tag>
-        <Tag color={done ? "default" : STATUS_COLOR[sensor.status]}>
-          {done ? "done" : sensor.status}
-        </Tag>
+        <Tag color={STATUS_COLOR[sensor.status]}>{sensor.status}</Tag>
         {pending && sensor.spec && <Tag color="gold">change to review</Tag>}
       </Space>
       {error && (
@@ -535,8 +532,8 @@ function SensorCard({
       {/* A proposal that never ran has only its own buttons. */}
       {!(pending && !sensor.spec) && (
         <Space wrap>
-          {sensor.status === "active" && !done && button("run", "Run now")}
-          {sensor.status === "active" && !done && button("pause", "Pause")}
+          {sensor.status === "active" && button("run", "Run now")}
+          {sensor.status === "active" && button("pause", "Pause")}
           {sensor.status === "paused" &&
             sensor.spec &&
             kind !== "watch" &&

@@ -129,6 +129,16 @@ Patterns that have mattered:
   expects (for example conda on "CoCalc Basic").
 - **Fixed but not deployed** (or deployed but not yet verified for this
   customer).
+- **Wrong file from a hand-built URL.** Project file URLs contain an
+  absolute path: `/projects/<project_id>/files/<path>` opens `/<path>`. The
+  home directory is `/home/user`, so a home file is
+  `.../files/home/user/Course%20Materials.course`, while
+  `.../files/Course%20Materials.course` opens `/Course Materials.course` at
+  the filesystem root, a different file (Oct 12 2026, #20979: it showed
+  74 students, no assignments and Not on disk instead of the real course).
+  Open documents from Files or by their full `/home/user` path, and check
+  that what you see matches the customer's screenshot before changing
+  anything.
 
 ### Inspecting consented project content
 

@@ -210,7 +210,13 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
     description: "Example University: AR-2026-000001",
     automatic_tax: { enabled: false },
     payment_settings: {
-      payment_method_types: ["card", "us_bank_account"],
+      payment_method_types: ["card", "us_bank_account", "customer_balance"],
+      payment_method_options: {
+        customer_balance: {
+          funding_type: "bank_transfer",
+          bank_transfer: { type: "us_bank_transfer" },
+        },
+      },
     },
     subtotal: 390000,
     total: 390000,
@@ -227,6 +233,7 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
       commercial_invoice_id: "ci_1",
       order_number: "AR-2026-000001",
       cocalc_site: SITE,
+      commercial_payment_settings: "bank-transfer-v1",
     },
     payments: { data: [] },
     status_transitions: {},
@@ -340,13 +347,20 @@ describe("commercial Stripe invoices", () => {
         customer: "cus_1",
         days_until_due: 30,
         payment_settings: {
-          payment_method_types: ["card", "us_bank_account"],
+          payment_method_types: ["card", "us_bank_account", "customer_balance"],
+          payment_method_options: {
+            customer_balance: {
+              funding_type: "bank_transfer",
+              bank_transfer: { type: "us_bank_transfer" },
+            },
+          },
         },
         metadata: expect.objectContaining({
           flow: "commercial_order",
           commercial_order_id: "co_1",
           commercial_invoice_id: "ci_1",
           cocalc_site: SITE,
+          commercial_payment_settings: "bank-transfer-v1",
         }),
       }),
       expect.objectContaining({
@@ -1162,14 +1176,103 @@ describe("commercial Stripe invoices", () => {
           commercial_invoice_id: "ci_1",
           order_number: "AR-2026-000001",
           cocalc_site: SITE,
+          commercial_payment_settings: "bank-transfer-v1",
         }),
       }),
       expect.objectContaining({
-        idempotencyKey: expect.stringContaining(":metadata"),
+        idempotencyKey: expect.stringContaining(":metadata:bank-transfer-v1"),
       }),
     );
     expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
       expect.objectContaining({ event_type: "existing-invoice-linked" }),
+    );
+
+    // Once linked with the current settings, losing bank transfer is drift.
+    const linkedMetadata = stripe.invoices.update.mock.calls[0][1].metadata;
+    const linked = invoiceFixture({ status: "draft" });
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ invoices: [linked] }),
+    );
+    mockGetCommercialInvoice.mockResolvedValue(linked);
+    stripe.invoices.retrieve.mockResolvedValue(
+      stripeInvoiceFixture({
+        metadata: linkedMetadata,
+        payment_settings: { payment_method_types: ["card", "us_bank_account"] },
+      }),
+    );
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Send linked invoice",
+      }),
+    ).rejects.toThrow("payment settings");
+    expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("links a card + ACH invoice as legacy, without the settings marker", async () => {
+    jest.useFakeTimers({ now: new Date("2026-10-01T00:00:00.000Z") });
+    const prepared = stripeInvoiceFixture({
+      payment_settings: { payment_method_types: ["card", "us_bank_account"] },
+      metadata: {
+        flow: "commercial_order",
+        commercial_order_id: "co_1",
+        order_number: "AR-2026-000001",
+        cocalc_site: SITE,
+      },
+    });
+    const { commercial_payment_settings: _marker, ...linkedMetadata } =
+      stripeInvoiceFixture().metadata;
+    stripe.invoices.retrieve
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(
+        stripeInvoiceFixture({
+          payment_settings: prepared.payment_settings,
+          metadata: linkedMetadata,
+        }),
+      );
+
+    await linkExistingStripeCommercialInvoice({
+      id: "co_1",
+      provider_invoice_id: "in_1",
+      account_id: "admin-1",
+      expected_version: 4,
+      reason: "Link the reviewed institutional invoice",
+    });
+
+    const metadata = stripe.invoices.update.mock.calls[0][1].metadata;
+    expect(metadata.commercial_invoice_id).toBe("ci_1");
+    expect(metadata).not.toHaveProperty("commercial_payment_settings");
+  });
+
+  it("recovers rather than duplicates when an older create used the same key", async () => {
+    stripe.invoices.create.mockRejectedValue(
+      Object.assign(
+        Error(
+          "Keys for idempotent requests can only be used with the same parameters",
+        ),
+        {
+          type: "StripeIdempotencyError",
+          rawType: "idempotency_error",
+        },
+      ),
+    );
+
+    await expect(
+      createStripeCommercialInvoiceDraft({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Retry invoice creation after deploy",
+      }),
+    ).rejects.toThrow("retry in a minute to recover it");
+    expect(stripe.invoices.create).toHaveBeenCalledTimes(1);
+    expect(stripe.invoiceItems.create).not.toHaveBeenCalled();
+    expect(mockSetCommercialProviderOperationStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "indeterminate" }),
     );
   });
 
@@ -1398,6 +1501,42 @@ describe("commercial Stripe invoices", () => {
     );
   });
 
+  it("still finalizes a draft created before bank transfer was offered", async () => {
+    // No settings marker: created by the code before bank transfer.
+    const { commercial_payment_settings: _marker, ...legacyMetadata } =
+      stripeInvoiceFixture().metadata;
+    const legacy = {
+      payment_settings: { payment_method_types: ["us_bank_account", "card"] },
+      metadata: legacyMetadata,
+    };
+    const invoice = invoiceFixture({ status: "draft" });
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ invoices: [invoice] }),
+    );
+    mockGetCommercialInvoice.mockResolvedValue(invoice);
+    stripe.invoices.retrieve.mockResolvedValue(stripeInvoiceFixture(legacy));
+    stripe.invoices.finalizeInvoice.mockResolvedValue(
+      stripeInvoiceFixture({ ...legacy, status: "open" }),
+    );
+    stripe.invoices.sendInvoice.mockResolvedValue(
+      stripeInvoiceFixture({
+        ...legacy,
+        status: "open",
+        hosted_invoice_url: "https://invoice.test/in_1",
+      }),
+    );
+
+    await sendStripeCommercialInvoice({
+      id: "co_1",
+      commercial_invoice_id: "ci_1",
+      account_id: "admin-1",
+      expected_version: 4,
+      reason: "Send approved invoice",
+    });
+
+    expect(stripe.invoices.sendInvoice).toHaveBeenCalled();
+  });
+
   it("finalizes an invoice whose description is the approved invoice memo", async () => {
     const memo = "University PO 5874860; campus adoption pilot.";
     const invoice = invoiceFixture({ status: "draft" });
@@ -1506,6 +1645,48 @@ describe("commercial Stripe invoices", () => {
     [
       "payment methods",
       { payment_settings: { payment_method_types: ["card"] } },
+      "payment settings",
+    ],
+    [
+      "legacy methods on a current invoice",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "us_bank_account"],
+        },
+      },
+      "payment settings",
+    ],
+    [
+      "bank transfer options",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "us_bank_account", "customer_balance"],
+        },
+      },
+      "payment settings",
+    ],
+    [
+      "bank transfer type",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "us_bank_account", "customer_balance"],
+          payment_method_options: {
+            customer_balance: {
+              funding_type: "bank_transfer",
+              bank_transfer: { type: "eu_bank_transfer" },
+            },
+          },
+        },
+      },
+      "payment settings",
+    ],
+    [
+      "bank transfer without ACH",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "customer_balance"],
+        },
+      },
       "payment settings",
     ],
   ])(

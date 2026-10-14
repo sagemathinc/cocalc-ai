@@ -1,6 +1,9 @@
 import { Map } from "immutable";
 
-import { shouldSendProjectStop } from "./projects-operations";
+import {
+  shouldSendProjectRestart,
+  shouldSendProjectStop,
+} from "./projects-operations";
 
 function project({
   host_id = "host-1",
@@ -58,5 +61,19 @@ describe("shouldSendProjectStop", () => {
   it("does not block stop when host status is not loaded yet", () => {
     expect(shouldSendProjectStop(project(), undefined)).toBe(true);
     expect(shouldSendProjectStop(project(), Map())).toBe(true);
+  });
+});
+
+describe("shouldSendProjectRestart", () => {
+  it("restarts running and stopped projects that are on a host", () => {
+    expect(shouldSendProjectRestart(project())).toBe(true);
+    expect(shouldSendProjectRestart(project({ state: "opened" }))).toBe(true);
+  });
+
+  it("skips projects without a host or being deleted", () => {
+    expect(shouldSendProjectRestart(project({ host_id: null }))).toBe(false);
+    expect(shouldSendProjectRestart(project({ state: "deleting" }))).toBe(
+      false,
+    );
   });
 });

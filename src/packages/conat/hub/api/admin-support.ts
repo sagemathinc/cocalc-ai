@@ -392,7 +392,7 @@ export interface AdminSupportSpamResponse {
 }
 
 export const ADMIN_SUPPORT_CONVENTIONS = {
-  version: 3,
+  version: 4,
   statuses: {
     new: "We have not reviewed or acted on the ticket.",
     open: "CoCalc is actively investigating or still owes work, including after an interim reply.",
@@ -414,6 +414,7 @@ export const ADMIN_SUPPORT_CONVENTIONS = {
   ],
   handling: [
     "Inspect relevant screenshots and attachments before drawing conclusions from an incomplete description.",
+    "Project file URLs contain an absolute path: /projects/<project_id>/files/<path> opens /<path>. The home directory is /home/user, so a file in it is /projects/<project_id>/files/home/user/<name>, while /projects/<project_id>/files/<name> opens /<name> at the filesystem root, a different file that users normally cannot write (the editor then shows Not on disk). Before reading or changing a customer's document, open it from Files or by its full /home/user path, and confirm it matches what the customer sees.",
     "Use open, not pending, when CoCalc still owns the next action.",
     "Use pending only when the requester must respond or act.",
     "Do not mark solved merely because a fix was committed; complete and verify the promised operational action first.",

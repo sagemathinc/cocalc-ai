@@ -9,6 +9,7 @@ import {
   acpAdmissionLimitsFromEffectiveLimits,
   admitAcpJobExecution,
   admitAcpJobCreation,
+  withoutRecoveryLineage,
   mergeAcpAdmissionLimits,
   setAcpAdmissionDenialRecorder,
   throwIfAcpAdmissionDenied,
@@ -1180,6 +1181,42 @@ describe("acp job queue ordering", () => {
         runningPerProject: 0,
       }),
     ).toEqual({ ok: true });
+  });
+
+  it("does not take recovery lineage from a submitted turn", () => {
+    const base = makeRequest({
+      userMessageId: "user-submitted-lineage",
+      assistantMessageId: "assistant-submitted-lineage",
+      assistantDate: "2026-03-08T00:00:14.050Z",
+    });
+    const submitted = {
+      ...base,
+      recovery_parent_op_id: "some-op",
+      recovery_reason: "server restart",
+      recovery_count: 1,
+      chat: {
+        ...base.chat!,
+        recovery_parent_op_id: "some-op",
+        recovery_reason: "server restart",
+        recovery_count: 1,
+      },
+    };
+    const request = withoutRecoveryLineage(submitted);
+    expect(request).not.toHaveProperty("recovery_parent_op_id");
+    expect(request).not.toHaveProperty("recovery_count");
+    expect(request.chat).not.toHaveProperty("recovery_parent_op_id");
+    expect(request.chat).not.toHaveProperty("recovery_reason");
+    expect(request.chat!.thread_id).toBe(base.chat!.thread_id);
+    expect(
+      admitAcpJobCreation(request, {
+        queuedPerAccount: 0,
+        queuedPerThread: 0,
+        created5hPerAccount: 0,
+        created7dPerAccount: 0,
+        runningPerAccount: 0,
+        runningPerProject: 0,
+      }),
+    ).toMatchObject({ ok: false });
   });
 
   it("admits a human turn that atomically supersedes a queued recovery", () => {

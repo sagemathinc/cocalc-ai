@@ -7,6 +7,7 @@
  * Cursor presence smoke test using the in-memory presence adapter fallback.
  */
 
+import { EventEmitter } from "events";
 import { once } from "@cocalc/util/async-utils";
 import { Client, fs } from "./client-test";
 import { SyncString } from "../sync";
@@ -137,26 +138,55 @@ describe("cursor presence emits cursor_activity", () => {
 
   it("continues without cursor presence when the subscription is denied", async () => {
     const client = new Client(init_queries, "userC");
+    const createAdapter = jest
+      .spyOn(SyncString.prototype as any, "createCursorPresenceAdapter")
+      .mockRejectedValue(new Error("permission denied subscribing to cursors"));
+    try {
+      const sync = new SyncString({
+        project_id,
+        path,
+        client,
+        fs,
+        cursors: true,
+        string_id: "cursor-test-permission-denied",
+      });
+      await waitForReady(sync);
+      expect(sync.get_state()).toBe("ready");
+      expect(createAdapter).toHaveBeenCalled();
+      expect((sync as any).patchflowSession?.presenceAdapter).toBeUndefined();
+      await sync.close();
+    } finally {
+      createAdapter.mockRestore();
+    }
+  });
+
+  it("opens the cursor channel once and closes it with the document", async () => {
+    const client = new Client(init_queries, "userD");
+    const close = jest.fn();
+    const pubsub = Object.assign(new EventEmitter(), {
+      set: jest.fn(),
+      close,
+    });
+    (client as any).pubsub_conat = jest.fn(async () => pubsub);
     const sync = new SyncString({
       project_id,
       path,
       client,
       fs,
       cursors: true,
-      string_id: "cursor-test-permission-denied",
+      string_id: "cursor-test-channel-lifetime",
     });
     await waitForReady(sync);
-    const createAdapter = jest
-      .spyOn(sync as any, "createCursorPresenceAdapter")
-      .mockRejectedValue(new Error("permission denied subscribing to cursors"));
-
-    await expect(
-      (sync as any).getCursorPresenceAdapter(),
-    ).resolves.toBeUndefined();
-    expect(sync.get_state()).toBe("ready");
-    expect(createAdapter).toHaveBeenCalledTimes(1);
-
+    // The test client cannot open conat tables; exercise only the channel.
+    (sync as any).cursorPresenceAdapter = undefined;
+    (sync as any).useConat = true;
+    await (sync as any).getCursorPresenceAdapter();
+    await (sync as any).getCursorPresenceAdapter();
+    (sync as any).useConat = false;
+    expect((client as any).pubsub_conat).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
     await sync.close();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });
 

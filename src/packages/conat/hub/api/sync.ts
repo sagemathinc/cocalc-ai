@@ -42,10 +42,19 @@ export interface Sync {
     account_id?: string;
     project_id: string;
     path: string;
-  }) => Promise<{
-    deleted: number;
-    history_epoch: number;
-  }>;
+    // only reset the history if this patch, too large to load, is still in
+    // it, and keep the old history instead of deleting it
+    oversized_seq?: number;
+  }) => Promise<PurgeHistoryResult>;
+}
+
+export interface PurgeHistoryResult {
+  // number of patches deleted (or kept aside)
+  deleted: number;
+  // the history epoch now in effect
+  history_epoch: number;
+  // false if oversized_seq was given and that patch was already gone
+  reset: boolean;
 }
 
 export const sync = {

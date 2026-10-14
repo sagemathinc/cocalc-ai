@@ -608,7 +608,10 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(output.statuses.open, /actively investigating/);
   assert.match(output.statuses.pending, /waiting for the requester/);
   assert.match(output.statuses.solved, /complete and verified/);
-  assert.equal(output.version, 3);
+  assert.equal(output.version, 4);
+  const handling = output.handling.join("\n");
+  assert.match(handling, /Project file URLs contain an absolute path/);
+  assert.match(handling, /\/projects\/<project_id>\/files\/home\/user\/<name>/);
   assert.match(output.workflow.join("\n"), /multiline comments/);
   assert.match(output.workflow.join("\n"), /--public-reply-file/);
   const vocabulary = output.vocabulary.join("\n");

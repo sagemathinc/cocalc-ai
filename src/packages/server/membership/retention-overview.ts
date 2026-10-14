@@ -427,7 +427,9 @@ async function getAdminRetentionOverviewUncached(
           )
       `;
   // query-cache-ok: admin analytics: retention overview
-  const { rows } = await getCachedReadPool("medium").query<RetentionSqlRow>(
+  const { rows } = await getCachedReadPool("medium", {
+    label: "retention-overview-cohorts",
+  }).query<RetentionSqlRow>(
     `
       WITH cohort_accounts AS (
         SELECT
@@ -555,7 +557,9 @@ async function getAdminActiveUsersOverviewUncached(
           )
       `;
   // query-cache-ok: admin analytics: active-user overview
-  const { rows } = await getCachedReadPool("medium").query<ActiveUsersSqlRow>(
+  const { rows } = await getCachedReadPool("medium", {
+    label: "retention-overview-active-users",
+  }).query<ActiveUsersSqlRow>(
     `
       WITH buckets AS (
         SELECT generate_series(

@@ -201,6 +201,15 @@ export interface Client extends ProjectClient {
     model_id: string;
     buffer_path: string | string[];
   }) => Promise<ArrayBuffer>;
+
+  // Reset a document's edit history because it holds the patch oversized_seq,
+  // which is too large to load, keeping the old history aside.  Only resets
+  // if that patch is still there.  Used by SyncDoc when it cannot open.
+  resetOversizedHistory?: (opts: {
+    project_id: string;
+    path: string;
+    oversized_seq: number;
+  }) => Promise<{ history_epoch: number; reset: boolean }>;
 }
 
 export interface DocType {
