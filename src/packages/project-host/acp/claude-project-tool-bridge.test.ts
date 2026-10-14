@@ -445,14 +445,20 @@ test("trusted MCP helper executes only through the scoped project socket", async
     expect(execute.mock.calls.at(-1)?.[0]).toContain(
       "project chat memory list",
     );
+    // The CLI reports a failure as JSON on stderr; the tool gives just the
+    // message.
     execute.mockImplementationOnce(async () => ({
       code: 1,
       cleanupConfirmed: true,
-      stdout: JSON.stringify({
+      stdout: "",
+      stderr: JSON.stringify({
         ok: false,
-        error: { message: "Agent memory is off for this account." },
+        command: "cocalc",
+        error: {
+          code: "command_failed",
+          message: "Agent memory is off for this account.",
+        },
       }),
-      stderr: "",
     }));
     const wrote = await request(31, "tools/call", {
       name: "memory_write",
@@ -463,6 +469,9 @@ test("trusted MCP helper executes only through the scoped project socket", async
       },
     });
     expect(wrote.result.isError).toBe(true);
+    expect(JSON.parse(wrote.result.content[0].text)).toEqual({
+      error: "Agent memory is off for this account.",
+    });
     const script = execute.mock.calls.at(-1)?.[0] as string;
     expect(script).toContain("project chat memory write 'deploy'");
     expect(script).not.toContain("$(x)");

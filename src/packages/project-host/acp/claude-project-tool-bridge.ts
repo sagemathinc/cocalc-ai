@@ -142,14 +142,22 @@ export async function runAgentMemoryTool(
     script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${name()} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin${expect}`;
   } else throw Error("Unsupported project tool");
   const out = await runCaptured(execute, script, signal, 1_000_000);
-  let parsed: any;
-  try {
-    parsed = JSON.parse(out.stdout);
-  } catch {
-    return { error: out.stderr.trim() || "agent memory command failed" };
-  }
+  // Results come on stdout; a failure's JSON on stderr. Either way the tool
+  // returns the data or the plain message, not the CLI's JSON as text.
+  const json = (text: string): any => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  };
+  const parsed = json(out.stdout) ?? json(out.stderr);
   if (parsed?.ok) return parsed.data;
-  return { error: parsed?.error?.message ?? "agent memory command failed" };
+  return {
+    error:
+      parsed?.error?.message ??
+      (out.stderr.trim() || "agent memory command failed"),
+  };
 }
 
 export interface ClaudeProjectToolBridge {
