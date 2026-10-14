@@ -45,7 +45,7 @@ export const PUBLIC_ABOUT_PRINCIPLES_HEADLINE =
 
 export const PUBLIC_ABOUT_PRINCIPLES = [
   {
-    body: "Each agent works in a CoCalc project with your files, installed software, and terminals. When a task needs a web browser, the agent drives one in the project while you watch, and you can take over at any moment, then hand it back.",
+    body: "Each agent works in a CoCalc project with your files, installed software, and terminals. When a task needs a web browser, the agent drives one in the project while you watch, and you can take over at any moment, then hand it back. Browsing the web needs a project with internet access.",
     icon: "server",
     title: "Agents need a real place to work.",
   },
@@ -55,7 +55,7 @@ export const PUBLIC_ABOUT_PRINCIPLES = [
     title: "Agents belong to the team.",
   },
   {
-    body: "An agent has full access to its own project. To let it work in other projects, give it CoCalc access to the ones you choose, read-only or full, without creating an API key. That access ends when its turn does.",
+    body: "An agent has full access to its own project. To let it work in other projects, give it CoCalc access to the ones you choose, read-only files or full runtime, without creating an API key. That access ends when its turn does; grant it only from a project whose collaborators you trust.",
     icon: "key",
     title: "People decide what agents can reach.",
   },
