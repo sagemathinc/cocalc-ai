@@ -69,9 +69,10 @@ jobs:
     env:
       RELEASE_ID: ${{ needs.release-id.outputs.id }}
       IMAGE: sagemathinc/star:${{ needs.release-id.outputs.id }}-${{ matrix.arch }}
-      # Build the container runtime with the runner's Docker daemon, whose
-      # Docker Hub pulls are authenticated. Anonymous pulls from shared runner
-      # IPs hit both Docker Hub's pull limit and AWS public ECR's data limit.
+      # Build the container runtime with the runner's Docker daemon: public
+      # Docker Hub pulls from GitHub-hosted runners are exempt from Docker
+      # Hub's rate limits. Podman's anonymous pulls from shared runner IPs hit
+      # both Docker Hub's pull limit and AWS public ECR's data limit.
       COCALC_CONTAINER_BUILD_ENGINE: docker
     steps:
       - name: Free disk space
