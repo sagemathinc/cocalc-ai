@@ -1,7 +1,8 @@
 # Computers: revocation that stops running work (stage-1 release gate)
 
-Implementation note, Oct 14 2026. **Revision 5** answers lite1-review's
-review of revision 4. Earlier revisions answered the earlier reviews. Plan: `computers-plan-2026-10-11.md` ("Revocation
+Implementation note, Oct 14 2026. **Revision 6** answers lite1-review's
+review of revision 5 (its one remaining gap: a rehome immediately followed by
+a hard delete). Earlier revisions answered the earlier reviews. Plan: `computers-plan-2026-10-11.md` ("Revocation
 semantics", "The computer principal and the data path", "Multi-bay,
 rehoming, deletion"). This is the first open release gate from #1036: *the
 signed floors/control push and the epoch-close outbox (revocation must also
@@ -272,9 +273,34 @@ All of these are account-home tables carrying `account_id`, added to
   - the actual last owner signs its tombstone;
   - a bay the project moved away from answers "unknown", which just retries.
 
-  Tests: a hard delete after the directory entry is already removed; a
-  rehome where the stored old bay answers "unknown"; a directory miss or
-  rehome race against a real hard-delete tombstone.
+- **When the last bay doesn't have it either:** a rehome followed at once
+  by a hard delete leaves the row naming the old bay, which answers
+  "unknown" forever.
+  - For a row whose directory resolution is empty **and** whose last bay
+    answers "unknown", the poller asks for tombstone evidence through the
+    **same bounded, configured-cluster lookup the directory already uses on
+    a miss** (`resolveProjectBayAcrossCluster`). Each bay answers from its
+    durable `deleted_projects` tombstone.
+  - That lookup goes only over the authenticated inter-bay fabric, only to
+    the configured cluster bays, only for such rows, and with backoff (every
+    5 minutes, then slower).
+  - It isn't an open broadcast: only the bay that actually hard-deleted the
+    project can return a signed `deleted` attestation bound to the project,
+    the account and itself. Every other bay answers "unknown", and that never
+    raises anything.
+  - When the cluster gets a real cluster-wide project index (the
+    directory's own documented long-term fix), the tombstone moves into it
+    and this fanout goes away.
+
+  Tests:
+  - a hard delete after the directory entry is already removed;
+  - the exact sequence: an old-bay ticket and run, a rehome, an immediate
+    hard delete, the directory removed, with no ticket or poll in between.
+    TERMINAL must reach the daemon and the run must be killed;
+  - a rehome where the old bay answers "unknown" and the project is still
+    alive: nothing is raised;
+  - a directory miss or rehome race against a real tombstone;
+  - one bay unreachable during the fanout: a retry, never a false TERMINAL.
 - **The poller** is a due-work queue:
   - hubs continuously claim due rows (`next_check_at <= now()`, lease,
     `SKIP LOCKED`, 50 per claim);
