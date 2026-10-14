@@ -92,7 +92,9 @@ Table({
       "uuid",
       "The agent network whose registered members this computer serves.",
     ),
-    policy_ceiling: json("Approved policy ceiling P0, as resolved on the machine."),
+    policy_ceiling: json(
+      "Approved policy ceiling P0, as resolved on the machine.",
+    ),
     ceiling_hash: required("string", "Hash of the canonical policy ceiling."),
     effective_policy: json("Current effective policy, at most the ceiling."),
     policy_epoch: counter("Monotonic effective-policy epoch."),
@@ -102,10 +104,19 @@ Table({
     ),
     home_bay_id: required("string", "Bay that issued the certificate."),
     home_epoch: counter("Account home-bay ownership epoch at pairing."),
-    signing_key: required("string", "Fingerprint of the machine's Ed25519 key."),
+    signing_key: required(
+      "string",
+      "Fingerprint of the machine's Ed25519 key.",
+    ),
     signing_public_key: required("string", "base64url DER of the signing key."),
-    agreement_key: required("string", "Fingerprint of the machine's X25519 key."),
-    transcript_hash: required("string", "Hash of the approved pairing transcript."),
+    agreement_key: required(
+      "string",
+      "Fingerprint of the machine's X25519 key.",
+    ),
+    transcript_hash: required(
+      "string",
+      "Hash of the approved pairing transcript.",
+    ),
     certificate: json("Signed computer certificate."),
     request_id: required("string", "Pairing request that created it."),
     origin: {
@@ -162,6 +173,10 @@ Table({
         name: "account_computer_requests_expiry",
         query: "(expires_at) WHERE state IN ('pending','paired')",
       },
+      {
+        name: "account_computer_requests_network",
+        query: "(account_id,agent_network_id) WHERE state IN ('pending','paired')",
+      },
     ],
   },
   fields: {
@@ -173,6 +188,10 @@ Table({
     thread_id: optional("string", "Chat thread of the request card."),
     name: required("string", "Requested alias."),
     requested_policy: json("Requested policy, before local resolution."),
+    agent_network_id: required(
+      "uuid",
+      "Agent network the computer would serve (from the requested policy).",
+    ),
     why: {
       type: "string",
       pg_type: "TEXT",
@@ -180,15 +199,24 @@ Table({
       pg_default: "''::text",
       desc: "Why the agent asks.",
     },
-    state: required("string", "pending, paired, approved, declined, expired, invalidated."),
+    state: required(
+      "string",
+      "pending, paired, approved, declined, expired, invalidated.",
+    ),
     server_nonce: required("string", "Nonce for the pairing transcript."),
     transcript: json("Signed pairing transcript from the machine.", false),
     transcript_hash: optional("string", "Hash of the transcript."),
     pairing_phrase: optional("string", "Phrase derived from the transcript."),
     resolved_policy: json("Policy as resolved on the machine.", false),
-    claimants: counter("Pairing attempts; a second one invalidates the request."),
+    claimants: counter(
+      "Pairing attempts; a second one invalidates the request.",
+    ),
     computer_id: optional("uuid", "Computer created by approval."),
     approved_by: optional("uuid", "Account that approved."),
+    approved_network_generation: optional(
+      "string",
+      "Agent network generation (membership) the owner reviewed at approval.",
+    ),
     approved_at: timestamp("Approval time."),
     expires_at: { ...timestamp("Request expiry."), not_null: true },
     created_at: created("Request time."),
@@ -229,7 +257,10 @@ Table({
     source_project_id: required("uuid", "Project of the agent."),
     thread_id: optional("string", "Chat thread, if known."),
     operation: required("string", "exec, run, put, get, ..."),
-    request_hash: required("string", "Canonical request hash; a retry must match."),
+    request_hash: required(
+      "string",
+      "Canonical request hash; a retry must match.",
+    ),
     command: {
       type: "string",
       pg_type: "TEXT",
@@ -237,7 +268,14 @@ Table({
     },
     description: optional("string", "Short description (required for jobs)."),
     ticket_id: required("uuid", "Last ticket issued for this operation."),
-    state: required("string", "issued, admitted, running, done, failed, unknown, refused."),
+    pop_key: required(
+      "string",
+      "Proof-of-possession key of the requester; a retry must present the same.",
+    ),
+    state: required(
+      "string",
+      "issued, admitted, running, done, failed, unknown, refused.",
+    ),
     exit_code: optional("integer", "Exit code, when known."),
     image_digest: optional("string", "Pinned image digest (isolated mode)."),
     connectors: json("Connector names passed to the job.", false),
@@ -292,13 +330,39 @@ Table({
       pg_default: "true",
       desc: "Runs under nice/ionice.",
     },
-    state: required("string", "queued, running, done, failed, killed, unknown."),
+    state: required(
+      "string",
+      "queued, running, done, failed, killed, unknown.",
+    ),
     exit_code: optional("integer", "Exit code."),
     resources: json("Latest CPU/memory/GPU use.", false),
     created_at: created("Admission time."),
     started_at: timestamp("Start time."),
     finished_at: timestamp("End time."),
     updated_at: created("Last report."),
+  },
+});
+
+// Account home: every ticket issued, for hard per-run and per-computer rate
+// limits (a retry of one operation still counts). Pruned after an hour.
+Table({
+  name: "account_computer_ticket_log",
+  rules: {
+    primary_key: "ticket_id",
+    pg_custom_indexes: [
+      {
+        name: "account_computer_ticket_log_computer",
+        query: "(computer_id,issued_at)",
+      },
+      { name: "account_computer_ticket_log_run", query: "(run_id,issued_at)" },
+    ],
+  },
+  fields: {
+    ticket_id: required("uuid", "Ticket."),
+    account_id: required("uuid", "Owning account."),
+    computer_id: required("uuid", "Computer."),
+    run_id: required("uuid", "Agent run that asked."),
+    issued_at: created("Issue time."),
   },
 });
 
@@ -315,9 +379,15 @@ Table({
       "string",
       "kid of the key that endorsed this one (rotation chain).",
     ),
-    endorsement: optional("string", "Signature of the endorsing key."),
+    endorsement: optional(
+      "string",
+      "The endorsing key's signed endorsement (JSON envelope).",
+    ),
     created_at: created("Creation time."),
-    not_after: { ...timestamp("Last time this key may be trusted."), not_null: true },
+    not_after: {
+      ...timestamp("Last time this key may be trusted."),
+      not_null: true,
+    },
     revoked_at: timestamp("Revocation time."),
   },
 });
@@ -334,6 +404,19 @@ Table({
       not_null: true,
       desc: "PKCS#8 PEM, encrypted by secret storage.",
     },
+    public_key: required("string", "base64url DER of the Ed25519 public key."),
+    not_after: {
+      ...timestamp("Last time this key may be trusted."),
+      not_null: true,
+    },
+    endorsed_by: optional(
+      "string",
+      "kid of the previous key, which endorsed this one.",
+    ),
+    endorsement: optional(
+      "string",
+      "The previous key's signed endorsement (JSON envelope).",
+    ),
     created_at: created("Creation time."),
     retired_at: timestamp("No longer used to sign."),
   },

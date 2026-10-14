@@ -29,7 +29,9 @@ sensors), a security review by @lite1-review, and a survey of similar products
   - a signed pairing transcript with a short authentication string, and a
     certificate instead of a delivered secret;
   - a release-signing root kept offline, outside the online service;
-  - a sticky eligibility flag owned by the project's bay;
+  - a sticky eligibility flag owned by the project's bay (superseded:
+    decision 23 computes eligibility from the collaborators at attestation;
+    there is no stored flag);
   - broker isolation as a stage-3 gate;
   - corrected wording for PoP and for the local log.
 
@@ -104,10 +106,10 @@ stops accidents, but it is not a wall between agents in one project.
 
 So:
 - **Computers can be used only from an eligible project:** one whose **only
-  collaborator is the owner** and isn't public (decision 23). The text
-  below is the stricter revision-5 "never shared" design, kept for the
-  record; decision 23 relaxes it, with a warning when the project has had
-  other collaborators.
+  collaborator is the owner** (decision 23; public shares don't matter). The
+  sub-bullets below are the stricter revision-5 "never shared" design,
+  **historical, not current**; decision 23 replaced it, with a warning when
+  the project has had other collaborators.
   - Removing a collaborator doesn't restore eligibility: something they left
     running could steal a later turn's credential.
   - The way back is a new project.
@@ -134,6 +136,51 @@ So:
 - **Long term** (a later stage): run each agent's turns as their own principal,
   with a broker on the project host that authenticates the actual run. Then the
   per-agent switch becomes a real boundary.
+
+## Revision 7: what the implementation review changed (Oct 11)
+
+These override older text below wherever they differ:
+- **No grants.** Decision 22 replaced per-agent grants with membership in
+  the computer's agent network. Wherever older text says "grant", "grant
+  epoch" or `agent_computer_grants`, read: active membership in that network,
+  checked in the ticket transaction. The authoritative epoch is the
+  **computer epoch**, bumped on every narrowing (member removed, network
+  paused or closed, account messaging paused or revoked, computer revoked).
+- **Eligibility is decision 23**, not "never shared": exactly one
+  collaborator (the owner). (Public shares were dropped from it on Oct 12;
+  the share-related bullets below are historical.) The "never shared"
+  text is the revision-5 record. A formerly shared project is eligible by
+  design; the history warning is still to build.
+- **Adding a member, or resuming a network, that a computer or open request
+  serves needs fresh auth**, and approval binds the network generation the
+  owner saw.
+- **Every computers transaction takes the account-rehome fence first**,
+  then controls, network and computer, the same order as agent-network
+  changes.
+- **The relay exception** to "the data path never goes through the hub" is
+  stated in rule 14 below.
+- **The privacy epoch** is `runtime_authority_revision`.
+  - A trigger advances it on every change to the users map (any code path),
+    and it is copied with the project when it is rehomed.
+  - The attestation locks the project row, then reads it in a later
+    statement. (Measured: under READ COMMITTED a statement that waits for a
+    lock keeps its old snapshot for everything else it reads.)
+- **Public shares don't affect computers** (Oct 12, William). An earlier
+  revision counted them with a trigger on `public_project_paths` and fenced
+  share changes; that trigger and its columns are gone (it only ever ran on
+  the lite1b dev server, cleaned up there by hand).
+- **Only the owning bay attests**, under the project-rehome fence:
+  - never while a rehome runs;
+  - never once its own row names another owner.
+
+  The project row, epoch included, moves with the project, so the epoch
+  never goes back. An attestation made just before a rehome starts is good
+  for at most 30 s, and a ticket's start-by can't outlive it: the same
+  bounded window as any other change. The project's next change at its new
+  bay advances the epoch past it, for the floors.
+- **Ticket issuance reads the key directory fresh:** at most 30 s cached, no
+  stale fallback. It fails closed while the seed is unreachable. Other
+  readers may use the last answer for up to 10 minutes.
 
 ## Decisions (William, Oct 11)
 
@@ -228,8 +275,11 @@ So:
     - Only registered members count; external agents don't run in CoCalc
       projects.
 23. **Eligible projects:** an existing project qualifies while it has **exactly
-    one collaborator** (the owner) and isn't public. *(rev 6; replaces "never
-    shared")*
+    one collaborator** (the owner). *(rev 6; replaces "never shared". Oct 12
+    2026, William: public shares no longer matter: they let nobody act in
+    the project, and the same argument would apply to anything done in it.
+    The share trigger, share count and share-state flag were removed; the
+    privacy epoch is runtime_authority_revision.)*
     - Adding a collaborator makes it ineligible at once (privacy epoch,
       attestation, floors, all unchanged).
     - Removing the extra collaborators makes it eligible again.
@@ -249,6 +299,13 @@ So:
     Releases are still signed by an offline key, verified, and protected
     against downgrades. A hub "minimum version" message only stops the
     daemon. *(William, Oct 11)*
+28. **The account-wide agent kill switch covers computers:** pausing all agent
+    messaging (or "revoke all") bumps the epoch of every computer on the
+    account, and no tickets are issued while paused. Narrowing one network
+    (removing a member, pausing, closing) bumps only its computers. Ticket
+    issuance locks controls, then network, then computer: the same order as
+    every narrowing path. Account rehome is refused while any computer,
+    pairing request or audit row exists. *(implementation, Oct 11)*
 
 ## What exists to build on (traced, origin/main 25f42495b2)
 
@@ -629,12 +686,13 @@ the daemon (see "Files").
 
 ### Privacy fence across bays
 
-- **Two authorities:** the grant and computer rows live at the **account's
-  home bay**; project membership and the sticky eligibility flag live at the
-  **project's bay**.
-- **The project's privacy epoch:** the project's bay keeps a monotonic epoch.
-  Every change to membership, public access, ownership or eligibility bumps
-  it under the project's membership lock.
+- **Two authorities:** the network membership and computer rows live at the
+  **account's home bay**; project membership (the users map, from which
+  eligibility is computed at each attestation) lives at the **project's
+  bay**.
+- **The project's privacy epoch:** `runtime_authority_revision`, a monotonic
+  counter on the project's bay. Every change to the users map (membership,
+  ownership) advances it, whatever code path makes the change.
 - **Signed attestations:** to issue tickets for a project, the home bay holds
   an attestation from the project's bay, signed with that bay's key. It binds:
   - protocol, site and cluster;
@@ -1021,9 +1079,9 @@ the daemon (see "Files").
 
 | Threat | Mitigation |
 |---|---|
-| A collaborator uses my computer | Only eligible projects (never shared, not public). The account check on every ticket. |
-| Another agent, process or untrusted dependency in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. A process holding the identity of a granted turn gets its own tickets, because PoP doesn't stop that. Never-shared eligibility keeps people out, and the docs say every process in that project can use it during such a turn. Later: per-agent runtime principals. |
-| A former collaborator's leftover process steals a later credential | Never-shared eligibility: removing a collaborator doesn't restore it. |
+| A collaborator uses my computer | Only eligible projects: the owner is the only collaborator (decision 23), attested by the project's current bay for at most 30 s per ticket. The account check on every ticket. |
+| Another agent, process or untrusted dependency in my project acts as my granted agent during its turn | Acknowledged: per-agent switches are scope, not isolation. A process holding the identity of a granted turn gets its own tickets, because PoP doesn't stop that. Eligibility keeps other people out of the project, and the docs say every process in that project can use it during such a turn. Later: per-agent runtime principals. |
+| A former collaborator's leftover process steals a later credential | Accepted residual of decision 23 (a formerly shared project becomes eligible again once its owner is the only collaborator). The card warns when the project's history shows other collaborators (to build), and "create a private project" gives a clean one. |
 | A collaborator is added while tickets are being issued (two bays) | Attestations signed by the project's bay with not-after, verified by the daemon; start-by ≤ not-after. Interactive leases expire on their own. Detached jobs continue until the invalidation arrives (documented). |
 | A revoke races a ticket | One transaction with `FOR SHARE`/`FOR UPDATE`, the audit row committed before release, epochs and floors on the daemon. |
 | A copied ticket | Audience-bound (computer and key), proof of possession, one-time, start-by. |
@@ -1083,11 +1141,30 @@ No fresh auth is needed for disconnecting, turning off or narrowing.
 - **`agent_computer_grants`:** `grant_id`, `account_id`, `agent_id`,
   `source_project_id`, `computer_id` (unique together), `enabled`, `epoch`
   (monotonic across delete and recreate), timestamps.
-- **On the project's bay:** `privacy_epoch`, and `computers_eligibility`
-  (`eligible | ineligible | uncertain`, sticky; existing projects are
-  `uncertain`), both changed under the membership lock and moved with the
-  project when it is rehomed. The bay also has a signing key for
+- **On the project's bay:** `runtime_authority_revision` (the privacy
+  epoch), advanced on every change to the users map and moved with the
+  project when it is rehomed. Eligibility is computed from the users map at
+  each attestation (no stored flag). The bay also has a signing key for
   attestations, published in the cluster's bay-key directory.
+- **The bay-key directory** (`cluster_computer_signing_keys`, on the seed):
+  - Standalone and seed bays write their own keys; attached bays send theirs
+    with the registration heartbeat (which also creates the first key).
+  - Keys are published as `{source_bay_id, keys}`, and typed inter-bay
+    services check `source_bay_id` against the caller's **bay credential**,
+    so a bay can publish keys only for itself, its first key included.
+    *(rev 7, after review: no trust on first use over the fabric)*
+  - Every **later** key needs an endorsement by the bay's **newest** trusted
+    key (the outgoing key signs its successor at rotation). Older keys still
+    verify what they signed but can't authorize successors. Lifetimes are
+    capped at a year. A kid never moves to another bay.
+  - Every bay verifies against the **seed's** directory: attached bays read
+    it from the seed (cached 30 s; the last answer for at most 10 minutes if
+    the seed is unreachable).
+  - A ticket's attestation must come from the project's **current** owning
+    bay (the cluster directory), not just any bay that names itself.
+  - A bay that loses its keys (a database restore) cannot publish a new
+    chain until an operator revokes its old directory keys or they expire.
+    *(implementation, Oct 11)*
 - **Bay ownership:** all `account_computer*` and `agent_computer_grants` rows
   are account-home tables. Rehoming is blocked while any exist. Deletion uses
   a tombstone plus an outbox.
@@ -1120,7 +1197,7 @@ built, and reviewed by a security reviewer before release.
     - Within that project, **every process and any untrusted code or
       dependency** can use it while such a turn runs, including starting
       detached jobs.
-    - "Never shared" keeps people out; it doesn't make the project's code,
+    - Eligibility keeps other people out; it doesn't make the project's code,
       or imported files, trustworthy.
     - Detached jobs continue after the turn, until their own or the session's
       deadline.
@@ -1176,8 +1253,8 @@ Each stage ships with tests and a live check on real machines:
   start-by, local clock;
 - the privacy fence with signed project-bay attestations (not-after) and
   interactive leases;
-- the sticky eligibility flag (existing projects start "uncertain") and fresh
-  private projects;
+- eligibility computed from the users map at each attestation (the owner is
+  the only collaborator), and "create a private project";
 - the policy ceiling, its partial order, and `policy_epoch`;
 - the signed pairing transcript with its short authentication phrase, and the
   computer certificate with challenge and response;
@@ -1188,7 +1265,8 @@ Each stage ships with tests and a live check on real machines:
   `put`, `get`;
 - safe manifest transfers with CoCalc-side metering and egress reservation;
 - per-agent grants in the Connectors menu, with fresh auth;
-- eligibility (never shared) and "create a private project";
+- eligibility (the owner is the only collaborator; decision 23) with a
+  history warning, and "create a private project";
 - time limits (initial and max) and no-limit with `--service`;
 - `--exclusive`, `nice`;
 - aliases and mentions;
@@ -1372,8 +1450,11 @@ Each is a new operation kind in the same ticket protocol.
 13. **The policy is one typed, hashed object,** used by requests, cards, the
     CLI, the daemon and the hub alike. Isolated-mode fields exist from the
     start.
-14. **The data path never goes through the hub.** Byte counting is by CoCalc
-    on the trusted side.
+14. **The data path never goes through the hub, with one bounded exception:**
+    command output (at most 1 MB per operation) comes back through the home
+    bay's relay, so run identities stay sealed (part 4b). Transfers and
+    other bulk streams get their own flow-controlled path. Byte counting is
+    by CoCalc on the trusted side.
 15. **Output, logs and notes are data, not instructions,** in every
     agent-facing surface.
 16. **Project-bay attestations have an expiry the daemon checks.** Start-by,

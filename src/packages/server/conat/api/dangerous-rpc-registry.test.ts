@@ -26,6 +26,7 @@ const SOURCE_MODULES: SourceModule[] = [
   { filename: "admin-support.ts", hubGroup: "adminSupport" },
   { filename: "commercial-orders.ts", hubGroup: "commercialOrders" },
   { filename: "compute.ts", hubGroup: "compute" },
+  { filename: "computers.ts", hubGroup: "computers" },
   { filename: "db.ts", hubGroup: "db" },
   { filename: "lro.ts", hubGroup: "lro" },
   { filename: "messages.ts", hubGroup: "messages" },

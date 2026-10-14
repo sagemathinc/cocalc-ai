@@ -13,6 +13,7 @@
 // Every parser fails closed: an unknown type, version or field is an error,
 // so a daemon never acts on something newer than it understands.
 
+import { UNSAFE_LINE_CHARS } from "./canonical";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export const COMPUTER_PROTOCOL_VERSION = 1;
@@ -24,6 +25,7 @@ export const SIGNED_KINDS = {
   attestation: "project-attestation",
   ticket: "computer-ticket",
   floors: "computer-floors",
+  key_endorsement: "signing-key-endorsement",
 } as const;
 
 export interface SignedEnvelope<T> {
@@ -118,6 +120,20 @@ export interface ProjectAttestation {
   account_id: string;
   home_bay_id: string;
   issued_at: number;
+  not_after: number;
+}
+
+/**
+ * Signed by a bay's previous key: its next key. A bay's first key is
+ * accepted as is; every later key needs this, so the directory follows an
+ * unbroken chain per bay.
+ */
+export interface SigningKeyEndorsement {
+  type: "cocalc-computer-key-endorsement";
+  version: 1;
+  bay_id: string;
+  kid: string;
+  public_key: string;
   not_after: number;
 }
 
@@ -262,6 +278,27 @@ export function parseComputerCertificate(input: unknown): ComputerCertificate {
     ceiling_hash: hash(o.ceiling_hash, "ceiling_hash"),
     not_before,
     not_after,
+  };
+}
+
+export function parseSigningKeyEndorsement(
+  input: unknown,
+): SigningKeyEndorsement {
+  const o = record(input, "endorsement");
+  onlyKeys(
+    o,
+    ["type", "version", "bay_id", "kid", "public_key", "not_after"],
+    "endorsement",
+  );
+  literal(o.type, "cocalc-computer-key-endorsement", "endorsement.type");
+  version(o.version);
+  return {
+    type: "cocalc-computer-key-endorsement",
+    version: 1,
+    bay_id: bayId(o.bay_id),
+    kid: fingerprint(o.kid, "endorsement.kid"),
+    public_key: base64url(o.public_key, "endorsement.public_key", 4, 200),
+    not_after: time(o.not_after, "endorsement.not_after"),
   };
 }
 
@@ -641,15 +678,18 @@ function requestId(value: unknown): string {
 }
 
 /** A cluster id is a label ("standalone" for single-bay sites). */
+// Cluster and bay ids are configured labels (e.g. "ci-mb-fe5Y7t", "bay-0").
+const LABEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 function clusterId(value: unknown): string {
-  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) {
+  if (typeof value !== "string" || !LABEL_ID.test(value)) {
     throw new ProtocolError("cluster id is malformed");
   }
   return value;
 }
 
 function bayId(value: unknown): string {
-  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) {
+  if (typeof value !== "string" || !LABEL_ID.test(value)) {
     throw new ProtocolError("bay id is malformed");
   }
   return value;
@@ -660,7 +700,7 @@ function label(value: unknown, where: string): string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > 255 ||
-    /[\u0000-\u001f\u007f]/.test(value)
+    UNSAFE_LINE_CHARS.test(value)
   ) {
     throw new ProtocolError(`${where} must be a short printable string`);
   }
