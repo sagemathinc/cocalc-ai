@@ -398,9 +398,10 @@ tar -xzf sagebrush-0.3.2.tgz && node=$(command -v node) &&
 sb() { env -i HOME="$d" PATH=/usr/bin:/bin "$node" "$d/package/bin/sagebrush.cjs" "$@"; }
 ```
 
-`sb` runs it with no environment variables, so no credentials or tokens reach
-it; it is not a sandbox, and it can still read the project's files. Stop if the
-digest check fails. Then:
+`sb` receives only `HOME` and `PATH`, so environment-provided credentials and
+tokens are not passed to it. This is not a sandbox: it can still read the
+project's files, including secrets stored there. Stop if the digest check
+fails. Then:
 
 - find functions: `sb --search "elliptic curve rank"`;
 - run every code item before putting it on the board: `sb --sage -c '...'`
