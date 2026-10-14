@@ -557,6 +557,8 @@ async function submitAgentRpcOperation(
 
 export const agentRpcControl: AgentRpcControlApi = {
   external: externalControl,
+  memory: async (opts) =>
+    (await import("./memory-home")).memoryHomeControl(opts),
   personal: (opts) => personalControl(opts),
   principal: async (opts) => {
     await local(opts, opts.source);

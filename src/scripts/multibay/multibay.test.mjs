@@ -261,6 +261,97 @@ describe("agent delivery reports across bays", () => {
   });
 });
 
+describe("agent memory on the account's home bay", () => {
+  // The seed handles a memory request for bob, whose home is the attached
+  // bay: it must run there, over the real fabric, with real encryption.
+  const fromSeed = (kind, request, extra = {}) =>
+    runInBay(
+      cluster,
+      SEED,
+      `const { withMemoryHome } = server("agents/memory-home.js");
+       return await withMemoryHome(${JSON.stringify(bob.account_id)}, {
+         kind: ${JSON.stringify(kind)},
+         ${extra.project_id ? `project_id: ${JSON.stringify(extra.project_id)},` : ""}
+         request: ${JSON.stringify(request)},
+       });`,
+    );
+  const rowsIn = (bay, table) =>
+    runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT * FROM ${table} WHERE account_id=$1",
+         [${JSON.stringify(bob.account_id)}]);
+       return rows;`,
+    );
+
+  it("settings and notes written through the seed are stored on bob's home bay", async () => {
+    assert.ok(bob.project, "bob's project from routing by ownership");
+    await fromSeed("owner", { op: "set-enabled", enabled: true });
+    await fromSeed("owner", {
+      op: "namespace-save",
+      name: "multibay",
+      description: "Two-bay test notes",
+    });
+    await fromSeed("owner", {
+      op: "set-project-namespaces",
+      project_id: bob.project,
+      namespaces: ["multibay"],
+    });
+    const saved = await fromSeed(
+      "agent",
+      {
+        action: "memory",
+        op: "write",
+        name: "crossing",
+        description: "Saved through the seed",
+        body: "This text must be stored encrypted.",
+      },
+      { project_id: bob.project },
+    );
+    const { revision, ...rest } = saved;
+    assert.deepEqual(rest, {
+      name: "multibay/crossing",
+      namespace: "multibay",
+      saved: "created",
+    });
+    assert.match(revision, /^[0-9a-f]{16}$/);
+    const notes = await rowsIn(ATTACHED, "agent_memory_notes");
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].namespace, "multibay");
+    assert.ok(!notes[0].body.includes("stored encrypted"));
+    assert.equal((await rowsIn(ATTACHED, "agent_memory_accounts")).length, 1);
+    assert.equal((await rowsIn(SEED, "agent_memory_notes")).length, 0);
+    assert.equal((await rowsIn(SEED, "agent_memory_accounts")).length, 0);
+  });
+
+  it("the turn index and search come back across the bays", async () => {
+    const index = await fromSeed("turn-index", undefined, {
+      project_id: bob.project,
+    });
+    assert.equal(index.notes, 1);
+    assert.match(index.index, /- multibay: Two-bay test notes/);
+    assert.match(index.index, /- multibay\/crossing: Saved through the seed/);
+    const found = await fromSeed(
+      "agent",
+      { action: "memory", op: "search", query: "encrypted" },
+      { project_id: bob.project },
+    );
+    assert.deepEqual(
+      found.results.map((r) => r.name),
+      ["multibay/crossing"],
+    );
+    // Another of bob's projects does not see the namespace.
+    const elsewhere = await fromSeed(
+      "agent",
+      { action: "memory", op: "list" },
+      { project_id: alice.project },
+    );
+    assert.deepEqual(elsewhere.notes, []);
+  });
+});
+
 describe("cross-bay collaboration", () => {
   it("lists a seed-owned project for a collaborator homed on the attached bay", async () => {
     await invite(alice, bob, alice.project);
@@ -652,6 +743,56 @@ describe("project moves across bays", () => {
       assert.equal(await forwardedCalls(name), before + 1);
     });
   }
+});
+
+describe("bulk project stop across bays", () => {
+  // carol, homed on the seed, stops a project on each bay in one call. Each
+  // project's stop is its own call, forwarded to the project's bay when it is
+  // not this one; that bay records each forwarded call it runs. This cluster
+  // has no project hosts, so the stops themselves do not finish here: the
+  // test checks only where each one runs, with accounts and projects of its
+  // own (the hung stops then affect nothing else).
+  let carol;
+  let dave;
+  const forwardedStops = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.stop' AND source_bay_id=$1 AND account_id=$2",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(carol.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("sends the other bay's project's stop to that bay", async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "bulk-stopper",
+    });
+    carol.client = await client(carol);
+    dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "bulk-owner",
+    });
+    dave.client = await client(dave);
+    const local = await createProject(carol.client, "bulk-stop-seed");
+    const remote = await createProject(dave.client, "bulk-stop-attached");
+    await invite(dave, carol, remote);
+    assert.equal(await owningBay(local), SEED);
+    assert.equal(await owningBay(remote), ATTACHED);
+    const before = await forwardedStops();
+    const pending = carol.client
+      .call("projects.stopProjects", { project_ids: [local, remote] })
+      .catch(() => undefined);
+    await eventually(async () => (await forwardedStops()) === before + 1, {
+      what: "the attached bay to run the forwarded stop",
+    });
+    // Only the attached bay's project was forwarded.
+    await sleep(2000);
+    assert.equal(await forwardedStops(), before + 1);
+    void pending;
+  });
 });
 
 describe("course reconfiguration across bays", () => {
@@ -1235,4 +1376,286 @@ describe("fabric faults", () => {
       "after starting during a registry outage",
     );
   });
+});
+
+describe("computers across bays", () => {
+  // Carol is homed on the attached bay, so her computers live there; her
+  // project is owned by the seed, so the seed attests it. The attached bay
+  // must check that attestation against the seed's key directory, and only
+  // while the seed still owns the project.
+  let project;
+  let computer;
+  const agent = randomUUID();
+  let carol; // homed on the attached bay; fresh, so earlier scenarios can't fill her limits
+
+  before(async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
+    carol.client = await client(carol);
+  });
+
+  it("publishes each bay's computer signing key in the seed's directory", async () => {
+    const bays = await eventually(
+      async () => {
+        const keys = await runInBay(
+          cluster,
+          SEED,
+          `const { listSigningKeyDirectoryLocal } = server("computers/signing-keys.js");
+           return await listSigningKeyDirectoryLocal();`,
+        );
+        const bays = new Set(keys.map((k) => k.bay_id));
+        return bays.has(SEED) && bays.has(ATTACHED) ? [...bays] : false;
+      },
+      { timeoutMs: 180_000, intervalMs: 2_000, what: "both bays' keys" },
+    );
+    assert.deepEqual(bays.sort(), [SEED, ATTACHED].sort());
+    // The attached bay reads the same directory from the seed.
+    const fromAttached = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { listSigningKeyDirectory } = server("computers/signing-keys.js");
+       return (await listSigningKeyDirectory()).map((k) => k.bay_id);`,
+    );
+    assert.ok(fromAttached.includes(SEED) && fromAttached.includes(ATTACHED));
+  });
+
+  it("lets a bay publish computer keys only for itself", async () => {
+    // Over the real fabric, with the attached bay's credential.
+    const attempt = (claims) =>
+      runInBay(
+        cluster,
+        ATTACHED,
+        `const { createInterBayBayRegistryClient } = require("@cocalc/conat/inter-bay/api");
+         const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+         const c = require("@cocalc/backend/computers/crypto");
+         const key = c.generateSigningKey();
+         const claims = ${JSON.stringify(claims)};
+         await createInterBayBayRegistryClient({ client: getInterBayFabricClient() }).register({
+           bay_id: claims.bay_id,
+           computer_signing_keys: {
+             source_bay_id: claims.source_bay_id,
+             keys: [{ kid: key.fingerprint, public_key: key.publicDer,
+                      not_after: Date.now() + 86400000, endorsement: null }],
+           },
+         });
+         return key.fingerprint;`,
+      );
+    // Claiming to be another bay is refused by the authenticated service.
+    await assert.rejects(
+      attempt({ bay_id: "bay-9", source_bay_id: "bay-9" }),
+      /source_bay_id must match authenticated bay/,
+    );
+    // Keys claimed for another bay's registry row are covered by the unit
+    // tests (bay-registry.test.ts).
+  });
+
+  it("issues a ticket at the attached home for a seed-owned private project", async () => {
+    // A seed project whose only collaborator is carol.
+    project = await createProject(alice.client, "computers");
+    await invite(alice, carol, project);
+    await eventually(() => listed(carol.client, project), {
+      what: "the project in carol's list",
+    });
+    await alice.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: alice.account_id,
+      to_account_id: carol.account_id,
+    });
+    await eventually(
+      async () =>
+        (await listed(carol.client, project))?.users_summary?.[carol.account_id]
+          ?.group === "owner",
+      { what: "carol to own it" },
+    );
+    await carol.client.call("projects.removeCollaborator", {
+      opts: { project_id: project, account_id: alice.account_id },
+    });
+    assert.equal(await owningBay(project), SEED);
+
+    // Bob's agent network and an approved computer, at his home bay.
+    computer = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const crypto = require("node:crypto");
+       const c = require("@cocalc/backend/computers/crypto");
+       const { SIGNED_KINDS } = require("@cocalc/util/computers/protocol");
+       const req = server("computers/requests.js");
+       const network = crypto.randomUUID();
+       const account = ${JSON.stringify(carol.account_id)};
+       await getPool().query(
+         "INSERT INTO agent_networks (agent_network_id, account_id, title, state, delivery_mode, generation, created_by) VALUES ($1,$2,'lab','active','queued',$3,$2)",
+         [network, account, crypto.randomUUID()]);
+       await getPool().query(
+         "INSERT INTO agent_network_members (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by) VALUES ($1,'registered',$2,$2,$3,$4)",
+         [network, ${JSON.stringify(agent)}, ${JSON.stringify(project)}, account]);
+       const policy = { version: 1, mode: "direct", duration: null, agent_network_id: network,
+         network: "on", gpu: true, mounts: [], images: { kind: "any" }, scratch_bytes: null,
+         limits: { cpu_millis: null, memory_bytes: null, pids: null } };
+       const { request_id } = await req.createComputerRequest({ account_id: account, name: "bench", requested_policy: policy });
+       const view = await req.getPairingView(request_id);
+       const signing = c.generateSigningKey();
+       const { transcript_hash } = await req.submitPairing({
+         request_id,
+         transcript: c.signEnvelope(SIGNED_KINDS.transcript, {
+           type: "cocalc-computer-pairing", version: 1, site: view.site, cluster_id: view.cluster_id,
+           request_id, account_id: account, policy_hash: c.policyHash(policy),
+           signing_key: signing.fingerprint, agreement_key: c.generateAgreementKey().fingerprint,
+           client_nonce: c.randomNonce(), server_nonce: view.server_nonce,
+           machine: { hostname: "bench", os: "linux", arch: "x64", user: "b" } }, signing),
+         signing_public_key: signing.publicDer,
+         resolved_policy: policy,
+       });
+       const { rows } = await getPool().query("SELECT generation FROM agent_networks WHERE agent_network_id=$1", [network]);
+       const approved = await req.approveComputerRequest({ account_id: account, request_id, transcript_hash,
+         agent_network_generation: rows[0].generation });
+       return { computer_id: approved.computer_id, home_bay_id: approved.certificate.payload.home_bay_id };`,
+    );
+    assert.equal(computer.home_bay_id, ATTACHED);
+
+    const attestation = await attest();
+    assert.equal(attestation.payload.project_bay_id, SEED);
+    assert.equal(attestation.payload.eligible, true);
+    const ticket = await issue(attestation);
+    assert.equal(
+      ticket.ticket.payload.attestation.payload.project_bay_id,
+      SEED,
+    );
+    assert.equal(ticket.ticket.payload.issuer_bay_id, ATTACHED);
+  });
+
+  it("refuses the seed's attestation once the directory says the project moved", async () => {
+    const attestation = await attest();
+    await setOwningBay(ATTACHED);
+    try {
+      await assert.rejects(
+        issue(attestation),
+        /not from the project's current bay/,
+      );
+    } finally {
+      await setOwningBay(SEED);
+    }
+    await issue(await attest());
+  });
+
+  it("a public share doesn't change eligibility, before or after a real rehome; the old bay stops attesting", async () => {
+    const share = randomUUID();
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+         [${JSON.stringify(share)}, ${JSON.stringify(project)}]);`,
+    );
+    const before = await attest(SEED);
+    assert.equal(before.payload.eligible, true);
+    // An admin moves the project to the attached bay.
+    const admin = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "dave",
+    });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query("UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);
+       const { rehomeProject } = server("projects/rehome.js");
+       return await rehomeProject(${JSON.stringify({
+         account_id: admin.account_id,
+         project_id: project,
+         dest_bay_id: ATTACHED,
+         reason: "computers test",
+       })});`,
+      { timeoutMs: 180_000 },
+    );
+    await eventually(async () => (await owningBay(project)) === ATTACHED, {
+      timeoutMs: 120_000,
+      what: "the project to move",
+    });
+    // The new owner attests it, still eligible (shares don't matter), at a
+    // privacy epoch that didn't go back.
+    const moved = await eventually(
+      async () => {
+        try {
+          return await attest(ATTACHED);
+        } catch {
+          return false;
+        }
+      },
+      { timeoutMs: 60_000, what: "an attestation from the new owner" },
+    );
+    assert.equal(moved.payload.project_bay_id, ATTACHED);
+    assert.equal(moved.payload.eligible, true);
+    assert.ok(moved.payload.privacy_epoch >= before.payload.privacy_epoch);
+    // A share row left behind on the old bay can be changed freely there.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query("UPDATE public_project_paths SET disabled=false, visibility='unlisted' WHERE id=$1",
+         [${JSON.stringify(share)}]);`,
+    );
+    assert.equal((await attest(ATTACHED)).payload.eligible, true);
+    // The old bay no longer attests at all.
+    await assert.rejects(
+      attest(SEED),
+      /no longer owns the project|project rehome/,
+    );
+  });
+
+  // Both go through the hubs over the fabric, as the agent path does: the
+  // attached bay asks the seed's hub to attest, and the seed asks the
+  // attached hub (the account's home) for the ticket.
+  async function attest(owner = SEED) {
+    return await runInBay(
+      cluster,
+      owner === SEED ? ATTACHED : SEED,
+      `const { computersAtBay } = server("computers/routing.js");
+       return await computersAtBay(${JSON.stringify(owner)}).attestProject(${JSON.stringify(
+         {
+           project_id: project,
+           account_id: carol.account_id,
+           home_bay_id: ATTACHED,
+         },
+       )});`,
+    );
+  }
+
+  async function issue(attestation) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { computersAtBay } = server("computers/routing.js");
+       const c = require("@cocalc/backend/computers/crypto");
+       const crypto = require("node:crypto");
+       return await computersAtBay(${JSON.stringify(ATTACHED)}).issueTicket({
+         account_id: ${JSON.stringify(carol.account_id)},
+         agent_id: ${JSON.stringify(agent)},
+         run_id: crypto.randomUUID(),
+         source_project_id: ${JSON.stringify(project)},
+         run_expires_at: Date.now() + 3600000,
+         computer: "bench",
+         operation: "exec",
+         request: { command: "true" },
+         operation_id: crypto.randomUUID(),
+         pop_key: c.generateSigningKey().publicDer,
+         attestation: ${JSON.stringify(attestation)},
+       });`,
+    );
+  }
+
+  /** What the seed's project directory says owns the project. */
+  async function setOwningBay(bay) {
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query("UPDATE projects SET owning_bay_id=$2 WHERE project_id=$1",
+         [${JSON.stringify(project)}, ${JSON.stringify(bay)}]);`,
+    );
+  }
 });

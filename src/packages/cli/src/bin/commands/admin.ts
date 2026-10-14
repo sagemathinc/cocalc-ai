@@ -538,6 +538,19 @@ export function buildEntitlementOverrideSchemaDoc() {
           descriptions.usage_limits.sensor_max_wakes_per_day.adminDescription,
       }),
       fieldDoc({
+        path: "usage_limits.sensor_max_active_watchers",
+        ...descriptions.usage_limits.sensor_max_active_watchers,
+        description:
+          descriptions.usage_limits.sensor_max_active_watchers.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.sensor_max_active_watchers_per_agent",
+        ...descriptions.usage_limits.sensor_max_active_watchers_per_agent,
+        description:
+          descriptions.usage_limits.sensor_max_active_watchers_per_agent
+            .adminDescription,
+      }),
+      fieldDoc({
         path: "usage_limits.blob_account_total_bytes",
         ...descriptions.usage_limits.blob_account_total_bytes,
         unit: "bytes",

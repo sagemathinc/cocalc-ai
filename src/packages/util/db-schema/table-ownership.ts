@@ -447,6 +447,46 @@ export const TABLE_OWNERSHIP = {
 
   ...entries(
     [
+      "account_computers",
+      "account_computer_requests",
+      "account_computer_operations",
+      "account_computer_jobs",
+      "account_computer_ticket_log",
+      "account_computer_challenges",
+      "account_computer_sessions",
+      "account_computer_relays",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Agent source project (source_project_id) is a locator checked through its owning bay's attestation, not account-home state.",
+      },
+      notes:
+        "Computers an account connects for its agents (src/.agents/computers-plan-2026-10-11.md): policy ceiling, epochs, pairing requests, operation audit and job mirror. Authoritative only at the account home; account rehome is blocked while any rows exist until an explicit migration exists.",
+    },
+  ),
+  ...entries(["cluster_computer_signing_keys"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    secondary_reference_fields: {
+      bay_id: "Bay holding the private key; the key directory is cluster-wide.",
+    },
+    notes:
+      "Public directory of the Ed25519 keys bays use to sign computer certificates, project attestations and tickets. Daemons on connected computers verify against it.",
+  }),
+  ...entries(["bay_computer_signing_keys"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    notes:
+      "This bay's own computer-signing private keys, encrypted by secret storage. Never replicated; account moves do not move them.",
+  }),
+  ...entries(
+    [
       "agent_cocalc_connector_configs",
       "agent_cocalc_connector_turns",
       "agent_connector_grants",
@@ -459,6 +499,37 @@ export const TABLE_OWNERSHIP = {
         "Human-owned connector consent and turn-key lifecycle are authoritative only at the account home. Source project/run authority is checked through project ownership; account rehome requires explicit migration before these tables are portable.",
     },
   ),
+
+  ...entries(["oauth_authorization_codes"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id: "Approving account, not account-home state.",
+    },
+    notes:
+      "One-time OAuth authorization codes, valid for 60 seconds, stored on the bay that served the authorize page, which is also the bay the client's token request reaches. Losing rows only makes the user sign in again.",
+    rebuild: "No rebuild: the client starts a new sign-in.",
+  }),
+
+  ...entries(["oauth_client_approvals"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Which OAuth clients an account has approved, recorded under the rehome fence by the home bay when it issues the approval proof. It only decides whether the deletion dialog offers to keep a client's data: deletion purges every enabled client regardless, so a row left on an old home bay by a rehome cannot skip a purge.",
+  }),
+
+  ...entries(["oauth_client_purge_requests"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      account_id: "Deleted account whose client data must be purged.",
+    },
+    notes:
+      "Durable outbox of purge requests to OAuth clients, queued by account deletion on the account's home bay and delivered by that bay's worker until the client accepts them. The account is already deleted, so rows never move.",
+  }),
 
   ...entries(["agent_rpc_admission_state"], {
     ownership: "ephemeral",
@@ -487,6 +558,18 @@ export const TABLE_OWNERSHIP = {
       "One row per reported message whose delivery report started a turn, kept until after the report's signed capability expired, so a report cannot be replayed into a second turn. Rows only deny.",
     rebuild:
       "No rebuild: a lost row allows at most one more report turn for a message reported in the last week.",
+  }),
+
+  ...entries(["agent_memory_accounts", "agent_memory_notes"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Where a note was written, or which projects see a namespace: ranking and visibility of the account's own memory, not project state.",
+    },
+    notes:
+      "Account-scoped agent memory (settings and one row per encrypted note), authoritative on the account home bay; every caller routes to it. Like the encrypted credential record it replaces, it does not move on account rehome.",
   }),
 
   ...entries(["agent_memory_usage"], {

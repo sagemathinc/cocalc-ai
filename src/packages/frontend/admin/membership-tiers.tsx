@@ -537,6 +537,12 @@ function tierToFormValues(tier: Partial<Tier>) {
     usage_limit_sensor_max_wakes_per_day: normalizedOptionalNumber(
       tier.usage_limits?.sensor_max_wakes_per_day,
     ),
+    usage_limit_sensor_max_active_watchers: normalizedOptionalNumber(
+      tier.usage_limits?.sensor_max_active_watchers,
+    ),
+    usage_limit_sensor_max_active_watchers_per_agent: normalizedOptionalNumber(
+      tier.usage_limits?.sensor_max_active_watchers_per_agent,
+    ),
     active: !tier.disabled,
   };
 }
@@ -707,6 +713,16 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     usage_limits,
     "sensor_max_wakes_per_day",
     values.usage_limit_sensor_max_wakes_per_day,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "sensor_max_active_watchers",
+    values.usage_limit_sensor_max_active_watchers,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "sensor_max_active_watchers_per_agent",
+    values.usage_limit_sensor_max_active_watchers_per_agent,
   );
 
   return pick(
@@ -2321,6 +2337,22 @@ export function MembershipTiers() {
                   <Form.Item
                     name="usage_limit_sensor_max_wakes_per_day"
                     label="Sensor wakes / day"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_sensor_max_active_watchers"
+                    label="Active watchers / account"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_sensor_max_active_watchers_per_agent"
+                    label="Active watchers / agent"
                   >
                     <InputNumber min={0} step={1} precision={0} />
                   </Form.Item>

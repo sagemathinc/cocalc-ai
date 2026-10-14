@@ -39,6 +39,10 @@ export interface SensorLimits {
   maxActive: number;
   minIntervalMinutes: number;
   maxWakesPerDay: number;
+  /** Built-in watchers all of the account's agents may have active at once. */
+  maxWatchers: number;
+  /** Built-in watchers one agent may have active at once. */
+  maxWatchersPerAgent: number;
 }
 
 export async function sensorLimits(account_id: string): Promise<SensorLimits> {
@@ -48,6 +52,8 @@ export async function sensorLimits(account_id: string): Promise<SensorLimits> {
       maxActive: 0,
       minIntervalMinutes: SENSOR_DEFAULT_MIN_INTERVAL_MINUTES,
       maxWakesPerDay: 0,
+      maxWatchers: 0,
+      maxWatchersPerAgent: 0,
     };
   const limits =
     (await resolveMembershipForAccount(account_id)).effective_limits ?? {};
@@ -55,6 +61,10 @@ export async function sensorLimits(account_id: string): Promise<SensorLimits> {
     typeof value === "number" && Number.isFinite(value) && value >= 0
       ? Math.floor(value)
       : fallback;
+  const maxWatchers = count(
+    limits.sensor_max_active_watchers,
+    SENSOR_LIMITS.maxWatchersPerAccount,
+  );
   return {
     maxActive: count(
       limits.acp_max_active_automations_per_project,
@@ -70,6 +80,12 @@ export async function sensorLimits(account_id: string): Promise<SensorLimits> {
     maxWakesPerDay: count(
       limits.sensor_max_wakes_per_day,
       SENSOR_DEFAULT_ACCOUNT_WAKES_PER_DAY,
+    ),
+    maxWatchers,
+    // Unset: one agent may use all of the account's watchers.
+    maxWatchersPerAgent: Math.min(
+      maxWatchers,
+      count(limits.sensor_max_active_watchers_per_agent, maxWatchers),
     ),
   };
 }
@@ -166,23 +182,34 @@ export async function reserveSensorWatcherAtHome(
     throw new Error("invalid watcher expiry");
   const limits = await sensorLimits(opts.account_id);
   // Watchers replace polling: any membership that allows wakes has them,
-  // limited by maxWatchersPerAccount and the wake budget, not maxActive.
-  if (limits.maxWakesPerDay === 0) throw new Error(NO_SENSORS);
+  // limited by maxWatchers, maxWatchersPerAgent and the wake budget, not
+  // maxActive.
+  if (limits.maxWakesPerDay === 0 || limits.maxWatchers === 0)
+    throw new Error(NO_SENSORS);
   await agentStore().transaction(async (client) => {
     await lockAccountSensors(client, opts.account_id);
     const { rows: counts } = await client.query<{
       active: string;
+      agent_active: string;
       recent: string;
     }>(
       `SELECT
          count(*) FILTER (WHERE released_at IS NULL AND expires_at > now()) AS active,
+         count(*) FILTER (WHERE released_at IS NULL AND expires_at > now()
+                          AND agent_id=$2) AS agent_active,
          count(*) FILTER (WHERE created > now() - interval '1 day') AS recent
        FROM agent_sensor_events WHERE account_id=$1 AND kind='watch'`,
-      [opts.account_id],
+      [opts.account_id, opts.agent_id],
     );
-    if (Number(counts[0]?.active) >= SENSOR_LIMITS.maxWatchersPerAccount)
+    if (Number(counts[0]?.active) >= limits.maxWatchers)
       throw new Error(
-        `at most ${SENSOR_LIMITS.maxWatchersPerAccount} watchers may be active at once for this account`,
+        `at most ${limits.maxWatchers} watchers may be active at once for this account (all its agents together). ` +
+          (await activeWatchersText(client, opts.account_id)),
+      );
+    if (Number(counts[0]?.agent_active) >= limits.maxWatchersPerAgent)
+      throw new Error(
+        `at most ${limits.maxWatchersPerAgent} watchers may be active at once for this agent. ` +
+          (await activeWatchersText(client, opts.account_id, opts.agent_id)),
       );
     if (Number(counts[0]?.recent) >= limits.maxWakesPerDay)
       throw new Error(
@@ -201,6 +228,37 @@ export async function reserveSensorWatcherAtHome(
       ],
     );
   });
+}
+
+/**
+ * Which watchers hold the account's (or one agent's) places, so whoever hits
+ * a limit can see what to delete instead of guessing.
+ */
+async function activeWatchersText(
+  client: Querier,
+  account_id: string,
+  agent_id?: string,
+): Promise<string> {
+  const { rows } = await client.query<{
+    sensor_id: string;
+    agent_id: string;
+    project_id: string;
+    expires_at: Date;
+  }>(
+    `SELECT sensor_id, agent_id, project_id, expires_at FROM agent_sensor_events
+      WHERE account_id=$1 AND kind='watch' AND released_at IS NULL
+        AND expires_at > now() AND ($2::uuid IS NULL OR agent_id=$2)
+      ORDER BY created LIMIT 10`,
+    [account_id, agent_id ?? null],
+  );
+  if (rows.length === 0) return "";
+  const list = rows
+    .map(
+      (r) =>
+        `${r.sensor_id} (agent ${r.agent_id}, project ${r.project_id}, counted until ${new Date(r.expires_at).toISOString()})`,
+    )
+    .join("; ");
+  return `Active: ${list}. An agent can delete its own with \`cocalc sensor delete <id>\`; a person can delete any in that agent's Sensors panel.`;
 }
 
 /** The watcher fired, gave up or was deleted: no longer active. */

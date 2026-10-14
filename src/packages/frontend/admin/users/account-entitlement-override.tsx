@@ -454,6 +454,32 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
         .sensor_max_wakes_per_day.adminDescription,
   },
   {
+    id: "sensor_max_active_watchers",
+    section: "usage_limits",
+    key: "sensor_max_active_watchers",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_max_active_watchers.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .sensor_max_active_watchers.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_max_active_watchers.adminDescription,
+  },
+  {
+    id: "sensor_max_active_watchers_per_agent",
+    section: "usage_limits",
+    key: "sensor_max_active_watchers_per_agent",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_max_active_watchers_per_agent.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .sensor_max_active_watchers_per_agent.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .sensor_max_active_watchers_per_agent.adminDescription,
+  },
+  {
     id: "rootfs_count",
     section: "usage_limits",
     key: "rootfs_count",

@@ -24,5 +24,7 @@ export function syncdb({ client, service, ...opts }: SyncDBOptions): SyncDB {
       project_id: opts.project_id,
     });
   const syncClient = new SyncClient(client);
-  return new SyncDB({ ...opts, fs, client: syncClient });
+  const doc = new SyncDB({ ...opts, fs, client: syncClient });
+  doc.once("closed", syncClient.release);
+  return doc;
 }

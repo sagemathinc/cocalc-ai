@@ -139,6 +139,7 @@ import {
   setAcpAdmissionDenialRecorder,
   setAcpAdmissionLimitsProvider,
   throwIfAcpAdmissionDenied,
+  withoutRecoveryLineage,
 } from "./admission";
 import {
   buildCodexTurnNoticeOptions,
@@ -218,6 +219,7 @@ import {
 } from "../sqlite/acp-sessions";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
+  humanTurnComputerNote,
   resolveHumanTurnMentions,
   resolveHumanTurnArtifactMentions,
 } from "./turn-mentions";
@@ -693,17 +695,20 @@ function buildRecoveryContinuationContent({
   recoveryCount,
   delayMs = 0,
   maxRetries = ACP_AUTO_RECOVERY_MAX_RETRIES,
+  agentLabel = "Codex",
 }: {
   interruptedNotice: string;
   recoveryCount: number;
   delayMs?: number;
   maxRetries?: number;
+  agentLabel?: string;
 }): string {
   const plain = `${interruptedNotice ?? ""}`.replace(/^\*\*|\*\*$/g, "").trim();
+  const session = `this ${agentLabel} session`;
   const timing =
     delayMs > 0
-      ? `CoCalc will automatically resume this Codex session in about ${formatQueuedDelay(delayMs)}, unless you send another turn first`
-      : "CoCalc is automatically resuming this Codex session";
+      ? `CoCalc will automatically resume ${session} in about ${formatQueuedDelay(delayMs)}, unless you send another turn first`
+      : `CoCalc is automatically resuming ${session}`;
   return `${ACP_RECOVERY_VISIBLE_LABEL}: ${plain} ${timing} (attempt ${recoveryCount}/${maxRetries}).`;
 }
 
@@ -8201,9 +8206,12 @@ async function executeAcpRequest({
           agent_memory_context: memory.context,
           mentionReferences,
           readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
-          prompt: artifactReferences.length
-            ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
-            : augmentPromptWithAgentMentions(prompt, mentionReferences),
+          prompt: withComputerNote(
+            artifactReferences.length
+              ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
+              : augmentPromptWithAgentMentions(prompt, mentionReferences),
+            humanTurnComputerNote(request),
+          ),
           local_images: harness ? undefined : local_images,
           image_attachments: harness ? image_attachments : undefined,
           runtime_env: runtimeEnv,
@@ -8925,6 +8933,11 @@ async function enqueueRecoveryContinuationForJob({
     recoveryCount,
     delayMs,
     maxRetries,
+    agentLabel: !harness
+      ? "Codex"
+      : request.runtime?.profile.id === "claude-code"
+        ? "Claude"
+        : "agent",
   });
   await withChatSyncDB({
     client,
@@ -9371,7 +9384,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
-    const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
+    const message = `This agent turn could not run: ${(err as Error)?.message ?? err}`;
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
       err,
@@ -10213,6 +10226,10 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  // Every turn submitted here (a new message, or guidance that could not
+  // steer a running turn) is new; only the worker creates recovery
+  // continuations, and they bypass this function.
+  request = withoutRecoveryLineage(request);
   await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
   if (!request.chat) {
@@ -12339,3 +12356,7 @@ export const acpTestInternals = {
   terminalTurnNeedsPeriodicRepair,
   waitForChatWriterDisposal,
 };
+
+function withComputerNote(prompt: string, note: string): string {
+  return note ? `${prompt}\n\n${note}` : prompt;
+}

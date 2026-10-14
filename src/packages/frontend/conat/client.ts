@@ -2801,6 +2801,12 @@ export class ConatClient extends EventEmitter {
         auth: (cb) => cb({ browser_id: this.client.browser_id }),
       }),
     };
+    // Reply on the inbox this connection's server assigns, as the main
+    // connection does: an agent-scoped session gets one of its own, not the
+    // account's.
+    state.client.inboxPrefixHook = (info) => {
+      return info?.user ? inboxPrefix(info.user) : undefined;
+    };
     state.client.on("connected", () => {
       logProjectHostRoutingDiagnostic("socket-connected", {
         routing_key,

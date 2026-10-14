@@ -40,7 +40,10 @@ export class ConatSyncClient extends EventEmitter implements SyncClient {
   };
 
   pubsub_conat = async (opts) => {
-    return new PubSub({ client: this.client, ...opts });
+    const channel = new PubSub({ client: this.client, ...opts });
+    // Report a denied subscription as a failed open (see SyncDoc cursors).
+    await channel.ready;
+    return channel;
   };
 
   // account_id or project_id

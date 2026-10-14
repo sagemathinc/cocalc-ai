@@ -83,6 +83,7 @@ export type SiteSettingsKeys =
   | "agent_openai_codex_enabled"
   | "codex_notification_toast_enabled"
   | "codex_notification_browser_enabled"
+  | "computers_enabled"
   | "google_vertexai_enabled"
   | "mistral_enabled"
   | "anthropic_enabled"
@@ -1560,6 +1561,16 @@ export const site_settings_conf: SiteSettings = {
     tags: ["AI"],
     group: "AI & Agents",
     subgroup: "Codex",
+  },
+  computers_enabled: {
+    name: "Enable Computers",
+    desc: "Let agents use computers that their owners connect (a laptop, a workstation, a server) to run commands there. When this is off, no computer can be requested, paired, approved or used, and connected computers are disconnected; owners can still list theirs, decline requests and revoke.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Computers",
   },
   codex_notification_browser_enabled: {
     name: "Codex Browser Notifications",

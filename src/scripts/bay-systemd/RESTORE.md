@@ -162,15 +162,27 @@ the hosts and in project backups.
    mount -a
    ```
 
-3. **Prepare the host** from a checkout of this repository (the release you
-   intend to run):
+3. **Prepare the host** from a checkout of the release the old bay ran. The
+   public deployment index lists every bay deployment with its artifact and
+   commit; take the newest one whose status is `succeeded`:
+
+   ```sh
+   curl -fsS https://software.cocalc.ai/software/deployments/prod/bay/index.json |
+     python3 -c 'import json, sys
+   d = next(d for d in json.load(sys.stdin)["deployments"] if d["status"] == "succeeded")
+   print(d["artifact_id"], d["git"]["commit"])'
+   ```
 
    ```sh
    git clone https://github.com/sagemathinc/cocalc-ai.git && cd cocalc-ai
+   git checkout <commit>
    sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
+   sudo chown cocalc-bay:cocalc-bay /mnt/cocalc-backups
    ```
 
    This creates the `cocalc-bay` user and installs the runtime libraries.
+   PostgreSQL writes its local backups to `/mnt/cocalc-backups`, and does not
+   start until the bay account owns it.
 
 4. **Install the master key** (from the human, as a file):
 
@@ -186,12 +198,11 @@ the hosts and in project backups.
    Cloudflare login).
 
    ```sh
-   umask 077
-   printf 'user = "%s:%s"\n' "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" > /root/r2.curl
-   curl --config /root/r2.curl --aws-sigv4 aws:amz:auto:s3 --fail --max-filesize 8388608 \
-     -o /root/bay-config.v1.json \
-     "$R2_ENDPOINT/$R2_BUCKET/cocalc-escrow/bay-0/bay-config.v1.json"
-   rm /root/r2.curl
+   # The keys reach curl on stdin, never on a command line.
+   printf 'user = "%s:%s"\n' "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" |
+     sudo sh -c 'umask 077; curl --config - --aws-sigv4 aws:amz:auto:s3 --fail \
+       --max-filesize 8388608 -o /root/bay-config.v1.json "$1"' sh \
+       "$R2_ENDPOINT/$R2_BUCKET/cocalc-escrow/bay-0/bay-config.v1.json"
    NODE="$(ls /opt/cocalc/nvm/versions/node/*/bin/node | tail -1)"   # from step 3
    sudo "$NODE" src/scripts/bay-systemd/libexec/bay-config-escrow.mjs info \
      --in /root/bay-config.v1.json --master-key /etc/cocalc/site-master-key
@@ -213,14 +224,20 @@ the hosts and in project backups.
 
 6. **Install the release** without starting it (the escrowed env files are
    kept; only missing ones are generated). This also installs `bay-restore`
-   in `/usr/local/libexec/cocalc-bay`:
+   in `/usr/local/libexec/cocalc-bay`. Use the published bay bundle of the
+   artifact from step 3, checked against the SHA-256 in its manifest:
 
    ```sh
-   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh --source "$PWD/src"
+   A=https://software.cocalc.ai/software/artifacts/bay/<artifact_id>
+   curl -fsS -o /tmp/cocalc-bay-runtime-linux-x64.tar.xz "$A/files/cocalc-bay-runtime-linux-x64.tar.xz"
+   curl -fsS "$A/manifest.json" | python3 -c 'import json, sys
+   print(json.load(sys.stdin)["files"][0]["sha256"], " /tmp/cocalc-bay-runtime-linux-x64.tar.xz")' |
+     sha256sum -c
+   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz
    ```
 
-   (or `--bundle` with a built bay runtime bundle; see README.md, "Fresh VM
-   Bootstrap").
+   (`--source "$PWD/src"` works too, but needs a full build of the checkout
+   first; see README.md, "Fresh VM Bootstrap").
 
 7. **Install the backup tools** the restore needs:
 
@@ -231,7 +248,21 @@ the hosts and in project backups.
      sudo tar -xz -C /usr/local/bin rustic
    ```
 
-8. **Restore and start the bay:**
+8. **Make sure the old bay is down, then restore and start the bay.** The new
+   VM runs the same Cloudflare tunnel as the old one. If both run it,
+   Cloudflare spreads requests over two separate bays, and both archive into
+   the same backup repository. So if the old VM still exists, stop it first
+   and confirm that it is stopped:
+
+   ```sh
+   gcloud compute instances stop prod-bay-0 --project=projecthosts --zone=us-south1-a
+   gcloud compute instances describe prod-bay-0 --project=projecthosts \
+     --zone=us-south1-a --format='value(status)'   # must print TERMINATED
+   ```
+
+   If the old VM cannot be reached (for example, its zone is down), ask the
+   human to confirm in the Cloudflare dashboard that the tunnel shows no
+   connectors before you go on. Then:
 
    ```sh
    sudo /usr/local/libexec/cocalc-bay/bay-restore restore --latest --yes
@@ -239,17 +270,22 @@ the hosts and in project backups.
 
    This restores PostgreSQL to the newest archived transaction and Conat to
    its newest snapshot, moves any freshly initialized data aside, and starts
-   the bay. Traffic reaches the new VM through the Cloudflare tunnel, whose
-   credentials came from the escrow; DNS does not change.
+   the bay, with the frontdoor and the tunnel (enabled bay services outside
+   `cocalc-bay.target`). Traffic reaches the new VM through the Cloudflare
+   tunnel, whose credentials came from the escrow; DNS does not change. If
+   the restore fails, or with `--no-cutover`, the frontdoor and the tunnel
+   stay down: the new VM's empty bay never takes traffic.
 
 9. **Afterwards:**
    - confirm the site works;
    - enable the backup timers listed in README.md ("Activation Order") and
      `cocalc-bay-config-escrow.timer`;
-   - stop or delete the old VM if it still exists, so two bays never run the
-     same tunnel or archive into the same repository;
-   - run a disposable drill (`cocalc bay restore-test bay-0
-     --disposable-gcp`);
+   - keep the old VM stopped; delete it and its disks once you are satisfied;
+   - run a disposable drill:
+     `cocalc bay restore-test bay-0 --disposable-gcp`. The new VM has no
+     record of a SQLite backup yet, so the drill refuses to run until the
+     first one has finished; start it with
+     `sudo systemctl start cocalc-bay-sqlite-backup.service`;
    - replay deletions as in mode A, step 4.
 10. **Rotate the live credentials** the escrow contained, as described under
     "Rotation" in README.md ("Configuration Escrow"): the escrow was opened,
@@ -264,6 +300,11 @@ the hosts and in project backups.
   - the bay is stopped, and its processes are gone, before the engine runs;
   - the bay restarts on its old data after a failure or with `--no-cutover`;
   - the cutover order, the unhealthy case and the backup warning are right;
+  - on a fresh VM the enabled frontdoor and tunnel start with the restored
+    bay, and stay down after a failure or with `--no-cutover`;
+  - `--target-time` keeps its microseconds.
+- `libexec/bay-restore-engine.test.sh` checks the engine's PITR sentinel
+  verdict, and that a missed target fails the drill at once.
   - copies and work directories the bay account could change are refused.
 - `test/bay-restore-e2e.sh` runs `bay-restore` end to end on a disposable
   Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore, a

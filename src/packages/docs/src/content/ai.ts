@@ -699,7 +699,8 @@ There are three kinds:
 Sensors work with Codex, Claude Code and other agents registered in a project.
 They need a project with internet access, which comes with a paid membership.
 Your membership also sets how many sensors a project may run, how often they
-may run, and how many agent turns all of your sensors and watchers may start in
+may run, how many watchers your agents may have at once (in total and per
+agent), and how many agent turns all of your sensors and watchers may start in
 any 24 hours (each sensor can also set a lower limit of its own). Each wake is
 a turn paid by the person who set up or approved the sensor.
 

@@ -179,6 +179,46 @@ function stringValue(value: unknown): string | undefined {
   return str || undefined;
 }
 
+function urlOrigin(value: string): string | undefined {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+// Hosts and installers download artifacts anonymously from the URLs written
+// into the catalogs.  The R2 S3 API endpoint answers unsigned requests with
+// HTTP 400, so a base URL pointing there publishes catalogs nobody can use.
+// The error never echoes the URL: its host contains the R2 account id.
+export function publicSoftwareBaseUrl(value: string, endpoint: string): string {
+  const example = "https://software.cocalc.ai";
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      `COCALC_R2_PUBLIC_BASE_URL must be an absolute URL, e.g. ${example}`,
+    );
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error(
+      `COCALC_R2_PUBLIC_BASE_URL must be an http(s) URL, e.g. ${example}`,
+    );
+  }
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "r2.cloudflarestorage.com" ||
+    host.endsWith(".r2.cloudflarestorage.com") ||
+    url.origin === urlOrigin(endpoint)
+  ) {
+    throw new Error(
+      `COCALC_R2_PUBLIC_BASE_URL is the R2 S3 API endpoint, which refuses unsigned downloads; set it to the public download origin, e.g. ${example}`,
+    );
+  }
+  return value.replace(/\/+$/, "");
+}
+
 export async function resolveSoftwareRemoteConfig({
   env,
   envFile,
@@ -200,17 +240,18 @@ export async function resolveSoftwareRemoteConfig({
       `Missing R2 software credentials; set COCALC_R2_ACCOUNT_ID, COCALC_R2_ACCESS_KEY_ID, COCALC_R2_SECRET_ACCESS_KEY, COCALC_R2_BUCKET, and COCALC_R2_PUBLIC_BASE_URL in ${envFile || DEFAULT_SOFTWARE_R2_ENV_FILE} or the environment.`,
     );
   }
+  const endpoint =
+    stringValue(merged.COCALC_R2_ENDPOINT) ||
+    `https://${accountId}.r2.cloudflarestorage.com`;
   return {
     auth: {
-      endpoint:
-        stringValue(merged.COCALC_R2_ENDPOINT) ||
-        `https://${accountId}.r2.cloudflarestorage.com`,
+      endpoint,
       accessKey,
       secretKey,
       bucket,
       region: stringValue(merged.COCALC_R2_REGION) || "auto",
     },
-    publicBaseUrl: publicBaseUrl.replace(/\/+$/, ""),
+    publicBaseUrl: publicSoftwareBaseUrl(publicBaseUrl, endpoint),
     artifactCacheControl:
       stringValue(merged.COCALC_R2_CACHE_CONTROL) ||
       "public, max-age=31536000, immutable",
@@ -626,11 +667,13 @@ export async function publishHostCompatibilityArtifact({
     !["project-host", "container-runtime", "project", "tools"].includes(
       artifact,
     ) ||
-    (artifact !== "tools" && entry.files.length !== 1) ||
+    (artifact !== "tools" &&
+      artifact !== "container-runtime" &&
+      entry.files.length !== 1) ||
     entry.files.length < 1
   ) {
     throw new Error(
-      `software host compatibility publish expected project-host/container-runtime/project to have one file and tools to have one or more files in ${entry.artifact_id}`,
+      `software host compatibility publish expected project-host/project to have one file and tools/container-runtime to have one or more per-architecture files in ${entry.artifact_id}`,
     );
   }
   const urls: string[] = [];

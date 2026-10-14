@@ -96,6 +96,7 @@ import {
   claimDueSensors,
   runClaimedSensor,
   setSensorDispatchHookForTests,
+  setSensorIssueHookForTests,
   startSensorScheduler,
 } from "./sensor-scheduler";
 
@@ -1007,6 +1008,203 @@ describeDb("agent sensors", () => {
     await expect(make()).rejects.toThrow(/at most 5 watchers may be active/);
   });
 
+  const fileWatch = (r: any = run, a: any = agent) =>
+    agentSensorRequest(r, a, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    }) as any;
+
+  const secondAgent = async () => {
+    const other_id = randomUUID();
+    await getPool().query(
+      `INSERT INTO agent_identities (agent_id, project_id, path, thread_id, name, created_by)
+       VALUES ($1, $2, '/home/user/b.chat', 't2', 'second', $3)`,
+      [other_id, project_id, owner],
+    );
+    const otherAgent = (
+      await getPool().query(
+        "SELECT * FROM agent_identities WHERE agent_id=$1",
+        [other_id],
+      )
+    ).rows[0];
+    return {
+      otherAgent,
+      otherRun: { ...run, agent_id: other_id, run_id: randomUUID() },
+    };
+  };
+
+  test("the membership tier sets how many watchers an account may have", async () => {
+    limits.sensor_max_active_watchers = 2;
+    const first = (await fileWatch()).sensor;
+    await fileWatch();
+    // The error names the watchers holding the places, and how to free one.
+    await expect(fileWatch()).rejects.toThrow(
+      new RegExp(
+        `at most 2 watchers may be active at once for this account.*Active: ${first.sensor_id} \\(agent ${agent_id}.*cocalc sensor delete`,
+      ),
+    );
+    limits.sensor_max_active_watchers = 0;
+    await expect(fileWatch()).rejects.toThrow(/does not include agent sensors/);
+  });
+
+  test("a per-agent limit keeps one agent from using all of the account's watchers", async () => {
+    limits.sensor_max_active_watchers = 3;
+    limits.sensor_max_active_watchers_per_agent = 2;
+    await fileWatch();
+    await fileWatch();
+    await expect(fileWatch()).rejects.toThrow(
+      /at most 2 watchers may be active at once for this agent/,
+    );
+    const { otherAgent, otherRun } = await secondAgent();
+    await fileWatch(otherRun, otherAgent);
+    // The account limit still holds across agents.
+    await expect(fileWatch(otherRun, otherAgent)).rejects.toThrow(
+      /at most 3 watchers may be active at once for this account/,
+    );
+  });
+
+  test("a watcher paused because its connector is off gives back its place", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 992 },
+    })) as any;
+    await expect(fileWatch()).rejects.toThrow(/at most 1 watchers/);
+    lease.missing = ["github"];
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({ status: "paused" });
+    expect(rows[0].pause_reason).toMatch(/uses GitHub/);
+    // A watcher can never be resumed, so its place is free again.
+    lease.missing = [];
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a watcher paused by a person gives back its place", async () => {
+    limits.sensor_max_active_watchers = 1;
+    const first = (await fileWatch()).sensor;
+    await expect(fileWatch()).rejects.toThrow(/at most 1 watchers/);
+    await sensorControlLocal(owner, project_id, {
+      op: "pause",
+      sensor_id: first.sensor_id,
+    });
+    await expect(fileWatch()).resolves.toMatchObject({
+      sensor: expect.objectContaining({ status: "active" }),
+    });
+  });
+
+  test("a fired watcher whose wake is still queued cannot be deleted out from under it", async () => {
+    const watched = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    })) as any;
+    await makeDue(watched.sensor.sensor_id);
+    await runDue();
+    // The host queued the wake (the agent was busy); its turn has not started.
+    const { authorization, prompt, path, thread_id } =
+      host.deliverAgentSensorWake.mock.calls[0][0];
+    const remove = {
+      action: "sensor",
+      op: "delete",
+      sensor_id: watched.sensor.sensor_id,
+    } as const;
+    await expect(agentSensorRequest(run, agent, remove)).rejects.toThrow(
+      /wake is still queued/,
+    );
+    await expect(
+      sensorControlLocal(owner, project_id, {
+        op: "delete",
+        sensor_id: watched.sensor.sensor_id,
+      }),
+    ).rejects.toThrow(/wake is still queued/);
+    // So the queued turn can still run.
+    await expect(
+      authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
+        prompt_sha256: sha(prompt),
+        path,
+        thread_id,
+      }),
+    ).resolves.toBeUndefined();
+    // Once it started, deleting the done watcher is fine.
+    await expect(agentSensorRequest(run, agent, remove)).resolves.toEqual({
+      deleted: watched.sensor.sensor_id,
+    });
+    await expect(agentSensorRequest(run, agent, remove)).rejects.toThrow(
+      /sensor not found/,
+    );
+  });
+
+  test("a watcher cannot be deleted while it is being run and may be waking the agent", async () => {
+    const watched = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    })) as any;
+    const remove = {
+      action: "sensor",
+      op: "delete",
+      sensor_id: watched.sensor.sensor_id,
+    } as const;
+    await makeDue(watched.sensor.sensor_id);
+    let during: unknown;
+    // After the last dispatch check, just before the wake is issued.
+    setSensorIssueHookForTests(async () => {
+      during = await agentSensorRequest(run, agent, remove).catch((err) => err);
+    });
+    try {
+      await runDue();
+    } finally {
+      setSensorIssueHookForTests(undefined);
+    }
+    expect(`${during}`).toMatch(/checking right now/);
+    // The wake was issued and delivered, and its turn can still start.
+    const { authorization, prompt, path, thread_id } =
+      host.deliverAgentSensorWake.mock.calls[0][0];
+    await expect(
+      authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
+        prompt_sha256: sha(prompt),
+        path,
+        thread_id,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("a wake is not sent if its watcher was deleted after the lease ran out", async () => {
+    const watched = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "file", path: "out.txt" },
+    })) as any;
+    await makeDue(watched.sensor.sensor_id);
+    setSensorIssueHookForTests(async () => {
+      // A run that outlived its lease: the delete is no longer held off.
+      await getPool().query(
+        "UPDATE agent_sensors SET lease_until=now() - interval '1 minute' WHERE sensor_id=$1",
+        [watched.sensor.sensor_id],
+      );
+      await agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "delete",
+        sensor_id: watched.sensor.sensor_id,
+      });
+    });
+    try {
+      await runDue();
+    } finally {
+      setSensorIssueHookForTests(undefined);
+    }
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+  });
+
   test("a reminder runs no code and wakes the agent with its own note", async () => {
     const at = new Date(Date.now() + 3_600_000).toISOString();
     const set = (await agentSensorRequest(run, agent, {
@@ -1135,6 +1333,14 @@ describeDb("agent sensors", () => {
       const { sensor } = await watch();
       await makeDue(sensor.sensor_id);
       await runDue();
+      // The woken turn starts (consuming its wake), then cleans up.
+      const { authorization, prompt, path, thread_id } =
+        host.deliverAgentSensorWake.mock.calls[i][0];
+      await authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
+        prompt_sha256: sha(prompt),
+        path,
+        thread_id,
+      });
       await agentSensorRequest(run, agent, {
         action: "sensor",
         op: "delete",

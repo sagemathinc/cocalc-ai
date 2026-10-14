@@ -216,6 +216,31 @@ async function getObject({ auth, key }) {
   return await getR2ObjectBuffer({ auth, key });
 }
 
+// Manifests are downloaded anonymously.  The R2 S3 API endpoint answers
+// unsigned requests with HTTP 400, so it must never be the public base URL.
+// Do not echo the URL: its host contains the R2 account id.
+function assertPublicBaseUrl(publicBaseUrl, endpoint) {
+  const example = "https://software.cocalc.ai";
+  let url;
+  try {
+    url = new URL(publicBaseUrl);
+  } catch {
+    throw new Error(
+      `COCALC_R2_PUBLIC_BASE_URL must be an absolute URL, e.g. ${example}`,
+    );
+  }
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "r2.cloudflarestorage.com" ||
+    host.endsWith(".r2.cloudflarestorage.com") ||
+    url.origin === new URL(endpoint).origin
+  ) {
+    throw new Error(
+      `COCALC_R2_PUBLIC_BASE_URL is the R2 S3 API endpoint, which refuses unsigned downloads; set it to the public download origin, e.g. ${example}`,
+    );
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const copyFrom = args["copy-from"] || process.env.COCALC_R2_COPY_FROM;
@@ -266,6 +291,9 @@ async function main() {
   const prefix = args.prefix || process.env.COCALC_R2_PREFIX || "";
   const publicBaseUrl =
     args["public-base-url"] || process.env.COCALC_R2_PUBLIC_BASE_URL || "";
+  if (publicBaseUrl) {
+    assertPublicBaseUrl(publicBaseUrl, endpoint);
+  }
   const cacheControl =
     args["cache-control"] ||
     process.env.COCALC_R2_CACHE_CONTROL ||

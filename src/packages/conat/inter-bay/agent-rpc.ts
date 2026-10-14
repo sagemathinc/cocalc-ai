@@ -134,6 +134,12 @@ export interface AgentRpcControlApi {
   ): Promise<
     import("@cocalc/conat/agents/external").ExternalAgentControlResult
   >;
+  /** Agent memory, run on the account's home bay (server/agents/memory-home.ts). */
+  memory(opts: {
+    account_id: string;
+    home_bay_id: string;
+    request: import("@cocalc/conat/agents/memory").AgentMemoryHomeRequest;
+  }): Promise<any>;
   personal(opts: {
     account_id: string;
     home_bay_id: string;

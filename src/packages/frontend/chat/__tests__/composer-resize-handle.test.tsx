@@ -22,6 +22,20 @@ import {
 
 let lastChatInputProps: any;
 let lastCodexConfigProps: any;
+// The computer check passes sends through and records what it saw.
+const mockComputerPreflight = jest.fn(
+  async (_value: string, send: () => unknown) => await send(),
+);
+const mockComputerThreads: (string | undefined)[] = [];
+jest.mock("@cocalc/frontend/agents/computer-access", () => ({
+  useComputerMentionCheck: ({ threadId }: { threadId?: string }) => ({
+    preflight: (value: string, send: () => unknown) => {
+      mockComputerThreads.push(threadId);
+      return mockComputerPreflight(value, send);
+    },
+    ui: null,
+  }),
+}));
 let mockStoredHeight: string | null = null;
 
 // rc-util's fixed Jest ID makes the popover and modal share one Escape-stack
@@ -427,6 +441,88 @@ describe("ChatRoomComposer resize handle", () => {
     );
     expect(send).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["only a computer", "computer"],
+    ["an agent and a computer", "mixed"],
+  ])(
+    "a first message naming %s prepares the agent, then goes through the computer check with its thread",
+    async (_label, kind) => {
+      const {
+        serializeComputerMention,
+      } = require("@cocalc/util/computer-mentions");
+      const { serializeAgentMention } = require("@cocalc/util/agent-mentions");
+      const computer = serializeComputerMention({
+        version: 1,
+        computer_id: "1a057860-889d-461a-9073-4b8c69d65123",
+        name: "m1",
+      });
+      const agent = serializeAgentMention({
+        version: 1,
+        naming_account_id: "11111111-1111-4111-8111-111111111111",
+        target: {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          agent_id: "33333333-3333-4333-8333-333333333333",
+        },
+        name: "reviewer",
+      });
+      const draft =
+        kind === "computer"
+          ? `disk usage on ${computer}?`
+          : `ask ${agent} about ${computer}`;
+      mockComputerPreflight.mockClear();
+      mockComputerThreads.length = 0;
+      const user = userEvent.setup();
+      const prepare = jest.fn(async () => "prepared-thread");
+      const send = jest.fn();
+      const view = renderComposer({
+        isNewThreadCodex: true,
+        input: draft,
+        hasInput: true,
+        onPrepareAgentThread: prepare,
+        on_send: send,
+      });
+      lastChatInputProps.inputControlRef.current = {
+        getValue: () => draft,
+        focus: () => true,
+        captureSelection: () => null,
+        insertText: () => true,
+      };
+      await act(async () => {
+        lastChatInputProps.on_send(draft);
+      });
+      // No agent yet: prepare it first; nothing is sent or checked.
+      expect(prepare).toHaveBeenCalledWith(draft);
+      expect(send).not.toHaveBeenCalled();
+      expect(mockComputerPreflight).not.toHaveBeenCalled();
+      // The thread exists now: the deferred send runs the computer check,
+      // bound to that thread.
+      await act(async () => {
+        view.rerender(
+          <ChatEmbeddingOptionsProvider value={{}}>
+            <ChatRoomComposer
+              {...view.props}
+              selectedThread={
+                { key: "prepared-thread", label: "New", isAI: true } as any
+              }
+              isSelectedThreadAI
+            />
+          </ChatEmbeddingOptionsProvider>,
+        );
+      });
+      await waitFor(() =>
+        expect(mockComputerPreflight).toHaveBeenCalledWith(
+          draft,
+          expect.any(Function),
+        ),
+      );
+      expect(mockComputerThreads.at(-1)).toBe("prepared-thread");
+      if (kind === "computer") {
+        await waitFor(() => expect(send).toHaveBeenCalledWith(draft));
+      }
+      void user;
+    },
+  );
 
   it.each(["button", "keyboard callback"])(
     "snapshots the live editor for %s sends despite serialized newline differences",

@@ -65,6 +65,8 @@ import type { AgentMention } from "./agent-mention";
 import "./agent-mention";
 import type { ArtifactMention } from "./artifact-mention";
 import "./artifact-mention";
+import type { ComputerMention } from "./computer-mention";
+import "./computer-mention";
 import type { PeopleReferenceElement } from "./people-reference";
 import "./people-reference";
 import "./mention/editable";
@@ -106,6 +108,7 @@ declare module "slate" {
       | Mention
       | AgentMention
       | ArtifactMention
+      | ComputerMention
       | PeopleReferenceElement
       | Table
       | THead

@@ -255,7 +255,41 @@ test("admitted Agent Network RPC work preserves the selected subscription", () =
   expect(admitted.harness_credential).toEqual(source.harness_credential);
   expect(admitted.account_id).toBe(source.account_id);
   delete source.chat!.agent_rpc_execution;
-  expect(() => prepareHarnessRequest(source)).toThrow("Unsupported ACP");
+  expect(() => prepareHarnessRequest(source)).toThrow(
+    "Claude turns cannot use agent-authored messages outside agent messaging",
+  );
+});
+
+test("a recovery continuation of an interrupted turn is accepted", () => {
+  const source = claudeRequest();
+  const parent = randomUUID();
+  Object.assign(source, {
+    recovery_parent_op_id: parent,
+    recovery_reason: "worker stopped",
+    recovery_count: 1,
+  });
+  Object.assign(source.chat!, {
+    recovery_parent_op_id: parent,
+    recovery_reason: "worker stopped",
+    recovery_count: 1,
+  });
+  const admitted = prepareHarnessRequest(source);
+  expect(admitted.recovery_parent_op_id).toBe(parent);
+  expect(admitted.chat!.recovery_count).toBe(1);
+});
+
+test("rejections name what the harness turn cannot use", () => {
+  const source = claudeRequest();
+  source.config = { model: "gpt-5" } as any;
+  source.runtime_env = { FOO: "1" };
+  expect(() => prepareHarnessRequest(source)).toThrow(
+    "Claude turns cannot use Codex settings (config), environment overrides (runtime_env)",
+  );
+  const other = request();
+  other.runtime_env = { FOO: "1" };
+  expect(() => prepareHarnessRequest(other)).toThrow(
+    "ACP agent turns cannot use environment overrides (runtime_env)",
+  );
 });
 
 test("connector opt-out is pinned at admission and changes the retained runtime key", () => {
@@ -423,7 +457,7 @@ test("generic RPC delivery permits guidance under the execution principal", () =
   expect(prepareHarnessRequest(value).chat!.send_mode).toBe("immediate");
 });
 
-test("unsupported runtime versions, funding and recovery fail closed", () => {
+test("unsupported runtime versions and funding fail closed", () => {
   const source = request();
   for (const changes of [
     { runtime: { ...source.runtime, version: 2 } },
@@ -431,7 +465,6 @@ test("unsupported runtime versions, funding and recovery fail closed", () => {
     { runtime: null },
     { config: { paymentSource: "auto" } },
     { runtime_env: { KEY: "secret" } },
-    { recovery_parent_op_id: "old" },
     { chat: { ...source.chat, project_id: "other" } },
   ])
     expect(() =>

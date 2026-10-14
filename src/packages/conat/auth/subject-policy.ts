@@ -1,8 +1,13 @@
 import { inboxPrefix } from "@cocalc/conat/names";
+import {
+  isComputerPrincipal,
+  type ComputerPrincipal,
+} from "@cocalc/conat/computers/principal";
 import { isValidUUID } from "@cocalc/util/misc";
 import { isAcpSubject } from "../ai/acp/subjects";
 
 export type CoCalcUser =
+  | ComputerPrincipal
   | {
       account_id: string;
       project_id?: string;
@@ -66,12 +71,12 @@ export type CoCalcUser =
 
 export type CoCalcUserType = "account" | "project" | "hub" | "host";
 
-export function getCoCalcUserType({
-  account_id,
-  project_id,
-  hub_id,
-  host_id,
-}: CoCalcUser): CoCalcUserType {
+export function getCoCalcUserType(user: CoCalcUser): CoCalcUserType {
+  // A computer is none of these; callers must handle it before asking.
+  if (isComputerPrincipal(user)) {
+    throw Error("a computer principal has no CoCalc user type");
+  }
+  const { account_id, project_id, hub_id, host_id } = user;
   if (account_id) {
     if (project_id || hub_id || host_id) {
       throw Error(
@@ -104,12 +109,11 @@ export function getCoCalcUserType({
   );
 }
 
-export function getCoCalcUserId({
-  account_id,
-  project_id,
-  hub_id,
-  host_id,
-}: CoCalcUser): string {
+export function getCoCalcUserId(user: CoCalcUser): string {
+  if (isComputerPrincipal(user)) {
+    throw Error("a computer principal has no CoCalc user id");
+  }
+  const { account_id, project_id, hub_id, host_id } = user;
   if (account_id) {
     if (project_id || hub_id || host_id) {
       throw Error(

@@ -36,6 +36,11 @@ import {
 } from "../invoices/stripe";
 import { recordCommercialProviderFailure } from "../observability";
 import {
+  commercialInvoicePaymentMetadata,
+  commercialInvoicePaymentSettings,
+  PAYMENT_SETTINGS_VERSION,
+} from "../payment-settings";
+import {
   buildCommercialQuotePreview,
   commercialIdempotencyKey,
   completeCommercialQuoteAcceptance,
@@ -59,7 +64,6 @@ import { registerCommercialOrderBillingAccount } from "../billing-authority";
 const logger = getLogger("server:commercial-orders:stripe-quotes");
 const FLOW = "commercial_quote";
 const MAX_PDF_BYTES = 2_097_152;
-const PAYMENT_METHOD_TYPES = ["card", "us_bank_account"] as const;
 
 type StripeConnection = Awaited<ReturnType<typeof getConn>>;
 
@@ -1118,20 +1122,23 @@ async function normalizeAcceptedInvoice(opts: {
       automatic_tax: {
         enabled: commercialTaxPolicy(opts.order.terms_snapshot).enabled,
       },
-      payment_settings: {
-        payment_method_types: [...PAYMENT_METHOD_TYPES],
-      },
+      payment_settings: commercialInvoicePaymentSettings(),
       metadata: {
         ...(invoice.metadata ?? {}),
         flow: "commercial_order",
         commercial_order_id: opts.order.id,
         commercial_invoice_id: opts.invoiceId,
         accepted_commercial_quote_id: opts.quoteId,
+        ...commercialInvoicePaymentMetadata(),
         order_number: opts.order.order_number,
         cocalc_site: await currentStripeSite(),
       },
     } as any,
-    { idempotencyKey: `${opts.keyPrefix}:invoice:normalize` },
+    // Versioned: the payload changed with the payment settings, and Stripe
+    // rejects a reused key with different parameters.
+    {
+      idempotencyKey: `${opts.keyPrefix}:invoice:normalize:${PAYMENT_SETTINGS_VERSION}`,
+    },
   );
   const lineResult = await opts.stripe.invoices.listLineItems(invoice.id, {
     limit: 100,

@@ -41,9 +41,16 @@ export class SyncClient extends EventEmitter implements Client0 {
   }
 
   close = () => {
+    this.client?.removeListener("closed", this.close);
     this.emit("closed");
     // @ts-ignore
     delete this.client;
+  };
+
+  // Each document gets its own SyncClient, but the conat client outlives
+  // them; stop listening to it once the document using this one closes.
+  release = () => {
+    this.client?.removeListener("closed", this.close);
   };
 
   is_project = (): boolean => false;
@@ -116,7 +123,11 @@ export class SyncClient extends EventEmitter implements Client0 {
   };
 
   pubsub_conat = async (opts): Promise<PubSub> => {
-    return new PubSub({ client: this.client, ...opts });
+    const channel = new PubSub({ client: this.client, ...opts });
+    // A denied subscription is a failed open (the channel closes itself),
+    // not a channel that looks open and later goes dead.
+    await channel.ready;
+    return channel;
   };
 
   // account_id or project_id for this signed-in conat client.
