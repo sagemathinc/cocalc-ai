@@ -64,6 +64,37 @@ const iso = (value: unknown): string | null =>
 const NOT_DONE_WATCHER =
   "NOT (spec->>'kind' = 'watch' AND next_run_at IS NULL)";
 
+/**
+ * A watcher that fired but whose wake has not started yet (the agent was
+ * busy, so the host queued it). Deleting it would delete the run that holds
+ * the wake's one-time permit (agent_sensor_runs cascades), and the queued
+ * turn would then fail with "sensor not found". It already gave back its
+ * place in the watcher budget and is removed a day after it fired, so there
+ * is nothing to gain by deleting it early.
+ */
+const WATCHER_WAKE_QUEUED = `(spec->>'kind' = 'watch' AND EXISTS (
+  SELECT 1 FROM agent_sensor_runs r
+   WHERE r.sensor_id = agent_sensors.sensor_id
+     AND r.wake_state IN ('issued', 'deferred', 'combining')
+     AND r.started_at > now() - interval '1 day'))`;
+
+const WATCHER_WAKE_QUEUED_ERROR =
+  "This watcher already fired and its wake is still queued for the agent; deleting it now would make that turn fail. It no longer counts toward the watcher limit and is removed automatically a day after it fired. To drop the wake, cancel the queued turn in the chat instead.";
+
+/** Why a delete matched no row: the sensor is missing, or its wake is queued. */
+async function deleteRefusal(
+  where: string,
+  values: unknown[],
+): Promise<Error> {
+  const { rows } = await agentStore().query(
+    `SELECT ${WATCHER_WAKE_QUEUED} AS queued FROM agent_sensors WHERE ${where}`,
+    values,
+  );
+  return new Error(
+    rows[0]?.queued ? WATCHER_WAKE_QUEUED_ERROR : "sensor not found",
+  );
+}
+
 export function toSensor(row: any): AgentSensor {
   // A watcher that fired or expired is done, though stored as active.
   const done =
@@ -213,10 +244,15 @@ export async function agentSensorRequest(
   if (request.op === "delete") {
     const { rows } = await db.query(
       `DELETE FROM agent_sensors WHERE sensor_id=$1 AND agent_id=$2
+         AND NOT ${WATCHER_WAKE_QUEUED}
        RETURNING approved_by, spec->>'kind' AS kind`,
       [request.sensor_id, agent.agent_id],
     );
-    if (!rows[0]) throw new Error("sensor not found");
+    if (!rows[0])
+      throw await deleteRefusal("sensor_id=$1 AND agent_id=$2", [
+        request.sensor_id,
+        agent.agent_id,
+      ]);
     if (rows[0].kind === "watch")
       await releaseWatcher(rows[0].approved_by, request.sensor_id);
     return { deleted: request.sensor_id };
@@ -660,10 +696,17 @@ export async function sensorControlLocal(
       return requested;
     }
     case "delete": {
-      await db.query(
-        "DELETE FROM agent_sensors WHERE sensor_id=$1 AND project_id=$2",
+      const { rows: deleted } = await db.query(
+        `DELETE FROM agent_sensors WHERE sensor_id=$1 AND project_id=$2
+           AND NOT ${WATCHER_WAKE_QUEUED}
+         RETURNING sensor_id`,
         [row.sensor_id, project_id],
       );
+      if (!deleted[0])
+        throw await deleteRefusal("sensor_id=$1 AND project_id=$2", [
+          row.sensor_id,
+          project_id,
+        ]);
       if (row.spec?.kind === "watch")
         await releaseWatcher(row.approved_by, row.sensor_id);
       return { deleted: row.sensor_id };
