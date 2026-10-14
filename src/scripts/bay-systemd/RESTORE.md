@@ -27,7 +27,12 @@ other secrets, data) comes from the backups.
   stays: run the restore again, or remove the file by hand to bring the bay
   back on its current data. A bay deploy refuses to run against a fenced
   bay: `bay-bootstrap-release.sh` checks before it stages anything, and
-  `upgrade-bay-release.sh` checks again before each restart. The drop-ins
+  `upgrade-bay-release.sh` checks again before each restart.
+- **One restore or deploy at a time.** `bay-restore` (restore and cutover)
+  and `bay-bootstrap-release.sh` hold `/etc/cocalc/bay-deploy.lock` for their
+  whole run, as do `upgrade-bay-release.sh`'s restart steps. A deploy started
+  during a restore is refused, and so is a restore during a deploy, before
+  either changes anything. The drop-ins
   and `bay-restore` are installed by `install-restore-tools.sh`, with every
   release and, in mode B, from current main.
 - **The live data is not changed until the cutover.** The restore is built in

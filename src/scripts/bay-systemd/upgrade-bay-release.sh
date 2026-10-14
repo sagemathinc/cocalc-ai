@@ -433,6 +433,9 @@ stage_release() {
   if remote_exec "test -e /etc/cocalc/bay-restore-fence"; then
     die "${REMOTE} is fenced for a restore (/etc/cocalc/bay-restore-fence); finish the restore (bay-restore cutover) before deploying"
   fi
+  if ! remote_exec "sudo flock -n /etc/cocalc/bay-deploy.lock true"; then
+    die "a bay restore or another deploy is running on ${REMOTE} (it holds /etc/cocalc/bay-deploy.lock)"
+  fi
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
   if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
     log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
@@ -553,6 +556,15 @@ echo "project_host_software_staged=\$current/runtime/packages"
 EOF
 }
 
+# Each restart section runs on the bay under the deploy lock, which bay-restore
+# holds for a whole restore ("flock -o": the commands do not inherit it), so
+# no restart happens while a restore has the bay stopped and fenced.
+REMOTE_LOCKED_BASH="flock -n -o -E 75 /etc/cocalc/bay-deploy.lock bash -s"
+restart_section_failed() {
+  [[ "$1" != 75 ]] || die "a bay restore holds /etc/cocalc/bay-deploy.lock on ${REMOTE}; not restarting the bay"
+  exit "$1"
+}
+
 restart_and_health_check() {
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     if [[ "$RESTART_HUB_WORKERS" -eq 0 ]]; then
@@ -562,7 +574,7 @@ restart_and_health_check() {
       return 0
     fi
     log "Restart hub workers one at a time and run health checks"
-    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo ${REMOTE_LOCKED_BASH}" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt" || restart_section_failed $?
 # Again here: a restore may have fenced the bay since the deploy began.
 [[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
@@ -593,7 +605,7 @@ bay_run bay-health
 EOF
   elif [[ "$SCAFFOLD_ONLY" -eq 1 ]]; then
     log "Reload bay scaffold and run health checks"
-    remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo ${REMOTE_LOCKED_BASH}" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt" || restart_section_failed $?
 # Again here: a restore may have fenced the bay since the deploy began.
 [[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
@@ -606,7 +618,7 @@ bay_run bay-health
 EOF
   elif [[ -n "$RESTART_BAY_SERVICE" ]]; then
     log "Run migrations, restart bay service ${RESTART_BAY_SERVICE}, and run health checks"
-    remote_exec "sudo env BAY_SERVICE=$(q "$RESTART_BAY_SERVICE") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo env BAY_SERVICE=$(q "$RESTART_BAY_SERVICE") BAY_USER=$(q "$BAY_USER") ${REMOTE_LOCKED_BASH}" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt" || restart_section_failed $?
 # Again here: a restore may have fenced the bay since the deploy began.
 [[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
@@ -677,7 +689,7 @@ bay_run bay-health
 EOF
   elif [[ "$HUB_ONLY" -eq 1 ]]; then
     log "Restart frontdoor, run migrations, roll hub workers, and run health checks"
-    remote_exec "sudo env BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo env BAY_USER=$(q "$BAY_USER") ${REMOTE_LOCKED_BASH}" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt" || restart_section_failed $?
 # Again here: a restore may have fenced the bay since the deploy began.
 [[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
@@ -732,7 +744,7 @@ bay_run bay-health
 EOF
   else
     log "Restart frontdoor, run migrations, roll hub workers, and run health checks"
-    remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") RESTART_CLOUDFLARED=$(q "$RESTART_CLOUDFLARED") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+    remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") RESTART_CLOUDFLARED=$(q "$RESTART_CLOUDFLARED") BAY_USER=$(q "$BAY_USER") ${REMOTE_LOCKED_BASH}" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt" || restart_section_failed $?
 # Again here: a restore may have fenced the bay since the deploy began.
 [[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail

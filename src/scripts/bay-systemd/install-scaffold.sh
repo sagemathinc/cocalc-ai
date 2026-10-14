@@ -135,7 +135,8 @@ for file in "${SCRIPT_DIR}/libexec/"*; do
   install -m 0755 "$file" "$TARGET_LIBEXEC_DIR/"
 done
 # The restore fence on every bay unit, and bay-restore with its lib.sh.
-"${SCRIPT_DIR}/install-restore-tools.sh" --root "$ROOT_DIR" --no-daemon-reload
+"${SCRIPT_DIR}/install-restore-tools.sh" --root "$ROOT_DIR" \
+  --systemd-dir "$SYSTEMD_DIR" --libexec-dir "$LIBEXEC_DIR" --no-daemon-reload
 install -m 0440 "${SCRIPT_DIR}/sudoers/"* "$TARGET_SUDOERS_DIR/"
 install -m 0644 "${SCRIPT_DIR}/needrestart/cocalc-bay.conf" \
   "${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf"

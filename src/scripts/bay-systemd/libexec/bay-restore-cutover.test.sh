@@ -178,7 +178,7 @@ bay_restore() {
     COCALC_BAY_USER="$(id -un)" COCALC_BAY_GROUP="$(id -gn)" \
     COCALC_BAY_CURRENT_LINK="${TMP_ROOT}/current" \
     COCALC_BAY_RESTORE_ASSUME_TRUSTED_DIR="${ASSUME_TRUSTED_DIR}" \
-    COCALC_BAY_RESTORE_FENCE="${TMP_ROOT}/fence" \
+    COCALC_BAY_RESTORE_FENCE="${TMP_ROOT}/fence" COCALC_BAY_DEPLOY_LOCK="${TMP_ROOT}/deploy.lock" \
     COCALC_BAY_PGBACKREST_S3_BUCKET=b COCALC_BAY_PGBACKREST_S3_ENDPOINT=https://r2.invalid \
     COCALC_BAY_PGBACKREST_S3_ACCESS_KEY=k COCALC_BAY_PGBACKREST_S3_SECRET_KEY=s \
     COCALC_BAY_PGBACKREST_CIPHER_PASS=c COCALC_BAY_SQLITE_RUSTIC_PASSWORD=p \
@@ -386,5 +386,26 @@ fresh_vm
 touch "${TMP_ROOT}/stuck-postgres"
 restore --work-dir "${WORKS}/r9" && fail "restored past a PostgreSQL that did not stop"
 [[ -e "${TMP_ROOT}/fence" ]] || fail "a failed stop lifted the operator's fence"
+
+# One restore or deploy at a time: while a deploy holds the lock, a restore
+# or cutover is refused before it touches anything.
+setup ""
+touch "${TMP_ROOT}/healthy"
+flock -o "${TMP_ROOT}/deploy.lock" sleep 30 &
+holder=$!
+sleep 0.5
+restore --work-dir "${WORKS}/r10" && fail "restored while a deploy held the lock"
+grep -q 'a bay deploy or another restore is running' "${TMP_ROOT}/out" || fail "no lock refusal: $(cat "${TMP_ROOT}/out")"
+[[ ! -s "$LOG" && ! -e "${TMP_ROOT}/fence" ]] || fail "a refused restore touched the bay: $(cat "$LOG")"
+work="${WORKS}/work11"
+setup "$work"
+cutover "$work" && fail "cut over while a deploy held the lock"
+[[ ! -s "$LOG" ]] || fail "a refused cutover touched the bay: $(cat "$LOG")"
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+# Nothing the restore ran holds the lock afterwards (flock -o): a deploy can
+# take it at once.
+restore --work-dir "${WORKS}/r12" || { cat "${TMP_ROOT}/out" >&2; fail "restore after the lock was freed failed"; }
+flock -n "${TMP_ROOT}/deploy.lock" true || fail "the lock is still held after the restore"
 
 echo "bay-restore tests passed"

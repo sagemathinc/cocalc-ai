@@ -64,6 +64,15 @@ bash "${SCRIPT_DIR}/install-restore-tools.sh" --root "$TOOLS_ROOT" --fence
 [[ -f "${TOOLS_ROOT}/etc/systemd/system/cocalc-bay-.service.d/restore-fence.conf" ]]
 cmp -s "${SCRIPT_DIR}/libexec/bay-restore" "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/bay-restore"
 [[ -x "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/bay-restore-engine.py" && -f "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/lib.sh" ]]
+# Custom destinations reach the restore tooling too: the drop-ins in the
+# custom systemd dir, bay-restore with its lib.sh in the custom libexec dir.
+CUSTOM_ROOT="${TMP_ROOT}/custom-rootfs"
+bash "${SCRIPT_DIR}/install-scaffold.sh" --root "$CUSTOM_ROOT" \
+  --systemd-dir /custom/systemd --libexec-dir /custom/libexec >/dev/null
+[[ -f "${CUSTOM_ROOT}/custom/systemd/cocalc-bay-.service.d/restore-fence.conf" ]]
+[[ ! -e "${CUSTOM_ROOT}/etc/systemd/system/cocalc-bay-.service.d" ]]
+[[ -x "${CUSTOM_ROOT}/custom/libexec/bay-restore" && -f "${CUSTOM_ROOT}/custom/libexec/lib.sh" ]]
+[[ ! -e "${CUSTOM_ROOT}/usr/local/libexec/cocalc-bay" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-restore" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-config-escrow-run" ]]
 grep -qx 'ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run' \

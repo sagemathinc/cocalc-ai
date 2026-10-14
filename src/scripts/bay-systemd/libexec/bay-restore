@@ -537,8 +537,29 @@ cmd_cutover() {
   echo "  A new full pgBackRest backup was started (cocalc-bay-pgbackrest-backup@full)."
 }
 
+# One restore or deploy at a time. bay-restore and bay-bootstrap-release run
+# whole under this lock, so a deploy cannot change the release or start
+# PostgreSQL in the middle of a restore, nor a restore stop the bay in the
+# middle of a deploy. Run under "flock -o": the flock process holds the lock,
+# and nothing this run starts (the engine, the bay account's commands)
+# inherits it or can release it. COCALC_BAY_DEPLOY_LOCK exists only for tests.
+DEPLOY_LOCK="${COCALC_BAY_DEPLOY_LOCK:-/etc/cocalc/bay-deploy.lock}"
+run_locked() {
+  [[ "${COCALC_BAY_DEPLOY_LOCKED:-}" != 1 ]] || return 0
+  install -d -m 0755 "$(dirname "$DEPLOY_LOCK")"
+  local rc=0
+  COCALC_BAY_DEPLOY_LOCKED=1 flock -n -o -E 75 "$DEPLOY_LOCK" \
+    "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" "$@" || rc=$?
+  [[ "$rc" != 75 ]] ||
+    die "a bay deploy or another restore is running (it holds ${DEPLOY_LOCK}); nothing was changed"
+  exit "$rc"
+}
+
 [[ "$(id -u)" == 0 ]] || die "run as root"
 command="${1:-}"
+case "$command" in
+  restore|cutover) run_locked "$@" ;;
+esac
 shift || true
 case "$command" in
   restore) cmd_restore "$@" ;;

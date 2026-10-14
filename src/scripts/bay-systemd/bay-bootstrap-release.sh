@@ -911,6 +911,10 @@ prune_old_releases() {
 # staged or changed. Only a rebuild's release install (mode B step 6) runs
 # fenced, with --fenced, and it never starts the bay.
 check_restore_fence() {
+  if [[ "$ALLOW_FENCED" -eq 1 && "$START_BAY" -eq 1 ]]; then
+    echo "--fenced and --start exclude each other: a fenced bay is started only by bay-restore's cutover" >&2
+    exit 2
+  fi
   [[ -e "$RESTORE_FENCE" ]] || return 0
   if [[ "$ALLOW_FENCED" -ne 1 ]]; then
     echo "refusing: the bay is fenced for a restore (${RESTORE_FENCE}); deploy after bay-restore's cutover (a mode B rebuild installs with --fenced)" >&2
@@ -1413,6 +1417,12 @@ EOF
   fi
 
   if [[ "$START_BAY" -eq 1 ]]; then
+    # Checked at the start too; the deploy lock keeps a restore from fencing
+    # the bay since, so this is defense in depth.
+    if [[ -e "$RESTORE_FENCE" ]]; then
+      echo "refusing --start: the bay is fenced for a restore (${RESTORE_FENCE})" >&2
+      exit 1
+    fi
     validate_site_master_key
     run systemctl start cocalc-bay.target
     run systemctl start cocalc-bay-frontdoor.service
@@ -1456,6 +1466,26 @@ Next steps:
 EOF
 }
 
+# One deploy or restore at a time: as root, the whole run holds the bay's
+# deploy lock, which bay-restore holds for a whole restore too, so a restore
+# cannot fence and stop the bay while this changes the release or starts
+# PostgreSQL, nor this run during a restore. Under "flock -o" the lock stays
+# with the flock process: nothing this run starts inherits it.
+DEPLOY_LOCK="${COCALC_BAY_DEPLOY_LOCK:-/etc/cocalc/bay-deploy.lock}"
+run_locked_main() {
+  if [[ "$(id -u)" != 0 || "${COCALC_BAY_DEPLOY_LOCKED:-}" == 1 ]]; then
+    main "$@"
+    return
+  fi
+  install -d -m 0755 "$(dirname "$DEPLOY_LOCK")"
+  local rc=0
+  COCALC_BAY_DEPLOY_LOCKED=1 flock -n -o -E 75 "$DEPLOY_LOCK" "$(readlink -f "$0")" "$@" || rc=$?
+  if [[ "$rc" == 75 ]]; then
+    echo "refusing: a bay restore or another deploy is running (it holds ${DEPLOY_LOCK}); nothing was changed" >&2
+  fi
+  exit "$rc"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  main "$@"
+  run_locked_main "$@"
 fi

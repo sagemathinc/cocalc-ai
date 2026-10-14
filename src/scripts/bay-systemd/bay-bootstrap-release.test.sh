@@ -437,6 +437,10 @@ fence_check() {
   (RESTORE_FENCE="${TMP_ROOT}/bay-restore-fence" ALLOW_FENCED="$1" START_BAY="$2" check_restore_fence) 2>/dev/null
 }
 fence_check 0 1 || { echo "refused a deploy to a bay that is not fenced" >&2; exit 1; }
+if fence_check 1 1; then
+  echo "accepted --fenced with --start" >&2
+  exit 1
+fi
 touch "${TMP_ROOT}/bay-restore-fence"
 if fence_check 0 0; then
   echo "deployed to a fenced bay" >&2
@@ -452,6 +456,28 @@ if ! awk '/^main\(\)/ { inmain = 1 } inmain && /require_root$/ { getline; found 
   "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
   echo "check_restore_fence is not the first step after require_root" >&2
   exit 1
+fi
+
+# As root the whole run holds the deploy lock, so it is refused, before it
+# parses anything, while a restore holds it (needs passwordless sudo).
+if [[ "$(id -u)" == 0 ]] || sudo -n true 2>/dev/null; then
+  lock="${TMP_ROOT}/deploy.lock"
+  flock -o "$lock" sleep 30 &
+  holder=$!
+  sleep 0.5
+  if sudo -n env COCALC_BAY_DEPLOY_LOCK="$lock" "${SCRIPT_DIR}/bay-bootstrap-release.sh" --help \
+    > "${TMP_ROOT}/locked.out" 2>&1; then
+    echo "ran while a restore held the deploy lock" >&2
+    exit 1
+  fi
+  grep -q 'a bay restore or another deploy is running' "${TMP_ROOT}/locked.out" ||
+    { echo "no lock refusal: $(cat "${TMP_ROOT}/locked.out")" >&2; exit 1; }
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  sudo -n env COCALC_BAY_DEPLOY_LOCK="$lock" "${SCRIPT_DIR}/bay-bootstrap-release.sh" --help >/dev/null ||
+    { echo "refused once the lock was free" >&2; exit 1; }
+else
+  echo "note: deploy lock test needs root or passwordless sudo; skipped" >&2
 fi
 
 echo "bay release pruning and CDN retention tests passed"
