@@ -149,8 +149,11 @@ const ABOUT_PAGE_CSS = `
     width: 100%;
   }
 
+  /* The principle cards hold a few sentences each, too long for three narrow
+     columns on tablets or at 200% zoom, so they stack here. */
   @media (max-width: 900px) {
-    .cocalc-about-founder {
+    .cocalc-about-founder,
+    .cocalc-about-principles {
       grid-template-columns: 1fr;
     }
 
@@ -165,7 +168,6 @@ const ABOUT_PAGE_CSS = `
       gap: 38px;
     }
 
-    .cocalc-about-principles,
     .cocalc-about-audiences,
     .cocalc-about-facts,
     .cocalc-about-timeline,
