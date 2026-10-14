@@ -63,8 +63,9 @@ import {
 } from "../state";
 import { registerCommercialOrderBillingAccount } from "../billing-authority";
 import {
+  commercialInvoicePaymentMetadata,
   commercialInvoicePaymentSettings,
-  isApprovedPaymentMethodSet,
+  hasApprovedPaymentSettings,
 } from "../payment-settings";
 
 const logger = getLogger("server:commercial-orders:stripe");
@@ -820,11 +821,7 @@ function assertInvoiceDeliveryConfiguration(
     );
   }
   assertCommercialAutomaticTax(stripeInvoice, order);
-  if (
-    !isApprovedPaymentMethodSet(
-      stripeInvoice.payment_settings?.payment_method_types,
-    )
-  ) {
+  if (!hasApprovedPaymentSettings(stripeInvoice)) {
     throw Error(
       "Stripe invoice payment settings do not match the approved order",
     );
@@ -1044,6 +1041,7 @@ export async function createStripeCommercialInvoiceDraft(
           description: invoiceDescription(order),
           metadata: {
             ...preview.metadata,
+            ...commercialInvoicePaymentMetadata(),
             commercial_invoice_id: invoice.id,
           },
           automatic_tax: {

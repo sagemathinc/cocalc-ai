@@ -12,27 +12,56 @@ const PAYMENT_METHOD_TYPES = [
   "us_bank_account",
   "customer_balance",
 ] as const;
-// Invoices created before bank transfer was offered remain valid.
+const FUNDING_TYPE = "bank_transfer";
+const BANK_TRANSFER_TYPE = "us_bank_transfer";
+
+// Invoices created before bank transfer was offered have card + ACH only.
+// Every invoice we create or normalize now records the settings version in
+// its Stripe metadata, so only an invoice without that marker may use the
+// legacy set: a current invoice that lost bank transfer is drift.
 const LEGACY_PAYMENT_METHOD_TYPES = ["card", "us_bank_account"] as const;
+export const PAYMENT_SETTINGS_METADATA_KEY = "commercial_payment_settings";
+const PAYMENT_SETTINGS_VERSION = "bank-transfer-v1";
 
 export function commercialInvoicePaymentSettings() {
   return {
     payment_method_types: [...PAYMENT_METHOD_TYPES],
     payment_method_options: {
       customer_balance: {
-        funding_type: "bank_transfer" as const,
-        bank_transfer: { type: "us_bank_transfer" as const },
+        funding_type: FUNDING_TYPE as typeof FUNDING_TYPE,
+        bank_transfer: {
+          type: BANK_TRANSFER_TYPE as typeof BANK_TRANSFER_TYPE,
+        },
       },
     },
   };
 }
 
-export function isApprovedPaymentMethodSet(value: unknown): boolean {
-  const actual = JSON.stringify(
-    Array.isArray(value) ? value.map(String).sort() : [],
+export function commercialInvoicePaymentMetadata(): Record<string, string> {
+  return { [PAYMENT_SETTINGS_METADATA_KEY]: PAYMENT_SETTINGS_VERSION };
+}
+
+function sameMethods(actual: unknown, expected: readonly string[]): boolean {
+  if (!Array.isArray(actual)) return false;
+  return (
+    JSON.stringify(actual.map(String).sort()) ===
+    JSON.stringify([...expected].sort())
   );
-  return [
-    PAYMENT_METHOD_TYPES as readonly string[],
-    LEGACY_PAYMENT_METHOD_TYPES as readonly string[],
-  ].some((allowed) => JSON.stringify([...allowed].sort()) === actual);
+}
+
+/** True if a Stripe invoice still has the payment settings we created it with. */
+export function hasApprovedPaymentSettings(stripeInvoice: any): boolean {
+  const settings = stripeInvoice?.payment_settings;
+  const types = settings?.payment_method_types;
+  if (sameMethods(types, PAYMENT_METHOD_TYPES)) {
+    const balance = settings?.payment_method_options?.customer_balance;
+    return (
+      balance?.funding_type === FUNDING_TYPE &&
+      balance?.bank_transfer?.type === BANK_TRANSFER_TYPE
+    );
+  }
+  return (
+    sameMethods(types, LEGACY_PAYMENT_METHOD_TYPES) &&
+    stripeInvoice?.metadata?.[PAYMENT_SETTINGS_METADATA_KEY] == null
+  );
 }

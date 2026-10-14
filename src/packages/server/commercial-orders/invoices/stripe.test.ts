@@ -211,6 +211,12 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
     automatic_tax: { enabled: false },
     payment_settings: {
       payment_method_types: ["card", "us_bank_account", "customer_balance"],
+      payment_method_options: {
+        customer_balance: {
+          funding_type: "bank_transfer",
+          bank_transfer: { type: "us_bank_transfer" },
+        },
+      },
     },
     subtotal: 390000,
     total: 390000,
@@ -227,6 +233,7 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
       commercial_invoice_id: "ci_1",
       order_number: "AR-2026-000001",
       cocalc_site: SITE,
+      commercial_payment_settings: "bank-transfer-v1",
     },
     payments: { data: [] },
     status_transitions: {},
@@ -353,6 +360,7 @@ describe("commercial Stripe invoices", () => {
           commercial_order_id: "co_1",
           commercial_invoice_id: "ci_1",
           cocalc_site: SITE,
+          commercial_payment_settings: "bank-transfer-v1",
         }),
       }),
       expect.objectContaining({
@@ -1405,8 +1413,12 @@ describe("commercial Stripe invoices", () => {
   });
 
   it("still finalizes a draft created before bank transfer was offered", async () => {
+    // No settings marker: created by the code before bank transfer.
+    const { commercial_payment_settings: _marker, ...legacyMetadata } =
+      stripeInvoiceFixture().metadata;
     const legacy = {
       payment_settings: { payment_method_types: ["us_bank_account", "card"] },
+      metadata: legacyMetadata,
     };
     const invoice = invoiceFixture({ status: "draft" });
     mockGetCommercialOrder.mockResolvedValue(
@@ -1544,6 +1556,39 @@ describe("commercial Stripe invoices", () => {
     [
       "payment methods",
       { payment_settings: { payment_method_types: ["card"] } },
+      "payment settings",
+    ],
+    [
+      "legacy methods on a current invoice",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "us_bank_account"],
+        },
+      },
+      "payment settings",
+    ],
+    [
+      "bank transfer options",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "us_bank_account", "customer_balance"],
+        },
+      },
+      "payment settings",
+    ],
+    [
+      "bank transfer type",
+      {
+        payment_settings: {
+          payment_method_types: ["card", "us_bank_account", "customer_balance"],
+          payment_method_options: {
+            customer_balance: {
+              funding_type: "bank_transfer",
+              bank_transfer: { type: "eu_bank_transfer" },
+            },
+          },
+        },
+      },
       "payment settings",
     ],
     [

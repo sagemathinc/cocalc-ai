@@ -35,7 +35,10 @@ import {
   resolveCommercialStripeCustomer,
 } from "../invoices/stripe";
 import { recordCommercialProviderFailure } from "../observability";
-import { commercialInvoicePaymentSettings } from "../payment-settings";
+import {
+  commercialInvoicePaymentMetadata,
+  commercialInvoicePaymentSettings,
+} from "../payment-settings";
 import {
   buildCommercialQuotePreview,
   commercialIdempotencyKey,
@@ -1125,6 +1128,7 @@ async function normalizeAcceptedInvoice(opts: {
         commercial_order_id: opts.order.id,
         commercial_invoice_id: opts.invoiceId,
         accepted_commercial_quote_id: opts.quoteId,
+        ...commercialInvoicePaymentMetadata(),
         order_number: opts.order.order_number,
         cocalc_site: await currentStripeSite(),
       },
