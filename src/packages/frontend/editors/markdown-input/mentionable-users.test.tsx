@@ -171,6 +171,17 @@ describe("mentionableUsers", () => {
       computer("old", { revoked_at: Date.now() - 2 * 24 * 3_600_000 }),
     ];
     mockAllowAgentMentions = true;
+    // The site's computers switch, off: no computers are offered.
+    const off = renderHook(() => useMentionableUsers());
+    expect(
+      off.result.current("").some((item) => item.group === "Computers"),
+    ).toBe(false);
+    jest
+      .mocked(useTypedRedux)
+      .mockImplementation(((store: string, key: string) =>
+        store === "customize" && key === "computers_enabled"
+          ? true
+          : undefined) as any);
     const { result } = renderHook(() => useMentionableUsers());
     const offered = result
       .current("")

@@ -6,6 +6,11 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: () => mockSiteURL(),
 }));
 
+const mockSettings = { computers_enabled: true };
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: async () => mockSettings,
+}));
+
 jest.mock("@cocalc/server/computers/routing", () => ({
   pairingUrl: async (id: string) => `https://bay-2.example.com/c/${id}`,
 }));
@@ -64,4 +69,18 @@ test("serves the computer connect script with the home bay's pairing line", asyn
   const bad = await call("GET", { action: "computer", request: "R-x; id" });
   expect(bad.body).toContain("t a pairing request");
   expect(bad.body).not.toContain("; id");
+});
+
+test("the computer setup line says computers are off when the site turned them off", async () => {
+  mockSettings.computers_enabled = false;
+  try {
+    const r = await call("GET", {
+      action: "computer",
+      request: "R-396W8E8XD1",
+    });
+    expect(r.body).toContain("Computers are turned off on this site");
+    expect(r.body).not.toContain("'computer' 'connect'");
+  } finally {
+    mockSettings.computers_enabled = true;
+  }
 });

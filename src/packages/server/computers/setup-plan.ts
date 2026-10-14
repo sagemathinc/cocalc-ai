@@ -11,6 +11,7 @@ import {
   type SetupPlan,
 } from "@cocalc/server/cli-setup/setup-script";
 import { pairingUrl } from "./routing";
+import { COMPUTERS_DISABLED, computersEnabled } from "./enabled";
 
 export const REQUEST_ID = /^R-[0-9A-HJ-NP-Z]{10}$/;
 
@@ -18,6 +19,9 @@ export const REQUEST_ID = /^R-[0-9A-HJ-NP-Z]{10}$/;
 export async function computerConnectPlan(
   request_id: string,
 ): Promise<SetupPlan> {
+  if (!(await computersEnabled())) {
+    throw new SetupActionError(COMPUTERS_DISABLED);
+  }
   if (!REQUEST_ID.test(request_id)) {
     throw new SetupActionError("that isn't a pairing request");
   }
