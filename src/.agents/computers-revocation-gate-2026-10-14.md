@@ -58,10 +58,12 @@ Implemented and tested:
 
 All of §9 is covered:
 - crash points: `backend/computers/daemon/crash.test.ts` runs real daemon
-  processes SIGKILLed after the state write, before each side effect, and
-  before the ack, for "ended" and for a project floor; a restart plus the
-  redelivered state stops the job and the orphaned 50-minute exec; an
-  older state's replay never stops newer work;
+  processes (directly, not through the conat connector) SIGKILLed after
+  the state write, before each kill step (the job-kill batch as a whole,
+  and each exec), and before the ack, for "ended" and for a project
+  floor; a restart plus the redelivered state stops the job and the
+  orphaned 50-minute exec; an older state's replay never stops newer work.
+  Delivery, redelivery and finalize are covered by the server tests;
 - the rotation crossing: `revocation.e2e.test.ts` (paired before a
   rotation, offline across it, revoked: ended at login, signed with the
   certificate's retired key);
