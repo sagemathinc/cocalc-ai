@@ -428,6 +428,11 @@ stage_release() {
   REMOTE_BUNDLE="${REMOTE_WORK_DIR}/${bundle_name}"
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
+  # A fenced bay is being restored or rebuilt (RESTORE.md): none of its units
+  # start, so a deploy would only appear to restart it.
+  if remote_exec "test -e /etc/cocalc/bay-restore-fence"; then
+    die "${REMOTE} is fenced for a restore (/etc/cocalc/bay-restore-fence); finish the restore (bay-restore cutover) before deploying"
+  fi
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
   if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
     log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"

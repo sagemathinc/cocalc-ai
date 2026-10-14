@@ -15,6 +15,17 @@ other secrets, data) comes from the backups.
   every remaining process of the `cocalc-bay` account. Nothing of the bay's
   runs again until the restore has finished: root must not work on files that
   a process of the bay account could swap out underneath it.
+- **The bay is fenced until the cutover.** Before it stops anything,
+  `bay-restore` creates `/etc/cocalc/bay-restore-fence`. While that file
+  exists, no bay unit starts: not at boot, not from a timer, not through
+  `Restart=` (a drop-in on every `cocalc-bay*` unit makes the file a start
+  condition). So a reboot during a restore, which can take hours, does not
+  bring up a half-restored bay, its tunnel or its backup jobs. The cutover
+  lifts the fence once the verified data is in place. A failed restore and
+  `--no-cutover` lift the fence too, unless it was already there before the
+  restore (mode B, below). If `bay-restore` itself is killed, the fence
+  stays: run the restore again, or remove the file by hand to bring the bay
+  back on its current data. A bay deploy refuses to run against a fenced bay.
 - **The live data is not changed until the cutover.** The restore is built in
   a new work directory and verified there. Only then does the cutover move the
   live `postgres` and `sync` directories to `<work-dir>/pre-restore/`, move the
@@ -184,9 +195,14 @@ the hosts and in project backups.
    PostgreSQL writes its local backups to `/mnt/cocalc-backups`, and does not
    start until the bay account owns it.
 
-4. **Install the master key** (from the human, as a file):
+4. **Fence the new bay, and install the master key** (from the human, as a
+   file). The release installed in step 6 enables the bay's units, including
+   the production tunnel, so that it comes up at boot. The fence (see "How
+   the restore works") keeps all of it down, across reboots, until the
+   cutover in step 8 has put restored data in place:
 
    ```sh
+   sudo install -m 0644 /dev/null /etc/cocalc/bay-restore-fence
    sudo install -o root -g root -m 0600 ./site-master-key /etc/cocalc/site-master-key
    ```
 
@@ -248,21 +264,45 @@ the hosts and in project backups.
      sudo tar -xz -C /usr/local/bin rustic
    ```
 
-8. **Make sure the old bay is down, then restore and start the bay.** The new
-   VM runs the same Cloudflare tunnel as the old one. If both run it,
-   Cloudflare spreads requests over two separate bays, and both archive into
-   the same backup repository. So if the old VM still exists, stop it first
-   and confirm that it is stopped:
+8. **Make sure the old bay cannot come back, then restore and start the
+   bay.** The new VM runs the same Cloudflare tunnel as the old one, with the
+   same credentials. If both run it, Cloudflare spreads requests over two
+   separate bays, and both write to the same backup repository. Seeing no
+   tunnel connectors right now is not enough: GCP restarts a VM that went
+   down with its host or zone, and the old bay then reconnects. One of these
+   must hold before you go on:
+   - **The old VM is stopped or deleted, confirmed through the API.** A
+     stopped VM stays stopped:
 
-   ```sh
-   gcloud compute instances stop prod-bay-0 --project=projecthosts --zone=us-south1-a
-   gcloud compute instances describe prod-bay-0 --project=projecthosts \
-     --zone=us-south1-a --format='value(status)'   # must print TERMINATED
-   ```
+     ```sh
+     gcloud compute instances stop prod-bay-0 --project=projecthosts --zone=us-south1-a
+     gcloud compute instances describe prod-bay-0 --project=projecthosts \
+       --zone=us-south1-a --format='value(status)'   # must print TERMINATED
+     ```
 
-   If the old VM cannot be reached (for example, its zone is down), ask the
-   human to confirm in the Cloudflare dashboard that the tunnel shows no
-   connectors before you go on. Then:
+   - **If it cannot be reached (its zone is down), its credentials are
+     revoked.** It would come back with everything it had. With the human,
+     who has the Cloudflare login:
+     - revoke the bay's R2 tokens (R2 > Manage API tokens), create new ones
+       scoped to the bucket, and put them in `/etc/cocalc/bay-secrets.env` on
+       the new VM;
+     - revoke the Cloudflare API token the bay uses for its tunnel (server
+       setting "Project Hosts: Cloudflare Tunnel - API Token"), create a new
+       one with the same permissions, and add it to
+       `/etc/cocalc/bay-secrets.env` as
+       `COCALC_SETTING_PROJECT_HOSTS_CLOUDFLARE_TUNNEL_API_TOKEN=<token>`
+       (the hubs store it at start; remove the line afterwards, as it keeps
+       the setting read-only);
+     - delete the tunnel (Zero Trust > Networks > Tunnels, `hub-<hostname>`).
+       The new bay creates a new one and points DNS at it, and the old
+       tunnel secret no longer works;
+     - replace the host-owner SSH key: trust a new key on the project hosts
+       and remove the old public key (README.md, "Rotation").
+
+     Then rotate the rest as in step 10. Stop or delete the old VM as soon as
+     its zone is back.
+
+   Then:
 
    ```sh
    sudo /usr/local/libexec/cocalc-bay/bay-restore restore --latest --yes
@@ -272,9 +312,10 @@ the hosts and in project backups.
    its newest snapshot, moves any freshly initialized data aside, and starts
    the bay, with the frontdoor and the tunnel (enabled bay services outside
    `cocalc-bay.target`). Traffic reaches the new VM through the Cloudflare
-   tunnel, whose credentials came from the escrow; DNS does not change. If
-   the restore fails, or with `--no-cutover`, the frontdoor and the tunnel
-   stay down: the new VM's empty bay never takes traffic.
+   tunnel, whose credentials came from the escrow; DNS does not change. The
+   cutover lifts the fence from step 4. If the restore fails, or with
+   `--no-cutover`, the fence stays and the bay stays down, after a reboot
+   too: the new VM's empty bay never takes traffic.
 
 9. **Afterwards:**
    - confirm the site works;
@@ -300,6 +341,9 @@ the hosts and in project backups.
   - the bay is stopped, and its processes are gone, before the engine runs;
   - the bay restarts on its old data after a failure or with `--no-cutover`;
   - the cutover order, the unhealthy case and the backup warning are right;
+  - the bay is fenced while the engine runs; the cutover, a failed restore
+    and `--no-cutover` lift the fence, except one that was there before the
+    restore; a stop that fails lifts the fence it set;
   - on a fresh VM the enabled frontdoor and tunnel start with the restored
     bay, and stay down after a failure or with `--no-cutover`;
   - `--target-time` keeps its microseconds.

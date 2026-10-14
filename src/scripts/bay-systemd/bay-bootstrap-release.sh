@@ -1388,6 +1388,11 @@ EOF
   fi
 
   if [[ "$START_BAY" -eq 1 ]]; then
+    # Fenced for a restore (RESTORE.md): the starts below would be skipped.
+    if [[ -e /etc/cocalc/bay-restore-fence ]]; then
+      echo "not starting the bay: it is fenced for a restore (/etc/cocalc/bay-restore-fence); bay-restore cutover starts it" >&2
+      exit 1
+    fi
     validate_site_master_key
     run systemctl start cocalc-bay.target
     run systemctl start cocalc-bay-frontdoor.service

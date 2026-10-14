@@ -48,6 +48,13 @@ LIBEXEC="${TARGET_ROOT}/usr/local/libexec/cocalc-bay"
 # So is bay-restore, with its engine and a copy of lib.sh.
 [[ -x "${LIBEXEC}/bay-restore" && -x "${LIBEXEC}/bay-restore-engine.py" && -f "${LIBEXEC}/lib.sh" ]]
 [[ ! -e "${LIBEXEC}/bay-restore-cutover.test.sh" ]]
+[[ ! -e "${LIBEXEC}/bay-restore-engine.test.sh" ]]
+# The restore fence holds every bay unit: the target, and by prefix drop-ins
+# all cocalc-bay-* services (template instances too), timers and targets.
+for dropin_dir in cocalc-bay.target.d cocalc-bay-.target.d cocalc-bay-.service.d cocalc-bay-.timer.d; do
+  grep -qx 'ConditionPathExists=!/etc/cocalc/bay-restore-fence' \
+    "${TARGET_ROOT}/etc/systemd/system/${dropin_dir}/restore-fence.conf"
+done
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-restore" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-config-escrow-run" ]]
 grep -qx 'ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run' \

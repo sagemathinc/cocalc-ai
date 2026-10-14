@@ -30,6 +30,13 @@
 # If the restore fails, the bay is restarted on its unchanged data. Exit
 # status 2: the bay is running on the restored data, but the required new
 # full backup could not be started.
+#
+# From the moment the bay is stopped until the cutover, the bay is fenced:
+# while /etc/cocalc/bay-restore-fence exists no bay unit starts, not at boot,
+# by a timer or a Restart= either (systemd-dropins/restore-fence.conf). A
+# restore that fails, or --no-cutover, lifts the fence it set; a fence that
+# was there before (a VM being rebuilt, RESTORE.md mode B) stays until a
+# cutover puts verified data in place.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # Installed root-owned in /usr/local/libexec/cocalc-bay with a copy of lib.sh;
@@ -103,6 +110,36 @@ usage() {
   sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
+# The restore fence (see the top of this file). The drop-in names this path;
+# COCALC_BAY_RESTORE_FENCE exists only for tests and, like everything here,
+# comes from root's environment.
+FENCE="${COCALC_BAY_RESTORE_FENCE:-/etc/cocalc/bay-restore-fence}"
+
+# Fence the bay, recording in DIR/fence-preexisting whether it already was.
+set_fence() {
+  local work_dir="$1"
+  if [[ -e "$FENCE" ]]; then
+    echo yes > "${work_dir}/fence-preexisting"
+  else
+    echo no > "${work_dir}/fence-preexisting"
+  fi
+  printf 'bay-restore %s since %s\n' "$work_dir" "$(date -u +%FT%TZ)" > "$FENCE"
+  chmod 0644 "$FENCE"
+}
+
+lift_fence() {
+  rm -f "$FENCE"
+}
+
+# stop_bay could not stop the bay: lift the fence it set, as nothing was
+# changed, then fail.
+stop_failed() {
+  local work_dir="$1"
+  shift
+  [[ "$(cat "${work_dir}/fence-preexisting" 2>/dev/null)" == yes ]] || lift_fence
+  die "$@"
+}
+
 json_get() {
   "$PYTHON" -c 'import json,sys
 value = json.load(open(sys.argv[1]))
@@ -162,6 +199,9 @@ make_work_dir() {
 # and restart themselves); then any process of the bay account that is left.
 stop_bay() {
   local work_dir="$1" timers jobs unit services
+  # First, so that from here on nothing of the bay's starts again, not even
+  # after a reboot during the restore.
+  set_fence "$work_dir"
   timers="$(systemctl list-units --type=timer --state=active --no-legend --plain 'cocalc-bay-*' | awk '{print $1}')"
   echo "bay-restore: stopping the bay"
   printf '%s\n' $timers > "${work_dir}/stopped-timers"
@@ -175,7 +215,7 @@ stop_bay() {
   [[ -z "$jobs" ]] || systemctl stop $jobs
   for unit in $jobs; do
     if systemctl is-active --quiet "$unit"; then
-      die "${unit} did not stop; nothing was changed. Timers stopped: ${work_dir}/stopped-timers"
+      stop_failed "$work_dir" "${unit} did not stop; nothing was changed. Timers stopped: ${work_dir}/stopped-timers"
     fi
   done
   if systemctl is-active --quiet cocalc-bay.target; then
@@ -186,7 +226,7 @@ stop_bay() {
   systemctl stop cocalc-bay.target
   systemctl stop cocalc-bay-postgres.service || true
   if systemctl is-active --quiet cocalc-bay-postgres.service; then
-    die "cocalc-bay-postgres did not stop; nothing was changed"
+    stop_failed "$work_dir" "cocalc-bay-postgres did not stop; nothing was changed"
   fi
   services="$(systemctl list-units --type=service --state=active,activating,reloading \
     --no-legend --plain 'cocalc-bay*' | awk '{print $1}')"
@@ -195,7 +235,7 @@ stop_bay() {
   [[ -z "$services" ]] || systemctl stop $services
   for unit in $services; do
     if systemctl is-active --quiet "$unit"; then
-      die "${unit} did not stop; nothing was changed. Stopped: ${work_dir}/stopped-services, ${work_dir}/stopped-timers"
+      stop_failed "$work_dir" "${unit} did not stop; nothing was changed. Stopped: ${work_dir}/stopped-services, ${work_dir}/stopped-timers"
     fi
   done
   kill_bay_processes
@@ -249,9 +289,16 @@ start_stopped_services() {
 # that is nothing: its empty bay must not take the tunnel's traffic.
 restart_bay() {
   local work_dir="$1" timers
-  echo "bay-restore: restarting the bay on its unchanged data"
   # Nothing the restore ran as the bay account may live on into the bay.
   kill_bay_processes
+  if [[ "$(cat "${work_dir}/fence-preexisting" 2>/dev/null)" == yes ]]; then
+    # A VM being rebuilt: its bay has no data until a cutover.
+    echo "bay-restore: ${FENCE} was there before the restore, so the bay stays fenced and stopped."
+    echo "  A cutover of a passed restore lifts it; to start this bay on its current data, remove it by hand."
+    return 0
+  fi
+  echo "bay-restore: restarting the bay on its unchanged data"
+  lift_fence
   # A work directory from before stopped-target was recorded: start it.
   if [[ "$(cat "${work_dir}/stopped-target" 2>/dev/null || echo active)" == active ]]; then
     systemctl start cocalc-bay.target || true
@@ -447,6 +494,8 @@ cmd_cutover() {
   date -u +%FT%TZ > "${work_dir}/cutover-at"
 
   echo "bay-restore: starting the bay on the restored data"
+  # Verified data is in place: the bay may start again, also at boot.
+  lift_fence
   local healthy=0
   for _ in $(seq 1 60); do
     # Again on every round: a unit whose dependency failed at first (say
@@ -461,10 +510,17 @@ cmd_cutover() {
   if [[ "$healthy" != 1 ]]; then
     # Leave backups and the other timers stopped, so nothing backs up or
     # prunes from a bay that may be broken while it is diagnosed.
-    die "the bay did not report healthy within 10 minutes; check 'systemctl status cocalc-bay.target' and ${BAY_HEALTH}. The previous data is in ${aside}/. The timers listed in ${work_dir}/stopped-timers were left stopped; start them once the bay is healthy."
+    die "the bay did not report healthy within 10 minutes; check 'systemctl status cocalc-bay.target' and ${BAY_HEALTH}. The previous data is in ${aside}/. The bay's timers (those listed in ${work_dir}/stopped-timers, and the enabled cocalc-bay-*.timer units) were left stopped; start them once the bay is healthy."
   fi
+  # Also the enabled timers, as a boot would: after a reboot during the
+  # restore, or on a rebuilt VM, none was running for stop_bay to record, and
+  # the backups must not stay off.
+  local unit
+  for unit in $(systemctl list-unit-files --no-legend --plain --state=enabled 'cocalc-bay-*.timer' | awk '{print $1}'); do
+    [[ " ${timers//$'\n'/ } " == *" ${unit} "* ]] || timers+=$'\n'"$unit"
+  done
   # shellcheck disable=SC2086
-  [[ -z "$timers" ]] || systemctl start $timers
+  [[ -z "${timers//[[:space:]]/}" ]] || systemctl start $timers
   echo "bay-restore: ${COCALC_BAY_ID} is running on the restored data."
   echo "  The previous data is kept in ${aside}/; delete it once you are satisfied."
   # A restore to a point in time starts a new timeline: take a fresh full
