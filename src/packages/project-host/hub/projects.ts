@@ -2577,6 +2577,23 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           runner_phase_timings_ms: runnerPhaseTimings,
         },
       });
+      // Agent turns fenced by a restart (or a lost runtime) resume now.
+      try {
+        const { releaseAcpProjectFenceResumesAfterStart } =
+          await import("@cocalc/lite/hub/acp");
+        const released = releaseAcpProjectFenceResumesAfterStart(project_id);
+        if (released > 0) {
+          logger.info("start: resuming agent work fenced by a restart", {
+            project_id,
+            released,
+          });
+        }
+      } catch (err) {
+        logger.warn("start: failed to resume fenced agent work", {
+          project_id,
+          err: `${err}`,
+        });
+      }
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.
       ensureProjectRow({
@@ -2621,21 +2638,29 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     project_id,
     force,
     runtime_exit_reason,
+    resume_agent_turns = false,
   }: {
     project_id: string;
     force?: boolean;
     runtime_exit_reason?: ProjectState["runtime_exit_reason"];
+    /** Part of a restart: running agent turns resume after the next start. */
+    resume_agent_turns?: boolean;
   }): Promise<void> {
     const activity_id = `stop:${project_id}:${Date.now()}`;
     const { pauseHarnessDiscovery } =
       await import("@cocalc/lite/hub/acp/harness-runtime");
     const resumeDiscovery = pauseHarnessDiscovery(project_id);
     beginProjectHostActivity(activity_id, "stop");
-    logger.debug("stop: project-host request received", { project_id, force });
+    logger.debug("stop: project-host request received", {
+      project_id,
+      force,
+      resume_agent_turns,
+    });
+    const resume = resume_agent_turns === true;
     try {
       // ACP sidecars share the project network namespace. Release their live
       // runtimes before Podman removes the primary container they depend on.
-      await fenceProjectHostAcpWork({ project_id });
+      await fenceProjectHostAcpWork({ project_id, resume });
       const status = await runnerApi.stop({ project_id, force });
       noteProjectHostActivityProgress(activity_id);
       let finalState = status?.state ?? "opened";
@@ -2668,7 +2693,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         );
       }
       // Retain the post-stop sweep for late worker/queue completion races.
-      await fenceProjectHostAcpWork({ project_id });
+      await fenceProjectHostAcpWork({ project_id, resume });
       if (!syntheticRuntimeProbeProjects.has(project_id)) {
         try {
           const base = getMountPoint();

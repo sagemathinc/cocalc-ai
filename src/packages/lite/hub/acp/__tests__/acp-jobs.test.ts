@@ -30,12 +30,16 @@ import {
   decodeAcpJobRequest,
   enqueueAcpJob,
   enqueueAcpJobCancelingQueuedRecoveries,
+  ACP_FENCE_INTENT_RESUME_PENDING,
+  ACP_FENCE_INTENT_RESUME_READY,
+  ACP_FENCE_INTENT_STOPPED,
   fenceAcpJobsForProject,
   getAcpJob,
   getAcpJobByOpId,
   hasNewerNonRecoveryAcpJob,
   latestAcpJobUpdateForWorker,
   listAcpJobsByRecoveryParent,
+  listAcpJobsWithFenceIntent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobs,
   listQueuedAcpJobThreadKeys,
@@ -43,8 +47,12 @@ import {
   nextQueuedAcpJobAvailability,
   oldestClaimableQueuedAcpJobTimestamp,
   oldestQueuedAcpJobTimestamp,
+  moveAcpJobFenceIntent,
+  releaseAcpProjectFenceResumes,
+  requeueFencedAcpJob,
   resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
+  stopAcpFenceResumesForThread,
   setAcpJobState,
   removeRetiredAutomationJobs,
 } from "../../sqlite/acp-jobs";
@@ -382,8 +390,10 @@ describe("acp job queue ordering", () => {
     expect(getAcpJobByOpId(running.op_id)).toMatchObject({
       state: "error",
       error: "project restart fence",
-      recovery_code: null,
+      // Owed to the chat and the sender, not a failure recovery.
+      recovery_code: ACP_FENCE_INTENT_STOPPED,
     });
+    expect(listAcpJobsWithRecoveryIntent()).toHaveLength(0);
     expect(getAcpJobByOpId(queued.op_id)?.state).toBe("canceled");
     setAcpJobState({
       op_id: running.op_id,
@@ -392,6 +402,120 @@ describe("acp job queue ordering", () => {
     });
     expect(getAcpJobByOpId(running.op_id)?.state).toBe("error");
     expect(listQueuedAcpJobs()).toHaveLength(0);
+  });
+
+  it("records restart resumes that a start releases and a later stop overrides", () => {
+    const fenceProject = (resume: boolean) => {
+      const running = enqueueAcpJob(
+        makeRequest({
+          userMessageId: `user-running-${resume}`,
+          assistantMessageId: `assistant-running-${resume}`,
+          assistantDate: "2026-10-14T00:00:00.000Z",
+        }) as any,
+      );
+      claimNextQueuedAcpJobForThread({
+        project_id: running.project_id,
+        path: running.path,
+        thread_id: running.thread_id,
+      });
+      const queued = enqueueAcpJob(
+        makeRequest({
+          userMessageId: `user-queued-${resume}`,
+          assistantMessageId: `assistant-queued-${resume}`,
+          assistantDate: "2026-10-14T00:00:01.000Z",
+        }) as any,
+      );
+      expect(
+        fenceAcpJobsForProject({
+          project_id: running.project_id,
+          reason: "project restarted",
+          resume,
+        }),
+      ).toEqual({ queued: 1, running: 1 });
+      return { running, queued };
+    };
+
+    const { running, queued } = fenceProject(true);
+    expect(getAcpJobByOpId(running.op_id)).toMatchObject({
+      state: "interrupted",
+      recovery_code: ACP_FENCE_INTENT_RESUME_PENDING,
+    });
+    expect(getAcpJobByOpId(queued.op_id)).toMatchObject({
+      state: "canceled",
+      recovery_code: ACP_FENCE_INTENT_RESUME_PENDING,
+    });
+    // Neither is a failure recovery, and nothing is runnable yet.
+    expect(listAcpJobsWithRecoveryIntent()).toHaveLength(0);
+    expect(listAcpJobsWithFenceIntent()).toHaveLength(2);
+    expect(listQueuedAcpJobs()).toHaveLength(0);
+    expect(requeueFencedAcpJob(queued.op_id)).toBeUndefined();
+
+    // A start releases fresh resumes only.
+    expect(
+      releaseAcpProjectFenceResumes({
+        project_id: running.project_id,
+        maxAgeMs: 60_000,
+        now: Date.now() + 2 * 60_000,
+      }),
+    ).toBe(0);
+    expect(
+      releaseAcpProjectFenceResumes({
+        project_id: running.project_id,
+        maxAgeMs: 60_000,
+      }),
+    ).toBe(2);
+    expect(getAcpJobByOpId(running.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_RESUME_READY,
+    );
+    // Moves are atomic: only one pass can take a given intent.
+    expect(
+      moveAcpJobFenceIntent({
+        op_id: running.op_id,
+        from: ACP_FENCE_INTENT_RESUME_PENDING,
+        to: null,
+      }),
+    ).toBe(false);
+    expect(requeueFencedAcpJob(running.op_id)).toBeUndefined();
+    expect(requeueFencedAcpJob(queued.op_id)).toMatchObject({
+      state: "queued",
+      recovery_code: null,
+      finished_at: null,
+      error: null,
+    });
+
+    // A stop before the resume ran makes the rest stopped work.
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const second = fenceProject(true);
+    fenceAcpJobsForProject({
+      project_id: second.running.project_id,
+      reason: "project stopped",
+    });
+    expect(getAcpJobByOpId(second.running.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_STOPPED,
+    );
+    expect(getAcpJobByOpId(second.queued.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_STOPPED,
+    );
+    expect(
+      releaseAcpProjectFenceResumes({
+        project_id: second.running.project_id,
+        maxAgeMs: 60_000,
+      }),
+    ).toBe(0);
+
+    // So does an interrupt in the thread.
+    getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+    const third = fenceProject(true);
+    expect(
+      stopAcpFenceResumesForThread({
+        project_id: third.running.project_id,
+        path: third.running.path,
+        thread_id: third.running.thread_id,
+      }),
+    ).toBe(2);
+    expect(getAcpJobByOpId(third.running.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_STOPPED,
+    );
   });
 
   it("does not claim a delayed recovery until its availability time", () => {

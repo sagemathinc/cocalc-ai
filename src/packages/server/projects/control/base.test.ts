@@ -191,8 +191,10 @@ describe("BaseProject local ownership", () => {
       project.restart({ account_id: "account-1", lro_op_id: "restart-1" }),
     ).rejects.toThrow("assigned host unavailable");
 
+    // A restart's stop asks the host to resume the agent turns it cuts off.
     expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
       runtime_lifecycle_revision: 7,
+      resume_agent_turns: true,
     });
     expect(startProjectOnHostMock).not.toHaveBeenCalled();
   });

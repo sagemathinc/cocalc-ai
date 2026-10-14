@@ -26,6 +26,7 @@ import {
 } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
   ACP_PROJECT_RESTART_FENCE_REASON,
+  ACP_PROJECT_RESUME_FENCE_REASON,
   countRunningAcpJobsForWorker,
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
@@ -626,17 +627,23 @@ async function requestWorkerDrain(
 
 export async function fenceProjectHostAcpWork({
   project_id,
-  reason = ACP_PROJECT_RESTART_FENCE_REASON,
+  resume = false,
+  reason = resume
+    ? ACP_PROJECT_RESUME_FENCE_REASON
+    : ACP_PROJECT_RESTART_FENCE_REASON,
 }: {
   project_id: string;
   reason?: string;
+  /** A restart or lost runtime: resume the work once the project runs
+   * again. A stop leaves it stopped. Nothing runs until then either way. */
+  resume?: boolean;
 }): Promise<void> {
   const { drainHarnessDiscovery } =
     await import("@cocalc/lite/hub/acp/harness-runtime");
   await drainHarnessDiscovery(project_id);
   // Persist the terminal fence before asking workers to release live runtimes.
   // This also covers a host with no currently running ACP worker.
-  fenceAcpJobsForProject({ project_id, reason });
+  fenceAcpJobsForProject({ project_id, reason, resume });
   fenceAcpTurnLeasesForProject({ project_id, reason });
   clearAcpPayloadsForProject(project_id);
   const launch = workerLaunchSignature();
@@ -662,7 +669,7 @@ export async function fenceProjectHostAcpWork({
           worker_id,
           timeout: Math.max(ACP_WORKER_CONTROL_TIMEOUT_MS, 10_000),
           waitForInterest: true,
-        }).fenceProject({ project_id, reason });
+        }).fenceProject({ project_id, reason, resume });
       } catch (err) {
         logger.warn("ACP worker did not acknowledge project restart fence", {
           project_id,

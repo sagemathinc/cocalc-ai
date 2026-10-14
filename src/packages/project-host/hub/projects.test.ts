@@ -86,6 +86,13 @@ jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
 }));
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
+const releaseAcpProjectFenceResumesAfterStart = jest.fn(
+  (_projectId: string) => 0,
+);
+jest.mock("@cocalc/lite/hub/acp", () => ({
+  releaseAcpProjectFenceResumesAfterStart: (projectId: string) =>
+    releaseAcpProjectFenceResumesAfterStart(projectId),
+}));
 jest.mock("@cocalc/backend/data", () => ({
   account_id: "test-account-id",
   data: "/tmp",
@@ -545,6 +552,10 @@ describe("project host start ordering", () => {
     expect(volume.quota.get).toHaveBeenCalledTimes(1);
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
     expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true);
+    // A running project resumes agent work fenced by its restart.
+    expect(releaseAcpProjectFenceResumesAfterStart).toHaveBeenCalledWith(
+      project_id,
+    );
   });
 
   it("prepares the fail-closed network policy before starting a free project", async () => {
@@ -864,6 +875,25 @@ describe("project host start ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
   });
 
+  it("fences a restart's stop so that agent turns resume after the start", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(async () => ({ state: "opened" })),
+      status: jest.fn(async () => ({ state: "opened" })),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(
+      hubApi.projects.stop({ project_id, resume_agent_turns: true } as any),
+    ).resolves.toBeUndefined();
+    expect(fenceProjectHostAcpWork).toHaveBeenCalledTimes(2);
+    for (const call of fenceProjectHostAcpWork.mock.calls) {
+      expect(call[0]).toEqual({ project_id, resume: true });
+    }
+  });
+
   it("verifies stop convergence before marking a project opened", async () => {
     const runnerApi = {
       start: jest.fn(),
@@ -879,7 +909,11 @@ describe("project host start ordering", () => {
 
     await expect(hubApi.projects.stop({ project_id })).resolves.toBeUndefined();
     expect(runnerApi.status).toHaveBeenCalledTimes(2);
-    expect(fenceProjectHostAcpWork).toHaveBeenCalledWith({ project_id });
+    // A plain stop: agent turns stay stopped.
+    expect(fenceProjectHostAcpWork).toHaveBeenCalledWith({
+      project_id,
+      resume: false,
+    });
     expect(fenceProjectHostAcpWork).toHaveBeenCalledTimes(2);
     expect(pauseHarnessDiscovery).toHaveBeenCalledWith(project_id);
     expect(pauseHarnessDiscovery.mock.invocationCallOrder[0]).toBeLessThan(

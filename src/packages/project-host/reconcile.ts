@@ -224,7 +224,14 @@ async function reportRuntimeLost(project_id: string, now: number) {
       try {
         const { fenceProjectHostAcpWork } =
           await import("./hub/acp/worker-manager");
-        await fenceProjectHostAcpWork({ project_id });
+        const { ACP_PROJECT_RUNTIME_LOST_FENCE_REASON } =
+          await import("@cocalc/lite/hub/sqlite/acp-jobs");
+        // Like a restart: the agent turns resume once the project runs again.
+        await fenceProjectHostAcpWork({
+          project_id,
+          resume: true,
+          reason: ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
+        });
         recordRuntimeLost(project_id, now);
       } finally {
         resumeDiscovery();

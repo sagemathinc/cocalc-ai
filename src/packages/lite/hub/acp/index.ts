@@ -172,7 +172,13 @@ import {
   updateAcpTurnLeaseSessionId,
 } from "../sqlite/acp-turns";
 import {
+  ACP_FENCE_CHAT_FINALIZED,
+  ACP_FENCE_INTENT_RESUME_PENDING,
+  ACP_FENCE_INTENT_RESUME_READY,
+  ACP_FENCE_INTENT_STOPPED,
   ACP_PROJECT_RESTART_FENCE_REASON,
+  ACP_PROJECT_RESUME_FENCE_REASON,
+  ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
   cancelQueuedAcpJob,
   claimNextQueuedAcpJobForThread,
   clearAcpJobRecoveryIntent,
@@ -191,13 +197,18 @@ import {
   listQueuedAcpJobThreadKeys,
   listQueuedAcpJobs,
   listAcpJobsByRecoveryParent,
+  listAcpJobsWithFenceIntent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
+  moveAcpJobFenceIntent,
   nextQueuedAcpJobAvailability,
+  releaseAcpProjectFenceResumes,
+  requeueFencedAcpJob,
   requeueRunningAcpJob,
   resendCanceledAcpJob,
+  stopAcpFenceResumesForThread,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
   type AcpJobRow,
@@ -242,6 +253,7 @@ import {
   enqueueAcpSteer,
   getAcpSteer,
   heartbeatAcpSteerClaim,
+  listHandledAcpSteersForThread,
   listPendingAcpSteers,
   markAcpSteerError,
   markAcpSteerHandled,
@@ -6910,24 +6922,45 @@ function storageFailureNoticeForReason(
 
 let acpTerminalRecoveryPollerStarted = false;
 let acpTerminalRecoveryPollInFlight = false;
+let acpTerminalRecoveryPollAgain = false;
+let acpTerminalRecoveryPoll: (() => Promise<void>) | undefined;
+
+/** Run the project-host recovery poll now, e.g. after a project start. */
+function kickAcpTerminalRecoveryPoll(): void {
+  void acpTerminalRecoveryPoll?.();
+}
 
 function startAcpTerminalRecoveryPoller(client: ConatClient): void {
   if (acpTerminalRecoveryPollerStarted) return;
   acpTerminalRecoveryPollerStarted = true;
   const poll = async () => {
-    if (acpTerminalRecoveryPollInFlight) return;
+    if (acpTerminalRecoveryPollInFlight) {
+      acpTerminalRecoveryPollAgain = true;
+      return;
+    }
     acpTerminalRecoveryPollInFlight = true;
     try {
-      await recoverTerminalStaleAcpTurns(client, {
-        recoveryReason: "terminal ACP storage recovery",
-        periodicCandidatesOnly: true,
-      });
-    } catch (err) {
-      logger.warn("ACP terminal recovery poll failed", err);
+      do {
+        acpTerminalRecoveryPollAgain = false;
+        try {
+          await recoverTerminalStaleAcpTurns(client, {
+            recoveryReason: "terminal ACP storage recovery",
+            periodicCandidatesOnly: true,
+          });
+        } catch (err) {
+          logger.warn("ACP terminal recovery poll failed", err);
+        }
+        try {
+          await processAcpProjectFenceIntents(client);
+        } catch (err) {
+          logger.warn("ACP project fence follow-up poll failed", err);
+        }
+      } while (acpTerminalRecoveryPollAgain);
     } finally {
       acpTerminalRecoveryPollInFlight = false;
     }
   };
+  acpTerminalRecoveryPoll = poll;
   const timer = setInterval(
     () => void poll(),
     ACP_TERMINAL_STALE_TURN_RECOVERY_POLL_MS,
@@ -7458,9 +7491,9 @@ export async function runDetachedAcpQueueWorker(
         },
         requestDrain: ({ reason } = {}) =>
           requestDetachedWorkerDrain({ reason }),
-        fenceProject: async ({ project_id, reason }) => ({
+        fenceProject: async ({ project_id, reason, resume }) => ({
           project_id,
-          ...(await fenceAcpProjectAfterStop({ project_id, reason })),
+          ...(await fenceAcpProjectAfterStop({ project_id, reason, resume })),
         }),
       });
     }
@@ -9141,6 +9174,317 @@ async function recoverPendingFailureRecoveryIntents({
     }
   }
   return recovered;
+}
+
+// After a project fence (fenceAcpJobsForProject), each fenced job carries a
+// durable intent. A stopped project's work stays stopped: its chat shows the
+// interruption and the agents that sent its messages are told. A restarted
+// project's work (also a lost runtime) resumes once the project runs again
+// within ACP_FENCE_RESUME_MAX_AGE_MS; otherwise it is treated as stopped.
+// Project-host owns this (startAcpTerminalRecoveryPoller), so it continues
+// after the worker that ran the turns was killed.
+const ACP_FENCE_RESUME_MAX_AGE_MS = envNumber(
+  "COCALC_ACP_FENCE_RESUME_MAX_AGE_MS",
+  60 * 60_000,
+);
+// A follow-up whose chat cannot be written is retried this long.
+const ACP_FENCE_FOLLOWUP_MAX_AGE_MS = envNumber(
+  "COCALC_ACP_FENCE_FOLLOWUP_MAX_AGE_MS",
+  24 * 60 * 60_000,
+);
+const ACP_FENCE_GUIDANCE_MAX_CHARS = 16_000;
+const PROJECT_STOPPED_NOTICE =
+  "**Conversation interrupted because the project was stopped.** Send a message to continue.";
+
+function fencedJobRestartCause(job: AcpJobRow): string {
+  return job.error === ACP_PROJECT_RUNTIME_LOST_FENCE_REASON
+    ? "the project stopped unexpectedly"
+    : "the project restarted";
+}
+
+function fencePendingNotice(job: AcpJobRow): string {
+  return `**Conversation interrupted because ${fencedJobRestartCause(job)}.** CoCalc resumes this turn if the project is running again within ${Math.round(ACP_FENCE_RESUME_MAX_AGE_MS / 60_000)} minutes.`;
+}
+
+function fenceResumedNotice(job: AcpJobRow): string {
+  return `**Conversation interrupted because ${fencedJobRestartCause(job)}.**`;
+}
+
+// Guidance that arrived while the fenced turn ran may never have reached the
+// model; the latest is the likeliest unseen. Steers that became their own
+// turn have a job; skip those.
+function guidanceDeliveredIntoFencedTurn(job: AcpJobRow): string | undefined {
+  const since = Number(job.started_at ?? 0);
+  const until = Number(job.finished_at ?? 0);
+  if (!(since > 0) || !(until >= since)) return undefined;
+  const prompts: string[] = [];
+  let total = 0;
+  for (const steer of listHandledAcpSteersForThread({
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    since,
+    until,
+  })) {
+    if (
+      getAcpJob({
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: steer.user_message_id,
+      })
+    )
+      continue;
+    let prompt = "";
+    try {
+      prompt = `${decodeAcpSteerRequest(steer).prompt ?? ""}`.trim();
+    } catch {
+      continue;
+    }
+    if (!prompt) continue;
+    if (total + prompt.length > ACP_FENCE_GUIDANCE_MAX_CHARS) break;
+    total += prompt.length;
+    prompts.unshift(prompt);
+  }
+  if (prompts.length === 0) return undefined;
+  return [
+    "While the interrupted turn was running, these messages arrived as guidance. Some may already have been handled; check before acting on any of them again.",
+    ...prompts.map((prompt) => `---\n${prompt}`),
+  ].join("\n\n");
+}
+
+// Mark the fenced turn's assistant row interrupted; true once that is durable.
+async function finalizeFencedTurnChat({
+  client,
+  job,
+  notice,
+  reasonId,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  notice: string;
+  reasonId: string;
+}): Promise<boolean> {
+  const request = decodeAcpJobRequest(job);
+  const result = await repairInterruptedAcpTurnOnce({
+    client,
+    turn: {
+      project_id: job.project_id,
+      path: job.path,
+      message_date: job.assistant_message_date,
+      sender_id: request.chat?.sender_id,
+      message_id: job.assistant_message_id,
+      thread_id: job.thread_id,
+      account_id: job.account_id,
+    },
+    interruptedNotice: notice,
+    interruptedReasonId: reasonId,
+    recoveryReason: job.error ?? notice,
+    // Only this turn: a resumed or newer turn may already be running.
+    exactMessageId: true,
+  });
+  return result.durable;
+}
+
+// Project-host does not run turns itself: hand new work to a worker.
+async function wakeAcpQueueForFencedWork(): Promise<void> {
+  if (liteUseDetachedAcpWorker()) {
+    await ensureDetachedWorkerRunning({ force: true });
+  } else {
+    kickAllQueuedAcpJobs();
+  }
+}
+
+function reportFencedAgentMessage(job: AcpJobRow, detail: string): void {
+  // A message that never ran still has a reply cut-off: when it was sent.
+  reportFailedAgentMessageTurn(
+    { ...job, started_at: job.started_at ?? job.created_at },
+    decodeAcpJobRequest(job),
+    detail,
+  );
+}
+
+async function processAcpFenceIntent(
+  client: ConatClient,
+  job: AcpJobRow,
+  now: number,
+): Promise<void> {
+  const ran = job.state !== "canceled";
+  const fencedAt = Number(job.finished_at ?? job.updated_at ?? 0);
+  switch (job.recovery_code) {
+    case ACP_FENCE_INTENT_RESUME_PENDING: {
+      if (now - fencedAt > ACP_FENCE_RESUME_MAX_AGE_MS) {
+        // Not running again in time: from here on it is a stopped project.
+        moveAcpJobFenceIntent({
+          op_id: job.op_id,
+          from: ACP_FENCE_INTENT_RESUME_PENDING,
+          to: ACP_FENCE_INTENT_STOPPED,
+        });
+        return;
+      }
+      if (ran && job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED) {
+        if (
+          await finalizeFencedTurnChat({
+            client,
+            job,
+            notice: fencePendingNotice(job),
+            reasonId: "project_restarted",
+          })
+        ) {
+          moveAcpJobFenceIntent({
+            op_id: job.op_id,
+            from: ACP_FENCE_INTENT_RESUME_PENDING,
+            to: ACP_FENCE_INTENT_RESUME_PENDING,
+            detail: ACP_FENCE_CHAT_FINALIZED,
+          });
+        }
+      }
+      return;
+    }
+    case ACP_FENCE_INTENT_RESUME_READY: {
+      if (!ran) {
+        const requeued = requeueFencedAcpJob(job.op_id);
+        if (requeued) {
+          await persistQueuedUserMessageProjection({
+            client,
+            project_id: requeued.project_id,
+            path: requeued.path,
+            thread_id: requeued.thread_id,
+            user_message_id: requeued.user_message_id,
+            queued: true,
+          });
+          await wakeAcpQueueForFencedWork();
+        }
+        return;
+      }
+      if (job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED) {
+        await finalizeFencedTurnChat({
+          client,
+          job,
+          notice: fencePendingNotice(job),
+          reasonId: "project_restarted",
+        });
+      }
+      let resumed: AcpJobRow | undefined;
+      try {
+        resumed = await enqueueRecoveryContinuationForJob({
+          client,
+          job,
+          interruptedNotice: fenceResumedNotice(job),
+          recoveryReason: job.error ?? ACP_PROJECT_RESUME_FENCE_REASON,
+          recoveryGuidance: guidanceDeliveredIntoFencedTurn(job),
+        });
+      } catch (err) {
+        // Admission refused it, e.g. access was revoked during the restart.
+        logger.warn("fenced ACP turn was not resumed", {
+          op_id: job.op_id,
+          err,
+        });
+      }
+      const continued =
+        resumed != null ||
+        listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id })
+          .length > 0;
+      if (
+        moveAcpJobFenceIntent({
+          op_id: job.op_id,
+          from: ACP_FENCE_INTENT_RESUME_READY,
+          to: null,
+        }) &&
+        !continued
+      ) {
+        reportFencedAgentMessage(
+          job,
+          "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
+        );
+      }
+      if (resumed) {
+        await wakeAcpQueueForFencedWork();
+        logger.warn("resumed ACP turn after project restart", {
+          fenced_op_id: job.op_id,
+          resumed_op_id: resumed.op_id,
+          thread_id: resumed.thread_id,
+        });
+      }
+      return;
+    }
+    case ACP_FENCE_INTENT_STOPPED: {
+      let durable = true;
+      try {
+        if (ran) {
+          durable = await finalizeFencedTurnChat({
+            client,
+            job,
+            notice: PROJECT_STOPPED_NOTICE,
+            reasonId: "project_stopped",
+          });
+        } else {
+          await persistQueuedUserMessageProjection({
+            client,
+            project_id: job.project_id,
+            path: job.path,
+            thread_id: job.thread_id,
+            user_message_id: job.user_message_id,
+            queued: false,
+          });
+        }
+      } catch (err) {
+        durable = false;
+        logger.warn("failed to show a stopped project's ACP turn", {
+          op_id: job.op_id,
+          err,
+        });
+      }
+      // Retry the chat later; past the follow-up window, give up on it.
+      if (!durable && now - fencedAt < ACP_FENCE_FOLLOWUP_MAX_AGE_MS) return;
+      if (
+        moveAcpJobFenceIntent({
+          op_id: job.op_id,
+          from: ACP_FENCE_INTENT_STOPPED,
+          to: null,
+        })
+      ) {
+        reportFencedAgentMessage(
+          job,
+          ran
+            ? "The recipient's project was stopped while it worked on your message; that turn did not finish."
+            : "The recipient's project was stopped before your message ran; it was not run.",
+        );
+      }
+      return;
+    }
+  }
+}
+
+export async function processAcpProjectFenceIntents(
+  client: ConatClient,
+  { limit = 100, now = Date.now() }: { limit?: number; now?: number } = {},
+): Promise<number> {
+  let processed = 0;
+  for (const job of listAcpJobsWithFenceIntent(limit)) {
+    try {
+      await processAcpFenceIntent(client, job, now);
+      processed += 1;
+    } catch (err) {
+      logger.warn("failed processing fenced ACP job", {
+        op_id: job.op_id,
+        recovery_code: job.recovery_code,
+        err,
+      });
+    }
+  }
+  return processed;
+}
+
+/** The project runs again: resume its fenced work (from project start). */
+export function releaseAcpProjectFenceResumesAfterStart(
+  project_id: string,
+): number {
+  const released = releaseAcpProjectFenceResumes({
+    project_id,
+    maxAgeMs: ACP_FENCE_RESUME_MAX_AGE_MS,
+  });
+  if (released > 0) kickAcpTerminalRecoveryPoll();
+  return released;
 }
 
 async function clearSupersededRecoveryProjections({
@@ -11994,6 +12338,10 @@ async function handleInterruptRequest(
   if (expectedMessageId && request.chat?.message_id !== expectedMessageId) {
     return { ok: false, state: "stale", threadId };
   }
+  // Interrupting also cancels a resume that a project restart left pending.
+  if (project_id && path && threadId) {
+    stopAcpFenceResumesForThread({ project_id, path, thread_id: threadId });
+  }
 
   const interruption = await tryInterruptCandidateIds({
     projectId: project_id,
@@ -12227,10 +12575,14 @@ export async function disposeAcpAgents(): Promise<void> {
 
 export async function fenceAcpProjectAfterStop({
   project_id,
-  reason = ACP_PROJECT_RESTART_FENCE_REASON,
+  resume = false,
+  reason = resume
+    ? ACP_PROJECT_RESUME_FENCE_REASON
+    : ACP_PROJECT_RESTART_FENCE_REASON,
 }: {
   project_id: string;
   reason?: string;
+  resume?: boolean;
 }): Promise<{
   queued_jobs: number;
   running_jobs: number;
@@ -12238,7 +12590,7 @@ export async function fenceAcpProjectAfterStop({
   queued_payloads: number;
   disposed_agents: number;
 }> {
-  const jobs = fenceAcpJobsForProject({ project_id, reason });
+  const jobs = fenceAcpJobsForProject({ project_id, reason, resume });
   let running_turns = fenceAcpTurnLeasesForProject({ project_id, reason });
   let queued_payloads = clearAcpPayloadsForProject(project_id);
   const projectAgents = [...agents.entries()].filter(
@@ -12266,7 +12618,7 @@ export async function fenceAcpProjectAfterStop({
   );
   // Disposal is asynchronous. Sweep again so a losing completion/recovery race
   // cannot recreate durable work after the first fence but before shutdown.
-  const finalJobs = fenceAcpJobsForProject({ project_id, reason });
+  const finalJobs = fenceAcpJobsForProject({ project_id, reason, resume });
   running_turns += fenceAcpTurnLeasesForProject({ project_id, reason });
   queued_payloads += clearAcpPayloadsForProject(project_id);
   return {

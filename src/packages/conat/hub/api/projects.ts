@@ -2364,6 +2364,7 @@ export interface Projects {
     project_id: string;
     force?: boolean;
     runtime_exit_reason?: ProjectState["runtime_exit_reason"];
+    resume_agent_turns?: boolean;
   }) => Promise<void>;
   status?: (opts: { account_id?: string; project_id: string }) => Promise<{
     runtime: ProjectRuntimeConfiguration;

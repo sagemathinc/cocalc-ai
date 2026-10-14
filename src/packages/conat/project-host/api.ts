@@ -839,6 +839,9 @@ export interface HostControlApi {
   stopProject: (opts: {
     project_id: string;
     runtime_lifecycle_revision?: number;
+    /** Part of a restart: running agent turns resume after the next start.
+     * Hosts that predate this ignore it, and their turns stay stopped. */
+    resume_agent_turns?: boolean;
   }) => Promise<HostCreateProjectResponse>;
   getProjectStatus: (opts: {
     project_id: string;
