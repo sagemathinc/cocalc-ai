@@ -113,9 +113,10 @@ const STOP_FORCE_KILL_SETTLE_MS = 250;
 const START_RUNNING_CHECK_TIMEOUT_MS = 5000;
 const START_RUNNING_CHECK_INTERVAL_MS = 250;
 // Without a bound, a hung `podman inspect` holds project start for podman's
-// 30 minute default; generous, since podman is slow while many containers
-// (re)start at once, e.g. after a project-host rollout.
-const START_INSPECT_TIMEOUT_S = 60;
+// 30 minute default. One deadline covers the whole running check (and stays
+// under the 90 s synthetic probe); generous, since podman is slow while many
+// containers (re)start at once, e.g. after a project-host rollout.
+const START_INSPECT_DEADLINE_MS = 60_000;
 const START_FAILURE_LOG_LINES = 80;
 const START_FAILURE_DETAIL_MAX_BYTES = 12_000;
 const VERIFY_PROJECT_POOL_TIMEOUT_S = 10;
@@ -953,6 +954,7 @@ type StartedContainerRuntime = {
 
 async function inspectStartedContainerRuntime(
   name: string,
+  timeoutS: number,
 ): Promise<StartedContainerRuntime | undefined> {
   let stdout: string;
   try {
@@ -963,7 +965,7 @@ async function inspectStartedContainerRuntime(
         "{{.State.Running}}|{{.State.Pid}}|{{.State.ConmonPid}}|{{.NetworkSettings.SandboxKey}}",
         name,
       ],
-      { timeout: START_INSPECT_TIMEOUT_S },
+      { timeout: timeoutS },
     ));
   } catch {
     return undefined;
@@ -993,19 +995,30 @@ async function inspectStartedContainerRuntime(
   };
 }
 
+// timedOut: podman did not answer in time, so the container's state is unknown
+// (as opposed to a container that is known not to be running).
 async function waitForStartedContainer(
   name: string,
-): Promise<StartedContainerRuntime | undefined> {
+): Promise<{ runtime?: StartedContainerRuntime; timedOut?: boolean }> {
   const start = Date.now();
+  const deadline = start + START_INSPECT_DEADLINE_MS;
+  const inspect = async () => {
+    const remainingS = Math.floor((deadline - Date.now()) / 1000);
+    if (remainingS < 1) return undefined;
+    return await inspectStartedContainerRuntime(name, remainingS);
+  };
   while (Date.now() - start < START_RUNNING_CHECK_TIMEOUT_MS) {
-    const runtime = await inspectStartedContainerRuntime(name);
-    if (runtime) return runtime;
+    const runtime = await inspect();
+    if (runtime) return { runtime };
+    if (Date.now() >= deadline - 1000) return { timedOut: true };
     if (!(await hasLiveConmonContainer(name))) {
-      return undefined;
+      return {};
     }
     await wait(START_RUNNING_CHECK_INTERVAL_MS);
   }
-  return await inspectStartedContainerRuntime(name);
+  const runtime = await inspect();
+  if (runtime) return { runtime };
+  return { timedOut: Date.now() >= deadline - 1000 };
 }
 
 function truncateStartFailureDetail(text: string): string {
@@ -2559,12 +2572,13 @@ async function startUnlocked({
       );
       throw err;
     }
-    const runtime = await timings.measure(
+    const { runtime, timedOut } = await timings.measure(
       "verify_container_running",
       async () => await waitForStartedContainer(name),
     );
     if (!runtime) {
-      const detail = await collectStartFailureDetail(name);
+      // Asking a podman that just timed out for more detail would only wait.
+      const detail = timedOut ? "" : await collectStartFailureDetail(name);
       await podman(["rm", "-f", "-t", "0", name], { timeout: 10 }).catch(
         (err) => {
           if (!isLikelyMissingContainerError(err)) {
@@ -2577,7 +2591,9 @@ async function startUnlocked({
         },
       );
       throw Error(
-        `project container ${name} exited before reporting a running state${detail ? `\n${detail}` : ""}`,
+        timedOut
+          ? `podman did not report whether project container ${name} is running within ${START_INSPECT_DEADLINE_MS / 1000}s`
+          : `project container ${name} exited before reporting a running state${detail ? `\n${detail}` : ""}`,
       );
     }
     try {
