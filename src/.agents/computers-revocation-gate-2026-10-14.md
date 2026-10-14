@@ -1,6 +1,8 @@
 # Computers: revocation that stops running work (stage-1 release gate)
 
-Implementation note, Oct 14 2026. **Revision 6** answers lite1-review's
+Implementation note, Oct 14 2026. **Approved for implementation by
+lite1-review at revision 6** (the certificate option in §7 is William's).
+Revision 6 answers lite1-review's
 review of revision 5 (its one remaining gap: a rehome immediately followed by
 a hard delete). Earlier revisions answered the earlier reviews. Plan: `computers-plan-2026-10-11.md` ("Revocation
 semantics", "The computer principal and the data path", "Multi-bay,
@@ -291,6 +293,16 @@ All of these are account-home tables carrying `account_id`, added to
   - When the cluster gets a real cluster-wide project index (the
     directory's own documented long-term fix), the tombstone moves into it
     and this fanout goes away.
+  - **Implementation (lite1-review, on approval):** a separately typed
+    `resolveProjectHardDeleteEvidenceAcrossCluster`, patterned on the
+    configured-bay enumeration, never `resolveProjectBayAcrossCluster`'s live
+    result. The caller verifies each envelope's project, account, bay and
+    key bindings, and aggregates conservatively:
+    - "unknown" is inert;
+    - malformed or conflicting signed answers fail closed and raise an
+      alert;
+    - transport failures retry;
+    - only a valid signed `deleted` tombstone raises TERMINAL.
 
   Tests:
   - a hard delete after the directory entry is already removed;
