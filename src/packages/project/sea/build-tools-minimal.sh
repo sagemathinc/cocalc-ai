@@ -14,6 +14,7 @@ OUT_DIR="${1:-$ROOT/packages/project/build}"
 WORK_DIR="$OUT_DIR/tools-minimal"
 CLI_PKG_DIR="$ROOT/packages/cli"
 CLI_BUNDLE_JS="$CLI_PKG_DIR/build/bundle/index.js"
+CLI_LOADER_JS="$CLI_PKG_DIR/sea/cli-loader.cjs"
 CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
 
 source "$(dirname "$0")/tools-cache.sh"
@@ -52,7 +53,9 @@ install_cocalc_cli_runtime() {
   local work_dir="$1"
   mkdir -p "$work_dir/bin" "$work_dir/share/licenses/cocalc-cli"
 
-  cp "$CLI_BUNDLE_JS" "$work_dir/bin/cocalc-cli.js"
+  # cocalc-cli.js starts the bundle with the compile cache on.
+  cp "$CLI_BUNDLE_JS" "$work_dir/bin/cocalc-cli-bundle.js"
+  cp "$CLI_LOADER_JS" "$work_dir/bin/cocalc-cli.js"
   chmod +x "$work_dir/bin/cocalc-cli.js"
 
   cat >"$work_dir/bin/cocalc" <<'EOF'
