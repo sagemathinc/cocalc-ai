@@ -447,13 +447,7 @@ export interface AgentApi {
   }): Promise<{ account_ids: string[]; unavailable: number }>;
   manageAgentMemory(
     opts: AgentHumanAuth &
-      (
-        | { op: "status" }
-        | { op: "list" }
-        | { op: "set-enabled"; enabled: boolean }
-        | { op: "delete"; name: string }
-        | { op: "delete-all" }
-      ),
+      import("@cocalc/conat/agents/memory").AgentMemoryOwnerRequest,
   ): Promise<any>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(

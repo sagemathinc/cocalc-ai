@@ -261,6 +261,97 @@ describe("agent delivery reports across bays", () => {
   });
 });
 
+describe("agent memory on the account's home bay", () => {
+  // The seed handles a memory request for bob, whose home is the attached
+  // bay: it must run there, over the real fabric, with real encryption.
+  const fromSeed = (kind, request, extra = {}) =>
+    runInBay(
+      cluster,
+      SEED,
+      `const { withMemoryHome } = server("agents/memory-home.js");
+       return await withMemoryHome(${JSON.stringify(bob.account_id)}, {
+         kind: ${JSON.stringify(kind)},
+         ${extra.project_id ? `project_id: ${JSON.stringify(extra.project_id)},` : ""}
+         request: ${JSON.stringify(request)},
+       });`,
+    );
+  const rowsIn = (bay, table) =>
+    runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT * FROM ${table} WHERE account_id=$1",
+         [${JSON.stringify(bob.account_id)}]);
+       return rows;`,
+    );
+
+  it("settings and notes written through the seed are stored on bob's home bay", async () => {
+    assert.ok(bob.project, "bob's project from routing by ownership");
+    await fromSeed("owner", { op: "set-enabled", enabled: true });
+    await fromSeed("owner", {
+      op: "namespace-save",
+      name: "multibay",
+      description: "Two-bay test notes",
+    });
+    await fromSeed("owner", {
+      op: "set-project-namespaces",
+      project_id: bob.project,
+      namespaces: ["multibay"],
+    });
+    const saved = await fromSeed(
+      "agent",
+      {
+        action: "memory",
+        op: "write",
+        name: "crossing",
+        description: "Saved through the seed",
+        body: "This text must be stored encrypted.",
+      },
+      { project_id: bob.project },
+    );
+    const { revision, ...rest } = saved;
+    assert.deepEqual(rest, {
+      name: "multibay/crossing",
+      namespace: "multibay",
+      saved: "created",
+    });
+    assert.match(revision, /^[0-9a-f]{16}$/);
+    const notes = await rowsIn(ATTACHED, "agent_memory_notes");
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].namespace, "multibay");
+    assert.ok(!notes[0].body.includes("stored encrypted"));
+    assert.equal((await rowsIn(ATTACHED, "agent_memory_accounts")).length, 1);
+    assert.equal((await rowsIn(SEED, "agent_memory_notes")).length, 0);
+    assert.equal((await rowsIn(SEED, "agent_memory_accounts")).length, 0);
+  });
+
+  it("the turn index and search come back across the bays", async () => {
+    const index = await fromSeed("turn-index", undefined, {
+      project_id: bob.project,
+    });
+    assert.equal(index.notes, 1);
+    assert.match(index.index, /- multibay: Two-bay test notes/);
+    assert.match(index.index, /- multibay\/crossing: Saved through the seed/);
+    const found = await fromSeed(
+      "agent",
+      { action: "memory", op: "search", query: "encrypted" },
+      { project_id: bob.project },
+    );
+    assert.deepEqual(
+      found.results.map((r) => r.name),
+      ["multibay/crossing"],
+    );
+    // Another of bob's projects does not see the namespace.
+    const elsewhere = await fromSeed(
+      "agent",
+      { action: "memory", op: "list" },
+      { project_id: alice.project },
+    );
+    assert.deepEqual(elsewhere.notes, []);
+  });
+});
+
 describe("cross-bay collaboration", () => {
   it("lists a seed-owned project for a collaborator homed on the attached bay", async () => {
     await invite(alice, bob, alice.project);
