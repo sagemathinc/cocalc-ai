@@ -45,6 +45,11 @@ jq -e '.host_contract.database_backend == "sqlite"
   and .host_contract.cgroup_manager == "cgroupfs"
   and (.host_contract.required_commands | type == "array")' \
   "$MANIFEST" >/dev/null || fail "manifest host contract is not sqlite/netavark/cgroupfs with required_commands"
+# The same rule project-host applies before activating a runtime
+# (upgrade.ts): every command is a non-blank string.
+jq -e '.host_contract.required_commands
+  | all(.[]; type == "string" and test("\\S"))' \
+  "$MANIFEST" >/dev/null || fail "manifest required_commands has a blank or non-string entry"
 
 PODMAN_VERSION="$(jq -r '.components.podman.version // empty' "$MANIFEST")"
 PASST_VERSION="$(jq -r '.components.passt.version // empty' "$MANIFEST")"
