@@ -646,7 +646,8 @@ export async function runConnector(opts: RunOptions): Promise<void> {
         backoff = Math.min(backoff * 2, 60_000);
       }
       if (signal?.aborted || daemon.sessionEnded) break;
-      await new Promise((r) => setTimeout(r, backoff * (0.5 + Math.random())));
+      // Stopping wakes it at once (the backoff can be a minute).
+      await sleep(backoff * (0.5 + Math.random()), signal).catch(() => {});
     }
   } finally {
     // Ended: every job was told to stop; see them gone (SIGKILL after the
@@ -710,20 +711,29 @@ async function oneSession({
     io.log(`connected (@${connection.name})`);
     onSession?.(session_id);
     for await (const mesg of sub) {
-      const work = answer({
-        client,
-        daemon,
-        hubClock,
-        computer_id: connection.computer_id,
-        session_id,
-        data: mesg.data,
-      }).catch((err) => io.log(`answer: ${err}`));
-      // A push is applied before the next message; after "end" the session
-      // is over for good.
-      if ((mesg.data as Partial<ComputerOpMessage> | null)?.push != null) {
-        await work;
-        if (daemon.sessionEnded) break;
+      const op = validOp(mesg.data, connection.computer_id, session_id);
+      if (op == null) continue;
+      if (typeof op.hub_now === "number") {
+        hubClock.observe(op.hub_now - systemClocks.wall());
       }
+      if (op.push != null) {
+        // Applied (and every job reconciled) before the next message is
+        // read; then the ack, bounded: after "ended" the hub may already
+        // have dropped this socket, and a publish on it can hang forever.
+        const ack = applyPush(daemon, op.push);
+        await publishBounded(
+          client,
+          op.reply_subject,
+          { v: 1, correlation: op.correlation, reply: ack },
+          daemon.sessionEnded ? ENDED_ACK_WAIT_MS : ACK_WAIT_MS,
+        ).catch((err) => io.log(`ack: ${err}`));
+        // Ended: over for good.
+        if (daemon.sessionEnded) break;
+        continue;
+      }
+      void answer({ client, daemon, op }).catch((err) =>
+        io.log(`answer: ${err}`),
+      );
     }
   } finally {
     clearTimeout(timer);
@@ -754,49 +764,64 @@ export function applyPush(
   }
 }
 
-async function answer({
-  client,
-  daemon,
-  hubClock,
-  computer_id,
-  session_id,
-  data,
-}: {
-  client: Client;
-  daemon: ComputerDaemon;
-  hubClock: HubClock;
-  computer_id: string;
-  session_id: string;
-  data: unknown;
-}): Promise<void> {
-  const received_at = systemClocks.continuous();
+/** How long a push's ack may take to publish (ended: a last chance). */
+const ACK_WAIT_MS = 10_000;
+const ENDED_ACK_WAIT_MS = 2_000;
+
+/**
+ * A well-formed op message for this session: a reply subject of this very
+ * session ending in its correlation (conat auth refuses anything else
+ * anyway), and exactly one of an operation or a push.
+ */
+function validOp(
+  data: unknown,
+  computer_id: string,
+  session_id: string,
+): (ComputerOpMessage & { reply_subject: string }) | null {
   const op = data as Partial<ComputerOpMessage> | null;
   if (
     op == null ||
     op.v !== 1 ||
     !isSubjectToken(op.correlation) ||
     typeof op.reply_subject !== "string" ||
-    // Only to a reply subject of this very session, ending in this
-    // correlation (conat auth refuses anything else anyway).
     !computerSubjectAllowed(computer_id, session_id, op.reply_subject, "pub") ||
     !op.reply_subject.endsWith(`.${op.correlation}`) ||
     (op.message == null) === (op.push == null)
   ) {
-    return;
+    return null;
   }
-  if (typeof op.hub_now === "number") {
-    hubClock.observe(op.hub_now - systemClocks.wall());
+  return op as ComputerOpMessage & { reply_subject: string };
+}
+
+async function publishBounded(
+  client: Client,
+  subject: string,
+  out: ComputerReplyMessage,
+  ms: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      client.publish(subject, out),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("publish timed out")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  if (op.push != null) {
-    const ack = applyPush(daemon, op.push);
-    const out: ComputerReplyMessage = {
-      v: 1,
-      correlation: op.correlation,
-      reply: ack,
-    };
-    await client.publish(op.reply_subject, out);
-    return;
-  }
+}
+
+async function answer({
+  client,
+  daemon,
+  op,
+}: {
+  client: Client;
+  daemon: ComputerDaemon;
+  op: ComputerOpMessage & { reply_subject: string };
+}): Promise<void> {
+  const received_at = systemClocks.continuous();
   if (op.message == null) return;
   const reply = await daemon.handle({
     ticket: op.message.ticket,

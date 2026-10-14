@@ -116,6 +116,12 @@ export interface DaemonDeps {
   identify?: (pid: number) => string | undefined;
   /** All exec output kept on the machine (default EXEC_OUTPUT_RETENTION_BYTES). */
   execOutputQuotaBytes?: number;
+  /**
+   * Tests only: called at each crash point of applying state ("state-saved"
+   * after the durable write, "side-effect" before each kill), so a test can
+   * kill the process exactly there.
+   */
+  fault?: (point: "state-saved" | "side-effect") => void;
 }
 
 export type DaemonEvent =
@@ -546,6 +552,7 @@ export class ComputerDaemon {
     let applied: ReturnType<DaemonStore["applyState"]>;
     try {
       applied = this.deps.store.applyState(envelope, hubNow);
+      this.deps.fault?.("state-saved");
     } finally {
       this.reconcile();
     }
@@ -600,6 +607,7 @@ export class ComputerDaemon {
         ineligible,
       ),
     );
+    this.deps.fault?.("side-effect");
     killed.push(
       ...this.jobs.killWhere(ineligible, "its project is no longer eligible"),
     );
@@ -607,6 +615,7 @@ export class ComputerDaemon {
       if (!belowProject(exec.auth.source_project_id, exec.auth.privacy_epoch)) {
         continue;
       }
+      this.deps.fault?.("side-effect");
       this.stopExec(id, exec.controller);
       killed.push(id);
     }
@@ -727,8 +736,10 @@ export class ComputerDaemon {
     this.ended = true;
     // The enforcement timer keeps running: killed jobs still need SIGKILL.
     for (const [id, { controller }] of this.running) {
+      this.deps.fault?.("side-effect");
       this.stopExec(id, controller);
     }
+    this.deps.fault?.("side-effect");
     this.jobs.killAll(reason);
   }
 

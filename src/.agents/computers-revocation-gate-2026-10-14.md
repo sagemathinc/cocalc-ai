@@ -56,13 +56,16 @@ Implemented and tested:
   - `state`, `recheck`, `sessions` and `pairing-http` integration tests;
   - daemon unit tests.
 
-Not yet covered from §9:
-
-- crash-point injection between the state write and its side effects (the
-  daemon's reconcile-at-start is unit-tested);
-- a rotation-crossing e2e (the snapshot signing with a retired key is
-  integration-tested);
-- the more-than-200-due-pairs load test.
+All of §9 is covered:
+- crash points: `backend/computers/daemon/crash.test.ts` runs real daemon
+  processes SIGKILLed after the state write, before each side effect, and
+  before the ack, for "ended" and for a project floor; a restart plus the
+  redelivered state stops the job and the orphaned 50-minute exec; an
+  older state's replay never stops newer work;
+- the rotation crossing: `revocation.e2e.test.ts` (paired before a
+  rotation, offline across it, revoked: ended at login, signed with the
+  certificate's retired key);
+- the load test: 250 due rows across two concurrent passes.
 
 ## Invariants
 

@@ -103,6 +103,19 @@ async function until(
   }
 }
 
+/** Until these connectors finish; on a timeout, say what they logged. */
+async function finished(
+  ...cs: { finished: boolean; logs: string[] }[]
+): Promise<void> {
+  try {
+    await until(() => cs.every((c) => c.finished), 30_000);
+  } catch (err) {
+    throw new Error(
+      `${err}; connector logs:\n${cs.map((c) => c.logs.join("\n")).join("\n--\n")}`,
+    );
+  }
+}
+
 /** Is this process alive? */
 function alive(pid: number): boolean {
   try {
@@ -533,6 +546,7 @@ describeDb("revoking a computer stops its work", () => {
       project,
       other,
       computer_id,
+      certificate,
       dir,
       start,
       ready,
@@ -550,7 +564,7 @@ describeDb("revoking a computer stops its work", () => {
     const pids = await w.startWork();
     const { revokeComputer } = await import("./computers");
     await revokeComputer({ account_id: w.account, computer_id: w.computer_id });
-    await until(() => c.finished, 30_000);
+    await finished(c);
     expect(alive(pids.job)).toBe(false);
     expect(alive(pids.exec)).toBe(false);
     expect(w.endedOnDisk()).toEqual({ reason: "revoked" });
@@ -573,7 +587,7 @@ describeDb("revoking a computer stops its work", () => {
     await w.ready(two);
     const { revokeComputer } = await import("./computers");
     await revokeComputer({ account_id: w.account, computer_id: w.computer_id });
-    await until(() => one.finished && two.finished, 30_000);
+    await finished(one, two);
     expect(w.endedOnDisk()).toEqual({ reason: "revoked" });
     expect(w.endedOnDisk(copy)).toEqual({ reason: "revoked" });
   });
@@ -590,7 +604,7 @@ describeDb("revoking a computer stops its work", () => {
     await revokeComputer({ account_id: w.account, computer_id: w.computer_id });
     await setComputersEnabled(false);
     const back = w.start();
-    await until(() => back.finished, 30_000);
+    await finished(back);
     expect(back.sessions).toEqual([]);
     expect(alive(pids.job)).toBe(false);
     expect(w.endedOnDisk()).toEqual({ reason: "revoked" });
@@ -620,7 +634,7 @@ describeDb("revoking a computer stops its work", () => {
     const pids = await w.startWork();
     const { markAccountDeleted } = await import("../accounts/delete");
     await markAccountDeleted(w.account);
-    await until(() => c.finished, 30_000);
+    await finished(c);
     expect(alive(pids.job)).toBe(false);
     expect(alive(pids.exec)).toBe(false);
     expect(w.endedOnDisk()).toEqual({ reason: "deleted" });
@@ -683,5 +697,36 @@ describeDb("revoking a computer stops its work", () => {
     );
     expect(r.reply.result.stdout).toBe("newer\n");
     expect(c.finished).toBe(false);
+  });
+
+  // Last: it rotates this bay's signing key for the rest of the file.
+  it("paired before a key rotation, offline across it, revoked: told at its next login, signed with its certificate's (retired) key", async () => {
+    const w = await world();
+    const c = w.start();
+    await w.ready(c);
+    const pids = await w.startWork();
+    await c.stop();
+    // The bay's key rotates: the certificate's key is retired (it still
+    // signs what its certificates need) and a new one signs everything else.
+    await db().query(
+      "UPDATE bay_computer_signing_keys SET created_at=now() - interval '301 days'",
+    );
+    const { getBaySigningKey, resetSigningKeyCacheForTesting } =
+      await import("./signing-keys");
+    resetSigningKeyCacheForTesting();
+    const current = await getBaySigningKey();
+    expect(current.fingerprint).not.toBe(w.certificate.kid);
+    const { revokeComputer } = await import("./computers");
+    await revokeComputer({ account_id: w.account, computer_id: w.computer_id });
+    const { computerStateSnapshot } = await import("./state");
+    expect((await computerStateSnapshot(w.computer_id))!.envelope.kid).toBe(
+      w.certificate.kid,
+    );
+    // Back online with only the directory it got at pairing.
+    const back = w.start();
+    await finished(back);
+    expect(back.sessions).toEqual([]);
+    expect(w.endedOnDisk()).toEqual({ reason: "revoked" });
+    expect(alive(pids.job)).toBe(false);
   });
 });
