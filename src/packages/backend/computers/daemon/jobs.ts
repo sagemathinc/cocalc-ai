@@ -31,8 +31,12 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  commandText,
+  type CommandSpec,
+} from "@cocalc/util/computers/operations";
 import { ensurePrivateDir, readJson, writeDurableJson } from "./durable";
-import { loginShell } from "./exec";
+import { loginShell, loginShellCommand } from "./exec";
 import {
   captureIdentity,
   leaderAlive,
@@ -60,7 +64,9 @@ export interface JobSpec {
   source_project_id: string;
   name: string | null;
   description: string;
-  command: string;
+  /** See CommandSpec; jobs recorded before argv existed have no argv. */
+  command: string | null;
+  argv?: string[] | null;
   /** Resolved absolute working directory. */
   cwd: string;
   nice: boolean;
@@ -118,6 +124,10 @@ export interface JobSummary {
   exit_code: number | null;
   /** True for the asking agent's own jobs (it may read logs and kill). */
   own: boolean;
+}
+
+function spec(job: JobSpec): CommandSpec {
+  return { command: job.command, argv: job.argv ?? null };
 }
 
 export const MAX_QUEUED_JOBS = 20;
@@ -305,6 +315,7 @@ export class JobManager {
     this.opts.launchHook?.("starting");
     const dir = this.jobDir(job_id);
     const log = openSync(join(dir, "log"), "a", 0o600);
+    const run = loginShellCommand(spec(job));
     let child;
     try {
       child = spawn("/bin/sh", ["-c", WRAPPER, "cocalc-job"], {
@@ -313,7 +324,8 @@ export class JobManager {
         stdio: ["ignore", log, log, "pipe"],
         env: {
           ...process.env,
-          COCALC_JOB_COMMAND: job.command,
+          ...run.env,
+          COCALC_JOB_COMMAND: run.line,
           COCALC_JOB_EXIT_FILE: join(dir, "exit_code"),
           COCALC_JOB_SHELL: this.opts.shell ?? loginShell(),
           COCALC_JOB_NICE: job.nice ? "1" : "",
@@ -610,7 +622,7 @@ export class JobManager {
       job_id: job.job_id,
       name: job.name,
       agent_id: job.agent_id,
-      command: job.command,
+      command: commandText(spec(job)),
       description: job.description,
       state: job.state,
       exclusive: job.exclusive,

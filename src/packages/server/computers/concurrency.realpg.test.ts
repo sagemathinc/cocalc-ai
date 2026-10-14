@@ -37,6 +37,15 @@ jest.setTimeout(60_000);
 
 const describeReal = postgresBinDir() != null ? describe : describe.skip;
 
+/**
+ * Mark a promise that is expected to reject as handled right away: its
+ * assertion is attached only after the race is released, and under load an
+ * unobserved rejection could be reported first.
+ */
+function observe(p: Promise<unknown>): void {
+  p.catch(() => {});
+}
+
 const tables = [
   "accounts",
   "projects",
@@ -57,6 +66,9 @@ const tables = [
   "account_computer_operations",
   "account_computer_jobs",
   "account_computer_ticket_log",
+  "account_computer_challenges",
+  "account_computer_sessions",
+  "account_computer_relays",
   "cluster_computer_signing_keys",
   "bay_computer_signing_keys",
 ];
@@ -249,7 +261,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       signing_public_key: signing.publicDer,
       resolved_policy: resolved,
     });
-    return { request_id, transcript_hash };
+    return { request_id, transcript_hash, signing };
   }
 
   const addNewcomer = (fresh: boolean) =>
@@ -284,6 +296,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       });
       await waiters(1);
       const add = addNewcomer(false);
+      observe(add);
       await waiters(2);
       await release();
       await expect(approve).resolves.toHaveProperty("computer_id");
@@ -303,12 +316,231 @@ describeReal("computers: races on real PostgreSQL", () => {
         transcript_hash,
         agent_network_generation: seen,
       });
+      observe(approve);
       await waiters(2);
       await release();
       await expect(add).resolves.toBeDefined();
       await expect(approve).rejects.toThrow(/agent network changed/);
       const { rows } = await pool.query(
         "SELECT count(*)::int AS n FROM account_computers",
+      );
+      expect(rows[0].n).toBe(0);
+    });
+  });
+
+  describe("a relay and a narrowing of the network", () => {
+    async function connectedComputer() {
+      const { approveComputerRequest } = await import("./requests");
+      const { request_id, transcript_hash } = await pairedRequest();
+      const { computer_id } = await approveComputerRequest({
+        account_id: account,
+        request_id,
+        transcript_hash,
+        agent_network_generation: await generation(),
+      });
+      // A live session (the conat login is tested elsewhere).
+      await pool.query(
+        `INSERT INTO account_computer_sessions
+           (session_id, computer_id, account_id, slot, epoch, generation,
+            router, lease_until, connected_at, last_seen)
+         SELECT $1, computer_id, account_id, 1, epoch, 1, 'test',
+                now() + interval '10 minutes', now(), now()
+           FROM account_computers WHERE computer_id=$2`,
+        [randomUUID(), computer_id],
+      );
+      return computer_id;
+    }
+
+    async function ticketAndProof(reuse?: {
+      operation_id: string;
+      pop: any;
+      run_id: string;
+    }) {
+      const { issueComputerTicket } = await import("./tickets");
+      const { attestProjectLocal } = await import("./attestation");
+      const crypto = await import("@cocalc/backend/computers/crypto");
+      const pop = reuse?.pop ?? crypto.generateSigningKey();
+      const run_id = reuse?.run_id ?? randomUUID();
+      const issued: any = await issueComputerTicket({
+        account_id: account,
+        agent_id: source.agent_id,
+        run_id,
+        source_project_id: project,
+        run_expires_at: Date.now() + 3_600_000,
+        computer: "bench",
+        operation: "exec",
+        request: { command: "true" },
+        operation_id: reuse?.operation_id ?? randomUUID(),
+        pop_key: pop.publicDer,
+        attestation: await attestProjectLocal({
+          project_id: project,
+          account_id: account,
+          home_bay_id: "bay-0",
+        }),
+      });
+      const t = issued.ticket.payload;
+      return {
+        pop,
+        operation_id: t.operation_id as string,
+        run_id,
+        ticket: issued.ticket,
+        request: issued.operation.request,
+        proof: crypto.signProofOfPossession(pop, t.ticket_id, t.request_hash),
+      };
+    }
+
+    /** The hub's conat client: a reply never comes (the wait is short). */
+    async function silentHub() {
+      const { setRelayClientForTesting } = await import("./relay");
+      setRelayClientForTesting({
+        subscribe: async () => {
+          let close: () => void = () => {};
+          const closed = new Promise<void>((r) => (close = r));
+          return {
+            close,
+            async *[Symbol.asyncIterator]() {
+              await closed;
+            },
+          };
+        },
+        publish: async () => ({ count: 1 }),
+      } as any);
+    }
+
+    const relay = async (t: Awaited<ReturnType<typeof ticketAndProof>>) => {
+      const { relayToComputer } = await import("./relay");
+      return await relayToComputer({
+        account_id: account,
+        agent_id: source.agent_id,
+        run_id: t.run_id,
+        source_project_id: project,
+        ticket: t.ticket,
+        proof: t.proof,
+        request: t.request,
+        waitMs: 200,
+      });
+    };
+
+    // Removing ANOTHER member: the relaying agent stays a member, so only
+    // the epoch can refuse it.
+    const removePeer = () =>
+      store.updateNetwork(
+        account,
+        {
+          request_id: randomUUID(),
+          agent_network_id: network,
+          action: "remove-member",
+          member: { kind: "registered", endpoint: peer },
+        },
+        8,
+        true,
+      );
+
+    it("relay first: it commits at the old epoch, and the narrowing then bumps past it", async () => {
+      const computer_id = await connectedComputer();
+      await silentHub();
+      const t = await ticketAndProof();
+      const release = await block();
+      const r = relay(t);
+      observe(r);
+      await waiters(1);
+      const narrow = removePeer();
+      await waiters(2);
+      await release();
+      await expect(r).resolves.toMatchObject({ answered: false });
+      await narrow;
+      const { rows } = await pool.query(
+        `SELECT r.epoch AS relayed, c.epoch AS now
+           FROM account_computer_relays r JOIN account_computers c USING (computer_id)
+          WHERE r.computer_id=$1`,
+        [computer_id],
+      );
+      expect(rows).toHaveLength(1);
+      expect(Number(rows[0].now)).toBe(Number(rows[0].relayed) + 1);
+    });
+
+    it("concurrent challenge requests never exceed the per-computer cap", async () => {
+      const { approveComputerRequest } = await import("./requests");
+      const { createLoginChallenge } = await import("./sessions");
+      const { signChallengeRequest } =
+        await import("@cocalc/backend/computers/login");
+      const { request_id, transcript_hash, signing } = await pairedRequest();
+      const { certificate } = await approveComputerRequest({
+        account_id: account,
+        request_id,
+        transcript_hash,
+        agent_network_generation: await generation(),
+      });
+      const results = await Promise.allSettled(
+        Array.from({ length: 12 }, () =>
+          createLoginChallenge(
+            signChallengeRequest({ certificate, key: signing }),
+          ),
+        ),
+      );
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(5);
+      const { rows } = await pool.query(
+        "SELECT count(*)::int AS n FROM account_computer_challenges WHERE computer_id=$1",
+        [certificate.payload.computer_id],
+      );
+      expect(rows[0].n).toBe(5);
+    });
+
+    it("a ticket retry and a relay of the same operation serialize (no deadlock), and the retry supersedes the relayed ticket", async () => {
+      await connectedComputer();
+      await silentHub();
+      const t = await ticketAndProof();
+      const { relayToComputer } = await import("./relay");
+      let inside: () => void = () => {};
+      const entered = new Promise<void>((r) => (inside = r));
+      let resume: () => void = () => {};
+      const paused = new Promise<void>((r) => (resume = r));
+      // The relay holds every lock it takes (fence, operation row, ...).
+      const r = relayToComputer({
+        account_id: account,
+        agent_id: source.agent_id,
+        run_id: t.run_id,
+        source_project_id: project,
+        ticket: t.ticket,
+        proof: t.proof,
+        request: t.request,
+        waitMs: 200,
+        beforeCommit: async () => {
+          inside();
+          await paused;
+        },
+      });
+      await entered;
+      const retry = ticketAndProof(t);
+      await waiters(1);
+      resume();
+      await expect(r).resolves.toMatchObject({ answered: false });
+      const newer: any = await retry;
+      expect(newer.ticket.payload.ticket_id).not.toBe(
+        t.ticket.payload.ticket_id,
+      );
+      // The relayed ticket is now superseded.
+      await expect(relay(t)).rejects.toThrow(
+        /newer ticket|already being relayed/,
+      );
+    });
+
+    it("narrowing first: the ticket from before is refused, nothing is relayed", async () => {
+      const computer_id = await connectedComputer();
+      await silentHub();
+      const t = await ticketAndProof();
+      const release = await block();
+      const narrow = removePeer();
+      await waiters(1);
+      const r = relay(t);
+      observe(r);
+      await waiters(2);
+      await release();
+      await narrow;
+      await expect(r).rejects.toThrow(/stale/);
+      const { rows } = await pool.query(
+        "SELECT count(*)::int AS n FROM account_computer_relays WHERE computer_id=$1",
+        [computer_id],
       );
       expect(rows[0].n).toBe(0);
     });
@@ -383,6 +615,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       const p = pause();
       await waiters(1);
       const t = ticket();
+      observe(t);
       await waiters(2);
       await release();
       await p;
@@ -444,6 +677,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         name: "late",
         requested_policy: policy(),
       });
+      observe(create);
       await waiters(2);
       await release();
       await rehome;
@@ -460,6 +694,7 @@ describeReal("computers: races on real PostgreSQL", () => {
       });
       await waiters(1);
       const rehome = startRehome();
+      observe(rehome);
       await waiters(2);
       await release();
       await create;
@@ -519,6 +754,7 @@ describeReal("computers: races on real PostgreSQL", () => {
         [project],
       );
       const a = attest();
+      observe(a);
       await waiters(1);
       await rehome.release();
       await expect(a).rejects.toThrow(/project rehome p1 is running/);

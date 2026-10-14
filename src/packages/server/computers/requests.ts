@@ -53,7 +53,7 @@ import type {
 } from "@cocalc/util/computers/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
-import { getBaySigningKey } from "./signing-keys";
+import { getBaySigningKey, listSigningKeyDirectory } from "./signing-keys";
 import { computersSite } from "./site";
 import { assertComputersAuthority } from "./authority";
 import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
@@ -120,6 +120,19 @@ export async function createComputerRequest({
 }> {
   requireUuid(account_id, "account_id");
   const alias = computerName(name);
+  if (
+    requested_by != null &&
+    requested_policy != null &&
+    typeof requested_policy === "object" &&
+    (requested_policy as any).agent_network_id == null
+  ) {
+    // An agent asks for a computer for its own network; it may leave the
+    // network out when it is in exactly one (membership is rechecked below).
+    requested_policy = {
+      ...requested_policy,
+      agent_network_id: await onlyNetworkOf(account_id, requested_by),
+    };
+  }
   const policy = parseRequestedPolicy(requested_policy);
   if (typeof why !== "string" || why.length > MAX_WHY_LENGTH) {
     throw new ComputerRequestError("why must be at most 1000 characters");
@@ -212,6 +225,29 @@ export async function createComputerRequest({
   } finally {
     client.release();
   }
+}
+
+async function onlyNetworkOf(
+  account_id: string,
+  requested_by: RequestedBy,
+): Promise<string> {
+  requireUuid(requested_by.agent_id, "agent_id");
+  requireUuid(requested_by.project_id, "project_id");
+  const { rows } = await getPool().query(
+    `SELECT n.agent_network_id FROM agent_networks n
+       JOIN agent_network_members m ON m.agent_network_id = n.agent_network_id
+      WHERE n.account_id=$1 AND n.state='active' AND m.member_kind='registered'
+        AND m.removed_at IS NULL AND m.registered_agent_id=$2 AND m.project_id=$3`,
+    [account_id, requested_by.agent_id, requested_by.project_id],
+  );
+  if (rows.length !== 1) {
+    throw new ComputerRequestError(
+      rows.length === 0
+        ? "this agent is in no active agent network; a computer serves one"
+        : "this agent is in several agent networks; name one in the policy (agent_network_id)",
+    );
+  }
+  return rows[0].agent_network_id;
 }
 
 export async function getPairingView(
@@ -417,7 +453,8 @@ export async function getPairingStatus({
   if (row.state !== "approved" || row.computer_id == null) return status;
   const computer = (
     await getPool().query(
-      `SELECT computer_id, name, certificate, revoked_at, tombstoned_at
+      `SELECT computer_id, name, certificate, revoked_at, tombstoned_at,
+              policy_ceiling, agent_network_id
          FROM account_computers
         WHERE computer_id=$1 AND transcript_hash=$2`,
       [row.computer_id, row.transcript_hash],
@@ -435,6 +472,9 @@ export async function getPairingStatus({
     computer_id: computer.computer_id,
     name: computer.name,
     certificate: computer.certificate,
+    directory: await listSigningKeyDirectory(),
+    policy: computer.policy_ceiling,
+    agent_network_id: computer.agent_network_id,
   };
 }
 
@@ -533,6 +573,31 @@ export async function approveComputerRequest({
         "the computer changed since you saw it; look again",
       );
     }
+    // A computer that is over (disconnected, or past its time) gives up its
+    // name to the new one and leaves the list; a live one keeps it.
+    const taken = await client.query(
+      `SELECT computer_id, revoked_at, deadline FROM account_computers
+        WHERE account_id=$1 AND name=$2 AND tombstoned_at IS NULL
+        FOR UPDATE`,
+      [account_id, row.name],
+    );
+    for (const old of taken.rows) {
+      const over =
+        old.revoked_at != null ||
+        (old.deadline != null && new Date(old.deadline).valueOf() <= now);
+      if (!over) {
+        throw new ComputerRequestError(
+          `@${row.name} is still connected. Disconnect it first, then approve this one.`,
+        );
+      }
+      await client.query(
+        `UPDATE account_computers
+            SET tombstoned_at=$2, revoked_at=COALESCE(revoked_at,$2),
+                epoch=epoch+1, updated_at=$2
+          WHERE computer_id=$1`,
+        [old.computer_id, new Date(now)],
+      );
+    }
     const count = await client.query(
       `SELECT count(*)::int AS n FROM account_computers
         WHERE account_id=$1 AND tombstoned_at IS NULL`,
@@ -540,16 +605,6 @@ export async function approveComputerRequest({
     );
     if (count.rows[0].n >= MAX_COMPUTERS_PER_ACCOUNT) {
       throw new ComputerRequestError("too many computers on this account");
-    }
-    const taken = await client.query(
-      `SELECT 1 FROM account_computers
-        WHERE account_id=$1 AND name=$2 AND tombstoned_at IS NULL`,
-      [account_id, row.name],
-    );
-    if (taken.rows.length > 0) {
-      throw new ComputerRequestError(
-        `a computer named ${row.name} already exists`,
-      );
     }
     const envelope = row.transcript as SignedEnvelope<PairingTranscript> & {
       signing_public_key: string;
@@ -721,6 +776,7 @@ export function maskEmail(email: unknown): string {
 
 export async function listComputerRequests(
   account_id: string,
+  now = Date.now(),
 ): Promise<ComputerRequestSummary[]> {
   requireUuid(account_id, "account_id");
   const { rows } = await getPool().query(
@@ -751,7 +807,11 @@ export async function listComputerRequests(
     return {
       request_id: row.request_id,
       name: row.name,
-      state: row.state,
+      // Open past its expiry is expired, whether or not the sweep ran yet.
+      state:
+        isOpen(row.state) && new Date(row.expires_at).valueOf() <= now
+          ? "expired"
+          : row.state,
       why: row.why,
       requested_policy: row.requested_policy,
       resolved_policy: row.resolved_policy ?? null,

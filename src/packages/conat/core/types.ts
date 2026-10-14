@@ -1,6 +1,10 @@
 import type { ProjectHostApiKeyBinding } from "../auth/project-host-token";
+import type { ComputerPrincipal } from "../computers/principal";
 
-interface User {
+/** An authenticated principal: an account/project/hub/host, or a computer. */
+type User = PersonUser | ComputerPrincipal;
+
+interface PersonUser {
   account_id?: string;
   // Cookie-authenticated session reference supplied by the server for hub RPCs.
   auth_session_hash?: string;

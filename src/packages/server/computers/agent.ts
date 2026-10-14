@@ -18,7 +18,9 @@ import type {
 } from "@cocalc/util/computers/protocol";
 import { resolveProjectOwningBay } from "@cocalc/server/bay-directory";
 import type { AgentRun } from "@cocalc/server/agents/store";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { accountHomeBay, computersAtBay } from "./routing";
+import { relayToComputer } from "./relay";
 import { assertComputersEnabled } from "./enabled";
 
 export async function agentComputerRequest(
@@ -33,8 +35,10 @@ export async function agentComputerRequest(
   const home_bay_id = await accountHomeBay(account_id);
   const attestation = await attest(run, home_bay_id);
   if (!attestation.payload.eligible) {
+    const reason = await explainIneligibility(run).catch(() => null);
     throw new Error(
-      "computers can only be used from a project whose only collaborator is you (create a private project for this agent)",
+      reason ??
+        "this project can't use computers right now (they need a project whose only collaborator is you)",
     );
   }
   const home = computersAtBay(home_bay_id);
@@ -93,7 +97,35 @@ export async function agentComputerRequest(
         pop_key: request.pop_key,
         attestation,
       });
+    case "send":
+      // Stage 1: the computer's sessions live at the account's home bay.
+      if (home_bay_id !== getConfiguredBayId()) {
+        throw new Error(
+          "sending to a computer from another bay isn't supported yet",
+        );
+      }
+      return await relayToComputer({
+        account_id,
+        agent_id,
+        run_id: run.run_id,
+        source_project_id: project_id,
+        ticket: request.ticket,
+        proof: request.proof,
+        request: request.request,
+      });
   }
+}
+
+/** Why the project's owning bay says it can't use computers. */
+async function explainIneligibility(run: AgentRun): Promise<string | null> {
+  const { owning_bay_id } = await resolveProjectOwningBay({
+    account_id: run.account_id,
+    project_id: run.project_id,
+  });
+  return await computersAtBay(owning_bay_id).explainProjectIneligibility({
+    project_id: run.project_id,
+    account_id: run.account_id,
+  });
 }
 
 /** A fresh attestation from the project's owning bay. */

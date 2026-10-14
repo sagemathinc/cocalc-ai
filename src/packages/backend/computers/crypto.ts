@@ -94,6 +94,12 @@ export function privateKeyFromPem(pem: string): KeyObject {
   return createPrivateKey(pem);
 }
 
+/** A key pair from its private key (PEM), e.g. as stored on the computer. */
+export function keyPairFromPrivatePem(pem: string): KeyPair {
+  const privateKey = createPrivateKey(pem);
+  return describe({ privateKey, publicKey: createPublicKey(privateKey) });
+}
+
 /** "sha256:" + base64url digest of a value's canonical JSON. */
 export function canonicalHash(value: unknown): string {
   return `sha256:${createHash("sha256")

@@ -20,6 +20,7 @@ import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   maxRuntimeMs,
+  commandText,
   parseOperationRequest,
   type OperationRequest,
 } from "@cocalc/util/computers/operations";
@@ -482,7 +483,7 @@ function auditCommand(op: OperationRequest): string | null {
   switch (op.operation) {
     case "exec":
     case "run":
-      return op.request.command;
+      return commandText(op.request);
     case "put":
     case "get":
       return op.request.path;

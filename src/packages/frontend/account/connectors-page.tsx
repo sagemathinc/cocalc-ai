@@ -28,6 +28,8 @@ import { CocalcConnector } from "@cocalc/frontend/agents/cocalc-connector";
 import { cocalcAccessSummary } from "@cocalc/frontend/agents/composer-connectors";
 import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-network-actions";
 import { AgentMessagingSettings } from "./agent-messaging-settings";
+import { ComputersPanel } from "./computers-panel";
+import { useComputersEnabled } from "./computers-enabled";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
 
@@ -227,6 +229,7 @@ function ToggleCell({
 function AgentNetworksSection() {
   const { directory, error } = useAgentNetworks();
   const actions = useAgentNetworkActions();
+  const computersEnabled = useComputersEnabled();
   const networks = (directory?.networks ?? []).filter(
     ({ state }) => state !== "closed",
   );
@@ -324,6 +327,7 @@ function AgentNetworksSection() {
           />
         </>
       )}
+      {computersEnabled && <ComputersPanel />}
       <AgentMessagingSettings />
       <FreshAuthModal {...actions.freshAuthModalProps} />
     </Panel>

@@ -137,6 +137,13 @@ export interface InterBayComputersApi {
     account_id: string;
     home_bay_id: string;
   }): Promise<SignedEnvelope<ProjectAttestation>>;
+
+  // At the project's owning bay: why it can't use computers (null if it
+  // can). Only for messages; the attestation alone decides.
+  explainProjectIneligibility(opts: {
+    project_id: string;
+    account_id: string;
+  }): Promise<string | null>;
 }
 
 function subject(bay_id: string): string {

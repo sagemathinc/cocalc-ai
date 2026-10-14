@@ -145,3 +145,30 @@ export async function attestProjectLocal({
   });
   return await signAsBay(SIGNED_KINDS.attestation, payload);
 }
+
+/**
+ * Why a project can't use computers, for the agent's error message (null if
+ * it can). A plain read: the signed attestation alone decides.
+ */
+export async function explainProjectIneligibility({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): Promise<string | null> {
+  if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
+    throw new Error("invalid project or account id");
+  }
+  const { rows } = await getPool().query(
+    `SELECT users, deleted FROM projects WHERE project_id=$1`,
+    [project_id],
+  );
+  const row = rows[0];
+  if (row == null) return "no such project";
+  if (row.deleted) return "this project has been deleted";
+  if (!projectEligibleForComputers(row.users, account_id)) {
+    return "computers can only be used from a project whose only collaborator is you (create a private project for this agent)";
+  }
+  return null;
+}

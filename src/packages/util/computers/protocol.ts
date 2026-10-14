@@ -26,6 +26,8 @@ export const SIGNED_KINDS = {
   ticket: "computer-ticket",
   floors: "computer-floors",
   key_endorsement: "signing-key-endorsement",
+  login: "computer-login",
+  challenge_request: "computer-challenge-request",
 } as const;
 
 export interface SignedEnvelope<T> {
@@ -140,6 +142,85 @@ export interface SigningKeyEndorsement {
   not_after: number;
 }
 
+/**
+ * Signed by the computer's own key to log in to conat at its home bay, over
+ * a single-use challenge from that bay. Nothing reusable is ever issued.
+ */
+export interface ComputerLogin {
+  type: "cocalc-computer-login";
+  version: 1;
+  site: string;
+  cluster_id: string;
+  home_bay_id: string;
+  home_epoch: number;
+  computer_id: string;
+  account_id: string;
+  /** Canonical hash of the computer's certificate envelope. */
+  certificate_hash: string;
+  /** Fingerprint of the signing key (the envelope's kid too). */
+  signing_key: string;
+  audience: "conat";
+  challenge_id: string;
+  nonce: string;
+  issued_at: number;
+  expires_at: number;
+}
+
+/**
+ * Signed by the computer's key to ask for a login challenge, so nobody else
+ * (e.g. someone who only learned the computer's id) can use up its
+ * challenges.
+ */
+export interface ComputerChallengeRequest {
+  type: "cocalc-computer-challenge-request";
+  version: 1;
+  site: string;
+  cluster_id: string;
+  home_bay_id: string;
+  account_id: string;
+  computer_id: string;
+  issued_at: number;
+  /** Single use: the home bay refuses a nonce it has seen. */
+  nonce: string;
+}
+
+export function parseComputerChallengeRequest(
+  input: unknown,
+): ComputerChallengeRequest {
+  const o = record(input, "challenge request");
+  onlyKeys(
+    o,
+    [
+      "type",
+      "version",
+      "site",
+      "cluster_id",
+      "home_bay_id",
+      "account_id",
+      "computer_id",
+      "issued_at",
+      "nonce",
+    ],
+    "challenge request",
+  );
+  literal(o.type, "cocalc-computer-challenge-request", "challenge.type");
+  version(o.version);
+  return {
+    type: "cocalc-computer-challenge-request",
+    version: 1,
+    site: site(o.site),
+    cluster_id: clusterId(o.cluster_id),
+    home_bay_id: bayId(o.home_bay_id),
+    account_id: uuid(o.account_id, "challenge.account_id"),
+    computer_id: uuid(o.computer_id, "challenge.computer_id"),
+    issued_at: time(o.issued_at, "challenge.issued_at"),
+    nonce: nonce(o.nonce, "challenge.nonce"),
+  };
+}
+
+/** A login transcript lives at most this long. */
+export const MAX_LOGIN_MS = 60 * 1000;
+
 /** Signed by the account's home bay: permission for exactly one operation. */
 export interface ComputerTicket {
   type: "cocalc-computer-ticket";
@@ -236,6 +317,58 @@ export function parsePairingTranscript(input: unknown): PairingTranscript {
       arch: label(m.arch, "machine.arch"),
       user: label(m.user, "machine.user"),
     },
+  };
+}
+
+export function parseComputerLogin(input: unknown): ComputerLogin {
+  const o = record(input, "login");
+  onlyKeys(
+    o,
+    [
+      "type",
+      "version",
+      "site",
+      "cluster_id",
+      "home_bay_id",
+      "home_epoch",
+      "computer_id",
+      "account_id",
+      "certificate_hash",
+      "signing_key",
+      "audience",
+      "challenge_id",
+      "nonce",
+      "issued_at",
+      "expires_at",
+    ],
+    "login",
+  );
+  literal(o.type, "cocalc-computer-login", "login.type");
+  version(o.version);
+  literal(o.audience, "conat", "login.audience");
+  const issued_at = time(o.issued_at, "login.issued_at");
+  const expires_at = time(o.expires_at, "login.expires_at");
+  if (expires_at <= issued_at || expires_at - issued_at > MAX_LOGIN_MS) {
+    throw new ProtocolError(
+      `a login lives more than 0 and at most ${MAX_LOGIN_MS} ms`,
+    );
+  }
+  return {
+    type: "cocalc-computer-login",
+    version: 1,
+    site: site(o.site),
+    cluster_id: clusterId(o.cluster_id),
+    home_bay_id: bayId(o.home_bay_id),
+    home_epoch: epoch(o.home_epoch, "login.home_epoch"),
+    computer_id: uuid(o.computer_id, "login.computer_id"),
+    account_id: uuid(o.account_id, "login.account_id"),
+    certificate_hash: hash(o.certificate_hash, "login.certificate_hash"),
+    signing_key: fingerprint(o.signing_key, "login.signing_key"),
+    audience: "conat",
+    challenge_id: uuid(o.challenge_id, "login.challenge_id"),
+    nonce: nonce(o.nonce, "login.nonce"),
+    issued_at,
+    expires_at,
   };
 }
 

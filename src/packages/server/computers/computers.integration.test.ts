@@ -204,6 +204,30 @@ describeDb("computers store", () => {
       expect(env.payload.eligible).toBe(false);
     });
 
+    it("explains why a project can't use computers, one reason at a time", async () => {
+      const { explainProjectIneligibility } = await import("./attestation");
+      const explain = (project_id: string) =>
+        explainProjectIneligibility({ project_id, account_id: account });
+      const mine = await project({ [account]: { group: "owner" } });
+      expect(await explain(mine)).toBeNull();
+      // A public share doesn't matter.
+      await db().query(
+        "INSERT INTO public_project_paths (id, project_id, path, visibility, disabled) VALUES ($1,$2,'pub','listed',false)",
+        [randomUUID(), mine],
+      );
+      expect(await explain(mine)).toBeNull();
+      const shared = await project({
+        [account]: { group: "owner" },
+        [randomUUID()]: { group: "collaborator" },
+      });
+      expect(await explain(shared)).toMatch(/only collaborator is you/);
+      await db().query("UPDATE projects SET deleted=true WHERE project_id=$1", [
+        mine,
+      ]);
+      expect(await explain(mine)).toMatch(/deleted/);
+      expect(await explain(randomUUID())).toBe("no such project");
+    });
+
     it("public shares don't affect eligibility or the privacy epoch, and share changes aren't restricted", async () => {
       const { attestProjectLocal } = await import("./attestation");
       const project_id = await project({ [account]: { group: "owner" } }, 7);
@@ -564,7 +588,7 @@ describeDb("computers store", () => {
       ).rejects.toThrow(/expired/);
     });
 
-    it("refuses a request for a network that isn't the account's, and a taken name", async () => {
+    it("refuses a request for a network that isn't the account's; a live computer keeps its name until disconnected", async () => {
       const { createComputerRequest, approveComputerRequest } =
         await import("./requests");
       await expect(
@@ -584,14 +608,31 @@ describeDb("computers store", () => {
       });
       const two = await newRequest("dup");
       const p2 = await machinePairs(two.request_id);
-      await expect(
+      const approveTwo = async () =>
         approveComputerRequest({
           agent_network_generation: await networkGeneration(),
           account_id: account,
           request_id: two.request_id,
           transcript_hash: p2.transcript_hash,
-        }),
-      ).rejects.toThrow(/already exists/);
+        });
+      await expect(approveTwo()).rejects.toThrow(
+        /@dup is still connected\. Disconnect it first/,
+      );
+      // Once disconnected, the new computer takes the name and the old one
+      // leaves the list.
+      const { listComputers, revokeComputer } = await import("./computers");
+      const old = (await listComputers(account)).find((c) => c.name === "dup")!;
+      await revokeComputer({
+        account_id: account,
+        computer_id: old.computer_id,
+      });
+      await approveTwo();
+      const dups = (await listComputers(account)).filter(
+        (c) => c.name === "dup",
+      );
+      expect(dups).toHaveLength(1);
+      expect(dups[0].computer_id).not.toBe(old.computer_id);
+      expect(dups[0].revoked_at).toBeNull();
     });
   });
 

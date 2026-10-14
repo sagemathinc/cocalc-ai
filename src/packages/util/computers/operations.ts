@@ -12,6 +12,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import type { OperationKind } from "./protocol";
 
 export const MAX_COMMAND_BYTES = 32 * 1024;
+export const MAX_ARGV_LENGTH = 4096;
 export const MAX_DESCRIPTION_LENGTH = 200;
 export const MAX_JOB_NAME_LENGTH = 64;
 export const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60 * 1000;
@@ -25,9 +26,17 @@ export const MAX_TRANSFER_BYTES = 2 * 1024 ** 3;
 
 export class OperationError extends Error {}
 
-export interface ExecRequest {
-  /** A shell command line, run by the user's login shell. */
-  command: string;
+/**
+ * What runs: a shell command line for the user's login shell, or (argv) the
+ * exact arguments of one command, which no login shell parses. Exactly one
+ * of the two is set.
+ */
+export interface CommandSpec {
+  command: string | null;
+  argv: string[] | null;
+}
+
+export interface ExecRequest extends CommandSpec {
   /** Relative to the computer's working directory, or absolute. */
   cwd: string | null;
   timeout_ms: number;
@@ -35,8 +44,7 @@ export interface ExecRequest {
   stdin: string | null;
 }
 
-export interface RunRequest {
-  command: string;
+export interface RunRequest extends CommandSpec {
   cwd: string | null;
   /** Required short description, visible to the owner's other agents. */
   description: string;
@@ -92,7 +100,7 @@ export function parseOperationRequest(
       onlyKeys(o, [], operation);
       return { operation, request: {} };
     case "exec": {
-      onlyKeys(o, ["command", "cwd", "timeout_ms", "stdin"], "exec");
+      onlyKeys(o, ["command", "argv", "cwd", "timeout_ms", "stdin"], "exec");
       const timeout_ms =
         o.timeout_ms == null
           ? DEFAULT_EXEC_TIMEOUT_MS
@@ -113,7 +121,7 @@ export function parseOperationRequest(
       return {
         operation,
         request: {
-          command: command(o.command),
+          ...commandSpec(o),
           cwd: cwd(o.cwd),
           timeout_ms,
           stdin,
@@ -123,7 +131,7 @@ export function parseOperationRequest(
     case "run": {
       onlyKeys(
         o,
-        ["command", "cwd", "description", "name", "exclusive", "nice"],
+        ["command", "argv", "cwd", "description", "name", "exclusive", "nice"],
         "run",
       );
       if (typeof o.description !== "string" || !o.description.trim()) {
@@ -155,7 +163,7 @@ export function parseOperationRequest(
       return {
         operation,
         request: {
-          command: command(o.command),
+          ...commandSpec(o),
           cwd: cwd(o.cwd),
           description: o.description.trim(),
           name,
@@ -223,16 +231,62 @@ export function maxRuntimeMs(op: OperationRequest): number {
   }
 }
 
-function command(value: unknown): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new OperationError("command must be a non-empty string");
+function commandSpec(o: Record<string, unknown>): CommandSpec {
+  if ((o.command == null) === (o.argv == null)) {
+    throw new OperationError("give either command or argv");
   }
+  if (o.command != null) {
+    const value = o.command;
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new OperationError("command must be a non-empty string");
+    }
+    commandSize(value);
+    return { command: value, argv: null };
+  }
+  const argv = o.argv;
+  if (
+    !Array.isArray(argv) ||
+    argv.length === 0 ||
+    argv.length > MAX_ARGV_LENGTH ||
+    !argv.every((a) => typeof a === "string") ||
+    argv[0] === ""
+  ) {
+    throw new OperationError(
+      `argv must be a command and its arguments (at most ${MAX_ARGV_LENGTH} strings)`,
+    );
+  }
+  // Bound what actually travels (one environment string on the computer).
+  commandSize(argvScript(argv));
+  return { command: null, argv: [...argv] };
+}
+
+function commandSize(value: string): void {
   if (new TextEncoder().encode(value).length > MAX_COMMAND_BYTES) {
     throw new OperationError(`command is at most ${MAX_COMMAND_BYTES} bytes`);
   }
   if (value.includes("\u0000"))
     throw new OperationError("command contains NUL");
-  return value;
+}
+
+/** POSIX sh quoting, exact for every string without NUL. */
+export function posixQuote(arg: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg)
+    ? arg
+    : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The sh script that sets an argv as the positional parameters: every value
+ * is in argument position after a fixed `set --`, so none can become an
+ * assignment, a reserved word or an operator; the command is then "$@".
+ */
+export function argvScript(argv: string[]): string {
+  return `set -- ${argv.map(posixQuote).join(" ")}`;
+}
+
+/** How a request's command reads, for audit and job lists. */
+export function commandText(spec: CommandSpec): string {
+  return spec.command ?? (spec.argv ?? []).map(posixQuote).join(" ");
 }
 
 function cwd(value: unknown): string | null {

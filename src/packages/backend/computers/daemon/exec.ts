@@ -13,6 +13,8 @@ import { createWriteStream, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   MAX_EXEC_OUTPUT_BYTES,
+  argvScript,
+  type CommandSpec,
   type ExecRequest,
 } from "@cocalc/util/computers/operations";
 import { ensurePrivateDir } from "./durable";
@@ -66,6 +68,24 @@ export function resolveCwd(workdir: string, cwd: string | null): string {
 
 export function loginShell(): string {
   return process.env.SHELL || "/bin/sh";
+}
+
+/**
+ * The line the login shell runs (-lc) and the environment it needs. An argv
+ * never goes through the login shell's own parser (fish reads backslashes in
+ * single quotes differently): the shell runs a fixed line that reads the same
+ * in sh, bash, zsh and fish, in which /bin/sh only sets the positional
+ * parameters from the quoted argv (argvScript) and then runs "$@".
+ */
+export function loginShellCommand(spec: CommandSpec): {
+  line: string;
+  env: Record<string, string>;
+} {
+  if (spec.argv == null) return { line: spec.command ?? "", env: {} };
+  return {
+    line: `exec /bin/sh -c 'a=$COCALC_ARGV; unset COCALC_ARGV; eval "$a"; "$@"'`,
+    env: { COCALC_ARGV: argvScript(spec.argv) },
+  };
 }
 
 /**
@@ -132,11 +152,13 @@ export async function runExec(
     });
   }
   const started = Date.now();
+  const run = loginShellCommand(request);
   const child = spawn("/bin/sh", ["-c", EXEC_WRAPPER, "cocalc-exec"], {
     cwd,
     env: {
       ...(opts.env ?? process.env),
-      COCALC_EXEC_COMMAND: request.command,
+      ...run.env,
+      COCALC_EXEC_COMMAND: run.line,
       COCALC_EXEC_SHELL: opts.shell ?? loginShell(),
     },
     detached: true, // its own process group, so a timeout kills the tree
