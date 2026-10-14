@@ -55,6 +55,15 @@ for dropin_dir in cocalc-bay.target.d cocalc-bay-.target.d cocalc-bay-.service.d
   grep -qx 'ConditionPathExists=!/etc/cocalc/bay-restore-fence' \
     "${TARGET_ROOT}/etc/systemd/system/${dropin_dir}/restore-fence.conf"
 done
+# The scaffold never fences a bay itself.
+[[ ! -e "${TARGET_ROOT}/etc/cocalc/bay-restore-fence" ]]
+# A mode B rebuild installs the tooling, fenced, before any release.
+TOOLS_ROOT="${TMP_ROOT}/tools-rootfs"
+bash "${SCRIPT_DIR}/install-restore-tools.sh" --root "$TOOLS_ROOT" --fence
+[[ -e "${TOOLS_ROOT}/etc/cocalc/bay-restore-fence" ]]
+[[ -f "${TOOLS_ROOT}/etc/systemd/system/cocalc-bay-.service.d/restore-fence.conf" ]]
+cmp -s "${SCRIPT_DIR}/libexec/bay-restore" "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/bay-restore"
+[[ -x "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/bay-restore-engine.py" && -f "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/lib.sh" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-restore" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-config-escrow-run" ]]
 grep -qx 'ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run' \

@@ -431,4 +431,27 @@ for bad in ../bay-health /bin/sh 'bay-health;id' sh; do
   fi
 done
 
+# A bay fenced for a restore takes no deploy: only a rebuild's install with
+# --fenced, and never --start.
+fence_check() {
+  (RESTORE_FENCE="${TMP_ROOT}/bay-restore-fence" ALLOW_FENCED="$1" START_BAY="$2" check_restore_fence) 2>/dev/null
+}
+fence_check 0 1 || { echo "refused a deploy to a bay that is not fenced" >&2; exit 1; }
+touch "${TMP_ROOT}/bay-restore-fence"
+if fence_check 0 0; then
+  echo "deployed to a fenced bay" >&2
+  exit 1
+fi
+if fence_check 1 1; then
+  echo "started a fenced bay" >&2
+  exit 1
+fi
+fence_check 1 0 || { echo "refused a rebuild's --fenced install" >&2; exit 1; }
+# Before anything is staged: the check comes first in main, after root.
+if ! awk '/^main\(\)/ { inmain = 1 } inmain && /require_root$/ { getline; found = $1 == "check_restore_fence"; exit } END { exit !found }' \
+  "${SCRIPT_DIR}/bay-bootstrap-release.sh"; then
+  echo "check_restore_fence is not the first step after require_root" >&2
+  exit 1
+fi
+
 echo "bay release pruning and CDN retention tests passed"

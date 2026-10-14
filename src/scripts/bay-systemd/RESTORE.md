@@ -25,7 +25,11 @@ other secrets, data) comes from the backups.
   `--no-cutover` lift the fence too, unless it was already there before the
   restore (mode B, below). If `bay-restore` itself is killed, the fence
   stays: run the restore again, or remove the file by hand to bring the bay
-  back on its current data. A bay deploy refuses to run against a fenced bay.
+  back on its current data. A bay deploy refuses to run against a fenced
+  bay: `bay-bootstrap-release.sh` checks before it stages anything, and
+  `upgrade-bay-release.sh` checks again before each restart. The drop-ins
+  and `bay-restore` are installed by `install-restore-tools.sh`, with every
+  release and, in mode B, from current main.
 - **The live data is not changed until the cutover.** The restore is built in
   a new work directory and verified there. Only then does the cutover move the
   live `postgres` and `sync` directories to `<work-dir>/pre-restore/`, move the
@@ -187,6 +191,9 @@ the hosts and in project backups.
    ```sh
    git clone https://github.com/sagemathinc/cocalc-ai.git && cd cocalc-ai
    git checkout <commit>
+   # The restore tooling comes from current main, whatever release is
+   # restored: an older release may lack the fence (step 4).
+   git worktree add ../restore-tools origin/main
    sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
    sudo chown cocalc-bay:cocalc-bay /mnt/cocalc-backups
    ```
@@ -199,10 +206,13 @@ the hosts and in project backups.
    file). The release installed in step 6 enables the bay's units, including
    the production tunnel, so that it comes up at boot. The fence (see "How
    the restore works") keeps all of it down, across reboots, until the
-   cutover in step 8 has put restored data in place:
+   cutover in step 8 has put restored data in place. It is installed from
+   current main, with the restore tooling, before any release: releases
+   older than the fence have neither its drop-ins nor a `bay-restore` that
+   lifts it, and installing them leaves both in place:
 
    ```sh
-   sudo install -m 0644 /dev/null /etc/cocalc/bay-restore-fence
+   sudo ../restore-tools/src/scripts/bay-systemd/install-restore-tools.sh --fence
    sudo install -o root -g root -m 0600 ./site-master-key /etc/cocalc/site-master-key
    ```
 
@@ -239,9 +249,11 @@ the hosts and in project backups.
    there.
 
 6. **Install the release** without starting it (the escrowed env files are
-   kept; only missing ones are generated). This also installs `bay-restore`
-   in `/usr/local/libexec/cocalc-bay`. Use the published bay bundle of the
-   artifact from step 3, checked against the SHA-256 in its manifest:
+   kept; only missing ones are generated). Use the published bay bundle of
+   the artifact from step 3, checked against the SHA-256 in its manifest.
+   The release installs its own `bay-restore` in
+   `/usr/local/libexec/cocalc-bay`, so install the restore tooling from
+   current main again afterwards:
 
    ```sh
    A=https://software.cocalc.ai/software/artifacts/bay/<artifact_id>
@@ -249,7 +261,12 @@ the hosts and in project backups.
    curl -fsS "$A/manifest.json" | python3 -c 'import json, sys
    print(json.load(sys.stdin)["files"][0]["sha256"], " /tmp/cocalc-bay-runtime-linux-x64.tar.xz")' |
      sha256sum -c
-   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz
+   # Releases that know the fence refuse to install on a fenced bay without
+   # --fenced; older ones do not know the option.
+   FENCED=""
+   grep -q -- '--fenced)' ./src/scripts/bay-systemd/bay-bootstrap-release.sh && FENCED=--fenced
+   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh $FENCED --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz
+   sudo ../restore-tools/src/scripts/bay-systemd/install-restore-tools.sh
    ```
 
    (`--source "$PWD/src"` works too, but needs a full build of the checkout
@@ -349,6 +366,9 @@ the hosts and in project backups.
   - `--target-time` keeps its microseconds.
 - `libexec/bay-restore-engine.test.sh` checks the engine's PITR sentinel
   verdict, and that a missed target fails the drill at once.
+- `install-scaffold.test.sh` checks that the fence's drop-ins are installed
+  for every bay unit; `bay-bootstrap-release.test.sh` that a fenced bay takes
+  no deploy except a `--fenced` install, and never `--start`.
   - copies and work directories the bay account could change are refused.
 - `test/bay-restore-e2e.sh` runs `bay-restore` end to end on a disposable
   Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore, a

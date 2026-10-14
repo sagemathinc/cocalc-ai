@@ -15,6 +15,8 @@ WORKER_COUNT=""
 WORKER_COUNT_EXPLICIT=0
 ENABLE_WORKERS=1
 START_BAY=0
+ALLOW_FENCED=0
+RESTORE_FENCE="${COCALC_BAY_RESTORE_FENCE:-/etc/cocalc/bay-restore-fence}"
 FORCE_ENV=0
 FORCE_OVERLAY=0
 OVERLAY_MODE=""
@@ -63,6 +65,8 @@ Options:
   --force-overlay          overwrite bay-overlay.env only
   --no-enable-workers      do not enable worker units
   --start                  start cocalc-bay.target after install
+  --fenced                 install although the bay is fenced for a restore
+                           (RESTORE.md mode B, step 6); never with --start
   --overlay <mode>         overlay mode passed to install-scaffold
                            (default: current-cocalc for --source, rocket-bundle for --bundle)
   --no-daemon-reload       skip daemon-reload during scaffold install
@@ -902,6 +906,22 @@ prune_old_releases() {
   done < <(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
 }
 
+# A bay fenced for a restore (RESTORE.md) takes no deploy until the cutover,
+# which bay-restore runs on the release it has: checked before anything is
+# staged or changed. Only a rebuild's release install (mode B step 6) runs
+# fenced, with --fenced, and it never starts the bay.
+check_restore_fence() {
+  [[ -e "$RESTORE_FENCE" ]] || return 0
+  if [[ "$ALLOW_FENCED" -ne 1 ]]; then
+    echo "refusing: the bay is fenced for a restore (${RESTORE_FENCE}); deploy after bay-restore's cutover (a mode B rebuild installs with --fenced)" >&2
+    exit 1
+  fi
+  if [[ "$START_BAY" -eq 1 ]]; then
+    echo "refusing --start: the bay is fenced for a restore (${RESTORE_FENCE}); bay-restore's cutover starts it" >&2
+    exit 1
+  fi
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -986,6 +1006,10 @@ main() {
         START_BAY=1
         shift
         ;;
+      --fenced)
+        ALLOW_FENCED=1
+        shift
+        ;;
       --overlay)
         OVERLAY_MODE="$2"
         shift 2
@@ -1019,6 +1043,7 @@ main() {
   done
 
   require_root
+  check_restore_fence
 
   local input_count=0
   [[ -n "$SOURCE_ROOT" ]] && input_count=$((input_count + 1))
@@ -1388,11 +1413,6 @@ EOF
   fi
 
   if [[ "$START_BAY" -eq 1 ]]; then
-    # Fenced for a restore (RESTORE.md): the starts below would be skipped.
-    if [[ -e /etc/cocalc/bay-restore-fence ]]; then
-      echo "not starting the bay: it is fenced for a restore (/etc/cocalc/bay-restore-fence); bay-restore cutover starts it" >&2
-      exit 1
-    fi
     validate_site_master_key
     run systemctl start cocalc-bay.target
     run systemctl start cocalc-bay-frontdoor.service

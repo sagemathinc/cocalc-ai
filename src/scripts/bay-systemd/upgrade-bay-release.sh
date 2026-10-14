@@ -563,6 +563,8 @@ restart_and_health_check() {
     fi
     log "Restart hub workers one at a time and run health checks"
     remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+# Again here: a restore may have fenced the bay since the deploy began.
+[[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
 # Release commands run as the bay account (root-owned runner); root never
 # executes code from the bay-owned release.
@@ -592,6 +594,8 @@ EOF
   elif [[ "$SCAFFOLD_ONLY" -eq 1 ]]; then
     log "Reload bay scaffold and run health checks"
     remote_exec "sudo bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+# Again here: a restore may have fenced the bay since the deploy began.
+[[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
 # Release commands run as the bay account (root-owned runner); root never
 # executes code from the bay-owned release.
@@ -603,6 +607,8 @@ EOF
   elif [[ -n "$RESTART_BAY_SERVICE" ]]; then
     log "Run migrations, restart bay service ${RESTART_BAY_SERVICE}, and run health checks"
     remote_exec "sudo env BAY_SERVICE=$(q "$RESTART_BAY_SERVICE") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+# Again here: a restore may have fenced the bay since the deploy began.
+[[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
 # Release commands run as the bay account (root-owned runner); root never
 # executes code from the bay-owned release.
@@ -672,6 +678,8 @@ EOF
   elif [[ "$HUB_ONLY" -eq 1 ]]; then
     log "Restart frontdoor, run migrations, roll hub workers, and run health checks"
     remote_exec "sudo env BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+# Again here: a restore may have fenced the bay since the deploy began.
+[[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
 # Release commands run as the bay account (root-owned runner); root never
 # executes code from the bay-owned release.
@@ -725,6 +733,8 @@ EOF
   else
     log "Restart frontdoor, run migrations, roll hub workers, and run health checks"
     remote_exec "sudo env RESTART_SHARED_SERVICES=$(q "$RESTART_SHARED_SERVICES") RESTART_CLOUDFLARED=$(q "$RESTART_CLOUDFLARED") BAY_USER=$(q "$BAY_USER") bash -s" <<'EOF' | tee "${REPORT_DIR}/bay-health.txt"
+# Again here: a restore may have fenced the bay since the deploy began.
+[[ ! -e /etc/cocalc/bay-restore-fence ]] || { echo "the bay was fenced for a restore during the deploy (/etc/cocalc/bay-restore-fence); not restarting it" >&2; exit 1; }
 set -euo pipefail
 # Release commands run as the bay account (root-owned runner); root never
 # executes code from the bay-owned release.

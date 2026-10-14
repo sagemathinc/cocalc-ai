@@ -255,7 +255,9 @@ kill_bay_processes() {
     fi
     sleep 0.2
   done
-  die "processes of ${COCALC_BAY_USER} keep running (is a unit restarting them?); nothing was changed"
+  # The fence stays, if set: with an unknown process left, a bay that stays
+  # down is the safe outcome.
+  die "processes of ${COCALC_BAY_USER} keep running (is a unit restarting them?); the data was not changed. The bay is stopped$([[ -e "$FENCE" ]] && echo " and stays fenced (${FENCE})"): find what keeps them running, then rerun the restore, or remove the fence and start the bay to go back"
 }
 
 # The bay's ingress, wanted by multi-user.target rather than cocalc-bay.target.
