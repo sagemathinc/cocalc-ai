@@ -55,8 +55,15 @@ export const computersAtThisBay: InterBayComputersApi = {
     const created = await createComputerRequest(opts);
     return { ...created, pairing_url: await pairingUrl(created.request_id) };
   },
-  listRequests: async ({ account_id }) =>
-    await listComputerRequests(account_id),
+  listRequests: async ({ account_id }) => {
+    // The line to run on the machine, from the home bay (this one), as
+    // createRequest gives it: never rebuilt from a browser's origin.
+    const origin = await pairingOrigin();
+    return (await listComputerRequests(account_id)).map((r) => ({
+      ...r,
+      pairing_url: `${origin}/c/${r.request_id}`,
+    }));
+  },
   getPairingView: async ({ request_id }) => await getPairingView(request_id),
   submitPairing: async (opts) => await submitPairing(opts),
   approveRequest: async ({
@@ -105,10 +112,14 @@ export const computersAtThisBay: InterBayComputersApi = {
  * and the request id. The machine talks to the pairing endpoints there.
  */
 export async function pairingUrl(request_id: string): Promise<string> {
+  return `${await pairingOrigin()}/c/${request_id}`;
+}
+
+async function pairingOrigin(): Promise<string> {
   const origin =
     (await getBayPublicOrigin(getConfiguredBayId()).catch(() => undefined)) ??
     (await computersSite());
-  return `${origin.replace(/\/+$/, "")}/c/${request_id}`;
+  return origin.replace(/\/+$/, "");
 }
 
 /** The computers API at a given bay (this one, or over the fabric). */

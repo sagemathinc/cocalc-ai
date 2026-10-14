@@ -219,6 +219,7 @@ import {
 } from "../sqlite/acp-sessions";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
+  humanTurnComputerNote,
   resolveHumanTurnMentions,
   resolveHumanTurnArtifactMentions,
 } from "./turn-mentions";
@@ -8205,9 +8206,12 @@ async function executeAcpRequest({
           agent_memory_context: memory.context,
           mentionReferences,
           readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
-          prompt: artifactReferences.length
-            ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
-            : augmentPromptWithAgentMentions(prompt, mentionReferences),
+          prompt: withComputerNote(
+            artifactReferences.length
+              ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
+              : augmentPromptWithAgentMentions(prompt, mentionReferences),
+            humanTurnComputerNote(request),
+          ),
           local_images: harness ? undefined : local_images,
           image_attachments: harness ? image_attachments : undefined,
           runtime_env: runtimeEnv,
@@ -12352,3 +12356,7 @@ export const acpTestInternals = {
   terminalTurnNeedsPeriodicRepair,
   waitForChatWriterDisposal,
 };
+
+function withComputerNote(prompt: string, note: string): string {
+  return note ? `${prompt}\n\n${note}` : prompt;
+}

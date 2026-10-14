@@ -32,7 +32,10 @@ export interface ComputerSummary {
   notes_revision: number;
   notes_locked: boolean;
   connected_at: number | null;
+  /** When it was last heard from (its connector's latest heartbeat). */
   last_seen: number | null;
+  /** Its connector is online now: a live session seen in the last 45 s. */
+  connected: boolean;
   revoked_at: number | null;
   origin: string;
 }
@@ -106,6 +109,8 @@ export interface ComputerRequestSummary {
   computer_id: string | null;
   expires_at: number;
   created_at: number;
+  /** The line to run on the machine (its home bay's pairing URL). */
+  pairing_url?: string;
 }
 
 export type TicketResult =

@@ -65,3 +65,17 @@ it("retains the confirmation for account-wide revocation", async () => {
   );
   confirm.mockRestore();
 });
+
+it("can show only the kill switch (installations shown elsewhere)", async () => {
+  const user = userEvent.setup();
+  const onChanged = jest.fn();
+  render(
+    <AgentMessagingSettings installations={false} onChanged={onChanged} />,
+  );
+  expect(
+    screen.queryByRole("region", { name: "External agent installations" }),
+  ).toBeNull();
+  expect(screen.getByText(/the computers\s+they use/)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Pause all messaging" }));
+  await waitFor(() => expect(onChanged).toHaveBeenCalled());
+});

@@ -22,6 +22,7 @@ import {
 } from "@cocalc/util/computers/policy";
 import type { ComputerSummary } from "@cocalc/util/computers/api";
 import { computerName } from "./requests";
+import { SESSION_LIVENESS_MS } from "./sessions";
 import { assertComputersAuthority, lockAgentControls } from "./authority";
 
 export type { ComputerSummary };
@@ -30,6 +31,20 @@ export const MAX_NOTES_BYTES = 4096;
 export const NOTES_HISTORY = 20;
 
 export class ComputerError extends Error {}
+
+/**
+ * Computer rows with whether one is connected now (a live session) and when
+ * it was last heard from: sessions carry the heartbeat, the computer row only
+ * the last login.
+ */
+const COMPUTERS = `
+  SELECT c.*, s.live, s.seen FROM account_computers c
+  LEFT JOIN LATERAL (
+    SELECT max(last_seen) AS seen,
+           bool_or(closed_at IS NULL AND lease_until > now()
+                   AND last_seen > now() - make_interval(secs => ${SESSION_LIVENESS_MS / 1000}))
+             AS live
+      FROM account_computer_sessions WHERE computer_id = c.computer_id) s ON true`;
 
 function summary(row: any): ComputerSummary {
   const t = (v: any) => (v == null ? null : new Date(v).valueOf());
@@ -51,7 +66,15 @@ function summary(row: any): ComputerSummary {
     notes_revision: Number(row.notes_revision),
     notes_locked: !!row.notes_locked,
     connected_at: t(row.connected_at),
-    last_seen: t(row.last_seen),
+    last_seen: t(
+      row.seen != null && (row.last_seen == null || row.seen > row.last_seen)
+        ? row.seen
+        : row.last_seen,
+    ),
+    connected:
+      row.live === true &&
+      row.revoked_at == null &&
+      (row.deadline == null || new Date(row.deadline).valueOf() > Date.now()),
     revoked_at: t(row.revoked_at),
     origin: row.origin,
   };
@@ -62,8 +85,8 @@ export async function listComputers(
 ): Promise<ComputerSummary[]> {
   requireUuid(account_id, "account_id");
   const { rows } = await getPool().query(
-    `SELECT * FROM account_computers
-      WHERE account_id=$1 AND tombstoned_at IS NULL ORDER BY name`,
+    `${COMPUTERS}
+      WHERE c.account_id=$1 AND c.tombstoned_at IS NULL ORDER BY c.name`,
     [account_id],
   );
   return rows.map(summary);
@@ -76,8 +99,8 @@ export async function getComputer(
   requireUuid(account_id, "account_id");
   requireUuid(computer_id, "computer_id");
   const { rows } = await getPool().query(
-    `SELECT * FROM account_computers
-      WHERE account_id=$1 AND computer_id=$2 AND tombstoned_at IS NULL`,
+    `${COMPUTERS}
+      WHERE c.account_id=$1 AND c.computer_id=$2 AND c.tombstoned_at IS NULL`,
     [account_id, computer_id],
   );
   if (rows[0] == null) throw new ComputerError("no such computer");
@@ -105,7 +128,7 @@ export async function listComputersForAgent(
     requireUuid(v, w);
   }
   const { rows } = await getPool().query(
-    `SELECT c.* FROM account_computers c
+    `${COMPUTERS}
       WHERE c.account_id=$1 AND c.tombstoned_at IS NULL AND ${MEMBER_FILTER}
       ORDER BY c.name`,
     [account_id, agent_id, project_id],
@@ -135,9 +158,9 @@ export async function getComputerByRef(
   requireUuid(account_id, "account_id");
   const byId = isValidUUID(ref);
   const { rows } = await getPool().query(
-    `SELECT * FROM account_computers
-      WHERE account_id=$1 AND ${byId ? "computer_id" : "name"}=$2
-        AND tombstoned_at IS NULL`,
+    `${COMPUTERS}
+      WHERE c.account_id=$1 AND c.${byId ? "computer_id" : "name"}=$2
+        AND c.tombstoned_at IS NULL`,
     [account_id, byId ? ref.toLowerCase() : ref],
   );
   if (rows[0] == null) throw new ComputerError(`no computer '${ref}'`);

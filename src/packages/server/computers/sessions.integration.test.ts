@@ -287,6 +287,32 @@ describeDb("computer sessions", () => {
     );
   });
 
+  it("a computer shows as connected while it has a live session, with its heartbeat as last seen", async () => {
+    const { closeComputerSession, sessionIsCurrent } = await import(
+      "./sessions"
+    );
+    const { getComputer, listComputers } = await import("./computers");
+    const c = await pairedComputer();
+    expect((await getComputer(account, c.computer_id)).connected).toBe(false);
+    const { session } = await login(c);
+    // The heartbeat moves the session's last_seen, not the computer row's.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const beat = Date.now();
+    await sessionIsCurrent(session, beat, { touch: true });
+    const shown = await getComputer(account, c.computer_id);
+    expect(shown.connected).toBe(true);
+    expect(shown.last_seen).toBe(beat);
+    expect(
+      (await listComputers(account)).find(
+        (x) => x.computer_id === c.computer_id,
+      )?.connected,
+    ).toBe(true);
+    await closeComputerSession(session);
+    const after = await getComputer(account, c.computer_id);
+    expect(after.connected).toBe(false);
+    expect(after.last_seen).toBe(beat);
+  });
+
   it("caps open challenges per computer", async () => {
     const { createLoginChallenge } = await import("./sessions");
     const c = await pairedComputer();

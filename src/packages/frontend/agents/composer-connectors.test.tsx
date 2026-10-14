@@ -159,6 +159,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockSiteConnectors.cli_connector_github_enabled = true;
   mockSiteConnectors.cli_connector_cloudflare_enabled = true;
+  mockSiteConnectors.computers_enabled = false;
   mockRunQuota = { network: true };
   mockApi.listCliConnections.mockResolvedValue([]);
   mockApi.listCliConnectorGrants.mockResolvedValue([]);
@@ -299,6 +300,18 @@ test("only the connectors the site set up are shown", async () => {
   const items = await plusMenuItems(user);
   expect(items.some((text) => /^GitHub/.test(`${text}`))).toBe(true);
   expect(items.some((text) => /^Cloudflare/.test(`${text}`))).toBe(false);
+});
+
+test("the Computers item follows the site's computers switch", async () => {
+  const user = userEvent.setup();
+  const first = render(<Controls />);
+  const off = await plusMenuItems(user);
+  expect(off.some((text) => /^Computers/.test(`${text}`))).toBe(false);
+  first.unmount();
+  mockSiteConnectors.computers_enabled = true;
+  render(<Controls />);
+  const on = await plusMenuItems(user);
+  expect(on.some((text) => /^Computers/.test(`${text}`))).toBe(true);
 });
 
 test("a project without internet access says so", async () => {

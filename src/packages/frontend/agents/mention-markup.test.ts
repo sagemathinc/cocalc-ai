@@ -2,6 +2,11 @@ import MarkdownIt from "markdown-it";
 import { mentionPlugin } from "../markdown/mentions-plugin";
 import { createAgentMention } from "../editors/slate/elements/agent-mention";
 import { createArtifactMention } from "../editors/slate/elements/artifact-mention";
+import { createComputerMention } from "../editors/slate/elements/computer-mention";
+import {
+  parseComputerMention,
+  serializeComputerMention,
+} from "@cocalc/util/computer-mentions";
 import {
   parseArtifactMention,
   serializeArtifactMention,
@@ -90,4 +95,27 @@ test.each([
   expect(bindAgentName(`ask @reviewer\n${text}`, reference)).toBe(
     `ask ${serializeAgentMention(reference)}\n${text}`,
   );
+});
+
+test("computer mention round trips its identity through Markdown and Slate", () => {
+  const computer = {
+    version: 1 as const,
+    computer_id: "1a057860-889d-461a-9073-4b8c69d65123",
+    name: "m1",
+  };
+  const md = new MarkdownIt({ html: true });
+  md.use(mentionPlugin);
+  const markup = serializeComputerMention(computer);
+  const token = md
+    .parse(`disk usage on ${markup}?`, {})[1]
+    .children!.find((t) => t.type === "computer-mention")!;
+  expect(token).toBeTruthy();
+  const node = getMarkdownToSlate("computer-mention")({ token });
+  expect(node).toEqual(createComputerMention(computer));
+  expect(
+    parseComputerMention(
+      getSlateToMarkdown("computer-mention")({ node } as any),
+    ),
+  ).toEqual(computer);
+  expect(md.render(markup)).toContain(markup);
 });

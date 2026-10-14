@@ -14,14 +14,28 @@ import type {
   ComputerRequestSummary,
   ComputerSummary,
 } from "@cocalc/util/computers/api";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import { useAgentNetworks } from "@cocalc/frontend/agents/api";
+import {
+  approvalText,
+  approveRequest,
+  computersApi as api,
+  errorText,
+  ConnectOnMachine,
+  ReconnectComputer,
+  timeLimit,
+} from "./computer-pairing";
+import {
+  computerState,
+  isListed,
+  STATE_COLOR,
+  STATE_LABEL,
+} from "./computer-state";
 
-const api = () => webapp_client.conat_client.hub.computers;
 const OPEN = new Set(["pending", "paired"]);
 /** Expired requests stay listed this long, so the owner sees what happened. */
 const SHOW_EXPIRED_MS = 60 * 60 * 1000;
@@ -31,24 +45,6 @@ function stateNow(r: ComputerRequestSummary, now: number): string {
   return OPEN.has(r.state) && r.expires_at <= now ? "expired" : r.state;
 }
 
-/** The reason only, without RPC plumbing, as a sentence. */
-function errorText(err: unknown): string {
-  const message = normalizeUserFacingError(err).message.replace(
-    /^Error:\s*/,
-    "",
-  );
-  const sentence = message.charAt(0).toUpperCase() + message.slice(1);
-  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
-}
-
-function timeLimit(policy: {
-  duration: null | { initial_seconds: number; max_seconds: number };
-}) {
-  if (policy?.duration == null) return "no time limit";
-  const { initial_seconds, max_seconds } = policy.duration;
-  return `${Math.round(initial_seconds / 60)} min (at most ${Math.round(max_seconds / 3600)} h)`;
-}
-
 export function ComputersPanel() {
   const [requests, setRequests] = useState<ComputerRequestSummary[]>([]);
   const [computers, setComputers] = useState<ComputerSummary[]>([]);
@@ -56,6 +52,10 @@ export function ComputersPanel() {
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const [reconnecting, setReconnecting] = useState<ComputerSummary>();
+  const { directory: networks } = useAgentNetworks(true);
+  const networkTitle = (id: string) =>
+    networks?.networks.find((n) => n.agent_network_id === id)?.title;
 
   async function refresh() {
     try {
@@ -72,7 +72,7 @@ export function ComputersPanel() {
               x.expires_at > now - SHOW_EXPIRED_MS),
         ),
       );
-      setComputers(c.filter((x) => x.revoked_at == null));
+      setComputers(c.filter((x) => isListed(x, now)));
     } catch (err) {
       setError(errorText(err));
     }
@@ -103,7 +103,6 @@ export function ComputersPanel() {
 
   function approve(r: ComputerRequestSummary) {
     if (r.transcript_hash == null || r.agent_network == null) return;
-    const members = r.agent_network.members.length;
     Modal.confirm({
       title: `Connect ${r.machine?.hostname ?? "this machine"} as @${r.name}?`,
       width: 560,
@@ -115,24 +114,13 @@ export function ComputersPanel() {
           <Typography.Text strong code style={{ fontSize: "16px" }}>
             {r.pairing_phrase}
           </Typography.Text>
-          <div>
-            DIRECT mode: the {members} agent{members === 1 ? "" : "s"} in the{" "}
-            <b>{r.agent_network.title}</b> network will be able to run any
-            command there as <b>{r.machine?.user}</b>, with all of that user's
-            access, for {timeLimit(r.resolved_policy ?? r.requested_policy)}.
-          </div>
+          <div>{approvalText(r)}</div>
         </Space>
       ),
       okText: "Approve",
       onOk: () =>
         act(async () => {
-          await runFreshAuthAction(async () => {
-            await api().approveComputerRequest({
-              request_id: r.request_id,
-              transcript_hash: r.transcript_hash!,
-              agent_network_generation: r.agent_network!.generation,
-            });
-          });
+          await runFreshAuthAction(() => approveRequest(r));
         }),
     });
   }
@@ -185,12 +173,16 @@ export function ComputersPanel() {
                     </span>
                   </Space>
                 ) : r.state === "pending" ? (
-                  <Space orientation="vertical" size={0}>
+                  <Space
+                    orientation="vertical"
+                    size={4}
+                    style={{ width: "100%" }}
+                  >
                     <Tag>waiting for the machine</Tag>
-                    <span>Run this on the machine:</span>
-                    <Typography.Text code copyable>
-                      {`cocalc computer connect ${location.origin}/c/${r.request_id}`}
-                    </Typography.Text>
+                    <span>In a terminal on the machine, run:</span>
+                    {r.pairing_url && (
+                      <ConnectOnMachine pairing_url={r.pairing_url} />
+                    )}
                   </Space>
                 ) : (
                   <Space orientation="vertical" size={0}>
@@ -255,50 +247,114 @@ export function ComputersPanel() {
                   <span>
                     {c.machine_user}@{c.hostname} ({c.os} {c.arch}), {c.mode}
                   </span>
+                  {networkTitle(c.agent_network_id) && (
+                    <span>
+                      For the {networkTitle(c.agent_network_id)} network
+                    </span>
+                  )}
                 </Space>
               ),
+            },
+            {
+              key: "state",
+              title: "State",
+              render: (_, c) => {
+                const state = computerState(c);
+                return (
+                  <Tag color={STATE_COLOR[state]}>{STATE_LABEL[state]}</Tag>
+                );
+              },
             },
             {
               key: "seen",
               title: "Last seen",
               render: (_, c) =>
-                c.last_seen ? new Date(c.last_seen).toLocaleString() : "never",
+                c.connected ? (
+                  "now"
+                ) : c.last_seen ? (
+                  <TimeAgo date={c.last_seen} />
+                ) : (
+                  "never"
+                ),
             },
             {
               key: "until",
               title: "Until",
               render: (_, c) =>
-                c.deadline ? new Date(c.deadline).toLocaleString() : "no limit",
+                c.revoked_at ? (
+                  <span>
+                    disconnected <TimeAgo date={c.revoked_at} />
+                  </span>
+                ) : c.deadline ? (
+                  <TimeAgo date={c.deadline} />
+                ) : (
+                  "no limit"
+                ),
             },
             {
-              key: "revoke",
+              key: "actions",
               title: "",
               align: "right",
-              render: (_, c) => (
-                <Button
-                  danger
-                  disabled={busy}
-                  onClick={() =>
-                    Modal.confirm({
-                      title: `Disconnect @${c.name}?`,
-                      content:
-                        "New operations are refused at once and the machine's connection is closed within seconds. Commands and jobs already running there are NOT stopped yet: stop them on the machine if needed.",
-                      okText: "Disconnect",
-                      okButtonProps: { danger: true },
-                      onOk: () =>
-                        act(() =>
-                          api().revokeComputer({ computer_id: c.computer_id }),
-                        ),
-                    })
-                  }
-                >
-                  Disconnect
-                </Button>
-              ),
+              render: (_, c) => {
+                const state = computerState(c);
+                return (
+                  <Space>
+                    {state !== "connected" && (
+                      <Button
+                        type={state === "offline" ? "primary" : "default"}
+                        disabled={busy}
+                        onClick={() => setReconnecting(c)}
+                      >
+                        Reconnect…
+                      </Button>
+                    )}
+                    {state !== "ended" && (
+                      <Button
+                        danger
+                        disabled={busy}
+                        onClick={() =>
+                          Modal.confirm({
+                            title: `Disconnect @${c.name}?`,
+                            content:
+                              "New operations are refused at once and the machine's connection is closed within seconds. Commands and jobs already running there are NOT stopped yet: stop them on the machine if needed.",
+                            okText: "Disconnect",
+                            okButtonProps: { danger: true },
+                            onOk: () =>
+                              act(() =>
+                                api().revokeComputer({
+                                  computer_id: c.computer_id,
+                                }),
+                              ),
+                          })
+                        }
+                      >
+                        Disconnect
+                      </Button>
+                    )}
+                  </Space>
+                );
+              },
             },
           ]}
         />
       )}
+      <Modal
+        open={reconnecting != null}
+        title={reconnecting ? `Reconnect @${reconnecting.name}` : ""}
+        footer={null}
+        destroyOnHidden
+        onCancel={() => {
+          setReconnecting(undefined);
+          void refresh();
+        }}
+      >
+        {reconnecting && (
+          <ReconnectComputer
+            computer={reconnecting}
+            onDone={() => void refresh()}
+          />
+        )}
+      </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
