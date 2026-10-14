@@ -81,6 +81,9 @@ const WATCHER_WAKE_QUEUED = `(spec->>'kind' = 'watch' AND EXISTS (
      AND r.wake_state IN ('issued', 'deferred', 'combining')
      AND r.started_at > now() - interval '1 day'))`;
 
+/** The condition a sensor delete must meet (exported for the PostgreSQL test). */
+export const WATCHER_DELETE_GUARD = `NOT ${WATCHER_RUNNING} AND NOT ${WATCHER_WAKE_QUEUED}`;
+
 const WATCHER_RUNNING_ERROR =
   "This watcher is checking right now and may be waking the agent; try again in a minute.";
 const WATCHER_WAKE_QUEUED_ERROR =
@@ -97,8 +100,7 @@ async function deleteSensorGuarded(
 ): Promise<{ approved_by: string | null; kind: string | null }> {
   for (let attempt = 0; ; attempt++) {
     const { rows } = await agentStore().query(
-      `DELETE FROM agent_sensors WHERE ${where}
-         AND NOT ${WATCHER_RUNNING} AND NOT ${WATCHER_WAKE_QUEUED}
+      `DELETE FROM agent_sensors WHERE ${where} AND ${WATCHER_DELETE_GUARD}
        RETURNING approved_by, spec->>'kind' AS kind`,
       values,
     );

@@ -195,6 +195,18 @@ export function setSensorDispatchHookForTests(
   beforeDispatchHook = hook;
 }
 
+/**
+ * Issuing a wake first rewrites its sensor row: only while this run's lease is
+ * live, which it renews. Locking the row would not be enough: a delete that
+ * waits behind a lock proceeds once it is released unless the row changed. A
+ * delete that waits behind this update re-checks the new row, sees the live
+ * lease and refuses; a run whose lease ran out cannot issue at all.
+ */
+export const ISSUE_HOLD_SQL = `UPDATE agent_sensors
+     SET lease_until=GREATEST(lease_until, now() + interval '5 minutes')
+   WHERE sensor_id=$1 AND lease_id=$2 AND lease_until > now()
+   RETURNING sensor_id`;
+
 let beforeIssueHook: (() => Promise<void>) | undefined;
 /** Tests only: run something between the last dispatch check and issuing a wake. */
 export function setSensorIssueHookForTests(
@@ -446,13 +458,13 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     let gone = false;
     try {
       await db.transaction(async (client) => {
-        // Still this run's sensor, locked until the wake is recorded as
-        // issued: a delete either happened already (then nothing is sent)
-        // or waits, and then sees the issued wake and refuses.
-        const { rows: held } = await client.query(
-          "SELECT sensor_id FROM agent_sensors WHERE sensor_id=$1 AND lease_id=$2 FOR UPDATE",
-          [row.sensor_id, row.lease_id],
-        );
+        // Still this run's sensor, under a live lease (see ISSUE_HOLD_SQL):
+        // a delete either happened already (then nothing is sent) or
+        // refuses, now and once this commits.
+        const { rows: held } = await client.query(ISSUE_HOLD_SQL, [
+          row.sensor_id,
+          row.lease_id,
+        ]);
         if (held.length !== 1) {
           gone = true;
           throw new Error("the sensor changed before its wake was issued");
