@@ -455,6 +455,9 @@ export const TABLE_OWNERSHIP = {
       "account_computer_challenges",
       "account_computer_sessions",
       "account_computer_relays",
+      "account_computer_session_targets",
+      "account_computer_project_floors",
+      "account_computer_active_projects",
     ],
     {
       ownership: "account-home",
@@ -462,10 +465,10 @@ export const TABLE_OWNERSHIP = {
       portability: "unsupported",
       secondary_reference_fields: {
         project_id:
-          "Agent source project (source_project_id) is a locator checked through its owning bay's attestation, not account-home state.",
+          "Agent source project (source_project_id, or project_id of a computer's project floors and possibly-active projects) is a locator checked through its owning bay's attestation, not account-home state.",
       },
       notes:
-        "Computers an account connects for its agents (src/.agents/computers-plan-2026-10-11.md): policy ceiling, epochs, pairing requests, operation audit and job mirror. Authoritative only at the account home; account rehome is blocked while any rows exist until an explicit migration exists.",
+        "Computers an account connects for its agents (src/.agents/computers-plan-2026-10-11.md): policy ceiling, epochs, pairing requests, operation audit, job mirror, and the signed-state delivery, project floors and project re-checks of the revocation gate. Authoritative only at the account home; account rehome is blocked while any rows exist until an explicit migration exists.",
     },
   ),
   ...entries(["cluster_computer_signing_keys"], {

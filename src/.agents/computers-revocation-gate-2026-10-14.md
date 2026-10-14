@@ -22,6 +22,48 @@ Daemon-side pieces already on `feat/computers-revocation`:
 separate kinds into one **state snapshot** (§1). The code follows once this
 note is approved.
 
+## Implementation status (Oct 14, on `feat/computers-revocation`)
+
+Implemented and tested:
+
+- §1, the daemon side: snapshot, reconcile and ended at the challenge. In
+  `backend/computers/daemon`, `connector.ts`.
+- §2–§4, the hub side:
+  - state bumps at every change site (`state.ts`);
+  - delivery with readiness promotion by compare-and-swap
+    (`delivery.ts`);
+  - the receipt grace path (`isStateReceipt`);
+  - the signed ended answer before the site switch;
+  - account deletion in `markAccountDeleted`'s transaction;
+  - narrowing the policy, now enabled.
+- An ended daemon now drains its kills (SIGKILL after the grace period)
+  before the connector exits. Each exec's cleanup is recorded before it
+  is aborted.
+- §5–§6 (`recheck.ts`):
+  - the active-projects table with the 500 admission bound and safe GC;
+  - the re-check queue;
+  - a signed `project-deleted` tombstone (the only way to a terminal floor);
+  - `resolveProjectHardDeleteEvidenceAcrossCluster`;
+  - the queue-age gauge;
+  - the trigger on `UPDATE OF users, deleted`.
+- §7: certificates last until min(issue + 365 days, the signing key's
+  `not_after`). Settings shows the date.
+- Tests:
+  - `revocation.e2e.test.ts`, with a real conat server and connector:
+    revoke with one and with two sessions, revoked while offline with the
+    switch off, the initial session, account deletion, and a collaborator
+    added with the other project's work continuing;
+  - `state`, `recheck`, `sessions` and `pairing-http` integration tests;
+  - daemon unit tests.
+
+Not yet covered from §9:
+
+- crash-point injection between the state write and its side effects (the
+  daemon's reconcile-at-start is unit-tested);
+- a rotation-crossing e2e (the snapshot signing with a retired key is
+  integration-tested);
+- the more-than-200-due-pairs load test.
+
 ## Invariants
 
 1. **Every daemon that may be running work applies the computer's current
