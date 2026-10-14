@@ -65,6 +65,7 @@ export type SiteSettingsKeys =
   | "site_name"
   | "site_description"
   | "status_page_url"
+  | "sagebrush_origin"
   | "account_creation_email_instructions"
   | "sign_in_email_instructions"
   | "help_email"
@@ -533,6 +534,17 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Theme", "SLA"],
     group: "Branding & UI",
     subgroup: "Contact",
+  },
+  sagebrush_origin: {
+    name: "Sagebrush origin",
+    desc: "Where Sagebrush boards (.board.json files) shown in chat artifacts are loaded from: the board runs in a sandboxed frame of this site's /frame/board/ page. Blank shows boards as plain text.",
+    default: "https://sagebrush.space",
+    clearable: true,
+    valid: is_optional_http_url,
+    to_val: to_trimmed_str,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Artifacts",
   },
   help_email: {
     name: help_email_name,

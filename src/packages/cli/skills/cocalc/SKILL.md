@@ -367,10 +367,15 @@ Prefer `project chat artifact publish`:
 # Use the exact runtime CLI command in place of cocalc below.
 cocalc project chat artifact publish --source /home/user/plan.md
 cocalc project chat artifact publish --source /home/user/plot.png --title "Spectrum"
+cocalc project chat artifact publish --source /home/user/answer.board.json --title "Answer"
 cocalc project chat artifact publish --commit HEAD --repo /home/user/worktree
 cocalc project chat artifact publish --github-pr 123 --repo /home/user/worktree
 cocalc project chat artifact publish --file proposal.json
 ```
+
+To answer with a live Sagebrush board (text, pictures, flowcharts and Python
+that runs), write `foo.board.json` and publish it with `--source`. The card runs
+it in Sagebrush's sandboxed frame; edits made there are not saved to the file.
 
 JSON contains `title`, `markdown`, and optionally one of `file`, `actions`,
 `github_pr`, `commit`, plus optional `theme`. No message/operation/artifact IDs
