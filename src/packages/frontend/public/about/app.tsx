@@ -3,19 +3,21 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 
 import { Button, Flex, Tag, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
+  getPublicAboutIntro,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
-  PUBLIC_ABOUT_INTRO,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_BILLING_CONTACT,
+  type PublicAboutTextPart,
 } from "@cocalc/util/public-about-content";
+import { isPublicCocalcAiSite } from "@cocalc/util/public-home-content";
 import type { NewsItem } from "@cocalc/util/types/news";
 
 import {
@@ -95,6 +97,17 @@ const ABOUT_PAGE_CSS = `
     overflow: hidden;
     padding: clamp(28px, 5vw, 58px);
     position: relative;
+  }
+
+  /* The hero stays dark in both themes, so its text links are white. The
+     public page CSS underlines them. */
+  .cocalc-about-hero .ant-typography a:not(.ant-btn) {
+    color: ${PUBLIC_COLORS.onPrimary};
+  }
+
+  .cocalc-about-hero .ant-typography a:not(.ant-btn):focus-visible {
+    outline: 2px solid ${PUBLIC_COLORS.accent};
+    outline-offset: 2px;
   }
 
   .cocalc-about-founder {
@@ -228,7 +241,24 @@ function IconTile({ icon }: { icon: IconName }) {
   );
 }
 
-function AboutOverview() {
+// Shared About text, with its links resolved against the site's base path.
+function AboutText({ parts }: { parts: readonly PublicAboutTextPart[] }) {
+  return (
+    <>
+      {parts.map(({ path, text }, index) =>
+        path == null ? (
+          <Fragment key={index}>{text}</Fragment>
+        ) : (
+          <a href={publicPath(path)} key={index}>
+            {text}
+          </a>
+        ),
+      )}
+    </>
+  );
+}
+
+function AboutOverview({ config }: { config?: PublicConfig }) {
   const founder = getTeamMember("william-stein")!;
 
   return (
@@ -272,7 +302,9 @@ function AboutOverview() {
                 maxWidth: 760,
               }}
             >
-              {PUBLIC_ABOUT_INTRO}
+              <AboutText
+                parts={getPublicAboutIntro(isPublicCocalcAiSite(config))}
+              />
             </Paragraph>
           </div>
           <Flex gap={12} wrap>
@@ -926,7 +958,7 @@ export default function PublicAboutApp({
         <AboutTeamMemberPage slug={initialRoute.teamSlug} />
       ) : (
         <>
-          <AboutOverview />
+          <AboutOverview config={config} />
           <PublicNextStep
             authenticated={!!config?.is_authenticated}
             heading="Start your next project with an agent."

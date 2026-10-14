@@ -8,8 +8,8 @@ import {
   UNSUPPORTED_CAPABILITY_TERMS,
 } from "@cocalc/util/public-copy-guards";
 import {
+  getPublicAboutIntro,
   PUBLIC_ABOUT_HEADLINE,
-  PUBLIC_ABOUT_INTRO,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
@@ -41,6 +41,11 @@ import {
   PUBLIC_FEATURES_EYEBROW,
   PUBLIC_FEATURES_HEADLINE,
 } from "@cocalc/util/public-features-index";
+
+// Shared About text as readers see it, links included.
+function aboutText(parts: readonly { text: string }[]): string {
+  return parts.map(({ text }) => text).join("");
+}
 
 describe("public feature initial HTML", () => {
   it.each(["/prefix", "/docs"])(
@@ -443,8 +448,10 @@ describe("core landing page initial HTML", () => {
     ).toEqual([
       "p: SageMath, Inc. · The company behind CoCalc",
       `h1: ${PUBLIC_ABOUT_HEADLINE}`,
-      `p: ${PUBLIC_ABOUT_INTRO}`,
+      // Away from cocalc.ai, the lead names Codex only.
+      `p: ${aboutText(getPublicAboutIntro(false))}`,
     ]);
+    expect(header).not.toMatch(/Claude/);
     expect(about.match(/<h1>/g)).toHaveLength(1);
     expect(about).toContain(
       `<p>How we build</p>\n  <h2>${PUBLIC_ABOUT_PRINCIPLES_HEADLINE}</h2>\n  <p>${PUBLIC_ABOUT_REASON}</p>`,
@@ -458,6 +465,26 @@ describe("core landing page initial HTML", () => {
       /Claude Code|experimental preview|Incorporated|Our mission/i,
     );
   });
+
+  // As on the React page, cocalc.ai's lead names Claude and links it to the
+  // Claude guide, which states its preview status.
+  it.each(["/", "/prefix"])(
+    "links the About lead's Claude mention to its guide on cocalc.ai, on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const about = renderPublicRoutePrerender(
+        { section: "about", route: { view: "about" } },
+        basePath,
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
+      );
+      const [before, claude, after] = getPublicAboutIntro(true);
+      expect(claude).toEqual({ path: "docs/ai/claude-code", text: "Claude" });
+      expect(about).toContain(
+        `<h1>${PUBLIC_ABOUT_HEADLINE}</h1>\n  <p>${before.text}<a href="${prefix}/docs/ai/claude-code">Claude</a>${after.text}</p>`,
+      );
+      expect(about).not.toMatch(/Claude Code|experimental preview/i);
+    },
+  );
 
   it("uses shared team and community records for detail discovery", () => {
     const team = renderPublicRoutePrerender(

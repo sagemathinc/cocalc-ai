@@ -10,8 +10,32 @@
 export const PUBLIC_ABOUT_HEADLINE =
   "We build the agent platform where your agents work alongside your team.";
 
-export const PUBLIC_ABOUT_INTRO =
-  "You start an agent with a request, and it works in a persistent, shared CoCalc project with your files, installed software, terminals, and a web browser. Share the agent with colleagues, and they can review what it delivers and continue the work. Codex is built in, and Claude is available where the site enables it.";
+// A run of text, and a link when it has a path. The path is a site path, such
+// as "docs/ai/claude-code"; each renderer adds the site's base path.
+export interface PublicAboutTextPart {
+  path?: string;
+  text: string;
+}
+
+const PUBLIC_ABOUT_INTRO_START =
+  "You start an agent with a request, and it works in a persistent, shared CoCalc project with your files, installed software, terminals, and a web browser. Share the agent with colleagues, and they can review what it delivers and continue the work.";
+
+// The lead under the headline. Codex is built in on every site. Claude is
+// named only on cocalc.ai (isPublicCocalcAiSite in public-home-content.ts,
+// whose result renderers pass in), and links to the Claude guide, which
+// states its preview status.
+export function getPublicAboutIntro(
+  onCocalcAi: boolean,
+): readonly PublicAboutTextPart[] {
+  if (!onCocalcAi) {
+    return [{ text: `${PUBLIC_ABOUT_INTRO_START} Codex is built in.` }];
+  }
+  return [
+    { text: `${PUBLIC_ABOUT_INTRO_START} Codex is built in, and ` },
+    { path: "docs/ai/claude-code", text: "Claude" },
+    { text: " is available where the site enables it." },
+  ];
+}
 
 export const PUBLIC_ABOUT_REASON =
   "Important technical work should not depend on one laptop, one installation, or context trapped in a chat window. The environment itself should be durable, collaborative, inspectable, and ready for whoever works next.";

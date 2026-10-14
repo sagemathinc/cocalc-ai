@@ -25,15 +25,16 @@ import {
   PUBLIC_FEATURES_SECONDARY_CTA,
 } from "@cocalc/util/public-features-index";
 import {
+  getPublicAboutIntro,
   getPublicTeamMember,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
-  PUBLIC_ABOUT_INTRO,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
+  type PublicAboutTextPart,
 } from "@cocalc/util/public-about-content";
 import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import {
@@ -42,6 +43,7 @@ import {
 } from "@cocalc/util/public-guides";
 import {
   getPublicHomeHighlights,
+  isPublicCocalcAiSite,
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_INTRO,
@@ -567,7 +569,23 @@ ${groups}
 </main>`;
 }
 
-function renderAboutOverview(basePath: string): string {
+// Shared About text, as the React page renders it: links resolve against the
+// site's base path.
+function renderAboutText(
+  basePath: string,
+  parts: readonly PublicAboutTextPart[],
+): string {
+  return parts
+    .map(({ path, text }) =>
+      path == null ? htmlEscape(text) : publicLink(basePath, path, text),
+    )
+    .join("");
+}
+
+function renderAboutOverview(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   const principles = PUBLIC_ABOUT_PRINCIPLES.map(
     ({ body, title }) =>
       `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
@@ -588,7 +606,10 @@ function renderAboutOverview(basePath: string): string {
 <header>
   <p>SageMath, Inc. · The company behind CoCalc</p>
   <h1>${htmlEscape(PUBLIC_ABOUT_HEADLINE)}</h1>
-  <p>${htmlEscape(PUBLIC_ABOUT_INTRO)}</p>
+  <p>${renderAboutText(
+    basePath,
+    getPublicAboutIntro(isPublicCocalcAiSite(config)),
+  )}</p>
 </header>
 <section>
   <p>How we build</p>
@@ -638,10 +659,14 @@ function renderAboutTeamMember(basePath: string, slug?: string): string {
 </main>`;
 }
 
-function renderAbout(route: PublicMetadataRoute, basePath: string): string {
+function renderAbout(
+  route: PublicMetadataRoute,
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   switch (route.route?.view) {
     case "about":
-      return renderAboutOverview(basePath);
+      return renderAboutOverview(basePath, config);
     case "about-team":
       return renderAboutTeam(basePath);
     case "about-team-member":
@@ -751,7 +776,7 @@ export function renderPublicRoutePrerender(
     return renderGuides(basePath, resolvedConfig);
   }
   if (route.section === "about") {
-    return renderAbout(route, basePath);
+    return renderAbout(route, basePath, resolvedConfig);
   }
   if (route.section === "support") {
     return renderSupport(route, basePath);

@@ -16,8 +16,8 @@ import userEvent from "@testing-library/user-event";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import * as authApi from "@cocalc/frontend/auth/api";
 import {
+  getPublicAboutIntro,
   PUBLIC_ABOUT_HEADLINE,
-  PUBLIC_ABOUT_INTRO,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_TEAM_BILLING_CONTACT,
@@ -112,6 +112,11 @@ function canonicalHref(): string | null {
       .querySelector('link[data-cocalc-public-route-meta="canonical"]')
       ?.getAttribute("href") ?? null
   );
+}
+
+// Shared About text as readers see it, links included.
+function aboutText(parts: readonly { text: string }[]): string {
+  return parts.map(({ text }) => text).join("");
 }
 
 async function renderPublicApp(ui: React.ReactElement) {
@@ -344,7 +349,11 @@ describe("PublicApp", () => {
     expect(
       within(hero).getByText("SageMath, Inc. · The company behind CoCalc"),
     ).not.toBeNull();
-    expect(within(hero).getByText(PUBLIC_ABOUT_INTRO)).not.toBeNull();
+    // Away from cocalc.ai, the lead names Codex only.
+    expect(
+      within(hero).getByText(aboutText(getPublicAboutIntro(false))),
+    ).not.toBeNull();
+    expect(hero.textContent).not.toMatch(/Claude/);
 
     const principles = screen.getByRole("region", { name: "How we build" });
     expect(
@@ -380,17 +389,59 @@ describe("PublicApp", () => {
     );
   });
 
-  // Vendor names stay out of the H1 and the title; the lead names Codex and
-  // Claude, never the Claude Code product name or a maturity label.
+  // On cocalc.ai the lead names Claude and links it to the Claude guide, which
+  // states its preview status, so the page itself does not.
+  it("links the About lead's Claude mention to its guide on cocalc.ai", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
+          site_name: "CoCalc",
+        }}
+        initialRoute={aboutRoute({ view: "about" })}
+      />,
+    );
+
+    const hero = screen.getByRole("region", {
+      name: "SageMath, Inc. and CoCalc",
+    });
+    const claude = within(hero).getByRole("link", { name: "Claude" });
+    expect(claude).toHaveAttribute("href", publicPath("docs/ai/claude-code"));
+    expect(claude.parentElement?.textContent).toBe(
+      aboutText(getPublicAboutIntro(true)),
+    );
+
+    // The link is in the tab order, before the hero's buttons.
+    const howWeBuild = within(hero).getByRole("link", {
+      name: "How we build",
+    });
+    claude.focus();
+    await user.tab();
+    expect(howWeBuild).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(claude).toHaveFocus();
+  });
+
+  // Vendor names stay out of the H1 and the title; the lead names Codex, and
+  // Claude on cocalc.ai, never the Claude Code product name or a maturity
+  // label.
   it("keeps the About statement within the naming rules", () => {
+    const [otherSiteLead, cocalcAiLead] = [false, true].map((onCocalcAi) =>
+      aboutText(getPublicAboutIntro(onCocalcAi)),
+    );
     expect(PUBLIC_ABOUT_HEADLINE).not.toMatch(
       /Codex|Claude|OpenAI|Anthropic|ChatGPT/,
     );
-    expect(PUBLIC_ABOUT_INTRO).toMatch(/Codex is built in/);
-    expect(PUBLIC_ABOUT_INTRO).toMatch(/Claude is available where the site/);
+    expect(otherSiteLead).toMatch(/ Codex is built in\.$/);
+    expect(cocalcAiLead).toMatch(
+      / Codex is built in, and Claude is available where the site enables it\.$/,
+    );
     for (const text of [
       PUBLIC_ABOUT_HEADLINE,
-      PUBLIC_ABOUT_INTRO,
+      otherSiteLead,
+      cocalcAiLead,
       PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
       ...PUBLIC_ABOUT_PRINCIPLES.flatMap(({ body, title }) => [body, title]),
     ]) {
