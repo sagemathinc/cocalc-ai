@@ -35,6 +35,12 @@ jest.mock("@cocalc/database/settings/secret-settings", () => ({
     ).toString(),
     needsMigration: false,
   }),
+  // Plain site settings (the computers switch) pass through unchanged.
+  decryptSettingValue: async (_name: string, value: string) => ({
+    value,
+    needsMigration: false,
+  }),
+  encryptSettingValue: async (_name: string, value: string) => value,
 }));
 jest.mock("@cocalc/database/settings/site-url", () => ({
   __esModule: true,
@@ -51,6 +57,7 @@ const tables = [
   "bay_computer_signing_keys",
   "agent_networks",
   "accounts",
+  "server_settings",
 ];
 
 describeDb("computer pairing endpoints", () => {
@@ -90,6 +97,7 @@ describeDb("computer pairing endpoints", () => {
     resetSigningKeyCacheForTesting();
     const { resetPairingRateLimitForTesting } = await import("./pairing-http");
     resetPairingRateLimitForTesting();
+    await setComputersEnabled(true);
     await db().query(
       `INSERT INTO agent_networks
          (agent_network_id, account_id, title, state, delivery_mode, generation, created_by)
@@ -101,6 +109,43 @@ describeDb("computer pairing endpoints", () => {
        VALUES ($1,'Ada','Lovelace','ada@example.org',now())`,
       [account],
     );
+  });
+
+  async function setComputersEnabled(on: boolean) {
+    await db().query(
+      "DELETE FROM server_settings WHERE name='computers_enabled'",
+    );
+    if (on) {
+      await db().query(
+        "INSERT INTO server_settings (name, value) VALUES ('computers_enabled','yes')",
+      );
+    }
+    const { resetServerSettingsCache } =
+      await import("@cocalc/database/settings/server-settings");
+    resetServerSettingsCache();
+  }
+
+  it("refuses every pairing endpoint while the site's computers switch is off", async () => {
+    const { request_id } = await newRequest();
+    await setComputersEnabled(false);
+    const { pairingStatus, pairingSubmit, pairingView } =
+      await import("./pairing-http");
+    const { COMPUTERS_DISABLED } = await import("./enabled");
+    const address = "198.51.100.9";
+    expect(await pairingView({ request_id }, address)).toEqual({
+      error: COMPUTERS_DISABLED,
+    });
+    expect(await pairingSubmit({ request_id }, address)).toEqual({
+      error: COMPUTERS_DISABLED,
+    });
+    expect(
+      await pairingStatus({ request_id, transcript_hash: "x" }, address),
+    ).toEqual({ error: COMPUTERS_DISABLED });
+    // Turned back on, the same request can be viewed again.
+    await setComputersEnabled(true);
+    expect(
+      (await pairingView({ request_id }, address)) as PairingView,
+    ).toHaveProperty("server_nonce");
   });
 
   async function newRequest() {

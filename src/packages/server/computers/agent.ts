@@ -21,12 +21,14 @@ import type { AgentRun } from "@cocalc/server/agents/store";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { accountHomeBay, computersAtBay } from "./routing";
 import { relayToComputer } from "./relay";
+import { assertComputersEnabled } from "./enabled";
 
 export async function agentComputerRequest(
   run: AgentRun,
   request: AgentComputerRequest,
 ): Promise<unknown> {
   validateAgentComputerRequest(request);
+  await assertComputersEnabled();
   const account_id = run.account_id;
   const project_id = run.project_id;
   const agent_id = run.agent_id;
