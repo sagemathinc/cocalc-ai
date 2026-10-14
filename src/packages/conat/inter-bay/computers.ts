@@ -178,12 +178,13 @@ function subject(bay_id: string): string {
 export function createInterBayComputersClient(
   client: Client,
   bay_id: string,
+  timeout = 30_000,
 ): InterBayComputersApi {
   return createServiceClient<InterBayComputersApi>({
     client,
     service: "inter-bay-computers",
     subject: subject(bay_id),
-    timeout: 30_000,
+    timeout,
     noRetry: true,
   });
 }

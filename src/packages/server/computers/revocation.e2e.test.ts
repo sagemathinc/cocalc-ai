@@ -658,4 +658,30 @@ describeDb("revoking a computer stops its work", () => {
     );
     expect(r.reply.result.stdout).toBe("still\n");
   });
+
+  it("deleted and undeleted between two re-checks: the older work is killed, newer work runs", async () => {
+    const w = await world();
+    const c = w.start();
+    await w.ready(c);
+    const old = await w.startWork();
+    await db().query("UPDATE projects SET deleted=true WHERE project_id=$1", [
+      w.project,
+    ]);
+    await db().query("UPDATE projects SET deleted=false WHERE project_id=$1", [
+      w.project,
+    ]);
+    await db().query(
+      "UPDATE account_computer_active_projects SET next_check_at=now() - interval '1 second' WHERE computer_id=$1",
+      [w.computer_id],
+    );
+    const { recheckDueProjects } = await import("./recheck");
+    await recheckDueProjects();
+    await until(() => !alive(old.job) && !alive(old.exec), 30_000);
+    // A ticket at the new epoch (2) is above the floor.
+    const r: any = await w.relay(
+      await w.ticketFor("exec", { command: "echo newer" }),
+    );
+    expect(r.reply.result.stdout).toBe("newer\n");
+    expect(c.finished).toBe(false);
+  });
 });

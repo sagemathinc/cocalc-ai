@@ -119,7 +119,8 @@ export interface DaemonDeps {
 }
 
 export type DaemonEvent =
-  { kind: "operation"; entry: LedgerEntry } | { kind: "job"; job: Job };
+  | { kind: "operation"; entry: LedgerEntry }
+  | { kind: "job"; job: Job };
 
 const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 

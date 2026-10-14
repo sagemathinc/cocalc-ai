@@ -15,13 +15,18 @@
 //   per-computer ticket lock, safely expired pairs are dropped first, and a
 //   project outside the set is refused while it has 500 entries, so a
 //   snapshot never carries more than 500 project floors.
-// - A due-work queue: hubs claim due rows (SKIP LOCKED, 50 at a time), at
-//   most 8 re-checks in flight per hub, 10 s each, then again 30 s after a
-//   success, later with backoff after a failure.
-// - An ineligible attestation at epoch e raises the floor to e (no ticket at
-//   e was ever valid). Only a verified, signed hard-delete tombstone raises
-//   the terminal floor; an unknown owner, a missing row or a routing
-//   failure only retries.
+// - A due-work queue: hubs claim due rows (SKIP LOCKED) one window of 8 at
+//   a time and re-check them in parallel, each within one deadline that
+//   every inter-bay call it makes inherits as its own timeout (so nothing
+//   outlives the claim's lease); again 30 s after a success, later with
+//   backoff after a failure.
+// - An attestation at epoch e raises the floor to e, eligible or not: an
+//   ineligible one means no ticket at e was ever valid, and an eligible one
+//   at a newer epoch means the project changed since older tickets (a
+//   collaborator added and removed, a delete and undelete, between two
+//   re-checks). Only a verified, signed hard-delete tombstone raises the
+//   terminal floor; an unknown owner, a missing row or a routing failure
+//   only retries.
 
 import getPool from "@cocalc/database/pool";
 import type { KeyObject } from "node:crypto";
@@ -46,7 +51,9 @@ import {
   getConfiguredClusterBayIdsForStaticEnumerationOnly,
   getConfiguredClusterId,
 } from "@cocalc/server/cluster-config";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
+import { createInterBayDirectoryClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertComputersAuthority, type Queryable } from "./authority";
 import { kickComputerStateDelivery } from "./delivery";
 import { keyMap, listSigningKeyDirectory } from "./signing-keys";
@@ -60,10 +67,12 @@ export const MAX_ACTIVE_PROJECTS = MAX_STATE_PROJECT_FLOORS;
 /** Clock skew allowed between the hub and a computer. */
 export const SKEW_MS = 5 * 60 * 1000;
 export const RECHECK_EVERY_MS = 30_000;
-const RECHECK_TIMEOUT_MS = 10_000;
-const CLAIM_BATCH = 50;
+/** One re-check, every call it makes included. */
+export const RECHECK_DEADLINE_MS = 20_000;
+/** Re-checks in flight per hub process, and so rows per claim. */
 const MAX_IN_FLIGHT = 8;
-const LEASE_MS = 60_000;
+/** A claim's lease: its whole window runs in parallel within one deadline. */
+const LEASE_MS = 3 * RECHECK_DEADLINE_MS;
 const MAX_BACKOFF_MS = 30 * 60 * 1000;
 /** The cluster-wide tombstone lookup runs at most this often per project. */
 const FANOUT_MIN_INTERVAL_MS = 5 * 60 * 1000;
@@ -116,7 +125,13 @@ export async function admitActiveProject(
          ELSE GREATEST(a.possibly_active_until, EXCLUDED.possibly_active_until)
        END,
        last_start_by = GREATEST(a.last_start_by, EXCLUDED.last_start_by),
-       last_attesting_bay_id = EXCLUDED.last_attesting_bay_id`,
+       last_attesting_bay_id = EXCLUDED.last_attesting_bay_id,
+       -- A fresh, attested ticket: re-check on the normal schedule again,
+       -- however far a run of failures had backed it off (a claim in
+       -- progress keeps its lease).
+       next_check_at = LEAST(a.next_check_at, EXCLUDED.next_check_at),
+       attempts = 0,
+       last_error = NULL`,
     [
       t.computer_id,
       t.project_id,
@@ -173,6 +188,8 @@ export async function raiseProjectFloor({
   project_id: string;
   privacy_epoch: number;
 }): Promise<boolean> {
+  // A floor of 0 stops nothing.
+  if (privacy_epoch <= 0) return false;
   const db = await getPool().connect();
   let raised = false;
   try {
@@ -218,29 +235,41 @@ interface Due {
 
 /** How a re-check came out. */
 export type RecheckOutcome =
-  | { kind: "eligible"; bay_id: string }
+  | { kind: "eligible"; bay_id: string; privacy_epoch: number }
   | { kind: "ineligible"; bay_id: string; privacy_epoch: number }
   | { kind: "deleted"; bay_id: string }
   /** minWaitMs: after a cluster-wide lookup, the next is minutes away. */
   | { kind: "retry"; reason: string; minWaitMs?: number };
 
-/** What the re-check needs from the cluster (tests replace it). */
+/**
+ * What the re-check needs from the cluster (tests replace it). Each call
+ * gets timeoutMs and must end by then: it is the call's own timeout, so no
+ * call outlives its re-check.
+ */
 export interface RecheckDeps {
-  resolveOwner(project_id: string): Promise<string | null>;
+  resolveOwner(project_id: string, timeoutMs: number): Promise<string | null>;
   atBay(
     bay_id: string,
+    timeoutMs: number,
   ): Pick<InterBayComputersApi, "recheckProject" | "projectHardDeleteEvidence">;
   configuredBays(): string[];
 }
 
 let deps: RecheckDeps | undefined;
+let deadlineMs = RECHECK_DEADLINE_MS;
 
 async function defaultDeps(): Promise<RecheckDeps> {
   const { computersAtBay } = await import("./routing");
   return {
-    resolveOwner: async (project_id) =>
-      (await resolveProjectBay(project_id))?.bay_id ?? null,
-    atBay: (bay_id) => computersAtBay(bay_id),
+    resolveOwner: async (project_id, timeout) =>
+      (
+        (await resolveProjectBayDirect(project_id)) ??
+        (await createInterBayDirectoryClient({
+          client: getInterBayFabricClient(),
+          timeout,
+        }).resolveProjectBay({ project_id }))
+      )?.bay_id ?? null,
+    atBay: (bay_id, timeout) => computersAtBay(bay_id, { timeout }),
     configuredBays: () => {
       const bays = getConfiguredClusterBayIdsForStaticEnumerationOnly();
       return bays.length > 0 ? bays : [getConfiguredBayId()];
@@ -248,29 +277,42 @@ async function defaultDeps(): Promise<RecheckDeps> {
   };
 }
 
-/** Tests: replace how the cluster is asked. */
-export function setRecheckDepsForTesting(d: RecheckDeps | undefined): void {
-  deps = d;
+/** Tests: the deps in use. */
+export function __depsForTesting(): RecheckDeps | undefined {
+  return deps;
 }
 
-/** One pass: drop expired pairs, claim due rows and re-check them. */
+/** Tests: replace how the cluster is asked, and the deadline. */
+export function setRecheckDepsForTesting(
+  d: RecheckDeps | undefined,
+  deadline?: number,
+): void {
+  deps = d;
+  deadlineMs = deadline ?? RECHECK_DEADLINE_MS;
+}
+
+/**
+ * One pass: drop expired pairs, then claim one window of due rows at a time
+ * and re-check it in parallel, until none are due. Returns how many rows
+ * were re-checked.
+ */
 export async function recheckDueProjects(): Promise<number> {
   await dropExpired(getPool());
   await recordQueueAge();
-  const due = await claimDue();
   const d = deps ?? (await defaultDeps());
-  for (let i = 0; i < due.length; i += MAX_IN_FLIGHT) {
+  let total = 0;
+  for (;;) {
+    const due = await claimDue();
     await Promise.all(
-      due
-        .slice(i, i + MAX_IN_FLIGHT)
-        .map((row) =>
-          recheckOne(row, d).catch((err) =>
-            logger.warn("re-checking a project failed", err),
-          ),
+      due.map((row) =>
+        recheckOne(row, d).catch((err) =>
+          logger.warn("re-checking a project failed", err),
         ),
+      ),
     );
+    total += due.length;
+    if (due.length < MAX_IN_FLIGHT) return total;
   }
-  return due.length;
 }
 
 async function claimDue(): Promise<Due[]> {
@@ -288,7 +330,7 @@ async function claimDue(): Promise<Due[]> {
       WHERE a.computer_id=due.computer_id AND a.project_id=due.project_id
       RETURNING a.computer_id, a.project_id, a.account_id,
                 a.last_attesting_bay_id, a.attempts`,
-    [CLAIM_BATCH, LEASE_MS, HUB],
+    [MAX_IN_FLIGHT, LEASE_MS, HUB],
   );
   return rows.map((r) => ({ ...r, attempts: Number(r.attempts) }));
 }
@@ -296,15 +338,11 @@ async function claimDue(): Promise<Due[]> {
 async function recheckOne(row: Due, d: RecheckDeps): Promise<void> {
   let outcome: RecheckOutcome;
   try {
-    outcome = await withTimeout(
-      determine(row, d),
-      RECHECK_TIMEOUT_MS,
-      "the project's bay did not answer in time",
-    );
+    outcome = await determine(row, d, Date.now() + deadlineMs);
   } catch (err) {
     outcome = { kind: "retry", reason: `${(err as Error)?.message ?? err}` };
   }
-  if (outcome.kind === "ineligible" || outcome.kind === "deleted") {
+  if (outcome.kind !== "retry") {
     await raiseProjectFloor({
       account_id: row.account_id,
       computer_id: row.computer_id,
@@ -356,26 +394,41 @@ async function recheckOne(row: Due, d: RecheckDeps): Promise<void> {
   );
 }
 
-/** Ask the owner; with no owner, the last attesting bay; then the cluster. */
+/**
+ * Ask the owner; with no owner, the last attesting bay; then the cluster.
+ * Everything by `deadline`: each call gets the time left as its own
+ * timeout.
+ */
 export async function determine(
   row: Pick<
     Due,
     "project_id" | "account_id" | "last_attesting_bay_id" | "attempts"
   >,
   d: RecheckDeps,
+  deadline: number,
 ): Promise<RecheckOutcome> {
-  const owner = await d.resolveOwner(row.project_id);
+  const left = () => {
+    const ms = deadline - Date.now();
+    if (ms <= 0) throw new Error("the re-check ran out of time");
+    return ms;
+  };
+  const owner = await bounded(d.resolveOwner(row.project_id, left()), left());
   const bay = owner ?? row.last_attesting_bay_id;
-  const answer = await d.atBay(bay).recheckProject({
-    project_id: row.project_id,
-    account_id: row.account_id,
-    home_bay_id: getConfiguredBayId(),
-  });
+  const answer = await bounded(
+    d.atBay(bay, left()).recheckProject({
+      project_id: row.project_id,
+      account_id: row.account_id,
+      home_bay_id: getConfiguredBayId(),
+    }),
+    left(),
+  );
   if (answer.kind === "attestation") {
     const a = await verifiedAttestation(answer.attestation, row, bay);
-    return a.eligible
-      ? { kind: "eligible", bay_id: bay }
-      : { kind: "ineligible", bay_id: bay, privacy_epoch: a.privacy_epoch };
+    return {
+      kind: a.eligible ? "eligible" : "ineligible",
+      bay_id: bay,
+      privacy_epoch: a.privacy_epoch,
+    };
   }
   if (answer.kind === "deleted") {
     await verifiedDeleted(answer.evidence, row, bay);
@@ -389,7 +442,11 @@ export async function determine(
   // No owner, and the last attesting bay doesn't know it: a rehome just
   // followed by a hard delete leaves the row naming the old bay. Ask the
   // configured cluster for a tombstone (then not again for minutes).
-  const found = await resolveProjectHardDeleteEvidenceAcrossCluster(row, d);
+  const found = await resolveProjectHardDeleteEvidenceAcrossCluster(
+    row,
+    d,
+    deadline,
+  );
   if (found.kind === "deleted") {
     return { kind: "deleted", bay_id: found.bay_id };
   }
@@ -413,6 +470,7 @@ export async function determine(
 export async function resolveProjectHardDeleteEvidenceAcrossCluster(
   row: Pick<Due, "project_id" | "account_id">,
   d: RecheckDeps,
+  deadline: number,
 ): Promise<
   | { kind: "deleted"; bay_id: string }
   | { kind: "unknown" }
@@ -421,22 +479,33 @@ export async function resolveProjectHardDeleteEvidenceAcrossCluster(
   let valid: string | undefined;
   let transport = false;
   let bad = false;
-  for (const bay_id of d.configuredBays()) {
-    if (!bay_id) continue;
-    let answer: { kind?: unknown; evidence?: unknown } | undefined;
-    try {
-      answer = await withTimeout(
-        d.atBay(bay_id).projectHardDeleteEvidence({
+  // All bays at once, each call ending by the same deadline: a slow or
+  // unreachable bay can't hide another bay's tombstone, and nothing is
+  // left running afterwards.
+  const ms = deadline - Date.now();
+  if (ms <= 0) return { kind: "retry", reason: "the re-check ran out of time" };
+  const bays = [...new Set(d.configuredBays().filter((b) => !!b))];
+  const answers = await Promise.allSettled(
+    bays.map((bay_id) =>
+      bounded(
+        d.atBay(bay_id, ms).projectHardDeleteEvidence({
           project_id: row.project_id,
           account_id: row.account_id,
         }),
-        RECHECK_TIMEOUT_MS,
-        "no answer",
-      );
-    } catch {
+        ms,
+      ),
+    ),
+  );
+  for (let i = 0; i < bays.length; i++) {
+    const bay_id = bays[i];
+    const settled = answers[i];
+    if (settled.status === "rejected") {
       transport = true;
       continue;
     }
+    const answer = settled.value as
+      | { kind?: unknown; evidence?: unknown }
+      | undefined;
     if (answer?.kind === "unknown") continue;
     if (answer?.kind !== "deleted") {
       bad = true;
@@ -537,17 +606,20 @@ async function verifiedDeleted(
   return p;
 }
 
-async function withTimeout<T>(
-  p: Promise<T>,
-  ms: number,
-  message: string,
-): Promise<T> {
+/**
+ * A call that was given `ms` as its own timeout, also bounded here (a guard
+ * against a client that overruns it; the call itself ends by then).
+ */
+async function bounded<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       p,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), ms);
+        timer = setTimeout(
+          () => reject(new Error("the project's bay did not answer in time")),
+          ms + 1000,
+        );
       }),
     ]);
   } finally {
@@ -576,7 +648,8 @@ async function recordQueueAge(): Promise<void> {
   const age = await recheckQueueAgeMs();
   queueAge ??=
     (register.getSingleMetric("cocalc_computers_recheck_queue_age_seconds") as
-      Gauge | undefined) ??
+      | Gauge
+      | undefined) ??
     new Gauge({
       name: "cocalc_computers_recheck_queue_age_seconds",
       help: "Age of the oldest due project re-check for connected computers",
@@ -601,7 +674,7 @@ export function startProjectRecheck(): void {
     if (running) return;
     running = true;
     try {
-      while ((await recheckDueProjects()) === CLAIM_BATCH);
+      await recheckDueProjects();
     } catch (err) {
       logger.warn("project re-check pass failed", err);
     } finally {

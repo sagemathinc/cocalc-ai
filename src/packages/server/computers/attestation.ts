@@ -218,7 +218,10 @@ export async function recheckProjectLocal(opts: {
 
 /**
  * This bay's signed hard-delete tombstone for the project, from its durable
- * deleted_projects row, if it hard-deleted it and the account owned it.
+ * deleted_projects row, if it hard-deleted it. A project id is never reused,
+ * so a hard delete ends the project for every account that ever used it
+ * (ownership can be transferred just before the delete): the tombstone is
+ * issued for whichever account's computers ask, not only the last owner.
  */
 export async function projectHardDeleteEvidenceLocal({
   project_id,
@@ -248,14 +251,11 @@ export async function projectHardDeleteEvidenceLocal({
   if (live.rows.length > 0) return { kind: "unknown" };
   const row = (
     await getPool().query(
-      `SELECT owner_account_id, deleted_at FROM deleted_projects
-        WHERE project_id=$1`,
+      "SELECT deleted_at FROM deleted_projects WHERE project_id=$1",
       [project_id],
     )
   ).rows[0];
-  if (row == null || row.owner_account_id !== account_id) {
-    return { kind: "unknown" };
-  }
+  if (row == null) return { kind: "unknown" };
   const payload = parseProjectDeleted({
     type: "cocalc-project-deleted",
     version: 1,

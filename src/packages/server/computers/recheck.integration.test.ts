@@ -351,38 +351,71 @@ describeDb("re-checking the projects a computer serves", () => {
     );
   });
 
-  /** Fake cluster: what each bay answers. */
-  function cluster(answers: {
-    owner?: string | null;
-    recheck?: Record<string, () => Promise<any>>;
-    evidence?: Record<string, () => Promise<any>>;
-    bays?: string[];
-  }) {
+  /**
+   * Fake cluster: what each bay answers. Like a real fabric client, every
+   * call ends by the timeout it is given; `inFlight` counts calls still
+   * running.
+   */
+  const inFlight = { n: 0 };
+  function cluster(
+    answers: {
+      owner?: string | null;
+      recheck?: Record<string, (timeoutMs: number) => Promise<any>>;
+      evidence?: Record<string, (timeoutMs: number) => Promise<any>>;
+      bays?: string[];
+    },
+    deadline?: number,
+  ) {
     const asked: string[] = [];
+    const call = async <T>(
+      timeoutMs: number,
+      f: () => Promise<T>,
+    ): Promise<T> => {
+      inFlight.n += 1;
+      let timer;
+      try {
+        return await Promise.race([
+          f(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        inFlight.n -= 1;
+      }
+    };
     (
       require("./recheck") as typeof import("./recheck")
-    ).setRecheckDepsForTesting({
-      resolveOwner: async () =>
-        answers.owner === undefined ? getConfiguredBayId() : answers.owner,
-      atBay: (bay_id) => ({
-        recheckProject: async (opts) => {
-          asked.push(`recheck:${bay_id}`);
-          const f = answers.recheck?.[bay_id];
-          if (f) return await f();
-          return await (
-            await import("./attestation")
-          ).recheckProjectLocal(opts);
-        },
-        projectHardDeleteEvidence: async () => {
-          asked.push(`evidence:${bay_id}`);
-          const f = answers.evidence?.[bay_id];
-          return f ? await f() : { kind: "unknown" };
-        },
-      }),
-      configuredBays: () => answers.bays ?? [getConfiguredBayId(), OTHER_BAY],
-    });
+    ).setRecheckDepsForTesting(
+      {
+        resolveOwner: async () =>
+          answers.owner === undefined ? getConfiguredBayId() : answers.owner,
+        atBay: (bay_id, timeoutMs) => ({
+          recheckProject: async (opts) =>
+            await call(timeoutMs, async () => {
+              asked.push(`recheck:${bay_id}`);
+              const f = answers.recheck?.[bay_id];
+              if (f) return await f(timeoutMs);
+              return await (
+                await import("./attestation")
+              ).recheckProjectLocal(opts);
+            }),
+          projectHardDeleteEvidence: async () =>
+            await call(timeoutMs, async () => {
+              asked.push(`evidence:${bay_id}`);
+              const f = answers.evidence?.[bay_id];
+              return f ? await f(timeoutMs) : { kind: "unknown" };
+            }),
+        }),
+        configuredBays: () => answers.bays ?? [getConfiguredBayId(), OTHER_BAY],
+      },
+      deadline,
+    );
     return asked;
   }
+  /** Never answers (until its caller's timeout ends the call). */
+  const hang = () => new Promise<never>(() => {});
 
   const tombstone = (overrides: object = {}, key = otherBayKey) =>
     signEnvelope(
@@ -454,7 +487,73 @@ describeDb("re-checking the projects a computer serves", () => {
     const result: any = await issue();
     expect(result.ticket.payload.attestation.payload.privacy_epoch).toBe(2);
     await pass();
-    expect(`${await floor()}`).toBe("1");
+    // Eligible again at 2: work from before (below 2) stops; the new
+    // ticket at 2 is above the floor.
+    expect(`${await floor()}`).toBe("2");
+  });
+
+  it("a delete and undelete between two re-checks still stops the older work (the floor follows an eligible newer epoch)", async () => {
+    await issue();
+    cluster({});
+    await pass();
+    expect(await floor()).toBeUndefined();
+    await db().query("UPDATE projects SET deleted=true WHERE project_id=$1", [
+      project,
+    ]);
+    await db().query("UPDATE projects SET deleted=false WHERE project_id=$1", [
+      project,
+    ]);
+    await pass();
+    expect(`${await floor()}`).toBe("2");
+    expect(await snapshotFloors()).toEqual({ [project]: 2 });
+    const later: any = await issue();
+    expect(later.ticket.payload.attestation.payload.privacy_epoch).toBe(2);
+  });
+
+  it("ownership transferred, then the project hard-deleted at once: the tombstone ends it for the earlier owner's computers too", async () => {
+    await issue();
+    // Transferred to another account, then hard-deleted by it.
+    await db().query("DELETE FROM projects WHERE project_id=$1", [project]);
+    await db().query(
+      "INSERT INTO deleted_projects (project_id, owner_account_id) VALUES ($1,$2)",
+      [project, randomUUID()],
+    );
+    cluster({ owner: null });
+    await pass();
+    expect(`${await floor()}`).toBe(`${TERMINAL_PRIVACY_EPOCH}`);
+  });
+
+  it("a slow bay never hides a valid tombstone (either order), and no call outlives the re-check", async () => {
+    await issue();
+    const { determine, __depsForTesting } = await import("./recheck");
+    for (const order of [
+      [OTHER_BAY, "bay-slow"],
+      ["bay-slow", OTHER_BAY],
+    ]) {
+      cluster({
+        owner: null,
+        recheck: { [getConfiguredBayId()]: async () => ({ kind: "unknown" }) },
+        evidence: {
+          [OTHER_BAY]: async () => ({ kind: "deleted", evidence: tombstone() }),
+          "bay-slow": hang,
+        },
+        bays: order,
+      });
+      const started = Date.now();
+      const outcome = await determine(
+        {
+          project_id: project,
+          account_id: account,
+          last_attesting_bay_id: getConfiguredBayId(),
+          attempts: 0,
+        },
+        __depsForTesting()!,
+        Date.now() + 1500,
+      );
+      expect([order, outcome.kind]).toEqual([order, "deleted"]);
+      expect(Date.now() - started).toBeLessThan(4000);
+      expect(inFlight.n).toBe(0);
+    }
   });
 
   it("a hard delete after the directory entry is gone: the last attesting bay's signed tombstone raises the terminal floor", async () => {
@@ -586,7 +685,63 @@ describeDb("re-checking the projects a computer serves", () => {
     }
   });
 
-  it("at the project's bay: a live project gets an attestation; a hard-deleted one its signed tombstone, only for its owner", async () => {
+  it("a fresh ticket brings a row out of a long failure backoff", async () => {
+    await issue();
+    await db().query(
+      `UPDATE account_computer_active_projects
+          SET next_check_at=now() + interval '30 minutes', attempts=6,
+              last_error='unreachable'`,
+    );
+    await issue();
+    const a = await active();
+    expect(new Date(a.next_check_at).valueOf()).toBeLessThan(
+      Date.now() + 31_000,
+    );
+    expect(`${a.attempts}`).toBe("0");
+    expect(a.last_error).toBeNull();
+  });
+
+  it("more than 200 due rows, two hubs' passes at once, slow bays: each re-checked exactly once, none stranded", async () => {
+    const ids = Array.from({ length: 250 }, () => randomUUID());
+    await db().query(
+      `INSERT INTO account_computer_active_projects
+         (computer_id, project_id, account_id, possibly_active_until,
+          last_start_by, last_attesting_bay_id, next_check_at)
+       SELECT $1, p, $2, now() + interval '1 hour', now(), 'bay-0',
+              now() - interval '1 second'
+         FROM unnest($3::uuid[]) p`,
+      [computer_id, account, ids],
+    );
+    const seen = new Map<string, number>();
+    (await import("./recheck")).setRecheckDepsForTesting({
+      resolveOwner: async () => getConfiguredBayId(),
+      atBay: () => ({
+        recheckProject: async (opts) => {
+          seen.set(opts.project_id, (seen.get(opts.project_id) ?? 0) + 1);
+          await new Promise((r) => setTimeout(r, 20));
+          return { kind: "unknown" };
+        },
+        projectHardDeleteEvidence: async () => ({ kind: "unknown" }),
+      }),
+      configuredBays: () => [getConfiguredBayId()],
+    });
+    const { recheckDueProjects } = await import("./recheck");
+    const [a, b] = await Promise.all([
+      recheckDueProjects(),
+      recheckDueProjects(),
+    ]);
+    expect(a + b).toBe(250);
+    expect(seen.size).toBe(250);
+    expect([...seen.values()].every((n) => n === 1)).toBe(true);
+    const { rows } = await db().query(
+      `SELECT count(*)::int AS n FROM account_computer_active_projects
+        WHERE computer_id=$1 AND (lease_until IS NOT NULL OR next_check_at <= now())`,
+      [computer_id],
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  it("at the project's bay: a live project gets an attestation; a hard-deleted one its signed tombstone, for any account that asks", async () => {
     const { recheckProjectLocal, projectHardDeleteEvidenceLocal } =
       await import("./attestation");
     const opts = {
@@ -609,14 +764,15 @@ describeDb("re-checking the projects a computer serves", () => {
       account_id: account,
       project_bay_id: getConfiguredBayId(),
     });
-    expect(
-      (
-        await projectHardDeleteEvidenceLocal({
-          ...opts,
-          account_id: randomUUID(),
-        })
-      ).kind,
-    ).toBe("unknown");
+    // Issued for whichever account's computers ask (ownership may have
+    // moved just before the delete).
+    const another = randomUUID();
+    const forAnother: any = await projectHardDeleteEvidenceLocal({
+      ...opts,
+      account_id: another,
+    });
+    expect(forAnother.kind).toBe("deleted");
+    expect(forAnother.evidence.payload.account_id).toBe(another);
     // And the home bay accepts it (from the local bay) as terminal.
     await admit(project, Date.now() + 60_000);
     cluster({ owner: null });

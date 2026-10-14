@@ -44,8 +44,11 @@ const logger = getLogger("server:computers:delivery");
 export const DELIVERY_LEASE_MS = 30_000;
 /** How long one attempt waits for the ack. */
 export const DELIVERY_WAIT_MS = 10_000;
-/** Targets per claim, and attempts in flight per hub process. */
-const CLAIM_BATCH = 20;
+/**
+ * Attempts in flight per hub process, and so targets per claim: a claim is
+ * one window, all delivered at once, well within its lease (one attempt
+ * takes at most DELIVERY_WAIT_MS plus a few queries).
+ */
 const MAX_IN_FLIGHT = 8;
 /** Nobody subscribed yet (a session that just logged in): retry soon. */
 const NO_SUBSCRIBER_RETRY_MS = 250;
@@ -87,16 +90,17 @@ export function setDeliveryWaitForTesting(ms: number | undefined): void {
 }
 
 /**
- * One pass: drop targets of sessions that ended, claim due targets, and
- * deliver them. Returns how many sessions became ready.
+ * One pass: drop targets of sessions that ended, then claim and deliver
+ * one window of due targets at a time until none are due. Returns how many
+ * sessions became ready.
  */
 export async function deliverDueStates(): Promise<number> {
   await dropClosedTargets();
-  const claimed = await claimDue();
   let ready = 0;
-  for (let i = 0; i < claimed.length; i += MAX_IN_FLIGHT) {
+  for (;;) {
+    const claimed = await claimDue();
     const results = await Promise.all(
-      claimed.slice(i, i + MAX_IN_FLIGHT).map((t) =>
+      claimed.map((t) =>
         deliverOne(t).catch((err) => {
           logger.warn("delivering a computer state failed", err);
           return false;
@@ -104,8 +108,8 @@ export async function deliverDueStates(): Promise<number> {
       ),
     );
     ready += results.filter((x) => x).length;
+    if (claimed.length < MAX_IN_FLIGHT) return ready;
   }
-  return ready;
 }
 
 /**
@@ -133,7 +137,7 @@ async function claimDue(): Promise<Claimed[]> {
         WHERE lease_until IS NULL OR lease_until < now()
         ORDER BY lease_until NULLS FIRST
         LIMIT $1 FOR UPDATE SKIP LOCKED`,
-      [CLAIM_BATCH],
+      [MAX_IN_FLIGHT],
     );
     const claimed: Claimed[] = [];
     for (const r of rows) {

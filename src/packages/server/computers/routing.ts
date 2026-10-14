@@ -130,11 +130,17 @@ async function pairingOrigin(): Promise<string> {
   return origin.replace(/\/+$/, "");
 }
 
-/** The computers API at a given bay (this one, or over the fabric). */
-export function computersAtBay(bay_id: string): InterBayComputersApi {
+/**
+ * The computers API at a given bay (this one, or over the fabric). timeout:
+ * how long a call over the fabric may take (it ends then, never later).
+ */
+export function computersAtBay(
+  bay_id: string,
+  { timeout }: { timeout?: number } = {},
+): InterBayComputersApi {
   return bay_id === getConfiguredBayId()
     ? computersAtThisBay
-    : createInterBayComputersClient(getInterBayFabricClient(), bay_id);
+    : createInterBayComputersClient(getInterBayFabricClient(), bay_id, timeout);
 }
 
 export async function accountHomeBay(account_id: string): Promise<string> {

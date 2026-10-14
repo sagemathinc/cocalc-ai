@@ -514,7 +514,11 @@ export interface ProjectDeleted {
   site: string;
   cluster_id: string;
   project_id: string;
-  /** The project's owner when it was deleted. */
+  /**
+   * The account it is issued for: the one whose computers asked. A hard
+   * delete ends the project for every account (ownership may have moved
+   * just before it).
+   */
   account_id: string;
   /** The bay that hard-deleted it (and signs this). */
   project_bay_id: string;
