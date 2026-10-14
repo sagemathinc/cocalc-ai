@@ -375,8 +375,10 @@ cocalc project chat artifact publish --file proposal.json
 
 To answer with a live Sagebrush board (notes with Markdown and math, flowcharts,
 pictures, and code that runs), write `foo.board.json` and publish it with
-`--source`. The card runs it in Sagebrush's sandboxed frame; edits made there
-are not saved to the file.
+`--source`. On a site with live boards turned on (the "Sagebrush origin" site
+setting; cocalc.ai has it), the card runs it in Sagebrush's sandboxed frame;
+edits made there are not saved to the file. Elsewhere the card shows the file
+as text.
 
 Sagebrush changes often, so do not write a board from memory. First read
 https://sagebrush.space/llms.txt. It links the board format, says which

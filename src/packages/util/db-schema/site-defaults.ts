@@ -556,8 +556,10 @@ export const site_settings_conf: SiteSettings = {
   },
   sagebrush_origin: {
     name: "Sagebrush origin",
-    desc: "Where Sagebrush boards (.board.json files) shown in chat artifacts run: a sandboxed frame of this site's /frame/board/ page. Viewing a board sends that site the file's complete text and name. https only (http only for localhost). Blank shows boards as plain text and sends nothing.",
-    default: "https://sagebrush.space",
+    desc: "Where Sagebrush boards (.board.json files) shown in chat artifacts run: a sandboxed frame of this site's /frame/board/ page. Viewing a board sends that site the file's complete text and name. https only (http only for localhost), for example https://sagebrush.space. Blank (the default) shows boards as plain text and sends nothing.",
+    // Off unless a site turns it on: a board is the user's file, and this
+    // sends it to another site (cocalc.ai sets https://sagebrush.space).
+    default: "",
     clearable: true,
     valid: is_optional_https_or_loopback_url,
     to_val: to_trimmed_str,
