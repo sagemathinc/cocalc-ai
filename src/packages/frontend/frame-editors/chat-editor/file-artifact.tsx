@@ -183,7 +183,8 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
     return (
       <Suspense fallback={<div role="status">Loading board preview...</div>}>
         <BoardArtifact
-          key={path}
+          // A new origin is a new frame, answered afresh.
+          key={`${path}\n${boardFrameUrl}`}
           path={path}
           frameUrl={boardFrameUrl}
           historical={props.historical}

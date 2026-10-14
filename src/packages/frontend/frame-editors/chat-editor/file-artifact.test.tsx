@@ -325,3 +325,47 @@ test("a board waits for the site's settings and goes only where they say", async
   expect(document.querySelectorAll("iframe")).toHaveLength(1);
   mockCustomize = {};
 });
+
+test("a card whose site setting changes answers the new renderer", async () => {
+  const board: any = {
+    ...artifact,
+    file: { path: "/home/user/plan.board.json" },
+  };
+  readFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
+  const view = () => <FileArtifact artifact={board} historical={false} />;
+  const title = "Sagebrush board: plan.board.json";
+  const ready = (frame: HTMLIFrameElement) =>
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { sagebrush: "ready", version: 1 },
+          source: frame.contentWindow as Window,
+        }),
+      );
+    });
+  mockCustomize = {
+    _is_configured: true,
+    sagebrush_origin: "https://one.example.org",
+  };
+  const { rerender } = render(view());
+  const first = (await screen.findByTitle(title)) as HTMLIFrameElement;
+  first.contentWindow!.postMessage = jest.fn();
+  ready(first);
+  expect(first.contentWindow!.postMessage).toHaveBeenCalledTimes(1);
+
+  mockCustomize = {
+    _is_configured: true,
+    sagebrush_origin: "https://two.example.org",
+  };
+  rerender(view());
+  const second = (await waitFor(() => {
+    const f = screen.getByTitle(title) as HTMLIFrameElement;
+    expect(f.getAttribute("src")).toBe("https://two.example.org/frame/board/");
+    return f;
+  })) as HTMLIFrameElement;
+  const posted = jest.fn();
+  second.contentWindow!.postMessage = posted;
+  ready(second);
+  expect(posted).toHaveBeenCalledTimes(1);
+  mockCustomize = {};
+});
