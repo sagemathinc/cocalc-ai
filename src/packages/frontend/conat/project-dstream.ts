@@ -87,6 +87,10 @@ function getControlPlaneClient(origin: string): Client {
     noCache: true,
     forceNew: true,
   });
+  // reply on the inbox this connection's server assigns (see conat/client.ts)
+  client.inboxPrefixHook = (info) => {
+    return info?.user ? inboxPrefix(info.user) : undefined;
+  };
   client.on?.("closed", () => {
     if (controlPlaneClients.get(normalized) === client) {
       controlPlaneClients.delete(normalized);

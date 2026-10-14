@@ -205,6 +205,7 @@ describe("project-host Conat auth", () => {
       iat: 1000,
       auth_actor: "agent",
       project_id,
+      jti: "00000000-1000-4000-8000-0000000000a4",
     });
     mockGetRow.mockReturnValue({
       users: { [account_id]: { group: "collaborator" } },
@@ -228,6 +229,99 @@ describe("project-host Conat auth", () => {
         false,
       );
     }
+  });
+
+  it("keeps an agent bearer off its account's hub API, account subjects and replies", async () => {
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    // the human account first, so its decisions are cached
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "account",
+      jti: "00000000-1000-4000-8000-0000000000a1",
+    });
+    const human = await getUser({
+      handshake: { auth: { bearer: "account-token" }, headers: {} },
+    } as any);
+    expect(human.auth_api_key_reply_prefix).toBeUndefined();
+    const humanInbox = `_INBOX.account-${account_id}`;
+    const accountSubjects = [
+      // the embedded hub API identifies callers by this subject alone
+      `hub.account.${account_id}.api`,
+      `account.${account_id}.account-feed-live`,
+      `services.account-${account_id}.some-service`,
+      `persist.account-${account_id}.id`,
+    ];
+    for (const subject of accountSubjects) {
+      await expect(
+        isAllowed({ user: human, type: "pub", subject }),
+      ).resolves.toBe(true);
+    }
+    for (const subject of [humanInbox, `${humanInbox}.abc.>`]) {
+      await expect(
+        isAllowed({ user: human, type: "sub", subject }),
+      ).resolves.toBe(true);
+    }
+
+    const agentClaims = {
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "agent",
+      project_id,
+      jti: "00000000-1000-4000-8000-0000000000a2",
+      sid: "00000000-1000-4000-8000-0000000000b1",
+    };
+    mockVerifyProjectHostAuthToken.mockReturnValue(agentClaims);
+    const agent = await getUser({
+      handshake: { auth: { bearer: "signed-agent-token" }, headers: {} },
+    } as any);
+    const agentInbox = agent.auth_api_key_reply_prefix;
+    expect(agentInbox).toMatch(/^_INBOX\.api-key-[0-9a-f-]{36}$/);
+    // the same for the whole agent session, so a refreshed token keeps it
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      ...agentClaims,
+      jti: "00000000-1000-4000-8000-0000000000a3",
+    });
+    const refreshed = await getUser({
+      handshake: { auth: { bearer: "refreshed-agent-token" }, headers: {} },
+    } as any);
+    expect(refreshed.auth_api_key_reply_prefix).toBe(agentInbox);
+
+    for (const subject of accountSubjects) {
+      for (const type of ["pub", "sub"] as const) {
+        await expect(isAllowed({ user: agent, type, subject })).resolves.toBe(
+          false,
+        );
+      }
+    }
+    // not the human's replies, even though the human's decision is cached
+    for (const subject of [humanInbox, `${humanInbox}.abc.>`, "_INBOX.>"]) {
+      await expect(
+        isAllowed({ user: agent, type: "sub", subject }),
+      ).resolves.toBe(false);
+    }
+    // its own replies, and answering anyone's requests
+    for (const subject of [agentInbox, `${agentInbox}.abc.>`]) {
+      await expect(
+        isAllowed({ user: agent, type: "sub", subject }),
+      ).resolves.toBe(true);
+    }
+    await expect(
+      isAllowed({ user: agent, type: "pub", subject: `${humanInbox}.abc.1` }),
+    ).resolves.toBe(true);
+    // still fine inside its own project
+    await expect(
+      isAllowed({
+        user: agent,
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).resolves.toBe(true);
   });
 
   it("rejects a direct account bearer after its browser session expires", async () => {
