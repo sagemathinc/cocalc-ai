@@ -189,6 +189,9 @@ const SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS = Math.max(
   10_000,
   Number(process.env.COCALC_SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS) || 90_000,
 );
+// A probe still running this long is stuck (e.g. on a hung podman call), and
+// waiting for it would keep the host quarantined until project-host restarts.
+const SYNTHETIC_RUNTIME_PROBE_STALE_MS = 4 * SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS;
 const MB = 1_000_000;
 const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
 const PROJECT_OWNER_LIMITS_CACHE_TTL_MS = 5 * 60_000;
@@ -1646,12 +1649,16 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     finished_at: string;
     duration_ms: number;
   };
+  type SyntheticRuntimeProbeStage = { current: string; project_id?: string };
   let syntheticRuntimeProbeInFlight:
     | {
         started_at: number;
         promise: Promise<SyntheticRuntimeProbeResult>;
+        stage: SyntheticRuntimeProbeStage;
       }
     | undefined;
+  // A stuck probe that a newer one replaced; at most one is left running.
+  let abandonedSyntheticRuntimeProbe: Promise<void> | undefined;
   type StoppedVolumePreparationResult = {
     prepared: boolean;
     phase_timings_ms: Record<string, number>;
@@ -1820,11 +1827,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     };
   }
 
-  async function performSyntheticRuntimeProbe(): Promise<SyntheticRuntimeProbeResult> {
+  async function performSyntheticRuntimeProbe(
+    stage: SyntheticRuntimeProbeStage,
+  ): Promise<SyntheticRuntimeProbeResult> {
     const project_id = uuid();
     const marker = uuid();
     const startedAt = Date.now();
-    let stage = "create";
+    stage.current = "create";
+    stage.project_id = project_id;
     syntheticRuntimeProbeProjects.add(project_id);
     try {
       await createProject({
@@ -1840,14 +1850,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           disk_quota: 256,
         },
       } as CreateProjectOptions);
-      stage = "status";
+      stage.current = "status";
       const status = await runnerApi.status({ project_id });
       if (status?.state !== "running") {
         throw new Error(
           `synthetic project did not reach running state (state=${status?.state ?? "unknown"})`,
         );
       }
-      stage = "exec_file";
+      stage.current = "exec_file";
       const result = await sandboxExec({
         project_id,
         script: `mkdir -p .cocalc && printf '%s' '${marker}' > .cocalc/host-runtime-probe && cat .cocalc/host-runtime-probe`,
@@ -1867,9 +1877,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       };
     } catch (err) {
       throw new Error(
-        `synthetic project probe failed project_id=${project_id} stage=${stage}: ${err}`,
+        `synthetic project probe failed project_id=${project_id} stage=${stage.current}: ${err}`,
       );
     } finally {
+      stage.current = "cleanup";
       await runnerApi.stop({ project_id, force: true }).catch((err) => {
         logger.warn("synthetic runtime probe failed to stop its project", {
           project_id,
@@ -1889,14 +1900,47 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  function describeSyntheticRuntimeProbe(
+    started_at: number,
+    stage: SyntheticRuntimeProbeStage,
+  ): string {
+    return `${Date.now() - started_at}ms at stage=${stage.current}${stage.project_id ? ` project_id=${stage.project_id}` : ""}`;
+  }
+
   async function runSyntheticRuntimeProbe(): Promise<SyntheticRuntimeProbeResult> {
-    if (syntheticRuntimeProbeInFlight != null) {
-      throw new Error(
-        `synthetic runtime probe already in progress for ${Date.now() - syntheticRuntimeProbeInFlight.started_at}ms`,
+    const inFlight = syntheticRuntimeProbeInFlight;
+    if (inFlight != null) {
+      if (
+        Date.now() - inFlight.started_at < SYNTHETIC_RUNTIME_PROBE_STALE_MS ||
+        abandonedSyntheticRuntimeProbe != null
+      ) {
+        throw new Error(
+          `synthetic runtime probe already in progress for ${describeSyntheticRuntimeProbe(inFlight.started_at, inFlight.stage)}`,
+        );
+      }
+      logger.warn("abandoning stuck synthetic runtime probe", {
+        stuck: describeSyntheticRuntimeProbe(
+          inFlight.started_at,
+          inFlight.stage,
+        ),
+      });
+      const abandoned = inFlight.promise.then(
+        () => {},
+        () => {},
       );
+      abandonedSyntheticRuntimeProbe = abandoned;
+      void abandoned.finally(() => {
+        if (abandonedSyntheticRuntimeProbe === abandoned) {
+          abandonedSyntheticRuntimeProbe = undefined;
+        }
+      });
+      syntheticRuntimeProbeInFlight = undefined;
     }
     const startedAt = Date.now();
-    const promise = performSyntheticRuntimeProbe().finally(() => {
+    const stage: SyntheticRuntimeProbeStage = { current: "create" };
+    let settled = false;
+    const promise = performSyntheticRuntimeProbe(stage).finally(() => {
+      settled = true;
       if (syntheticRuntimeProbeInFlight?.promise === promise) {
         syntheticRuntimeProbeInFlight = undefined;
       }
@@ -1904,12 +1948,20 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     syntheticRuntimeProbeInFlight = {
       started_at: startedAt,
       promise,
+      stage,
     };
-    return await withTimeout(
-      promise,
-      SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS,
-      "synthetic runtime probe",
-    );
+    try {
+      return await withTimeout(
+        promise,
+        SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS,
+        "synthetic runtime probe",
+      );
+    } catch (err) {
+      if (settled) throw err;
+      throw new Error(
+        `${err} after ${describeSyntheticRuntimeProbe(startedAt, stage)}`,
+      );
+    }
   }
 
   async function createProject(

@@ -112,6 +112,10 @@ const STOP_INSPECT_TIMEOUT_S = 10;
 const STOP_FORCE_KILL_SETTLE_MS = 250;
 const START_RUNNING_CHECK_TIMEOUT_MS = 5000;
 const START_RUNNING_CHECK_INTERVAL_MS = 250;
+// Without a bound, a hung `podman inspect` holds project start for podman's
+// 30 minute default; generous, since podman is slow while many containers
+// (re)start at once, e.g. after a project-host rollout.
+const START_INSPECT_TIMEOUT_S = 60;
 const START_FAILURE_LOG_LINES = 80;
 const START_FAILURE_DETAIL_MAX_BYTES = 12_000;
 const VERIFY_PROJECT_POOL_TIMEOUT_S = 10;
@@ -952,12 +956,15 @@ async function inspectStartedContainerRuntime(
 ): Promise<StartedContainerRuntime | undefined> {
   let stdout: string;
   try {
-    ({ stdout } = await podman([
-      "inspect",
-      "--format",
-      "{{.State.Running}}|{{.State.Pid}}|{{.State.ConmonPid}}|{{.NetworkSettings.SandboxKey}}",
-      name,
-    ]));
+    ({ stdout } = await podman(
+      [
+        "inspect",
+        "--format",
+        "{{.State.Running}}|{{.State.Pid}}|{{.State.ConmonPid}}|{{.NetworkSettings.SandboxKey}}",
+        name,
+      ],
+      { timeout: START_INSPECT_TIMEOUT_S },
+    ));
   } catch {
     return undefined;
   }
