@@ -171,6 +171,12 @@ the signing key.
 - `COCALC_R2_BUCKET`
 - `COCALC_R2_PUBLIC_BASE_URL`
 
+`COCALC_R2_PUBLIC_BASE_URL` is the public download origin that every published
+URL starts with: exactly `https://software.cocalc.ai`. It is not the R2 S3 API
+endpoint (`https://<account-id>.r2.cloudflarestorage.com`), which refuses the
+unsigned downloads that hosts and installers make; `software push` and
+`publish-r2.js` refuse that value.
+
 Use `openssl` to produce single-line values for the two binary credential
 files, without committing either file:
 
