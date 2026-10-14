@@ -274,10 +274,7 @@ const surfaces = [
   {
     label: "Codex chat",
     chunks: [...initial, ...workspace, ...chat],
-    // 598.4 KiB on main at 6312c9dce8; the computers table schema (every
-    // table definition ships in this route's conat chunk) brings it to about
-    // 601.8 KiB. Raised from 600 KiB pending the size optimization pass.
-    max: 605 * KiB,
+    max: 600 * KiB,
   },
   {
     label: "Codex chat with mathematics",
@@ -315,10 +312,8 @@ const surfaces = [
     // and hub API auth entries, which this route loads), plus the durable
     // project-feed outbox (#948). The limit is a guard
     // against regressions, not a hard constraint: raised to 515 KiB (William,
-    // 2026-10-08) pending a size optimization pass. Main measured 515.3 KiB
-    // at 6312c9dce8; the computers table schema, site setting and hub API
-    // entries (#1033-#1038) bring it to about 518.8 KiB, so 520 KiB.
-    max: 520 * KiB,
+    // 2026-10-08) pending a size optimization pass.
+    max: 515 * KiB,
   },
   {
     label: "Essential Docs",
