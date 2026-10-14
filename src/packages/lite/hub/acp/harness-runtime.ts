@@ -183,6 +183,29 @@ async function withTemporaryHarness<T>(
   }
 }
 
+function harnessAgentName(profile: { id?: string }): string {
+  return profile.id === "claude-code" ? "Claude" : "ACP agent";
+}
+
+/** What a harness turn was given that only native Codex turns support. */
+function unsupportedHarnessOptions(request: AcpRequest): string[] {
+  const unsupported: string[] = [];
+  if (request.config && Object.keys(request.config).length)
+    unsupported.push("Codex settings (config)");
+  if (request.runtime_env && Object.keys(request.runtime_env).length)
+    unsupported.push("environment overrides (runtime_env)");
+  if (
+    request.chat?.agent_message &&
+    !request.chat.agent_rpc_execution &&
+    !request.chat.sensor_wake &&
+    !request.chat.agent_rpc_report
+  )
+    unsupported.push(
+      "agent-authored messages outside agent messaging, sensors and agent reports",
+    );
+  return unsupported;
+}
+
 export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
   if (request.runtime === undefined) {
     if (request.harness_credential !== undefined)
@@ -204,17 +227,13 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.chat.project_id !== request.project_id
   )
     throw Error("ACP harness requires a project-bound conversation");
-  if (
-    (request.config && Object.keys(request.config).length) ||
-    (request.runtime_env && Object.keys(request.runtime_env).length) ||
-    request.recovery_parent_op_id ||
-    request.chat.recovery_parent_op_id ||
-    (request.chat.agent_message &&
-      !request.chat.agent_rpc_execution &&
-      !request.chat.sensor_wake &&
-      !request.chat.agent_rpc_report)
-  )
-    throw Error("Unsupported ACP harness request options");
+  // A recovery continuation (recovery_parent_op_id) resumes an interrupted
+  // turn in the thread's current session, so it is supported.
+  const unsupported = unsupportedHarnessOptions(request);
+  if (unsupported.length)
+    throw Error(
+      `${harnessAgentName(runtime.profile)} turns cannot use ${unsupported.join(", ")}`,
+    );
   if (
     credential.mode === "account-api-key" &&
     (request.chat.agent_message ||

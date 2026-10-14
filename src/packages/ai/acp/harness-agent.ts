@@ -89,16 +89,22 @@ export class HarnessAgent implements AcpAgent {
     );
     if (JSON.stringify(credential) !== JSON.stringify(this.binding.credential))
       throw Error("ACP credential binding mismatch");
-    if (
-      request.local_images?.length ||
-      (request.config && Object.keys(request.config).length) ||
-      (request.runtime_env && Object.keys(request.runtime_env).length) ||
-      request.mentionReferences?.length ||
-      request.readPendingGoal
-    )
+    const unsupported = [
+      request.local_images?.length && "local image paths (local_images)",
+      request.config &&
+        Object.keys(request.config).length &&
+        "Codex settings (config)",
+      request.runtime_env &&
+        Object.keys(request.runtime_env).length &&
+        "environment overrides (runtime_env)",
+      request.mentionReferences?.length &&
+        "agent @mention references (mentionReferences)",
+      request.readPendingGoal && "Codex goals (readPendingGoal)",
+    ].filter(Boolean);
+    if (unsupported.length)
       throw new HarnessError(
         "unsupported",
-        "Unsupported generic ACP request options",
+        `${this.binding.profile.id === "claude-code" ? "Claude" : "ACP agent"} turns cannot use ${unsupported.join(", ")}`,
       );
     if (
       this.client &&

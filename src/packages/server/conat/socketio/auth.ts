@@ -58,6 +58,7 @@ import {
 } from "@cocalc/server/project-host/access";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { createHash, randomUUID } from "node:crypto";
+import { agentReplyPrefix } from "@cocalc/conat/auth/agent-reply-prefix";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -215,6 +216,9 @@ function verifyAgentScopedProjectHostBearer(
     const credentialIdentity = claims.sid
       ? ["agent-session", claims.sub, claims.project_id, claims.sid].join("\0")
       : bearerToken;
+    const auth_token_fingerprint = createHash("sha256")
+      .update(credentialIdentity)
+      .digest("hex");
     return {
       account_id: claims.sub,
       auth_actor: "agent",
@@ -222,9 +226,9 @@ function verifyAgentScopedProjectHostBearer(
       auth_project_id: claims.project_id,
       auth_iat_s: claims.iat,
       auth_exp_s: claims.exp,
-      auth_token_fingerprint: createHash("sha256")
-        .update(credentialIdentity)
-        .digest("hex"),
+      auth_token_fingerprint,
+      // replies of its own, not the account's _INBOX.account-<id>
+      auth_api_key_reply_prefix: agentReplyPrefix(auth_token_fingerprint),
     };
   } catch (err) {
     if (err instanceof Error && err.message === "token expired") {

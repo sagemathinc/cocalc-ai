@@ -3309,6 +3309,11 @@ export async function reserveCommercialProviderOperation(opts: {
   expected_version: number;
   idempotency_key: string;
   request?: Record<string, unknown>;
+  /**
+   * Refuse a new reservation while another operation of the same kind on this
+   * order is unresolved. An exact replay of that operation still resolves it.
+   */
+  exclusive?: boolean;
 }): Promise<{
   order: CommercialOrder;
   operation: CommercialProviderOperation;
@@ -3335,6 +3340,20 @@ export async function reserveCommercialProviderOperation(opts: {
       return { order, operation };
     }
     requireExpectedVersion(order.version, opts.expected_version);
+    if (opts.exclusive) {
+      const unresolved = await client.query<{ status: string }>(
+        `SELECT status FROM commercial_provider_operations
+          WHERE commercial_order_id=$1 AND operation=$2
+            AND status IN ('reserved','remote_started','indeterminate')
+          ORDER BY created_at LIMIT 1`,
+        [order.id, opts.operation],
+      );
+      if (unresolved.rows[0]) {
+        throw Error(
+          `${opts.operation} is blocked while another ${opts.operation} operation is ${unresolved.rows[0].status}; replay that operation to resolve it`,
+        );
+      }
+    }
     if (opts.operation === "sync-customer-billing") {
       await assertCommercialStripeBillingSyncAllowed(order, client);
     }

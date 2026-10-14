@@ -139,6 +139,7 @@ import {
   setAcpAdmissionDenialRecorder,
   setAcpAdmissionLimitsProvider,
   throwIfAcpAdmissionDenied,
+  withoutRecoveryLineage,
 } from "./admission";
 import {
   buildCodexTurnNoticeOptions,
@@ -693,17 +694,20 @@ function buildRecoveryContinuationContent({
   recoveryCount,
   delayMs = 0,
   maxRetries = ACP_AUTO_RECOVERY_MAX_RETRIES,
+  agentLabel = "Codex",
 }: {
   interruptedNotice: string;
   recoveryCount: number;
   delayMs?: number;
   maxRetries?: number;
+  agentLabel?: string;
 }): string {
   const plain = `${interruptedNotice ?? ""}`.replace(/^\*\*|\*\*$/g, "").trim();
+  const session = `this ${agentLabel} session`;
   const timing =
     delayMs > 0
-      ? `CoCalc will automatically resume this Codex session in about ${formatQueuedDelay(delayMs)}, unless you send another turn first`
-      : "CoCalc is automatically resuming this Codex session";
+      ? `CoCalc will automatically resume ${session} in about ${formatQueuedDelay(delayMs)}, unless you send another turn first`
+      : `CoCalc is automatically resuming ${session}`;
   return `${ACP_RECOVERY_VISIBLE_LABEL}: ${plain} ${timing} (attempt ${recoveryCount}/${maxRetries}).`;
 }
 
@@ -8925,6 +8929,11 @@ async function enqueueRecoveryContinuationForJob({
     recoveryCount,
     delayMs,
     maxRetries,
+    agentLabel: !harness
+      ? "Codex"
+      : request.runtime?.profile.id === "claude-code"
+        ? "Claude"
+        : "agent",
   });
   await withChatSyncDB({
     client,
@@ -9371,7 +9380,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
-    const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
+    const message = `This agent turn could not run: ${(err as Error)?.message ?? err}`;
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
       err,
@@ -10213,6 +10222,10 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  // Every turn submitted here (a new message, or guidance that could not
+  // steer a running turn) is new; only the worker creates recovery
+  // continuations, and they bypass this function.
+  request = withoutRecoveryLineage(request);
   await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
   if (!request.chat) {
