@@ -2,6 +2,7 @@
 
 import { Map as iMap } from "immutable";
 import { ChatActions } from "../actions";
+import { initFromSyncDB } from "../sync";
 
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
@@ -15,6 +16,16 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 const THREAD = "thread-1";
+
+class MockStore {
+  state: any = {};
+  setState(update: any) {
+    this.state = { ...this.state, ...update };
+  }
+  get(key: string) {
+    return this.state[key];
+  }
+}
 
 function makeActions(acpState: iMap<string, string>, messages: any[]): any {
   const actions: any = new (ChatActions as any)("proj-1", "x.chat");
@@ -61,6 +72,32 @@ describe("clearAgentContext", () => {
     expect(actions.clearAgentContext(THREAD)).toBe(false);
     expect(actions.setThreadConfigRecord).not.toHaveBeenCalled();
     expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
+
+  it("clears a thread whose only sent rows are delivered guidance", () => {
+    const guidance = {
+      ...message,
+      acp_guidance_delivered_at_ms: 1791780000000,
+      acp_send_mode: "immediate",
+    };
+    const store = new MockStore();
+    initFromSyncDB({
+      syncdb: {
+        get: () => [
+          {
+            event: "chat-thread-state",
+            thread_id: THREAD,
+            active_message_id: "message-0",
+            state: "error",
+          },
+          guidance,
+        ],
+      },
+      store,
+    });
+    const actions = makeActions(store.state.acpState, [guidance]);
+    expect(actions.hasActiveAgentTurn(THREAD)).toBe(false);
+    expect(actions.clearAgentContext(THREAD)).toBe(true);
   });
 
   it("clears an idle thread", () => {

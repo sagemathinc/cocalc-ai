@@ -1,4 +1,5 @@
 import { Map as iMap, fromJS } from "immutable";
+import { hasAcpGuidanceReceipt } from "./message-state";
 import { normalizeChatMessage } from "./normalize";
 
 const THREAD_STATE_EVENT = "chat-thread-state";
@@ -61,6 +62,13 @@ function chatRowToAcpState({
         `${(threadState as any)?.active_message_id ?? ""}`.trim();
       if (messageId && activeMessageId === messageId) {
         return threadStateToAcpState((threadState as any)?.state) ?? state;
+      }
+      // Guidance delivered into a running turn never gets a reply of its own,
+      // so its "sent" row state is final; the turn's state lives on the thread.
+      if (
+        hasAcpGuidanceReceipt((record as any)?.acp_guidance_delivered_at_ms)
+      ) {
+        return undefined;
       }
       return state;
     }
