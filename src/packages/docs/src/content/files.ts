@@ -135,11 +135,15 @@ build.
 - CoCalc saves the command with the document, so collaborators and agents who
   build it through CoCalc use the same command.
 - In the first 1,000 lines, \`% !TeX program = xelatex\` (or \`pdflatex\`,
-  \`lualatex\`) picks the engine for a document with no saved command, and
-  \`% !TeX cocalc = <command>\` sets the command in the document itself,
-  overriding the saved one; the semicolon rule applies to it too. The
-  **Build** tab then shows that command under **Hardcoded build-command**.
-  After you change or remove the line, click **Rescan** there.
+  \`lualatex\`) picks the engine for a document with no saved command.
+  \`% !TeX cocalc = <command>\` sets the command in the document itself; the
+  semicolon rule applies to it too. Builds use that command while the line is
+  present. When CoCalc reads the line, as it does when you open the file, it
+  makes that command the document's saved command and shows it under
+  **Hardcoded build-command** in the **Build** tab. After you add the line,
+  reopen the file; after you change or remove it, click **Rescan** there.
+  Removing the line leaves its command saved until you choose an engine or
+  edit the command.
 
 Some documents need a step before or between LaTeX runs. CoCalc runs it and
 shows its log in a tab of its own:

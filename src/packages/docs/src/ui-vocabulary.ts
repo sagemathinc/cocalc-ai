@@ -1670,6 +1670,22 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     reason:
       'The Local snapshots status date comes from the newest date-named (scheduled) snapshot only, while Find searches every retained snapshot. The Files guide (docs/src/content/files.ts, "Find a retained file when its path is unknown") says so. If the filter only moved, point this fact at its new location. If the date starts counting other snapshots, update that paragraph, then this fact.',
   },
+  {
+    id: "latex.directive.builds-use-it",
+    file: "apps/document-build/src/latex/config.ts",
+    kind: "present",
+    text: "if (directives.cocalc != null) { return { build_command: sanitizeLatexBuildCommand( directives.cocalc,",
+    reason:
+      'Every build reads a "% !TeX cocalc = ..." line from the document and uses its command before the saved one. The LaTeX guide (docs/src/content/files.ts, "Choose how the document builds") says builds use that command while the line is present. If the check only moved, point this fact at its new location; otherwise update that bullet, then this fact.',
+  },
+  {
+    id: "latex.directive.saved-as-command",
+    file: "frontend/frame-editors/latex-editor/actions.ts",
+    kind: "present",
+    text: "this.set_build_command(cocalc_cmd); this.setState({ build_command_hardcoded: true });",
+    reason:
+      'When the editor reads a "% !TeX cocalc = ..." line, it saves its command as the document\'s build command, which stays after the line is removed and the document is rescanned. The LaTeX guide (docs/src/content/files.ts, "Choose how the document builds") says so. If the code only moved, point this fact at its new location; otherwise update that bullet, then this fact.',
+  },
 ];
 
 export const UI_VOCABULARY_ALIAS_EXCEPTIONS: readonly UiVocabularyAliasException[] =
