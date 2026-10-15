@@ -717,6 +717,7 @@ export class AppServerClient {
   private exited = false;
   private exitDetail = "unknown";
   private exitError?: Error & { stderrTail?: string[] };
+  private stdinError?: Error;
   private attentionContext?: CodexAttentionContext;
   private attentionInputSupported = false;
   private readonly serverRequestContexts = new Map<
@@ -757,6 +758,14 @@ export class AppServerClient {
           err: `${err}`,
         });
       }
+    });
+    // A write after the app-server's stdin closed (its project container
+    // stopped) fails with EPIPE as an 'error' event. Unhandled, it would
+    // crash the whole shared ACP worker and interrupt every turn on the
+    // host. The exit handler settles this client's pending work.
+    proc.stdin?.on("error", (err) => {
+      this.stdinError ??= err;
+      logger.warn("codex app-server: stdin closed", { err: `${err}` });
     });
     proc.stderr?.on("data", (chunk) => {
       const text = chunk.toString("utf8");
@@ -895,7 +904,13 @@ export class AppServerClient {
         reject,
         timer,
       });
-      this.send({ id, method, params });
+      try {
+        this.send({ id, method, params });
+      } catch (err) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(err);
+      }
     });
   }
 
@@ -964,7 +979,13 @@ export class AppServerClient {
         new Error(`codex app-server already exited: ${this.exitDetail}`)
       );
     }
-    this.proc.stdin?.write(`${JSON.stringify(message)}\n`);
+    const stdin = this.proc.stdin;
+    if (this.stdinError || stdin?.destroyed || stdin?.writableEnded) {
+      throw new Error(
+        `codex app-server stdin is closed: ${this.stdinError ?? "ended"}`,
+      );
+    }
+    stdin?.write(`${JSON.stringify(message)}\n`);
   }
 
   private handleServerRequest(message: RpcServerRequest): void {
