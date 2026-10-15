@@ -8686,6 +8686,7 @@ describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
         { artifact: "project", version: "project-v2" },
         { artifact: "project-host", version: "ph-v2" },
       ],
+      previous_versions: { tools: "tools-v1", "project-bundle": "project-v1" },
     });
     expect(result.unconfirmed).toEqual([
       { artifact: "project", version: "project-v2" },
@@ -8700,6 +8701,48 @@ describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
       "artifact:tools=tools-v2",
       "component:project-host=ph-v2",
     ]);
+  });
+
+  it("records no pin for an artifact that was already current, and confirms nothing it has no evidence for", async () => {
+    installedArtifacts = [
+      {
+        artifact: "tools",
+        current_version: "tools-v2",
+        installed_versions: ["tools-v2"],
+      },
+      {
+        artifact: "project-bundle",
+        current_version: "project-v2",
+        installed_versions: ["project-v2"],
+      },
+    ];
+    const { recordConvergedProjectHostUpgradeInternal } =
+      await import("./hosts");
+    const result = await recordConvergedProjectHostUpgradeInternal({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      version: "ph-v2",
+      targets: [
+        // Already tools-v2 before the upgrade: a no-op, like a normal success.
+        { artifact: "tools", version: "tools-v2" },
+        // No pre-upgrade observation: cannot tell whether it changed.
+        { artifact: "project", version: "project-v2" },
+        // Applied only after a reply, so never confirmed by recovery.
+        { artifact: "bootstrap-environment", version: "boot-v2" },
+        { artifact: "project-host", version: "ph-v2" },
+      ],
+      previous_versions: { tools: "tools-v2" },
+    });
+    expect(result.unconfirmed.map((t) => t.artifact).sort()).toEqual([
+      "bootstrap-environment",
+      "project",
+    ]);
+    const call = setProjectHostRuntimeDeploymentsMock.mock.calls[0][0];
+    expect(
+      call.deployments
+        .map((d: any) => `${d.target_type}:${d.target}=${d.desired_version}`)
+        .sort(),
+    ).toEqual(["artifact:project-host=ph-v2", "component:project-host=ph-v2"]);
   });
 
   it("records what a successful project-host upgrade records", async () => {

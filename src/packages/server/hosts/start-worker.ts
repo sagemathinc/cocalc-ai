@@ -26,6 +26,7 @@ import {
   rollbackHostRuntimeDeploymentsInternal,
   rollbackProjectHostOverSshInternal,
   reconcileHostRuntimeDeploymentsInternal,
+  observeHostArtifactVersionsInternal,
   reconcileHostSoftwareInternal,
   recordConvergedProjectHostUpgradeInternal,
   removeSelfHostConnectorInternal,
@@ -2229,6 +2230,18 @@ async function handleOp(op: LroSummary): Promise<void> {
       );
       const requestedProjectHostTargetVersion =
         requestedProjectHostUpgradeVersion(input?.targets);
+      // A mixed request: note the other artifacts' versions now, so a lost
+      // reply can still tell which of them this upgrade changed.
+      const previousArtifactVersions =
+        requestedProjectHostUpgrade &&
+        (input?.targets ?? []).some(
+          (target: HostSoftwareUpgradeTarget) =>
+            target?.artifact !== "project-host" &&
+            target?.artifact !== "bootstrap-environment" &&
+            `${target?.version ?? ""}`.trim(),
+        )
+          ? await observeHostArtifactVersionsInternal(host_id)
+          : undefined;
       if (requestedProjectHostUpgrade) {
         await beginPlannedProjectHostRuntimeTransition({
           host_id,
@@ -2412,6 +2425,7 @@ async function handleOp(op: LroSummary): Promise<void> {
                   version: convergedVersion,
                   targets: input?.targets ?? [],
                   align_runtime_stack: input?.align_runtime_stack,
+                  previous_versions: previousArtifactVersions,
                 }));
             }
             const unconfirmedError = unconfirmedTargets.length
