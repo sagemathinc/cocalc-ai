@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   mkdirSync,
@@ -7709,6 +7710,50 @@ describe("CodexAppServerAgent", () => {
       context: firstContext,
     });
     expect(serverRequestResolved).toHaveBeenCalledTimes(1);
+    proc.kill();
+  });
+});
+
+describe("AppServerClient with a closed stdin", () => {
+  it("survives EPIPE after the child's stdin closes and rejects new requests", async () => {
+    // The child closes its end of the pipe but keeps running, like an
+    // app-server whose project container is being stopped.
+    const proc = spawn(
+      "sh",
+      ["-c", "exec 0<&-; echo closed >&2; exec sleep 30"],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    try {
+      await new Promise<void>((resolve) =>
+        proc.stderr!.once("data", () => resolve()),
+      );
+      const client = new AppServerClient(proc);
+      const epipe = new Promise<any>((resolve) =>
+        proc.stdin!.once("error", resolve),
+      );
+      client.notify("initialized", {});
+      await expect(epipe).resolves.toMatchObject({ code: "EPIPE" });
+      expect(() => client.notify("initialized", {})).not.toThrow();
+      await expect(client.request("thread/start", {}, 1000)).rejects.toThrow(
+        /stdin is closed/,
+      );
+      expect(client.hasExited()).toBe(false);
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  });
+
+  it("does not write to a destroyed stdin", async () => {
+    const proc = new FakeCodexAppServerProc(() => {});
+    const client = new AppServerClient(proc as any);
+    proc.stdin.destroy(
+      Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(() => client.notify("initialized", {})).not.toThrow();
+    await expect(client.request("thread/start", {}, 1000)).rejects.toThrow(
+      /stdin is closed: write EPIPE/,
+    );
     proc.kill();
   });
 });

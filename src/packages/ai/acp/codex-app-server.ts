@@ -717,6 +717,7 @@ export class AppServerClient {
   private exited = false;
   private exitDetail = "unknown";
   private exitError?: Error & { stderrTail?: string[] };
+  private stdinError?: Error;
   private attentionContext?: CodexAttentionContext;
   private attentionInputSupported = false;
   private readonly serverRequestContexts = new Map<
@@ -733,6 +734,14 @@ export class AppServerClient {
     private readonly requestHandler?: CodexAppServerRequestHandler,
     private readonly attentionHandler?: CodexAttentionHandler,
   ) {
+    // Writing after the app-server's end of the pipe closed (e.g. its project
+    // container stopped) emits EPIPE here.  Unhandled, that error would crash
+    // the whole worker process and every other turn in it.
+    proc.stdin?.on("error", (err) => {
+      if (this.stdinError) return;
+      this.stdinError = err;
+      logger.warn("codex app-server: stdin closed", { err: `${err}` });
+    });
     // Not readline: it splits JSON lines on U+2028/U+2029 inside strings.
     const rl = createJsonLineReader(proc.stdout as Readable);
     rl.on("line", (line) => {
@@ -895,7 +904,11 @@ export class AppServerClient {
         reject,
         timer,
       });
-      this.send({ id, method, params });
+      if (!this.send({ id, method, params })) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(this.stdinClosedError());
+      }
     });
   }
 
@@ -957,14 +970,37 @@ export class AppServerClient {
     return this.exited;
   }
 
-  private send(message: Record<string, any>): void {
+  private stdinClosedError(): Error {
+    return new Error(
+      `codex app-server stdin is closed: ${this.stdinError?.message ?? "not writable"}`,
+    );
+  }
+
+  // Returns false, without throwing, when the pipe is already closed: some
+  // callers send from error handlers, where a throw would go unhandled.
+  private send(message: Record<string, any>): boolean {
     if (this.exited) {
       throw (
         this.exitError ??
         new Error(`codex app-server already exited: ${this.exitDetail}`)
       );
     }
-    this.proc.stdin?.write(`${JSON.stringify(message)}\n`);
+    const stdin = this.proc.stdin;
+    if (this.stdinError || !stdin || stdin.destroyed || stdin.writableEnded) {
+      logger.warn("codex app-server: dropped a message; stdin is closed", {
+        method: message.method,
+        id: message.id,
+      });
+      return false;
+    }
+    try {
+      stdin.write(`${JSON.stringify(message)}\n`);
+      return true;
+    } catch (err) {
+      this.stdinError ??= err as Error;
+      logger.warn("codex app-server: stdin write failed", { err: `${err}` });
+      return false;
+    }
   }
 
   private handleServerRequest(message: RpcServerRequest): void {
