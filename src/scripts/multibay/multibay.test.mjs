@@ -853,11 +853,11 @@ describe("leaving projects across bays", () => {
     const before = await forwardedLeaves();
     assert.deepEqual(
       await leaver.client.call("projects.leaveOrDeleteProjects", {
-        project_ids: [remote, local],
+        project_ids: [local, remote],
       }),
       [
-        { project_id: remote, action: "removed_self" },
         { project_id: local, action: "removed_self" },
+        { project_id: remote, action: "removed_self" },
       ],
     );
     assert.equal(await forwardedLeaves(), before + 1);
