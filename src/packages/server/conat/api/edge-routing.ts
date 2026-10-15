@@ -140,6 +140,11 @@ export async function executeHubApiCall(call: HubApiCall): Promise<any> {
 
 // How many bays a call on several projects runs on at once.
 const SPLIT_BAYS_AT_ONCE = 3;
+// A call on several projects answers within the caller's 30 s: a bay's part
+// starts only if its forwarded call can finish (or be reported as of unknown
+// outcome) by then. Later parts never start, and say so.
+const SPLIT_CALL_BUDGET_MS = 28_000;
+const PART_WORST_CASE_MS = FORWARD_ATTEMPTS * FORWARD_ATTEMPT_TIMEOUT_MS;
 
 /**
  * A call on several projects: run it once per owning bay with that bay's
@@ -148,7 +153,8 @@ const SPLIT_BAYS_AT_ONCE = 3;
  * or does not answer gives each of its projects the method's error result.
  * Projects with no known bay, and malformed ids, run here, where the method
  * reports them. When every project is here the call runs as it is, and an
- * error it raises is raised as before.
+ * error it raises is raised as before. A bay's part that could not finish
+ * within the caller's time is not started; its projects say so.
  */
 async function executeSplitByProject(
   route: Extract<HubApiRoute, { owner: "projects" }>,
@@ -173,15 +179,31 @@ async function executeSplitByProject(
   const [opts, ...rest] = call.args;
   const parts: [string, string[], HubApiCall][] = allHere
     ? [[here, ids, call]]
-    : [...byBay].map(([bay_id, project_ids]) => [
-        bay_id,
-        project_ids,
-        { ...call, args: [{ ...opts, project_ids }, ...rest] },
-      ]);
+    : [...byBay]
+        // This bay's own part first, so it always runs.
+        .sort(([a], [b]) => Number(b === here) - Number(a === here))
+        .map(([bay_id, project_ids]) => [
+          bay_id,
+          project_ids,
+          { ...call, args: [{ ...opts, project_ids }, ...rest] },
+        ]);
   const merged = new Map<string, any>();
+  const deadline = Date.now() + SPLIT_CALL_BUDGET_MS;
   await mapParallelLimit(
     parts,
     async ([bay_id, project_ids, part]) => {
+      if (!allHere && Date.now() + PART_WORST_CASE_MS > deadline) {
+        for (const project_id of project_ids) {
+          merged.set(
+            project_id,
+            route.errorResult(
+              project_id,
+              `not attempted: no time left in this call for ${bay_id}; nothing was changed for this project, so it is safe to retry`,
+            ),
+          );
+        }
+        return;
+      }
       let results: unknown;
       try {
         results =

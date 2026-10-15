@@ -536,4 +536,61 @@ describe("a call on several projects", () => {
     expect(forward).toHaveBeenCalledTimes(6);
     expect(most).toBe(3);
   });
+
+  it("answers within the caller's time: parts that cannot finish in it never start", async () => {
+    const ids = Array.from(
+      { length: 7 },
+      (_, i) => `00000000-0000-4000-8000-00000000000${i}`,
+    );
+    resolveProjectBays.mockResolvedValue(
+      new Map(ids.map((id, i) => [id, { bay_id: `bay-${i + 1}`, epoch: 0 }])),
+    );
+    // A clock where each unanswered attempt takes its full 12 s; concurrent
+    // attempts overlap in time.
+    let now = 1_000_000;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    forward.mockImplementation(async () => {
+      const started = now;
+      await Promise.resolve();
+      now = Math.max(now, started + 12_000);
+      throw Object.assign(new Error("timeout"), { code: 408 });
+    });
+    try {
+      const results = await executeHubApiCall(hide(ids));
+      expect(results.map((r) => r.project_id)).toEqual(ids);
+      // Three bays at once, two attempts each; the first wave used the time.
+      expect(forward).toHaveBeenCalledTimes(6);
+      expect(now - 1_000_000).toBeLessThanOrEqual(28_000);
+      for (const r of results.slice(0, 3)) {
+        expect(r.error).toContain("outcome unknown");
+      }
+      for (const r of results.slice(3)) {
+        expect(r.error).toContain("not attempted");
+        expect(r.error).toContain("safe to retry");
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("runs this bay's own part first", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-2", epoch: 0 }],
+        [P[2], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    const order: string[] = [];
+    local.mockImplementation(async (call) => {
+      order.push("bay-0");
+      return answer(call);
+    });
+    forward.mockImplementation(async (call) => {
+      order.push(call.args[0].project_ids[0]);
+      return { ok: true, result: answer(call) };
+    });
+    await executeHubApiCall(hide(P));
+    expect(order[0]).toBe("bay-0");
+  });
 });
