@@ -88,6 +88,82 @@ describe("storage admission controller", () => {
     });
   });
 
+  it("does not classify throttled maintenance waits as host pressure", () => {
+    // A rustic backup in cocalc-maintenance stalls on that cgroup's io.max
+    // even on an idle disk, so root PSI tracks the backup's own stall.
+    const controller = createStorageAdmissionController({
+      mode: "enforce",
+      now: () => now,
+      readInputs: () => ({
+        sampled_at_ms: now,
+        host_io_full_avg10: 46.5,
+        project_pool_io_full_avg10: 0,
+        bees_io_full_avg10: 0,
+        maintenance_io_full_avg10: 69,
+        starting_projects: 0,
+        stopping_projects: 0,
+        btrfs_mutation_locks: 0,
+        btrfs_mutation_waiters: 0,
+      }),
+      contendedSamples: 1,
+    });
+
+    expect(controller.sample()).toMatchObject({
+      pressure_state: "normal",
+      host_io_full_avg10: 46.5,
+      maintenance_io_full_avg10: 69,
+      uncontained_io_full_avg10: 0,
+      effective_io_full_avg10: 0,
+    });
+    expect(controller.backgroundDeferralReason()).toBeUndefined();
+  });
+
+  it("preserves host pressure above maintenance waits", () => {
+    const controller = createStorageAdmissionController({
+      mode: "enforce",
+      now: () => now,
+      readInputs: () => ({
+        sampled_at_ms: now,
+        host_io_full_avg10: 30,
+        project_pool_io_full_avg10: 3,
+        maintenance_io_full_avg10: 12,
+        starting_projects: 0,
+        stopping_projects: 0,
+        btrfs_mutation_locks: 0,
+        btrfs_mutation_waiters: 0,
+      }),
+    });
+
+    expect(controller.sample()).toMatchObject({
+      pressure_state: "emergency",
+      uncontained_io_full_avg10: 18,
+      effective_io_full_avg10: 18,
+    });
+  });
+
+  it("still counts project-pool pressure while maintenance is throttled", () => {
+    const controller = createStorageAdmissionController({
+      mode: "enforce",
+      now: () => now,
+      readInputs: () => ({
+        sampled_at_ms: now,
+        host_io_full_avg10: 25,
+        project_pool_io_full_avg10: 15,
+        maintenance_io_full_avg10: 25,
+        starting_projects: 0,
+        stopping_projects: 0,
+        btrfs_mutation_locks: 0,
+        btrfs_mutation_waiters: 0,
+      }),
+    });
+
+    expect(controller.sample()).toMatchObject({
+      pressure_state: "emergency",
+      uncontained_io_full_avg10: 0,
+      effective_io_full_avg10: 15,
+    });
+  });
+
   it("preserves host pressure above BEES and project-pool waits", () => {
     const controller = createStorageAdmissionController({
       mode: "enforce",

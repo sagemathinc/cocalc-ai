@@ -971,6 +971,7 @@ export interface HostStorageAdmissionMetrics {
   host_io_full_avg10?: number;
   project_pool_io_full_avg10?: number;
   bees_io_full_avg10?: number;
+  maintenance_io_full_avg10?: number;
   uncontained_io_full_avg10?: number;
   effective_io_full_avg10?: number;
   lifecycle_active: number;
