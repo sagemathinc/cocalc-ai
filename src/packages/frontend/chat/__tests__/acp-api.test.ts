@@ -1050,6 +1050,32 @@ describe("queued ACP controls", () => {
     );
   });
 
+  it("still succeeds when the chat closed while send-now was in flight", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true, state: "running" });
+    const acpState = new FakeAcpState();
+    const actions: any = {
+      store: {
+        get: (key: string) =>
+          ({ project_id: "proj", path: "x.chat", acpState })[key],
+        setState: jest.fn(),
+      },
+      syncdb: {
+        set: jest.fn(),
+        commit: jest.fn(),
+        get_one: jest.fn(() => {
+          throw Error("closed");
+        }),
+      },
+    };
+    await expect(
+      sendQueuedAcpTurnImmediately({
+        actions,
+        message: { message_id: "m-closed", thread_id: "t-closed" } as any,
+      }),
+    ).resolves.toBe(true);
+    expect(acpState.get("message:m-closed")).toBe("sent");
+  });
+
   it("updates local state after cancelling a queued turn", async () => {
     mockControlAcp.mockResolvedValue({ ok: true });
     const acpState = new FakeAcpState();

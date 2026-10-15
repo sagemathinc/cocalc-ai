@@ -56,9 +56,14 @@ const ACP_ACK_BACKOFF_MS = 2000;
 // The hub saves the guidance receipt before a steer RPC returns, so by then
 // the row may already be final; setting "sent" again would leave it stuck.
 function guidanceAlreadyDelivered(syncdb: any, messageId: string): boolean {
-  let row = syncdb?.get_one?.({ event: "chat", message_id: messageId });
-  if (typeof row?.toJS === "function") row = row.toJS();
-  return hasAcpGuidanceReceipt(row?.acp_guidance_delivered_at_ms);
+  try {
+    let row = syncdb?.get_one?.({ event: "chat", message_id: messageId });
+    if (typeof row?.toJS === "function") row = row.toJS();
+    return hasAcpGuidanceReceipt(row?.acp_guidance_delivered_at_ms);
+  } catch {
+    // A closed SyncDB throws; the state writes below already tolerate that.
+    return false;
+  }
 }
 
 export function sanitizeSharedCodexConfig(
