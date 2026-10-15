@@ -37,6 +37,7 @@ import type {
   SiteLicenseExternalClaimPool,
   SiteLicenseOverview,
 } from "@cocalc/conat/hub/api/purchases";
+import { siteCliInstallCommand } from "@cocalc/frontend/components/install-cocalc-cli";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -129,7 +130,7 @@ function keyGenerationCommand(): string {
 function sampleTokenCommand(kid?: string): string {
   return [
     "# Install cocalc-cli if the cocalc command is not available:",
-    "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
+    siteCliInstallCommand(),
     "",
     "cocalc membership site-license sample-token \\",
     `  --kid ${optionalString(kid) ?? "<key-id>"} \\`,

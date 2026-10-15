@@ -12,6 +12,8 @@ export type ProductSpec = {
   command: ProductCommand;
   binary: string;
   installUrl: string;
+  /** The shell the installer is written for. */
+  installShell: "sh" | "bash";
 };
 
 export const PRODUCT_SPECS: Record<ProductCommand, ProductSpec> = {
@@ -20,7 +22,8 @@ export const PRODUCT_SPECS: Record<ProductCommand, ProductSpec> = {
     binary: "cocalc-plus",
     installUrl:
       process.env.COCALC_PLUS_INSTALL_URL ??
-      "https://software.cocalc.ai/software/cocalc-plus/install.sh",
+      "https://software.cocalc.ai/software/plus/install.sh",
+    installShell: "sh",
   },
   launchpad: {
     command: "launchpad",
@@ -28,6 +31,7 @@ export const PRODUCT_SPECS: Record<ProductCommand, ProductSpec> = {
     installUrl:
       process.env.COCALC_LAUNCHPAD_INSTALL_URL ??
       "https://software.cocalc.ai/software/cocalc-launchpad/install.sh",
+    installShell: "bash",
   },
 };
 
@@ -69,14 +73,14 @@ async function ensureProductInstalled(
   const approved = await shouldInstallProduct(spec);
   if (!approved) {
     throw new Error(
-      `'${spec.binary}' is required for 'cocalc ${spec.command}'. Install with: curl -fsSL ${spec.installUrl} | bash`,
+      `'${spec.binary}' is required for 'cocalc ${spec.command}'. Install with: curl -fsSL ${spec.installUrl} | ${spec.installShell}`,
     );
   }
 
   console.error(`Installing ${spec.binary} ...`);
   const code = await deps.runCommand("bash", [
     "-lc",
-    `curl -fsSL ${spec.installUrl} | bash`,
+    `curl -fsSL ${spec.installUrl} | ${spec.installShell}`,
   ]);
   if (code !== 0) {
     throw new Error(`failed installing '${spec.binary}' (exit ${code})`);

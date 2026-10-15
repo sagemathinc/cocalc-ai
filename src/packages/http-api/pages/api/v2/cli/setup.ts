@@ -17,11 +17,13 @@
 import type { Request, Response } from "express";
 import siteURL from "@cocalc/database/settings/site-url";
 import {
+  cliInstaller,
   errorScript,
   SetupActionError,
   setupScript,
   sshPlan,
 } from "@cocalc/server/cli-setup/setup-script";
+import { configuredReleaseSource } from "@cocalc/server/cli-distribution/releases";
 import { computerConnectPlan } from "@cocalc/server/computers/setup-plan";
 
 function param(req: Request, name: string): string {
@@ -39,13 +41,20 @@ export default async function handle(req: Request, res: Response) {
   }
   try {
     const action = param(req, "action");
+    const site = new URL(await siteURL()).href.replace(/\/+$/, "");
+    // This site's own installer when it serves CLI releases.
+    const installer = cliInstaller(site, configuredReleaseSource() != null);
     if (action === "ssh") {
-      const site = new URL(await siteURL()).href.replace(/\/+$/, "");
-      res.send(setupScript(sshPlan(site, param(req, "project"))));
+      res.send(setupScript(sshPlan(site, param(req, "project")), installer));
       return;
     }
     if (action === "computer") {
-      res.send(setupScript(await computerConnectPlan(param(req, "request"))));
+      res.send(
+        setupScript(
+          await computerConnectPlan(param(req, "request")),
+          installer,
+        ),
+      );
       return;
     }
     throw new SetupActionError("unknown setup action");

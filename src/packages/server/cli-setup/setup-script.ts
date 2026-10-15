@@ -16,9 +16,32 @@
 
 import { isValidUUID } from "@cocalc/util/misc";
 
-/** The official installer (see packages/cli/README.md). */
+/**
+ * The legacy single-binary installer, for a site that serves no CLI releases
+ * (COCALC_CLI_RELEASE_SOURCE=off). It needs bash.
+ */
 export const CLI_INSTALLER_URL =
   "https://software.cocalc.ai/software/cocalc/install.sh";
+
+export interface CliInstaller {
+  url: string;
+  /** The shell the installer is written for. */
+  shell: "sh" | "bash";
+}
+
+/**
+ * The installer the one-line setup uses: the site's own `<site>/cli/install.sh`
+ * (POSIX sh; distribution Phase A) when the site serves CLI releases, else the
+ * legacy one.
+ */
+export function cliInstaller(
+  site: string,
+  servesReleases: boolean,
+): CliInstaller {
+  return servesReleases
+    ? { url: `${site.replace(/\/+$/, "")}/cli/install.sh`, shell: "sh" }
+    : { url: CLI_INSTALLER_URL, shell: "bash" };
+}
 
 export class SetupActionError extends Error {}
 
@@ -83,7 +106,7 @@ function stepLines(step: SetupStep): string[] {
 
 export function setupScript(
   plan: SetupPlan,
-  installer = CLI_INSTALLER_URL,
+  installer: CliInstaller = { url: CLI_INSTALLER_URL, shell: "bash" },
 ): string {
   const steps = plan.steps.flatMap(stepLines).join("\n");
   if (!plan.probe.every((word) => /^[a-z][a-z0-9-]*$/.test(word))) {
@@ -159,11 +182,11 @@ if [ -z "$cocalc" ]; then
   fi
   if ! ask "$question"; then
     say "Nothing was changed. Install it with:"
-    say ${shQuote(`  curl -fsSL ${installer} | bash`)}
+    say ${shQuote(`  curl -fsSL ${installer.url} | ${installer.shell}`)}
     say "then run this line again."
     exit 1
   fi
-  curl -fsSL ${shQuote(installer)} | bash
+  curl -fsSL ${shQuote(installer.url)} | ${installer.shell}
   # An old cocalc may still come first on PATH: take the one that works.
   cocalc=$(pick)
   if [ -z "$cocalc" ]; then

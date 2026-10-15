@@ -1163,7 +1163,7 @@ export async function ensureRemoteReady(
   if (!install && !upgrade) return;
   await sshExecAsync(
     opts,
-    "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash",
+    "curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh",
     true,
   );
 }
@@ -1224,7 +1224,7 @@ export async function upgradeRemote(
 
 export async function upgradeLocal(): Promise<void> {
   const cmd =
-    "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
+    "curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh";
   await new Promise<void>((resolve, reject) => {
     const child = spawn("bash", ["-lc", cmd], { stdio: "inherit" });
     child.once("error", (err) => reject(err));
