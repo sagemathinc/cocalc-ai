@@ -2,6 +2,46 @@ import { createHash } from "node:crypto";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 
+/** Whether an account may still use a project's agents (project-host:
+ * owner or collaborator on its local project record). */
+export type AcpProjectMembershipChecker = (opts: {
+  account_id: string;
+  project_id: string;
+}) => boolean | Promise<boolean>;
+
+let projectMembershipChecker: AcpProjectMembershipChecker | undefined;
+
+/** Hosts with collaborators install this; single-user Lite does not. */
+export function setAcpProjectMembershipChecker(
+  checker: AcpProjectMembershipChecker | undefined,
+): void {
+  projectMembershipChecker = checker;
+}
+
+// Work can wait (queued behind a turn, held by a restart, recovered after a
+// crash). Run it only if whoever sent it may still use the project now.
+async function assertSenderStillProjectMember(
+  request: AcpRequest,
+): Promise<void> {
+  if (!projectMembershipChecker) return;
+  const account_id = `${request.account_id ?? ""}`.trim();
+  const project_id =
+    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
+  let member = false;
+  if (account_id && project_id) {
+    try {
+      member = await projectMembershipChecker({ account_id, project_id });
+    } catch {
+      member = false;
+    }
+  }
+  if (!member) {
+    throw new Error(
+      "Not run: the account that sent this message is no longer a collaborator on this project.",
+    );
+  }
+}
+
 export async function authorizeAgentDeliveryExecution(
   request: AcpRequest,
   api: Pick<
@@ -57,7 +97,11 @@ export async function authorizeAgentDeliveryExecution(
     });
     return;
   }
-  if (!chat?.agent_delivery_id) return;
+  if (!chat?.agent_delivery_id) {
+    // An ordinary message from a person: they must still be a collaborator.
+    await assertSenderStillProjectMember(request);
+    return;
+  }
   // Old queued work must not acquire the new RPC execution semantics, even
   // during a mixed-version rollout with a hub that still supports V1.
   throw new Error(

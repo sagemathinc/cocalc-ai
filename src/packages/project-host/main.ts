@@ -6,6 +6,7 @@
  * Security: intentionally insecure for now. No auth, no TLS.
  */
 import { createServer as createHttpServer } from "http";
+import { initAcpProjectMembership } from "./acp/project-membership";
 import type { IncomingMessage, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { once } from "node:events";
@@ -471,6 +472,7 @@ export async function main(
   setHarnessAuthorityValidator(validateHarnessAuthority);
   setHarnessRateLimitRecorder(recordHarnessRateLimit);
   initCodexSiteKeyGovernor();
+  initAcpProjectMembership();
   setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {
     const accountId = `${account_id ?? ""}`.trim();
     if (accountId) {

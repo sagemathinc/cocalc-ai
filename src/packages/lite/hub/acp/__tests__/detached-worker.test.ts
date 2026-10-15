@@ -3105,6 +3105,69 @@ describe("project fence follow-ups", () => {
     expect(wake).toHaveBeenCalled();
   });
 
+  it("lets a stop win against a resume that is already being enqueued", async () => {
+    const rows: any[] = [];
+    const { job } = runningTurn(rows);
+    await fenceAcpProjectAfterStop({
+      project_id: job.project_id,
+      resume: true,
+    });
+    await processAcpProjectFenceIntents(client); // chat shows the restart
+    expect(releaseAcpProjectFenceResumesAfterStart(job.project_id)).toBe(1);
+
+    // Block the resume while it saves its recovery message to the chat.
+    let saving!: () => void;
+    const saveStarted = new Promise<void>((resolve) => (saving = resolve));
+    let unblock!: () => void;
+    const gate = new Promise<void>((resolve) => (unblock = resolve));
+    const syncdb = makeSyncdb(rows);
+    syncdb.save = jest.fn(async () => {
+      saving();
+      await gate;
+    });
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    const processing = processAcpProjectFenceIntents(client);
+    await saveStarted;
+
+    // The project is stopped meanwhile: both sweeps finish first.
+    await fenceAcpProjectAfterStop({ project_id: job.project_id });
+    unblock();
+    await processing;
+
+    expect(listQueuedAcpJobs()).toHaveLength(0);
+    for (const child of listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: job.op_id,
+    })) {
+      expect(child.state).not.toBe("queued");
+      expect(child.state).not.toBe("running");
+    }
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_STOPPED,
+    );
+  });
+
+  it("does not resume a turn past the recovery limit", async () => {
+    const rows: any[] = [];
+    const { request, job } = runningTurn(rows);
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_count = ? WHERE op_id = ?")
+      .run(2, job.op_id);
+    await fenceAcpProjectAfterStop({
+      project_id: job.project_id,
+      resume: true,
+    });
+    await processAcpProjectFenceIntents(client);
+    const turn = rows.find((row) => row.message_id === request.chat.message_id);
+    expect(turn.acp_interrupted_text).toContain("already resumed");
+
+    expect(releaseAcpProjectFenceResumesAfterStart(job.project_id)).toBe(1);
+    await processAcpProjectFenceIntents(client);
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(0);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBeNull();
+  });
+
   it("tells the agent that sent a message its turn was stopped", async () => {
     const base = makeRequest();
     const request = {

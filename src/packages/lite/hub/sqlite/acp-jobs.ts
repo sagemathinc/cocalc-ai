@@ -25,7 +25,20 @@ export const ACP_PROJECT_RUNTIME_LOST_FENCE_REASON =
 export const ACP_FENCE_INTENT_PREFIX = "fence:";
 export const ACP_FENCE_INTENT_RESUME_PENDING = "fence:resume-pending";
 export const ACP_FENCE_INTENT_RESUME_READY = "fence:resume-ready";
+// Claimed by the follow-up that is enqueuing the resumed turn right now.
+export const ACP_FENCE_INTENT_RESUMING = "fence:resuming";
 export const ACP_FENCE_INTENT_STOPPED = "fence:stopped";
+// Intents that still mean "this work may run again".
+const ACP_FENCE_LIVE_RESUME_INTENTS = [
+  ACP_FENCE_INTENT_RESUME_PENDING,
+  ACP_FENCE_INTENT_RESUME_READY,
+  ACP_FENCE_INTENT_RESUMING,
+];
+const LIVE_RESUME_PLACEHOLDERS = ACP_FENCE_LIVE_RESUME_INTENTS.map(
+  () => "?",
+).join(", ");
+// The error of a held message the user canceled: never adopted by a fence.
+export const ACP_FENCED_JOB_CANCELED_ERROR = "canceled while held by a restart";
 // recovery_detail of a pending resume once its chat shows the interruption.
 export const ACP_FENCE_CHAT_FINALIZED = "chat-finalized";
 const THREAD_QUEUE_ORDER = `
@@ -80,6 +93,9 @@ type EnqueueAcpJobOptions = {
   preferred_worker_id?: string | null;
   available_at?: number | null;
   reject_if_newer_non_recovery_than?: AcpJobSupersessionGuard;
+  /** Insert only while the recovery parent still holds this fence intent,
+   * in the same transaction, so a fence that wins cannot be outrun. */
+  require_parent_fence_intent?: string;
 };
 
 function init(): void {
@@ -385,18 +401,28 @@ export function enqueueAcpJob(
       )
       .get(project_id, path, user_message_id) as AcpJobRow | undefined;
   const guard = opts.reject_if_newer_non_recovery_than;
+  const parentIntent = `${opts.require_parent_fence_intent ?? ""}`.trim();
   let job: AcpJobRow | undefined;
-  if (guard) {
+  if (guard || parentIntent) {
     db.exec("BEGIN IMMEDIATE");
     try {
       if (
-        hasNewerNonRecoveryAcpJobInDatabase({
-          db,
-          project_id,
-          path,
-          thread_id,
-          guard,
-        })
+        (guard &&
+          hasNewerNonRecoveryAcpJobInDatabase({
+            db,
+            project_id,
+            path,
+            thread_id,
+            guard,
+          })) ||
+        (parentIntent &&
+          (
+            db
+              .prepare(`SELECT recovery_code FROM ${TABLE} WHERE op_id = ?`)
+              .get(recovery_parent_op_id ?? "") as
+              | { recovery_code?: string | null }
+              | undefined
+          )?.recovery_code !== parentIntent)
       ) {
         db.exec("COMMIT");
         return undefined;
@@ -1051,21 +1077,84 @@ export function listAcpJobsWithRecoveryIntent(limit = 100): AcpJobRow[] {
     ) as AcpJobRow[];
 }
 
-export function listAcpJobsWithFenceIntent(limit = 100): AcpJobRow[] {
+/** Fence intents with work to do now, least recently attempted first: a
+ * pending resume only until its chat shows the interruption (or it expires),
+ * and a claimed resume only once its claim is stale. */
+export function listAcpJobsWithFenceIntent({
+  limit = 100,
+  now = Date.now(),
+  pendingMaxAgeMs,
+  resumingStaleMs,
+}: {
+  limit?: number;
+  now?: number;
+  pendingMaxAgeMs: number;
+  resumingStaleMs: number;
+}): AcpJobRow[] {
   ensureInit();
   return getAcpDatabase()
     .prepare(
       `SELECT * FROM ${TABLE}
-       WHERE recovery_code IN (?, ?, ?)
-       ORDER BY finished_at ASC, created_at ASC
+       WHERE recovery_code IN (?, ?)
+          OR (recovery_code = ? AND updated_at < ?)
+          OR (recovery_code = ?
+              AND (recovery_detail IS NULL OR finished_at < ?))
+       ORDER BY updated_at ASC, op_id ASC
        LIMIT ?`,
     )
     .all(
-      ACP_FENCE_INTENT_RESUME_PENDING,
       ACP_FENCE_INTENT_RESUME_READY,
       ACP_FENCE_INTENT_STOPPED,
+      ACP_FENCE_INTENT_RESUMING,
+      now - Math.max(0, resumingStaleMs),
+      ACP_FENCE_INTENT_RESUME_PENDING,
+      now - Math.max(0, pendingMaxAgeMs),
       Math.max(1, Math.floor(limit)),
     ) as AcpJobRow[];
+}
+
+/** Whether a restart still holds this job to resume it. */
+export function acpJobHasLiveFenceResume(
+  job: Pick<AcpJobRow, "recovery_code"> | undefined,
+): boolean {
+  return ACP_FENCE_LIVE_RESUME_INTENTS.includes(`${job?.recovery_code ?? ""}`);
+}
+
+/** Old workers fence without intents: adopt the rows this fence just
+ * terminalized (its reason, since it started) so they are not lost. */
+export function adoptAcpJobsFencedWithoutIntent({
+  project_id,
+  reason,
+  since,
+  resume = false,
+}: {
+  project_id: string;
+  reason: string;
+  since: number;
+  resume?: boolean;
+}): number {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = ?,
+           recovery_detail = CASE WHEN ? AND state = 'canceled' THEN ? ELSE NULL END,
+           updated_at = ?
+       WHERE project_id = ?
+         AND error = ?
+         AND recovery_code IS NULL
+         AND finished_at >= ?
+         AND state IN ('canceled', 'interrupted', 'error')`,
+    )
+    .run(
+      resume ? ACP_FENCE_INTENT_RESUME_PENDING : ACP_FENCE_INTENT_STOPPED,
+      resume ? 1 : 0,
+      ACP_FENCE_CHAT_FINALIZED,
+      Date.now(),
+      project_id,
+      reason,
+      since,
+    ).changes;
 }
 
 /** Atomically move a job's fence intent; false if another pass moved it. */
@@ -1147,7 +1236,7 @@ export function stopAcpFenceResumesForThread({
        SET recovery_code = ?,
            updated_at = ?
        WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND recovery_code IN (?, ?)`,
+         AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
     )
     .run(
       ACP_FENCE_INTENT_STOPPED,
@@ -1155,8 +1244,7 @@ export function stopAcpFenceResumesForThread({
       project_id,
       path,
       thread_id,
-      ACP_FENCE_INTENT_RESUME_PENDING,
-      ACP_FENCE_INTENT_RESUME_READY,
+      ...ACP_FENCE_LIVE_RESUME_INTENTS,
     ).changes;
 }
 
@@ -1179,9 +1267,14 @@ export function requeueFencedAcpJob(op_id: string): AcpJobRow | undefined {
            recovery_detail = NULL
        WHERE op_id = ?
          AND state = 'canceled'
-         AND recovery_code = ?`,
+         AND recovery_code IN (?, ?)`,
     )
-    .run(Date.now(), op_id, ACP_FENCE_INTENT_RESUME_READY);
+    .run(
+      Date.now(),
+      op_id,
+      ACP_FENCE_INTENT_RESUME_READY,
+      ACP_FENCE_INTENT_RESUMING,
+    );
   if (updated.changes !== 1) return undefined;
   const job = getAcpJobByOpId(op_id);
   mirrorAcpJobSession(job);
@@ -1316,16 +1409,43 @@ export function cancelQueuedAcpJob({
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
-  db.prepare(
-    `UPDATE ${TABLE}
-      SET state = 'canceled',
-          updated_at = ?,
-          finished_at = ?
-      WHERE project_id = ?
-        AND path = ?
-        AND user_message_id = ?
-        AND state = 'queued'`,
-  ).run(now, now, project_id, path, user_message_id);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    // A message a restart is holding is canceled too: it must not resume.
+    db.prepare(
+      `UPDATE ${TABLE}
+        SET recovery_code = NULL,
+            recovery_detail = NULL,
+            error = ?,
+            updated_at = ?
+        WHERE project_id = ?
+          AND path = ?
+          AND user_message_id = ?
+          AND state = 'canceled'
+          AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
+    ).run(
+      ACP_FENCED_JOB_CANCELED_ERROR,
+      now,
+      project_id,
+      path,
+      user_message_id,
+      ...ACP_FENCE_LIVE_RESUME_INTENTS,
+    );
+    db.prepare(
+      `UPDATE ${TABLE}
+        SET state = 'canceled',
+            updated_at = ?,
+            finished_at = ?
+        WHERE project_id = ?
+          AND path = ?
+          AND user_message_id = ?
+          AND state = 'queued'`,
+    ).run(now, now, project_id, path, user_message_id);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
   const job = getAcpJob({ project_id, path, user_message_id });
   mirrorAcpJobSession(job);
   return job;
@@ -1557,6 +1677,8 @@ export function resendCanceledAcpJob({
         AND path = ?
         AND user_message_id = ?
         AND state IN ('canceled', 'error')
+        AND (recovery_code IS NULL
+          OR recovery_code NOT IN (${LIVE_RESUME_PLACEHOLDERS}))
         AND (? IS NULL OR (state = 'error' AND request_json = ?))`,
     )
     .run(
@@ -1565,6 +1687,7 @@ export function resendCanceledAcpJob({
       project_id,
       path,
       user_message_id,
+      ...ACP_FENCE_LIVE_RESUME_INTENTS,
       expectedRequest,
       expectedRequest,
     );
@@ -1613,49 +1736,61 @@ export function fenceAcpJobsForProject({
   const intent = resume
     ? ACP_FENCE_INTENT_RESUME_PENDING
     : ACP_FENCE_INTENT_STOPPED;
-  if (!resume) {
-    // A stop overrides an earlier restart whose work has not resumed yet.
+  let queued = 0;
+  let running = 0;
+  // One transaction: a resume being enqueued either commits first (and its
+  // queued child is fenced here) or finds its claim gone and inserts nothing.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    // Earlier resumes not yet running: a stop ends them; another restart
+    // makes them wait for the next start again.
     db.prepare(
       `UPDATE ${TABLE}
        SET recovery_code = ?,
            updated_at = ?
-       WHERE project_id = ? AND recovery_code IN (?, ?)`,
-    ).run(
-      ACP_FENCE_INTENT_STOPPED,
-      now,
-      project_id,
-      ACP_FENCE_INTENT_RESUME_PENDING,
-      ACP_FENCE_INTENT_RESUME_READY,
-    );
+       WHERE project_id = ? AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
+    ).run(intent, now, project_id, ...ACP_FENCE_LIVE_RESUME_INTENTS);
+    queued = db
+      .prepare(
+        `UPDATE ${TABLE}
+         SET state = 'canceled',
+             error = ?,
+             recovery_code = ?,
+             recovery_detail = ?,
+             updated_at = ?,
+             finished_at = ?
+         WHERE project_id = ? AND state = 'queued'`,
+      )
+      // A held message has no chat to finalize while it waits.
+      .run(
+        reason,
+        intent,
+        resume ? ACP_FENCE_CHAT_FINALIZED : null,
+        now,
+        now,
+        project_id,
+      ).changes;
+    running = db
+      .prepare(
+        `UPDATE ${TABLE}
+         SET state = CASE
+               WHEN json_extract(request_json, '$.runtime.kind') = 'acp'
+               THEN 'error'
+               ELSE 'interrupted'
+             END,
+             error = ?,
+             recovery_code = ?,
+             recovery_detail = NULL,
+             updated_at = ?,
+             finished_at = ?
+         WHERE project_id = ? AND state = 'running'`,
+      )
+      .run(reason, intent, now, now, project_id).changes;
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
   }
-  const queued = db
-    .prepare(
-      `UPDATE ${TABLE}
-       SET state = 'canceled',
-           error = ?,
-           recovery_code = ?,
-           recovery_detail = NULL,
-           updated_at = ?,
-           finished_at = ?
-       WHERE project_id = ? AND state = 'queued'`,
-    )
-    .run(reason, intent, now, now, project_id).changes;
-  const running = db
-    .prepare(
-      `UPDATE ${TABLE}
-       SET state = CASE
-             WHEN json_extract(request_json, '$.runtime.kind') = 'acp'
-             THEN 'error'
-             ELSE 'interrupted'
-           END,
-           error = ?,
-           recovery_code = ?,
-           recovery_detail = NULL,
-           updated_at = ?,
-           finished_at = ?
-       WHERE project_id = ? AND state = 'running'`,
-    )
-    .run(reason, intent, now, now, project_id).changes;
   for (const row of db
     .prepare(`SELECT * FROM ${TABLE} WHERE project_id = ?`)
     .all(project_id) as AcpJobRow[]) {

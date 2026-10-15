@@ -31,6 +31,7 @@ import {
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
   oldestClaimableQueuedAcpJobTimestamp,
+  adoptAcpJobsFencedWithoutIntent,
   fenceAcpJobsForProject,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
 import {
@@ -641,6 +642,7 @@ export async function fenceProjectHostAcpWork({
   const { drainHarnessDiscovery } =
     await import("@cocalc/lite/hub/acp/harness-runtime");
   await drainHarnessDiscovery(project_id);
+  const fenceStartedAt = Date.now();
   // Persist the terminal fence before asking workers to release live runtimes.
   // This also covers a host with no currently running ACP worker.
   fenceAcpJobsForProject({ project_id, reason, resume });
@@ -683,6 +685,14 @@ export async function fenceProjectHostAcpWork({
       }
     }),
   );
+  // A worker from an older bundle fences jobs it was running without
+  // recording what they are owed; adopt exactly the rows this fence ended.
+  adoptAcpJobsFencedWithoutIntent({
+    project_id,
+    reason,
+    since: fenceStartedAt,
+    resume,
+  });
 }
 
 export function workerBundleVersionOf(

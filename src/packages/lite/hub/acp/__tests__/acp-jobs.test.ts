@@ -32,7 +32,11 @@ import {
   enqueueAcpJobCancelingQueuedRecoveries,
   ACP_FENCE_INTENT_RESUME_PENDING,
   ACP_FENCE_INTENT_RESUME_READY,
+  ACP_FENCE_INTENT_RESUMING,
   ACP_FENCE_INTENT_STOPPED,
+  ACP_FENCED_JOB_CANCELED_ERROR,
+  acpJobHasLiveFenceResume,
+  adoptAcpJobsFencedWithoutIntent,
   fenceAcpJobsForProject,
   getAcpJob,
   getAcpJobByOpId,
@@ -56,6 +60,11 @@ import {
   setAcpJobState,
   removeRetiredAutomationJobs,
 } from "../../sqlite/acp-jobs";
+
+const FENCE_LIST = {
+  pendingMaxAgeMs: 60 * 60_000,
+  resumingStaleMs: 5 * 60_000,
+};
 
 async function delay(ms = 2): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -446,7 +455,11 @@ describe("acp job queue ordering", () => {
     });
     // Neither is a failure recovery, and nothing is runnable yet.
     expect(listAcpJobsWithRecoveryIntent()).toHaveLength(0);
-    expect(listAcpJobsWithFenceIntent()).toHaveLength(2);
+    // The held message has nothing to show until the start; the cut-off turn
+    // still needs its chat to say so.
+    expect(
+      listAcpJobsWithFenceIntent(FENCE_LIST).map((row) => row.op_id),
+    ).toEqual([running.op_id]);
     expect(listQueuedAcpJobs()).toHaveLength(0);
     expect(requeueFencedAcpJob(queued.op_id)).toBeUndefined();
 
@@ -515,6 +528,185 @@ describe("acp job queue ordering", () => {
     ).toBe(2);
     expect(getAcpJobByOpId(third.running.op_id)?.recovery_code).toBe(
       ACP_FENCE_INTENT_STOPPED,
+    );
+  });
+
+  it("lets a cancel end a held message and refuses to resend it while held", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-held",
+        assistantMessageId: "assistant-held",
+        assistantDate: "2026-10-15T00:00:00.000Z",
+      }) as any,
+    );
+    fenceAcpJobsForProject({
+      project_id: queued.project_id,
+      reason: "project restarted",
+      resume: true,
+    });
+    const key = {
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    };
+    // Resend cannot run it while the restart holds it.
+    expect(resendCanceledAcpJob(key)).toMatchObject({
+      state: "canceled",
+      recovery_code: ACP_FENCE_INTENT_RESUME_PENDING,
+    });
+    expect(acpJobHasLiveFenceResume(getAcpJobByOpId(queued.op_id))).toBe(true);
+    // Cancel ends it: no resume after the start, and no fence adopts it.
+    expect(cancelQueuedAcpJob(key)).toMatchObject({
+      state: "canceled",
+      recovery_code: null,
+      error: ACP_FENCED_JOB_CANCELED_ERROR,
+    });
+    expect(
+      releaseAcpProjectFenceResumes({
+        project_id: queued.project_id,
+        maxAgeMs: 60_000,
+      }),
+    ).toBe(0);
+    expect(
+      adoptAcpJobsFencedWithoutIntent({
+        project_id: queued.project_id,
+        reason: "project restarted",
+        since: 0,
+      }),
+    ).toBe(0);
+  });
+
+  it("enqueues a resumed turn only while its parent's claim holds", () => {
+    const parent = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-parent",
+        assistantMessageId: "assistant-parent",
+        assistantDate: "2026-10-15T00:00:00.000Z",
+      }) as any,
+    );
+    claimNextQueuedAcpJobForThread({
+      project_id: parent.project_id,
+      path: parent.path,
+      thread_id: parent.thread_id,
+    });
+    fenceAcpJobsForProject({
+      project_id: parent.project_id,
+      reason: "project restarted",
+      resume: true,
+    });
+    releaseAcpProjectFenceResumes({
+      project_id: parent.project_id,
+      maxAgeMs: 60_000,
+    });
+    expect(
+      moveAcpJobFenceIntent({
+        op_id: parent.op_id,
+        from: ACP_FENCE_INTENT_RESUME_READY,
+        to: ACP_FENCE_INTENT_RESUMING,
+      }),
+    ).toBe(true);
+    const child = (n: number) => ({
+      ...makeRequest({
+        userMessageId: `user-child-${n}`,
+        assistantMessageId: `assistant-child-${n}`,
+        assistantDate: `2026-10-15T00:00:0${n}.000Z`,
+      }),
+      recovery_parent_op_id: parent.op_id,
+      recovery_count: 1,
+    });
+    // A stop wins: it ends the claim, so the insert refuses.
+    fenceAcpJobsForProject({
+      project_id: parent.project_id,
+      reason: "project stopped",
+    });
+    expect(getAcpJobByOpId(parent.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_STOPPED,
+    );
+    expect(
+      enqueueAcpJob(child(1) as any, {
+        require_parent_fence_intent: ACP_FENCE_INTENT_RESUMING,
+      }),
+    ).toBeUndefined();
+    // With the claim intact, it inserts.
+    moveAcpJobFenceIntent({
+      op_id: parent.op_id,
+      from: ACP_FENCE_INTENT_STOPPED,
+      to: ACP_FENCE_INTENT_RESUMING,
+    });
+    expect(
+      enqueueAcpJob(child(2) as any, {
+        require_parent_fence_intent: ACP_FENCE_INTENT_RESUMING,
+      })?.state,
+    ).toBe("queued");
+  });
+
+  it("polls fence intents fairly: settled pending rows wait, attempts rotate", () => {
+    const db = getAcpDatabase();
+    const jobs = [0, 1, 2].map((n) => {
+      const job = enqueueAcpJob(
+        makeRequest({
+          userMessageId: `user-fair-${n}`,
+          assistantMessageId: `assistant-fair-${n}`,
+          assistantDate: `2026-10-15T00:00:0${n}.000Z`,
+        }) as any,
+      );
+      return job;
+    });
+    fenceAcpJobsForProject({
+      project_id: jobs[0].project_id,
+      reason: "project stopped",
+    });
+    db.prepare("UPDATE acp_jobs SET updated_at = ? WHERE op_id = ?").run(
+      1,
+      jobs[0].op_id,
+    );
+    expect(
+      listAcpJobsWithFenceIntent({ ...FENCE_LIST, limit: 1 })[0].op_id,
+    ).toBe(jobs[0].op_id);
+    // A failed attempt touches the row; the next poll starts elsewhere.
+    moveAcpJobFenceIntent({
+      op_id: jobs[0].op_id,
+      from: ACP_FENCE_INTENT_STOPPED,
+      to: ACP_FENCE_INTENT_STOPPED,
+    });
+    expect(
+      listAcpJobsWithFenceIntent({ ...FENCE_LIST, limit: 1 })[0].op_id,
+    ).not.toBe(jobs[0].op_id);
+  });
+
+  it("adopts only the rows this fence ended without an intent", () => {
+    const db = getAcpDatabase();
+    const job = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-old-worker",
+        assistantMessageId: "assistant-old-worker",
+        assistantDate: "2026-10-15T00:00:00.000Z",
+      }) as any,
+    );
+    // What an older worker's sweep leaves: fenced, no intent.
+    const fencedAt = Date.now();
+    db.prepare(
+      `UPDATE acp_jobs SET state = 'canceled', error = ?, recovery_code = NULL,
+         finished_at = ? WHERE op_id = ?`,
+    ).run("project restarted", fencedAt, job.op_id);
+    expect(
+      adoptAcpJobsFencedWithoutIntent({
+        project_id: job.project_id,
+        reason: "project restarted",
+        since: fencedAt + 1,
+        resume: true,
+      }),
+    ).toBe(0);
+    expect(
+      adoptAcpJobsFencedWithoutIntent({
+        project_id: job.project_id,
+        reason: "project restarted",
+        since: fencedAt,
+        resume: true,
+      }),
+    ).toBe(1);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_RESUME_PENDING,
     );
   });
 
