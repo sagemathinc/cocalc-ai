@@ -14,6 +14,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -590,6 +591,71 @@ describe("the computer daemon (direct mode)", () => {
       expect(store.ended).toBeNull();
       const again = ok(await daemon.handle(at("exec", exec("echo back"))));
       expect((again.result as any).stdout).toBe("back\n");
+    });
+
+    it("a future-dated state renews nothing however often it is replayed (its restrictions still apply); one within the skew renews only to its own time", () => {
+      let shift = 0;
+      clocks = {
+        wall: () => Date.now() + shift,
+        continuous: systemClocks.continuous,
+      };
+      daemon = makeDaemon();
+      const before = store.renewal.at;
+      const future = stateEnvelope({
+        issued_at: Date.now() + 10 * 3_600_000,
+        project_floors: { [project_id]: 5 },
+      });
+      for (const s of [0, 3_600_000, 2 * 3_600_000]) {
+        shift = s;
+        daemon.applyState(future);
+        expect(store.renewal.at).toBe(before);
+      }
+      expect(store.state.floors.projects[project_id]).toBe(5);
+      shift = 0;
+      const t = Date.now() + 10_000;
+      const near = stateEnvelope({ state_version: "2", issued_at: t });
+      daemon.applyState(near);
+      expect(store.renewal.at).toBe(t);
+      shift = 3_600_000;
+      daemon.applyState(near);
+      expect(store.renewal.at).toBe(t);
+    });
+
+    it("a computer paired before the hard lease fails closed: at start its work stops and it runs nothing, but signed state still reaches it", async () => {
+      const started = ok(
+        await daemon.handle(message("run", runJob("sleep 30"))),
+      );
+      const job_id = (started.result as any).job_id;
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "running";
+      });
+      // The daemon.json of a computer paired before lease_hours existed.
+      const file = join(dir, "state", "daemon.json");
+      const legacy = JSON.parse(readFileSync(file, "utf8"));
+      delete legacy.ceiling.lease_hours;
+      delete legacy.effective_policy.lease_hours;
+      delete legacy.renewal;
+      writeFileSync(file, JSON.stringify(legacy));
+      store = DaemonStore.open(join(dir, "state"))!;
+      daemon = makeDaemon();
+      expect(daemon.leaseLapsed()).toBe(true);
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      const refused = await daemon.handle(message("exec", exec("true")));
+      expect((refused as any).refused).toEqual([
+        expect.stringMatching(/before hard leases existed/),
+      ]);
+      // A fresh state renews nothing that isn't there: still nothing runs.
+      daemon.applyState(stateEnvelope({ issued_at: Date.now() }));
+      expect(daemon.leaseLapsed()).toBe(true);
+      // Revocation still reaches it.
+      daemon.applyState(
+        stateEnvelope({ state_version: "2", ended: { reason: "revoked" } }),
+      );
+      expect(daemon.sessionEnded).toBe(true);
     });
 
     it("the hard lease also counts time since boot, so setting the wall clock back doesn't stretch it", () => {

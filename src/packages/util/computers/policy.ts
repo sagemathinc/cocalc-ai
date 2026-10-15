@@ -91,6 +91,23 @@ export function leaseRule(hours: number): string {
   return `If this computer can't connect to CoCalc for ${leaseHoursText(hours)}, all its jobs stop. It runs work again once it reconnects.`;
 }
 
+/**
+ * A valid lease (computers paired before the hard lease existed have none:
+ * they are treated as lapsed and must be paired again).
+ */
+export function validLeaseHours(hours: unknown): hours is number {
+  return (
+    typeof hours === "number" &&
+    Number.isInteger(hours) &&
+    hours >= MIN_LEASE_HOURS &&
+    hours <= MAX_LEASE_HOURS
+  );
+}
+
+/** Said when a computer paired before the hard lease is asked to work. */
+export const PRE_LEASE_TEXT =
+  "this computer was connected before hard leases existed, so it runs nothing; connect it again";
+
 export function leaseHoursText(hours: number): string {
   return `${hours} hour${hours === 1 ? "" : "s"}`;
 }

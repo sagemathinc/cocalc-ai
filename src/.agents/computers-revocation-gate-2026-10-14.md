@@ -83,10 +83,17 @@ without killing work over short outages:
   approval, the machine's prompt, the CLI): "If this computer can't
   connect to CoCalc for N hours, all its jobs stop. It runs work again
   once it reconnects."
-- Each applied signed state renews the lease, as of its signed
-  `issued_at`. A connected computer gets one at every login (at least
-  every 15 minutes), so the lease needs no new messages. A replayed old
-  state renews nothing.
+- Each applied signed state renews the lease to its own signed
+  `issued_at`, but only if that time isn't beyond the hub clock plus the
+  protocol's 30 s skew. A connected computer gets one at every login (at
+  least every 15 minutes), so the lease needs no new messages. Replaying a
+  state, even a future-dated one, never moves the lease twice; its
+  restrictions apply either way.
+- A computer paired before the lease existed (stored policy without
+  `lease_hours`) fails closed: its daemon treats the lease as lapsed and
+  runs nothing, and it must be connected again. The hub still signs its
+  state (so revocation and "ended" reach it) and refuses to narrow its
+  policy. Computers are unreleased, so there is no migration.
 - Expiry is checked by the daemon's enforcement timer, so it works
   offline, against the wall clock and, on the same boot, the time since
   boot. Expiry kills every job and exec and refuses work, through the

@@ -15,6 +15,7 @@ import {
   leaseRule,
   MAX_LEASE_HOURS,
   MIN_LEASE_HOURS,
+  validLeaseHours,
 } from "@cocalc/util/computers/policy";
 
 function LeaseHelp({ hours }: { hours: number }) {
@@ -36,6 +37,11 @@ export function LeaseSummary({
 }: {
   policy?: { lease_hours?: number } | null;
 }) {
+  if (policy != null && !validLeaseHours(policy.lease_hours)) {
+    return (
+      <span>Connected before hard leases: runs nothing; connect it again</span>
+    );
+  }
   const hours = policy?.lease_hours ?? DEFAULT_LEASE_HOURS;
   return (
     <span>

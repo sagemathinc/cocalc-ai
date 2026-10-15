@@ -45,7 +45,11 @@ import type {
   ComputerEndReason,
   ComputerTicket,
 } from "@cocalc/util/computers/protocol";
-import { leaseHoursText } from "@cocalc/util/computers/policy";
+import {
+  leaseHoursText,
+  PRE_LEASE_TEXT,
+  validLeaseHours,
+} from "@cocalc/util/computers/policy";
 import { admit, RateLimiter, type AdmissionInput } from "./admission";
 import {
   systemBootClock,
@@ -745,7 +749,10 @@ export class ComputerDaemon {
    * since boot (so moving the wall clock back doesn't stretch it)?
    */
   leaseLapsed(): boolean {
-    const leaseMs = this.deps.store.effectivePolicy.lease_hours * 3600_000;
+    const hours = this.deps.store.effectivePolicy.lease_hours;
+    // Paired before the hard lease (no or a bad lease): fail closed.
+    if (!validLeaseHours(hours)) return true;
+    const leaseMs = hours * 3600_000;
     const renewal = this.deps.store.renewal;
     const now = this.deps.hubClock.now() ?? this.deps.clocks.wall();
     if (now - renewal.at > leaseMs) return true;
@@ -772,6 +779,9 @@ export class ComputerDaemon {
   }
 
   private lapseText(): string {
+    if (!validLeaseHours(this.deps.store.effectivePolicy.lease_hours)) {
+      return PRE_LEASE_TEXT;
+    }
     return `this computer could not connect to CoCalc for ${leaseHoursText(
       this.deps.store.effectivePolicy.lease_hours,
     )}, so its jobs stopped; it runs work again once it reconnects`;

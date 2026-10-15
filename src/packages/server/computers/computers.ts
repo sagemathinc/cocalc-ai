@@ -21,6 +21,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import {
   parseComputerPolicy,
   policyWideningReasons,
+  validLeaseHours,
 } from "@cocalc/util/computers/policy";
 import type { ComputerSummary } from "@cocalc/util/computers/api";
 import { computerName } from "./requests";
@@ -438,6 +439,11 @@ export async function setEffectivePolicy({
     account_id,
     computer_id,
     async (client, row) => {
+      if (!validLeaseHours(row.effective_policy?.lease_hours)) {
+        throw new ComputerError(
+          "this computer was connected before hard leases existed; connect it again",
+        );
+      }
       const ceiling = parseComputerPolicy(row.policy_ceiling);
       const current = parseComputerPolicy(row.effective_policy);
       const reasons = [

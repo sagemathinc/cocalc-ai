@@ -16,7 +16,10 @@
 //   session ready. No operation reaches a session before that.
 
 import getPool from "@cocalc/database/pool";
-import { parseComputerPolicy } from "@cocalc/util/computers/policy";
+import {
+  DEFAULT_LEASE_HOURS,
+  parseComputerPolicy,
+} from "@cocalc/util/computers/policy";
 import {
   MAX_STATE_PROJECT_FLOORS,
   parseComputerState,
@@ -206,7 +209,14 @@ export async function computerStateSnapshot(
         floors.map((f) => [f.project_id, Number(f.privacy_epoch)]),
       ),
       policy_epoch: Number(row.policy_epoch),
-      policy: parseComputerPolicy(row.effective_policy),
+      // A computer paired before the hard lease has none in its stored
+      // policy. Its daemon fails closed on its own (no lease: lapsed); its
+      // state must still be signable, so that revocation, floors and
+      // "ended" reach it. (The policy here only applies at a newer epoch.)
+      policy: parseComputerPolicy({
+        lease_hours: DEFAULT_LEASE_HOURS,
+        ...row.effective_policy,
+      }),
       ended: endedOf(row),
       issued_at: now,
     });

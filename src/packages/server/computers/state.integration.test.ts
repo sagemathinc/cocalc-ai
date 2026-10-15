@@ -504,6 +504,29 @@ describeDb("a computer's signed state", () => {
     ).toEqual({ reason: "revoked" });
   });
 
+  it("a computer paired before the hard lease (stored policy without lease_hours) can't be narrowed, and its revocation is still signed", async () => {
+    const { computerStateSnapshot } = await import("./state");
+    const { revokeComputer, setEffectivePolicy } = await import("./computers");
+    const c = await pairedComputer();
+    await db().query(
+      `UPDATE account_computers
+          SET effective_policy = effective_policy - 'lease_hours',
+              policy_ceiling = policy_ceiling - 'lease_hours'
+        WHERE computer_id=$1`,
+      [c.computer_id],
+    );
+    await expect(
+      setEffectivePolicy({
+        account_id: account,
+        computer_id: c.computer_id,
+        policy: c.policy,
+      }),
+    ).rejects.toThrow(/before hard leases existed/);
+    await revokeComputer({ account_id: account, computer_id: c.computer_id });
+    const snapshot = await computerStateSnapshot(c.computer_id);
+    expect(snapshot!.envelope.payload.ended).toEqual({ reason: "revoked" });
+  });
+
   it("deleting the account ends its computers in the deletion's own transaction", async () => {
     const { markAccountDeleted } = await import("../accounts/delete");
     const { computerStateSnapshot } = await import("./state");

@@ -13,6 +13,7 @@
 import { join } from "node:path";
 import type { KeyObject } from "node:crypto";
 import {
+  MAX_FUTURE_SKEW_MS,
   mergeFloors,
   parseComputerCertificate,
   parseComputerFloors,
@@ -292,19 +293,22 @@ export class DaemonStore {
         policy_epoch = state.policy_epoch;
       }
     }
-    // Contact renews the hard lease, as of the state's own signed time (never
-    // later than now): replaying an old state renews nothing.
-    const renewedAt = Math.min(state.issued_at, hubNow);
+    // Contact renews the hard lease to the state's own signed time, and only
+    // if that time is not beyond the hub clock (plus the protocol's skew).
+    // So replaying a state, even a future-dated one, never moves the lease
+    // twice. (Its restrictions apply whatever its time.)
     const renewal =
-      renewedAt > this.renewal.at
+      state.issued_at > this.renewal.at &&
+      state.issued_at <= hubNow + MAX_FUTURE_SKEW_MS
         ? {
-            at: renewedAt,
+            at: state.issued_at,
             boot:
               boot == null
                 ? null
                 : {
                     boot_id: boot.boot_id,
-                    since_boot_ms: boot.since_boot_ms - (hubNow - renewedAt),
+                    since_boot_ms:
+                      boot.since_boot_ms - (hubNow - state.issued_at),
                   },
           }
         : this.renewal;
