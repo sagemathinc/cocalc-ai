@@ -82,7 +82,10 @@ case "$arch" in
   aarch64 | arm64) arch=arm64 ;;
   *) die "unsupported processor: $arch" ;;
 esac
-if [ "$os" = linux ] && ls /lib/ld-musl-* >/dev/null 2>&1; then
+# The official Node needs glibc. A glibc system may also have the musl package
+# (/lib/ld-musl-*, as on many Ubuntu images), so refuse only without glibc.
+if [ "$os" = linux ] && ! getconf GNU_LIBC_VERSION >/dev/null 2>&1 &&
+  ls /lib/ld-musl-* >/dev/null 2>&1; then
   die "musl-based Linux (such as Alpine) is not supported yet"
 fi
 platform="$os-$arch"
@@ -146,6 +149,19 @@ if ! intact "$root/node/$node_sha/bin/node" "$node_bin_size" "$node_bin_sha"; th
   mv "$staging/node-tree" "$root/node/$node_sha"
 fi
 node="$root/node/$node_sha/bin/node"
+# The official Node needs a few system libraries, e.g. libatomic.so.1, which
+# minimal container images lack: name the missing ones instead of failing later.
+if ! env -u NODE_OPTIONS "$node" --version >/dev/null 2>&1; then
+  missing=$(ldd "$node" 2>/dev/null | awk '/not found/ { printf "%s ", $1 }')
+  [ -n "$missing" ] || die "Node does not run on this system"
+  hint=""
+  case " $missing" in
+    *" libatomic.so.1 "*)
+      hint=" (on Debian or Ubuntu: sudo apt-get install libatomic1; on Fedora or RHEL: sudo dnf install libatomic)"
+      ;;
+  esac
+  die "Node needs system libraries that are missing: $missing$hint. Install them and run this again."
+fi
 
 say "Downloading CoCalc Plus..."
 if ! intact "$root/targets/$bootstrap/bootstrap.js" "$bootstrap_size" "$bootstrap"; then

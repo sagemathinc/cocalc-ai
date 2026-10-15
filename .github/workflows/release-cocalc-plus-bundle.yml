@@ -65,7 +65,7 @@ jobs:
           set -Eeuo pipefail
           docker run --rm ubuntu:24.04 bash -c '
             set -Eeuo pipefail
-            apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates libatomic1 >/dev/null
             curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh
             ~/.local/bin/cocalc-plus version
             ~/.local/bin/cocalc-plus update --check
