@@ -494,15 +494,26 @@ describe("core landing page initial HTML", () => {
     expect(team).toContain('data-cocalc-public-prerender="about-team"');
     expect(team).toContain("William Stein, Founder and CEO");
     expect(team).toContain("Blaec Bejarano, CSO");
-    // One entry per published profile, and the billing contact goes to the
-    // site's support page, as on the React page.
+    // One entry per published profile, and, as on the React page, the
+    // billing contact goes to cocalc.ai's support page: another site's own
+    // support page belongs to that site's operator.
     expect(
       [...team.matchAll(/href="\/about\/team\/([^"]+)"/g)].map(
         ([, slug]) => slug,
       ),
     ).toEqual(PUBLIC_TEAM_MEMBERS.map(({ slug }) => slug));
     expect(team).toContain(
-      `<p>${PUBLIC_TEAM_BILLING_CONTACT.text} <a href="/support">${PUBLIC_TEAM_BILLING_CONTACT.label}</a>.</p>`,
+      `<p>${PUBLIC_TEAM_BILLING_CONTACT.text} <a href="https://cocalc.ai/support">${PUBLIC_TEAM_BILLING_CONTACT.label}</a>.</p>`,
+    );
+    // On cocalc.ai itself, that is the site's own support page.
+    expect(
+      renderPublicRoutePrerender(
+        { section: "about", route: { view: "about-team" } },
+        "/prefix",
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
+      ),
+    ).toContain(
+      `<p>${PUBLIC_TEAM_BILLING_CONTACT.text} <a href="/prefix/support">${PUBLIC_TEAM_BILLING_CONTACT.label}</a>.</p>`,
     );
 
     const profile = renderPublicRoutePrerender(

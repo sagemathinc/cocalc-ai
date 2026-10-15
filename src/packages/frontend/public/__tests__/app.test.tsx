@@ -1186,22 +1186,46 @@ describe("PublicApp", () => {
     ]);
   });
 
-  it("sends quotes and invoices to the site's support page from the team page", async () => {
-    await renderPublicApp(
-      <PublicApp
-        config={{ site_name: "Launchpad" }}
-        initialRoute={aboutRoute({ view: "about-team" })}
-      />,
-    );
+  // SageMath, Inc. answers these on cocalc.ai's support page; another site's
+  // own support page belongs to that site's operator.
+  it.each([
+    {
+      config: {
+        cocalc_product: "launchpad",
+        dns: "cocalc.ai",
+        site_name: "CoCalc",
+      },
+      href: publicPath("support"),
+      site: "cocalc.ai",
+    },
+    {
+      config: {
+        cocalc_product: "launchpad",
+        dns: "launchpad.example.edu",
+        site_name: "Launchpad",
+      },
+      href: "https://cocalc.ai/support",
+      site: "another site",
+    },
+  ])(
+    "sends quotes and invoices to cocalc.ai's support page from the team page on $site",
+    async ({ config, href }) => {
+      await renderPublicApp(
+        <PublicApp
+          config={config}
+          initialRoute={aboutRoute({ view: "about-team" })}
+        />,
+      );
 
-    const contact = screen.getByRole("link", {
-      name: PUBLIC_TEAM_BILLING_CONTACT.label,
-    });
-    expect(contact).toHaveAttribute("href", publicPath("support"));
-    expect(contact.parentElement?.textContent).toBe(
-      `${PUBLIC_TEAM_BILLING_CONTACT.text} ${PUBLIC_TEAM_BILLING_CONTACT.label}.`,
-    );
-  });
+      const contact = screen.getByRole("link", {
+        name: PUBLIC_TEAM_BILLING_CONTACT.label,
+      });
+      expect(contact).toHaveAttribute("href", href);
+      expect(contact.parentElement?.textContent).toBe(
+        `${PUBLIC_TEAM_BILLING_CONTACT.text} ${PUBLIC_TEAM_BILLING_CONTACT.label}.`,
+      );
+    },
+  );
 
   it("renders an individual team profile", async () => {
     await renderPublicApp(

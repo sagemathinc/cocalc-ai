@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { CANONICAL_PUBLIC_SITE_ORIGIN } from "./public-site-policy";
+
 // The About page's company statement and principles. The React page and the
 // crawler fallback in hub/servers/app/public-prerender.ts both render these
 // strings, so the two stay word for word the same.
@@ -138,11 +140,14 @@ export function isUnpublishedTeamProfile(slug?: string): boolean {
   return slug != null && UNPUBLISHED_TEAM_PROFILE_SLUGS.includes(slug);
 }
 
-// Quotes, purchase orders, and invoices go to the site's support page rather
-// than to one person's address. The team page and its crawler fallback both
-// show this line.
+// Quotes, purchase orders, and invoices go to SageMath, Inc.'s support page
+// rather than to one person's address. The team page and its crawler fallback
+// both show this line. On cocalc.ai (isPublicCocalcAiSite) it links the site's
+// own support page, `path`. Every other site's support page belongs to the
+// site's operator, so there it links cocalc.ai's, `url`.
 export const PUBLIC_TEAM_BILLING_CONTACT = {
   label: "contact support",
   path: "support",
   text: "For quotes, purchase orders, and invoices,",
+  url: `${CANONICAL_PUBLIC_SITE_ORIGIN}/support`,
 } as const;

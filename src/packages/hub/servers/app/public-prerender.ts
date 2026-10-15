@@ -626,21 +626,26 @@ function renderAboutOverview(
 </main>`;
 }
 
-function renderAboutTeam(basePath: string): string {
+function renderAboutTeam(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   const members = PUBLIC_TEAM_MEMBERS.map(
     ({ cardText, name, slug, title }) => `<li>
   <h2>${publicLink(basePath, `about/team/${slug}`, `${name}, ${title}`)}</h2>
   <p>${htmlEscape(cardText)}</p>
 </li>`,
   ).join("");
+  const { label, path, text, url } = PUBLIC_TEAM_BILLING_CONTACT;
+  const billingHref = isPublicCocalcAiSite(config)
+    ? publicPath(basePath, path)
+    : url;
   return `<main data-cocalc-public-prerender="about-team" style="${ARTICLE_STYLE}">
 <header><p>SageMath, Inc.</p><h1>Meet the people behind CoCalc</h1></header>
 <ul>${members}</ul>
-<p>${htmlEscape(PUBLIC_TEAM_BILLING_CONTACT.text)} ${publicLink(
-    basePath,
-    PUBLIC_TEAM_BILLING_CONTACT.path,
-    PUBLIC_TEAM_BILLING_CONTACT.label,
-  )}.</p>
+<p>${htmlEscape(text)} <a href="${htmlEscape(billingHref)}">${htmlEscape(
+    label,
+  )}</a>.</p>
 <p>${publicLink(basePath, "about", "About CoCalc")}</p>
 </main>`;
 }
@@ -668,7 +673,7 @@ function renderAbout(
     case "about":
       return renderAboutOverview(basePath, config);
     case "about-team":
-      return renderAboutTeam(basePath);
+      return renderAboutTeam(basePath, config);
     case "about-team-member":
       return renderAboutTeamMember(basePath, route.route.teamSlug);
     // Events are database-backed. Do not render a static list that could

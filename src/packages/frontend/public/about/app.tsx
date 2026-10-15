@@ -639,7 +639,10 @@ function AboutOverview({ config }: { config?: PublicConfig }) {
   );
 }
 
-function AboutTeamPage() {
+function AboutTeamPage({ config }: { config?: PublicConfig }) {
+  const billingHref = isPublicCocalcAiSite(config)
+    ? publicPath(PUBLIC_TEAM_BILLING_CONTACT.path)
+    : PUBLIC_TEAM_BILLING_CONTACT.url;
   return (
     <>
       <PublicGrid columns={2}>
@@ -683,10 +686,7 @@ function AboutTeamPage() {
       </PublicGrid>
       <Paragraph style={{ margin: 0, textAlign: "center" }}>
         {PUBLIC_TEAM_BILLING_CONTACT.text}{" "}
-        <a href={publicPath(PUBLIC_TEAM_BILLING_CONTACT.path)}>
-          {PUBLIC_TEAM_BILLING_CONTACT.label}
-        </a>
-        .
+        <a href={billingHref}>{PUBLIC_TEAM_BILLING_CONTACT.label}</a>.
       </Paragraph>
     </>
   );
@@ -955,7 +955,7 @@ export default function PublicAboutApp({
       {initialRoute.view === "about-events" ? (
         <AboutEventsPage />
       ) : initialRoute.view === "about-team" ? (
-        <AboutTeamPage />
+        <AboutTeamPage config={config} />
       ) : initialRoute.view === "about-team-member" ? (
         <AboutTeamMemberPage slug={initialRoute.teamSlug} />
       ) : (
