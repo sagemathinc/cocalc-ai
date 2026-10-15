@@ -161,23 +161,29 @@
       <section class="card">
         <h2>What this does</h2>
         <ul>
-          <li>Downloads the platform-specific SEA binary.</li>
-          <li>Downloads the minimal tools bundle (rg, fd, ouch).</li>
           <li>
-            Installs into <code>~/.local/share/cocalc-plus</code> on Linux, or
-            <code>~/Library/Application Support/cocalc-plus</code> on macOS.
+            Downloads a pinned Node and the CoCalc Plus parts, checking every
+            file against the release's hashes.
           </li>
           <li>
-            Creates launcher at <code>~/.local/bin/cocalc-plus</code> on Linux,
-            or <code>~/Library/Application Support/cocalc-plus/bin/cocalc-plus</code>
-            on macOS, and adds it to PATH if needed.
+            On Linux, Node needs <code>libatomic.so.1</code> (Debian/Ubuntu:
+            <code>libatomic1</code>; Fedora/RHEL: <code>libatomic</code>); the
+            installer says so if it is missing.
+          </li>
+          <li>
+            Installs into <code>~/.local/share/cocalc/plus</code> (XDG aware) on
+            Linux and macOS, and keeps itself up to date in the background.
+          </li>
+          <li>
+            Creates the launcher <code>~/.local/bin/cocalc-plus</code> and adds
+            it to PATH if needed.
           </li>
         </ul>
       </section>
 
       <section class="card">
         <h2>Uninstall</h2>
-        <p>Remove the install directory and launcher (command auto-selected):</p>
+        <p>Remove the install directory and launcher:</p>
         <div class="command-box">
           <code id="uninstall-command"></code>
           <button id="copy-uninstall" type="button">Copy</button>
@@ -213,11 +219,8 @@
         copyText(installCommand);
       });
 
-      const isMac = `${navigator.platform || ""}`.toLowerCase().includes("mac");
       const uninstallCommand =
-        isMac
-          ? 'rm -rf "$HOME/Library/Application Support/cocalc-plus"'
-          : "rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus";
+        "rm -rf ~/.local/share/cocalc/plus ~/.local/bin/cocalc-plus";
       document.getElementById("uninstall-command").innerText = uninstallCommand;
       document.getElementById("copy-uninstall").addEventListener("click", () => {
         copyText(uninstallCommand);

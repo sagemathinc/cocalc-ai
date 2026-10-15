@@ -161,13 +161,19 @@
       <section class="card">
         <h2>What this does</h2>
         <ul>
-          <li>Downloads the platform-specific CoCalc CLI manifest.</li>
-          <li>Downloads and verifies the corresponding CLI runtime bundle.</li>
           <li>
-            Bundles the required Linux <code>libatomic</code> runtime privately;
-            no system <code>libatomic</code> package is required.
+            Downloads a pinned Node and the CLI bundle from your CoCalc site,
+            checking every file against the release's hashes.
           </li>
-          <li>Installs into <code>~/.local/share/cocalc</code> (XDG aware).</li>
+          <li>
+            On Linux, Node needs <code>libatomic.so.1</code> (Debian/Ubuntu:
+            <code>libatomic1</code>; Fedora/RHEL: <code>libatomic</code>); the
+            installer says so if it is missing.
+          </li>
+          <li>
+            Installs into <code>~/.local/share/cocalc/cli</code> (XDG aware) and
+            keeps itself up to date from the site it was installed from.
+          </li>
           <li>
             Creates <code>~/.local/bin/cocalc</code> and adds it to PATH if
             needed.
@@ -179,7 +185,7 @@
         <h2>Uninstall</h2>
         <p>Remove the install directory and launcher:</p>
         <div class="command-box">
-          <code>rm -rf ~/.local/share/cocalc ~/.local/bin/cocalc</code>
+          <code>rm -rf ~/.local/share/cocalc/cli ~/.local/bin/cocalc</code>
           <button id="copy-uninstall" type="button">Copy</button>
         </div>
       </section>
@@ -209,7 +215,7 @@
       });
 
       const uninstallCommand =
-        "rm -rf ~/.local/share/cocalc ~/.local/bin/cocalc";
+        "rm -rf ~/.local/share/cocalc/cli ~/.local/bin/cocalc";
       document
         .getElementById("copy-uninstall")
         .addEventListener("click", () => {

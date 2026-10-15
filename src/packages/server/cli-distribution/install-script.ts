@@ -13,6 +13,7 @@ import {
   CLI_PLATFORMS,
   type CliReleaseManifest,
 } from "@cocalc/util/cli-distribution/schema";
+import { CLI_INSTALLER_URL } from "../cli-setup/setup-script";
 
 // Single-quote for POSIX sh.
 export function shQuote(value: string): string {
@@ -201,5 +202,23 @@ case ":$PATH:" in
     say "Done. Open a new shell (or run: export PATH=\\"$bindir:\\$PATH\\"), then run: cocalc --help"
     ;;
 esac
+`;
+}
+
+/**
+ * /cli/install.sh for a site that serves no CLI releases
+ * (COCALC_CLI_RELEASE_SOURCE=off): hand over to the standalone installer, so
+ * every install command the site shows still works.
+ */
+export function legacyInstallScript(): string {
+  return `#!/bin/sh
+# CoCalc CLI installer. This site serves no CLI releases, so this installs the
+# standalone CLI from software.cocalc.ai instead.
+set -eu
+command -v bash >/dev/null 2>&1 || {
+  printf '%s\\n' "cocalc install: bash is required" >&2
+  exit 1
+}
+curl -fsSL ${shQuote(CLI_INSTALLER_URL)} | bash
 `;
 }
