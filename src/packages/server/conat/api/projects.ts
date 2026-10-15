@@ -136,7 +136,10 @@ import {
   type BulkProjectControlResult,
 } from "@cocalc/conat/hub/api/projects";
 import type { HubApiCall } from "./edge-routing";
-import { normalizeProjectIds } from "@cocalc/conat/hub/api/routes";
+import {
+  MAX_LEAVE_OR_DELETE_PER_BAY,
+  normalizeProjectIds,
+} from "@cocalc/conat/hub/api/routes";
 import type {
   ProjectRehomeOperationSummary,
   ProjectRehomeResponse,
@@ -5896,6 +5899,11 @@ export async function leaveOrDeleteProjects({
     } else {
       localProjectIds.push(project_id);
     }
+  }
+  if (localProjectIds.length > MAX_LEAVE_OR_DELETE_PER_BAY) {
+    throw new Error(
+      `at most ${MAX_LEAVE_OR_DELETE_PER_BAY} project(s) on one bay may be left or deleted in one call`,
+    );
   }
   for (const result of await leaveOrDeleteProjectsForAccount({
     account_id,

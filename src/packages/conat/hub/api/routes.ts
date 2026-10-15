@@ -44,6 +44,12 @@ export type HubApiRoute =
         error: string,
         code?: string | number,
       ) => Record<string, unknown>;
+      /**
+       * At most this many projects on any one bay per call, for methods that
+       * work through them one at a time: more is refused before any part
+       * runs, so a part always finishes within the call's time.
+       */
+      maxPerBay?: number;
     };
 
 export type CollabInviteRouteKey = { invite_id?: string; token?: string };
@@ -77,10 +83,22 @@ const hiddenProjects: HubApiRoute = {
   errorResult: (project_id, error) => ({ project_id, success: false, error }),
 };
 
+// Leaving or deleting is destructive and done one project at a time, so a
+// call takes at most one project per bay (the UI sends one project per
+// call).
+export const MAX_LEAVE_OR_DELETE_PER_BAY = 1;
+
 const leftOrDeletedProjects: HubApiRoute = {
   owner: "projects",
   key: (args) => args?.[0]?.project_ids,
-  errorResult: (project_id, error) => ({ project_id, action: "error", error }),
+  // The code says, e.g., that the outcome is unknown or fresh auth is needed.
+  errorResult: (project_id, error, code) => ({
+    project_id,
+    action: "error",
+    error,
+    ...(code != null ? { code } : {}),
+  }),
+  maxPerBay: MAX_LEAVE_OR_DELETE_PER_BAY,
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {

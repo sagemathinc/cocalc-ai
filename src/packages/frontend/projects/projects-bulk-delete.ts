@@ -14,6 +14,8 @@ export type LeaveOrDeleteProjectResult = {
   new_owner_account_id?: string;
   op_id?: string;
   error?: string;
+  // E.g. OUTCOME_UNKNOWN (its bay did not answer) or fresh_auth_required.
+  code?: string | number;
 };
 
 export type BulkLeaveOrDeleteProgressPhase = "submitting" | "waiting" | "done";
@@ -87,6 +89,16 @@ export async function runLeaveOrDeleteProjectsSequentially({
         error: "No result was returned.",
       });
       continue;
+    }
+    // A bay that needs a fresh sign-in says so per project when it was one
+    // of several; ask for it as if the call had thrown.
+    if (
+      result.action === "error" &&
+      isFreshAuthRequiredError({ code: result.code, message: result.error })
+    ) {
+      throw Object.assign(new Error(result.error ?? "fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
     }
 
     if (result.action === "hard_delete_queued" && result.op_id) {

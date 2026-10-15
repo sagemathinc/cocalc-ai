@@ -93,3 +93,11 @@ it("refuses more than MAX_PROJECTS_PER_CALL projects", async () => {
   ).rejects.toThrow("at most 1000");
   expect(local).not.toHaveBeenCalled();
 });
+
+it("refuses more than one of its own projects in one call", async () => {
+  const OTHER = "44444444-4444-4444-8444-444444444444";
+  await expect(
+    leaveOrDeleteProjects({ ...opts, project_ids: [HERE, OTHER] }),
+  ).rejects.toThrow("at most 1 project(s) on one bay");
+  expect(local).not.toHaveBeenCalled();
+});

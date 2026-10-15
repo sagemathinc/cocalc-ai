@@ -640,4 +640,68 @@ describe("a call on several projects", () => {
     expect(local.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
     expect(results[1].error).toContain("not attempted");
   });
+
+  const leave = (project_ids: string[]) => ({
+    name: "projects.leaveOrDeleteProjects",
+    args: [{ project_ids, browser_id: "b" }],
+    account_id: ACCOUNT,
+    auth_session_hash: "session",
+  });
+
+  it("refuses more than one project on a bay for leave/delete, before any part runs", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-1", epoch: 0 }],
+        [P[2], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    await expect(executeHubApiCall(leave(P))).rejects.toThrow(
+      "at most 1 project(s) on one bay",
+    );
+    expect(local).not.toHaveBeenCalled();
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("raises a single remote bay's error as the call's error, with its code", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([[P[0], { bay_id: "bay-1", epoch: 0 }]]),
+    );
+    forward.mockResolvedValue({
+      ok: false,
+      error: "fresh auth is required",
+      attrs: { code: "fresh_auth_required" },
+    });
+    await expect(executeHubApiCall(leave([P[0]]))).rejects.toMatchObject({
+      message: "fresh auth is required",
+      code: "fresh_auth_required",
+    });
+  });
+
+  it("keeps the code of a bay's failure on its projects' results", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    local.mockImplementation(async (call) =>
+      call.args[0].project_ids.map((project_id) => ({
+        project_id,
+        action: "removed_self",
+      })),
+    );
+    forward.mockRejectedValue(
+      Object.assign(new Error("timeout"), { code: 408 }),
+    );
+    expect(await executeHubApiCall(leave([P[0], P[1]]))).toEqual([
+      {
+        project_id: P[0],
+        action: "error",
+        error: expect.stringContaining("outcome unknown"),
+        code: "OUTCOME_UNKNOWN",
+      },
+      { project_id: P[1], action: "removed_self" },
+    ]);
+  });
 });
