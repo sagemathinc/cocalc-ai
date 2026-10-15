@@ -392,9 +392,9 @@ else, and then works offline, so check as much as you like:
 
 ```sh
 d=$(mktemp -d) && cd "$d" &&
-npm pack sagebrush@0.3.2 --silent >/dev/null &&
-echo "d24704a875755fad09ad5908c5d895f12d9a7c135f895c489bc24840fcecf3a488b38616835ea9c352a73a562ac77c7c0e4fa7265d4b909a3588e0be327b8858  sagebrush-0.3.2.tgz" | sha512sum -c --quiet - &&
-tar -xzf sagebrush-0.3.2.tgz && node=$(command -v node) &&
+npm pack sagebrush@0.4.0 --silent >/dev/null &&
+echo "3cb4c90bd61b6145124c30c80bfb7e5b21e1d225486834a666c40ffd39e72f4958294c5be2f02b64080b56203399bf268a93ea5ee31530c9109aedc4c6bf4fdf  sagebrush-0.4.0.tgz" | sha512sum -c --quiet - &&
+tar -xzf sagebrush-0.4.0.tgz && node=$(command -v node) &&
 sb() { env -i HOME="$d" PATH=/usr/bin:/bin "$node" "$d/package/bin/sagebrush.cjs" "$@"; }
 ```
 
@@ -405,11 +405,13 @@ fails. Then:
 
 - find functions: `sb --search "elliptic curve rank"`;
 - run every code item before putting it on the board: `sb --sage -c '...'`
-  (`--magma` for Magma, nothing for Python). Sagebrush raises an error for
-  anything it does not implement, so code that runs is supported.
-
-This version has no `--matlab` and no `board render`; they come with the next
-pinned version. Until then, check MATLAB code in the card itself.
+  (`--magma` for Magma, `--matlab` for MATLAB, nothing for Python). Sagebrush
+  raises an error for anything it does not implement, so code that runs is
+  supported;
+- check the finished board: `sb board render foo.board.json > foo.svg` must
+  exit 0, and you can look at the picture. It shows math as TeX source and
+  code without its outputs, so it checks the board's structure and layout,
+  not its code: that is what running each item is for.
 
 If the project cannot reach sagebrush.space, start from this minimal board.
 Notes are Markdown with `$...$` math; a note with `code` runs Python and shows
