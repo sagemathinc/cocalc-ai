@@ -763,6 +763,10 @@ describe("project host start ordering", () => {
     expect(runnerApi.status).toHaveBeenCalledWith({ project_id });
     expect(runnerApi.start).not.toHaveBeenCalled();
     expect(applyPendingCopies).not.toHaveBeenCalled();
+    // Running already still counts as a start for fenced agent work.
+    expect(releaseAcpProjectFenceResumesAfterStart).toHaveBeenCalledWith(
+      project_id,
+    );
   });
 
   it("does not probe Podman twice when local state records a stopped runtime", async () => {

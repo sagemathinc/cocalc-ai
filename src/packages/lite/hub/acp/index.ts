@@ -140,6 +140,7 @@ import {
   setAcpAdmissionLimitsProvider,
   throwIfAcpAdmissionDenied,
   withoutRecoveryLineage,
+  AcpAdmissionDeniedError,
 } from "./admission";
 import {
   buildCodexTurnNoticeOptions,
@@ -9318,13 +9319,25 @@ function reportFencedAgentMessage(job: AcpJobRow, detail: string): void {
   );
 }
 
-// A turn that keeps getting cut off (e.g. it brings its own container down)
-// resumes at most as often as any other recovery.
-function fencedTurnMayResume(job: AcpJobRow): boolean {
-  return (
-    Math.max(0, Math.floor(Number(job.recovery_count ?? 0)) || 0) <
+// Why a cut-off turn must not resume, or undefined if it may.
+function fencedTurnResumeBlocker(job: AcpJobRow): string | undefined {
+  const chat = decodeAcpJobRequest(job).chat;
+  // Their one-time authorization was spent by the turn that was cut off.
+  if (chat?.sensor_wake) {
+    return "**Conversation interrupted because the project restarted.** A sensor wake runs once and is not resumed; the sensor wakes it again if needed.";
+  }
+  if (chat?.agent_rpc_report) {
+    return "**Conversation interrupted because the project restarted.** A delivery report runs once and is not resumed.";
+  }
+  // A turn that keeps getting cut off (e.g. it brings its own container
+  // down) resumes at most as often as any other recovery.
+  if (
+    Math.max(0, Math.floor(Number(job.recovery_count ?? 0)) || 0) >=
     ACP_AUTO_RECOVERY_MAX_RETRIES
-  );
+  ) {
+    return PROJECT_RESTART_NOT_RESUMED_NOTICE;
+  }
+  return undefined;
 }
 
 // Move an intent; on a failed attempt, also move it to the back of the poll.
@@ -9336,9 +9349,10 @@ function touchAcpJobFenceIntent(job: AcpJobRow): void {
 async function resumeFencedAcpJob(
   client: ConatClient,
   job: AcpJobRow,
+  now: number,
 ): Promise<void> {
-  // Claim first. A stop or another restart replaces the claim, and then the
-  // continuation's insert below refuses to run (same SQLite transaction).
+  // Claim first. A stop, another restart or an Interrupt replaces the claim,
+  // and then the continuation's insert below refuses (same transaction).
   if (
     !moveAcpJobFenceIntent({
       op_id: job.op_id,
@@ -9350,45 +9364,60 @@ async function resumeFencedAcpJob(
   }
   const ran = job.state !== "canceled";
   if (!ran) {
+    // Runnable from here on: the worker's own poll runs it even if the
+    // projection or the wake below fails.
     const requeued = requeueFencedAcpJob(job.op_id);
     if (requeued) {
-      await persistQueuedUserMessageProjection({
-        client,
-        project_id: requeued.project_id,
-        path: requeued.path,
-        thread_id: requeued.thread_id,
-        user_message_id: requeued.user_message_id,
-        queued: true,
-      });
+      try {
+        await persistQueuedUserMessageProjection({
+          client,
+          project_id: requeued.project_id,
+          path: requeued.path,
+          thread_id: requeued.thread_id,
+          user_message_id: requeued.user_message_id,
+          queued: true,
+        });
+      } catch (err) {
+        logger.warn("failed to show a resumed message as queued", {
+          op_id: job.op_id,
+          err,
+        });
+      }
       await wakeAcpQueueForFencedWork();
     }
     return;
   }
+  const hasContinuation = () =>
+    listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }).length >
+    0;
   const finish = (): boolean =>
     moveAcpJobFenceIntent({
       op_id: job.op_id,
       from: ACP_FENCE_INTENT_RESUMING,
       to: null,
     });
-  if (
-    listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }).length > 0
-  ) {
-    // An earlier pass resumed it already.
-    finish();
-    return;
-  }
-  if (job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED) {
-    await finalizeFencedTurnChat({
-      client,
-      job,
-      notice: fencePendingNotice(job),
-      reasonId: "project_restarted",
-    });
-  }
-  let resumed: AcpJobRow | undefined;
-  if (fencedTurnMayResume(job)) {
+  const blocker = fencedTurnResumeBlocker(job);
+  if (!hasContinuation()) {
+    if (job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED || blocker) {
+      await finalizeFencedTurnChat({
+        client,
+        job,
+        notice: blocker ?? fencePendingNotice(job),
+        reasonId: "project_restarted",
+      });
+    }
+    if (blocker) {
+      logger.warn("fenced ACP turn is not resumable", { op_id: job.op_id });
+      if (finish()) {
+        reportFencedAgentMessage(
+          job,
+          "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
+        );
+      }
+      return;
+    }
     try {
-      resumed = await enqueueRecoveryContinuationForJob({
+      await enqueueRecoveryContinuationForJob({
         client,
         job,
         interruptedNotice: fenceResumedNotice(job),
@@ -9397,26 +9426,43 @@ async function resumeFencedAcpJob(
         requireParentFenceIntent: ACP_FENCE_INTENT_RESUMING,
       });
     } catch (err) {
-      logger.warn("fenced ACP turn was not resumed", { op_id: job.op_id, err });
+      // After the continuation is queued, a failure (e.g. showing it as
+      // queued) does not undo it; before, it is retried below.
+      logger.warn("resuming a fenced ACP turn hit an error", {
+        op_id: job.op_id,
+        continued: hasContinuation(),
+        err,
+      });
+      if (!hasContinuation()) {
+        const fencedAt = Number(job.finished_at ?? job.updated_at ?? 0);
+        const permanent = err instanceof AcpAdmissionDeniedError;
+        if (!permanent && now - fencedAt <= ACP_FENCE_RESUME_MAX_AGE_MS) {
+          // Hand it back for the next poll.
+          moveAcpJobFenceIntent({
+            op_id: job.op_id,
+            from: ACP_FENCE_INTENT_RESUMING,
+            to: ACP_FENCE_INTENT_RESUME_READY,
+          });
+          return;
+        }
+      }
     }
-  } else {
-    logger.warn("fenced ACP turn reached its recovery limit", {
-      op_id: job.op_id,
-      recovery_count: job.recovery_count ?? 0,
-    });
   }
-  if (finish() && !resumed) {
+  const continued = hasContinuation();
+  // The claim must still be ours: an Interrupt or fence that won canceled
+  // the continuation it raced with, so it must not be woken.
+  const claimed = finish();
+  if (claimed && !continued) {
     reportFencedAgentMessage(
       job,
       "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
     );
   }
-  if (resumed) {
+  if (claimed && continued) {
     await wakeAcpQueueForFencedWork();
     logger.warn("resumed ACP turn after project restart", {
       fenced_op_id: job.op_id,
-      resumed_op_id: resumed.op_id,
-      thread_id: resumed.thread_id,
+      thread_id: job.thread_id,
     });
   }
 }
@@ -9443,9 +9489,7 @@ async function processAcpFenceIntent(
         const durable = await finalizeFencedTurnChat({
           client,
           job,
-          notice: fencedTurnMayResume(job)
-            ? fencePendingNotice(job)
-            : PROJECT_RESTART_NOT_RESUMED_NOTICE,
+          notice: fencedTurnResumeBlocker(job) ?? fencePendingNotice(job),
           reasonId: "project_restarted",
         });
         if (durable) {
@@ -9463,7 +9507,7 @@ async function processAcpFenceIntent(
     }
     case ACP_FENCE_INTENT_RESUME_READY:
     case ACP_FENCE_INTENT_RESUMING: {
-      await resumeFencedAcpJob(client, job);
+      await resumeFencedAcpJob(client, job, now);
       return;
     }
     case ACP_FENCE_INTENT_STOPPED: {

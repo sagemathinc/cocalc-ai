@@ -1219,7 +1219,9 @@ export function releaseAcpProjectFenceResumes({
     ).changes;
 }
 
-/** An interrupt in this thread: work a restart left to resume stays stopped. */
+/** An interrupt in this thread: work a restart left to resume stays
+ * stopped, and a resumed turn already queued for it is canceled. One
+ * transaction, so it serializes with the guarded continuation insert. */
 export function stopAcpFenceResumesForThread({
   project_id,
   path,
@@ -1230,22 +1232,61 @@ export function stopAcpFenceResumesForThread({
   thread_id: string;
 }): number {
   ensureInit();
-  return getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE}
-       SET recovery_code = ?,
-           updated_at = ?
-       WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
-    )
-    .run(
-      ACP_FENCE_INTENT_STOPPED,
-      Date.now(),
-      project_id,
-      path,
-      thread_id,
-      ...ACP_FENCE_LIVE_RESUME_INTENTS,
-    ).changes;
+  const db = getAcpDatabase();
+  const now = Date.now();
+  let changes = 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    changes += db
+      .prepare(
+        `UPDATE ${TABLE}
+         SET recovery_code = ?,
+             updated_at = ?
+         WHERE project_id = ? AND path = ? AND thread_id = ?
+           AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
+      )
+      .run(
+        ACP_FENCE_INTENT_STOPPED,
+        now,
+        project_id,
+        path,
+        thread_id,
+        ...ACP_FENCE_LIVE_RESUME_INTENTS,
+      ).changes;
+    changes += db
+      .prepare(
+        `UPDATE ${TABLE}
+         SET state = 'canceled',
+             error = ?,
+             updated_at = ?,
+             finished_at = ?
+         WHERE project_id = ? AND path = ? AND thread_id = ?
+           AND state = 'queued'
+           AND recovery_parent_op_id IN (
+             SELECT op_id FROM ${TABLE}
+             WHERE project_id = ? AND path = ? AND thread_id = ?
+               AND error IN (?, ?)
+           )`,
+      )
+      .run(
+        "interrupted before it resumed",
+        now,
+        now,
+        project_id,
+        path,
+        thread_id,
+        project_id,
+        path,
+        thread_id,
+        ACP_PROJECT_RESUME_FENCE_REASON,
+        ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
+      ).changes;
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  return changes;
 }
 
 /** Queue again a message the fence held back from a restarting project. */
