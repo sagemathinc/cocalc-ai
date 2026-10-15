@@ -193,6 +193,7 @@ import {
   enqueueAcpJobCancelingQueuedRecoveries,
   fenceAcpJobsForProject,
   getAcpJob,
+  getOwnedAcpJob,
   getAcpJobByOpId,
   hasNewerNonRecoveryAcpJob,
   hasQueuedOrRunningAcpJobs,
@@ -11890,6 +11891,8 @@ async function handleAcpControlRequest(
       project_id,
       path,
       user_message_id,
+      account_id: request.account_id,
+      thread_id,
     });
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
@@ -11909,7 +11912,15 @@ async function handleAcpControlRequest(
       request.action === "resend" ||
       request.action === "resend_with_model" ||
       request.action === "resend_with_payment") &&
-    acpJobHasLiveFenceResume(getAcpJob({ project_id, path, user_message_id }))
+    acpJobHasLiveFenceResume(
+      getOwnedAcpJob({
+        project_id,
+        path,
+        user_message_id,
+        account_id: request.account_id,
+        thread_id,
+      }),
+    )
   ) {
     // A restart holds this message; it runs once the project is back.
     return { ok: false, state: "held" };
@@ -11919,6 +11930,8 @@ async function handleAcpControlRequest(
       project_id,
       path,
       user_message_id,
+      account_id: request.account_id,
+      thread_id,
     });
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
@@ -11929,6 +11942,8 @@ async function handleAcpControlRequest(
         project_id,
         path,
         user_message_id,
+        account_id: request.account_id,
+        thread_id,
       });
       if (!resent || resent.state !== "queued") {
         return { ok: false, state: resent?.state ?? "missing" };
@@ -11937,6 +11952,8 @@ async function handleAcpControlRequest(
         project_id,
         path,
         user_message_id,
+        account_id: request.account_id,
+        thread_id,
       });
       await persistQueuedUserMessageProjection({
         client,
@@ -12026,7 +12043,13 @@ async function handleAcpControlRequest(
     if (request.action === "resend_with_payment" && !request.payment_recovery) {
       throw new Error("Payment recovery requires a replacement source");
     }
-    const current = getAcpJob({ project_id, path, user_message_id });
+    const found = getAcpJob({ project_id, path, user_message_id });
+    // Only the account that sent a turn may resend it (it runs as, and is
+    // funded by, that account); do not reveal another account's turn state.
+    const current =
+      found?.account_id === request.account_id && found.thread_id === thread_id
+        ? found
+        : undefined;
     if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
     }
@@ -12082,6 +12105,8 @@ async function handleAcpControlRequest(
       project_id,
       path,
       user_message_id,
+      account_id: request.account_id,
+      thread_id,
       modelRecovery: request.model_recovery
         ? {
             ...request.model_recovery,

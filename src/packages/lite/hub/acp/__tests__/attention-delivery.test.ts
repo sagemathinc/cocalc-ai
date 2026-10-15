@@ -1570,3 +1570,41 @@ it("guidance that falls back to a new turn carries no client recovery lineage", 
   expect(queued.chat).not.toHaveProperty("recovery_parent_op_id");
   expect(queued.chat).not.toHaveProperty("recovery_count");
 });
+
+it("does not let another account or thread control a queued turn", async () => {
+  const job = enqueueAcpJob(turnRequest({ paymentSource: "site-api-key" }));
+  const control = (action: string, account_id: string, thread_id: string) =>
+    acpTestInternals.handleAcpControlRequest({
+      action,
+      account_id,
+      project_id: projectId,
+      path: record.path,
+      thread_id,
+      user_message_id: job.user_message_id,
+    } as any);
+  const otherAccount = "33333333-3333-4333-8333-333333333333";
+  for (const action of ["cancel", "send_immediately"]) {
+    await expect(
+      control(action, otherAccount, record.thread_id),
+    ).resolves.toEqual({ ok: false, state: "missing" });
+    await expect(control(action, accountId, "other-thread")).resolves.toEqual({
+      ok: false,
+      state: "missing",
+    });
+  }
+  expect(getAcpJobByOpId(job.op_id)?.state).toBe("queued");
+
+  setAcpJobState({ op_id: job.op_id, state: "error", error: "failed" });
+  const request_json = getAcpJobByOpId(job.op_id)?.request_json;
+  await expect(
+    control("resend", otherAccount, record.thread_id),
+  ).resolves.toEqual({ ok: false, state: "missing" });
+  await expect(control("resend", accountId, "other-thread")).resolves.toEqual({
+    ok: false,
+    state: "missing",
+  });
+  expect(getAcpJobByOpId(job.op_id)).toMatchObject({
+    state: "error",
+    request_json,
+  });
+});

@@ -1410,15 +1410,40 @@ export function clearQueuedAcpJobWorkerAffinity({
   return changed;
 }
 
-export function reprioritizeAcpJobImmediate({
+// User controls (cancel, send now, resend) act only on the caller's own turn
+// in the named thread: a queued turn runs as, and is funded by, the account
+// that sent it, and other collaborators can see its message ids.
+type AcpJobOwner = { account_id: string; thread_id: string };
+
+export function getOwnedAcpJob({
   project_id,
   path,
   user_message_id,
+  account_id,
+  thread_id,
 }: {
   project_id: string;
   path: string;
   user_message_id: string;
-}): AcpJobRow | undefined {
+} & AcpJobOwner): AcpJobRow | undefined {
+  const job = getAcpJob({ project_id, path, user_message_id });
+  if (!account_id || !thread_id) return undefined;
+  return job?.account_id === account_id && job.thread_id === thread_id
+    ? job
+    : undefined;
+}
+
+export function reprioritizeAcpJobImmediate({
+  project_id,
+  path,
+  user_message_id,
+  account_id,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  user_message_id: string;
+} & AcpJobOwner): AcpJobRow | undefined {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
@@ -1431,9 +1456,17 @@ export function reprioritizeAcpJobImmediate({
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?
+        AND account_id = ?
+        AND thread_id = ?
         AND state = 'queued'`,
-  ).run(now, project_id, path, user_message_id);
-  const job = getAcpJob({ project_id, path, user_message_id });
+  ).run(now, project_id, path, user_message_id, account_id, thread_id);
+  const job = getOwnedAcpJob({
+    project_id,
+    path,
+    user_message_id,
+    account_id,
+    thread_id,
+  });
   mirrorAcpJobSession(job);
   return job;
 }
@@ -1442,11 +1475,13 @@ export function cancelQueuedAcpJob({
   project_id,
   path,
   user_message_id,
+  account_id,
+  thread_id,
 }: {
   project_id: string;
   path: string;
   user_message_id: string;
-}): AcpJobRow | undefined {
+} & AcpJobOwner): AcpJobRow | undefined {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
@@ -1462,6 +1497,8 @@ export function cancelQueuedAcpJob({
         WHERE project_id = ?
           AND path = ?
           AND user_message_id = ?
+          AND account_id = ?
+          AND thread_id = ?
           AND state = 'canceled'
           AND recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})`,
     ).run(
@@ -1470,6 +1507,8 @@ export function cancelQueuedAcpJob({
       project_id,
       path,
       user_message_id,
+      account_id,
+      thread_id,
       ...ACP_FENCE_LIVE_RESUME_INTENTS,
     );
     db.prepare(
@@ -1480,14 +1519,22 @@ export function cancelQueuedAcpJob({
         WHERE project_id = ?
           AND path = ?
           AND user_message_id = ?
+          AND account_id = ?
+          AND thread_id = ?
           AND state = 'queued'`,
-    ).run(now, now, project_id, path, user_message_id);
+    ).run(now, now, project_id, path, user_message_id, account_id, thread_id);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
   }
-  const job = getAcpJob({ project_id, path, user_message_id });
+  const job = getOwnedAcpJob({
+    project_id,
+    path,
+    user_message_id,
+    account_id,
+    thread_id,
+  });
   mirrorAcpJobSession(job);
   return job;
 }
@@ -1621,12 +1668,16 @@ export function resendCanceledAcpJob({
   project_id,
   path,
   user_message_id,
+  account_id,
+  thread_id,
   modelRecovery,
   fundingRecovery,
 }: {
   project_id: string;
   path: string;
   user_message_id: string;
+  account_id: string;
+  thread_id: string;
   modelRecovery?: {
     model: string;
     expected_model: string;
@@ -1717,6 +1768,8 @@ export function resendCanceledAcpJob({
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?
+        AND account_id = ?
+        AND thread_id = ?
         AND state IN ('canceled', 'error')
         AND (recovery_code IS NULL
           OR recovery_code NOT IN (${LIVE_RESUME_PLACEHOLDERS}))
@@ -1728,13 +1781,21 @@ export function resendCanceledAcpJob({
       project_id,
       path,
       user_message_id,
+      account_id,
+      thread_id,
       ...ACP_FENCE_LIVE_RESUME_INTENTS,
       expectedRequest,
       expectedRequest,
     );
   if ((modelRecovery || fundingRecovery) && updated.changes !== 1)
     return undefined;
-  const job = getAcpJob({ project_id, path, user_message_id });
+  const job = getOwnedAcpJob({
+    project_id,
+    path,
+    user_message_id,
+    account_id,
+    thread_id,
+  });
   mirrorAcpJobSession(job);
   return job;
 }
