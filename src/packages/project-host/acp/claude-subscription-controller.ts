@@ -44,6 +44,10 @@ import {
   type ClaudeProjectToolBridge,
 } from "./claude-project-tool-bridge";
 import {
+  createRenewableCliLease,
+  type RenewableCliLease,
+} from "./claude-cli-lease";
+import {
   applyProjectRuntimeCliEnv,
   createProjectCliTokenLease,
   ensureProjectContainerRunning,
@@ -358,7 +362,11 @@ ${skill}
   let created = false;
   let launched = false;
   let toolBridge: ClaudeProjectToolBridge | undefined;
-  let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
+  let cliLease:
+    | RenewableCliLease<
+        NonNullable<Awaited<ReturnType<typeof createProjectCliTokenLease>>>
+      >
+    | undefined;
   let restrictedEgress: ClaudeRestrictedEgress | undefined;
   let stopped: Promise<void> | undefined;
   let cleanupRetries = 0;
@@ -460,58 +468,70 @@ ${skill}
       credentialId,
       sessionId: conversation.sessionId,
     });
-    cliLease = await createProjectCliTokenLease({
-      projectId,
-      accountId,
-      agentSessionKey: JSON.stringify([
-        "claude-subscription",
+    const leases = createRenewableCliLease(() =>
+      createProjectCliTokenLease({
         projectId,
         accountId,
-        credentialId,
-        conversation!.path,
-        conversation!.threadId,
-      ]),
-      currentEnv: identityContext,
-      home: projectPaths.home,
-      scratch: projectPaths.scratch,
-    });
-    if (!cliLease) throw Error("Scoped Claude CLI credentials unavailable");
-    const cliEnv: Record<string, string> = {
-      ...identityContext,
-      COCALC_PROJECT_ID: projectId,
-      COCALC_BEARER_TOKEN: "",
-      COCALC_AGENT_TOKEN: "",
-      COCALC_BEARER_TOKEN_FILE: cliLease.containerPath,
-      COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
-      COCALC_AGENT_IDENTITY_FILE: cliLease.identityContainerPath ?? "",
-      COCALC_AGENT_MENTION_REFERENCES_FILE: "",
-      // Holds the managed CoCalc connector key only during a turn whose
-      // agent has the connector enabled.
-      COCALC_CONNECTOR_API_KEY_FILE: cliLease.connectorContainerPath ?? "",
-      COCALC_API_URL: resolveProjectRuntimeApiUrl(),
+        agentSessionKey: JSON.stringify([
+          "claude-subscription",
+          projectId,
+          accountId,
+          credentialId,
+          conversation!.path,
+          conversation!.threadId,
+        ]),
+        currentEnv: identityContext,
+        home: projectPaths.home,
+        scratch: projectPaths.scratch,
+      }),
+    );
+    cliLease = leases;
+    // Fail startup now rather than at the first command.
+    await leases.acquire();
+    const cliEnvFor = (
+      lease: Awaited<ReturnType<typeof leases.acquire>>,
+    ): Record<string, string> => {
+      const env: Record<string, string> = {
+        ...identityContext,
+        COCALC_PROJECT_ID: projectId,
+        COCALC_BEARER_TOKEN: "",
+        COCALC_AGENT_TOKEN: "",
+        COCALC_BEARER_TOKEN_FILE: lease.containerPath,
+        COCALC_AGENT_TOKEN_FILE: lease.containerPath,
+        COCALC_AGENT_IDENTITY_FILE: lease.identityContainerPath ?? "",
+        COCALC_AGENT_MENTION_REFERENCES_FILE: "",
+        // Holds the managed CoCalc connector key only during a turn whose
+        // agent has the connector enabled.
+        COCALC_CONNECTOR_API_KEY_FILE: lease.connectorContainerPath ?? "",
+        COCALC_API_URL: resolveProjectRuntimeApiUrl(),
+      };
+      applyProjectRuntimeCliEnv(env, accountId);
+      if (lease.connectorContainerPath) lease.applyCliConnectorEnv(env);
+      return env;
     };
-    applyProjectRuntimeCliEnv(cliEnv, accountId);
-    if (cliLease.connectorContainerPath) cliLease.applyCliConnectorEnv(cliEnv);
     toolBridge = await createClaudeProjectToolBridge(
       projectId,
       async (script, cwd, signal, options) => {
+        // After a fence the tool layer only gets here once the runtime has
+        // proved every fenced job's processes are gone: issue a fresh lease.
+        const env = cliEnvFor(await leases.acquire());
         let result;
         try {
           result = await sandboxExec({
             project_id: projectId,
             script,
             cwd: cwd ?? binding.profile.cwd,
-            env: cliEnv,
+            env,
             signal,
             ...options,
           });
         } catch (error) {
-          await cliLease?.close();
+          await leases.retire();
           throw error;
         }
         if (result.cleanupConfirmed !== true) {
           // Fence CLI authority independently of process/container cleanup.
-          await cliLease?.close();
+          await leases.retire();
         }
         return result;
       },
@@ -599,12 +619,10 @@ ${skill}
       setAsyncQuestionHandler: toolBridge
         ? (handler) => toolBridge!.setAsyncQuestionHandler(handler)
         : undefined,
-      beginConnectorTurn: cliLease
-        ? (chat) => cliLease!.beginConnectorTurn(chat)
-        : undefined,
-      endConnectorTurn: cliLease
-        ? () => cliLease!.endConnectorTurn()
-        : undefined,
+      // A lease issued after a fence has no connector turn until the next turn.
+      beginConnectorTurn: async (chat) =>
+        await leases.current?.beginConnectorTurn(chat),
+      endConnectorTurn: async () => await leases.current?.endConnectorTurn(),
       ...(token ? { subscriptionAuth: "oauth-token" as const } : {}),
       stdin: proc.stdin,
       stdout: proc.stdout,
