@@ -58,6 +58,12 @@ export interface ComputerPolicy {
   mode: ComputerMode;
   /** null: no time limit. */
   duration: null | { initial_seconds: number; max_seconds: number };
+  /**
+   * The hard lease: if the computer can't connect to CoCalc for this many
+   * hours, all its jobs stop (it runs work again once it reconnects). See
+   * leaseRule.
+   */
+  lease_hours: number;
   /** The computer serves exactly this agent network's members (decision 22). */
   agent_network_id: string;
   network: "on" | "off";
@@ -72,10 +78,45 @@ export interface ComputerPolicy {
 
 export class PolicyError extends Error {}
 
+/** The hard lease: a whole number of hours in this range, 24 by default. */
+export const DEFAULT_LEASE_HOURS = 24;
+export const MIN_LEASE_HOURS = 1;
+export const MAX_LEASE_HOURS = 8760;
+
+/**
+ * The hard lease, in one sentence, exactly as people and agents are told
+ * it (the request form's help, the approval, the machine's prompt, the CLI).
+ */
+export function leaseRule(hours: number): string {
+  return `If this computer can't connect to CoCalc for ${leaseHoursText(hours)}, all its jobs stop. It runs work again once it reconnects.`;
+}
+
+/**
+ * A valid lease (computers paired before the hard lease existed have none:
+ * they are treated as lapsed and must be paired again).
+ */
+export function validLeaseHours(hours: unknown): hours is number {
+  return (
+    typeof hours === "number" &&
+    Number.isInteger(hours) &&
+    hours >= MIN_LEASE_HOURS &&
+    hours <= MAX_LEASE_HOURS
+  );
+}
+
+/** Said when a computer paired before the hard lease is asked to work. */
+export const PRE_LEASE_TEXT =
+  "this computer was connected before hard leases existed, so it runs nothing; connect it again";
+
+export function leaseHoursText(hours: number): string {
+  return `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
 const TOP_LEVEL_KEYS = [
   "version",
   "mode",
   "duration",
+  "lease_hours",
   "agent_network_id",
   "network",
   "gpu",
@@ -171,6 +212,7 @@ function parsePolicyWith(
   }
   const mode = oneOf(obj.mode, ["direct", "isolated"] as const, "mode");
   const duration = parseDuration(obj.duration);
+  const lease_hours = parseLeaseHours(obj.lease_hours);
   if (
     typeof obj.agent_network_id !== "string" ||
     !isValidUUID(obj.agent_network_id)
@@ -188,6 +230,7 @@ function parsePolicyWith(
     version: 1,
     mode,
     duration,
+    lease_hours,
     agent_network_id: obj.agent_network_id.toLowerCase(),
     network,
     gpu: obj.gpu,
@@ -233,6 +276,21 @@ export function directPolicyDefaults(): Pick<
     scratch_bytes: null,
     limits: { cpu_millis: null, memory_bytes: null, pids: null },
   };
+}
+
+/** Required, like every field: the request form starts it at 24. */
+function parseLeaseHours(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < MIN_LEASE_HOURS ||
+    value > MAX_LEASE_HOURS
+  ) {
+    throw new PolicyError(
+      `lease_hours must be a whole number of hours from ${MIN_LEASE_HOURS} to ${MAX_LEASE_HOURS}`,
+    );
+  }
+  return value;
 }
 
 function parseDuration(value: unknown): ComputerPolicy["duration"] {
@@ -396,6 +454,10 @@ export function policyWideningReasons(
   }
   if (!durationAtMost(candidate.duration, ceiling.duration)) {
     reasons.push("time limit exceeds the ceiling");
+  }
+  // A shorter lease stops work sooner: narrower.
+  if (candidate.lease_hours > ceiling.lease_hours) {
+    reasons.push("the lease is longer than the ceiling's");
   }
   if (candidate.agent_network_id !== ceiling.agent_network_id) {
     reasons.push("a different agent network");

@@ -14,6 +14,7 @@
 // so a daemon never acts on something newer than it understands.
 
 import { UNSAFE_LINE_CHARS } from "./canonical";
+import { parseComputerPolicy, type ComputerPolicy } from "./policy";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export const COMPUTER_PROTOCOL_VERSION = 1;
@@ -24,7 +25,7 @@ export const SIGNED_KINDS = {
   certificate: "computer-certificate",
   attestation: "project-attestation",
   ticket: "computer-ticket",
-  floors: "computer-floors",
+  state: "computer-state",
   key_endorsement: "signing-key-endorsement",
   login: "computer-login",
   challenge_request: "computer-challenge-request",
@@ -605,75 +606,115 @@ export function parseComputerTicket(input: unknown): ComputerTicket {
 
 // ------------------------------------------------------- daemon admission
 
+/** Why the home bay ended a computer for good. */
+export const COMPUTER_END_REASONS = ["revoked", "replaced", "deleted"] as const;
+export type ComputerEndReason = (typeof COMPUTER_END_REASONS)[number];
+
+/** At most this many project floors in one state snapshot. */
+export const MAX_STATE_PROJECT_FLOORS = 500;
+
+/** A state version on the wire: a canonical decimal (PostgreSQL bigint). */
+export const STATE_VERSION_PATTERN = /^(0|[1-9][0-9]{0,18})$/;
+
 /**
- * Signed by the computer's home bay and pushed on every change: the epochs
- * below which the daemon must refuse tickets. The daemon keeps the maximum of
- * each floor, so replaying an old push changes nothing.
+ * Signed by the computer's home bay: everything a daemon of this computer
+ * must have applied (revocation gate, computers-revocation-gate-2026-10-14).
+ * One snapshot, applied in one durable write and acknowledged as a whole:
+ * floors only rise, the policy applies only with a newer epoch and only if
+ * it narrows, and `ended` is terminal. So a replay changes nothing, and an
+ * older snapshot can't undo a newer one.
  */
-export interface ComputerFloors {
-  type: "cocalc-computer-floors";
+export interface ComputerState {
+  type: "cocalc-computer-state";
   version: 1;
   computer_id: string;
+  /** The hub's counter for this computer, as a canonical decimal string. */
+  state_version: string;
   home_epoch: number;
   computer_epoch: number;
   /** Privacy epoch floor per project id. */
-  projects: Record<string, number>;
+  project_floors: Record<string, number>;
+  policy_epoch: number;
+  policy: ComputerPolicy;
+  ended: null | { reason: ComputerEndReason };
   issued_at: number;
 }
 
-/** At most this many per-project floors in one push. */
-export const MAX_PROJECT_FLOORS = 1000;
-
-export function parseComputerFloors(input: unknown): ComputerFloors {
-  const o = record(input, "floors");
+export function parseComputerState(input: unknown): ComputerState {
+  const o = record(input, "state");
   onlyKeys(
     o,
     [
       "type",
       "version",
       "computer_id",
+      "state_version",
       "home_epoch",
       "computer_epoch",
-      "projects",
+      "project_floors",
+      "policy_epoch",
+      "policy",
+      "ended",
       "issued_at",
     ],
-    "floors",
+    "state",
   );
-  literal(o.type, "cocalc-computer-floors", "floors.type");
+  literal(o.type, "cocalc-computer-state", "state.type");
   version(o.version);
-  const projectsIn = record(o.projects, "floors.projects");
-  const entries = Object.entries(projectsIn);
-  if (entries.length > MAX_PROJECT_FLOORS) {
+  if (
+    typeof o.state_version !== "string" ||
+    !STATE_VERSION_PATTERN.test(o.state_version)
+  ) {
+    throw new ProtocolError("state.state_version is not a canonical decimal");
+  }
+  const floorsIn = record(o.project_floors, "state.project_floors");
+  const entries = Object.entries(floorsIn);
+  if (entries.length > MAX_STATE_PROJECT_FLOORS) {
     throw new ProtocolError(
-      `floors.projects has more than ${MAX_PROJECT_FLOORS} entries`,
+      `state.project_floors has more than ${MAX_STATE_PROJECT_FLOORS} entries`,
     );
   }
-  const projects: Record<string, number> = {};
+  const project_floors: Record<string, number> = {};
   for (const [project_id, value] of entries) {
-    projects[uuid(project_id, "floors.projects key")] = epoch(
+    project_floors[uuid(project_id, "state.project_floors key")] = epoch(
       value,
-      `floors.projects.${project_id}`,
+      `state.project_floors.${project_id}`,
     );
+  }
+  let ended: ComputerState["ended"] = null;
+  if (o.ended != null) {
+    const e = record(o.ended, "state.ended");
+    onlyKeys(e, ["reason"], "state.ended");
+    if (!COMPUTER_END_REASONS.includes(e.reason as ComputerEndReason)) {
+      throw new ProtocolError("state.ended.reason is not a known reason");
+    }
+    ended = { reason: e.reason as ComputerEndReason };
   }
   return {
-    type: "cocalc-computer-floors",
+    type: "cocalc-computer-state",
     version: 1,
-    computer_id: uuid(o.computer_id, "floors.computer_id"),
-    home_epoch: epoch(o.home_epoch, "floors.home_epoch"),
-    computer_epoch: epoch(o.computer_epoch, "floors.computer_epoch"),
-    projects,
-    issued_at: time(o.issued_at, "floors.issued_at"),
+    computer_id: uuid(o.computer_id, "state.computer_id"),
+    state_version: o.state_version,
+    home_epoch: epoch(o.home_epoch, "state.home_epoch"),
+    computer_epoch: epoch(o.computer_epoch, "state.computer_epoch"),
+    project_floors,
+    policy_epoch: epoch(o.policy_epoch, "state.policy_epoch"),
+    policy: parseComputerPolicy(o.policy),
+    ended,
+    issued_at: time(o.issued_at, "state.issued_at"),
   };
 }
 
 /**
- * Raise the daemon's floors to a push: each floor becomes the larger of the
- * two, never smaller. `raised` says whether anything went up (queued work is
- * then cancelled and re-authorized).
+ * Raise the daemon's floors to a state's: each floor becomes the larger of
+ * the two, never smaller. `raised` says whether anything went up.
  */
 export function mergeFloors(
   current: DaemonState["floors"],
-  pushed: Pick<ComputerFloors, "home_epoch" | "computer_epoch" | "projects">,
+  pushed: Pick<
+    DaemonState["floors"],
+    "home_epoch" | "computer_epoch" | "projects"
+  >,
 ): { floors: DaemonState["floors"]; raised: boolean } {
   let raised = false;
   const up = (a: number, b: number) => {

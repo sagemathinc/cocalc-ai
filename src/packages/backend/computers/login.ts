@@ -23,6 +23,21 @@ import {
   type KeyPair,
 } from "./crypto";
 
+/**
+ * What the challenge endpoint answers instead of a challenge when the home
+ * bay ended this computer (revoked, replaced or its account deleted): its
+ * signed state with `ended`, which the daemon verifies before acting on it.
+ */
+export interface LoginEnded {
+  ended: unknown;
+}
+
+export type LoginChallengeAnswer = LoginChallengeView | LoginEnded;
+
+export function isLoginEnded(value: unknown): value is LoginEnded {
+  return value != null && typeof value === "object" && "ended" in value;
+}
+
 export interface LoginChallengeView {
   challenge_id: string;
   nonce: string;

@@ -264,6 +264,11 @@ export class JobManager {
     return this.list().filter(isLive);
   }
 
+  /** How many jobs may still have processes. */
+  liveCount(): number {
+    return this.running().length;
+  }
+
   private queued(): Job[] {
     return this.list().filter((j) => j.state === "queued");
   }

@@ -14,6 +14,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ import {
 } from "@cocalc/util/computers/policy";
 import {
   parseComputerCertificate,
-  parseComputerFloors,
+  parseComputerState,
   parseComputerTicket,
   parseProjectAttestation,
   SIGNED_KINDS,
@@ -81,6 +82,7 @@ describe("the computer daemon (direct mode)", () => {
     version: 1,
     mode: "direct",
     duration: null,
+    lease_hours: 24,
     agent_network_id,
     ...directPolicyDefaults(),
   });
@@ -127,6 +129,30 @@ describe("the computer daemon (direct mode)", () => {
       signer,
     );
   }
+
+  /** A state snapshot from the home bay (floors, policy, ended). */
+  const stateEnvelope = (
+    overrides: Record<string, unknown> = {},
+    signer = homeKey,
+  ) =>
+    signEnvelope(
+      SIGNED_KINDS.state,
+      parseComputerState({
+        type: "cocalc-computer-state",
+        version: 1,
+        computer_id,
+        state_version: "1",
+        home_epoch: 0,
+        computer_epoch: 0,
+        project_floors: {},
+        policy_epoch: 0,
+        policy: ceiling,
+        ended: null,
+        issued_at: Date.now(),
+        ...overrides,
+      }),
+      signer,
+    );
 
   let store: DaemonStore;
   let daemon: ComputerDaemon;
@@ -372,27 +398,19 @@ describe("the computer daemon (direct mode)", () => {
       }
     });
 
-    it("refuses tickets below the floors the hub pushed, and only raises floors", async () => {
+    it("refuses tickets below the floors the home bay signed, and only raises floors", async () => {
       const floors = (computer_epoch: number, signer = homeKey) =>
-        signEnvelope(
-          SIGNED_KINDS.floors,
-          parseComputerFloors({
-            type: "cocalc-computer-floors",
-            version: 1,
-            computer_id,
-            home_epoch: 0,
-            computer_epoch,
-            projects: { [project_id]: 2 },
-            issued_at: Date.now(),
-          }),
+        stateEnvelope(
+          { computer_epoch, project_floors: { [project_id]: 2 } },
           signer,
         );
-      expect(() => daemon.applyFloors(floors(5, strangerKey))).toThrow(
+      expect(() => daemon.applyState(floors(5, strangerKey))).toThrow(
         /not signed by the home bay/,
       );
-      expect(daemon.applyFloors(floors(5)).raised).toBe(true);
-      // Replaying an older push changes nothing.
-      expect(daemon.applyFloors(floors(1)).raised).toBe(false);
+      daemon.applyState(floors(5));
+      // Replaying an older state changes nothing.
+      daemon.applyState(floors(1));
+      expect(store.state.floors.computer_epoch).toBe(5);
       const stale = await daemon.handle(
         message("exec", exec("true"), { ticket: { computer_epoch: 4 } }),
       );
@@ -415,6 +433,347 @@ describe("the computer daemon (direct mode)", () => {
         computer_epoch: 5,
         projects: { [project_id]: 2 },
       });
+    });
+
+    it("ends for good once its certificate has expired", () => {
+      const t = { wall: Date.now(), continuous: 0 };
+      clocks = { wall: () => t.wall, continuous: () => t.continuous };
+      daemon = makeDaemon();
+      daemon.tick();
+      expect(daemon.sessionEnded).toBe(false);
+      t.wall += 86_400_000 + 1000;
+      t.continuous += 86_400_000 + 1000;
+      daemon.tick();
+      expect(daemon.sessionEnded).toBe(true);
+    });
+
+    const runJob = (command: string) => ({
+      command,
+      cwd: null,
+      description: "test job",
+      name: "test",
+      exclusive: false,
+      nice: false,
+    });
+
+    it("parses state versions as canonical decimals only", () => {
+      for (const bad of ["01", "-1", "+1", "1.0", "", "1e3", " 1"]) {
+        expect(() => stateEnvelope({ state_version: bad })).toThrow(
+          /canonical decimal/,
+        );
+      }
+      expect(
+        stateEnvelope({ state_version: "12345678901234567" }).payload
+          .state_version,
+      ).toBe("12345678901234567");
+    });
+
+    it("a signed state with ended stops everything, for good, across a restart", async () => {
+      const started = ok(
+        await daemon.handle(message("run", runJob("sleep 30"))),
+      );
+      const job_id = (started.result as any).job_id;
+      expect(() =>
+        daemon.applyState(
+          stateEnvelope({ ended: { reason: "revoked" } }, strangerKey),
+        ),
+      ).toThrow(/not signed by the home bay/);
+      expect(() =>
+        daemon.applyState(
+          stateEnvelope({
+            computer_id: randomUUID(),
+            ended: { reason: "revoked" },
+          }),
+        ),
+      ).toThrow(/another computer/);
+      // Another kind's signature over the same payload is refused.
+      const env = stateEnvelope({ ended: { reason: "revoked" } });
+      expect(() =>
+        daemon.applyState(
+          signEnvelope(SIGNED_KINDS.ticket, env.payload, homeKey),
+        ),
+      ).toThrow();
+      expect(daemon.sessionEnded).toBe(false);
+
+      const ack = daemon.applyState(env);
+      expect(ack.state_version).toBe("1");
+      expect(ack.envelope_hash).toMatch(/^sha256:[A-Za-z0-9_-]{43}$/);
+      expect(daemon.sessionEnded).toBe(true);
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      // A replay is harmless and acknowledged the same way.
+      expect(daemon.applyState(env)).toEqual(ack);
+      // After a restart the computer is still ended before anything else.
+      daemon.endSession("test restart");
+      const reopened = DaemonStore.open(join(dir, "state"))!;
+      expect(reopened.ended).toEqual({ reason: "revoked" });
+      store = reopened;
+      daemon = makeDaemon();
+      expect(daemon.sessionEnded).toBe(true);
+      const reply = await daemon.handle(message("exec", exec("true")));
+      expect((reply as any).refused).toEqual([
+        "the session on this computer has ended",
+      ]);
+    });
+
+    it("the hard lease: no signed state for lease_hours stops every job and exec; a fresh state resumes work, an old one doesn't", async () => {
+      let shift = 0;
+      clocks = {
+        wall: () => Date.now() + shift,
+        continuous: systemClocks.continuous,
+      };
+      daemon = makeDaemon();
+      // A narrowed lease of 1 hour (the ceiling's is the default 24): the
+      // state that narrows it is itself contact.
+      const lease1 = { ...ceiling, lease_hours: 1 };
+      const narrow = stateEnvelope({ policy_epoch: 1, policy: lease1 });
+      daemon.applyState(narrow);
+      expect(store.effectivePolicy.lease_hours).toBe(1);
+      // Tickets in the (shifted) hub time, at the new policy epoch.
+      const at = (op: "run" | "exec", request: unknown) => {
+        const t = Date.now() + shift;
+        return message(op, request, {
+          ticket: {
+            policy_epoch: 1,
+            issued_at: t,
+            start_by: t + 30_000,
+            run_expires_at: t + 3_600_000,
+          },
+          attestation: { issued_at: t, not_after: t + 30_000 },
+        });
+      };
+      const started = ok(await daemon.handle(at("run", runJob("sleep 30"))));
+      const job_id = (started.result as any).job_id;
+      const execDone = daemon.handle(at("exec", exec("sleep 30")));
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "running";
+      });
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Two hours without contact (offline: only the enforcement timer).
+      shift = 2 * 3_600_000;
+      expect(daemon.leaseLapsed()).toBe(true);
+      daemon.tick();
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      await execDone;
+      const refused = await daemon.handle(at("exec", exec("true")));
+      expect((refused as any).refused).toEqual([
+        expect.stringMatching(/could not connect to CoCalc for 1 hour/),
+      ]);
+      // Replaying the old state renews nothing.
+      daemon.applyState(narrow);
+      expect(daemon.leaseLapsed()).toBe(true);
+      // A fresh one does; it is not an end.
+      daemon.applyState(
+        stateEnvelope({
+          state_version: "2",
+          policy_epoch: 1,
+          policy: lease1,
+          issued_at: Date.now() + shift,
+        }),
+      );
+      expect(daemon.leaseLapsed()).toBe(false);
+      expect(daemon.sessionEnded).toBe(false);
+      expect(store.ended).toBeNull();
+      const again = ok(await daemon.handle(at("exec", exec("echo back"))));
+      expect((again.result as any).stdout).toBe("back\n");
+    });
+
+    it("a future-dated state renews nothing however often it is replayed (its restrictions still apply); one within the skew renews only to its own time", () => {
+      let shift = 0;
+      clocks = {
+        wall: () => Date.now() + shift,
+        continuous: systemClocks.continuous,
+      };
+      daemon = makeDaemon();
+      const before = store.renewal.at;
+      const future = stateEnvelope({
+        issued_at: Date.now() + 10 * 3_600_000,
+        project_floors: { [project_id]: 5 },
+      });
+      for (const s of [0, 3_600_000, 2 * 3_600_000]) {
+        shift = s;
+        daemon.applyState(future);
+        expect(store.renewal.at).toBe(before);
+      }
+      expect(store.state.floors.projects[project_id]).toBe(5);
+      shift = 0;
+      const t = Date.now() + 10_000;
+      const near = stateEnvelope({ state_version: "2", issued_at: t });
+      daemon.applyState(near);
+      expect(store.renewal.at).toBe(t);
+      shift = 3_600_000;
+      daemon.applyState(near);
+      expect(store.renewal.at).toBe(t);
+    });
+
+    it("a computer paired before the hard lease fails closed: at start its work stops and it runs nothing, but signed state still reaches it", async () => {
+      const started = ok(
+        await daemon.handle(message("run", runJob("sleep 30"))),
+      );
+      const job_id = (started.result as any).job_id;
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "running";
+      });
+      // The daemon.json of a computer paired before lease_hours existed.
+      const file = join(dir, "state", "daemon.json");
+      const legacy = JSON.parse(readFileSync(file, "utf8"));
+      delete legacy.ceiling.lease_hours;
+      delete legacy.effective_policy.lease_hours;
+      delete legacy.renewal;
+      writeFileSync(file, JSON.stringify(legacy));
+      store = DaemonStore.open(join(dir, "state"))!;
+      daemon = makeDaemon();
+      expect(daemon.leaseLapsed()).toBe(true);
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      const refused = await daemon.handle(message("exec", exec("true")));
+      expect((refused as any).refused).toEqual([
+        expect.stringMatching(/before hard leases existed/),
+      ]);
+      // A fresh state renews nothing that isn't there: still nothing runs.
+      daemon.applyState(stateEnvelope({ issued_at: Date.now() }));
+      expect(daemon.leaseLapsed()).toBe(true);
+      // Revocation still reaches it.
+      daemon.applyState(
+        stateEnvelope({ state_version: "2", ended: { reason: "revoked" } }),
+      );
+      expect(daemon.sessionEnded).toBe(true);
+    });
+
+    it("the hard lease also counts time since boot, so setting the wall clock back doesn't stretch it", () => {
+      let since = 10_000;
+      let bootId = "boot-1";
+      const hubClock = new HubClock(clocks);
+      hubClock.observe(0);
+      daemon = new ComputerDaemon({
+        stateDir: dir,
+        store,
+        clocks,
+        hubClock,
+        session: new SessionClock(clocks, { deadline_ms: null, max_ms: null }),
+        workdir,
+        shell: "/bin/bash",
+        killGraceMs: 200,
+        bootClock: { bootId: () => bootId, sinceBootMs: () => since },
+      });
+      daemon.applyState(
+        stateEnvelope({
+          policy_epoch: 1,
+          policy: { ...ceiling, lease_hours: 1 },
+        }),
+      );
+      expect(store.renewal.boot?.boot_id).toBe("boot-1");
+      since += 30 * 60_000;
+      expect(daemon.leaseLapsed()).toBe(false);
+      // Two hours since boot, while the wall clock says no time passed.
+      since += 90 * 60_000;
+      expect(daemon.leaseLapsed()).toBe(true);
+      // After a reboot only the wall clock is left.
+      bootId = "boot-2";
+      expect(daemon.leaseLapsed()).toBe(false);
+    });
+
+    it("once ended, drain sees every job and exec gone, SIGKILL included, before the daemon may exit", async () => {
+      // SIGTERM is ignored by the shell and (inherited) by its sleep.
+      const stubborn = "trap '' TERM; sleep 30";
+      const started = ok(await daemon.handle(message("run", runJob(stubborn))));
+      const job_id = (started.result as any).job_id;
+      const execDone = daemon.handle(message("exec", exec(stubborn)));
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "running";
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      daemon.applyState(stateEnvelope({ ended: { reason: "revoked" } }));
+      expect(await daemon.drain(10_000, 50)).toBe(true);
+      expect(daemon.jobs.get(job_id)?.state).toBe("killed");
+      expect(daemon.jobs.liveCount()).toBe(0);
+      expect(daemon.cleanups.pending()).toEqual([]);
+      await execDone;
+    });
+
+    it("a state's policy only narrows; a widening one is refused but its floors still apply", async () => {
+      const narrower = {
+        ...ceiling,
+        duration: { initial_seconds: 3600, max_seconds: 7200 },
+      };
+      daemon.applyState(stateEnvelope({ policy_epoch: 1, policy: narrower }));
+      expect(store.state.policy_epoch).toBe(1);
+      expect(store.effectivePolicy.duration?.max_seconds).toBe(7200);
+      // Not even back to the ceiling, but the raised floor is applied.
+      expect(() =>
+        daemon.applyState(
+          stateEnvelope({
+            state_version: "2",
+            policy_epoch: 2,
+            policy: ceiling,
+            computer_epoch: 3,
+          }),
+        ),
+      ).toThrow(/would widen/);
+      expect(store.state.policy_epoch).toBe(1);
+      expect(store.state.floors.computer_epoch).toBe(3);
+      const old = await daemon.handle(message("exec", exec("true")));
+      expect((old as any).refused).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/another effective policy/),
+        ]),
+      );
+    });
+
+    it("reconciles at start: a crash after the state write but before its side effects is repaired", async () => {
+      const started = ok(
+        await daemon.handle(message("run", runJob("sleep 30"))),
+      );
+      const job_id = (started.result as any).job_id;
+      // The write happens, then the process dies before reconciling.
+      store.applyState(
+        stateEnvelope({ project_floors: { [project_id]: 5 } }),
+        Date.now(),
+      );
+      daemon.jobs.refresh();
+      expect(daemon.jobs.get(job_id)?.state).toBe("running");
+      daemon.stop();
+      // The next daemon reconciles before doing anything else.
+      daemon = makeDaemon();
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+    });
+
+    it("a running exec below its project's floor is stopped; one admitted above it keeps running", async () => {
+      const t0 = Date.now();
+      const below = daemon.handle(
+        message("exec", exec("sleep 30"), {
+          attestation: { privacy_epoch: 1 },
+        }),
+      );
+      await new Promise((r) => setTimeout(r, 300));
+      const snapshot = stateEnvelope({ project_floors: { [project_id]: 5 } });
+      daemon.applyState(snapshot);
+      await below;
+      expect(Date.now() - t0).toBeLessThan(15_000);
+      const above = daemon.handle(
+        message("exec", exec("sleep 1; echo kept"), {
+          attestation: { privacy_epoch: 5 },
+        }),
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      // Replaying the older snapshot changes nothing for it.
+      daemon.applyState(snapshot);
+      const r = ok(await above);
+      expect((r.result as any).stdout).toBe("kept\n");
     });
 
     it("refuses everything once the session has ended", async () => {
@@ -618,22 +977,10 @@ describe("the computer daemon (direct mode)", () => {
           ),
         ),
       );
-      const { cancelled } = daemon.applyFloors(
-        signEnvelope(
-          SIGNED_KINDS.floors,
-          parseComputerFloors({
-            type: "cocalc-computer-floors",
-            version: 1,
-            computer_id,
-            home_epoch: 0,
-            computer_epoch: 1,
-            projects: {},
-            issued_at: Date.now(),
-          }),
-          homeKey,
-        ),
+      daemon.applyState(stateEnvelope({ computer_epoch: 1 }));
+      expect(daemon.jobs.get((queued.result as any).job_id)!.state).toBe(
+        "cancelled",
       );
-      expect(cancelled).toEqual([(queued.result as any).job_id]);
       require("node:fs").writeFileSync(gate, "");
       await new Promise((r) => setTimeout(r, 300));
       daemon.jobs.refresh();
@@ -754,20 +1101,6 @@ describe("the computer daemon (direct mode)", () => {
       nice: false,
       ...extra,
     });
-    const floors = (computer_epoch: number, projects: Record<string, number>) =>
-      signEnvelope(
-        SIGNED_KINDS.floors,
-        parseComputerFloors({
-          type: "cocalc-computer-floors",
-          version: 1,
-          computer_id,
-          home_epoch: 0,
-          computer_epoch,
-          projects,
-          issued_at: Date.now(),
-        }),
-        homeKey,
-      );
 
     it("an exec runs no longer than the ticket allows", async () => {
       const started = Date.now();
@@ -826,12 +1159,14 @@ describe("the computer daemon (direct mode)", () => {
         await daemon.handle(message("run", run("true", { exclusive: true }))),
       );
       expect((queued.result as any).state).toBe("queued");
-      const { killed, cancelled } = daemon.applyFloors(
-        floors(0, { [project_id]: 2 }),
+      daemon.applyState(stateEnvelope({ project_floors: { [project_id]: 2 } }));
+      expect(daemon.jobs.get((queued.result as any).job_id)!.state).toBe(
+        "cancelled",
       );
-      expect(killed).toEqual([(mine.result as any).job_id]);
-      expect(cancelled).toEqual([(queued.result as any).job_id]);
-      daemon.jobs.refresh();
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get((mine.result as any).job_id)?.state === "killed";
+      });
       expect(daemon.jobs.get((blocker.result as any).job_id)!.state).toBe(
         "running",
       );
@@ -848,9 +1183,13 @@ describe("the computer daemon (direct mode)", () => {
       const queued = ok(
         await daemon.handle(message("run", run("true", { exclusive: true }))),
       );
-      const { cancelled, killed } = daemon.applyFloors(floors(3, {}));
-      expect(cancelled).toEqual([(queued.result as any).job_id]);
-      expect(killed).toEqual([]);
+      daemon.applyState(stateEnvelope({ computer_epoch: 3 }));
+      expect(daemon.jobs.get((queued.result as any).job_id)!.state).toBe(
+        "cancelled",
+      );
+      expect(
+        daemon.jobs.get((running.result as any).job_id)!.kill_requested,
+      ).toBe(false);
       require("node:fs").writeFileSync(gate, "");
       await waitFor(() => {
         daemon.jobs.refresh();
