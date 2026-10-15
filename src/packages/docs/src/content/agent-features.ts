@@ -184,7 +184,14 @@ Use [Agents](/docs/ai/my-agents) to inspect saved results beside the conversatio
 give feedback, and continue work. Artifacts can represent files, collaborative
 Markdown, images, proposed actions, Git commits, or GitHub pull requests. File
 previews show the current saved file, not a historical snapshot; a pinned commit
-is the appropriate artifact for a fixed code revision.
+is the appropriate artifact for a fixed code revision. A Sagebrush board
+(\`foo.board.json\`) published as a file shows live in the card on sites that
+turn this on (the Sagebrush origin site setting), its code running in
+Sagebrush's sandboxed frame; edits made there are not saved to the file.
+Showing it sends that site the file's complete text and name.
+Agents learn the board format, and what a board's code can use, from
+https://sagebrush.space/llms.txt, and check their code before publishing with
+the Sagebrush command line pinned (version and digest) in the CoCalc skill.
 
 The [CLI](/docs/cli/use-cocalc-cli) exposes the publication workflow through
 \`project chat artifact publish --help\`. Runtime instructions supply the exact

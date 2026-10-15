@@ -36,6 +36,20 @@ jest.mock("@cocalc/frontend/public-viewer/file-contents", () => ({
     </div>
   ),
 }));
+// Site settings a test sets; others come from the real store.
+let mockCustomize: Record<string, unknown> = {};
+jest.mock("@cocalc/frontend/app-framework", () => {
+  const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  return {
+    ...actual,
+    useTypedRedux: (store: string, key: string) => {
+      const value = actual.useTypedRedux(store, key);
+      return store === "customize" && key in mockCustomize
+        ? mockCustomize[key]
+        : value;
+    },
+  };
+});
 const artifact: any = {
   artifact_id: "policy",
   thread_id: "thread",
@@ -268,4 +282,90 @@ test("missing initial file shows the error without displaying another path's pre
   await screen.findByText("Error: No such file");
   expect(screen.queryByTestId("preview")).toBeNull();
   expect(screen.queryByText(/previous preview is retained/)).toBeNull();
+});
+
+test("a board waits for the site's settings and goes only where they say", async () => {
+  // Before the site's settings arrive, the store holds only the public
+  // defaults: a site that turned boards off, or chose its own renderer, must
+  // not have the board loaded into the public frame meanwhile.
+  const board: any = {
+    ...artifact,
+    file: { path: "/home/user/plan.board.json" },
+  };
+  readFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
+  const view = () => <FileArtifact artifact={board} historical={false} />;
+  mockCustomize = {
+    _is_configured: false,
+    sagebrush_origin: "https://sagebrush.space",
+  };
+  const { rerender } = render(view());
+  expect(screen.getByText("Loading board preview...")).toBeInTheDocument();
+  // Long enough for the board component to load and read the file, had it
+  // been mounted.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+  expect(document.querySelector("iframe")).toBeNull();
+  expect(readFile).not.toHaveBeenCalled();
+
+  // This site turned live boards off: shown as text, no frame.
+  mockCustomize = { _is_configured: true, sagebrush_origin: "" };
+  rerender(view());
+  await screen.findByTestId("preview");
+  expect(document.querySelector("iframe")).toBeNull();
+
+  // This site uses its own renderer.
+  mockCustomize = {
+    _is_configured: true,
+    sagebrush_origin: "https://boards.example.org",
+  };
+  rerender(view());
+  const frame = await screen.findByTitle("Sagebrush board: plan.board.json");
+  expect(frame.getAttribute("src")).toBe(
+    "https://boards.example.org/frame/board/",
+  );
+  expect(document.querySelectorAll("iframe")).toHaveLength(1);
+  mockCustomize = {};
+});
+
+test("a card whose site setting changes answers the new renderer", async () => {
+  const board: any = {
+    ...artifact,
+    file: { path: "/home/user/plan.board.json" },
+  };
+  readFile.mockResolvedValue('{"format":"sagebrush-board","version":1}');
+  const view = () => <FileArtifact artifact={board} historical={false} />;
+  const title = "Sagebrush board: plan.board.json";
+  const ready = (frame: HTMLIFrameElement) =>
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { sagebrush: "ready", version: 1 },
+          source: frame.contentWindow as Window,
+        }),
+      );
+    });
+  mockCustomize = {
+    _is_configured: true,
+    sagebrush_origin: "https://one.example.org",
+  };
+  const { rerender } = render(view());
+  const first = (await screen.findByTitle(title)) as HTMLIFrameElement;
+  first.contentWindow!.postMessage = jest.fn();
+  ready(first);
+  expect(first.contentWindow!.postMessage).toHaveBeenCalledTimes(1);
+
+  mockCustomize = {
+    _is_configured: true,
+    sagebrush_origin: "https://two.example.org",
+  };
+  rerender(view());
+  const second = (await waitFor(() => {
+    const f = screen.getByTitle(title) as HTMLIFrameElement;
+    expect(f.getAttribute("src")).toBe("https://two.example.org/frame/board/");
+    return f;
+  })) as HTMLIFrameElement;
+  const posted = jest.fn();
+  second.contentWindow!.postMessage = posted;
+  ready(second);
+  expect(posted).toHaveBeenCalledTimes(1);
+  mockCustomize = {};
 });

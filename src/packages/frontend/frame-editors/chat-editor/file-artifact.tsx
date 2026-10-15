@@ -27,11 +27,16 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
+import { isBoardPath, useBoardFrameUrl } from "./board-artifact-frame";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
 const NotebookArtifact = lazyWithRetry(
   () => import("./notebook-artifact"),
   "notebook artifact",
+);
+const BoardArtifact = lazyWithRetry(
+  () => import("./board-artifact"),
+  "board artifact",
 );
 
 const TEXT_EXTENSIONS = new Set([
@@ -167,6 +172,26 @@ function BinaryPreview({
 }
 
 export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
+  const boardFrameUrl = useBoardFrameUrl();
+  const path = props.artifact.file?.path ?? "";
+  // A Sagebrush board runs live in Sagebrush's sandboxed frame; with the
+  // sagebrush_origin site setting blank it is shown as text. Until the site's
+  // settings arrive, neither: the setting decides where the file may go.
+  if (boardFrameUrl === undefined && isBoardPath(path))
+    return <div role="status">Loading board preview...</div>;
+  if (boardFrameUrl && isBoardPath(path))
+    return (
+      <Suspense fallback={<div role="status">Loading board preview...</div>}>
+        <BoardArtifact
+          // A new origin is a new frame, answered afresh.
+          key={`${path}\n${boardFrameUrl}`}
+          path={path}
+          frameUrl={boardFrameUrl}
+          historical={props.historical}
+          onToolbarActions={props.onToolbarActions}
+        />
+      </Suspense>
+    );
   if (
     props.projectId &&
     props.artifact.file?.path.toLowerCase().endsWith(".ipynb")

@@ -65,6 +65,7 @@ export type SiteSettingsKeys =
   | "site_name"
   | "site_description"
   | "status_page_url"
+  | "sagebrush_origin"
   | "account_creation_email_instructions"
   | "sign_in_email_instructions"
   | "help_email"
@@ -292,6 +293,25 @@ const is_optional_http_url = (val: string): boolean => {
     return false;
   }
 };
+// An https URL, or an http one for this computer (development): a site that
+// receives users' files must not be reachable over plain http.
+export const is_https_or_loopback_url = (val: string): boolean => {
+  try {
+    const url = new URL(to_trimmed_str(val));
+    if (url.protocol === "https:") return true;
+    const host = url.hostname;
+    return (
+      url.protocol === "http:" &&
+      (host === "localhost" ||
+        host === "[::1]" ||
+        /^127\.\d+\.\d+\.\d+$/.test(host))
+    );
+  } catch {
+    return false;
+  }
+};
+const is_optional_https_or_loopback_url = (val: string): boolean =>
+  !to_trimmed_str(val) || is_https_or_loopback_url(val);
 export const only_booleans = ["yes", "no"]; // we also understand true and false
 export const to_int = (val): number => parseInt(val);
 export const only_ints = (val) =>
@@ -533,6 +553,19 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Theme", "SLA"],
     group: "Branding & UI",
     subgroup: "Contact",
+  },
+  sagebrush_origin: {
+    name: "Sagebrush origin",
+    desc: "Where Sagebrush boards (.board.json files) shown in chat artifacts run: a sandboxed frame of this site's /frame/board/ page. Viewing a board sends that site the file's complete text and name. https only (http only for localhost), for example https://sagebrush.space. Blank (the default) shows boards as plain text and sends nothing.",
+    // Off unless a site turns it on: a board is the user's file, and this
+    // sends it to another site (cocalc.ai sets https://sagebrush.space).
+    default: "",
+    clearable: true,
+    valid: is_optional_https_or_loopback_url,
+    to_val: to_trimmed_str,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Artifacts",
   },
   help_email: {
     name: help_email_name,
