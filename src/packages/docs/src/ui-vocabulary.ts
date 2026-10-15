@@ -372,6 +372,28 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ],
     usedIn: [bold("ai", "Start agent")],
   },
+  // Without a way to pay for the chosen runtime, the start button's tooltip
+  // and accessible name ask for that sign-in instead.
+  ...(
+    [
+      [
+        "codex",
+        "Sign in with ChatGPT to start",
+        ': "Sign in with ChatGPT to start"',
+      ],
+      ["claude", "Connect Claude to start", '? "Connect Claude to start"'],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `agents.new.sign-in-to-start.${key}`,
+      label,
+      anchors: [
+        def(WORKSPACE_PAGE, text),
+        ren(WORKSPACE_PAGE, "signInRequired ? signInLabel"),
+      ],
+      usedIn: [bold("ai", label)],
+    }),
+  ),
   {
     id: "agents.new.create-without-task",
     label: "Create agent without a task",
@@ -434,6 +456,18 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ),
     ],
     usedIn: [bold("ai", "My first project")],
+  },
+  {
+    id: "agents.new.runtime.codex",
+    label: "Codex",
+    anchors: [
+      def(
+        "frontend/agents/new-agent-runtime-select.tsx",
+        '{ value: "codex-native", label: "Codex" }',
+      ),
+      ren(WORKSPACE_PAGE, "<NewAgentRuntimeSelect"),
+    ],
+    usedIn: [{ file: doc("ai"), text: "the runtime menu starts at **Codex**" }],
   },
   {
     id: "agents.new.runtime.claude",
@@ -1456,7 +1490,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   },
   {
     // The heading that tells the first-run new-agent form, which has no
-    // runtime choice, from the full form.
+    // name or project choice, from the full form.
     id: "claude.first-run-form",
     label: "What would you like to work on?",
     anchors: [
