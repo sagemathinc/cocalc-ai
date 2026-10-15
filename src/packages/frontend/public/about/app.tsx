@@ -11,9 +11,11 @@ import {
   getPublicAboutIntro,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_HISTORY,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_ABOUT_TRUST,
   PUBLIC_TEAM_BILLING_CONTACT,
   type PublicAboutTextPart,
 } from "@cocalc/util/public-about-content";
@@ -177,35 +179,6 @@ const ABOUT_PAGE_CSS = `
   }
 `;
 
-const COMPANY_FACTS = [
-  {
-    detail: "Independent security audit",
-    href: publicPath("policies/trust"),
-    value: "SOC 2",
-  },
-  {
-    detail: "Verified privacy program",
-    href: publicPath("policies/trust"),
-    value: "GDPR",
-  },
-  { detail: "Hosted and customer-operated", value: "Flexible deployment" },
-];
-
-const COMPANY_TIMELINE = [
-  {
-    body: "SageMathCloud launches, bringing open technical software into a collaborative browser workspace.",
-    year: "2013",
-  },
-  {
-    body: "William leaves his full professorship to focus on SageMath, Inc. and CoCalc full-time.",
-    year: "2019",
-  },
-  {
-    body: "CoCalc is rebuilt with agents at its core: they work in the same persistent, shared projects as the people who direct them.",
-    year: "Today",
-  },
-];
-
 function Eyebrow({ children }: { children: string }) {
   return (
     <div
@@ -361,9 +334,9 @@ function AboutOverview({ config }: { config?: PublicConfig }) {
 
       <section aria-label="Company maturity and trust">
         <Flex gap={10} style={{ marginBottom: 22 }} vertical>
-          <Eyebrow>Built for the long term</Eyebrow>
+          <Eyebrow>{PUBLIC_ABOUT_TRUST.eyebrow}</Eyebrow>
           <Title level={2} style={{ margin: 0 }}>
-            A mature company behind your team and its agents.
+            {PUBLIC_ABOUT_TRUST.headline}
           </Title>
           <Paragraph
             style={{
@@ -373,13 +346,11 @@ function AboutOverview({ config }: { config?: PublicConfig }) {
               maxWidth: "72ch",
             }}
           >
-            SageMath, Inc. develops and operates CoCalc with the security,
-            privacy, deployment flexibility, and operational discipline expected
-            by individuals and institutions.
+            {PUBLIC_ABOUT_TRUST.intro}
           </Paragraph>
         </Flex>
         <div className="cocalc-about-facts">
-          {COMPANY_FACTS.map((fact) => {
+          {PUBLIC_ABOUT_TRUST.facts.map((fact) => {
             const content = (
               <>
                 <div
@@ -413,8 +384,8 @@ function AboutOverview({ config }: { config?: PublicConfig }) {
               padding: 18,
               textDecoration: "none",
             } as const;
-            return fact.href ? (
-              <a href={fact.href} key={fact.value} style={style}>
+            return fact.path ? (
+              <a href={publicPath(fact.path)} key={fact.value} style={style}>
                 {content}
               </a>
             ) : (
@@ -445,16 +416,15 @@ function AboutOverview({ config }: { config?: PublicConfig }) {
             />
             <div>
               <div style={{ fontWeight: PUBLIC_WEIGHT.bold }}>
-                Security and privacy are operating requirements.
+                {PUBLIC_ABOUT_TRUST.note.title}
               </div>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                Review independent assurance, privacy commitments, and data
-                processing terms.
+                {PUBLIC_ABOUT_TRUST.note.body}
               </div>
             </div>
           </Flex>
-          <Button href={publicPath("policies/trust")}>
-            Trust and compliance
+          <Button href={publicPath(PUBLIC_ABOUT_TRUST.link.path)}>
+            {PUBLIC_ABOUT_TRUST.link.label}
           </Button>
         </div>
       </section>
@@ -489,13 +459,13 @@ function AboutOverview({ config }: { config?: PublicConfig }) {
 
       <section aria-label="CoCalc company history">
         <Flex gap={10} style={{ marginBottom: 22 }} vertical>
-          <Eyebrow>Our path</Eyebrow>
+          <Eyebrow>{PUBLIC_ABOUT_HISTORY.eyebrow}</Eyebrow>
           <Title level={2} style={{ margin: 0 }}>
-            Built from computational mathematics, for work far beyond it.
+            {PUBLIC_ABOUT_HISTORY.headline}
           </Title>
         </Flex>
         <div className="cocalc-about-timeline">
-          {COMPANY_TIMELINE.map((item) => (
+          {PUBLIC_ABOUT_HISTORY.timeline.map((item) => (
             <div
               key={item.year}
               style={{

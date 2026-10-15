@@ -10,9 +10,11 @@ import {
 import {
   getPublicAboutIntro,
   PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_HISTORY,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_ABOUT_TRUST,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
   UNPUBLISHED_TEAM_PROFILE_SLUGS,
@@ -465,6 +467,53 @@ describe("core landing page initial HTML", () => {
       /Claude Code|experimental preview|Incorporated|Our mission/i,
     );
   });
+
+  // The React page renders the same words (frontend/public/__tests__/
+  // app.test.tsx), in the same order, so crawlers also read the trust section
+  // and the history.
+  it.each(["/", "/prefix"])(
+    "renders About's trust section and history from the shared content, on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const trustHref = `${prefix}/policies/trust`;
+      const about = renderPublicRoutePrerender(
+        { section: "about", route: { view: "about" } },
+        basePath,
+      );
+      const { eyebrow, headline, intro, link, note } = PUBLIC_ABOUT_TRUST;
+      expect(about).toContain(
+        `<p>${eyebrow}</p>\n  <h2>${headline}</h2>\n  <p>${intro}</p>`,
+      );
+      expect(about).toContain(
+        `<ul><li><a href="${trustHref}"><strong>SOC 2</strong> Independent security audit</a></li><li><a href="${trustHref}"><strong>GDPR</strong> Verified privacy program</a></li><li><strong>Flexible deployment</strong> Hosted and customer-operated</li></ul>`,
+      );
+      expect(about).toContain(
+        `<p><strong>${note.title}</strong> ${note.body}</p>\n  <p><a href="${trustHref}">${link.label}</a></p>`,
+      );
+      const history = PUBLIC_ABOUT_HISTORY;
+      expect(about).toContain(
+        `<p>${history.eyebrow}</p>\n  <h2>${history.headline}</h2>\n  <ul>${history.timeline
+          .map(({ body, year }) => `<li><strong>${year}</strong> ${body}</li>`)
+          .join("")}</ul>`,
+      );
+      // The two strings this page rewrote, word for word.
+      expect(about).toContain(
+        "<h2>A mature company behind your team and its agents.</h2>",
+      );
+      expect(about).toContain(
+        "<li><strong>Today</strong> CoCalc is rebuilt with agents at its core: they work in the same persistent, shared projects as the people who direct them.</li>",
+      );
+      const sections = [
+        PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+        headline,
+        "Who we serve",
+        history.headline,
+        "Meet the team",
+      ].map((text) => about.indexOf(`<h2>${text}</h2>`));
+      expect(sections.every((index) => index >= 0)).toBe(true);
+      expect([...sections].sort((a, b) => a - b)).toEqual(sections);
+    },
+  );
 
   // As on the React page, cocalc.ai's lead names Claude and links it to the
   // Claude guide, which states its preview status.

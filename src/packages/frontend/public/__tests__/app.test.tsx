@@ -18,8 +18,10 @@ import * as authApi from "@cocalc/frontend/auth/api";
 import {
   getPublicAboutIntro,
   PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_HISTORY,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+  PUBLIC_ABOUT_TRUST,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
   UNPUBLISHED_TEAM_PROFILE_SLUGS,
@@ -366,13 +368,53 @@ describe("PublicApp", () => {
     ).toEqual(PUBLIC_ABOUT_PRINCIPLES.map(({ title }) => title));
     expect(PUBLIC_ABOUT_PRINCIPLES).toHaveLength(3);
 
-    // Main's trust and events links stay.
+    // The trust section and the history render the shared words, as the
+    // crawler fallback does.
+    const trust = screen.getByRole("region", {
+      name: "Company maturity and trust",
+    });
+    expect(within(trust).getByText(PUBLIC_ABOUT_TRUST.eyebrow)).not.toBeNull();
+    expect(within(trust).getByRole("heading", { level: 2 }).textContent).toBe(
+      PUBLIC_ABOUT_TRUST.headline,
+    );
+    expect(within(trust).getByText(PUBLIC_ABOUT_TRUST.intro)).not.toBeNull();
+    for (const { detail, path, value } of PUBLIC_ABOUT_TRUST.facts) {
+      if (path == null) {
+        expect(within(trust).getByText(value)).not.toBeNull();
+        expect(within(trust).getByText(detail)).not.toBeNull();
+      } else {
+        expect(
+          within(trust).getByRole("link", { name: `${value} ${detail}` }),
+        ).toHaveAttribute("href", publicPath(path));
+      }
+    }
+    expect(
+      within(trust).getByText(PUBLIC_ABOUT_TRUST.note.title),
+    ).not.toBeNull();
+    expect(
+      within(trust).getByText(PUBLIC_ABOUT_TRUST.note.body),
+    ).not.toBeNull();
+    const history = screen.getByRole("region", {
+      name: "CoCalc company history",
+    });
+    expect(
+      within(history).getByText(PUBLIC_ABOUT_HISTORY.eyebrow),
+    ).not.toBeNull();
+    expect(within(history).getByRole("heading", { level: 2 }).textContent).toBe(
+      PUBLIC_ABOUT_HISTORY.headline,
+    );
+    for (const { body, year } of PUBLIC_ABOUT_HISTORY.timeline) {
+      expect(within(history).getByText(year)).not.toBeNull();
+      expect(within(history).getByText(body)).not.toBeNull();
+    }
+
+    // The overview keeps its trust and events links.
     expect(screen.getByRole("link", { name: /SOC 2/ })).toHaveAttribute(
       "href",
       publicPath("policies/trust"),
     );
     expect(
-      screen.getByRole("link", { name: "Trust and compliance" }),
+      screen.getByRole("link", { name: PUBLIC_ABOUT_TRUST.link.label }),
     ).toHaveAttribute("href", publicPath("policies/trust"));
     expect(screen.getByRole("link", { name: "Events" })).toHaveAttribute(
       "href",

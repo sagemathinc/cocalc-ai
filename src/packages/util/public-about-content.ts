@@ -5,9 +5,9 @@
 
 import { CANONICAL_PUBLIC_SITE_ORIGIN } from "./public-site-policy";
 
-// The About page's company statement and principles. The React page and the
-// crawler fallback in hub/servers/app/public-prerender.ts both render these
-// strings, so the two stay word for word the same.
+// The words of the About and team pages. The React page and the crawler
+// fallback in hub/servers/app/public-prerender.ts both render these strings,
+// so the two stay word for word the same.
 
 export const PUBLIC_ABOUT_HEADLINE =
   "We build the agent platform where your agents work alongside your team.";
@@ -63,6 +63,41 @@ export const PUBLIC_ABOUT_PRINCIPLES = [
   },
 ] as const;
 
+export interface PublicAboutFact {
+  detail: string;
+  // A site path that the fact links to.
+  path?: string;
+  value: string;
+}
+
+const PUBLIC_ABOUT_FACTS: readonly PublicAboutFact[] = [
+  {
+    detail: "Independent security audit",
+    path: "policies/trust",
+    value: "SOC 2",
+  },
+  {
+    detail: "Verified privacy program",
+    path: "policies/trust",
+    value: "GDPR",
+  },
+  { detail: "Hosted and customer-operated", value: "Flexible deployment" },
+];
+
+// The trust section, after the principles. Paths are site paths.
+export const PUBLIC_ABOUT_TRUST = {
+  eyebrow: "Built for the long term",
+  facts: PUBLIC_ABOUT_FACTS,
+  headline: "A mature company behind your team and its agents.",
+  intro:
+    "SageMath, Inc. develops and operates CoCalc with the security, privacy, deployment flexibility, and operational discipline expected by individuals and institutions.",
+  link: { label: "Trust and compliance", path: "policies/trust" },
+  note: {
+    body: "Review independent assurance, privacy commitments, and data processing terms.",
+    title: "Security and privacy are operating requirements.",
+  },
+} as const;
+
 export const PUBLIC_ABOUT_AUDIENCES = [
   {
     body: "Individual researchers and collaborative groups running experiments, papers, and long-lived computational projects.",
@@ -85,6 +120,26 @@ export const PUBLIC_ABOUT_AUDIENCES = [
     title: "Institutions",
   },
 ] as const;
+
+// The company's history, after the audiences.
+export const PUBLIC_ABOUT_HISTORY = {
+  eyebrow: "Our path",
+  headline: "Built from computational mathematics, for work far beyond it.",
+  timeline: [
+    {
+      body: "SageMathCloud launches, bringing open technical software into a collaborative browser workspace.",
+      year: "2013",
+    },
+    {
+      body: "William leaves his full professorship to focus on SageMath, Inc. and CoCalc full-time.",
+      year: "2019",
+    },
+    {
+      body: "CoCalc is rebuilt with agents at its core: they work in the same persistent, shared projects as the people who direct them.",
+      year: "Today",
+    },
+  ],
+} as const;
 
 export interface PublicTeamMemberSummary {
   cardText: string;

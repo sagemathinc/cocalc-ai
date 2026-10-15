@@ -29,9 +29,11 @@ import {
   getPublicTeamMember,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_HISTORY,
   PUBLIC_ABOUT_PRINCIPLES,
   PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_ABOUT_TRUST,
   PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
   type PublicAboutTextPart,
@@ -590,10 +592,30 @@ function renderAboutOverview(
     ({ body, title }) =>
       `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
   ).join("");
+  // As on the React page, a fact with a path links its value and detail.
+  const facts = PUBLIC_ABOUT_TRUST.facts
+    .map(({ detail, path, value }) => {
+      const content = `<strong>${htmlEscape(value)}</strong> ${htmlEscape(
+        detail,
+      )}`;
+      return `<li>${
+        path == null
+          ? content
+          : `<a href="${htmlEscape(publicPath(basePath, path))}">${content}</a>`
+      }</li>`;
+    })
+    .join("");
+  const { link, note } = PUBLIC_ABOUT_TRUST;
   const audiences = PUBLIC_ABOUT_AUDIENCES.map(
     ({ body, title }) =>
       `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
   ).join("");
+  const timeline = PUBLIC_ABOUT_HISTORY.timeline
+    .map(
+      ({ body, year }) =>
+        `<li><strong>${htmlEscape(year)}</strong> ${htmlEscape(body)}</li>`,
+    )
+    .join("");
   const team = PUBLIC_TEAM_MEMBERS.map(
     ({ name, slug, title }) =>
       `<li>${publicLink(
@@ -602,6 +624,8 @@ function renderAboutOverview(
         `${name}, ${title}`,
       )}</li>`,
   ).join("");
+  // The React page ends with PublicNextStep, the shared call to action that
+  // no crawler fallback renders, so its heading is not repeated here.
   return `<main data-cocalc-public-prerender="about" style="${ARTICLE_STYLE}">
 <header>
   <p>SageMath, Inc. · The company behind CoCalc</p>
@@ -617,7 +641,20 @@ function renderAboutOverview(
   <p>${htmlEscape(PUBLIC_ABOUT_REASON)}</p>
   <ul>${principles}</ul>
 </section>
+<section>
+  <p>${htmlEscape(PUBLIC_ABOUT_TRUST.eyebrow)}</p>
+  <h2>${htmlEscape(PUBLIC_ABOUT_TRUST.headline)}</h2>
+  <p>${htmlEscape(PUBLIC_ABOUT_TRUST.intro)}</p>
+  <ul>${facts}</ul>
+  <p><strong>${htmlEscape(note.title)}</strong> ${htmlEscape(note.body)}</p>
+  <p>${publicLink(basePath, link.path, link.label)}</p>
+</section>
 <section><h2>Who we serve</h2><ul>${audiences}</ul></section>
+<section>
+  <p>${htmlEscape(PUBLIC_ABOUT_HISTORY.eyebrow)}</p>
+  <h2>${htmlEscape(PUBLIC_ABOUT_HISTORY.headline)}</h2>
+  <ul>${timeline}</ul>
+</section>
 <section><h2>Meet the team</h2><ul>${team}</ul><p>${publicLink(
     basePath,
     "about/team",
