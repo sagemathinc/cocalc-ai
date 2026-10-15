@@ -396,6 +396,9 @@ function providerSnapshot(invoice: any): Record<string, unknown> {
       const intent = payment?.payment?.payment_intent;
       return {
         id: payment?.id,
+        type: payment?.payment?.type ?? null,
+        charge: stripeId(payment?.payment?.charge),
+        payment_record: stripeId(payment?.payment?.payment_record),
         status: payment?.status,
         amount_paid: payment?.amount_paid,
         amount_requested: payment?.amount_requested,
@@ -434,21 +437,62 @@ function paymentMethod(payment: any): CommercialPaymentMethod {
   return "other";
 }
 
+function stripeId(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  const id = (value as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" ? id : null;
+}
+
+function isSettledInvoicePayment(payment: any): boolean {
+  return (
+    !!payment?.id &&
+    (payment.status === "paid" || Number(payment.amount_paid ?? 0) > 0)
+  );
+}
+
+// Money that moved through Stripe has a PaymentIntent or a charge. A Payment
+// Record is a payment made outside Stripe: Stripe lists one when an invoice is
+// paid out of band (invoices.pay with paid_out_of_band, or the Dashboard).
+// CoCalc records that money as manual payment evidence, never as a Stripe
+// payment, or the same payment would be counted twice.
+function invoicePaymentKind(payment: any): "stripe" | "off-stripe" {
+  const detail = payment?.payment;
+  if (detail?.payment_intent || detail?.charge) return "stripe";
+  if (detail?.type === "payment_record" || detail?.type == null) {
+    return "off-stripe";
+  }
+  throw Error(
+    `Stripe invoice payment ${payment?.id} has unsupported type ${detail?.type}`,
+  );
+}
+
+function offStripePayments(invoice: any) {
+  return (invoice?.payments?.data ?? [])
+    .filter(
+      (payment) =>
+        isSettledInvoicePayment(payment) &&
+        invoicePaymentKind(payment) === "off-stripe",
+    )
+    .map((payment) => ({
+      id: payment.id,
+      amount: fromStripeAmount(payment.amount_paid ?? payment.amount_requested),
+      currency: `${invoice.currency ?? "usd"}`.toLowerCase(),
+    }));
+}
+
 function normalizedPayments(invoice: any) {
   return (invoice?.payments?.data ?? [])
     .filter(
       (payment) =>
-        payment?.id &&
-        (payment.status === "paid" || Number(payment.amount_paid ?? 0) > 0),
+        isSettledInvoicePayment(payment) &&
+        invoicePaymentKind(payment) === "stripe",
     )
     .map((payment) => {
-      const underlying = payment?.payment?.payment_intent;
       return {
         id: payment.id,
         underlying_payment_id:
-          typeof underlying === "string"
-            ? underlying
-            : (underlying?.id ?? null),
+          stripeId(payment?.payment?.payment_intent) ??
+          stripeId(payment?.payment?.charge),
         amount: fromStripeAmount(
           payment.amount_paid ?? payment.amount_requested,
         ),
@@ -960,6 +1004,10 @@ async function applyStripeInvoice(opts: {
       opts.include_provider_payments === false
         ? []
         : normalizedPayments(opts.stripeInvoice),
+    off_stripe_payments:
+      opts.include_provider_payments === false
+        ? []
+        : offStripePayments(opts.stripeInvoice),
     collection_state: collectionState,
     event_type: opts.event_type,
     event_source: opts.event_source,

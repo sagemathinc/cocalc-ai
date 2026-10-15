@@ -1890,6 +1890,122 @@ describe("commercial Stripe invoices", () => {
     );
   });
 
+  function paidInvoiceWithPayments(data: any[]) {
+    return stripeInvoiceFixture({
+      status: "paid",
+      amount_due: 390000,
+      amount_remaining: 0,
+      amount_paid: 390000,
+      status_transitions: { paid_at: 1787529600 },
+      payments: { data },
+    });
+  }
+
+  async function reconcileForTest(key: string) {
+    return await reconcileStripeCommercialInvoice({
+      id: "co_1",
+      commercial_invoice_id: "ci_1",
+      reason: "Reconcile Stripe invoice",
+      event_source: "stripe-webhook",
+      event_idempotency_key: key,
+    });
+  }
+
+  it("passes payments made outside Stripe on for evidence checks instead of recording them", async () => {
+    // After invoices.pay(paid_out_of_band) the manual evidence row is the
+    // payment; Stripe's payment record must not become a second payment.
+    mockGetCommercialInvoice.mockResolvedValue(
+      invoiceFixture({ status: "paid" }),
+    );
+    stripe.invoices.retrieve.mockResolvedValue(
+      paidInvoiceWithPayments([
+        {
+          id: "inpay_oob",
+          amount_paid: 390000,
+          amount_requested: 390000,
+          status: "paid",
+          status_transitions: { paid_at: 1787529600 },
+          payment: { type: "payment_record", payment_record: "prec_1" },
+        },
+        {
+          id: "inpay_canceled",
+          amount_paid: null,
+          amount_requested: 390000,
+          status: "canceled",
+          payment: {
+            type: "payment_intent",
+            payment_intent: { id: "pi_canceled", status: "canceled" },
+          },
+        },
+      ]),
+    );
+
+    await reconcileForTest("evt_oob");
+
+    expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount_paid: "3900.0000000000",
+        collection_state: "paid",
+        provider_payments: [],
+        off_stripe_payments: [
+          { id: "inpay_oob", amount: "3900.0000000000", currency: "usd" },
+        ],
+      }),
+    );
+  });
+
+  it("records charge-backed invoice payments with their charge id", async () => {
+    mockGetCommercialInvoice.mockResolvedValue(
+      invoiceFixture({ status: "paid" }),
+    );
+    stripe.invoices.retrieve.mockResolvedValue(
+      paidInvoiceWithPayments([
+        {
+          id: "inpay_charge",
+          amount_paid: 390000,
+          status: "paid",
+          status_transitions: { paid_at: 1787529600 },
+          payment: { type: "charge", charge: "ch_1" },
+        },
+      ]),
+    );
+
+    await reconcileForTest("evt_charge");
+
+    expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider_payments: [
+          expect.objectContaining({
+            id: "inpay_charge",
+            underlying_payment_id: "ch_1",
+          }),
+        ],
+        off_stripe_payments: [],
+      }),
+    );
+  });
+
+  it("fails closed on a paid invoice payment of an unknown type", async () => {
+    mockGetCommercialInvoice.mockResolvedValue(
+      invoiceFixture({ status: "paid" }),
+    );
+    stripe.invoices.retrieve.mockResolvedValue(
+      paidInvoiceWithPayments([
+        {
+          id: "inpay_new",
+          amount_paid: 390000,
+          status: "paid",
+          payment: { type: "something_new" },
+        },
+      ]),
+    );
+
+    await expect(reconcileForTest("evt_unknown")).rejects.toThrow(
+      "unsupported type",
+    );
+    expect(mockUpdateCommercialInvoiceProvider).not.toHaveBeenCalled();
+  });
+
   it("marks an open Stripe invoice paid out of band before recording manual evidence", async () => {
     const invoice = invoiceFixture({ status: "open" });
     const order = orderFixture({ invoices: [invoice] });
