@@ -49,10 +49,8 @@ import { CopyToClipBoard, Icon, TimeAgo } from "@cocalc/frontend/components";
 import { openAppDocs, openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
-import {
-  COCALC_CLI_DOWNLOAD_URL,
-  COCALC_CLI_INSTALL_COMMAND,
-} from "@cocalc/util/consts/ui";
+import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
+import { siteCliInstallCommand } from "@cocalc/frontend/components/install-cocalc-cli";
 import { uuid } from "@cocalc/util/misc";
 import {
   gcpMachineArchitecture,
@@ -5145,7 +5143,7 @@ export function ProjectComputeVms({
         }
         description={
           <CopyToClipBoard
-            value={COCALC_CLI_INSTALL_COMMAND}
+            value={siteCliInstallCommand()}
             {...COPYABLE_PROPS}
           />
         }

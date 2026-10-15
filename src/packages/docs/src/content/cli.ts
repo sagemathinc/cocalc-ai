@@ -16,14 +16,16 @@ See [authentication and targeting](/docs/cli/authentication-and-targets).
 
 ## Step 1: Install on your own computer
 
-For Linux (x64 or ARM64) or Apple Silicon macOS, open Terminal and run:
+For Linux (x64 or ARM64) or macOS (Apple Silicon or Intel), open Terminal and
+run this, with your CoCalc site's address (for example https://cocalc.ai):
 
 ~~~sh
-curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash
+curl -fsSL https://cocalc.ai/cli/install.sh | sh
 ~~~
 
-Follow the installer's printed PATH instruction if the command is not found.
-The standalone macOS installer currently supports Apple Silicon, not Intel Macs.
+Every CoCalc site serves its own installer at \`/cli/install.sh\`, and the CLI
+keeps itself up to date from the site it was installed from. Follow the
+installer's printed PATH instruction if the command is not found.
 
 For native Windows x64, open PowerShell and run:
 

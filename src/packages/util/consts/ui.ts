@@ -26,8 +26,13 @@ export const DOC_AI =
 
 export const COCALC_CLI_DOWNLOAD_URL =
   "https://software.cocalc.ai/software/cocalc/index.html";
-export const COCALC_CLI_INSTALL_COMMAND =
-  "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
+/**
+ * Install the CoCalc CLI from a site: every hub serves its installer at
+ * <site>/cli/install.sh (POSIX sh), and the CLI then updates from that site.
+ */
+export function cocalcCliInstallCommand(site: string): string {
+  return `curl -fsSL ${site.replace(/\/+$/, "")}/cli/install.sh | sh`;
+}
 
 export const R_IDE = "RStudio";
 

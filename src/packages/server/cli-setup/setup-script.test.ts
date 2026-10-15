@@ -19,6 +19,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CLI_INSTALLER_URL,
+  cliInstaller,
   errorScript,
   setupScript,
   shQuote,
@@ -148,6 +150,35 @@ EOF
     );
   });
 
+  it("installs from the site's own /cli/install.sh, piped to sh", () => {
+    // The fake curl records the URL and serves an installer for ~/.local/bin.
+    fake(
+      join(dir, "bin", "curl"),
+      `#!/bin/sh
+for a in "$@"; do printf '[curl %s]' "$a" >> "$LOG"; done
+printf '\\n' >> "$LOG"
+cat <<'EOF'
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/cocalc" <<'INNER'
+${FAKE_COCALC}INNER
+chmod +x "$HOME/.local/bin/cocalc"
+EOF
+`,
+    );
+    const script = setupScript(
+      sshPlan(SITE, PROJECT),
+      cliInstaller(SITE, true),
+    );
+    expect(script).toContain(`curl -fsSL '${SITE}/cli/install.sh' | sh`);
+    expect(script).not.toContain("| bash");
+    const r = run(shell, script, { answer: "\n" });
+    expect(r.status).toBe(0);
+    expect(r.calls[0]).toBe(`[curl -fsSL][curl ${SITE}/cli/install.sh]`);
+    expect(r.calls.at(-1)).toBe(
+      `[--api][${SITE}][project][ssh-config][add][-w][${PROJECT}]`,
+    );
+  });
+
   it("an old cocalc first on PATH: after upgrading, uses the new one in ~/.local/bin", () => {
     // The old one doesn't know the subcommand and must never run a step.
     fake(
@@ -221,4 +252,20 @@ EOF
 test("only real project ids; quoting refuses NUL", () => {
   expect(() => sshPlan(SITE, "x; rm -rf ~")).toThrow(SetupActionError);
   expect(() => shQuote("a\0b")).toThrow(SetupActionError);
+});
+
+describe("cliInstaller", () => {
+  it("is the site's own POSIX sh installer when the site serves CLI releases", () => {
+    expect(cliInstaller(`${SITE}/`, true)).toEqual({
+      url: `${SITE}/cli/install.sh`,
+      shell: "sh",
+    });
+  });
+
+  it("is the legacy bash installer when the site serves no CLI releases", () => {
+    expect(cliInstaller(SITE, false)).toEqual({
+      url: CLI_INSTALLER_URL,
+      shell: "bash",
+    });
+  });
 });
