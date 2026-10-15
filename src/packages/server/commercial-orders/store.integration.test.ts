@@ -1974,8 +1974,11 @@ describePglite("commercial order store", () => {
     ).rejects.toThrow("no payment evidence");
   });
 
-  it("accepts an off-Stripe settlement during CoCalc's own out-of-band operation", async () => {
+  it("accepts an off-Stripe settlement once its manual evidence exists", async () => {
     const { order, invoice } = await openStripeInvoiceForPaymentTest();
+    // The webhook can arrive between Stripe's out-of-band "pay" and the
+    // manual row; it fails then and succeeds on retry. Even CoCalc's own
+    // settlement operation is not evidence of the money.
     const { operation } = await store.reserveCommercialProviderOperation({
       order_id: order.id,
       invoice_id: invoice.id,
@@ -1988,11 +1991,30 @@ describePglite("commercial order store", () => {
       id: operation.id,
       status: "remote_started",
     });
+    await expect(
+      store.updateCommercialInvoiceProvider(paidOutOfBand(invoice)),
+    ).rejects.toThrow("no payment evidence");
+    const current = await store.getCommercialOrder(order.id);
+    await store.recordManualCommercialPayment({
+      account_id: actor,
+      id: order.id,
+      commercial_invoice_id: invoice.id,
+      expected_version: current.version,
+      reason: "record verified wire",
+      amount: "3900",
+      currency: "usd",
+      method: "wire",
+      evidence_reference: "TEST-WIRE-RETRY",
+    });
     const reconciled = await store.updateCommercialInvoiceProvider(
       paidOutOfBand(invoice),
     );
     expect(reconciled.collection_state).toBe("paid");
-    expect(reconciled.payments).toHaveLength(0);
+    expect(
+      reconciled.payments.filter(({ status }) => status === "succeeded"),
+    ).toEqual([
+      expect.objectContaining({ provider: "manual", method: "wire" }),
+    ]);
   });
 
   it("reconciles unchanged provider state without invalidating an operator version", async () => {

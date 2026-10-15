@@ -2789,15 +2789,14 @@ interface CommercialInvoiceProviderUpdate {
 }
 
 // Money that reached us outside Stripe must have CoCalc payment evidence: a
-// manual payment on this invoice, or our own in-progress out-of-band
-// settlement (Stripe was marked paid; the manual row follows in the same
-// operation). Otherwise an invoice marked paid elsewhere, e.g. in the Stripe
-// Dashboard, would complete the order with no record of the money.
-async function assertOffStripeSettlementEvidence(
-  client: PoolClient,
+// succeeded manual payment on this invoice covering it. Otherwise an invoice
+// marked paid elsewhere, e.g. in the Stripe Dashboard, would complete the
+// order with no record of the money. A webhook that arrives before CoCalc's
+// own manual settlement row is written fails here and is retried.
+function assertOffStripeSettlementEvidence(
   before: CommercialOrder,
   opts: CommercialInvoiceProviderUpdate,
-): Promise<void> {
+): void {
   const offStripe = opts.off_stripe_payments ?? [];
   if (offStripe.length === 0) return;
   const required = offStripe.reduce(
@@ -2813,15 +2812,6 @@ async function assertOffStripeSettlementEvidence(
     )
     .reduce((total, payment) => moneyAdd(total, payment.amount), toDecimal(0));
   if (moneyCompare(recorded, required) >= 0) return;
-  const { rows } = await client.query(
-    `SELECT 1 FROM commercial_provider_operations
-      WHERE commercial_invoice_id=$1
-        AND operation='mark-invoice-paid-out-of-band'
-        AND status IN ('remote_started','succeeded')
-      LIMIT 1`,
-    [opts.invoice_id],
-  );
-  if (rows[0]) return;
   throw Error(
     "Stripe reports a payment made outside Stripe on this invoice, but CoCalc has no payment evidence for it; record it with a manual payment before reconciling",
   );
@@ -2920,7 +2910,7 @@ export async function updateCommercialInvoiceProvider(
       recordCommercialOperator("provider-reconcile", "replay");
       return await loadOrder(client, replay);
     }
-    await assertOffStripeSettlementEvidence(client, before, opts);
+    assertOffStripeSettlementEvidence(before, opts);
     if (opts.skip_if_unchanged && sameProviderInvoiceState(before, opts)) {
       await client.query(
         `UPDATE commercial_invoices
