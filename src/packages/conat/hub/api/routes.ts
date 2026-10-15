@@ -191,9 +191,36 @@ export function hubApiRouteKey(
   return out.invite_id || out.token ? out : undefined;
 }
 
+// A call on several projects takes at most this many ids.
+export const MAX_PROJECTS_PER_CALL = 1000;
+
 /**
- * The project ids of a call on several projects, as the method will see
- * them (trimmed, deduplicated, in order), or undefined if not a list.
+ * Project ids as a call on several projects uses them: trimmed, valid UUIDs
+ * in lower case (as the database returns them), empty ones dropped,
+ * duplicates removed, in order. Throws on more than MAX_PROJECTS_PER_CALL.
+ */
+export function normalizeProjectIds(project_ids: unknown[]): string[] {
+  if (project_ids.length > MAX_PROJECTS_PER_CALL) {
+    throw new Error(
+      `at most ${MAX_PROJECTS_PER_CALL} projects may be given in one call`,
+    );
+  }
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const project_id of project_ids) {
+    let id = `${project_id ?? ""}`.trim();
+    if (!id) continue;
+    if (isValidUUID(id)) id = id.toLowerCase();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * The project ids of a call on several projects, normalized as the method
+ * normalizes them, or undefined if the call has no list.
  */
 export function splitProjectIds(
   route: HubApiRoute,
@@ -202,5 +229,5 @@ export function splitProjectIds(
   if (route.owner !== "projects") return;
   const ids = route.key(args);
   if (!Array.isArray(ids)) return;
-  return [...new Set(ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean))];
+  return normalizeProjectIds(ids);
 }

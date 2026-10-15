@@ -396,4 +396,81 @@ describe("a call on several projects", () => {
     });
     expect(resolveProjectBays).not.toHaveBeenCalled();
   });
+
+  it("refuses more than MAX_PROJECTS_PER_CALL projects before looking any up", async () => {
+    const { MAX_PROJECTS_PER_CALL } =
+      await import("@cocalc/conat/hub/api/routes");
+    const many = Array.from(
+      { length: MAX_PROJECTS_PER_CALL + 1 },
+      (_, i) => `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+    );
+    await expect(executeHubApiCall(hide(many))).rejects.toThrow(
+      `at most ${MAX_PROJECTS_PER_CALL}`,
+    );
+    expect(resolveProjectBays).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+  });
+
+  it("handles a full-size list, nearly all on one bay", async () => {
+    const { MAX_PROJECTS_PER_CALL } =
+      await import("@cocalc/conat/hub/api/routes");
+    const many = Array.from(
+      { length: MAX_PROJECTS_PER_CALL },
+      (_, i) => `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+    );
+    resolveProjectBays.mockResolvedValue(
+      new Map(
+        many.map((id, i) => [id, { bay_id: i === 0 ? "bay-1" : "bay-0" }]),
+      ),
+    );
+    const t0 = Date.now();
+    const results = await executeHubApiCall(hide(many));
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(results.map((r) => r.project_id)).toEqual(many);
+    expect(local.mock.calls[0][0].args[0].project_ids).toHaveLength(
+      MAX_PROJECTS_PER_CALL - 1,
+    );
+  });
+
+  it("trusts only exactly one result per project from each bay", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-1", epoch: 0 }],
+        [P[2], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    forward.mockResolvedValue({
+      ok: true,
+      result: [
+        // P[0] missing; P[1] twice; a project bay-1 was not asked about.
+        { project_id: P[1], success: true },
+        { project_id: P[1], success: true },
+        { project_id: "44444444-4444-4444-8444-444444444444", success: true },
+      ],
+    });
+    expect(await executeHubApiCall(hide(P))).toEqual([
+      {
+        project_id: P[0],
+        success: false,
+        error: "bay-1 returned 0 results for this project",
+      },
+      {
+        project_id: P[1],
+        success: false,
+        error: "bay-1 returned 2 results for this project",
+      },
+      { project_id: P[2], success: true },
+    ]);
+  });
+
+  it("treats a valid upper-case id as the project it names", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([[P[0], { bay_id: "bay-1", epoch: 0 }]]),
+    );
+    const results = await executeHubApiCall(hide([P[0].toUpperCase(), P[1]]));
+    expect(resolveProjectBays).toHaveBeenCalledWith([P[0], P[1]]);
+    expect(forward.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
+    expect(results.map((r) => r.project_id)).toEqual([P[0], P[1]]);
+  });
 });

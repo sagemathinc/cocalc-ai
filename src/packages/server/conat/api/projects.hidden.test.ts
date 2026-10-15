@@ -191,4 +191,34 @@ describe("setProjectHidden bay-aware update", () => {
     );
     expect(updateCalls[0][1][0]).toEqual([PROJECT_ID]);
   });
+
+  it("reads an upper-case id as its project, and caps the list", async () => {
+    poolQueryMock = jest.fn(async (_sql: string, params?: any[]) => ({
+      rows: (params?.[0] ?? []).map((project_id: string) => ({
+        project_id,
+        bay_id: "bay-1",
+      })),
+    }));
+    const { setProjectsHidden } = await import("./projects");
+    await expect(
+      setProjectsHidden({
+        account_id: ACCOUNT_ID,
+        project_ids: [PROJECT_ID.toUpperCase()],
+        hide: true,
+      }),
+    ).resolves.toEqual([
+      {
+        project_id: PROJECT_ID,
+        success: false,
+        error: expect.stringContaining("stale route"),
+      },
+    ]);
+    await expect(
+      setProjectsHidden({
+        account_id: ACCOUNT_ID,
+        project_ids: Array.from({ length: 1001 }, () => PROJECT_ID),
+        hide: true,
+      }),
+    ).rejects.toThrow("at most 1000");
+  });
 });

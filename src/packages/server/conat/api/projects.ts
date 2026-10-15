@@ -136,6 +136,7 @@ import {
   type BulkProjectControlResult,
 } from "@cocalc/conat/hub/api/projects";
 import type { HubApiCall } from "./edge-routing";
+import { normalizeProjectIds } from "@cocalc/conat/hub/api/routes";
 import type {
   ProjectRehomeOperationSummary,
   ProjectRehomeResponse,
@@ -5978,18 +5979,9 @@ export async function setProjectHidden({
   }
 }
 
+// As the split-by-project route normalizes them, so results match its ids.
 function dedupeProjectIds(project_ids: string[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const project_id of project_ids) {
-    const normalized = `${project_id ?? ""}`.trim();
-    if (!normalized || seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    deduped.push(normalized);
-  }
-  return deduped;
+  return normalizeProjectIds(project_ids);
 }
 
 export async function setLocalProjectsHidden({

@@ -155,43 +155,72 @@ async function executeSplitByProject(
   const byBay = new Map<string, string[]>();
   for (const id of ids) {
     const bay_id = owners.get(id)?.bay_id ?? here;
-    byBay.set(bay_id, [...(byBay.get(bay_id) ?? []), id]);
+    let bucket = byBay.get(bay_id);
+    if (bucket == null) {
+      bucket = [];
+      byBay.set(bay_id, bucket);
+    }
+    bucket.push(id);
   }
   if (byBay.size === 1 && byBay.has(here)) {
     return await requireExecutor()(call);
   }
   const [opts, ...rest] = call.args;
-  const parts = await Promise.all(
+  const merged = new Map<string, any>();
+  await Promise.all(
     [...byBay].map(async ([bay_id, project_ids]) => {
       const part: HubApiCall = {
         ...call,
         args: [{ ...opts, project_ids }, ...rest],
       };
+      let results: unknown;
       try {
-        const result =
+        results =
           bay_id === here
             ? await requireExecutor()(part)
             : await forwardHubApiCall(bay_id, part);
-        if (Array.isArray(result)) return result;
-        throw new Error(`unexpected result for '${call.name}' from ${bay_id}`);
       } catch (err) {
         const code = (err as { code?: unknown })?.code;
-        return project_ids.map((project_id) =>
-          route.errorResult(
+        for (const project_id of project_ids) {
+          merged.set(
             project_id,
-            err instanceof Error ? err.message : `${err}`,
-            typeof code === "string" || typeof code === "number"
-              ? code
-              : undefined,
-          ),
+            route.errorResult(
+              project_id,
+              err instanceof Error ? err.message : `${err}`,
+              typeof code === "string" || typeof code === "number"
+                ? code
+                : undefined,
+            ),
+          );
+        }
+        return;
+      }
+      // Exactly one result per project this bay was given; anything else
+      // (missing, duplicate, or for another project) is not trusted.
+      const asked = new Set(project_ids);
+      const found = new Map<string, unknown[]>();
+      for (const result of Array.isArray(results) ? results : []) {
+        const id = `${(result as any)?.project_id ?? ""}`;
+        if (!asked.has(id)) continue;
+        const list = found.get(id);
+        if (list == null) found.set(id, [result]);
+        else list.push(result);
+      }
+      for (const project_id of project_ids) {
+        const matches = found.get(project_id) ?? [];
+        merged.set(
+          project_id,
+          matches.length === 1
+            ? matches[0]
+            : route.errorResult(
+                project_id,
+                `${bay_id} returned ${matches.length} results for this project`,
+              ),
         );
       }
     }),
   );
-  const order = new Map(ids.map((id, i) => [id, i]));
-  const position = (result: any) =>
-    order.get(`${result?.project_id ?? ""}`) ?? ids.length;
-  return parts.flat().sort((a, b) => position(a) - position(b));
+  return ids.map((id) => merged.get(id));
 }
 
 /**
