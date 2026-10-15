@@ -38,6 +38,7 @@ import {
   OUTCOME_UNKNOWN,
   runForwardedCallOnce,
 } from "@cocalc/server/inter-bay/forwarded-calls";
+import { mapParallelLimit } from "@cocalc/util/async-utils";
 import { isValidUUID } from "@cocalc/util/misc";
 import { randomUUID } from "node:crypto";
 
@@ -137,12 +138,17 @@ export async function executeHubApiCall(call: HubApiCall): Promise<any> {
   return await forwardHubApiCall(owner, call);
 }
 
+// How many bays a call on several projects runs on at once.
+const SPLIT_BAYS_AT_ONCE = 3;
+
 /**
  * A call on several projects: run it once per owning bay with that bay's
- * projects (here, or forwarded exactly once), and merge the per-project
- * results in input order. A bay that fails or does not answer gives each of
- * its projects the method's error result. Projects with no known bay, and
- * malformed ids, run here, where the method reports them.
+ * projects (here, or forwarded exactly once), a few bays at a time, and
+ * return exactly one result per project, in input order. A bay that fails
+ * or does not answer gives each of its projects the method's error result.
+ * Projects with no known bay, and malformed ids, run here, where the method
+ * reports them. When every project is here the call runs as it is, and an
+ * error it raises is raised as before.
  */
 async function executeSplitByProject(
   route: Extract<HubApiRoute, { owner: "projects" }>,
@@ -162,17 +168,20 @@ async function executeSplitByProject(
     }
     bucket.push(id);
   }
-  if (byBay.size === 1 && byBay.has(here)) {
-    return await requireExecutor()(call);
-  }
+  // All here: run the call as it is. Otherwise one part per bay.
+  const allHere = byBay.size === 1 && byBay.has(here);
   const [opts, ...rest] = call.args;
+  const parts: [string, string[], HubApiCall][] = allHere
+    ? [[here, ids, call]]
+    : [...byBay].map(([bay_id, project_ids]) => [
+        bay_id,
+        project_ids,
+        { ...call, args: [{ ...opts, project_ids }, ...rest] },
+      ]);
   const merged = new Map<string, any>();
-  await Promise.all(
-    [...byBay].map(async ([bay_id, project_ids]) => {
-      const part: HubApiCall = {
-        ...call,
-        args: [{ ...opts, project_ids }, ...rest],
-      };
+  await mapParallelLimit(
+    parts,
+    async ([bay_id, project_ids, part]) => {
       let results: unknown;
       try {
         results =
@@ -180,6 +189,7 @@ async function executeSplitByProject(
             ? await requireExecutor()(part)
             : await forwardHubApiCall(bay_id, part);
       } catch (err) {
+        if (allHere) throw err;
         const code = (err as { code?: unknown })?.code;
         for (const project_id of project_ids) {
           merged.set(
@@ -218,7 +228,8 @@ async function executeSplitByProject(
               ),
         );
       }
-    }),
+    },
+    SPLIT_BAYS_AT_ONCE,
   );
   return ids.map((id) => merged.get(id));
 }

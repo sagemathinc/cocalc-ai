@@ -473,4 +473,67 @@ describe("a call on several projects", () => {
     expect(forward.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
     expect(results.map((r) => r.project_id)).toEqual([P[0], P[1]]);
   });
+
+  it("checks the results of an all-local call as well", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map(P.map((id) => [id, { bay_id: "bay-0", epoch: 0 }])),
+    );
+    local.mockResolvedValue([
+      { project_id: P[1], success: true },
+      { project_id: P[1], success: true },
+      { project_id: P[2], success: true },
+      { project_id: "44444444-4444-4444-8444-444444444444", success: true },
+    ]);
+    expect(await executeHubApiCall(hide(P))).toEqual([
+      {
+        project_id: P[0],
+        success: false,
+        error: "bay-0 returned 0 results for this project",
+      },
+      {
+        project_id: P[1],
+        success: false,
+        error: "bay-0 returned 2 results for this project",
+      },
+      { project_id: P[2], success: true },
+    ]);
+    expect(local).toHaveBeenCalledWith(hide(P));
+  });
+
+  it("raises the error of an all-local call, as before", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([[P[0], { bay_id: "bay-0", epoch: 0 }]]),
+    );
+    local.mockRejectedValue(new Error("hide must be a boolean"));
+    await expect(executeHubApiCall(hide([P[0]]))).rejects.toThrow(
+      "hide must be a boolean",
+    );
+  });
+
+  it("runs on at most three bays at a time", async () => {
+    const ids = Array.from(
+      { length: 7 },
+      (_, i) => `00000000-0000-4000-8000-00000000000${i}`,
+    );
+    resolveProjectBays.mockResolvedValue(
+      new Map(ids.map((id, i) => [id, { bay_id: `bay-${i}`, epoch: 0 }])),
+    );
+    let running = 0;
+    let most = 0;
+    const slow = async (result) => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      running -= 1;
+      return result;
+    };
+    local.mockImplementation(async (call) => await slow(answer(call)));
+    forward.mockImplementation(
+      async (call) => await slow({ ok: true, result: answer(call) }),
+    );
+    const results = await executeHubApiCall(hide(ids));
+    expect(results.map((r) => r.project_id)).toEqual(ids);
+    expect(forward).toHaveBeenCalledTimes(6);
+    expect(most).toBe(3);
+  });
 });
