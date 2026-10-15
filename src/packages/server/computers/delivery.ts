@@ -24,6 +24,7 @@
 
 import { randomBytes } from "node:crypto";
 import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getLogger from "@cocalc/backend/logger";
 import { canonicalHash } from "@cocalc/backend/computers/crypto";
 import type { Client } from "@cocalc/conat/core/client";
@@ -354,6 +355,11 @@ export function kickComputerStateDelivery(): Promise<void> {
     try {
       do {
         again = false;
+        // Off (the default): no computer can connect, so there is no one to
+        // deliver to, and the poll must not query the database every second
+        // on every hub. Owed targets wait until computers are turned on.
+        // Settings are cached, so this check costs no query.
+        if ((await getServerSettings()).computers_enabled !== true) break;
         await deliverDueStates();
       } while (again);
     } catch (err) {
