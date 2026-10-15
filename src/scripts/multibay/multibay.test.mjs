@@ -1491,7 +1491,7 @@ describe("computers across bays", () => {
        await getPool().query(
          "INSERT INTO agent_network_members (agent_network_id, member_kind, member_id, registered_agent_id, project_id, added_by) VALUES ($1,'registered',$2,$2,$3,$4)",
          [network, ${JSON.stringify(agent)}, ${JSON.stringify(project)}, account]);
-       const policy = { version: 1, mode: "direct", duration: null, agent_network_id: network,
+       const policy = { version: 1, mode: "direct", duration: null, lease_hours: 24, agent_network_id: network,
          network: "on", gpu: true, mounts: [], images: { kind: "any" }, scratch_bytes: null,
          limits: { cpu_millis: null, memory_bytes: null, pids: null } };
        const { request_id } = await req.createComputerRequest({ account_id: account, name: "bench", requested_policy: policy });
