@@ -111,6 +111,34 @@ describe("trackUploadedBackups", () => {
     ]);
   });
 
+  it("accounts an upload whose confirmation failed exactly once", async () => {
+    const tracker = trackUploadedBackups();
+    // The upload commits; a later step (e.g. confirming the snapshot exists)
+    // fails with an ordinary error before afterCreate records it.
+    await tracker.wrapUpload(async () => ({
+      id: "backup-1",
+      summary: { data_added_packed: 3_000 },
+    }));
+    const confirm = async () => {
+      throw new Error("new backup is not confirmed in the repository");
+    };
+    await expect(confirm()).rejects.toThrow("not confirmed");
+    expect(tracker.unaccounted(new Set()).map(({ id }) => id)).toEqual([
+      "backup-1",
+    ]);
+    // A retry of the same run must not count it again.
+    expect(tracker.unaccounted(new Set())).toEqual([]);
+  });
+
+  it("skips uploads that afterCreate already recorded", async () => {
+    const tracker = trackUploadedBackups();
+    await tracker.wrapUpload(async () => ({ id: "recorded" }));
+    await tracker.wrapUpload(async () => ({ id: "abandoned" }));
+    expect(
+      tracker.unaccounted(new Set(["recorded"])).map(({ id }) => id),
+    ).toEqual(["abandoned"]);
+  });
+
   it("records nothing when the upload itself fails", async () => {
     const tracker = trackUploadedBackups();
     await expect(

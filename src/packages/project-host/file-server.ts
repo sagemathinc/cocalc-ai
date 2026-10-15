@@ -4675,7 +4675,7 @@ async function updateBackupsUnlocked({
         await refreshed.rustic.update(counts, {
           limit,
           timeout: timeout_ms,
-          wrapUpload: wrapUpload == null ? undefined : uploads.wrapUpload,
+          wrapUpload: uploads.wrapUpload,
           // Same privileged, size-limited backup as manual backups, so a huge
           // sparse file cannot occupy every scheduled backup of this host.
           runner: async ({ src, host, timeout, tags, parent, progress }) => {
@@ -4758,14 +4758,11 @@ async function updateBackupsUnlocked({
           },
         });
       } catch (err) {
-        if (err instanceof RollingSnapshotRetentionSkipped) {
-          // The abandoned upload is in the repository and spent managed
-          // egress even though this run records no recovery point.
-          for (const backup of uploads.uploaded()) {
-            if (!createdBackupIds.has(backup.id)) {
-              await recordBackupEgress(backup);
-            }
-          }
+        // An upload that committed before the failure (the volume changed,
+        // confirmation failed, ...) is in the repository and spent managed
+        // egress even though afterCreate never recorded it.
+        for (const backup of uploads.unaccounted(createdBackupIds)) {
+          await recordBackupEgress(backup);
         }
         if (createdBackupIds.size === 0) throw err;
         retentionError = err;

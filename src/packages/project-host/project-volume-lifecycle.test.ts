@@ -10,6 +10,7 @@ import {
   resetProjectVolumeLifecycleForTesting,
   withCurrentProjectVolumeLifecycleLock,
   withProjectVolumeLifecycleLock,
+  type ProjectVolumeLifecycleLock,
 } from "./project-volume-lifecycle";
 
 describe("project volume lifecycle coordination", () => {
@@ -140,6 +141,66 @@ describe("project volume lifecycle coordination", () => {
       "later",
       "retention",
     ]);
+  });
+
+  it("rejects a handle used after its scope ended without wedging the lock", async () => {
+    const project_id = "project-1";
+    let escaped: ProjectVolumeLifecycleLock | undefined;
+    await withProjectVolumeLifecycleLock(project_id, async (lock) => {
+      escaped = lock;
+    });
+    const inner = jest.fn(async () => undefined);
+    await expect(escaped!.unlocked(inner)).rejects.toThrow(
+      "after its scope ended",
+    );
+    expect(inner).not.toHaveBeenCalled();
+    await expect(
+      withProjectVolumeLifecycleLock(project_id, async () => "next"),
+    ).resolves.toBe("next");
+  });
+
+  it("does not keep a lock reacquired by an unawaited unlocked section", async () => {
+    const project_id = "project-1";
+    let finishInner!: () => void;
+    const innerDone = new Promise<void>((resolve) => {
+      finishInner = resolve;
+    });
+    let pending: Promise<unknown> | undefined;
+    await withProjectVolumeLifecycleLock(project_id, async (lock) => {
+      pending = lock.unlocked(async () => await innerDone);
+    });
+    finishInner();
+    await pending;
+    await expect(
+      withProjectVolumeLifecycleLock(project_id, async () => "next"),
+    ).resolves.toBe("next");
+  });
+
+  it("releases a reacquisition that completes after the scope ended", async () => {
+    const project_id = "project-1";
+    let releaseOther!: () => void;
+    let pending: Promise<unknown> | undefined;
+    let other: Promise<unknown> | undefined;
+    const holder = withProjectVolumeLifecycleLock(project_id, async (lock) => {
+      pending = lock.unlocked(async () => {
+        // Someone else takes the lock while we are unlocked, so the
+        // reacquisition below has to wait for them.
+        other = withProjectVolumeLifecycleLock(project_id, async () => {
+          await new Promise<void>((resolve) => {
+            releaseOther = resolve;
+          });
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    await holder;
+    releaseOther();
+    await Promise.all([pending, other]);
+    await expect(
+      withProjectVolumeLifecycleLock(project_id, async () => "next"),
+    ).resolves.toBe("next");
   });
 
   it("reacquires the lock even when unlocked work fails", async () => {

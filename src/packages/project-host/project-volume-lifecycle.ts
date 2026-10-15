@@ -62,8 +62,16 @@ export async function withProjectVolumeLifecycleLock<T>(
 ): Promise<T> {
   let release = await acquireProjectVolumeLifecycleLock(project_id);
   let held = true;
+  // The handle is only valid while fn runs. A reacquisition nobody will
+  // release would block every later lifecycle operation of this project.
+  let active = true;
   const lock: ProjectVolumeLifecycleLock = {
     unlocked: async (inner) => {
+      if (!active) {
+        throw new Error(
+          "project volume lifecycle lock handle used after its scope ended",
+        );
+      }
       if (!held) {
         throw new Error("project volume lifecycle lock is already released");
       }
@@ -72,15 +80,27 @@ export async function withProjectVolumeLifecycleLock<T>(
       try {
         return await inner();
       } finally {
-        release = await acquireProjectVolumeLifecycleLock(project_id);
-        held = true;
+        if (active) {
+          const reacquired =
+            await acquireProjectVolumeLifecycleLock(project_id);
+          if (active) {
+            release = reacquired;
+            held = true;
+          } else {
+            reacquired();
+          }
+        }
       }
     },
   };
   try {
     return await fn(lock);
   } finally {
-    release();
+    active = false;
+    if (held) {
+      held = false;
+      release();
+    }
   }
 }
 
