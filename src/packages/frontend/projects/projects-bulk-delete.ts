@@ -71,10 +71,15 @@ export async function runLeaveOrDeleteProjectsSequentially({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      const code = (err as { code?: unknown })?.code;
       results.push({
         project_id,
         action: "error",
         error: `${err}`,
+        // E.g. OUTCOME_UNKNOWN: the delete may or may not have happened.
+        ...(typeof code === "string" || typeof code === "number"
+          ? { code }
+          : {}),
       });
       continue;
     }
@@ -90,8 +95,8 @@ export async function runLeaveOrDeleteProjectsSequentially({
       });
       continue;
     }
-    // A bay that needs a fresh sign-in says so per project when it was one
-    // of several; ask for it as if the call had thrown.
+    // A project on another bay that needs a fresh sign-in says so in its
+    // result; ask for it as if the call had thrown.
     if (
       result.action === "error" &&
       isFreshAuthRequiredError({ code: result.code, message: result.error })

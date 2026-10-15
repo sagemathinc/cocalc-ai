@@ -152,8 +152,8 @@ const PART_WORST_CASE_MS = FORWARD_ATTEMPTS * FORWARD_ATTEMPT_TIMEOUT_MS;
  * return exactly one result per project, in input order. A bay that fails
  * or does not answer gives each of its projects the method's error result.
  * Projects with no known bay, and malformed ids, run here, where the method
- * reports them. When every project is here the call runs as it is; when all
- * are on one bay, an error of that bay's part is raised as the call's error. One budget covers the whole call:
+ * reports them. When every project is here the call runs as it is, and an
+ * error it raises is raised as before. One budget covers the whole call:
  * owning bays are looked up within it, and a project whose bay is not found
  * in time, or whose bay's part could not finish in it, is not run; its
  * result says so.
@@ -208,10 +208,6 @@ async function executeSplitByProject(
     }
   }
   const allHere = merged.size === 0 && byBay.size === 1 && byBay.has(here);
-  // With one part only (all projects on one bay), its error is the call's
-  // error, as for a call on one project: e.g. fresh auth needed, or outcome
-  // unknown.
-  const onePart = merged.size === 0 && byBay.size === 1;
   const [opts, ...rest] = call.args;
   const parts: [string, string[], HubApiCall][] = allHere
     ? [[here, ids, call]]
@@ -245,7 +241,7 @@ async function executeSplitByProject(
             ? await requireExecutor()(part)
             : await forwardHubApiCall(bay_id, part);
       } catch (err) {
-        if (onePart) throw err;
+        if (allHere) throw err;
         const code = (err as { code?: unknown })?.code;
         for (const project_id of project_ids) {
           merged.set(

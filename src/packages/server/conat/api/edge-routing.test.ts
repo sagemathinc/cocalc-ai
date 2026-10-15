@@ -663,7 +663,7 @@ describe("a call on several projects", () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
-  it("raises a single remote bay's error as the call's error, with its code", async () => {
+  it("returns a single remote bay's error per project, with its code", async () => {
     resolveProjectBays.mockResolvedValue(
       new Map([[P[0], { bay_id: "bay-1", epoch: 0 }]]),
     );
@@ -672,10 +672,32 @@ describe("a call on several projects", () => {
       error: "fresh auth is required",
       attrs: { code: "fresh_auth_required" },
     });
-    await expect(executeHubApiCall(leave([P[0]]))).rejects.toMatchObject({
-      message: "fresh auth is required",
-      code: "fresh_auth_required",
-    });
+    expect(await executeHubApiCall(leave([P[0]]))).toEqual([
+      {
+        project_id: P[0],
+        action: "error",
+        error: "fresh auth is required",
+        code: "fresh_auth_required",
+      },
+    ]);
+  });
+
+  it("returns an array for projects all on one remote bay that does not answer", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-1", epoch: 0 }],
+      ]),
+    );
+    forward.mockRejectedValue(
+      Object.assign(new Error("timeout"), { code: 408 }),
+    );
+    const results = await executeHubApiCall(hide([P[0], P[1]]));
+    expect(results.map((r) => [r.project_id, r.success])).toEqual([
+      [P[0], false],
+      [P[1], false],
+    ]);
+    expect(results[0].error).toContain("outcome unknown");
   });
 
   it("keeps the code of a bay's failure on its projects' results", async () => {

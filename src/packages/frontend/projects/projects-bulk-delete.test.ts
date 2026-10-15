@@ -135,4 +135,24 @@ describe("runLeaveOrDeleteProjectsSequentially", () => {
       },
     ]);
   });
+
+  it("keeps the code of a thrown unknown outcome", async () => {
+    const { results } = await runLeaveOrDeleteProjectsSequentially({
+      project_ids: ["p1"],
+      submitProject: async () => {
+        throw Object.assign(new Error("outcome unknown"), {
+          code: "OUTCOME_UNKNOWN",
+        });
+      },
+      waitForQueuedDelete: async () => undefined,
+    });
+    expect(results).toEqual([
+      {
+        project_id: "p1",
+        action: "error",
+        error: "Error: outcome unknown",
+        code: "OUTCOME_UNKNOWN",
+      },
+    ]);
+  });
 });
