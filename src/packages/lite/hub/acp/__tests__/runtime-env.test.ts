@@ -68,9 +68,8 @@ describe("buildCodexRuntimeEnv", () => {
 
     expect(env.COCALC_BEARER_TOKEN).toBe("existing-bearer");
     expect(env.COCALC_AGENT_TOKEN).toBe("existing-bearer");
-    // No surface flag (an agent message, sensor wake or scheduled prompt):
-    // workbench is on.
-    expect(env.COCALC_WORKBENCH).toBe("1");
+    // No chat thread: there is nowhere to publish, so workbench is off.
+    expect(env.COCALC_WORKBENCH).toBe("0");
     expect(issueToken).not.toHaveBeenCalled();
   });
 
@@ -78,10 +77,11 @@ describe("buildCodexRuntimeEnv", () => {
     process.env.COCALC_BEARER_TOKEN = "existing-bearer";
     const { buildCodexRuntimeEnv } = await import("../runtime-env");
     for (const enabled of [false, true, undefined]) {
+      const thread = { path: "a.chat", thread_id: "thread-1" };
       const env = await buildCodexRuntimeEnv({
         request: {
           prompt: "test",
-          chat: enabled == null ? {} : { workbench: enabled },
+          chat: enabled == null ? thread : { ...thread, workbench: enabled },
           runtime_env: { COCALC_WORKBENCH: enabled === false ? "1" : "0" },
         } as any,
         projectId: "project",
@@ -89,6 +89,30 @@ describe("buildCodexRuntimeEnv", () => {
         useContainer: false,
       });
       expect(env.COCALC_WORKBENCH).toBe(enabled === false ? "0" : "1");
+    }
+  });
+
+  it("turns workbench off when the turn has no chat thread to publish into", async () => {
+    process.env.COCALC_BEARER_TOKEN = "existing-bearer";
+    const { buildCodexRuntimeEnv } = await import("../runtime-env");
+    for (const chat of [
+      undefined,
+      { workbench: true },
+      { path: "a.chat", workbench: true },
+      { thread_id: "thread-1", workbench: true },
+      { path: " ", thread_id: "thread-1", workbench: true },
+    ]) {
+      const env = await buildCodexRuntimeEnv({
+        request: {
+          prompt: "test",
+          chat,
+          runtime_env: { COCALC_WORKBENCH: "1" },
+        } as any,
+        projectId: "project",
+        includeCliBin: false,
+        useContainer: false,
+      });
+      expect(env.COCALC_WORKBENCH).toBe("0");
     }
   });
 
