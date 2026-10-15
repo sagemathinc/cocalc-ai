@@ -155,6 +155,41 @@ describe("inter-bay directory", () => {
     expect(requestMock).toHaveBeenCalledTimes(1);
   });
 
+  it("with a deadline, gives directory lookups only the time left", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    requestMock.mockResolvedValue({ data: { bay_id: "bay-remote", epoch: 7 } });
+    const { resolveProjectBays } = await import("./directory");
+    const deadline = Date.now() + 3_000;
+    await expect(resolveProjectBays(["proj-2"], { deadline })).resolves.toEqual(
+      new Map([["proj-2", { bay_id: "bay-remote", epoch: 7 }]]),
+    );
+    const { timeout } = requestMock.mock.calls[0][2];
+    expect(timeout).toBeGreaterThan(0);
+    expect(timeout).toBeLessThanOrEqual(3_000);
+  });
+
+  it("with a deadline, leaves out a project not resolved in time", async () => {
+    queryMock.mockResolvedValue({
+      rows: [{ project_id: "proj-1", bay_id: "bay-1" }],
+    });
+    requestMock.mockRejectedValue(new Error("timeout"));
+    const { resolveProjectBays } = await import("./directory");
+    await expect(
+      resolveProjectBays(["proj-1", "proj-2"], {
+        deadline: Date.now() + 1_000,
+      }),
+    ).resolves.toEqual(new Map([["proj-1", { bay_id: "bay-1", epoch: 0 }]]));
+  });
+
+  it("with a deadline already past, asks the directory nothing", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    const { resolveProjectBays } = await import("./directory");
+    await expect(
+      resolveProjectBays(["proj-2"], { deadline: Date.now() - 1 }),
+    ).resolves.toEqual(new Map());
+    expect(requestMock).not.toHaveBeenCalled();
+  });
+
   it("falls back across configured bays for project resolution", async () => {
     queryMock.mockResolvedValue({ rows: [] });
     directoryResolveProjectBayMock

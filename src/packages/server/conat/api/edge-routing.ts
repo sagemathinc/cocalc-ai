@@ -153,8 +153,10 @@ const PART_WORST_CASE_MS = FORWARD_ATTEMPTS * FORWARD_ATTEMPT_TIMEOUT_MS;
  * or does not answer gives each of its projects the method's error result.
  * Projects with no known bay, and malformed ids, run here, where the method
  * reports them. When every project is here the call runs as it is, and an
- * error it raises is raised as before. A bay's part that could not finish
- * within the caller's time is not started; its projects say so.
+ * error it raises is raised as before. One budget covers the whole call:
+ * owning bays are looked up within it, and a project whose bay is not found
+ * in time, or whose bay's part could not finish in it, is not run; its
+ * result says so.
  */
 async function executeSplitByProject(
   route: Extract<HubApiRoute, { owner: "projects" }>,
@@ -163,9 +165,27 @@ async function executeSplitByProject(
   const ids = splitProjectIds(route, call.args);
   const here = getConfiguredBayId();
   if (ids == null || ids.length === 0) return await requireExecutor()(call);
-  const owners = await resolveProjectBays(ids.filter((id) => isValidUUID(id)));
+  // One budget for the whole call, lookups included. Finding owning bays
+  // gets only the time that leaves room for a full forwarded part after it.
+  const deadline = Date.now() + SPLIT_CALL_BUDGET_MS;
+  const valid = ids.filter((id) => isValidUUID(id));
+  const owners = await resolveProjectBays(valid, {
+    deadline: deadline - PART_WORST_CASE_MS,
+  });
+  const merged = new Map<string, any>();
   const byBay = new Map<string, string[]>();
   for (const id of ids) {
+    if (isValidUUID(id) && !owners.has(id)) {
+      // Its bay could not be found in time: it is not run anywhere.
+      merged.set(
+        id,
+        route.errorResult(
+          id,
+          "not attempted: its bay could not be found in time; nothing was changed for this project, so it is safe to retry",
+        ),
+      );
+      continue;
+    }
     const bay_id = owners.get(id)?.bay_id ?? here;
     let bucket = byBay.get(bay_id);
     if (bucket == null) {
@@ -175,7 +195,7 @@ async function executeSplitByProject(
     bucket.push(id);
   }
   // All here: run the call as it is. Otherwise one part per bay.
-  const allHere = byBay.size === 1 && byBay.has(here);
+  const allHere = merged.size === 0 && byBay.size === 1 && byBay.has(here);
   const [opts, ...rest] = call.args;
   const parts: [string, string[], HubApiCall][] = allHere
     ? [[here, ids, call]]
@@ -187,8 +207,6 @@ async function executeSplitByProject(
           project_ids,
           { ...call, args: [{ ...opts, project_ids }, ...rest] },
         ]);
-  const merged = new Map<string, any>();
-  const deadline = Date.now() + SPLIT_CALL_BUDGET_MS;
   await mapParallelLimit(
     parts,
     async ([bay_id, project_ids, part]) => {
