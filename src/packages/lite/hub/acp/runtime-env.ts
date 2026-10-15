@@ -162,11 +162,13 @@ export async function buildCodexRuntimeEnv({
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
   const chatPath = `${request.chat?.path ?? ""}`.trim();
-  // On unless a surface explicitly turned it off: turns started by agent
-  // messages, sensor wakes and scheduled prompts carry no surface flag.
-  out.COCALC_WORKBENCH = request.chat?.workbench === false ? "0" : "1";
   const threadId = `${request.chat?.thread_id ?? ""}`.trim();
   const messageDate = `${request.chat?.message_date ?? ""}`.trim();
+  // On unless a surface explicitly turned it off: turns started by agent
+  // messages, sensor wakes and scheduled prompts carry no surface flag.
+  // A turn with no chat thread has nowhere to publish, so it is off there.
+  out.COCALC_WORKBENCH =
+    chatPath && threadId && request.chat?.workbench !== false ? "1" : "0";
   if (chatPath && threadId) {
     out.COCALC_CODEX_CHAT_PATH = chatPath;
     out.COCALC_CODEX_THREAD_ID = threadId;
