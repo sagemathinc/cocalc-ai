@@ -1554,6 +1554,30 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       usedIn: [bold("files", label)],
     }),
   ),
+  // The menu beside the Build button labels its items itself; there Delete
+  // Aux Files is called Clean.
+  ...(
+    [
+      ["force-build", "Force Build"],
+      ["clean", "Clean"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `latex.build.menu.${key}`,
+      label,
+      anchors: [
+        def(
+          "frontend/frame-editors/latex-editor/output-control-build.tsx",
+          `key: "${key}", label: "${label}",`,
+        ),
+        ren(
+          LATEX_BUILD_COMMAND,
+          "<BuildControls actions={actions} narrow={true} />",
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
   {
     id: "course.no-matching-license",
     label: "No matching site license found",
