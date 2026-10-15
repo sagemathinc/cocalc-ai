@@ -35,6 +35,7 @@ import {
   STATE_COLOR,
   STATE_LABEL,
 } from "./computer-state";
+import { LeaseSummary } from "./computer-lease";
 
 const OPEN = new Set(["pending", "paired"]);
 /** Expired requests stay listed this long, so the owner sees what happened. */
@@ -158,6 +159,7 @@ export function ComputersPanel() {
                   <b>@{r.name}</b>
                   {r.why && <span>{r.why}</span>}
                   <span>{timeLimit(r.requested_policy)}</span>
+                  <LeaseSummary policy={r.requested_policy} />
                 </Space>
               ),
             },
@@ -252,6 +254,7 @@ export function ComputersPanel() {
                       For the {networkTitle(c.agent_network_id)} network
                     </span>
                   )}
+                  <LeaseSummary policy={c.effective_policy} />
                 </Space>
               ),
             },
@@ -287,6 +290,10 @@ export function ComputersPanel() {
                   </span>
                 ) : c.deadline ? (
                   <TimeAgo date={c.deadline} />
+                ) : c.certificate_not_after ? (
+                  <span title="Its certificate ends then: connect it again to keep using it.">
+                    <TimeAgo date={c.certificate_not_after} />
+                  </span>
                 ) : (
                   "no limit"
                 ),
