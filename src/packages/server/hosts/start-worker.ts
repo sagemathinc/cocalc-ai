@@ -355,10 +355,14 @@ function completedProjectHostUpgradeVersion({
   row,
   targetVersion,
   previousVersion,
+  previousSessionId,
 }: {
   row: any;
   targetVersion?: string;
   previousVersion?: string;
+  // The host's session when the upgrade began: completion without a reply
+  // needs evidence that project-host was replaced since then.
+  previousSessionId?: string;
 }): string | undefined {
   const target = `${targetVersion ?? ""}`.trim();
   const previous = `${previousVersion ?? ""}`.trim();
@@ -366,6 +370,17 @@ function completedProjectHostUpgradeVersion({
   const lastKnownGoodVersion = projectHostLastKnownGoodVersion(row);
   if (!installedVersion || !lastKnownGoodVersion) {
     return undefined;
+  }
+  // Already on the target: nothing shows that this upgrade did anything.
+  if (target && previous && target === previous) {
+    return undefined;
+  }
+  const previousSession = `${previousSessionId ?? ""}`.trim();
+  if (previousSession) {
+    const session = `${row?.metadata?.host_session_id ?? ""}`.trim();
+    if (!session || session === previousSession) {
+      return undefined;
+    }
   }
   if (target) {
     return installedVersion === target && lastKnownGoodVersion === target
@@ -385,12 +400,14 @@ async function waitForCompletedProjectHostUpgrade({
   host_id,
   targetVersion,
   previousVersion,
+  previousSessionId,
   timeoutMs = PROJECT_HOST_UPGRADE_CONVERGENCE_TIMEOUT_MS,
   pollMs = PROJECT_HOST_UPGRADE_CONVERGENCE_POLL_MS,
 }: {
   host_id: string;
   targetVersion?: string;
   previousVersion?: string;
+  previousSessionId?: string;
   timeoutMs?: number;
   pollMs?: number;
 }): Promise<string | undefined> {
@@ -404,6 +421,7 @@ async function waitForCompletedProjectHostUpgrade({
       row,
       targetVersion: target,
       previousVersion: previous,
+      previousSessionId,
     });
     if (converged) {
       return converged;
@@ -415,6 +433,7 @@ async function waitForCompletedProjectHostUpgrade({
     row: finalRow,
     targetVersion: target,
     previousVersion: previous,
+    previousSessionId,
   });
 }
 
@@ -2365,6 +2384,9 @@ async function handleOp(op: LroSummary): Promise<void> {
                 host_id,
                 targetVersion: targetProjectHostVersion,
                 previousVersion: knownGoodProjectHostVersion,
+                previousSessionId:
+                  `${preUpgradeRow?.metadata?.host_session_id ?? ""}`.trim() ||
+                  undefined,
               }),
           );
           if (
@@ -2381,15 +2403,24 @@ async function handleOp(op: LroSummary): Promise<void> {
               },
             );
             // The lost reply skipped recording the host's desired versions.
+            let unconfirmedTargets: HostSoftwareUpgradeTarget[] = [];
             if (input?.record_runtime_deployments !== false) {
-              await recordConvergedProjectHostUpgradeInternal({
-                account_id,
-                host_id,
-                version: convergedVersion,
-                targets: input?.targets ?? [],
-                align_runtime_stack: input?.align_runtime_stack,
-              });
+              ({ unconfirmed: unconfirmedTargets } =
+                await recordConvergedProjectHostUpgradeInternal({
+                  account_id,
+                  host_id,
+                  version: convergedVersion,
+                  targets: input?.targets ?? [],
+                  align_runtime_stack: input?.align_runtime_stack,
+                }));
             }
+            const unconfirmedError = unconfirmedTargets.length
+              ? `project-host ${convergedVersion} is running after the upgrade lost its reply, but these requested artifacts are not confirmed on the host: ${unconfirmedTargets
+                  .map(
+                    (t) => `${t.artifact}${t.version ? `=${t.version}` : ""}`,
+                  )
+                  .join(", ")}`
+              : null;
             const recoveryComponents =
               delayedProjectHostConvergenceRolloutComponents({
                 targets: input?.targets ?? [],
@@ -2435,12 +2466,15 @@ async function handleOp(op: LroSummary): Promise<void> {
             }
             const updated = await updateLro({
               op_id,
-              status: "succeeded",
+              status: unconfirmedError ? "failed" : "succeeded",
               progress_summary: {
                 phase: "done",
                 host_id,
                 results: response?.results ?? [],
                 recovered_after_convergence_delay: true,
+                ...(unconfirmedTargets.length
+                  ? { unconfirmed_targets: unconfirmedTargets }
+                  : {}),
                 ...(rolloutResponse
                   ? { managed_component_rollout: rolloutResponse.results ?? [] }
                   : {}),
@@ -2450,19 +2484,24 @@ async function handleOp(op: LroSummary): Promise<void> {
                 host_id,
                 ...(response ? response : {}),
                 recovered_after_convergence_delay: true,
+                ...(unconfirmedTargets.length
+                  ? { unconfirmed_targets: unconfirmedTargets }
+                  : {}),
                 ...(rolloutResponse
                   ? { managed_component_rollout: rolloutResponse.results ?? [] }
                   : {}),
                 ...timingSummary(),
               },
-              error: null,
+              error: unconfirmedError,
             });
             if (updated) {
               await publishSummary(updated);
             }
             await progressStep(
               "done",
-              "upgrade complete after delayed project-host convergence",
+              unconfirmedError
+                ? "project-host converged; other requested artifacts unconfirmed"
+                : "upgrade complete after delayed project-host convergence",
               {
                 host_id,
                 target_version: targetProjectHostVersion || convergedVersion,

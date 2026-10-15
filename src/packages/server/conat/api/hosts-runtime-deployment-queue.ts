@@ -101,6 +101,38 @@ function pickRequestedBy({
   );
 }
 
+// A running upgrade/rollout op counts as in flight while its worker
+// heartbeats (every 15 s, 120 s lease), however long it runs; a queued one
+// only for a while, so an op nobody claims cannot block convergence forever.
+const HOST_SOFTWARE_CHANGE_QUEUED_MAX_AGE_MS = 20 * 60_000;
+const HOST_SOFTWARE_CHANGE_HEARTBEAT_STALE_MS = 3 * 60_000;
+
+function timestampMsOf(value: unknown): number {
+  const ms = value == null ? NaN : new Date(value as any).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+export function hostSoftwareChangeOpInFlight(
+  op: {
+    status: string;
+    created_at?: unknown;
+    started_at?: unknown;
+    heartbeat_at?: unknown;
+  },
+  now = Date.now(),
+): boolean {
+  if (op.status === "running") {
+    const alive = Math.max(
+      timestampMsOf(op.heartbeat_at),
+      timestampMsOf(op.started_at),
+    );
+    return now - alive < HOST_SOFTWARE_CHANGE_HEARTBEAT_STALE_MS;
+  }
+  return (
+    now - timestampMsOf(op.created_at) < HOST_SOFTWARE_CHANGE_QUEUED_MAX_AGE_MS
+  );
+}
+
 function uniqueHostIds(host_ids: string[]): string[] {
   return Array.from(
     new Set(

@@ -8644,6 +8644,7 @@ describe("hosts.recordClaudeSubscriptionUsage", () => {
 });
 
 describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
+  let installedArtifacts: any[];
   beforeEach(() => {
     queryMock = jest.fn(async (sql: string) =>
       sql.includes("FROM project_hosts")
@@ -8651,6 +8652,54 @@ describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
         : { rows: [] },
     );
     setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    installedArtifacts = [];
+    routedHostControlClientMock = jest.fn(async () => ({
+      getManagedComponentStatus: async () => [],
+      getInstalledRuntimeArtifacts: async () => installedArtifacts,
+      getHostAgentStatus: async () => ({}),
+    }));
+  });
+
+  it("records other artifacts of the same request only where the host runs them", async () => {
+    installedArtifacts = [
+      {
+        artifact: "tools",
+        current_version: "tools-v2",
+        installed_versions: ["tools-v2", "tools-v1"],
+      },
+      {
+        artifact: "project-bundle",
+        current_version: "project-v1",
+        installed_versions: ["project-v1"],
+      },
+    ];
+    const { recordConvergedProjectHostUpgradeInternal } =
+      await import("./hosts");
+    const result = await recordConvergedProjectHostUpgradeInternal({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      version: "ph-v2",
+      targets: [
+        { artifact: "tools", version: "tools-v2" },
+        { artifact: "project", version: "project-v2" },
+        { artifact: "project-host", version: "ph-v2" },
+      ],
+    });
+    expect(result.unconfirmed).toEqual([
+      { artifact: "project", version: "project-v2" },
+    ]);
+    const call = setProjectHostRuntimeDeploymentsMock.mock.calls[0][0];
+    expect(
+      call.deployments
+        .map((d: any) => `${d.target_type}:${d.target}=${d.desired_version}`)
+        .sort(),
+    ).toEqual([
+      "artifact:project-host=ph-v2",
+      "artifact:tools=tools-v2",
+      "component:project-host=ph-v2",
+    ]);
   });
 
   it("records what a successful project-host upgrade records", async () => {

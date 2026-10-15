@@ -6,6 +6,7 @@
 import {
   ensureAutomaticHostArtifactDeploymentsReconcileInternal,
   ensureAutomaticHostRuntimeDeploymentsReconcileInternal,
+  hostSoftwareChangeOpInFlight,
 } from "./hosts-runtime-deployment-queue";
 
 // The host reports project-host at the new version while the effective
@@ -98,5 +99,65 @@ describe("automatic convergence while a host upgrade is in flight", () => {
     await expect(
       ensureAutomaticHostRuntimeDeploymentsReconcileInternal(idle),
     ).resolves.toMatchObject({ queued: true, op_id: "op-2" });
+  });
+});
+
+describe("which upgrade ops count as in flight", () => {
+  const now = Date.parse("2026-10-15T05:00:00Z");
+  const ago = (ms: number) => new Date(now - ms);
+
+  it("keeps a running op in flight while its worker heartbeats, however old it is", () => {
+    // Queued for 30 min behind other host ops, then claimed just now.
+    expect(
+      hostSoftwareChangeOpInFlight(
+        {
+          status: "running",
+          created_at: ago(30 * 60_000),
+          started_at: ago(20_000),
+          heartbeat_at: ago(10_000),
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      hostSoftwareChangeOpInFlight(
+        {
+          status: "running",
+          created_at: ago(3 * 3600_000),
+          started_at: ago(2 * 3600_000),
+          heartbeat_at: ago(15_000),
+        },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("stops counting a running op whose worker stopped heartbeating", () => {
+    expect(
+      hostSoftwareChangeOpInFlight(
+        {
+          status: "running",
+          created_at: ago(10 * 60_000),
+          started_at: ago(10 * 60_000),
+          heartbeat_at: ago(5 * 60_000),
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("bounds a queued op by its queue age", () => {
+    expect(
+      hostSoftwareChangeOpInFlight(
+        { status: "queued", created_at: ago(5 * 60_000) },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      hostSoftwareChangeOpInFlight(
+        { status: "queued", created_at: ago(25 * 60_000) },
+        now,
+      ),
+    ).toBe(false);
   });
 });
