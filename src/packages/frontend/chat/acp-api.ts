@@ -24,6 +24,7 @@ import {
   parentMessageId,
 } from "./access";
 import { type ChatActions } from "./actions";
+import { hasAcpGuidanceReceipt } from "./message-state";
 import {
   markCodexResponseTrace,
   recordCodexBackendAcknowledged,
@@ -51,6 +52,14 @@ let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
 const ACP_ACK_MAX_ATTEMPTS = 5;
 const ACP_ACK_BACKOFF_MS = 2000;
+
+// The hub saves the guidance receipt before a steer RPC returns, so by then
+// the row may already be final; setting "sent" again would leave it stuck.
+function guidanceAlreadyDelivered(syncdb: any, messageId: string): boolean {
+  let row = syncdb?.get_one?.({ event: "chat", message_id: messageId });
+  if (typeof row?.toJS === "function") row = row.toJS();
+  return hasAcpGuidanceReceipt(row?.acp_guidance_delivered_at_ms);
+}
 
 export function sanitizeSharedCodexConfig(
   config: Partial<CodexThreadConfig> & { credentialId?: string },
@@ -467,6 +476,10 @@ export async function processAcpLLM({
   ) => {
     const messageIdKey = `message:${user_message_id}`;
     let next = store.get("acpState");
+    if (state === "sent" && guidanceAlreadyDelivered(syncdb, user_message_id)) {
+      store.setState({ acpState: next.delete(messageIdKey) });
+      return;
+    }
     if (state) {
       next = next.set(messageIdKey, state);
     } else {
@@ -723,6 +736,13 @@ export async function sendQueuedAcpTurnImmediately({
     sendMode?: "immediate";
   }): void => {
     let next = store.get("acpState") ?? new Map();
+    if (
+      state === "sent" &&
+      guidanceAlreadyDelivered(actions.syncdb, messageId)
+    ) {
+      store.setState({ acpState: next.delete(`message:${messageId}`) });
+      return;
+    }
     if (state) {
       next = next.set(`message:${messageId}`, state);
     } else {

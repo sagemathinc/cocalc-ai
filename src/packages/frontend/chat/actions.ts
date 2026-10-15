@@ -132,6 +132,8 @@ const logger = getLogger("frontend:chat:actions");
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const warnedMissingThreadIds = new Set<string>();
 let lastGeneratedChatMessageMs = 0;
+// Longer than a send can take: acp-api.ts retries its ack for up to 10 minutes.
+const AGENT_SEND_IN_FLIGHT_MS = 15 * 60 * 1000;
 
 export function shouldOptimisticallyStopGeneratingLocally(opts?: {
   threadId?: string;
@@ -1291,10 +1293,18 @@ export class ChatActions extends Actions<ChatState> {
       ["queue", "sending", "sent", "running"].includes(
         state.trim().toLowerCase(),
       );
+    // The thread-state row is authoritative for turns the runtime has taken.
     if (active(acpState?.get?.(`thread:${thread_id}`))) return true;
+    // A message's own state only covers the hand-off before the runtime takes
+    // it. That state is written by the sending browser and stays behind if no
+    // reply or receipt ever clears it, so it stops counting once the send
+    // could no longer be in progress.
+    const recentSince =
+      webapp_client.server_time().valueOf() - AGENT_SEND_IN_FLIGHT_MS;
     for (const message of this.getMessagesInThread(thread_id) ?? []) {
       const message_id = `${(message as any)?.message_id ?? ""}`.trim();
       const date = new Date((message as any)?.date ?? NaN).valueOf();
+      if (!(date >= recentSince)) continue;
       if (
         (message_id && active(acpState?.get?.(`message:${message_id}`))) ||
         (Number.isFinite(date) && active(acpState?.get?.(`${date}`)))

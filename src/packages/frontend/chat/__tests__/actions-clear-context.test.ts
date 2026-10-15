@@ -74,6 +74,21 @@ describe("clearAgentContext", () => {
     expect(actions.syncdb.set).not.toHaveBeenCalled();
   });
 
+  it("ignores a message state left over from a send long ago", () => {
+    // Sent yesterday, never acknowledged or answered; the thread is idle.
+    const old = { ...message, date: "2026-10-05T04:59:00.000Z" };
+    for (const state of ["sent", "sending", "queue"]) {
+      const actions = makeActions(iMap({ "message:message-1": state }), [old]);
+      expect(actions.hasActiveAgentTurn(THREAD)).toBe(false);
+    }
+    // The thread's own state still counts however old its messages are.
+    const running = makeActions(
+      iMap({ [`thread:${THREAD}`]: "queue", "message:message-1": "sent" }),
+      [old],
+    );
+    expect(running.hasActiveAgentTurn(THREAD)).toBe(true);
+  });
+
   it("clears a thread whose only sent rows are delivered guidance", () => {
     const guidance = {
       ...message,

@@ -272,6 +272,59 @@ describe("processAcpLLM", () => {
     );
   });
 
+  it("does not mark steer guidance sent again after its receipt", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(4800);
+    // The hub saves the receipt (and may finish the turn) before replying.
+    mockSteerAcp.mockResolvedValue({ ok: true, state: "steered" });
+    const acpState = new FakeAcpState();
+    const actions: any = {
+      syncdb: {
+        save: jest.fn().mockResolvedValue(undefined),
+        set: jest.fn(),
+        commit: jest.fn(),
+        get_one: jest.fn((where: any) =>
+          where.message_id === "user-msg-48"
+            ? {
+                message_id: "user-msg-48",
+                acp_state: "sent",
+                acp_guidance_delivered_at_ms: 4801,
+              }
+            : undefined,
+        ),
+      },
+      store: {
+        get: (key: string) =>
+          ({ project_id: "proj", path: "x.chat", acpState })[key],
+        setState: jest.fn(),
+      },
+      chatStreams: new Set<string>(),
+      getAllMessages: () => new Map(),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      getCodexConfig: jest.fn(() => ({})),
+      sendReply: jest.fn(),
+    };
+    await processAcpLLM({
+      message: {
+        event: "chat",
+        sender_id: "user-1",
+        date: new Date(4800),
+        message_id: "user-msg-48",
+        thread_id: "thread-48",
+        history: [{ author_id: "user-1", content: "also check docs" }],
+      } as any,
+      model: "codex-agent",
+      input: "also check docs",
+      actions,
+      sendMode: "immediate",
+    });
+    expect(mockSteerAcp).toHaveBeenCalledTimes(1);
+    expect(acpState.get("message:user-msg-48")).toBeUndefined();
+    expect(actions.syncdb.set).not.toHaveBeenCalledWith(
+      expect.objectContaining({ acp_state: "sent" }),
+    );
+  });
+
   it("retries a no-ack ACP submission with interrupt and backoff", async () => {
     jest.spyOn(Date, "now").mockReturnValue(4500);
     jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
@@ -958,6 +1011,43 @@ describe("queued ACP controls", () => {
       acp_send_mode: "immediate",
       acp_state: "sent",
     });
+  });
+
+  it("leaves a queued turn final when its guidance receipt came first", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true, state: "running" });
+    const acpState = new FakeAcpState();
+    acpState.set("message:user-msg-queued", "queue");
+    const store: any = {
+      get: (key: string) =>
+        ({ project_id: "proj", path: "x.chat", acpState })[key],
+      setState: jest.fn(),
+    };
+    const actions: any = {
+      store,
+      syncdb: {
+        set: jest.fn(),
+        commit: jest.fn(),
+        get_one: jest.fn(() => ({
+          message_id: "user-msg-queued",
+          acp_state: "sent",
+          acp_guidance_delivered_at_ms: 1234,
+        })),
+      },
+    };
+    const message: any = {
+      message_id: "user-msg-queued",
+      thread_id: "thread-queued",
+      history: [{ content: "actually say hello" }],
+    };
+
+    await expect(
+      sendQueuedAcpTurnImmediately({ actions, message }),
+    ).resolves.toBe(true);
+
+    expect(acpState.get("message:user-msg-queued")).toBeUndefined();
+    expect(actions.syncdb.set).not.toHaveBeenCalledWith(
+      expect.objectContaining({ acp_state: "sent" }),
+    );
   });
 
   it("updates local state after cancelling a queued turn", async () => {
