@@ -104,7 +104,9 @@ test("pairs again: the new request first, then the old computer is disconnected;
 
 test("the hard lease is a form item (24 by default), and the request carries what is entered", async () => {
   render(<ReconnectComputer computer={m1} />);
-  const input = screen.getByRole("spinbutton", { name: "Hard lease in hours" });
+  const input = screen.getByRole("spinbutton", {
+    name: "Stop all work after hours without CoCalc",
+  });
   expect((input as HTMLInputElement).value).toBe("24");
   await userEvent.clear(input);
   await userEvent.type(input, "6");

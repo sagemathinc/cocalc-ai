@@ -7,6 +7,7 @@
 // can't connect to CoCalc for N hours, all its jobs stop (William, Oct 15
 // 2026). The "?" states the exact rule.
 
+import { useId } from "react";
 import { InputNumber, Space } from "antd";
 import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import {
@@ -51,7 +52,10 @@ export function LeaseSummary({
   );
 }
 
-/** The lease as a form item (whole hours, 1 to 8760). */
+/**
+ * The lease as a form item (whole hours, 1 to 8760). Its accessible name is
+ * its visible text: "Stop all work after … hours without CoCalc".
+ */
 export function LeaseInput({
   value,
   onChange,
@@ -59,11 +63,15 @@ export function LeaseInput({
   value: number;
   onChange: (hours: number) => void;
 }) {
+  const id = useId();
   return (
     <Space wrap>
-      <span>Stop all work after</span>
+      <label id={`${id}-before`} htmlFor={id}>
+        Stop all work after
+      </label>
       <InputNumber
-        aria-label="Hard lease in hours"
+        id={id}
+        aria-labelledby={`${id}-before ${id}-after`}
         min={MIN_LEASE_HOURS}
         max={MAX_LEASE_HOURS}
         precision={0}
@@ -76,7 +84,7 @@ export function LeaseInput({
           )
         }
       />
-      <span>hours without CoCalc</span>
+      <span id={`${id}-after`}>hours without CoCalc</span>
       <LeaseHelp hours={value} />
     </Space>
   );
