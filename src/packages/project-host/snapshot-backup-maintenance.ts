@@ -75,8 +75,8 @@ const DEFAULT_STARVATION_INTERVAL_MS = 5 * 60 * 1000;
 // at most about 22 GB of changed data, and a killed run leaves no snapshot, so
 // the next run has even more to read: a project that outgrows the limit is
 // never backed up again. Each consecutive failure doubles the limit, up to the
-// cap. The cap stays modest because the run holds the project's volume
-// lifecycle lock, which a start of that project waits for.
+// cap. The cap stays modest because a run occupies one of the host's few
+// backup lanes, and while it runs no starvation override is admitted.
 const SCHEDULED_BACKUP_TIMEOUT_MS = 30 * 60 * 1000;
 const SCHEDULED_BACKUP_MAX_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const GIB = 1024 ** 3;

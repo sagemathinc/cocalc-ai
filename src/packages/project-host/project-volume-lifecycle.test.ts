@@ -93,4 +93,74 @@ describe("project volume lifecycle coordination", () => {
     await expect(staleMaintenance).resolves.toBeUndefined();
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("lets queued work run while the holder works unlocked, then reacquires behind it", async () => {
+    const project_id = "project-1";
+    const order: string[] = [];
+    let finishUpload!: () => void;
+    const uploading = new Promise<void>((resolve) => {
+      finishUpload = resolve;
+    });
+    let uploadStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      uploadStarted = resolve;
+    });
+    const backup = withProjectVolumeLifecycleLock(project_id, async (lock) => {
+      order.push("snapshot");
+      await lock.unlocked(async () => {
+        uploadStarted();
+        await uploading;
+        order.push("upload done");
+      });
+      order.push("retention");
+    });
+    await started;
+    await withProjectVolumeLifecycleLock(project_id, async () => {
+      order.push("scratch reset");
+    });
+    expect(order).toEqual(["snapshot", "scratch reset"]);
+
+    let releaseLater!: () => void;
+    const later = withProjectVolumeLifecycleLock(project_id, async () => {
+      await new Promise<void>((resolve) => {
+        releaseLater = resolve;
+      });
+      order.push("later");
+    });
+    finishUpload();
+    await new Promise((resolve) => setImmediate(resolve));
+    // The holder queued behind work that took the lock while it was away.
+    expect(order).toEqual(["snapshot", "scratch reset", "upload done"]);
+    releaseLater();
+    await Promise.all([backup, later]);
+    expect(order).toEqual([
+      "snapshot",
+      "scratch reset",
+      "upload done",
+      "later",
+      "retention",
+    ]);
+  });
+
+  it("reacquires the lock even when unlocked work fails", async () => {
+    const project_id = "project-1";
+    const order: string[] = [];
+    const holder = withProjectVolumeLifecycleLock(project_id, async (lock) => {
+      await expect(
+        lock.unlocked(async () => {
+          throw new Error("upload failed");
+        }),
+      ).rejects.toThrow("upload failed");
+      const queued = withProjectVolumeLifecycleLock(project_id, async () => {
+        order.push("queued");
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      order.push("holder");
+      return { queued };
+    });
+    await (
+      await holder
+    ).queued;
+    expect(order).toEqual(["holder", "queued"]);
+  });
 });
