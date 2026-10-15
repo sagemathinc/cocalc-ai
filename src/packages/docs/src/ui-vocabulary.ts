@@ -86,6 +86,11 @@ const API_KEY_SCOPE = "frontend/components/api-key-scope-editor.tsx";
 const AGENT_ATTACHMENT = "frontend/chat/agent-file-attachment.tsx";
 const NETWORK_APPROVAL = "frontend/agents/network-approval.tsx";
 const AGENTS_OVERVIEW = "frontend/agents/agents-overview.tsx";
+const GENERIC_COMMANDS =
+  "frontend/frame-editors/frame-tree/commands/generic-commands.tsx";
+const LATEX_BUILD_COMMAND =
+  "frontend/frame-editors/latex-editor/build-command.tsx";
+const LATEX_ENGINES = "apps/document-build/src/latex/commands.ts";
 
 const doc = (name: string): string => `docs/src/content/${name}.ts`;
 const entries = (name: string): string => `docs/src/entries/${name}.ts`;
@@ -1448,6 +1453,101 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       bold("research-specialist", "Build Log"),
     ],
   },
+  // The LaTeX editor's build controls (latex/build-papers)
+  {
+    id: "latex.output.build-tab",
+    label: "Build",
+    anchors: [
+      msg(
+        COMMON,
+        "editor.build_control_and_log.title.short",
+        'defaultMessage: "Build"',
+      ),
+      ren(
+        "frontend/frame-editors/latex-editor/output.tsx",
+        "intl.formatMessage(editor.build_control_and_log_title_short)",
+      ),
+    ],
+    usedIn: [
+      { file: doc("files"), text: "The **Build** tab in the output panel" },
+    ],
+  },
+  {
+    id: "latex.build.engine-menu",
+    label: "Engine...",
+    anchors: [
+      def(LATEX_BUILD_COMMAND, 'placeholder="Engine..."'),
+      ren(LATEX_BUILD_COMMAND, "options={engineOptions()}"),
+    ],
+    usedIn: [bold("files", "Engine...")],
+  },
+  ...(
+    [
+      ["pdflatex", "PDFLaTeX", 'LATEX_ENGINES = [ "PDFLaTeX",'],
+      ["xelatex", "XeLaTeX", '"XeLaTeX",'],
+      ["luatex", "LuaTex", '"LuaTex",'],
+      ["shell-escape", "PDFLaTeX (shell-escape)", '"PDFLaTeX (shell-escape)",'],
+      [
+        "no-output-dir",
+        "(no output dir)",
+        'export const NO_OUTPUT_DIR = "(no output dir)";',
+      ],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `latex.build.engine.${key}`,
+      label,
+      anchors: [
+        def(LATEX_ENGINES, text),
+        ren(LATEX_BUILD_COMMAND, "options={engineOptions()}"),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  ...(
+    [
+      ["hardcoded", "Hardcoded build-command", "Hardcoded build-command"],
+      ["rescan", "Rescan", '<Icon name="reload" /> Rescan'],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `latex.build.${key}`,
+      label,
+      anchors: [def(LATEX_BUILD_COMMAND, text)],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  // The log tab of each build stage.
+  ...(["Knitr", "SageTex", "PythonTeX"] as const).map(
+    (label): UiVocabularyEntry => ({
+      id: `latex.build.log.${label.toLowerCase()}`,
+      label,
+      anchors: [
+        def(
+          "frontend/frame-editors/latex-editor/types.ts",
+          `label: "${label}"`,
+        ),
+        ren(
+          "frontend/frame-editors/latex-editor/build.tsx",
+          "const title = BUILD_SPECS[stage].label;",
+        ),
+      ],
+      usedIn: [bold("files", label)],
+    }),
+  ),
+  ...(
+    [
+      ["force-build", "Force Build", "command.generic.force_build.label"],
+      ["clean", "Delete Aux Files", "command.generic.clean.label"],
+    ] as const
+  ).map(
+    ([key, label, messageId]): UiVocabularyEntry => ({
+      id: `latex.build.${key}`,
+      label,
+      anchors: [msg(GENERIC_COMMANDS, messageId, `defaultMessage: "${label}"`)],
+      usedIn: [bold("files", label)],
+    }),
+  ),
   {
     id: "course.no-matching-license",
     label: "No matching site license found",
