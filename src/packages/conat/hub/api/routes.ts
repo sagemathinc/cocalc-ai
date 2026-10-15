@@ -77,6 +77,12 @@ const hiddenProjects: HubApiRoute = {
   errorResult: (project_id, error) => ({ project_id, success: false, error }),
 };
 
+const leftOrDeletedProjects: HubApiRoute = {
+  owner: "projects",
+  key: (args) => args?.[0]?.project_ids,
+  errorResult: (project_id, error) => ({ project_id, action: "error", error }),
+};
+
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
@@ -86,6 +92,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // Hiding is per account, but stored in each project's users map.
   "projects.setProjectHidden": projectFromOpts,
   "projects.setProjectsHidden": hiddenProjects,
+  // Each bay leaves, transfers or deletes its own projects; fresh auth asks
+  // the caller's home bay.
+  "projects.leaveOrDeleteProjects": leftOrDeletedProjects,
   // Host placement and moves run where the project, its runtime slot and its
   // operations live; fresh auth for a move asks the caller's home bay.
   "projects.moveProject": projectFromOpts,

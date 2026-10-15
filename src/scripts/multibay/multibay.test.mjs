@@ -798,6 +798,74 @@ describe("hiding projects across bays", () => {
   });
 });
 
+describe("leaving projects across bays", () => {
+  // leaver, homed on the seed, collaborates on a project on each bay and
+  // leaves both in one call. The call runs once per bay with that bay's
+  // project; the attached bay records the part forwarded to it, after asking
+  // the seed (leaver's home) for fresh auth. Own accounts: projects count
+  // against each account's limit.
+  let leaver;
+  const member = async (bay, project_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT users -> $2::text ->> 'group' AS grp FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project_id)}, ${JSON.stringify(leaver.account_id)}]);
+       return rows[0]?.grp ?? null;`,
+    );
+  const forwardedLeaves = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.leaveOrDeleteProjects' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(leaver.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("leaves a project on each bay, each on its own bay", async () => {
+    leaver = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "leaver",
+    });
+    leaver.client = await client(leaver);
+    const seedOwner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "seed-owner",
+    });
+    seedOwner.client = await client(seedOwner);
+    const attachedOwner = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "attached-owner",
+    });
+    attachedOwner.client = await client(attachedOwner);
+    const local = await createProject(seedOwner.client, "leave-seed");
+    const remote = await createProject(attachedOwner.client, "leave-attached");
+    await invite(seedOwner, leaver, local);
+    await invite(attachedOwner, leaver, remote);
+    assert.equal(await owningBay(remote), ATTACHED);
+    assert.equal(await member(ATTACHED, remote), "collaborator");
+    assert.equal(await member(SEED, local), "collaborator");
+
+    const before = await forwardedLeaves();
+    assert.deepEqual(
+      await leaver.client.call("projects.leaveOrDeleteProjects", {
+        project_ids: [remote, local],
+      }),
+      [
+        { project_id: remote, action: "removed_self" },
+        { project_id: local, action: "removed_self" },
+      ],
+    );
+    assert.equal(await forwardedLeaves(), before + 1);
+    assert.equal(await member(ATTACHED, remote), null);
+    assert.equal(await member(SEED, local), null);
+  });
+});
+
 describe("bulk project stop across bays", () => {
   // carol, homed on the seed, stops a project on each bay in one call. Each
   // project's stop is its own call, forwarded to the project's bay when it is
