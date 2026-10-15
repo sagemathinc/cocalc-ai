@@ -1851,6 +1851,150 @@ describePglite("commercial order store", () => {
     ).toBe(true);
   });
 
+  async function openStripeInvoiceForPaymentTest() {
+    const created = await store.createCommercialOrder(
+      request({ collection_mode: "stripe_invoice" }),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve Stripe invoice terms",
+    });
+    const intent = await store.createCommercialInvoiceIntent({
+      order_id: approved.id,
+      actor_account_id: actor,
+      expected_version: approved.version,
+      reason: "create invoice for out-of-band test",
+      idempotency_key: `oob-intent-${randomUUID()}`,
+      due_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    const open = await store.updateCommercialInvoiceProvider({
+      ...providerInvoiceState(intent.invoice),
+      status: "open",
+      amount_due: "3900",
+      amount_paid: "0",
+      collection_state: "open",
+      event_type: "invoice-opened-test",
+      event_reason: "test provider invoice opened",
+      event_idempotency_key: `oob-open-${randomUUID()}`,
+    });
+    return { order: open, invoice: intent.invoice };
+  }
+
+  function providerInvoiceState(invoice: {
+    id: string;
+    due_at?: string | null;
+  }) {
+    return {
+      invoice_id: invoice.id,
+      provider_customer_id: "cus_test",
+      provider_invoice_id: `in_oob_${invoice.id.slice(0, 8)}`,
+      subtotal: "3900",
+      tax: "0",
+      total: "3900",
+      due_at: invoice.due_at,
+      provider_snapshot: {},
+      event_source: "reconciler" as const,
+    };
+  }
+
+  function paidOutOfBand(invoice: { id: string; due_at?: string | null }) {
+    return {
+      ...providerInvoiceState(invoice),
+      status: "paid" as const,
+      amount_due: "0",
+      amount_paid: "3900",
+      paid_at: "2026-10-06T12:00:00.000Z",
+      collection_state: "paid" as const,
+      event_type: "invoice-reconciled",
+      event_reason: "Stripe webhook after out-of-band settlement",
+      event_idempotency_key: `oob-reconcile-${randomUUID()}`,
+      provider_payments: [],
+      off_stripe_payments: [
+        { id: "inpay_oob", amount: "3900.0000000000", currency: "usd" },
+      ],
+    };
+  }
+
+  it("cancels an off-Stripe placeholder stored next to its manual evidence", async () => {
+    const { order, invoice } = await openStripeInvoiceForPaymentTest();
+    const manual = await store.recordManualCommercialPayment({
+      account_id: actor,
+      id: order.id,
+      commercial_invoice_id: invoice.id,
+      expected_version: order.version,
+      reason: "record verified wire",
+      amount: "3900",
+      currency: "usd",
+      method: "wire",
+      evidence_reference: "TEST-WIRE-3900",
+    });
+    // What reconciliation stored before off-Stripe payments were recognized.
+    const duplicated = await store.updateCommercialInvoiceProvider({
+      ...paidOutOfBand(invoice),
+      off_stripe_payments: [],
+      provider_payments: [
+        {
+          id: "inpay_oob",
+          amount: "3900.0000000000",
+          currency: "usd",
+          status: "succeeded",
+          received_at: new Date().toISOString(),
+          method: "other",
+        },
+      ],
+    });
+    expect(
+      duplicated.payments.filter(({ status }) => status === "succeeded"),
+    ).toHaveLength(2);
+
+    const repaired = await store.updateCommercialInvoiceProvider({
+      ...paidOutOfBand(invoice),
+      skip_if_unchanged: true,
+    });
+    const succeeded = repaired.payments.filter(
+      ({ status }) => status === "succeeded",
+    );
+    expect(succeeded).toHaveLength(1);
+    expect(succeeded[0]).toMatchObject({ provider: "manual", method: "wire" });
+    expect(
+      repaired.payments.find(
+        ({ provider_payment_id }) => provider_payment_id === "inpay_oob",
+      ),
+    ).toMatchObject({ provider: "stripe", status: "canceled" });
+    expect(repaired.collection_state).toBe("paid");
+    expect(manual.payments).toHaveLength(1);
+  });
+
+  it("rejects an off-Stripe settlement that CoCalc has no evidence for", async () => {
+    const { invoice } = await openStripeInvoiceForPaymentTest();
+    await expect(
+      store.updateCommercialInvoiceProvider(paidOutOfBand(invoice)),
+    ).rejects.toThrow("no payment evidence");
+  });
+
+  it("accepts an off-Stripe settlement during CoCalc's own out-of-band operation", async () => {
+    const { order, invoice } = await openStripeInvoiceForPaymentTest();
+    const { operation } = await store.reserveCommercialProviderOperation({
+      order_id: order.id,
+      invoice_id: invoice.id,
+      expected_version: order.version,
+      operation: "mark-invoice-paid-out-of-band",
+      idempotency_key: `oob-op-${randomUUID()}`,
+      request: { amount: "3900" },
+    });
+    await store.setCommercialProviderOperationStatus({
+      id: operation.id,
+      status: "remote_started",
+    });
+    const reconciled = await store.updateCommercialInvoiceProvider(
+      paidOutOfBand(invoice),
+    );
+    expect(reconciled.collection_state).toBe("paid");
+    expect(reconciled.payments).toHaveLength(0);
+  });
+
   it("reconciles unchanged provider state without invalidating an operator version", async () => {
     const created = await store.createCommercialOrder(
       request({ collection_mode: "stripe_invoice" }),

@@ -2778,6 +2778,53 @@ interface CommercialInvoiceProviderUpdate {
     received_at: string;
     method: CommercialPayment["method"];
   }>;
+  // Settlements Stripe lists as off-Stripe payment records, e.g. after
+  // invoices.pay with paid_out_of_band. They are never stored as Stripe
+  // payments: CoCalc's manual evidence row is the payment.
+  off_stripe_payments?: Array<{
+    id: string;
+    amount: string;
+    currency: string;
+  }>;
+}
+
+// Money that reached us outside Stripe must have CoCalc payment evidence: a
+// manual payment on this invoice, or our own in-progress out-of-band
+// settlement (Stripe was marked paid; the manual row follows in the same
+// operation). Otherwise an invoice marked paid elsewhere, e.g. in the Stripe
+// Dashboard, would complete the order with no record of the money.
+async function assertOffStripeSettlementEvidence(
+  client: PoolClient,
+  before: CommercialOrder,
+  opts: CommercialInvoiceProviderUpdate,
+): Promise<void> {
+  const offStripe = opts.off_stripe_payments ?? [];
+  if (offStripe.length === 0) return;
+  const required = offStripe.reduce(
+    (total, payment) => moneyAdd(total, payment.amount),
+    toDecimal(0),
+  );
+  const recorded = before.payments
+    .filter(
+      ({ commercial_invoice_id, provider, status }) =>
+        commercial_invoice_id === opts.invoice_id &&
+        provider === "manual" &&
+        status === "succeeded",
+    )
+    .reduce((total, payment) => moneyAdd(total, payment.amount), toDecimal(0));
+  if (moneyCompare(recorded, required) >= 0) return;
+  const { rows } = await client.query(
+    `SELECT 1 FROM commercial_provider_operations
+      WHERE commercial_invoice_id=$1
+        AND operation='mark-invoice-paid-out-of-band'
+        AND status IN ('remote_started','succeeded')
+      LIMIT 1`,
+    [opts.invoice_id],
+  );
+  if (rows[0]) return;
+  throw Error(
+    "Stripe reports a payment made outside Stripe on this invoice, but CoCalc has no payment evidence for it; record it with a manual payment before reconciling",
+  );
 }
 
 function sameProviderPaymentState(
@@ -2873,6 +2920,7 @@ export async function updateCommercialInvoiceProvider(
       recordCommercialOperator("provider-reconcile", "replay");
       return await loadOrder(client, replay);
     }
+    await assertOffStripeSettlementEvidence(client, before, opts);
     if (opts.skip_if_unchanged && sameProviderInvoiceState(before, opts)) {
       await client.query(
         `UPDATE commercial_invoices
@@ -2923,6 +2971,23 @@ export async function updateCommercialInvoiceProvider(
       )
     ) {
       throw Error("a cancelled commercial order cannot accept payment");
+    }
+    // An off-Stripe settlement stored as a Stripe payment by earlier code
+    // duplicated its manual evidence row; cancel exactly that row.
+    for (const payment of opts.off_stripe_payments ?? []) {
+      await client.query(
+        `UPDATE commercial_payments SET status='canceled',updated_at=NOW()
+          WHERE provider='stripe' AND provider_payment_id=$1
+            AND commercial_order_id=$2 AND commercial_invoice_id=$3
+            AND amount=$4 AND currency=$5 AND status='succeeded'`,
+        [
+          payment.id,
+          before.id,
+          opts.invoice_id,
+          payment.amount,
+          payment.currency,
+        ],
+      );
     }
     for (const payment of opts.provider_payments ?? []) {
       const linked = await client.query<{
