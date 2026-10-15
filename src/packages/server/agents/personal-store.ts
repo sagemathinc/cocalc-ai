@@ -72,7 +72,10 @@ export interface PersonalAgentHooks {
   ): Promise<void>;
   upsert?(account: string, agent: NamedAgent): Promise<void>;
   remove?(account: string, endpoint: AgentEndpoint): Promise<void>;
-  /** Removed from Agents: delete the agent's own scope in the account's memory. */
+  /**
+   * Removed from Agents: delete the agent's own scope in the account's
+   * memory. Not best effort: a failure aborts the removal.
+   */
   retireMemory?(account: string, agent_id: string): Promise<void>;
   /** This account's payment selections for the agents' conversations. */
   payments?(account: string, agents: NamedAgent[]): Promise<void>;
@@ -464,6 +467,17 @@ export class PersonalAgentStore {
 
   async retire(account: string, opts: RetireNamedAgentOptions): Promise<void> {
     validateAgentEndpoint(opts.endpoint);
+    // The agent's own memory scope goes first: if deleting it fails, nothing
+    // is removed and the person can retry, rather than being told its notes
+    // are gone while they remain. Its notes in shared memory stay, still
+    // showing who wrote them.
+    try {
+      await this.hooks.retireMemory?.(account, opts.endpoint.agent_id);
+    } catch (err) {
+      throw new Error(
+        `unable to delete the agent's own memory notes, so it was not removed; try again (${err})`,
+      );
+    }
     await this.locked(account, async (db) => {
       await db.query(
         "DELETE FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3",
@@ -474,11 +488,6 @@ export class PersonalAgentStore {
       .watch?.(account, opts.endpoint, false)
       .catch(() => undefined);
     await this.hooks.remove?.(account, opts.endpoint).catch(() => undefined);
-    // The agent's own memory scope goes with it. Its notes in shared memory
-    // stay, still showing who wrote them.
-    await this.hooks
-      .retireMemory?.(account, opts.endpoint.agent_id)
-      .catch(() => undefined);
   }
 
   async resolveName(account: string, value: string): Promise<NamedAgent> {

@@ -67,8 +67,12 @@ const STALE = Symbol("stale");
 // The turn index never shows more lines than this, so it decrypts no more.
 const INDEX_CANDIDATES = 400;
 const DAY_SECONDS = 24 * 60 * 60;
+// Authorship and expiry hold only for the write that set them: a later
+// write by a hub that does not keep them (a rolling upgrade, the
+// first-version record) changes updated_at without them.
+const ATTRIBUTED = "attributed_at = updated_at";
 // Notes past their expiry act as deleted until the sweep removes them.
-const LIVE = "(expires_at IS NULL OR expires_at > now())";
+const LIVE = `(expires_at IS NULL OR expires_at > now() OR NOT COALESCE(${ATTRIBUTED}, false))`;
 
 type Rows = { rows: any[]; rowCount?: number | null };
 export type MemoryDb = {
@@ -200,11 +204,31 @@ type NoteRow = {
   written_by_name?: string | null;
   ttl_seconds?: number | null;
   expires_at?: Date | string | null;
+  attributed_at?: Date | string | null;
 };
 
 const NOTE_COLUMNS = `namespace, name, description, bytes, project_id, updated_at,
   last_read_at, read_count, written_by_agent_id, written_by_name, ttl_seconds,
-  expires_at`;
+  expires_at, attributed_at`;
+
+/** What the owner sees: while memory is off, nothing expires. */
+const ownerLive = (enabled: boolean) => (enabled ? LIVE : "TRUE");
+
+/** Whether a row's authorship and expiry still describe its content. */
+function attributed(row: {
+  updated_at?: Date | string | null;
+  attributed_at?: Date | string | null;
+}): boolean {
+  if (row.attributed_at == null || row.updated_at == null) return false;
+  return (
+    new Date(row.attributed_at as any).getTime() ===
+    new Date(row.updated_at as any).getTime()
+  );
+}
+
+const writer = (row: NoteRow) =>
+  attributed(row) ? (row.written_by_name ?? null) : null;
+const expiry = (row: NoteRow) => (attributed(row) ? iso(row.expires_at) : null);
 
 /**
  * Identifies a note's content, so a write can refuse to replace a change
@@ -256,9 +280,14 @@ function otherWriter(
 }
 
 const writtenByOther = (
-  row: { written_by_agent_id?: string | null },
+  row: {
+    written_by_agent_id?: string | null;
+    updated_at?: Date | string | null;
+    attributed_at?: Date | string | null;
+  },
   caller: AgentMemoryCaller | undefined,
 ) =>
+  attributed(row) &&
   row.written_by_agent_id != null &&
   row.written_by_agent_id !== caller?.agent_id;
 
@@ -438,7 +467,10 @@ export function createAgentMemory(
            VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
            ON CONFLICT (account_id, namespace, name) DO UPDATE SET
              description=EXCLUDED.description, body=EXCLUDED.body,
-             bytes=EXCLUDED.bytes, updated_at=EXCLUDED.updated_at
+             bytes=EXCLUDED.bytes, updated_at=EXCLUDED.updated_at,
+             -- Nobody known wrote this content, and it does not expire.
+             written_by_agent_id=NULL, written_by_name=NULL,
+             ttl_seconds=NULL, expires_at=NULL, attributed_at=NULL
            WHERE agent_memory_notes.updated_at < EXCLUDED.updated_at`,
           [
             account_id,
@@ -498,12 +530,14 @@ export function createAgentMemory(
     account_id: string,
     namespaces: string[] | undefined,
     withBody = false,
+    // While memory is off nothing expires, so the owner still sees it all.
+    live = LIVE,
   ): Promise<NoteRow[]> {
     const { rows } = await db.query(
       `SELECT ${withBody ? "body," : ""} ${NOTE_COLUMNS}
          FROM agent_memory_notes
         WHERE account_id=$1 AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
-          AND ${LIVE}`,
+          AND ${live}`,
       [account_id, namespaces ?? null],
     );
     return rows;
@@ -529,8 +563,8 @@ export function createAgentMemory(
             : await decryptField(account_id, row, "body", row.body),
         updated_at: iso(row.updated_at)!,
         last_read_at: iso(row.last_read_at),
-        written_by: row.written_by_name ?? null,
-        expires_at: iso(row.expires_at),
+        written_by: writer(row),
+        expires_at: expiry(row),
       })),
     );
   }
@@ -554,8 +588,8 @@ export function createAgentMemory(
         bytes: Number(row.bytes),
         project_id: row.project_id,
         read_count: Number(row.read_count),
-        written_by: row.written_by_name ?? null,
-        expires_at: iso(row.expires_at),
+        written_by: writer(row),
+        expires_at: expiry(row),
       })),
     );
   }
@@ -741,19 +775,21 @@ export function createAgentMemory(
       `INSERT INTO agent_memory_notes
          (account_id, namespace, name, description, body, bytes, project_id,
           written_by_agent_id, written_by_name, ttl_seconds, expires_at,
-          created_at, updated_at)
+          created_at, updated_at, attributed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::int,
-               now() + make_interval(secs => $10::int), now(), now())
+               now() + make_interval(secs => $10::int), now(), now(), now())
        ON CONFLICT (account_id, namespace, name) DO UPDATE SET
          description=EXCLUDED.description, body=EXCLUDED.body, bytes=EXCLUDED.bytes,
          project_id=COALESCE(EXCLUDED.project_id, agent_memory_notes.project_id),
          written_by_agent_id=EXCLUDED.written_by_agent_id,
          written_by_name=EXCLUDED.written_by_name,
          ttl_seconds=CASE WHEN $11::boolean THEN EXCLUDED.ttl_seconds
-                          ELSE agent_memory_notes.ttl_seconds END,
+                          WHEN agent_memory_notes.attributed_at = agent_memory_notes.updated_at
+                          THEN agent_memory_notes.ttl_seconds END,
          expires_at=now() + make_interval(secs => CASE WHEN $11::boolean THEN EXCLUDED.ttl_seconds
-                          ELSE agent_memory_notes.ttl_seconds END),
-         updated_at=now()`,
+                          WHEN agent_memory_notes.attributed_at = agent_memory_notes.updated_at
+                          THEN agent_memory_notes.ttl_seconds END),
+         updated_at=now(), attributed_at=now()`,
       [
         account_id,
         namespace,
@@ -871,10 +907,14 @@ export function createAgentMemory(
     );
   }
 
-  async function namespaceCounts(db: MemoryDb, account_id: string) {
+  async function namespaceCounts(
+    db: MemoryDb,
+    account_id: string,
+    live = LIVE,
+  ) {
     const { rows } = await db.query(
       `SELECT namespace, count(*)::int AS notes, coalesce(sum(bytes),0)::bigint AS bytes
-         FROM agent_memory_notes WHERE account_id=$1 AND ${LIVE} GROUP BY namespace`,
+         FROM agent_memory_notes WHERE account_id=$1 AND ${live} GROUP BY namespace`,
       [account_id],
     );
     const counts: Record<string, number> = {};
@@ -931,11 +971,46 @@ export function createAgentMemory(
     );
     if (rows[0]) return rows[0].agent_id;
     const { rows: known } = await db.query(
-      `SELECT agent_id FROM agent_memory_agents
-        WHERE account_id=$1 AND name=$2 ORDER BY last_turn_at DESC LIMIT 1`,
+      `SELECT DISTINCT agent_id FROM agent_memory_agents
+        WHERE account_id=$1 AND name=$2`,
       [account_id, name],
     );
+    // Never guess between agents: each would expect @name to be its own.
+    if (known.length > 1)
+      throw new Error(
+        `more than one agent is known as @${name} here; the account owner can give one of them its own name in Agents`,
+      );
     return known[0]?.agent_id;
+  }
+
+  /**
+   * A name for an agent the account does not list: its registration name,
+   * made unique with part of its id if another agent already goes by it.
+   */
+  async function fallbackName(
+    db: MemoryDb,
+    account_id: string,
+    agent: AgentMemoryCaller,
+  ): Promise<string> {
+    const base = agentNameFallback(agent.name);
+    const suffix = agent.agent_id.replace(/-/g, "").slice(0, 8);
+    const suffixed = `${base.slice(0, 23).replace(/-+$/, "")}-${suffix}`;
+    const { rows: stored } = await db.query(
+      "SELECT name FROM agent_memory_agents WHERE account_id=$1 AND agent_id=$2",
+      [account_id, agent.agent_id],
+    );
+    // Once unique by its id, a name stays put, so references keep working.
+    if (stored[0]?.name === suffixed) return suffixed;
+    const { rows: taken } = await db.query(
+      `SELECT 1 FROM agent_personal_names
+        WHERE account_id=$1 AND name=$2 AND retired_at IS NULL AND agent_id<>$3
+       UNION ALL
+       SELECT 1 FROM agent_memory_agents
+        WHERE account_id=$1 AND name=$2 AND agent_id<>$3
+       LIMIT 1`,
+      [account_id, base, agent.agent_id],
+    );
+    return taken.length ? suffixed : base;
   }
 
   /**
@@ -954,9 +1029,12 @@ export function createAgentMemory(
         WHERE account_id=$1 AND agent_id=$2 AND retired_at IS NULL LIMIT 1`,
       [account_id, agent.agent_id],
     );
+    const agent_id = agent.agent_id.toLowerCase();
     const caller = {
-      agent_id: agent.agent_id.toLowerCase(),
-      name: rows[0]?.name ?? agentNameFallback(agent.name),
+      agent_id,
+      name:
+        rows[0]?.name ??
+        (await fallbackName(db, account_id, { agent_id, name: agent.name })),
     };
     try {
       await db.query(
@@ -1110,7 +1188,7 @@ export function createAgentMemory(
                     expires_at=now() + make_interval(secs => ttl_seconds)
               WHERE account_id=$1 AND namespace=$2 AND name=$3 AND ${LIVE}
               RETURNING namespace, name, description, body, updated_at,
-                        written_by_name, expires_at`,
+                        written_by_name, expires_at, attributed_at`,
             [account_id, namespace, ref.name],
           );
           if (!rows[0]) throw new Error(`no memory note named ${request.name}`);
@@ -1435,7 +1513,7 @@ export function createAgentMemory(
             "description",
             row.description,
           ),
-          written_by: row.written_by_name ?? null,
+          written_by: writer(row),
         })),
       );
       // Only what this project sees: nothing about other namespaces.
@@ -1489,13 +1567,18 @@ export function createAgentMemory(
       const { rowCount: expired } = await db.query(
         `DELETE FROM agent_memory_notes WHERE ctid IN (
            SELECT ctid FROM agent_memory_notes
-            WHERE expires_at IS NOT NULL AND expires_at <= now() LIMIT $1)`,
+            WHERE expires_at IS NOT NULL AND expires_at <= now() AND ${ATTRIBUTED}
+              -- Turning memory off pauses expiry.
+              AND account_id IN
+                (SELECT account_id FROM agent_memory_accounts WHERE enabled)
+            LIMIT $1)`,
         [batch],
       );
       const { rows: idle } = await db.query(
-        `SELECT account_id, agent_id FROM agent_memory_agents
-          WHERE last_turn_at < now() - make_interval(days => $1::int)
-          ORDER BY last_turn_at LIMIT $2`,
+        `SELECT g.account_id, g.agent_id FROM agent_memory_agents g
+           JOIN agent_memory_accounts a ON a.account_id=g.account_id AND a.enabled
+          WHERE g.last_turn_at < now() - make_interval(days => $1::int)
+          ORDER BY g.last_turn_at LIMIT $2`,
         [AGENT_MEMORY_LIMITS.agentInactiveDays, batch],
       );
       let inactive_notes = 0;
@@ -1534,7 +1617,11 @@ export function createAgentMemory(
       switch (request.op) {
         case "status": {
           const settings = await settingsOf(account_id);
-          const all = await namespaceCounts(db, account_id);
+          const all = await namespaceCounts(
+            db,
+            account_id,
+            ownerLive(settings.enabled),
+          );
           const { rows } = await db.query(
             "SELECT max(updated_at) AS updated_at FROM agent_memory_notes WHERE account_id=$1",
             [account_id],
@@ -1556,20 +1643,34 @@ export function createAgentMemory(
           return status;
         }
         case "list": {
-          await settingsOf(account_id);
+          const settings = await settingsOf(account_id);
           return {
             notes_list: await summaries(
               account_id,
-              await noteRows(db, account_id, undefined),
+              await noteRows(
+                db,
+                account_id,
+                undefined,
+                false,
+                ownerLive(settings.enabled),
+              ),
             ),
           };
         }
         case "read": {
-          await settingsOf(account_id);
+          const settings = await settingsOf(account_id);
+          // Like an agent's read: an expired note is gone, and reading one
+          // keeps it (while memory is off, nothing expires).
           const { rows } = await db.query(
-            `SELECT namespace, name, description, body, updated_at, last_read_at
-               FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3`,
-            [account_id, request.namespace, request.name],
+            `UPDATE agent_memory_notes
+                SET expires_at = CASE WHEN $4::boolean
+                  THEN now() + make_interval(secs => ttl_seconds)
+                  ELSE expires_at END
+              WHERE account_id=$1 AND namespace=$2 AND name=$3
+                AND ${ownerLive(settings.enabled)}
+              RETURNING namespace, name, description, body, updated_at,
+                        last_read_at, written_by_name, expires_at, attributed_at`,
+            [account_id, request.namespace, request.name, settings.enabled],
           );
           if (!rows[0])
             throw new Error(
@@ -1586,6 +1687,7 @@ export function createAgentMemory(
               account_id,
               request.namespace ? [request.namespace] : undefined,
               true,
+              ownerLive(settings.enabled),
             ),
           );
           return {
@@ -1606,6 +1708,20 @@ export function createAgentMemory(
           ns === GLOBAL || settings.namespaces.some((n) => n.name === ns);
         switch (request.op) {
           case "set-enabled":
+            if (request.enabled && !settings.enabled) {
+              // Expiry and inactivity were paused while memory was off:
+              // their clocks start again now.
+              await tx.query(
+                `UPDATE agent_memory_notes
+                    SET expires_at = now() + make_interval(secs => ttl_seconds)
+                  WHERE account_id=$1 AND ttl_seconds IS NOT NULL AND ${ATTRIBUTED}`,
+                [account_id],
+              );
+              await tx.query(
+                "UPDATE agent_memory_agents SET last_turn_at=now() WHERE account_id=$1",
+                [account_id],
+              );
+            }
             await saveSettings(tx, account_id, {
               ...settings,
               enabled: request.enabled,

@@ -1177,6 +1177,186 @@ describeDb("agent memory: authorship, agent scopes and expiry", () => {
     expect(rows.map((r: any) => r.name)).toEqual(["active", "shared-by-idle"]);
   });
 
+  test("a write by a hub that does not keep authorship drops it and its expiry", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory);
+    await as(memory, account, OPS, note("status", "x", { expires_in: "1h" }));
+    // What an older hub does during a rolling upgrade: content and time only.
+    await getPool().query(
+      `UPDATE agent_memory_notes SET body=$2, description=$3, updated_at=now() + interval '1 second',
+              expires_at=now() - interval '1 second'
+        WHERE account_id=$1 AND name='status'`,
+      [
+        account,
+        `enc:agent-memory:${account}:global:status:body:` +
+          Buffer.from("old hub").toString("base64"),
+        `enc:agent-memory:${account}:global:status:description:` +
+          Buffer.from("old").toString("base64"),
+      ],
+    );
+    const read = await as(memory, account, REVIEW, {
+      op: "read",
+      name: "status",
+    });
+    // Still there (the expiry no longer applies), with no claimed writer...
+    expect(read).toMatchObject({ body: "old hub" });
+    expect(read.written_by).toBeUndefined();
+    expect(read.expires_at).toBeUndefined();
+    // ...so it is not guarded on behalf of the former writer.
+    await expect(
+      as(memory, account, REVIEW, note("status", "review")),
+    ).resolves.toMatchObject({ saved: "updated" });
+    expect(
+      (await as(memory, account, OPS, { op: "read", name: "status" }))
+        .written_by,
+    ).toBe("review");
+  });
+
+  test("a first-version record absorbed later clears authorship and expiry", async () => {
+    const { memory, legacy } = setup();
+    const account = await newAccount(memory);
+    await as(memory, account, OPS, note("prefs", "x", { expires_in: "2h" }));
+    legacy.set(
+      account,
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        notes: [
+          {
+            name: "prefs",
+            description: "the prefs note",
+            body: "from an old hub",
+            updated_at: new Date(Date.now() + 60_000).toISOString(),
+          },
+        ],
+      }),
+    );
+    const read = await as(memory, account, REVIEW, {
+      op: "read",
+      name: "prefs",
+    });
+    expect(read).toMatchObject({ body: "from an old hub" });
+    expect(read.written_by).toBeUndefined();
+    expect(read.expires_at).toBeUndefined();
+  });
+
+  test("turning memory off pauses expiry and inactivity", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory);
+    const idle = { agent_id: randomUUID(), name: "idle" };
+    await as(
+      memory,
+      account,
+      idle,
+      note("agent/pinned", "x", { expires_in: "never" }),
+    );
+    await as(
+      memory,
+      account,
+      OPS,
+      note("agent/short", "x", { expires_in: "1h" }),
+    );
+    await memory.owner(account, { op: "set-enabled", enabled: false });
+    await getPool().query(
+      `UPDATE agent_memory_notes SET expires_at = now() - interval '1 second'
+        WHERE account_id=$1 AND name='short'`,
+      [account],
+    );
+    await getPool().query(
+      `UPDATE agent_memory_agents SET last_turn_at = now() - interval '91 days'
+        WHERE account_id=$1`,
+      [account],
+    );
+    await memory.sweep();
+    // Nothing was deleted, and the owner still sees both.
+    const listed = await memory.owner(account, { op: "list" });
+    expect(listed.notes_list.map((n: any) => n.name).sort()).toEqual([
+      "pinned",
+      "short",
+    ]);
+    // Turning it on again starts the clocks over.
+    await memory.owner(account, { op: "set-enabled", enabled: true });
+    await memory.sweep();
+    const after = await as(memory, account, OPS, {
+      op: "read",
+      name: "agent/short",
+    });
+    expect(Date.parse(after.expires_at)).toBeGreaterThan(
+      Date.now() + 50 * 60_000,
+    );
+    await expect(
+      as(memory, account, OPS, { op: "read", name: "@idle/pinned" }),
+    ).resolves.toMatchObject({ body: "x" });
+  });
+
+  test("agents the account does not name get unique names, and @name never guesses", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory);
+    const first = { agent_id: randomUUID(), name: "Helper" };
+    const second = { agent_id: randomUUID(), name: "helper" };
+    await as(memory, account, first, note("agent/a"));
+    const saved = await as(memory, account, second, note("shared-b"));
+    expect(saved.saved).toBe("created");
+    const { rows } = await getPool().query(
+      "SELECT agent_id, name FROM agent_memory_agents WHERE account_id=$1",
+      [account],
+    );
+    const names = new Map(rows.map((r: any) => [r.agent_id, r.name]));
+    expect(names.get(first.agent_id)).toBe("helper");
+    const secondName = names.get(second.agent_id)!;
+    expect(secondName).toMatch(/^helper-[0-9a-f]{8}$/);
+    // The suffixed name is stable on later turns.
+    await as(memory, account, second, note("shared-c"));
+    expect(
+      (await as(memory, account, OPS, { op: "read", name: "shared-c" }))
+        .written_by,
+    ).toBe(secondName);
+    await expect(
+      as(memory, account, OPS, { op: "read", name: "@helper/a" }),
+    ).resolves.toMatchObject({ name: "@helper/a" });
+    // If two agents ever share a name, @name refuses to pick one.
+    await getPool().query(
+      "UPDATE agent_memory_agents SET name='helper' WHERE account_id=$1",
+      [account],
+    );
+    await expect(
+      as(memory, account, OPS, { op: "read", name: "@helper/a" }),
+    ).rejects.toThrow(/more than one agent is known as @helper/);
+  });
+
+  test("the owner's read follows expiry like an agent's", async () => {
+    const { memory } = setup();
+    const account = await newAccount(memory);
+    const namespace = `agent:${OPS.agent_id}`;
+    await as(
+      memory,
+      account,
+      OPS,
+      note("agent/kept", "x", { expires_in: "2h" }),
+    );
+    await getPool().query(
+      `UPDATE agent_memory_notes SET expires_at = now() + interval '1 minute'
+        WHERE account_id=$1 AND name='kept'`,
+      [account],
+    );
+    const read = await memory.owner(account, {
+      op: "read",
+      namespace,
+      name: "kept",
+    });
+    expect(Date.parse(read.expires_at)).toBeGreaterThan(
+      Date.now() + 100 * 60_000,
+    );
+    await getPool().query(
+      `UPDATE agent_memory_notes SET expires_at = now() - interval '1 second'
+        WHERE account_id=$1 AND name='kept'`,
+      [account],
+    );
+    await expect(
+      memory.owner(account, { op: "read", namespace, name: "kept" }),
+    ).rejects.toThrow(/no memory note/);
+  });
+
   test("removing an agent from Agents deletes its own scope and nothing else", async () => {
     const { memory } = setup();
     const account = await newAccount(memory);

@@ -510,6 +510,9 @@ Table({
     expires_at: timestamp(
       "When the note expires unless read or written again (last use + ttl_seconds).",
     ),
+    attributed_at: timestamp(
+      "updated_at of the write that set written_by_* and ttl_seconds. A later write by a hub that does not keep them (rolling upgrade, first-version record) changes updated_at only, so they no longer apply.",
+    ),
   },
 });
 

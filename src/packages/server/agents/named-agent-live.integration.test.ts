@@ -148,6 +148,33 @@ describeDb("live name book", () => {
     expect(retiredMemory).toEqual([[account, agent.agent_id]]);
   });
 
+  test("a failure to delete its own memory leaves the agent in place", async () => {
+    await store.name(account, { endpoint: agent, name: "builder" });
+    const failing = new PersonalAgentStore(
+      db,
+      identity,
+      async () => account,
+      async () => {},
+      async () => false,
+      undefined,
+      {
+        ...hooks,
+        retireMemory: async () => {
+          throw new Error("memory home unavailable");
+        },
+      },
+    );
+    await expect(failing.retire(account, { endpoint: agent })).rejects.toThrow(
+      /unable to delete the agent's own memory notes, so it was not removed/,
+    );
+    expect(removes).toEqual([]);
+    const { rows } = await db.query(
+      "SELECT name FROM agent_personal_names WHERE account_id=$1 AND agent_id=$2",
+      [account, agent.agent_id],
+    );
+    expect(rows.map((r: any) => r.name)).toEqual(["builder"]);
+  });
+
   test("repair fixes stale snapshots and pushes only real changes", async () => {
     await store.name(account, { endpoint: agent, name: "builder" });
     upserts.length = 0;
