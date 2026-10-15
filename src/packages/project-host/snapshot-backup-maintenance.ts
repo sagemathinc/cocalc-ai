@@ -70,6 +70,15 @@ const CHANGE_EVENT_DELAY_MS = 15_000;
 const CHANGE_EVENT_RETRY_MS = 60_000;
 const DEFAULT_STARVATION_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_STARVATION_INTERVAL_MS = 5 * 60 * 1000;
+// Scheduled backups normally finish well within 30 minutes. Under the
+// maintenance cgroup's read cap (12 MiB/s on a typical host), 30 minutes reads
+// at most about 22 GB of changed data, and a killed run leaves no snapshot, so
+// the next run has even more to read: a project that outgrows the limit is
+// never backed up again. Each consecutive failure doubles the limit, up to the
+// cap. The cap stays modest because the run holds the project's volume
+// lifecycle lock, which a start of that project waits for.
+const SCHEDULED_BACKUP_TIMEOUT_MS = 30 * 60 * 1000;
+const SCHEDULED_BACKUP_MAX_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const GIB = 1024 ** 3;
 const DEFAULT_MEMORY_AVAILABLE_RATIO = 0.25;
 const DEFAULT_MEMORY_AVAILABLE_MIN_BYTES = 2 * GIB;
@@ -474,7 +483,7 @@ async function runScheduledStorageOperation({
   allowStarvationOverride?: boolean;
   starvationIntervalMs?: number;
   validate: () => Promise<string | undefined>;
-  run: () => Promise<void>;
+  run: (admission: { starvationOverride: boolean }) => Promise<void>;
 }): Promise<{ ran: boolean; starvationOverride: boolean; reason?: string }> {
   const releaseReservation = allowStarvationOverride
     ? starvationQueue.reserve(
@@ -547,7 +556,7 @@ async function runScheduledStorageOperation({
           }
           validationReason = await validate();
           if (validationReason) return;
-          await run();
+          await run({ starvationOverride: ticket.starvation_override });
         },
       );
       if (validationReason) {
@@ -592,6 +601,24 @@ function scheduleRevision(schedule: SnapshotSchedule | null): string {
     Object.entries({ ...DEFAULT_SNAPSHOT_COUNTS, ...(schedule ?? {}) }).sort(
       ([a], [b]) => a.localeCompare(b),
     ),
+  );
+}
+
+export function scheduledBackupTimeoutMs({
+  failures,
+  starvationOverride,
+}: {
+  failures: number;
+  starvationOverride: boolean;
+}): number {
+  // While a starvation-override run is in flight, the host admits no other
+  // snapshot or backup, so such a run keeps the base limit.
+  if (starvationOverride || !(failures > 0)) {
+    return SCHEDULED_BACKUP_TIMEOUT_MS;
+  }
+  return Math.min(
+    SCHEDULED_BACKUP_MAX_TIMEOUT_MS,
+    SCHEDULED_BACKUP_TIMEOUT_MS * 2 ** Math.min(failures, 8),
   );
 }
 
@@ -1548,13 +1575,17 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             validate: () => validateAssignment(row, "backup"),
             allowStarvationOverride: starvationOverrideEligible,
             starvationIntervalMs,
-            run: async () => {
+            run: async ({ starvationOverride }) => {
               const updated = await runScheduledBackupMaintenance({
                 project_id,
                 counts: scheduleToCounts(schedule, { allowFrequent: false }),
                 limit: row.max_backups_per_project ?? undefined,
                 knownLastBackupAt: row.last_backup,
                 stage_durations_ms: stageDurations,
+                timeout_ms: scheduledBackupTimeoutMs({
+                  failures: row.backup_failures ?? 0,
+                  starvationOverride,
+                }),
               });
               created = updated?.created ?? false;
               backupDeferredReason = updated?.deferred_reason;

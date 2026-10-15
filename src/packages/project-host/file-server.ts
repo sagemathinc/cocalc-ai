@@ -4608,12 +4608,14 @@ async function updateBackupsUnlocked({
   limit,
   knownLastBackupAt,
   stage_durations_ms,
+  timeout_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
   stage_durations_ms?: Record<string, number>;
+  timeout_ms?: number;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
@@ -4651,6 +4653,7 @@ async function updateBackupsUnlocked({
       try {
         await refreshed.rustic.update(counts, {
           limit,
+          timeout: timeout_ms,
           // Same privileged, size-limited backup as manual backups, so a huge
           // sparse file cannot occupy every scheduled backup of this host.
           runner: async ({ src, host, timeout, tags, parent, progress }) => {
@@ -4818,6 +4821,7 @@ async function updateBackupsIfVolumeCurrent({
   knownLastBackupAt,
   expectedLifecycleGeneration,
   stage_durations_ms,
+  timeout_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
@@ -4825,6 +4829,7 @@ async function updateBackupsIfVolumeCurrent({
   knownLastBackupAt?: string | null;
   expectedLifecycleGeneration: number;
   stage_durations_ms?: Record<string, number>;
+  timeout_ms?: number;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
@@ -4861,6 +4866,7 @@ async function updateBackupsIfVolumeCurrent({
         limit,
         knownLastBackupAt,
         stage_durations_ms,
+        timeout_ms,
       });
     },
   );
@@ -4913,12 +4919,15 @@ export async function runScheduledBackupMaintenance({
   limit = 30,
   knownLastBackupAt,
   stage_durations_ms,
+  timeout_ms,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
   stage_durations_ms?: Record<string, number>;
+  // Defaults to the 30 minute rustic backup limit.
+  timeout_ms?: number;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
@@ -4942,6 +4951,7 @@ export async function runScheduledBackupMaintenance({
           knownLastBackupAt,
           stage_durations_ms,
           expectedLifecycleGeneration,
+          timeout_ms,
         }),
     })) ?? { created: false, deferred_reason: "backup_capacity_busy" }
   );
