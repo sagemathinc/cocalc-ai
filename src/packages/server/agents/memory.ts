@@ -204,26 +204,27 @@ type NoteRow = {
   written_by_name?: string | null;
   ttl_seconds?: number | null;
   expires_at?: Date | string | null;
-  attributed_at?: Date | string | null;
+  /** ATTRIBUTED, computed by PostgreSQL at full (microsecond) precision. */
+  attributed?: boolean | null;
 };
+
+// Every query whose rows decide authorship or expiry selects this.
+const ATTRIBUTED_COLUMN = `COALESCE(${ATTRIBUTED}, false) AS attributed`;
 
 const NOTE_COLUMNS = `namespace, name, description, bytes, project_id, updated_at,
   last_read_at, read_count, written_by_agent_id, written_by_name, ttl_seconds,
-  expires_at, attributed_at`;
+  expires_at, ${ATTRIBUTED_COLUMN}`;
 
 /** What the owner sees: while memory is off, nothing expires. */
 const ownerLive = (enabled: boolean) => (enabled ? LIVE : "TRUE");
 
-/** Whether a row's authorship and expiry still describe its content. */
-function attributed(row: {
-  updated_at?: Date | string | null;
-  attributed_at?: Date | string | null;
-}): boolean {
-  if (row.attributed_at == null || row.updated_at == null) return false;
-  return (
-    new Date(row.attributed_at as any).getTime() ===
-    new Date(row.updated_at as any).getTime()
-  );
+/**
+ * Whether a row's authorship and expiry still describe its content. Compared
+ * in PostgreSQL: node-postgres Dates keep only milliseconds, and two writes
+ * can fall in the same millisecond.
+ */
+function attributed(row: { attributed?: boolean | null }): boolean {
+  return row.attributed === true;
 }
 
 const writer = (row: NoteRow) =>
@@ -282,8 +283,7 @@ function otherWriter(
 const writtenByOther = (
   row: {
     written_by_agent_id?: string | null;
-    updated_at?: Date | string | null;
-    attributed_at?: Date | string | null;
+    attributed?: boolean | null;
   },
   caller: AgentMemoryCaller | undefined,
 ) =>
@@ -860,9 +860,24 @@ export function createAgentMemory(
         ? "NULL::int"
         : "ttl_seconds";
     // The ciphertexts are bound to the note's place, so they are rewritten.
+    // The move sets the note's expiry afresh, so it is attributed again: a
+    // writer that no longer describes the content is dropped, and an expiry
+    // it never had cannot linger (a ttl kept only by an unattributed row is
+    // not kept).
+    const keptTtl = `CASE WHEN COALESCE(${ATTRIBUTED}, false) THEN ${ttl} ELSE ${
+      agentOfMemoryNamespace(to)
+        ? `${AGENT_MEMORY_LIMITS.agentNoteDefaultTtlDays * DAY_SECONDS}`
+        : "NULL::int"
+    } END`;
     await db.query(
       `UPDATE agent_memory_notes SET namespace=$4, description=$5, body=$6,
-              ttl_seconds=${ttl}, expires_at=now() + make_interval(secs => ${ttl})
+              ttl_seconds=${keptTtl},
+              expires_at=now() + make_interval(secs => ${keptTtl}),
+              written_by_agent_id=CASE WHEN COALESCE(${ATTRIBUTED}, false)
+                THEN written_by_agent_id END,
+              written_by_name=CASE WHEN COALESCE(${ATTRIBUTED}, false)
+                THEN written_by_name END,
+              attributed_at=updated_at
         WHERE account_id=$1 AND namespace=$2 AND name=$3`,
       [account_id, from, name, to, encrypted.description, encrypted.body],
     );
@@ -958,7 +973,11 @@ export function createAgentMemory(
       );
   }
 
-  /** An agent by its name in this account: its Agents list, then memory. */
+  /**
+   * An agent by its name in this account: in its Agents list, or as memory
+   * knows it (agents it does not list). Never guesses: if the name means
+   * different agents in the two (or two agents in memory), it is refused.
+   */
   async function agentByName(
     db: MemoryDb,
     account_id: string,
@@ -966,21 +985,20 @@ export function createAgentMemory(
   ): Promise<string | undefined> {
     const { rows } = await db.query(
       `SELECT agent_id FROM agent_personal_names
-        WHERE account_id=$1 AND name=$2 AND retired_at IS NULL`,
-      [account_id, name],
-    );
-    if (rows[0]) return rows[0].agent_id;
-    const { rows: known } = await db.query(
-      `SELECT DISTINCT agent_id FROM agent_memory_agents
+        WHERE account_id=$1 AND name=$2 AND retired_at IS NULL
+       UNION
+       SELECT agent_id FROM agent_memory_agents
         WHERE account_id=$1 AND name=$2`,
       [account_id, name],
     );
-    // Never guess between agents: each would expect @name to be its own.
-    if (known.length > 1)
+    const ids = [
+      ...new Set(rows.map((row) => `${row.agent_id}`.toLowerCase())),
+    ];
+    if (ids.length > 1)
       throw new Error(
         `more than one agent is known as @${name} here; the account owner can give one of them its own name in Agents`,
       );
-    return known[0]?.agent_id;
+    return ids[0];
   }
 
   /**
@@ -993,24 +1011,35 @@ export function createAgentMemory(
     agent: AgentMemoryCaller,
   ): Promise<string> {
     const base = agentNameFallback(agent.name);
-    const suffix = agent.agent_id.replace(/-/g, "").slice(0, 8);
-    const suffixed = `${base.slice(0, 23).replace(/-+$/, "")}-${suffix}`;
+    const id = agent.agent_id.replace(/-/g, "");
+    // Another agent goes by this name, in the Agents list or in memory.
+    const taken = async (name: string) =>
+      (
+        await db.query(
+          `SELECT 1 FROM agent_personal_names
+            WHERE account_id=$1 AND name=$2 AND retired_at IS NULL AND agent_id<>$3
+           UNION ALL
+           SELECT 1 FROM agent_memory_agents
+            WHERE account_id=$1 AND name=$2 AND agent_id<>$3
+           LIMIT 1`,
+          [account_id, name, agent.agent_id],
+        )
+      ).rows.length > 0;
     const { rows: stored } = await db.query(
       "SELECT name FROM agent_memory_agents WHERE account_id=$1 AND agent_id=$2",
       [account_id, agent.agent_id],
     );
-    // Once unique by its id, a name stays put, so references keep working.
-    if (stored[0]?.name === suffixed) return suffixed;
-    const { rows: taken } = await db.query(
-      `SELECT 1 FROM agent_personal_names
-        WHERE account_id=$1 AND name=$2 AND retired_at IS NULL AND agent_id<>$3
-       UNION ALL
-       SELECT 1 FROM agent_memory_agents
-        WHERE account_id=$1 AND name=$2 AND agent_id<>$3
-       LIMIT 1`,
-      [account_id, base, agent.agent_id],
-    );
-    return taken.length ? suffixed : base;
+    // Keep the name it has while nobody else uses it, so references keep
+    // working; otherwise the plain name, then ever longer parts of its id.
+    const candidates = [
+      ...(stored[0]?.name ? [stored[0].name as string] : []),
+      base,
+      `${base.slice(0, 23).replace(/-+$/, "")}-${id.slice(0, 8)}`,
+      `${base.slice(0, 15).replace(/-+$/, "")}-${id.slice(0, 16)}`,
+    ];
+    for (const name of candidates) if (!(await taken(name))) return name;
+    // Not reachable by name; @name refuses to guess rather than misroute.
+    return candidates[candidates.length - 1];
   }
 
   /**
@@ -1188,7 +1217,7 @@ export function createAgentMemory(
                     expires_at=now() + make_interval(secs => ttl_seconds)
               WHERE account_id=$1 AND namespace=$2 AND name=$3 AND ${LIVE}
               RETURNING namespace, name, description, body, updated_at,
-                        written_by_name, expires_at, attributed_at`,
+                        written_by_name, expires_at, ${ATTRIBUTED_COLUMN}`,
             [account_id, namespace, ref.name],
           );
           if (!rows[0]) throw new Error(`no memory note named ${request.name}`);
@@ -1669,7 +1698,7 @@ export function createAgentMemory(
               WHERE account_id=$1 AND namespace=$2 AND name=$3
                 AND ${ownerLive(settings.enabled)}
               RETURNING namespace, name, description, body, updated_at,
-                        last_read_at, written_by_name, expires_at, attributed_at`,
+                        last_read_at, written_by_name, expires_at, ${ATTRIBUTED_COLUMN}`,
             [account_id, request.namespace, request.name, settings.enabled],
           );
           if (!rows[0])
