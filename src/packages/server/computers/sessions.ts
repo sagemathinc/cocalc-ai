@@ -22,6 +22,12 @@
 //
 // Nothing reusable is ever issued: a stolen transcript is useless once its
 // challenge is consumed (or after 60 s).
+//
+// A session starts not ready: it may only subscribe to its op subject and
+// acknowledge its state snapshot (delivery.ts). Ordinary authority needs
+// ready_version >= the computer's state_version. An ended computer asking
+// for a challenge gets its signed ended state instead, even with the site's
+// computers switch off.
 
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import getPool from "@cocalc/database/pool";
@@ -33,6 +39,8 @@ import {
   SIGNED_KINDS,
   MAX_FUTURE_SKEW_MS,
   type ComputerLogin,
+  type ComputerState,
+  type SignedEnvelope,
 } from "@cocalc/util/computers/protocol";
 import {
   canonicalHash,
@@ -45,6 +53,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterId } from "@cocalc/server/cluster-config";
 import { assertComputersAuthority } from "./authority";
 import { computersSite } from "./site";
+import { addSessionTarget, computerStateSnapshot, endedOf } from "./state";
 
 export const CHALLENGE_LIFETIME_MS = 60 * 1000;
 /** A session's lease: it must log in again (a new challenge) after this. */
@@ -71,16 +80,26 @@ export interface LoginChallenge {
   home_bay_id: string;
 }
 
+/** Instead of a challenge: this computer has ended, for good. */
+export interface LoginEnded {
+  ended: SignedEnvelope<ComputerState>;
+}
+
 /**
  * A single-use challenge, for a request signed by the computer's own key
- * (so someone who only knows its id can't use up its challenges). Unknown,
- * revoked and foreign computers, and bad signatures, get the same answer.
+ * (so someone who only knows its id can't use up its challenges). Unknown
+ * and foreign computers, and bad signatures, get the same answer.
+ *
+ * An ended computer (revoked, replaced, its account deleted) whose request
+ * verifies gets its signed ended state, before assertEnabled (the site's
+ * switch): so a daemon that was offline stops its jobs when it comes back.
  * The computer's row is locked, so count and insert are serialized.
  */
 export async function createLoginChallenge(
   input: unknown,
   now = Date.now(),
-): Promise<LoginChallenge> {
+  { assertEnabled }: { assertEnabled?: () => Promise<void> } = {},
+): Promise<LoginChallenge | LoginEnded> {
   const envelope = parseSignedEnvelope(
     input,
     parseComputerChallengeRequest,
@@ -99,18 +118,7 @@ export async function createLoginChallenge(
       "this request is too old (or the computer's clock is off)",
     );
   }
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    const computer = (
-      await client.query(
-        `SELECT account_id, signing_key, signing_public_key FROM account_computers
-          WHERE computer_id=$1 AND revoked_at IS NULL AND tombstoned_at IS NULL
-            AND home_bay_id=$2
-          FOR UPDATE`,
-        [request.computer_id, getConfiguredBayId()],
-      )
-    ).rows[0];
+  const verified = (computer: any): boolean => {
     let key: KeyObject | undefined;
     try {
       key =
@@ -120,15 +128,51 @@ export async function createLoginChallenge(
     } catch {
       key = undefined;
     }
-    if (
-      computer == null ||
-      key == null ||
-      computer.account_id !== request.account_id ||
-      envelope.kid !== computer.signing_key ||
-      !verifyEnvelope(SIGNED_KINDS.challenge_request, envelope, (kid) =>
+    return (
+      computer != null &&
+      key != null &&
+      computer.account_id === request.account_id &&
+      envelope.kid === computer.signing_key &&
+      verifyEnvelope(SIGNED_KINDS.challenge_request, envelope, (kid) =>
         kid === computer.signing_key ? key : undefined,
       )
-    ) {
+    );
+  };
+  // First, whatever the computer's state: is the request really its own?
+  const stored = (
+    await getPool().query(
+      `SELECT account_id, signing_key, signing_public_key, ended_reason,
+              revoked_at, tombstoned_at
+         FROM account_computers WHERE computer_id=$1 AND home_bay_id=$2`,
+      [request.computer_id, getConfiguredBayId()],
+    )
+  ).rows[0];
+  if (!verified(stored)) {
+    throw new ComputerSessionError("no such computer");
+  }
+  if (endedOf(stored) != null) {
+    const snapshot = await computerStateSnapshot(request.computer_id, now);
+    if (snapshot?.envelope.payload.ended == null) {
+      throw new ComputerSessionError("no such computer");
+    }
+    return { ended: snapshot.envelope };
+  }
+  await assertEnabled?.();
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const computer = (
+      await client.query(
+        `SELECT account_id, signing_key, signing_public_key FROM account_computers
+          WHERE computer_id=$1 AND revoked_at IS NULL AND tombstoned_at IS NULL
+            AND ended_reason IS NULL AND home_bay_id=$2
+          FOR UPDATE`,
+        [request.computer_id, getConfiguredBayId()],
+      )
+    ).rows[0];
+    if (!verified(computer)) {
+      // Ended (or changed) since the check above: the next request gets
+      // the ended state.
       throw new ComputerSessionError("no such computer");
     }
     // Retention, bounded and inline: this computer's challenges past a day
@@ -256,7 +300,8 @@ export async function loginComputer(
       computer.home_bay_id !== login.home_bay_id ||
       Number(computer.home_epoch) !== login.home_epoch ||
       computer.revoked_at != null ||
-      computer.tombstoned_at != null
+      computer.tombstoned_at != null ||
+      computer.ended_reason != null
     ) {
       throw new ComputerSessionError("no such computer");
     }
@@ -358,6 +403,15 @@ export async function loginComputer(
         new Date(now),
       ],
     );
+    // Not ready until its daemon acks the current state: under this row
+    // lock, so every later bump raises this target too.
+    await addSessionTarget(client, {
+      session_id: login.challenge_id,
+      account_id: login.account_id,
+      computer_id: login.computer_id,
+      generation: 1,
+      state_version: `${computer.state_version}`,
+    });
     await client.query(
       `UPDATE account_computers SET connected_at=$2, last_seen=$2 WHERE computer_id=$1`,
       [login.computer_id, new Date(now)],
@@ -396,6 +450,9 @@ async function closeSessionInTransaction(
 /**
  * Is this session still exactly what logged in? Uncached: called for every
  * authorization decision and every revalidation of the socket.
+ * requireReady: and has its daemon applied the computer's current state?
+ * (Not for the session's own revalidation or its op subscription: a
+ * session isn't closed for lagging before delivery.)
  */
 export async function sessionIsCurrent(
   s: Pick<
@@ -403,10 +460,15 @@ export async function sessionIsCurrent(
     "computer_id" | "session_id" | "generation" | "epoch"
   >,
   now = Date.now(),
-  { touch = false }: { touch?: boolean } = {},
+  {
+    touch = false,
+    requireReady = false,
+  }: { touch?: boolean; requireReady?: boolean } = {},
 ): Promise<boolean> {
   const { rows } = await getPool().query(
     `SELECT s.generation, s.lease_until, s.closed_at, s.epoch,
+            (s.ready_version IS NOT NULL AND s.ready_version >= c.state_version)
+              AS ready,
             c.epoch AS computer_epoch, c.revoked_at, c.tombstoned_at, c.deadline
        FROM account_computer_sessions s
        JOIN account_computers c ON c.computer_id = s.computer_id
@@ -424,8 +486,31 @@ export async function sessionIsCurrent(
     r.revoked_at == null &&
     r.tombstoned_at == null &&
     (r.deadline == null || new Date(r.deadline).valueOf() > now) &&
+    (!requireReady || r.ready === true) &&
     (!touch || (await touchSession(s, now)))
   );
+}
+
+/**
+ * The one thing a session may publish before it is ready (or after a bump
+ * made it stale): the ack of a claimed state delivery, on exactly that
+ * attempt's reply subject, while the claim lasts, for this very session and
+ * generation.
+ */
+export async function isStateReceipt(
+  s: Pick<ComputerSession, "computer_id" | "session_id" | "generation">,
+  subject: string,
+): Promise<boolean> {
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM account_computer_session_targets t
+       JOIN account_computer_sessions s ON s.session_id = t.session_id
+      WHERE t.session_id=$1 AND t.computer_id=$2 AND t.generation=$3
+        AND s.generation=$3 AND s.closed_at IS NULL
+        AND t.reply_subject=$4 AND t.claimed_by_hub IS NOT NULL
+        AND t.lease_until > now()`,
+    [s.session_id, s.computer_id, s.generation, subject],
+  );
+  return rows.length > 0;
 }
 
 /**
@@ -452,7 +537,7 @@ async function touchSession(
   return (rowCount ?? 0) > 0;
 }
 
-/** The session to send to: the newest current one, if any. */
+/** The session to send to: the newest current, ready one, if any. */
 export async function currentSession(
   computer_id: string,
   now = Date.now(),
@@ -461,7 +546,7 @@ export async function currentSession(
     `SELECT s.* FROM account_computer_sessions s
        JOIN account_computers c ON c.computer_id = s.computer_id
       WHERE s.computer_id=$1 AND s.closed_at IS NULL AND s.lease_until > $2
-        AND s.last_seen > $3
+        AND s.last_seen > $3 AND s.ready_version >= c.state_version
         AND s.epoch = c.epoch AND c.revoked_at IS NULL AND c.tombstoned_at IS NULL
       ORDER BY s.last_seen DESC, s.connected_at DESC LIMIT 1`,
     [computer_id, new Date(now), new Date(now - SESSION_LIVENESS_MS)],

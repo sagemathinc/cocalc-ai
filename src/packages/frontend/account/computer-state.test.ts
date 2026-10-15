@@ -25,6 +25,16 @@ test("connected, offline or ended, one word everywhere", () => {
   expect(
     computerState(computer({ connected: true, deadline: now - 1 }), now),
   ).toBe("ended");
+  // So past its certificate (a year at most): it must be paired again.
+  expect(computerState(computer({ certificate_not_after: now - 1 }), now)).toBe(
+    "ended",
+  );
+  expect(reconnectKind(computer({ certificate_not_after: now - 1 }), now)).toBe(
+    "pair",
+  );
+  expect(computerState(computer({ certificate_not_after: now + 1 }), now)).toBe(
+    "offline",
+  );
 });
 
 test("ended computers stay listed for a day, to reconnect them", () => {

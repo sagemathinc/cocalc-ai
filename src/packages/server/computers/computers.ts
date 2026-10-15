@@ -11,7 +11,9 @@
 // Every change that withdraws authority bumps the computer's epoch, which
 // daemons enforce as a floor; every change of the effective policy bumps the
 // policy epoch. Both happen under FOR UPDATE, so a ticket issued under
-// FOR SHARE can't straddle them.
+// FOR SHARE can't straddle them. Each also bumps the computer's state
+// (state.ts), so the signed snapshot reaches every open session, and a
+// revoked computer is told it has ended (delivery.ts).
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
@@ -19,11 +21,14 @@ import { isValidUUID } from "@cocalc/util/misc";
 import {
   parseComputerPolicy,
   policyWideningReasons,
+  validLeaseHours,
 } from "@cocalc/util/computers/policy";
 import type { ComputerSummary } from "@cocalc/util/computers/api";
 import { computerName } from "./requests";
 import { SESSION_LIVENESS_MS } from "./sessions";
 import { assertComputersAuthority, lockAgentControls } from "./authority";
+import { bumpComputerState, endComputers } from "./state";
+import { kickComputerStateDelivery } from "./delivery";
 
 export type { ComputerSummary };
 
@@ -74,8 +79,14 @@ function summary(row: any): ComputerSummary {
     connected:
       row.live === true &&
       row.revoked_at == null &&
-      (row.deadline == null || new Date(row.deadline).valueOf() > Date.now()),
+      (row.deadline == null || new Date(row.deadline).valueOf() > Date.now()) &&
+      !(Number(row.certificate?.payload?.not_after) <= Date.now()),
     revoked_at: t(row.revoked_at),
+    certificate_not_after: Number.isFinite(
+      Number(row.certificate?.payload?.not_after),
+    )
+      ? Number(row.certificate.payload.not_after)
+      : null,
     origin: row.origin,
   };
 }
@@ -238,29 +249,36 @@ async function withComputerForUpdate<T>(
   }
 }
 
-/** Disconnect: no new tickets, and the bumped epoch makes daemons refuse old ones. */
+/**
+ * Disconnect, for good: no new tickets, the bumped epoch makes daemons
+ * refuse old ones, and the computer's state says "ended", which stops every
+ * job on it (now, or when it next asks to log in).
+ */
 export async function revokeComputer({
   account_id,
   computer_id,
-  now = Date.now(),
 }: {
   account_id: string;
   computer_id: string;
   now?: number;
 }): Promise<{ epoch: number }> {
-  return await withComputerForUpdate(
+  const result = await withComputerForUpdate(
     account_id,
     computer_id,
     async (client, row) => {
-      if (row.revoked_at != null) return { epoch: Number(row.epoch) };
+      if (row.revoked_at != null && row.ended_reason != null) {
+        return { epoch: Number(row.epoch) };
+      }
+      await endComputers(client, [computer_id], "revoked");
       const { rows } = await client.query(
-        `UPDATE account_computers SET revoked_at=$2, epoch=epoch+1, updated_at=$2
-        WHERE computer_id=$1 RETURNING epoch`,
-        [computer_id, new Date(now)],
+        "SELECT epoch FROM account_computers WHERE computer_id=$1",
+        [computer_id],
       );
       return { epoch: Number(rows[0].epoch) };
     },
   );
+  void kickComputerStateDelivery();
+  return result;
 }
 
 export async function renameComputer({
@@ -399,8 +417,11 @@ export async function extendComputer({
 }
 
 /**
- * Narrow the effective policy. It must be at most the ceiling, field by
- * field (the daemon checks the same thing itself).
+ * Narrow the effective policy: never widen. It must be at most the current
+ * effective policy and at most the ceiling, field by field (the daemon
+ * checks the same itself). Widening back needs a new pairing. The new
+ * policy reaches daemons in the signed state snapshot; queued work
+ * authorized under the old policy epoch is cancelled there.
  */
 export async function setEffectivePolicy({
   account_id,
@@ -414,12 +435,21 @@ export async function setEffectivePolicy({
   now?: number;
 }): Promise<{ policy_epoch: number }> {
   const effective = parseComputerPolicy(policy);
-  return await withComputerForUpdate(
+  const result = await withComputerForUpdate(
     account_id,
     computer_id,
     async (client, row) => {
+      if (!validLeaseHours(row.effective_policy?.lease_hours)) {
+        throw new ComputerError(
+          "this computer was connected before hard leases existed; connect it again",
+        );
+      }
       const ceiling = parseComputerPolicy(row.policy_ceiling);
-      const reasons = policyWideningReasons(effective, ceiling);
+      const current = parseComputerPolicy(row.effective_policy);
+      const reasons = [
+        ...policyWideningReasons(effective, current),
+        ...policyWideningReasons(effective, ceiling),
+      ];
       if (reasons.length > 0) {
         throw new ComputerError(
           `that would widen the approved policy: ${reasons.join("; ")}`,
@@ -431,16 +461,14 @@ export async function setEffectivePolicy({
         WHERE computer_id=$1 RETURNING policy_epoch`,
         [computer_id, JSON.stringify(effective), new Date(now)],
       );
+      await bumpComputerState(client, [computer_id]);
       return { policy_epoch: Number(rows[0].policy_epoch) };
     },
   );
+  void kickComputerStateDelivery();
+  return result;
 }
 
-/**
- * The agent network of some computers narrowed (a member removed, or the
- * network paused or closed): bump those computers' epochs, inside the
- * caller's transaction so it commits with the network change.
- */
 /** Anything with a query method: a pool client inside a transaction. */
 export interface Queryable {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
@@ -448,9 +476,10 @@ export interface Queryable {
 
 /**
  * The agent network narrowed (a member removed, paused or closed): bump the
- * epoch of every computer serving it, in the caller's transaction, so tickets
- * issued before no longer start and detached jobs end when the computer
- * learns the new epoch. Returns the computers to notify.
+ * epoch and state of every computer serving it, in the caller's
+ * transaction, so tickets issued before no longer start and queued work is
+ * cancelled when the daemon applies the new floor (delivery picks it up
+ * after the commit). Returns the computers to notify.
  */
 export async function bumpComputersForNetwork(
   client: Queryable,
@@ -464,7 +493,9 @@ export async function bumpComputersForNetwork(
       RETURNING computer_id`,
     [account_id, agent_network_id],
   );
-  return rows.map((r) => r.computer_id);
+  const ids = rows.map((r) => r.computer_id);
+  await bumpComputerState(client, ids);
+  return ids;
 }
 
 /**
@@ -503,7 +534,31 @@ export async function bumpComputersForAccount(
       RETURNING computer_id`,
     [account_id],
   );
-  return rows.map((r) => r.computer_id);
+  const ids = rows.map((r) => r.computer_id);
+  await bumpComputerState(client, ids);
+  return ids;
+}
+
+/**
+ * The account is being deleted: end every computer of it, in the deletion's
+ * own fenced transaction (before deleted=true), so each daemon stops its
+ * jobs now or at its next login attempt.
+ */
+export async function endComputersForAccountDeletion(
+  client: Queryable,
+  account_id: string,
+): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT computer_id FROM account_computers
+      WHERE account_id=$1 AND ended_reason IS NULL
+      ORDER BY computer_id FOR UPDATE`,
+    [account_id],
+  );
+  await endComputers(
+    client,
+    rows.map((r) => r.computer_id),
+    "deleted",
+  );
 }
 
 function requireUuid(value: unknown, where: string): string {

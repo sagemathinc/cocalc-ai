@@ -56,6 +56,7 @@ const describeDb =
 
 const tables = [
   "account_computers",
+  "account_computer_session_targets",
   "account_computer_requests",
   "account_computer_sessions",
   "account_computer_operations",
@@ -317,6 +318,7 @@ describeDb("computers store", () => {
       version: 1,
       mode: "isolated",
       duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+      lease_hours: 24,
       agent_network_id: network,
       network: "on",
       gpu: false,
@@ -648,7 +650,7 @@ describeDb("computers store", () => {
   });
 
   describe("computers", () => {
-    async function approvedComputer() {
+    async function approvedComputer(overrides: object = {}) {
       const {
         createComputerRequest,
         getPairingView,
@@ -659,6 +661,7 @@ describeDb("computers store", () => {
         version: 1,
         mode: "isolated",
         duration: { initial_seconds: 3600, max_seconds: 2 * 3600 },
+        lease_hours: 24,
         agent_network_id: network,
         network: "on",
         gpu: false,
@@ -666,6 +669,7 @@ describeDb("computers store", () => {
         images: { kind: "allow", refs: ["ubuntu:24.04", "python:3.13"] },
         scratch_bytes: 2 ** 30,
         limits: { cpu_millis: 4000, memory_bytes: 2 ** 32, pids: 1000 },
+        ...overrides,
       });
       const { request_id } = await createComputerRequest({
         account_id: account,
@@ -705,6 +709,41 @@ describeDb("computers store", () => {
       };
     }
 
+    it("a certificate lasts a year at most, and never past the key that signs it", async () => {
+      const { getComputer, revokeComputer } = await import("./computers");
+      const DAY = 24 * 60 * 60 * 1000;
+      const a = await approvedComputer({ duration: null });
+      const keyNotAfter = async () =>
+        new Date(
+          (
+            await db().query(
+              "SELECT not_after FROM bay_computer_signing_keys WHERE kid=$1",
+              [a.certificate.kid],
+            )
+          ).rows[0].not_after,
+        ).valueOf();
+      const { not_before, not_after } = a.certificate.payload;
+      expect(not_after - not_before).toBeLessThanOrEqual(365 * DAY);
+      expect(not_after - not_before).toBeGreaterThan(364 * DAY);
+      expect(not_after).toBeLessThanOrEqual(await keyNotAfter());
+      // Shown to the owner: after it, the computer is paired again.
+      expect(
+        (await getComputer(account, a.computer_id)).certificate_not_after,
+      ).toBe(not_after);
+      await revokeComputer({ account_id: account, computer_id: a.computer_id });
+      // A key with ten days left: the certificate ends with it.
+      await db().query(
+        "UPDATE bay_computer_signing_keys SET not_after=now() + interval '10 days' WHERE kid=$1",
+        [a.certificate.kid],
+      );
+      const b = await approvedComputer({ duration: null });
+      expect(b.certificate.kid).toBe(a.certificate.kid);
+      expect(b.certificate.payload.not_after).toBe(await keyNotAfter());
+      expect(b.certificate.payload.not_after - Date.now()).toBeLessThan(
+        10 * DAY + 1000,
+      );
+    });
+
     it("revoking bumps the epoch once", async () => {
       const { revokeComputer, getComputer } = await import("./computers");
       const { computer_id } = await approvedComputer();
@@ -722,6 +761,14 @@ describeDb("computers store", () => {
     it("narrows the effective policy but never widens it", async () => {
       const { setEffectivePolicy } = await import("./computers");
       const { computer_id, resolved } = await approvedComputer();
+      const version = async () =>
+        (
+          await db().query(
+            "SELECT state_version FROM account_computers WHERE computer_id=$1",
+            [computer_id],
+          )
+        ).rows[0].state_version;
+      expect(`${await version()}`).toBe("0");
       const narrower = {
         ...resolved,
         network: "off",
@@ -736,6 +783,8 @@ describeDb("computers store", () => {
           })
         ).policy_epoch,
       ).toBe(1);
+      // The narrower policy goes out in the next state snapshot.
+      expect(`${await version()}`).toBe("1");
       await expect(
         setEffectivePolicy({
           account_id: account,
@@ -750,6 +799,15 @@ describeDb("computers store", () => {
           policy: { ...resolved, images: { kind: "any" } },
         }),
       ).rejects.toThrow(/image/);
+      // Not even back to the approved ceiling: narrowing is one-way.
+      await expect(
+        setEffectivePolicy({
+          account_id: account,
+          computer_id,
+          policy: resolved,
+        }),
+      ).rejects.toThrow(/widen/);
+      expect(`${await version()}`).toBe("1");
     });
 
     it("extends within the maximum only", async () => {

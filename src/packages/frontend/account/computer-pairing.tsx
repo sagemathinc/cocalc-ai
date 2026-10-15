@@ -22,6 +22,8 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { computerState, reconnectKind } from "./computer-state";
+import { LeaseInput } from "./computer-lease";
+import { DEFAULT_LEASE_HOURS, leaseRule } from "@cocalc/util/computers/policy";
 import { CommandLine } from "@cocalc/frontend/components/command-line";
 
 export const computersApi = () => webapp_client.conat_client.hub.computers;
@@ -81,7 +83,8 @@ export function timeLimit(policy: {
 /** What approving lets the network's agents do, said before it happens. */
 export function approvalText(r: ComputerRequestSummary): string {
   const members = r.agent_network?.members.length ?? 0;
-  return `DIRECT mode: the ${members} agent${members === 1 ? "" : "s"} in the ${r.agent_network?.title ?? "?"} network will be able to run any command there as ${r.machine?.user}, with all of that user's access, for ${timeLimit(r.resolved_policy ?? r.requested_policy)}.`;
+  const policy = r.resolved_policy ?? r.requested_policy;
+  return `DIRECT mode: the ${members} agent${members === 1 ? "" : "s"} in the ${r.agent_network?.title ?? "?"} network will be able to run any command there as ${r.machine?.user}, with all of that user's access, for ${timeLimit(policy)}. ${leaseRule(policy?.lease_hours ?? DEFAULT_LEASE_HOURS)}`;
 }
 
 export async function approveRequest(r: ComputerRequestSummary) {
@@ -214,6 +217,9 @@ export function ReconnectComputer({
   onDone?: () => void;
 }) {
   const [mode, setMode] = useState(() => reconnectKind(computer));
+  const [leaseHours, setLeaseHours] = useState(
+    computer.effective_policy?.lease_hours ?? DEFAULT_LEASE_HOURS,
+  );
   const [request_id, setRequestId] = useState<string>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -253,6 +259,7 @@ export function ReconnectComputer({
         name: c.name,
         policy: {
           ...c.effective_policy,
+          lease_hours: leaseHours,
           mounts: [],
           agent_network_id: c.agent_network_id,
         },
@@ -313,6 +320,7 @@ export function ReconnectComputer({
                 c.name +
                 " is disconnected first."}
           </span>
+          <LeaseInput value={leaseHours} onChange={setLeaseHours} />
           <Button type="primary" disabled={busy} onClick={pairAgain}>
             Pair @{c.name} again
           </Button>

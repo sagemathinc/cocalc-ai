@@ -34,6 +34,16 @@ export interface LedgerEntry {
   ticket_id: string;
   agent_id: string;
   source_project_id: string;
+  /**
+   * What authorized it (epochs), recorded before it starts so that a
+   * reconciliation can tell whether it is below a later floor.
+   */
+  auth?: {
+    source_project_id: string;
+    computer_epoch: number;
+    privacy_epoch: number;
+    policy_epoch: number;
+  };
   state: LedgerState;
   /** Exit code of an exec, or null. */
   exit_code: number | null;

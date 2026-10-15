@@ -61,6 +61,7 @@ const m1 = (extra: object = {}) => ({
   agent_network_id: "n1",
   connected: true,
   revoked_at: null,
+  certificate_not_after: null,
   deadline: null,
   effective_policy: { duration: null },
   ...extra,

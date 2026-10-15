@@ -41,6 +41,7 @@ function transcriptFor(
         version: 1,
         mode: "isolated",
         duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+        lease_hours: 24,
         agent_network_id: NETWORK,
         network: "on",
         gpu: false,

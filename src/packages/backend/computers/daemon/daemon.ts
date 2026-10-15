@@ -41,7 +41,15 @@ import {
   MAX_EXEC_OUTPUT_BYTES,
   type OperationRequest,
 } from "@cocalc/util/computers/operations";
-import type { ComputerTicket } from "@cocalc/util/computers/protocol";
+import type {
+  ComputerEndReason,
+  ComputerTicket,
+} from "@cocalc/util/computers/protocol";
+import {
+  leaseHoursText,
+  PRE_LEASE_TEXT,
+  validLeaseHours,
+} from "@cocalc/util/computers/policy";
 import { admit, RateLimiter, type AdmissionInput } from "./admission";
 import {
   systemBootClock,
@@ -69,6 +77,8 @@ export const MAX_ACTIVE_OPERATIONS = 16;
 export const MAX_ACTIVE_OPERATIONS_PER_AGENT = 4;
 /** How often the daemon enforces deadlines on its own, without traffic. */
 export const ENFORCEMENT_INTERVAL_MS = 1000;
+/** How long an ended daemon keeps enforcing kills before it exits. */
+export const DRAIN_MS = 30_000;
 /** How often the timer forgets old records. */
 export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 /**
@@ -111,6 +121,12 @@ export interface DaemonDeps {
   identify?: (pid: number) => string | undefined;
   /** All exec output kept on the machine (default EXEC_OUTPUT_RETENTION_BYTES). */
   execOutputQuotaBytes?: number;
+  /**
+   * Tests only: called at each crash point of applying state ("state-saved"
+   * after the durable write, "side-effect" before each kill), so a test can
+   * kill the process exactly there.
+   */
+  fault?: (point: "state-saved" | "side-effect") => void;
 }
 
 export type DaemonEvent =
@@ -119,15 +135,40 @@ export type DaemonEvent =
 
 const SIDE_EFFECTS = new Set(["exec", "run", "kill"]);
 
+const END_REASON_TEXT: Record<ComputerEndReason, string> = {
+  revoked: "this computer was disconnected in CoCalc",
+  deleted: "the CoCalc account of this computer was deleted",
+  replaced: "this computer was connected again in CoCalc, as a new computer",
+};
+
+/** What authorized an exec: kept while it runs and in its ledger entry. */
+export interface ExecAuth {
+  source_project_id: string;
+  computer_epoch: number;
+  privacy_epoch: number;
+  policy_epoch: number;
+}
+
+function execAuth(ticket: ComputerTicket): ExecAuth {
+  return {
+    source_project_id: ticket.source_project_id,
+    computer_epoch: ticket.computer_epoch,
+    privacy_epoch: ticket.attestation.payload.privacy_epoch,
+    policy_epoch: ticket.policy_epoch,
+  };
+}
+
 export class ComputerDaemon {
   readonly ledger: Ledger;
   readonly jobs: JobManager;
   readonly cleanups: Cleanups;
   private running = new Map<
     string,
-    { controller: AbortController; agent_id: string }
+    { controller: AbortController; agent_id: string; auth: ExecAuth }
   >();
   private ended = false;
+  /** The hard lease lapsed and its work was stopped (until a renewal). */
+  private lapsed = false;
   private timer?: ReturnType<typeof setInterval>;
   // Before anything else (messages arrive before they are authenticated), a
   // global bucket; after admission, one per agent.
@@ -167,6 +208,9 @@ export class ComputerDaemon {
       if (entry != null) this.report({ kind: "operation", entry });
     }
     this.jobs.refresh();
+    // Whatever the durable state says (ended, floors, policy) holds from
+    // the first moment, before any reconnect or admission.
+    this.reconcile();
   }
 
   /** One message from an agent: ticket, proof and request. */
@@ -175,6 +219,9 @@ export class ComputerDaemon {
       return { ok: false, refused: ["this computer is busy; try again"] };
     }
     this.tick();
+    if (!this.ended && this.leaseLapsed()) {
+      return { ok: false, refused: [this.lapseText()] };
+    }
     const admission = admit(input, {
       store: this.deps.store,
       hub_now: this.deps.hubClock.now(),
@@ -219,6 +266,7 @@ export class ComputerDaemon {
         ticket_id: ticket.ticket_id,
         agent_id: ticket.agent_id,
         source_project_id: ticket.source_project_id,
+        auth: execAuth(ticket),
       });
     } catch (err) {
       if (err instanceof LedgerConflict)
@@ -335,7 +383,11 @@ export class ComputerDaemon {
           this.pruneExecOutput();
           this.ledger.update(id, { state: "running" });
           const controller = new AbortController();
-          this.running.set(id, { controller, agent_id });
+          this.running.set(id, {
+            controller,
+            agent_id,
+            auth: execAuth(ticket),
+          });
           // The least of what was asked, what the ticket allows, and what is
           // left of the session.
           const timeout_ms = Math.max(
@@ -479,49 +531,107 @@ export class ComputerDaemon {
   }
 
   /**
-   * Raise floors from a signed push.
-   * - The computer epoch rose (revoked, or its network narrowed): queued
-   *   work can't be re-authorized here, so it is cancelled; running jobs
-   *   continue until the hub says more (revocation ends the session).
-   * - A project's privacy epoch rose (it is no longer private): that
-   *   project's queued jobs are cancelled and its running jobs stopped.
+   * A signed state snapshot from the home bay: applied durably in one
+   * write, then every job and running exec is reconciled against the
+   * result, whether or not anything changed. Only then is it acknowledged.
+   * A policy that would widen is refused, but its floors and `ended` (which
+   * only restrict) are applied and enforced anyway.
    */
-  applyFloors(envelope: unknown): {
-    raised: boolean;
-    cancelled: string[];
-    killed: string[];
+  applyState(envelope: unknown): {
+    state_version: string;
+    envelope_hash: string;
   } {
-    const hubNow = this.deps.hubClock.now();
-    if (hubNow == null) throw new Error("no hub time yet");
-    const before = this.deps.store.state.floors;
-    const { raised } = this.deps.store.applyFloors(envelope, hubNow);
-    const after = this.deps.store.state.floors;
+    // Hub time when known; a daemon told it is ended at its login challenge
+    // may not have it yet (the state only ever restricts).
+    const hubNow = this.deps.hubClock.now() ?? this.deps.clocks.wall();
+    let applied: ReturnType<DaemonStore["applyState"]>;
+    try {
+      applied = this.deps.store.applyState(envelope, hubNow, this.bootNow());
+      this.deps.fault?.("state-saved");
+    } finally {
+      this.reconcile();
+    }
+    return {
+      state_version: applied.state.state_version,
+      envelope_hash: applied.envelope_hash,
+    };
+  }
+
+  /**
+   * Bring every queued job, running job and running exec in line with the
+   * durable state. Idempotent: called after every state application (first
+   * or replayed) and at every start, so a crash between a
+   * state write and its side effects is always repaired.
+   * - ended: the session ends for good and every job is killed (re-driven);
+   * - below the computer floor: queued work is cancelled (running work
+   *   continues, as documented);
+   * - an older policy epoch: queued work is cancelled;
+   * - below its project's floor: queued and running jobs and running execs
+   *   are stopped. An exec's verified-pid cleanup is recorded durably before
+   *   it is aborted.
+   */
+  reconcile(): { cancelled: string[]; killed: string[] } {
     const cancelled: string[] = [];
     const killed: string[] = [];
-    if (!raised) return { raised, cancelled, killed };
-    const changedProjects = new Set(
-      Object.keys(after.projects).filter(
-        (p) => (after.projects[p] ?? 0) > (before.projects[p] ?? 0),
+    const store = this.deps.store;
+    const ended = store.ended;
+    if (ended != null) {
+      const reason = END_REASON_TEXT[ended.reason];
+      if (!this.ended) this.endSession(reason);
+      else this.jobs.killAll(reason);
+      return { cancelled, killed };
+    }
+    if (this.leaseLapsed()) {
+      this.stopForLapse();
+      return { cancelled, killed };
+    }
+    this.lapsed = false;
+    const { floors, policy_epoch } = store.state;
+    const belowProject = (project_id: string, privacy_epoch: number) =>
+      privacy_epoch < (floors.projects[project_id] ?? 0);
+    cancelled.push(
+      ...this.jobs.cancelQueued(
+        "authorization changed before it started",
+        (job: Job) => job.auth.computer_epoch < floors.computer_epoch,
+      ),
+      ...this.jobs.cancelQueued(
+        "the computer's policy changed before it started",
+        (job: Job) => job.auth.policy_epoch !== policy_epoch,
       ),
     );
-    if (after.computer_epoch > before.computer_epoch) {
-      cancelled.push(
-        ...this.jobs.cancelQueued("authorization changed before it started"),
-      );
+    const ineligible = (job: Job) =>
+      belowProject(job.source_project_id, job.auth.privacy_epoch);
+    cancelled.push(
+      ...this.jobs.cancelQueued(
+        "its project is no longer eligible",
+        ineligible,
+      ),
+    );
+    this.deps.fault?.("side-effect");
+    killed.push(
+      ...this.jobs.killWhere(ineligible, "its project is no longer eligible"),
+    );
+    for (const [id, exec] of this.running) {
+      if (!belowProject(exec.auth.source_project_id, exec.auth.privacy_epoch)) {
+        continue;
+      }
+      this.deps.fault?.("side-effect");
+      this.stopExec(id, exec.controller);
+      killed.push(id);
     }
-    if (changedProjects.size > 0) {
-      const affected = (job: Job) => changedProjects.has(job.source_project_id);
-      cancelled.push(
-        ...this.jobs.cancelQueued(
-          "its project is no longer eligible",
-          affected,
-        ),
-      );
-      killed.push(
-        ...this.jobs.killWhere(affected, "its project is no longer eligible"),
-      );
+    return { cancelled, killed };
+  }
+
+  /** Record the exec's verified-pid cleanup durably, then abort it. */
+  private stopExec(id: string, controller: AbortController): void {
+    const r = this.ledger.get(id)?.result as {
+      pid?: number;
+      pid_start?: string;
+    } | null;
+    if (r?.pid != null && r.pid_start != null) {
+      this.cleanups.add(id, r.pid, r.pid_start);
     }
-    return { raised, cancelled, killed };
+    controller.abort();
   }
 
   /** A job's deadline, on the wall clock and on this boot's clock. */
@@ -571,7 +681,10 @@ export class ComputerDaemon {
 
   /** Why a queued job may no longer start, or null. */
   private jobRefusal(job: Job): string | null {
-    if (this.ended) return "the session on this computer has ended";
+    if (this.ended || this.deps.store.ended != null) {
+      return "the session on this computer has ended";
+    }
+    if (this.leaseLapsed()) return this.lapseText();
     const state = this.deps.store.state;
     if (job.auth.computer_epoch < state.floors.computer_epoch) {
       return "authorization changed before it started";
@@ -598,8 +711,74 @@ export class ComputerDaemon {
   tick(now = Date.now()): void {
     if (!this.ended && this.deps.session.ended())
       this.endSession("time limit reached");
+    // Past its certificate this computer can never log in again (and its
+    // revocation could no longer be signed): stop for good.
+    if (
+      !this.ended &&
+      this.deps.store.certificate.payload.not_after <=
+        (this.deps.hubClock.now() ?? this.deps.clocks.wall())
+    ) {
+      this.endSession("this computer's certificate expired");
+    }
+    // The hard lease, offline too: no contact for that long stops all work.
+    if (!this.ended && !this.lapsed && this.leaseLapsed()) {
+      this.stopForLapse();
+    }
     this.jobs.refresh(now);
     this.cleanups.drive(now);
+  }
+
+  /**
+   * Has the hard lease lapsed: no signed state from the home bay for
+   * lease_hours, by the (hub) wall clock or, on the same boot, by the time
+   * since boot (so moving the wall clock back doesn't stretch it)?
+   */
+  leaseLapsed(): boolean {
+    const hours = this.deps.store.effectivePolicy.lease_hours;
+    // Paired before the hard lease (no or a bad lease): fail closed.
+    if (!validLeaseHours(hours)) return true;
+    const leaseMs = hours * 3600_000;
+    const renewal = this.deps.store.renewal;
+    const now = this.deps.hubClock.now() ?? this.deps.clocks.wall();
+    if (now - renewal.at > leaseMs) return true;
+    const boot = this.deps.bootClock ?? systemBootClock;
+    if (renewal.boot != null && boot.bootId() === renewal.boot.boot_id) {
+      const since = boot.sinceBootMs();
+      if (since != null && since - renewal.boot.since_boot_ms > leaseMs) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Stop every exec and job: the hard lease lapsed (not an end). */
+  private stopForLapse(): void {
+    this.lapsed = true;
+    const reason = this.lapseText();
+    for (const [id, { controller }] of this.running) {
+      this.deps.fault?.("side-effect");
+      this.stopExec(id, controller);
+    }
+    this.deps.fault?.("side-effect");
+    this.jobs.killAll(reason);
+  }
+
+  private lapseText(): string {
+    if (!validLeaseHours(this.deps.store.effectivePolicy.lease_hours)) {
+      return PRE_LEASE_TEXT;
+    }
+    return `this computer could not connect to CoCalc for ${leaseHoursText(
+      this.deps.store.effectivePolicy.lease_hours,
+    )}, so its jobs stopped; it runs work again once it reconnects`;
+  }
+
+  private bootNow(): { boot_id: string; since_boot_ms: number } | null {
+    const boot = this.deps.bootClock ?? systemBootClock;
+    const boot_id = boot.bootId();
+    const since_boot_ms = boot.sinceBootMs();
+    return boot_id != null && since_boot_ms != null
+      ? { boot_id, since_boot_ms }
+      : null;
   }
 
   /** Tell the hub something; never let that change an operation's outcome. */
@@ -614,8 +793,33 @@ export class ComputerDaemon {
   endSession(reason: string): void {
     this.ended = true;
     // The enforcement timer keeps running: killed jobs still need SIGKILL.
-    for (const { controller } of this.running.values()) controller.abort();
+    for (const [id, { controller }] of this.running) {
+      this.deps.fault?.("side-effect");
+      this.stopExec(id, controller);
+    }
+    this.deps.fault?.("side-effect");
     this.jobs.killAll(reason);
+  }
+
+  /**
+   * After the session ended: keep enforcing until every killed job is gone
+   * and every exec cleanup is done (SIGKILL follows SIGTERM after the grace
+   * period), or until maxMs. Whatever is left is re-driven at the next start.
+   */
+  async drain(maxMs = DRAIN_MS, pollMs = 250): Promise<boolean> {
+    const until = Date.now() + maxMs;
+    for (;;) {
+      this.tick();
+      if (
+        this.running.size === 0 &&
+        this.jobs.liveCount() === 0 &&
+        this.cleanups.pending().length === 0
+      ) {
+        return true;
+      }
+      if (Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
   }
 
   get sessionEnded(): boolean {

@@ -14,10 +14,16 @@ export type ComputerState = "connected" | "offline" | "ended";
 /** Ended computers stay listed this long, so they can be reconnected. */
 export const SHOW_ENDED_MS = 24 * 60 * 60 * 1000;
 
-/** When it ended (disconnected, or its time ran out), if it has. */
+/**
+ * When it ended (disconnected, its time ran out, or its certificate did),
+ * if it has.
+ */
 export function endedAt(c: ComputerSummary, now = Date.now()): number | null {
   if (c.revoked_at != null) return c.revoked_at;
   if (c.deadline != null && c.deadline <= now) return c.deadline;
+  if (c.certificate_not_after != null && c.certificate_not_after <= now) {
+    return c.certificate_not_after;
+  }
   return null;
 }
 
