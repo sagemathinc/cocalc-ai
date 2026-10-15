@@ -325,10 +325,26 @@ export function registerAgentCommands(
     )
     .action(async (_opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const identity = await sendIdentityMessage(
+        { action: "whoami" },
+        globals.api,
+      );
+      // Best effort: an identity outside any network, or an older hub, has
+      // no network name; whoami still answers.
+      const self = await sendIdentityMessage(
+        { version: 3, action: "destinations" },
+        globals.api,
+      )
+        .then((directory) =>
+          friendlyAgentSelf(directory as AgentNetworkDiscovery),
+        )
+        .catch(() => undefined);
       emitSuccess(
         { globals },
         `${prefix} whoami`,
-        await sendIdentityMessage({ action: "whoami" }, globals.api),
+        self && identity && typeof identity === "object"
+          ? { ...identity, as_seen_by_peers: self }
+          : identity,
       );
     });
   agent
@@ -711,8 +727,23 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     });
 }
 
-export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
+// How peers see this agent: the @name they send to, per network. The identity
+// record's own name and appearance are not that name.
+export function friendlyAgentSelf(directory: AgentNetworkDiscovery) {
+  if (!directory.self) return undefined;
   return {
+    ...(directory.self.name ? { name: directory.self.name } : {}),
+    networks: directory.self.networks.map(({ title, delivery_mode }) => ({
+      title,
+      delivery_mode,
+    })),
+  };
+}
+
+export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
+  const you = friendlyAgentSelf(directory);
+  return {
+    ...(you ? { you } : {}),
     peers: directory.peers.map(({ member, same_project, networks }) => ({
       kind: member.kind,
       name: member.kind === "registered" ? member.name : member.label,

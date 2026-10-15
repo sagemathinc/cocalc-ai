@@ -43,6 +43,8 @@ export function wireHostsApi(): void {
     forwardHost("agent.resolvePaymentSelection", [opts]);
   hubApi.agent.reportRuntime = (opts) =>
     forwardHost("agent.reportRuntime", [opts]);
+  hubApi.agent.describeNetworkSelf = (opts) =>
+    forwardHost("agent.describeNetworkSelf", [opts]);
   hubApi.agent.authorizeRpcAdmission = (opts) =>
     forwardHost("agent.authorizeRpcAdmission", [opts]);
   hubApi.agent.authorizeRpcExecution = (opts) =>

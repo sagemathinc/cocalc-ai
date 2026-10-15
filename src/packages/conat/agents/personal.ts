@@ -205,8 +205,16 @@ export interface AgentNetworkPeer {
   >;
 }
 
+// How the asking agent itself appears to its peers: the @name they see and
+// send to, and the networks it is in. Agents otherwise guess their own name.
+export interface AgentNetworkSelf {
+  name?: string;
+  networks: AgentNetworkPeer["networks"];
+}
+
 export interface AgentNetworkDiscovery {
   peers: AgentNetworkPeer[];
+  self?: AgentNetworkSelf;
 }
 
 export interface AgentNetworkActivity {
