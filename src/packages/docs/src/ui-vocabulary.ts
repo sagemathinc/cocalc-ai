@@ -272,6 +272,12 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("ai", "Show in sidebar")],
   },
   {
+    id: "agents.page.set-payment-method",
+    label: "Set payment method…",
+    anchors: [def(AGENTS_OVERVIEW, "> Set payment method… </Button>")],
+    usedIn: [bold("ai", "Set payment method…")],
+  },
+  {
     id: "agents.overview.mine",
     // Rendered with its count, as "Mine (N)".
     label: "Mine",

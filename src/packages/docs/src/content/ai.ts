@@ -146,7 +146,7 @@ funding source before sending.
 
 ## Choose payment methods across your agents
 
-On the **Agents** page, select your agents and choose **Set payment method**.
+On the **Agents** page, select your agents and choose **Set payment method…**.
 You can leave a provider unchanged, select a connected credential, or have the
 selected agents follow your account default. **Make this my default** changes
 that provider's default as well; other agents following the default use it too.
