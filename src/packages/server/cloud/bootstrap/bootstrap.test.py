@@ -855,7 +855,7 @@ secret_access_key = "secret"
                 self.run_scan(root, "--subpath", "missing")
 
     def scan_tree(self, root: Path, **kwargs) -> dict:
-        namespace = self.helper_namespace()
+        namespace = kwargs.pop("namespace", None) or self.helper_namespace()
         fd = os.open(root, namespace["O_PATH"] | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             return namespace["scan_oversized_files"](
@@ -868,40 +868,35 @@ secret_access_key = "secret"
         finally:
             os.close(fd)
 
-    def test_scan_oversized_files_walks_in_process(self) -> None:
+    def test_scan_oversized_files_runs_the_walker_not_find(self) -> None:
         # find judged directories by (device, inode) and failed on a loop
         # that does not exist when OverlayFS (xino=off) gave a directory its
-        # ancestor's inode number; the walk runs no external command.
+        # ancestor's inode number. The walker, supervised like find was, runs
+        # in an isolated Python: its working directory is the user's tree.
         namespace = self.helper_namespace()
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "etc" / "X11" / "fonts" / "Type1").mkdir(parents=True)
             make_sparse_file(root / "etc" / "X11" / "fonts" / "Type1" / "big", 2_000_000_000)
-            fd = os.open(root, namespace["O_PATH"] | os.O_DIRECTORY | os.O_CLOEXEC)
-            try:
-                with mock.patch.dict(
-                    namespace,
-                    {"run_supervised": mock.Mock(side_effect=AssertionError("ran a command"))},
-                ):
-                    report = namespace["scan_oversized_files"](
-                        fd,
-                        max_file_bytes=1_000_000_000,
-                        one_file_system=False,
-                        deadline=time.monotonic() + 60,
-                    )
-            finally:
-                os.close(fd)
+            make_sparse_file(root / "odd\nname", 3_000_000_000)
+            (root / "os.py").write_text("raise SystemExit('imported from the tree')\n")
+            supervised = mock.Mock(wraps=namespace["run_supervised"])
+            with mock.patch.dict(namespace, {"run_supervised": supervised}):
+                report = self.scan_tree(root, namespace=namespace)
+            args = supervised.call_args.args[0]
+            self.assertNotIn("find", args)
+            self.assertEqual(args[1:4], ["-I", "-S", "-c"])
             self.assertEqual(
-                report["files"],
-                [{"path": "etc/X11/fonts/Type1/big", "size": 2_000_000_000}],
+                sorted((f["path"], f["size"]) for f in report["files"]),
+                [("etc/X11/fonts/Type1/big", 2_000_000_000), ("odd\nname", 3_000_000_000)],
             )
 
-    def test_scan_oversized_files_stops_at_deadline_and_depth(self) -> None:
+    def test_scan_oversized_files_deadline_and_depth(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            for i in range(5000):
-                (root / f"f{i}").touch()
-            with self.assertRaisesRegex(ValueError, "deadline exceeded"):
+            (root / "f").touch()
+            # An already spent (shared) deadline: nothing more is started.
+            with self.assertRaisesRegex(ValueError, "deadline exceeded; not starting"):
                 self.scan_tree(root, deadline=time.monotonic() - 1)
         with tempfile.TemporaryDirectory() as tmpdir:
             deep = Path(tmpdir)
@@ -916,8 +911,64 @@ secret_access_key = "secret"
                     fd = child
             finally:
                 os.close(fd)
-            with self.assertRaisesRegex(ValueError, "too deep"):
+            with self.assertRaisesRegex(ValueError, "unable to scan"):
                 self.scan_tree(deep)
+
+    def test_scan_stops_and_nothing_follows_when_caller_is_killed(self) -> None:
+        # Killing sudo during the scan stops the walk, and the helper starts
+        # no Rustic afterwards (it once took the new parent for its caller).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            tree = tmp / "tree"
+            tree.mkdir()
+            walker_pid = tmp / "walker.pid"
+            rustic_ran = tmp / "rustic.ran"
+            script = tmp / "helper.py"
+            walk = (
+                "import os, time; "
+                f"open({str(walker_pid)!r}, 'w').write(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            script.write_text(
+                "import os, sys, time\n"
+                f"sys.path.insert(0, {str(Path(bootstrap.__file__).parent)!r})\n"
+                "import bootstrap\n"
+                "ns = {'__name__': 'helper'}\n"
+                "exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, ns)\n"
+                # A walk that takes long: records its pid, then waits.
+                f"ns['OVERSIZED_WALK_PROGRAM'] = {walk!r}\n"
+                f"fd = os.open({str(tree)!r}, ns['O_PATH'] | os.O_DIRECTORY)\n"
+                "deadline = time.monotonic() + 60\n"
+                "try:\n"
+                "    ns['scan_oversized_files'](fd, max_file_bytes=1, one_file_system=True, deadline=deadline)\n"
+                "finally:\n"
+                f"    ns['run_supervised'](['sh', '-c', 'touch {rustic_ran}; exec sleep 60'], deadline=deadline)\n",
+                encoding="utf-8",
+            )
+            # sh stands in for sudo: the caller the helper must not outlive.
+            caller = subprocess.Popen(
+                ["sh", "-c", f"{sys.executable} {script} & wait"],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                started = time.monotonic() + 15
+                while not walker_pid.exists() or not walker_pid.read_text().strip():
+                    if time.monotonic() > started:
+                        self.fail("the walk did not start")
+                    time.sleep(0.05)
+                walker = int(walker_pid.read_text())
+                os.kill(caller.pid, 9)
+                caller.wait()
+                self.assertTrue(self.wait_for_exit(walker))
+                time.sleep(2)
+                self.assertFalse(rustic_ran.exists(), "started a command after the caller died")
+            finally:
+                try:
+                    os.killpg(caller.pid, 9)
+                except ProcessLookupError:
+                    pass
 
     def test_supervised_command_stops_at_deadline(self) -> None:
         run_supervised = self.helper_namespace()["run_supervised"]
