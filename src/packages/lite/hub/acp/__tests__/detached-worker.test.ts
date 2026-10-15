@@ -3211,6 +3211,38 @@ describe("project fence follow-ups", () => {
     expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBeNull();
   });
 
+  it("does not resume before the cut-off turn's chat shows it ended", async () => {
+    const rows: any[] = [];
+    const { request, job } = runningTurn(rows);
+    await fenceAcpProjectAfterStop({
+      project_id: job.project_id,
+      resume: true,
+    });
+    // Released before any poll could write the chat.
+    expect(releaseAcpProjectFenceResumesAfterStart(job.project_id)).toBe(1);
+    const syncdb = makeSyncdb(rows);
+    syncdb.save = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValue(undefined);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+
+    await processAcpProjectFenceIntents(client);
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(0);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBe(
+      ACP_FENCE_INTENT_RESUME_READY,
+    );
+
+    await processAcpProjectFenceIntents(client);
+    const turn = rows.find((row) => row.message_id === request.chat.message_id);
+    expect(turn.generating).toBe(false);
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+  });
+
   it("counts a resume as done once its continuation is queued, even if a later step fails", async () => {
     const rows: any[] = [];
     const { job } = await readyToResume(rows);

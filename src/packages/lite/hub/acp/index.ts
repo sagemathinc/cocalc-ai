@@ -9399,12 +9399,26 @@ async function resumeFencedAcpJob(
   const blocker = fencedTurnResumeBlocker(job);
   if (!hasContinuation()) {
     if (job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED || blocker) {
-      await finalizeFencedTurnChat({
+      const durable = await finalizeFencedTurnChat({
         client,
         job,
         notice: blocker ?? fencePendingNotice(job),
         reasonId: "project_restarted",
       });
+      if (!durable) {
+        // The cut-off turn must show it ended before anything follows it.
+        const fencedAt = Number(job.finished_at ?? job.updated_at ?? 0);
+        moveAcpJobFenceIntent({
+          op_id: job.op_id,
+          from: ACP_FENCE_INTENT_RESUMING,
+          // Out of time: a stop keeps retrying the chat and tells the sender.
+          to:
+            now - fencedAt <= ACP_FENCE_RESUME_MAX_AGE_MS
+              ? ACP_FENCE_INTENT_RESUME_READY
+              : ACP_FENCE_INTENT_STOPPED,
+        });
+        return;
+      }
     }
     if (blocker) {
       logger.warn("fenced ACP turn is not resumable", { op_id: job.op_id });
