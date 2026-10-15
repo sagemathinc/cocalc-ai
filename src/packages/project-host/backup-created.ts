@@ -33,6 +33,29 @@ export function parseCreatedBackupSnapshot(
   };
 }
 
+// Remembers what each upload produced. A run that abandons an upload before
+// recording it (e.g. the volume changed meanwhile) still has to account for
+// it, because the managed egress was spent.
+export function trackUploadedBackups(
+  wrapUpload?: <T>(upload: () => Promise<T>) => Promise<T>,
+): {
+  wrapUpload: <T>(upload: () => Promise<T>) => Promise<T>;
+  uploaded: () => BackupSnapshotRef[];
+} {
+  const uploaded: BackupSnapshotRef[] = [];
+  const outer = wrapUpload ?? (<T>(upload: () => Promise<T>) => upload());
+  return {
+    wrapUpload: <T>(upload: () => Promise<T>) =>
+      outer(async () => {
+        const result = await upload();
+        const backup = parseCreatedBackupSnapshot(result);
+        if (backup) uploaded.push(backup);
+        return result;
+      }),
+    uploaded: () => [...uploaded],
+  };
+}
+
 export function newestBackupTimeForIds({
   backups,
   backupIds,

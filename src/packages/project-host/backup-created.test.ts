@@ -3,6 +3,7 @@ import {
   confirmedBackupTimeForIds,
   newestBackupTimeForIds,
   parseCreatedBackupSnapshot,
+  trackUploadedBackups,
 } from "./backup-created";
 
 describe("parseCreatedBackupSnapshot", () => {
@@ -86,5 +87,37 @@ describe("newestBackupTimeForIds", () => {
         ],
       }),
     ).toEqual(new Date("2026-05-22T12:00:00.000Z"));
+  });
+});
+
+describe("trackUploadedBackups", () => {
+  it("remembers uploads that the outer wrapper then abandons", async () => {
+    const tracker = trackUploadedBackups(async (upload) => {
+      await upload();
+      throw new Error("volume changed");
+    });
+    await expect(
+      tracker.wrapUpload(async () => ({
+        id: "backup-1",
+        time: "2026-10-15T20:37:37.000Z",
+        summary: { data_added_packed: 3_000 },
+      })),
+    ).rejects.toThrow("volume changed");
+    expect(tracker.uploaded()).toEqual([
+      expect.objectContaining({
+        id: "backup-1",
+        summary: { data_added_packed: 3_000 },
+      }),
+    ]);
+  });
+
+  it("records nothing when the upload itself fails", async () => {
+    const tracker = trackUploadedBackups();
+    await expect(
+      tracker.wrapUpload(async () => {
+        throw new Error("upload failed");
+      }),
+    ).rejects.toThrow("upload failed");
+    expect(tracker.uploaded()).toEqual([]);
   });
 });

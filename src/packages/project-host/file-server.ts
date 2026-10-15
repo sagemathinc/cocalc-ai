@@ -257,6 +257,7 @@ import {
 import {
   confirmedBackupForIds,
   parseCreatedBackupSnapshot,
+  trackUploadedBackups,
 } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
@@ -4643,6 +4644,22 @@ async function updateBackupsUnlocked({
       ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
       : undefined;
   const createdBackupIds = new Set<string>();
+  const uploads = trackUploadedBackups(wrapUpload);
+  const recordBackupEgress = async (
+    backup: ReturnType<typeof parseCreatedBackupSnapshot>,
+  ) => {
+    if (!backup?.summary) return;
+    await recordManagedBackupEgressBestEffort({
+      project_id,
+      backup_id: backup.id,
+      tags:
+        legacyInitialBackupOverride == null
+          ? undefined
+          : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
+      summary: backup.summary,
+      managed_egress_override: legacyInitialBackupOverride,
+    });
+  };
   const stageDurations = stage_durations_ms ?? {};
   let bytesScanned: number | undefined;
   let bytesUploaded: number | undefined;
@@ -4658,7 +4675,7 @@ async function updateBackupsUnlocked({
         await refreshed.rustic.update(counts, {
           limit,
           timeout: timeout_ms,
-          wrapUpload,
+          wrapUpload: wrapUpload == null ? undefined : uploads.wrapUpload,
           // Same privileged, size-limited backup as manual backups, so a huge
           // sparse file cannot occupy every scheduled backup of this host.
           runner: async ({ src, host, timeout, tags, parent, progress }) => {
@@ -4736,20 +4753,20 @@ async function updateBackupsUnlocked({
               if (Number.isFinite(uploaded) && uploaded >= 0) {
                 bytesUploaded = (bytesUploaded ?? 0) + uploaded;
               }
-              await recordManagedBackupEgressBestEffort({
-                project_id,
-                backup_id: backup.id,
-                tags:
-                  legacyInitialBackupOverride == null
-                    ? undefined
-                    : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
-                summary: backup.summary,
-                managed_egress_override: legacyInitialBackupOverride,
-              });
+              await recordBackupEgress(backup);
             }
           },
         });
       } catch (err) {
+        if (err instanceof RollingSnapshotRetentionSkipped) {
+          // The abandoned upload is in the repository and spent managed
+          // egress even though this run records no recovery point.
+          for (const backup of uploads.uploaded()) {
+            if (!createdBackupIds.has(backup.id)) {
+              await recordBackupEgress(backup);
+            }
+          }
+        }
         if (createdBackupIds.size === 0) throw err;
         retentionError = err;
       }
