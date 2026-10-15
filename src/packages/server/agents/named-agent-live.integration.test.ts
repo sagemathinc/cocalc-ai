@@ -22,6 +22,7 @@ describeDb("live name book", () => {
   const watch = jest.fn(async () => {});
   const upserts: NamedAgent[] = [];
   const removes: unknown[] = [];
+  const retiredMemory: unknown[] = [];
   const hooks: PersonalAgentHooks = {
     watch,
     upsert: async (_account, row) => {
@@ -29,6 +30,9 @@ describeDb("live name book", () => {
     },
     remove: async (_account, endpoint) => {
       removes.push(endpoint);
+    },
+    retireMemory: async (account_id, agent_id) => {
+      retiredMemory.push([account_id, agent_id]);
     },
     payments: async (_account, agents) => {
       for (const row of agents)
@@ -69,6 +73,7 @@ describeDb("live name book", () => {
     await db.query("DELETE FROM agent_personal_names");
     upserts.length = 0;
     removes.length = 0;
+    retiredMemory.length = 0;
     watch.mockClear();
     identity.mockClear();
     live = {
@@ -135,11 +140,12 @@ describeDb("live name book", () => {
     expect(watch).toHaveBeenCalledWith(account, agent, false);
   });
 
-  test("removing unregisters and pushes the removal", async () => {
+  test("removing unregisters, pushes the removal and drops its own memory", async () => {
     await store.name(account, { endpoint: agent, name: "builder" });
     await store.retire(account, { endpoint: agent });
     expect(watch).toHaveBeenLastCalledWith(account, agent, false);
     expect(removes).toEqual([agent]);
+    expect(retiredMemory).toEqual([[account, agent.agent_id]]);
   });
 
   test("repair fixes stale snapshots and pushes only real changes", async () => {
