@@ -283,7 +283,8 @@ function hasNewerNonRecoveryAcpJobInDatabase({
     return false;
   }
   // A message that was canceled never runs, so it supersedes nothing; one a
-  // fence holds (with an intent) may still run.
+  // restart holds (a live resume intent) may still run.  A stop's intent
+  // (fence:stopped) only tells the sender; that message never runs either.
   const row = db
     .prepare(
       `SELECT 1
@@ -293,9 +294,9 @@ function hasNewerNonRecoveryAcpJobInDatabase({
          AND thread_id = ?
          AND recovery_parent_op_id IS NULL
          AND rowid > ?
-         AND NOT (
-           state = 'canceled'
-           AND (recovery_code IS NULL OR recovery_code NOT LIKE ?)
+         AND (
+           state != 'canceled'
+           OR recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})
          )
        LIMIT 1`,
     )
@@ -304,7 +305,7 @@ function hasNewerNonRecoveryAcpJobInDatabase({
       path,
       thread_id,
       sourceSequence,
-      `${ACP_FENCE_INTENT_PREFIX}%`,
+      ...ACP_FENCE_LIVE_RESUME_INTENTS,
     );
   return row != null;
 }
@@ -1200,6 +1201,61 @@ export function moveAcpJobFenceIntent({
         from,
       ).changes === 1
   );
+}
+
+/**
+ * A fenced turn's resume found newer messages that run instead.  The check ran
+ * before the chat was updated, so recheck it in the same transaction that
+ * ends the resume: if those messages were canceled meanwhile, hand the resume
+ * back ("resume") instead of ending it.  "lost": the claim is no longer ours.
+ */
+export function finishSupersededFencedResume({
+  op_id,
+  project_id,
+  path,
+  thread_id,
+  guard,
+}: {
+  op_id: string;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  guard: AcpJobSupersessionGuard;
+}): "finished" | "resume" | "lost" {
+  ensureInit();
+  const db = getAcpDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = db
+      .prepare(`SELECT recovery_code FROM ${TABLE} WHERE op_id = ?`)
+      .get(op_id) as { recovery_code?: string | null } | undefined;
+    if (current?.recovery_code !== ACP_FENCE_INTENT_RESUMING) {
+      db.exec("COMMIT");
+      return "lost";
+    }
+    const superseded = hasNewerNonRecoveryAcpJobInDatabase({
+      db,
+      project_id,
+      path,
+      thread_id,
+      guard,
+    });
+    db.prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = ?, updated_at = ?
+       WHERE op_id = ? AND recovery_code = ?`,
+    ).run(
+      superseded ? null : ACP_FENCE_INTENT_RESUME_READY,
+      Date.now(),
+      op_id,
+      ACP_FENCE_INTENT_RESUMING,
+    );
+    db.exec("COMMIT");
+    return superseded ? "finished" : "resume";
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /** The project runs again: resumes fenced within maxAgeMs become ready. */

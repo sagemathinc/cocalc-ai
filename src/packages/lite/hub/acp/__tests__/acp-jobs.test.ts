@@ -845,6 +845,12 @@ describe("acp job queue ordering", () => {
       .run(ACP_FENCE_INTENT_RESUME_PENDING, newer.op_id);
     expect(superseded()).toBe(true);
 
+    // Canceled by a stop: the intent only tells the sender; it never runs.
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_code = ? WHERE op_id = ?")
+      .run(ACP_FENCE_INTENT_STOPPED, newer.op_id);
+    expect(superseded()).toBe(false);
+
     // Canceled for good: it never runs.
     getAcpDatabase()
       .prepare("UPDATE acp_jobs SET recovery_code = NULL WHERE op_id = ?")

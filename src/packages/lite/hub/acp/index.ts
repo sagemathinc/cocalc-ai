@@ -207,6 +207,7 @@ import {
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
   moveAcpJobFenceIntent,
+  finishSupersededFencedResume,
   nextQueuedAcpJobAvailability,
   releaseAcpProjectFenceResumes,
   requeueFencedAcpJob,
@@ -9369,12 +9370,9 @@ function reportFencedAgentMessage(job: AcpJobRow, detail: string): void {
   );
 }
 
-// Why a cut-off turn must not resume, or undefined if it may.  Newer
-// messages are only known to win when resuming: a held one may be canceled.
-function fencedTurnResumeBlocker(
-  job: AcpJobRow,
-  { resuming = false }: { resuming?: boolean } = {},
-): string | undefined {
+// Why a cut-off turn must not resume, or undefined if it may.  These reasons
+// do not change while it waits; newer messages winning can (see below).
+function fencedTurnResumeBlocker(job: AcpJobRow): string | undefined {
   const chat = decodeAcpJobRequest(job).chat;
   // Their one-time authorization was spent by the turn that was cut off.
   if (chat?.sensor_wake) {
@@ -9391,20 +9389,28 @@ function fencedTurnResumeBlocker(
   ) {
     return PROJECT_RESTART_NOT_RESUMED_NOTICE;
   }
-  // Messages sent after it run instead (resuming it would answer out of
-  // order); enqueueRecoveryContinuationForJob refuses it for the same reason.
-  if (
-    resuming &&
-    hasNewerNonRecoveryAcpJob({
-      project_id: job.project_id,
-      path: job.path,
-      thread_id: job.thread_id,
-      guard: { source_op_id: job.op_id, source_created_at: job.created_at },
-    })
-  ) {
-    return `**Conversation interrupted because ${fencedJobRestartCause(job)}.** The newer messages in this thread run instead of resuming it; send a message to continue this one.`;
-  }
   return undefined;
+}
+
+// Messages sent after the cut-off turn run instead of resuming it (it would
+// answer out of order); enqueueRecoveryContinuationForJob refuses it for the
+// same reason.  Only known when resuming: a held message may still be
+// canceled, so this is rechecked when the resume ends.
+function fencedTurnSupersessionGuard(job: AcpJobRow) {
+  return { source_op_id: job.op_id, source_created_at: job.created_at };
+}
+
+function fencedTurnSuperseded(job: AcpJobRow): boolean {
+  return hasNewerNonRecoveryAcpJob({
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    guard: fencedTurnSupersessionGuard(job),
+  });
+}
+
+function fenceSupersededNotice(job: AcpJobRow): string {
+  return `**Conversation interrupted because ${fencedJobRestartCause(job)}.** The newer messages in this thread run instead of resuming it; send a message to continue this one.`;
 }
 
 // Move an intent; on a failed attempt, also move it to the back of the poll.
@@ -9463,7 +9469,21 @@ async function resumeFencedAcpJob(
       from: ACP_FENCE_INTENT_RESUMING,
       to: null,
     });
-  const blocker = fencedTurnResumeBlocker(job, { resuming: true });
+  const fencedAt = Number(job.finished_at ?? job.updated_at ?? 0);
+  // Hand the resume back for the next poll (e.g. the chat was unavailable).
+  const retryLater = (): boolean => {
+    if (now - fencedAt > ACP_FENCE_RESUME_MAX_AGE_MS) return false;
+    moveAcpJobFenceIntent({
+      op_id: job.op_id,
+      from: ACP_FENCE_INTENT_RESUMING,
+      to: ACP_FENCE_INTENT_RESUME_READY,
+    });
+    return true;
+  };
+  const staticBlocker = fencedTurnResumeBlocker(job);
+  const superseded = !staticBlocker && fencedTurnSuperseded(job);
+  const blocker =
+    staticBlocker ?? (superseded ? fenceSupersededNotice(job) : undefined);
   if (!hasContinuation()) {
     if (job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED || blocker) {
       const durable = await finalizeFencedTurnChat({
@@ -9474,7 +9494,6 @@ async function resumeFencedAcpJob(
       });
       if (!durable) {
         // The cut-off turn must show it ended before anything follows it.
-        const fencedAt = Number(job.finished_at ?? job.updated_at ?? 0);
         moveAcpJobFenceIntent({
           op_id: job.op_id,
           from: ACP_FENCE_INTENT_RESUMING,
@@ -9490,6 +9509,7 @@ async function resumeFencedAcpJob(
     if (blocker) {
       logger.warn("fenced ACP turn is not resumable", { op_id: job.op_id });
       if (job.recovery_detail === ACP_FENCE_CHAT_FINALIZED) {
+        // The chat still promises a resume; say what happens instead.
         try {
           await replaceFencedTurnNotice({
             client,
@@ -9502,15 +9522,46 @@ async function resumeFencedAcpJob(
             op_id: job.op_id,
             err,
           });
+          if (retryLater()) return;
         }
       }
-      if (finish()) {
+      // Newer messages may have been canceled during the chat update: end
+      // the resume only if they still win (one transaction).
+      const outcome = superseded
+        ? finishSupersededFencedResume({
+            op_id: job.op_id,
+            project_id: job.project_id,
+            path: job.path,
+            thread_id: job.thread_id,
+            guard: fencedTurnSupersessionGuard(job),
+          })
+        : finish()
+          ? "finished"
+          : "lost";
+      if (outcome === "finished") {
         reportFencedAgentMessage(
           job,
           "The recipient's project restarted while it worked on your message, and that turn could not be resumed.",
         );
       }
       return;
+    }
+    if (job.recovery_detail === ACP_FENCE_CHAT_FINALIZED) {
+      // An earlier pass may have said newer messages win; they were canceled.
+      try {
+        await replaceFencedTurnNotice({
+          client,
+          job,
+          from: fenceSupersededNotice(job),
+          to: fencePendingNotice(job),
+        });
+      } catch (err) {
+        logger.warn("failed to update a fenced turn's notice", {
+          op_id: job.op_id,
+          err,
+        });
+        if (retryLater()) return;
+      }
     }
     try {
       await enqueueRecoveryContinuationForJob({
@@ -9530,7 +9581,6 @@ async function resumeFencedAcpJob(
         err,
       });
       if (!hasContinuation()) {
-        const fencedAt = Number(job.finished_at ?? job.updated_at ?? 0);
         const permanent = err instanceof AcpAdmissionDeniedError;
         if (!permanent && now - fencedAt <= ACP_FENCE_RESUME_MAX_AGE_MS) {
           // Hand it back for the next poll.
