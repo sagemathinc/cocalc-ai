@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import {
   MANAGED_SANDBOX_COMMAND_SUPERVISOR,
+  SANDBOX_COMMAND_LEASE_MS,
   SANDBOX_COMMAND_SUPERVISOR,
+  sandboxCommandSupervisor,
 } from "./sandbox-command-supervisor";
 
 test.each(["EPERM", "ESRCH", "EIO"])(
@@ -65,12 +67,65 @@ test.each([undefined, "job-1-1-2-2-00000000-0000-4000-8000-000000000001"])(
   },
 );
 
+function leaseHarness(supervisor: string) {
+  const child = Object.assign(new EventEmitter(), { pid: 123 });
+  const stdin = new EventEmitter();
+  const kill = jest.fn();
+  let now = 1_000_000;
+  let tick: (() => void) | undefined;
+  runInNewContext(supervisor, {
+    require: (name) => {
+      if (name === "node:child_process") return { spawn: () => child };
+      throw Error(`Unexpected module: ${name}`);
+    },
+    process: Object.assign(new EventEmitter(), {
+      stdin,
+      argv: ["node", "command"],
+      kill,
+      exit: jest.fn(),
+    }),
+    Date: { now: () => now },
+    setInterval: (callback: () => void) => {
+      tick = callback;
+      return 1;
+    },
+    clearInterval: () => {},
+  });
+  return {
+    killed: () => kill.mock.calls.some(([, signal]) => signal === "SIGKILL"),
+    advance: (ms: number) => {
+      now += ms;
+      tick?.();
+    },
+    heartbeat: () => stdin.emit("data", ".\n"),
+  };
+}
+
+test("a host stall of several seconds does not kill the command", () => {
+  // Alpha host1, 2026-10-15: acp-worker event-loop stalls of 2-130 s under
+  // disk load killed agent commands with exit 130 under the old 5 s lease.
+  expect(SANDBOX_COMMAND_LEASE_MS).toBeGreaterThanOrEqual(60_000);
+  const lease = leaseHarness(SANDBOX_COMMAND_SUPERVISOR);
+  lease.advance(10_000);
+  expect(lease.killed()).toBe(false);
+  lease.heartbeat();
+  lease.advance(SANDBOX_COMMAND_LEASE_MS - 1_000);
+  expect(lease.killed()).toBe(false);
+  lease.advance(2_000);
+  expect(lease.killed()).toBe(true);
+});
+
 test.each(["closed", "expired"])(
   "a %s command lease kills the shell and its sleeping child",
   async (mode) => {
     const child = spawn(
       process.execPath,
-      ["-e", SANDBOX_COMMAND_SUPERVISOR, "--", 'sleep 60 & echo "$!"; wait'],
+      [
+        "-e",
+        sandboxCommandSupervisor(2_000),
+        "--",
+        'sleep 60 & echo "$!"; wait',
+      ],
       { stdio: "pipe" },
     );
     const exited = once(child, "exit");
