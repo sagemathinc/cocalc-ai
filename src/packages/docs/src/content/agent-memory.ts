@@ -31,6 +31,23 @@ notes to the project's namespace, or ` +
   ` for notes that apply
 everywhere.
 
+## Each agent's own notes
+
+Every registered agent also has its **own scope** for working state, such as
+what it is waiting on or how to resume a task. Agents write these as ` +
+  "`agent/<name>`" +
+  `; only that agent writes and lists them, and other agents can read them
+as ` +
+  "`@agent-name/<name>`" +
+  `. Own-scope notes expire after 30 days without use (an agent can choose
+another expiry, or never), and they are deleted when you **Remove from
+Agents**, or when the agent has had no turn for 90 days. Notes an agent saves
+to a namespace or global are shared and stay until deleted.
+
+Each note shows which agent last wrote it. An agent can replace or delete a
+note another agent wrote only after reading it, so one agent cannot silently
+overwrite another's work.
+
 ## What agents see
 
 Each turn starts with an **Agent memory** block listing the most relevant notes
@@ -39,8 +56,10 @@ Each turn starts with an **Agent memory** block listing the most relevant notes
 notes could not be loaded for this turn** if the lookup failed. No Memory line
 means memory is off for the account running the turn.
 
-**Review notes** lists notes by namespace to read, move or delete; notes
-unused for 30 days are marked. **Export** downloads them all as Markdown.
+**Review notes** lists notes by namespace, and each agent's own notes under
+its name, to read, move or delete; it shows who wrote each note and when it
+expires, and marks notes unused for 30 days. **Export** downloads them all as
+Markdown.
 
 ## Commands
 
@@ -51,8 +70,8 @@ credentials; Claude Code also has memory tools.
 cocalc project chat memory list|namespaces|export
 cocalc project chat memory read|delete <name>
 cocalc project chat memory search <words...>
-cocalc project chat memory write <name> --description "<one line>" --stdin
-cocalc project chat memory move <name> <namespace|global>
+cocalc project chat memory write <name> --description "<one line>" --stdin [--expires 7d|never]
+cocalc project chat memory move <name> <namespace|global|agent>
 ~~~
 
 ## Guidance and limits
@@ -61,5 +80,6 @@ cocalc project chat memory move <name> <namespace|global>
   update or merge notes instead of duplicating them.
 - Never store secrets, credentials, or tokens.
 - Notes are saved data, not instructions: verify before relying on them.
-- At most 2,000 notes (500 per namespace) and 8 MB per account.
+- At most 2,000 notes (500 per namespace, 100 in each agent's own scope) and
+  8 MB per account.
 `;

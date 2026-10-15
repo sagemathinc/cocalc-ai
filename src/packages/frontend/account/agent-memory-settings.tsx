@@ -23,6 +23,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AGENT_MEMORY_GLOBAL,
   AGENT_MEMORY_UNUSED_DAYS,
+  agentOfMemoryNamespace,
   isUnusedMemoryNote,
   memoryRef,
   type AgentMemoryNoteSummary,
@@ -71,13 +72,22 @@ export function AgentMemoryDisclosure() {
           you share with them.
         </li>
         <li>
+          <b>Each agent has its own working notes.</b> Besides shared notes, an
+          agent keeps notes about its own work in progress. Only it writes them;
+          your other agents can read them. They expire after 30 days without use
+          and are deleted when you remove the agent from Agents. Every note
+          shows which agent wrote it, and an agent cannot replace another
+          agent's note without reading it first.
+        </li>
+        <li>
           <b>Never store secrets.</b> Saves that look like credentials (keys,
           tokens, passwords) are rejected, but detection is not complete.
         </li>
         <li>
-          <b>Limits.</b> At most 2,000 notes (500 per namespace) and 8 MB. Each
-          turn lists only the most relevant notes; agents search for the rest.
-          Agent use of memory is rate-limited per account.
+          <b>Limits.</b> At most 2,000 notes (500 per namespace, 100 of an
+          agent's own) and 8 MB. Each turn lists only the most relevant notes;
+          agents search for the rest. Agent use of memory is rate-limited per
+          account.
         </li>
       </ul>
       <p style={{ marginBottom: 0 }}>
@@ -500,16 +510,34 @@ function Notes({
   const [filter, setFilter] = useState("");
   const api = () => personalAgentApi();
   const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+  const agentName = new Map(
+    (status.agents ?? []).map((agent) => [agent.agent_id, agent.name]),
+  );
+  const groupLabel = (ns: string) => {
+    if (ns === AGENT_MEMORY_GLOBAL) return "Global (every project)";
+    const agent_id = agentOfMemoryNamespace(ns);
+    if (!agent_id) return ns;
+    const name = agentName.get(agent_id);
+    return `${name ? `@${name}` : "Removed or unnamed agent"}: its own notes`;
+  };
   const shown = notes.filter((note) => {
     const text =
-      `${note.namespace}/${note.name} ${note.description}`.toLowerCase();
+      `${groupLabel(note.namespace)} ${note.name} ${note.description} ${note.written_by ?? ""}`.toLowerCase();
     return words.every((word) => text.includes(word));
   });
-  const groups = [
+  const shared = [
     AGENT_MEMORY_GLOBAL,
     ...(status.namespaces ?? []).map((ns) => ns.name),
   ];
-  const moveOptions = groups.map((ns) => ({
+  // Agents' own scopes come after the shared notes; notes can be moved from
+  // them to shared memory (where they no longer expire), not into them.
+  const groups = [
+    ...shared,
+    ...[...new Set(notes.map((note) => note.namespace))]
+      .filter((ns) => agentOfMemoryNamespace(ns))
+      .sort((a, b) => groupLabel(a).localeCompare(groupLabel(b))),
+  ];
+  const moveOptions = shared.map((ns) => ({
     value: ns,
     label: ns === AGENT_MEMORY_GLOBAL ? "global (every project)" : ns,
   }));
@@ -529,9 +557,7 @@ function Notes({
         if (!inGroup.length) return null;
         return (
           <div key={ns}>
-            <Typography.Text strong>
-              {ns === AGENT_MEMORY_GLOBAL ? "Global (every project)" : ns}
-            </Typography.Text>{" "}
+            <Typography.Text strong>{groupLabel(ns)}</Typography.Text>{" "}
             <span style={{ color: UI_COLORS.secondary }}>
               ({inGroup.length})
             </span>
@@ -547,6 +573,16 @@ function Notes({
                       {" "}
                       — {note.description}
                     </span>{" "}
+                    {note.written_by && (
+                      <Tooltip title="The agent that last wrote this note">
+                        <Tag>by @{note.written_by}</Tag>
+                      </Tooltip>
+                    )}
+                    {note.expires_at && (
+                      <Tooltip title="Deleted then unless an agent reads or changes it first">
+                        <Tag>expires {note.expires_at.slice(0, 10)}</Tag>
+                      </Tooltip>
+                    )}
                     {isUnusedMemoryNote(note) && (
                       <Tooltip
                         title={`Not read or changed by an agent in ${AGENT_MEMORY_UNUSED_DAYS} days`}
@@ -558,7 +594,9 @@ function Notes({
                 ),
                 extra: (
                   <Space size={4} onClick={(event) => event.stopPropagation()}>
-                    {groups.length > 1 && (
+                    {moveOptions.some(
+                      (option) => option.value !== note.namespace,
+                    ) && (
                       <Select
                         size="small"
                         style={{ width: 150 }}
