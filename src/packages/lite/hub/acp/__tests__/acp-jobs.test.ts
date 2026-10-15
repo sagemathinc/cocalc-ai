@@ -810,6 +810,48 @@ describe("acp job queue ordering", () => {
     expect(listQueuedAcpJobs()).toHaveLength(2);
   });
 
+  it("does not count a canceled newer message as superseding, unless a fence holds it", () => {
+    const source = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-supersede-source",
+        assistantMessageId: "assistant-supersede-source",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }) as any,
+    );
+    const newer = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-supersede-newer",
+        assistantMessageId: "assistant-supersede-newer",
+        assistantDate: "2026-03-08T00:01:00.000Z",
+      }) as any,
+    );
+    const superseded = () =>
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard: {
+          source_op_id: source.op_id,
+          source_created_at: source.created_at,
+        },
+      });
+    expect(superseded()).toBe(true);
+
+    // Held by a restart: it may still run.
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'canceled', recovery_code = ? WHERE op_id = ?",
+      )
+      .run(ACP_FENCE_INTENT_RESUME_PENDING, newer.op_id);
+    expect(superseded()).toBe(true);
+
+    // Canceled for good: it never runs.
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_code = NULL WHERE op_id = ?")
+      .run(newer.op_id);
+    expect(superseded()).toBe(false);
+  });
+
   it("uses insertion order for supersession within one millisecond", () => {
     const older = enqueueAcpJob(
       makeRequest({

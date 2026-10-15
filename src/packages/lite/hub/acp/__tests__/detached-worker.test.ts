@@ -38,6 +38,7 @@ import {
   ACP_FENCE_INTENT_STOPPED,
   ACP_PROJECT_RESUME_FENCE_REASON,
   stopAcpFenceResumesForThread,
+  cancelQueuedAcpJob,
   claimNextQueuedAcpJobForThread,
   decodeAcpJobRequest,
   enqueueAcpJob,
@@ -3146,6 +3147,75 @@ describe("project fence follow-ups", () => {
     expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBe(
       ACP_FENCE_INTENT_STOPPED,
     );
+  });
+
+  // A message sent in the same thread after the running turn.
+  function laterMessage(request: any) {
+    return {
+      ...request,
+      prompt: "a later message",
+      chat: {
+        ...request.chat,
+        parent_message_id: "user-later",
+        message_id: "assistant-later",
+        message_date: "2026-03-16T00:00:09.000Z",
+      },
+    };
+  }
+
+  it("runs newer messages instead of resuming, and says so", async () => {
+    const rows: any[] = [];
+    const { request, job } = runningTurn(rows);
+    const later = enqueueAcpJob(laterMessage(request));
+    await fenceAcpProjectAfterStop({
+      project_id: job.project_id,
+      resume: true,
+    });
+    await processAcpProjectFenceIntents(client);
+    const turn = rows.find((row) => row.message_id === request.chat.message_id);
+    // The newer message is held and may still be canceled.
+    expect(turn.acp_interrupted_text).toContain("CoCalc resumes");
+
+    expect(releaseAcpProjectFenceResumesAfterStart(job.project_id)).toBe(2);
+    await processAcpProjectFenceIntents(client);
+    const after = rows.find(
+      (row) => row.message_id === request.chat.message_id,
+    );
+    expect(after.acp_interrupted_text).toContain(
+      "newer messages in this thread run instead",
+    );
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(0);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_code).toBeNull();
+    expect(getAcpJobByOpId(later.op_id)?.state).toBe("queued");
+  });
+
+  it("resumes a turn whose only newer message was canceled while held", async () => {
+    const rows: any[] = [];
+    const { request, job } = runningTurn(rows);
+    const later = enqueueAcpJob(laterMessage(request));
+    await fenceAcpProjectAfterStop({
+      project_id: job.project_id,
+      resume: true,
+    });
+    await processAcpProjectFenceIntents(client);
+    expect(
+      cancelQueuedAcpJob({
+        project_id: later.project_id,
+        path: later.path,
+        user_message_id: later.user_message_id,
+      }),
+    ).toMatchObject({ state: "canceled" });
+
+    expect(releaseAcpProjectFenceResumesAfterStart(job.project_id)).toBe(1);
+    await processAcpProjectFenceIntents(client);
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+    ).toHaveLength(1);
+    expect(getAcpJobByOpId(later.op_id)?.state).toBe("canceled");
+    const turn = rows.find((row) => row.message_id === request.chat.message_id);
+    expect(turn.acp_interrupted_text).not.toContain("run instead");
   });
 
   it("does not resume a turn past the recovery limit", async () => {

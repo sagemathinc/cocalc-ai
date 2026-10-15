@@ -282,6 +282,8 @@ function hasNewerNonRecoveryAcpJobInDatabase({
   if (!Number.isFinite(sourceSequence)) {
     return false;
   }
+  // A message that was canceled never runs, so it supersedes nothing; one a
+  // fence holds (with an intent) may still run.
   const row = db
     .prepare(
       `SELECT 1
@@ -291,9 +293,19 @@ function hasNewerNonRecoveryAcpJobInDatabase({
          AND thread_id = ?
          AND recovery_parent_op_id IS NULL
          AND rowid > ?
+         AND NOT (
+           state = 'canceled'
+           AND (recovery_code IS NULL OR recovery_code NOT LIKE ?)
+         )
        LIMIT 1`,
     )
-    .get(project_id, path, thread_id, sourceSequence);
+    .get(
+      project_id,
+      path,
+      thread_id,
+      sourceSequence,
+      `${ACP_FENCE_INTENT_PREFIX}%`,
+    );
   return row != null;
 }
 

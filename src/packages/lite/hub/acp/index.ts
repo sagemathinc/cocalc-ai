@@ -9300,6 +9300,55 @@ async function finalizeFencedTurnChat({
   return result.durable;
 }
 
+// Replace a notice shown while the project was down (e.g. "CoCalc resumes
+// this turn") once it turns out not to hold.  An interrupted row is never
+// repaired again, so this edits the notice alone.
+async function replaceFencedTurnNotice({
+  client,
+  job,
+  from,
+  to,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  from: string;
+  to: string;
+}): Promise<void> {
+  await withChatSyncDB({
+    client,
+    project_id: job.project_id,
+    path: job.path,
+    fn: async (syncdb) => {
+      const current = findChatRowByMessageId(syncdb, job.assistant_message_id);
+      if (
+        current == null ||
+        syncdbField<string>(current, "acp_interrupted_text") !== from
+      ) {
+        return;
+      }
+      const update: any = {
+        event: "chat",
+        date: syncdbField<string>(current, "date"),
+        sender_id: syncdbField<string>(current, "sender_id"),
+        message_id: job.assistant_message_id,
+        thread_id: job.thread_id,
+        acp_interrupted_text: to,
+      };
+      const history = historyToArray(syncdbField(current, "history"));
+      const first = history[0] as MessageHistory | undefined;
+      if (typeof first?.content === "string" && first.content.includes(from)) {
+        update.history = [
+          { ...first, content: first.content.replace(from, to) },
+          ...history.slice(1),
+        ];
+      }
+      syncdb.set(update);
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
 // Project-host does not run turns itself: hand new work to a worker.
 async function wakeAcpQueueForFencedWork(): Promise<void> {
   if (liteUseDetachedAcpWorker()) {
@@ -9320,8 +9369,12 @@ function reportFencedAgentMessage(job: AcpJobRow, detail: string): void {
   );
 }
 
-// Why a cut-off turn must not resume, or undefined if it may.
-function fencedTurnResumeBlocker(job: AcpJobRow): string | undefined {
+// Why a cut-off turn must not resume, or undefined if it may.  Newer
+// messages are only known to win when resuming: a held one may be canceled.
+function fencedTurnResumeBlocker(
+  job: AcpJobRow,
+  { resuming = false }: { resuming?: boolean } = {},
+): string | undefined {
   const chat = decodeAcpJobRequest(job).chat;
   // Their one-time authorization was spent by the turn that was cut off.
   if (chat?.sensor_wake) {
@@ -9337,6 +9390,19 @@ function fencedTurnResumeBlocker(job: AcpJobRow): string | undefined {
     ACP_AUTO_RECOVERY_MAX_RETRIES
   ) {
     return PROJECT_RESTART_NOT_RESUMED_NOTICE;
+  }
+  // Messages sent after it run instead (resuming it would answer out of
+  // order); enqueueRecoveryContinuationForJob refuses it for the same reason.
+  if (
+    resuming &&
+    hasNewerNonRecoveryAcpJob({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      guard: { source_op_id: job.op_id, source_created_at: job.created_at },
+    })
+  ) {
+    return `**Conversation interrupted because ${fencedJobRestartCause(job)}.** The newer messages in this thread run instead of resuming it; send a message to continue this one.`;
   }
   return undefined;
 }
@@ -9397,7 +9463,7 @@ async function resumeFencedAcpJob(
       from: ACP_FENCE_INTENT_RESUMING,
       to: null,
     });
-  const blocker = fencedTurnResumeBlocker(job);
+  const blocker = fencedTurnResumeBlocker(job, { resuming: true });
   if (!hasContinuation()) {
     if (job.recovery_detail !== ACP_FENCE_CHAT_FINALIZED || blocker) {
       const durable = await finalizeFencedTurnChat({
@@ -9423,6 +9489,21 @@ async function resumeFencedAcpJob(
     }
     if (blocker) {
       logger.warn("fenced ACP turn is not resumable", { op_id: job.op_id });
+      if (job.recovery_detail === ACP_FENCE_CHAT_FINALIZED) {
+        try {
+          await replaceFencedTurnNotice({
+            client,
+            job,
+            from: fencePendingNotice(job),
+            to: blocker,
+          });
+        } catch (err) {
+          logger.warn("failed to update a fenced turn's notice", {
+            op_id: job.op_id,
+            err,
+          });
+        }
+      }
       if (finish()) {
         reportFencedAgentMessage(
           job,
