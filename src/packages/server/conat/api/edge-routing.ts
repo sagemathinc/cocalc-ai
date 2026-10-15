@@ -19,6 +19,7 @@ import {
 import {
   getHubApiRoute,
   hubApiRouteKey,
+  splitProjectIds,
   type HubApiRoute,
 } from "@cocalc/conat/hub/api/routes";
 import {
@@ -27,13 +28,17 @@ import {
 } from "@cocalc/conat/inter-bay/hub-api";
 import { isAccountBannedCached } from "@cocalc/server/accounts/security-state";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveProjectBay,
+  resolveProjectBays,
+} from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   forwardedCallHash,
   OUTCOME_UNKNOWN,
   runForwardedCallOnce,
 } from "@cocalc/server/inter-bay/forwarded-calls";
+import { isValidUUID } from "@cocalc/util/misc";
 import { randomUUID } from "node:crypto";
 
 const logger = getLogger("server:conat:api:edge-routing");
@@ -74,6 +79,10 @@ async function ownerBay(
   const key = hubApiRouteKey(route, args);
   if (key == null) return;
   switch (route.owner) {
+    case "projects":
+      // Split by bay before this (executeSplitByProject); on the owning bay
+      // the method itself refuses projects it does not own.
+      return;
     case "project":
       return typeof key === "string"
         ? (await resolveProjectBay(key))?.bay_id
@@ -119,10 +128,70 @@ type ForwardedResult =
 export async function executeHubApiCall(call: HubApiCall): Promise<any> {
   const route = getHubApiRoute(call.name);
   if (route == null) return await requireExecutor()(call);
+  if (route.owner === "projects") {
+    return await executeSplitByProject(route, call);
+  }
   const owner = await ownerBay(route, call.args);
   const here = getConfiguredBayId();
   if (owner == null || owner === here) return await requireExecutor()(call);
   return await forwardHubApiCall(owner, call);
+}
+
+/**
+ * A call on several projects: run it once per owning bay with that bay's
+ * projects (here, or forwarded exactly once), and merge the per-project
+ * results in input order. A bay that fails or does not answer gives each of
+ * its projects the method's error result. Projects with no known bay, and
+ * malformed ids, run here, where the method reports them.
+ */
+async function executeSplitByProject(
+  route: Extract<HubApiRoute, { owner: "projects" }>,
+  call: HubApiCall,
+): Promise<any> {
+  const ids = splitProjectIds(route, call.args);
+  const here = getConfiguredBayId();
+  if (ids == null || ids.length === 0) return await requireExecutor()(call);
+  const owners = await resolveProjectBays(ids.filter((id) => isValidUUID(id)));
+  const byBay = new Map<string, string[]>();
+  for (const id of ids) {
+    const bay_id = owners.get(id)?.bay_id ?? here;
+    byBay.set(bay_id, [...(byBay.get(bay_id) ?? []), id]);
+  }
+  if (byBay.size === 1 && byBay.has(here)) {
+    return await requireExecutor()(call);
+  }
+  const [opts, ...rest] = call.args;
+  const parts = await Promise.all(
+    [...byBay].map(async ([bay_id, project_ids]) => {
+      const part: HubApiCall = {
+        ...call,
+        args: [{ ...opts, project_ids }, ...rest],
+      };
+      try {
+        const result =
+          bay_id === here
+            ? await requireExecutor()(part)
+            : await forwardHubApiCall(bay_id, part);
+        if (Array.isArray(result)) return result;
+        throw new Error(`unexpected result for '${call.name}' from ${bay_id}`);
+      } catch (err) {
+        const code = (err as { code?: unknown })?.code;
+        return project_ids.map((project_id) =>
+          route.errorResult(
+            project_id,
+            err instanceof Error ? err.message : `${err}`,
+            typeof code === "string" || typeof code === "number"
+              ? code
+              : undefined,
+          ),
+        );
+      }
+    }),
+  );
+  const order = new Map(ids.map((id, i) => [id, i]));
+  const position = (result: any) =>
+    order.get(`${result?.project_id ?? ""}`) ?? ids.length;
+  return parts.flat().sort((a, b) => position(a) - position(b));
 }
 
 /**

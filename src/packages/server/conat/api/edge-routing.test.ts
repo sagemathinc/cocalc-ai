@@ -4,6 +4,7 @@
  */
 
 const resolveProjectBay = jest.fn();
+const resolveProjectBays = jest.fn();
 const forward = jest.fn();
 const createInterBayHubApiClient = jest.fn(() => ({ call: forward }));
 const isAccountBannedCached = jest.fn(() => false);
@@ -20,6 +21,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay,
+  resolveProjectBays,
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),
@@ -283,5 +285,115 @@ describe("routing an email invite", () => {
     await executeHubApiCall(call([{ invite_id: INVITE, token: "tok" }]));
     expect(local).toHaveBeenCalledTimes(2);
     expect(forward).not.toHaveBeenCalled();
+  });
+});
+
+describe("a call on several projects", () => {
+  const P = [
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333",
+  ];
+  const hide = (project_ids: unknown) => ({
+    name: "projects.setProjectsHidden",
+    args: [{ project_ids, hide: true }],
+    account_id: ACCOUNT,
+    auth_session_hash: "session",
+  });
+  // The method: one result per project it was given.
+  const answer = (call) =>
+    [].concat(call.args[0].project_ids).map((project_id) => ({
+      project_id,
+      success: true,
+    }));
+
+  beforeEach(() => {
+    local.mockImplementation(async (call) => answer(call));
+    forward.mockImplementation(async (call) => ({
+      ok: true,
+      result: answer(call),
+    }));
+  });
+
+  it("runs here, unchanged, when this bay owns every project", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map(P.map((id) => [id, { bay_id: "bay-0", epoch: 0 }])),
+    );
+    await executeHubApiCall(hide(P));
+    expect(local).toHaveBeenCalledWith(hide(P));
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("runs once per bay with that bay's projects, and merges in input order", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-0", epoch: 0 }],
+        [P[2], { bay_id: "bay-1", epoch: 0 }],
+      ]),
+    );
+    const results = await executeHubApiCall(hide([P[0], P[1], P[2], P[0]]));
+    expect(results.map((r) => r.project_id)).toEqual(P);
+    expect(local).toHaveBeenCalledTimes(1);
+    expect(local.mock.calls[0][0].args[0]).toEqual({
+      project_ids: [P[1]],
+      hide: true,
+    });
+    expect(forward).toHaveBeenCalledTimes(1);
+    expect(forward.mock.calls[0][0]).toMatchObject({
+      name: "projects.setProjectsHidden",
+      account_id: ACCOUNT,
+      auth_session_hash: "session",
+      source_bay_id: "bay-0",
+      args: [{ project_ids: [P[0], P[2]], hide: true }],
+    });
+  });
+
+  it("keeps unknown projects and malformed ids here, where the method reports them", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([[P[0], { bay_id: "bay-1", epoch: 0 }]]),
+    );
+    await executeHubApiCall(hide([P[0], P[1], "nope"]));
+    expect(resolveProjectBays).toHaveBeenCalledWith([P[0], P[1]]);
+    expect(local.mock.calls[0][0].args[0].project_ids).toEqual([P[1], "nope"]);
+    expect(forward.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
+  });
+
+  it("gives each project of a bay that does not answer an error, and the rest their results", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    forward.mockRejectedValue(
+      Object.assign(new Error("timeout"), { code: 408 }),
+    );
+    const results = await executeHubApiCall(hide([P[0], P[1]]));
+    expect(results[0]).toEqual({
+      project_id: P[0],
+      success: false,
+      error: expect.stringContaining("outcome unknown"),
+    });
+    expect(results[1]).toEqual({ project_id: P[1], success: true });
+  });
+
+  it("passes a malformed call through, for the method to reject", async () => {
+    await executeHubApiCall(hide("not a list"));
+    expect(resolveProjectBays).not.toHaveBeenCalled();
+    expect(local).toHaveBeenCalledWith(hide("not a list"));
+  });
+
+  it("on the owning bay, leaves refusing foreign projects to the method", async () => {
+    const result = await handleForwardedHubApiCall({
+      ...hide([P[0]]),
+      source_bay_id: "bay-1",
+      call_id: "9a9a9a9a-9a9a-4a9a-8a9a-9a9a9a9a9a9a",
+    });
+    expect(result).toEqual({
+      ok: true,
+      result: [{ project_id: P[0], success: true }],
+    });
+    expect(resolveProjectBays).not.toHaveBeenCalled();
   });
 });

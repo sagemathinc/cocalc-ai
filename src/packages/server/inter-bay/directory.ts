@@ -81,6 +81,11 @@ export async function resolveProjectBays(
   const missing = uniqueProjectIds.filter(
     (project_id) => !result.has(project_id),
   );
+  // As resolveProjectBay: only ask the directory about projects not found
+  // here, so a bay with no fabric credential can still resolve its own.
+  if (missing.length === 0) {
+    return result;
+  }
   const directory = createInterBayDirectoryClient({
     client: getInterBayFabricClient(),
   });
