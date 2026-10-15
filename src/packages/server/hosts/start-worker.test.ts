@@ -273,6 +273,50 @@ describe("hosts start-worker project-host upgrade convergence detection", () => 
     ).toBeUndefined();
   });
 
+  test("needs evidence that project-host was replaced before calling a lost-reply upgrade complete", () => {
+    const row = (session: string) => ({
+      version: "ph-v2",
+      metadata: {
+        host_session_id: session,
+        software: { project_host: "ph-v2" },
+        host_agent: { project_host: { last_known_good_version: "ph-v2" } },
+      },
+    });
+    // Already on the explicit target before the upgrade: nothing happened.
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        targetVersion: "ph-v2",
+        previousVersion: "ph-v2",
+        row: row("session-2"),
+      }),
+    ).toBeUndefined();
+    // Same project-host session as when the upgrade began.
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        targetVersion: "ph-v2",
+        previousVersion: "ph-v1",
+        previousSessionId: "session-1",
+        row: row("session-1"),
+      }),
+    ).toBeUndefined();
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        previousVersion: "ph-v1",
+        previousSessionId: "session-1",
+        row: row("session-1"),
+      }),
+    ).toBeUndefined();
+    // Replaced since: the upgrade completed.
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        targetVersion: "ph-v2",
+        previousVersion: "ph-v1",
+        previousSessionId: "session-1",
+        row: row("session-2"),
+      }),
+    ).toBe("ph-v2");
+  });
+
   test("suppresses rollback when the host already runs the rollback version", () => {
     expect(
       __test__.redundantProjectHostRollbackReason({

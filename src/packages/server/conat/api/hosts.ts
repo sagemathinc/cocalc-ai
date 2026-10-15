@@ -351,6 +351,7 @@ import {
 } from "./hosts-runtime-deployment-status";
 import {
   bestEffortQueueAutomaticArtifactDeploymentReconcileForHostsInternal,
+  hostSoftwareChangeOpInFlight,
   bestEffortQueueAutomaticRuntimeDeploymentReconcileForHostsInternal,
   ensureAutomaticHostArtifactDeploymentsReconcileInternal,
   ensureAutomaticHostRuntimeDeploymentsReconcileInternal,
@@ -6692,6 +6693,23 @@ async function listActiveHostLrosForKinds({
   );
 }
 
+// Upgrades and rollouts restart project-host, which then registers before the
+// op has recorded the host's new desired versions; automatic convergence
+// waits for them (see hostSoftwareChangeOpInFlight).
+const HOST_SOFTWARE_CHANGE_LRO_KINDS = [
+  HOST_UPGRADE_LRO_KIND,
+  HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
+] as const;
+async function hostSoftwareChangeInFlight(host_id: string): Promise<boolean> {
+  const now = Date.now();
+  return (
+    await listActiveHostLrosForKinds({
+      host_id,
+      kinds: HOST_SOFTWARE_CHANGE_LRO_KINDS,
+    })
+  ).some((op) => hostSoftwareChangeOpInFlight(op, now));
+}
+
 async function assertNoPendingDestructiveHostOp(host_id: string) {
   const active = await listActiveHostLrosForKinds({
     host_id,
@@ -9553,6 +9571,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
       reason:
         | "host_missing"
         | "host_not_running"
+        | "host_upgrade_in_flight"
         | "no_reconcile_needed"
         | "observation_failed";
       observation_error?: string;
@@ -9582,6 +9601,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
     normalizeManagedComponentKindsForDedupe,
     reconcile_lro_kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
     automatic_reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+    hostUpgradeInFlight: hostSoftwareChangeInFlight,
   });
 }
 
@@ -9596,6 +9616,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
       reason:
         | "host_missing"
         | "host_not_running"
+        | "host_upgrade_in_flight"
         | "no_reconcile_needed"
         | "observation_failed";
       observation_error?: string;
@@ -9622,6 +9643,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
     createHostLro,
     hostUpgradeDedupeKey,
     upgrade_lro_kind: HOST_UPGRADE_LRO_KIND,
+    hostUpgradeInFlight: hostSoftwareChangeInFlight,
   });
 }
 
@@ -10222,6 +10244,139 @@ export async function listHostSoftwareVersions({
     arch,
     history_limit,
   });
+}
+
+// The host's current artifact versions (runtime artifact -> version), taken
+// before an upgrade so that a lost-reply recovery can tell which requested
+// artifacts the upgrade changed.  Undefined when the host can't be observed.
+export async function observeHostArtifactVersionsInternal(
+  host_id: string,
+): Promise<Record<string, string | undefined> | undefined> {
+  try {
+    const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
+    if (!row) return undefined;
+    const status = await getHostRuntimeDeploymentStatusInternal({
+      id: host_id,
+      row,
+      running_statuses: HOST_RUNNING_STATUSES,
+      hostControlClient,
+    });
+    if (!(status.observed_artifacts ?? []).length) return undefined;
+    const versions: Record<string, string | undefined> = {};
+    for (const artifact of status.observed_artifacts ?? []) {
+      versions[artifact.artifact] =
+        `${artifact.current_version ?? ""}`.trim() || undefined;
+    }
+    return versions;
+  } catch (err) {
+    logger.warn("could not observe host artifact versions", {
+      host_id,
+      err: `${err}`,
+    });
+    return undefined;
+  }
+}
+
+// An upgrade whose reply was lost (project-host restarted during the call)
+// but that the host was then seen to complete: record the desired versions
+// a normal success records, or automatic convergence would revert it.  The
+// lost reply also carried the results of any other artifacts in the same
+// request (installed before project-host).  Like a normal success, record an
+// artifact only if this upgrade changed it: the host runs the requested
+// version now and did not before (previous_versions, observed before the
+// upgrade).  Anything else requested is returned as unconfirmed, including a
+// bootstrap-environment target, which is only applied after a reply.  The
+// targets are always checked; the desired rows are written only if `record`.
+export async function recordConvergedProjectHostUpgradeInternal({
+  account_id,
+  host_id,
+  version,
+  targets,
+  align_runtime_stack,
+  previous_versions,
+  record = true,
+}: {
+  account_id?: string;
+  host_id: string;
+  version: string;
+  targets?: HostSoftwareUpgradeTarget[];
+  align_runtime_stack?: boolean;
+  previous_versions?: Record<string, string | undefined>;
+  record?: boolean;
+}): Promise<{ unconfirmed: HostSoftwareUpgradeTarget[] }> {
+  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
+  const otherTargets = (targets ?? []).filter(
+    (target) => target.artifact !== "project-host",
+  );
+  const unconfirmed: HostSoftwareUpgradeTarget[] = [];
+  const directTargets: HostSoftwareUpgradeTarget[] = [];
+  for (const target of otherTargets) {
+    if (target.artifact === "bootstrap-environment") {
+      unconfirmed.push(target);
+    } else {
+      directTargets.push(target);
+    }
+  }
+  const observed = new Map<string, string | undefined>();
+  if (directTargets.length > 0 && row) {
+    const status = await getHostRuntimeDeploymentStatusInternal({
+      id: host_id,
+      row,
+      running_statuses: HOST_RUNNING_STATUSES,
+      hostControlClient,
+    });
+    for (const artifact of status.observed_artifacts ?? []) {
+      observed.set(artifact.artifact, artifact.current_version);
+    }
+  }
+  const results: NonNullable<HostSoftwareUpgradeResponse["results"]> = [
+    { artifact: "project-host", version, status: "updated" },
+  ];
+  for (const target of directTargets) {
+    const wanted = `${target.version ?? ""}`.trim();
+    const runtimeTarget = normalizeRuntimeArtifactTarget(target.artifact);
+    const before = runtimeTarget
+      ? `${previous_versions?.[runtimeTarget] ?? ""}`.trim()
+      : "";
+    const now = runtimeTarget && `${observed.get(runtimeTarget) ?? ""}`.trim();
+    if (wanted && before === wanted && now === wanted) {
+      // Current before and after the upgrade: a no-op, recorded by nothing.
+      continue;
+    }
+    if (wanted && before && now === wanted) {
+      results.push({
+        artifact: target.artifact,
+        version: wanted,
+        status: "updated",
+      });
+    } else {
+      unconfirmed.push(target);
+    }
+  }
+  const deployments = normalizeRuntimeDeploymentUpserts([
+    ...runtimeDeploymentsForUpgradeResults(results, {
+      alignRuntimeStack: align_runtime_stack,
+      alignedProjectHostVersion: version,
+    }),
+    ...runtimeDeploymentsForComponentRollout({
+      components: rolloutComponentsForUpgradeResultsInternal(results, {
+        targets,
+        alignRuntimeStack: !!align_runtime_stack,
+      }),
+      desired_version: version,
+      reason: "host_software_upgrade",
+    }),
+  ]);
+  if (record && deployments.length > 0) {
+    await setProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id,
+      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+      deployments,
+      replace: false,
+    });
+  }
+  return { unconfirmed };
 }
 
 export async function upgradeHostSoftwareInternal({

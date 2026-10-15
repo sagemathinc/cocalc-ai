@@ -100,6 +100,18 @@ const stopPolicyPriorityCache = new Map<
 const stopPolicyPriorityInflight = new Map<string, Promise<number>>();
 const hostRestartRecoveryInflight = new Map<string, Promise<void>>();
 
+// Retry on a later heartbeat: the host could not be observed, or an upgrade
+// that will record its desired versions has not ended yet.
+function automaticConvergenceShouldRetry(
+  result: { queued: true } | { queued: false; reason: string },
+): boolean {
+  return (
+    !result.queued &&
+    (result.reason === "observation_failed" ||
+      result.reason === "host_upgrade_in_flight")
+  );
+}
+
 async function completePlannedProjectHostTransitionIfReady({
   host_id,
   runtime_state,
@@ -1363,8 +1375,7 @@ export async function initHostRegistryService() {
           host_id,
           reason,
         });
-        nextRuntimePending =
-          !result.queued && result.reason === "observation_failed";
+        nextRuntimePending = automaticConvergenceShouldRetry(result);
       } catch (err) {
         nextRuntimePending = true;
         logger.warn("automatic runtime deployment reconcile failed", {
@@ -1379,8 +1390,7 @@ export async function initHostRegistryService() {
         const result = await ensureAutomaticHostArtifactDeploymentsReconcile({
           host_id,
         });
-        nextArtifactsPending =
-          !result.queued && result.reason === "observation_failed";
+        nextArtifactsPending = automaticConvergenceShouldRetry(result);
       } catch (err) {
         nextArtifactsPending = true;
         logger.warn("automatic artifact deployment reconcile failed", {

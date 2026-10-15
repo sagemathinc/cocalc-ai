@@ -447,6 +447,84 @@ describe("host-registry automatic convergence retry", () => {
     ).toBeUndefined();
   });
 
+  it("retries artifact convergence on heartbeat while a host upgrade is in flight at register", async () => {
+    currentMetadata = {};
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        return applyRestartRecoveryMetadataUpdate(params);
+      }
+      if (
+        sql.includes(
+          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        currentMetadata = params[1];
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    // The upgrade that restarted project-host has not recorded its target yet.
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        queued: false,
+        host_id: "host-1",
+        reason: "host_upgrade_in_flight",
+      })
+      .mockResolvedValueOnce({
+        queued: false,
+        host_id: "host-1",
+        reason: "no_reconcile_needed",
+      });
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+    const registration = {
+      id: "host-1",
+      metadata: { host_session_id: "session-2", machine: { cloud: "gcp" } },
+    } as any;
+
+    await service.register(registration);
+    expect(
+      currentMetadata?.runtime_deployments?.pending_automatic_convergence_retry,
+    ).toMatchObject({ artifacts: true });
+
+    await service.heartbeat(registration);
+    expect(
+      ensureAutomaticHostArtifactDeploymentsReconcileMock,
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      currentMetadata?.runtime_deployments?.pending_automatic_convergence_retry,
+    ).toBeUndefined();
+  });
+
   it("preserves existing host bay ownership when heartbeats arrive on another bay", async () => {
     currentMetadata = {
       host_session_id: "session-1",

@@ -756,6 +756,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "hosts.recordConvergedProjectHostUpgradeInternal": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "hosts.reconcileHostSoftwareInternal": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
