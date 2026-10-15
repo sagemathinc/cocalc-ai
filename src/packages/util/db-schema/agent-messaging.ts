@@ -465,6 +465,10 @@ Table({
         name: "agent_memory_notes_recent",
         query: "(account_id,namespace,updated_at)",
       },
+      {
+        name: "agent_memory_notes_expiry",
+        query: "(expires_at) WHERE expires_at IS NOT NULL",
+      },
     ],
   },
   fields: {
@@ -491,6 +495,42 @@ Table({
       ...required("integer", "Times an agent read the note."),
       pg_default: "0",
     },
+    written_by_agent_id: {
+      type: "uuid",
+      desc: "Registered agent that last wrote the note; null if unknown (notes from before authorship was kept).",
+    },
+    written_by_name: {
+      type: "string",
+      desc: "That agent's name when it wrote the note, shown if the account no longer names it.",
+    },
+    ttl_seconds: {
+      type: "integer",
+      desc: "Delete the note after this long without a read or write; null for never.",
+    },
+    expires_at: timestamp(
+      "When the note expires unless read or written again (last use + ttl_seconds).",
+    ),
+  },
+});
+
+// The agents whose own memory scope an account keeps, and when each last had
+// a turn, so the scope of an agent nobody uses any more can be deleted.
+Table({
+  name: "agent_memory_agents",
+  rules: {
+    primary_key: ["account_id", "agent_id"],
+    pg_custom_indexes: [
+      {
+        name: "agent_memory_agents_last_turn",
+        query: "(last_turn_at)",
+      },
+    ],
+  },
+  fields: {
+    account_id: required("uuid", "Account whose memory keeps the scope."),
+    agent_id: required("uuid", "Registered agent the scope belongs to."),
+    name: required("string", "The agent's name at its last turn."),
+    last_turn_at: created("Last turn this agent ran for the account."),
   },
 });
 

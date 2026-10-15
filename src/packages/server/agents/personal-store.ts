@@ -72,6 +72,8 @@ export interface PersonalAgentHooks {
   ): Promise<void>;
   upsert?(account: string, agent: NamedAgent): Promise<void>;
   remove?(account: string, endpoint: AgentEndpoint): Promise<void>;
+  /** Removed from Agents: delete the agent's own scope in the account's memory. */
+  retireMemory?(account: string, agent_id: string): Promise<void>;
   /** This account's payment selections for the agents' conversations. */
   payments?(account: string, agents: NamedAgent[]): Promise<void>;
   /** Reconcile snapshots in the background when listing (production). */
@@ -472,6 +474,11 @@ export class PersonalAgentStore {
       .watch?.(account, opts.endpoint, false)
       .catch(() => undefined);
     await this.hooks.remove?.(account, opts.endpoint).catch(() => undefined);
+    // The agent's own memory scope goes with it. Its notes in shared memory
+    // stay, still showing who wrote them.
+    await this.hooks
+      .retireMemory?.(account, opts.endpoint.agent_id)
+      .catch(() => undefined);
   }
 
   async resolveName(account: string, value: string): Promise<NamedAgent> {

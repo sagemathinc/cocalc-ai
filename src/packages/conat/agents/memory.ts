@@ -13,8 +13,18 @@
 // `namespace/name`, or just `name` when that is unambiguous; global notes
 // are `global/name`. Output names every note in full whenever namespaces
 // are in view, so a listed name always works.
+//
+// Each agent also has its own scope for working state: `agent/name` to the
+// agent itself, `@agent-name/name` (read-only) to other agents. It is stored
+// in the reserved namespace `agent:<agent_id>`, listed first in that agent's
+// own turn index only, and its notes expire after a period without use.
+// Every note records the agent that last wrote it; an agent must pass the
+// revision it read to replace or remove a note another agent wrote.
 
 export const AGENT_MEMORY_GLOBAL = "global";
+/** How an agent names its own scope: `agent/<name>`. */
+export const AGENT_MEMORY_AGENT_SCOPE = "agent";
+const AGENT_NAMESPACE_PREFIX = "agent:";
 
 export const AGENT_MEMORY_LIMITS = {
   /** Notes per account, all namespaces together. */
@@ -35,6 +45,14 @@ export const AGENT_MEMORY_LIMITS = {
   maxProjects: 2_000,
   maxSearchResults: 20,
   maxSearchQueryBytes: 200,
+  /** Notes in one agent's own scope (they also count toward the account). */
+  maxNotesPerAgent: 100,
+  /** Agent-scope notes expire after this long without a read or write... */
+  agentNoteDefaultTtlDays: 30,
+  /** ...and a whole scope goes once its agent has had no turn this long. */
+  agentInactiveDays: 90,
+  /** The longest expiry a note can ask for, other than never. */
+  maxTtlDays: 3650,
 } as const;
 
 // The single encrypted record of the first version, read once to migrate.
@@ -68,6 +86,9 @@ export type AgentMemoryNote = {
   body: string;
   updated_at: string;
   last_read_at?: string | null;
+  /** Name of the agent that last wrote the note, if an agent did. */
+  written_by?: string | null;
+  expires_at?: string | null;
 };
 
 export type AgentMemoryNoteSummary = Omit<AgentMemoryNote, "body"> & {
@@ -88,10 +109,23 @@ export type AgentMemoryRequest =
       body: string;
       /** Only replace the note if it still has this revision (from read). */
       expected_revision?: string;
+      /** `7d`, `12h` or `never`: delete the note after this long unused. */
+      expires_in?: string;
     }
-  | { action: "memory"; op: "delete"; name: string }
+  | {
+      action: "memory";
+      op: "delete";
+      name: string;
+      expected_revision?: string;
+    }
   | { action: "memory"; op: "search"; query: string; limit?: number }
-  | { action: "memory"; op: "move"; name: string; to: string }
+  | {
+      action: "memory";
+      op: "move";
+      name: string;
+      to: string;
+      expected_revision?: string;
+    }
   | { action: "memory"; op: "namespaces" }
   | { action: "memory"; op: "export"; namespace?: string };
 
@@ -109,11 +143,21 @@ export type AgentMemoryOwnerRequest =
   | { op: "namespace-delete"; name: string }
   | { op: "set-project-namespaces"; project_id: string; namespaces: string[] };
 
+/** The registered agent a request comes from, from its authenticated run. */
+export type AgentMemoryCaller = { agent_id: string; name: string };
+
 /** What runs on the account's home bay, whichever bay received it. */
 export type AgentMemoryHomeRequest =
-  | { kind: "agent"; project_id: string; request: AgentMemoryRequest }
-  | { kind: "turn-index"; project_id: string }
-  | { kind: "owner"; request: AgentMemoryOwnerRequest };
+  | {
+      kind: "agent";
+      project_id: string;
+      request: AgentMemoryRequest;
+      agent?: AgentMemoryCaller;
+    }
+  | { kind: "turn-index"; project_id: string; agent?: AgentMemoryCaller }
+  | { kind: "owner"; request: AgentMemoryOwnerRequest }
+  /** The account removed this agent from its Agents: drop its scope. */
+  | { kind: "agent-retired"; agent_id: string };
 
 export type AgentMemoryStatus = {
   enabled: boolean;
@@ -123,6 +167,8 @@ export type AgentMemoryStatus = {
   namespaces?: (AgentMemoryNamespace & { notes: number })[];
   projects?: Record<string, string[]>;
   global_notes?: number;
+  /** Agent scopes: notes per agent. */
+  agents?: { agent_id: string; name: string | null; notes: number }[];
   limits?: typeof AGENT_MEMORY_LIMITS;
 };
 
@@ -157,25 +203,95 @@ export function validateMemoryNamespace(
   if (
     typeof namespace !== "string" ||
     !NAMESPACE_RE.test(namespace) ||
-    namespace === AGENT_MEMORY_GLOBAL
+    namespace === AGENT_MEMORY_GLOBAL ||
+    namespace === AGENT_MEMORY_AGENT_SCOPE
   )
     throw new Error(
-      `memory namespace must be 1-32 lowercase letters, digits or hyphens, starting with a letter or digit, and not "${AGENT_MEMORY_GLOBAL}" (for example cocalc-dev)`,
+      `memory namespace must be 1-32 lowercase letters, digits or hyphens, starting with a letter or digit, and not "${AGENT_MEMORY_GLOBAL}" or "${AGENT_MEMORY_AGENT_SCOPE}" (for example cocalc-dev)`,
     );
   return namespace;
 }
 
-export type AgentMemoryRef = { namespace?: string; name: string };
+/** The stored namespace of an agent's own scope. */
+export function agentMemoryNamespace(agent_id: string): string {
+  if (!UUID_RE.test(agent_id)) throw new Error("invalid agent id");
+  return `${AGENT_NAMESPACE_PREFIX}${agent_id.toLowerCase()}`;
+}
 
-/** `name`, `namespace/name` or `global/name`. */
+/** The agent whose scope a stored namespace is, if it is one. */
+export function agentOfMemoryNamespace(namespace: string): string | undefined {
+  if (!namespace.startsWith(AGENT_NAMESPACE_PREFIX)) return undefined;
+  const id = namespace.slice(AGENT_NAMESPACE_PREFIX.length);
+  return UUID_RE.test(id) ? id : undefined;
+}
+
+/** A namespace the owner's settings page may name: also agent scopes. */
+export function validateOwnerMemoryNamespace(namespace: unknown): string {
+  if (typeof namespace === "string" && agentOfMemoryNamespace(namespace))
+    return namespace;
+  return validateMemoryNamespace(namespace);
+}
+
+const AGENT_NAME_RE = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+export type AgentMemoryRef = {
+  namespace?: string;
+  name: string;
+  /**
+   * An agent scope: `self` for the caller's own (`agent/name`), otherwise
+   * the name of another agent (`@agent-name/name`).
+   */
+  agent?: string;
+};
+
+/** `name`, `namespace/name`, `global/name`, `agent/name` or `@agent/name`. */
 export function parseMemoryRef(ref: unknown): AgentMemoryRef {
   if (typeof ref !== "string") throw new Error("memory note name must be text");
   const slash = ref.indexOf("/");
   if (slash < 0) return { name: validateMemoryName(ref) };
-  return {
-    namespace: validateMemoryNamespace(ref.slice(0, slash)),
-    name: validateMemoryName(ref.slice(slash + 1)),
-  };
+  const scope = ref.slice(0, slash);
+  const name = validateMemoryName(ref.slice(slash + 1));
+  if (scope === AGENT_MEMORY_AGENT_SCOPE) return { name, agent: "self" };
+  if (scope.startsWith("@")) {
+    const agent = scope.slice(1).toLowerCase();
+    if (!AGENT_NAME_RE.test(agent))
+      throw new Error(`invalid agent name in memory note name ${ref}`);
+    return { name, agent };
+  }
+  return { namespace: validateMemoryNamespace(scope), name };
+}
+
+/** What list and export may name: a namespace, `agent` or `@agent-name`. */
+export function validateMemoryScopeName(scope: unknown): string {
+  if (scope === AGENT_MEMORY_AGENT_SCOPE) return scope;
+  if (typeof scope === "string" && scope.startsWith("@")) {
+    if (!AGENT_NAME_RE.test(scope.slice(1)))
+      throw new Error(`invalid agent name ${scope}`);
+    return scope;
+  }
+  return validateMemoryNamespace(scope);
+}
+
+const TTL_RE = /^([1-9][0-9]{0,4})([hd])$/;
+
+/**
+ * `7d`, `12h` or `never` as seconds (null for never). Expiry counts from the
+ * note's last read or write, so a note in use does not expire.
+ */
+export function parseMemoryExpiry(value: unknown): number | null {
+  if (value === "never") return null;
+  const match = typeof value === "string" ? TTL_RE.exec(value) : null;
+  const seconds = match
+    ? Number(match[1]) * (match[2] === "h" ? 3600 : 86400)
+    : NaN;
+  if (
+    !Number.isFinite(seconds) ||
+    seconds > AGENT_MEMORY_LIMITS.maxTtlDays * 86400
+  )
+    throw new Error(
+      `memory note expiry must be a number of hours or days, such as 12h or 30d (at most ${AGENT_MEMORY_LIMITS.maxTtlDays}d), or never`,
+    );
+  return seconds;
 }
 
 /**
@@ -188,6 +304,9 @@ export function memoryRef(
   name: string,
   qualified: boolean,
 ): string {
+  // An agent's own scope, as that agent names it.
+  if (agentOfMemoryNamespace(namespace))
+    return `${AGENT_MEMORY_AGENT_SCOPE}/${name}`;
   return namespace === AGENT_MEMORY_GLOBAL && !qualified
     ? name
     : `${namespace}/${name}`;
@@ -305,24 +424,34 @@ export function validateAgentMemoryRequest(
   const allowed: Record<string, string[]> = {
     list: ["action", "op", "namespace"],
     read: ["action", "op", "name"],
-    write: ["action", "op", "name", "description", "body", "expected_revision"],
-    delete: ["action", "op", "name"],
+    write: [
+      "action",
+      "op",
+      "name",
+      "description",
+      "body",
+      "expected_revision",
+      "expires_in",
+    ],
+    delete: ["action", "op", "name", "expected_revision"],
     search: ["action", "op", "query", "limit"],
-    move: ["action", "op", "name", "to"],
+    move: ["action", "op", "name", "to", "expected_revision"],
     namespaces: ["action", "op"],
     export: ["action", "op", "namespace"],
   };
   const keys = allowed[`${r.op}`];
   if (!keys) throw new Error("unsupported memory operation");
   checkKeys(r, keys);
-  if (r.namespace !== undefined) validateMemoryNamespace(r.namespace);
+  if (r.namespace !== undefined) validateMemoryScopeName(r.namespace);
   if (r.op === "read" || r.op === "delete" || r.op === "move")
     parseMemoryRef(r.name);
-  if (r.op === "move") validateMemoryNamespace(r.to);
+  if (r.op === "move" && r.to !== AGENT_MEMORY_AGENT_SCOPE)
+    validateMemoryNamespace(r.to);
+  if (r.expected_revision !== undefined)
+    validateMemoryRevision(r.expected_revision);
   if (r.op === "write") {
     validateMemoryWrite(r as any);
-    if (r.expected_revision !== undefined)
-      validateMemoryRevision(r.expected_revision);
+    if (r.expires_in !== undefined) parseMemoryExpiry(r.expires_in);
   }
   if (r.op === "search") {
     validateSearchQuery(r.query);
@@ -369,12 +498,12 @@ export function validateAgentMemoryOwnerRequest(
     case "delete":
     case "move":
       if (r.namespace !== undefined || r.op !== "delete")
-        validateMemoryNamespace(r.namespace);
+        validateOwnerMemoryNamespace(r.namespace);
       validateMemoryName(r.name);
       if (r.op === "move") validateMemoryNamespace(r.to);
       break;
     case "export":
-      if (r.namespace !== undefined) validateMemoryNamespace(r.namespace);
+      if (r.namespace !== undefined) validateOwnerMemoryNamespace(r.namespace);
       break;
     case "namespace-save":
       validateMemoryNamespace(r.name, { allowGlobal: false });
@@ -459,6 +588,8 @@ export type AgentMemoryIndexNote = {
   updated_at: string;
   last_read_at?: string | null;
   project_id?: string | null;
+  /** Name of the agent that last wrote it, if an agent did. */
+  written_by?: string | null;
 };
 
 function recency(note: {
@@ -508,6 +639,8 @@ export type AgentMemoryIndexInput = {
    */
   counts: Record<string, number>;
   maxBytes?: number;
+  /** The agent this turn runs as; its own scope is listed first. */
+  agent?: AgentMemoryCaller;
 };
 
 /**
@@ -519,9 +652,18 @@ export type AgentMemoryIndexInput = {
 export function buildMemoryIndex(input: AgentMemoryIndexInput): string {
   const max = input.maxBytes ?? AGENT_MEMORY_LIMITS.maxIndexBytes;
   const qualified = input.namespaces.length > 0;
+  const own = input.agent ? agentMemoryNamespace(input.agent.agent_id) : null;
   const line = (note: AgentMemoryIndexNote) =>
-    `- ${memoryRef(note.namespace, note.name, qualified)}: ${note.description}`;
+    `- ${memoryRef(note.namespace, note.name, qualified)}: ${note.description}${
+      note.written_by && note.written_by !== input.agent?.name
+        ? ` (by @${note.written_by})`
+        : ""
+    }`;
   const head: string[] = [];
+  if (input.agent)
+    head.push(
+      `Your own scope: agent/<name> notes are for your working state (what you are waiting on, what you changed, how to resume). Only you write them and only your list shows them; other agents can read them as @${input.agent.name}/<name>. They expire after ${AGENT_MEMORY_LIMITS.agentNoteDefaultTtlDays} days without a read or write, unless written with --expires (for example 7d or never). Notes another agent wrote show (by @name): pass the revision you read to replace or delete one.`,
+    );
   if (qualified) {
     head.push(
       "Namespaces of this project (their notes are seen only in the projects attached to them):",
@@ -559,6 +701,10 @@ export function buildMemoryIndex(input: AgentMemoryIndexInput): string {
     used += bytes;
     return true;
   };
+  // The agent's own notes first, up to a third.
+  if (own)
+    for (const note of input.notes)
+      if (note.namespace === own && !take(note, room / 3)) break;
   if (qualified) {
     // Global notes first, up to a third.
     for (const note of input.notes)
@@ -576,6 +722,7 @@ export function buildMemoryIndex(input: AgentMemoryIndexInput): string {
       groups.set(note.namespace, [...(groups.get(note.namespace) ?? []), note]);
   const lines = [...head];
   const order = [
+    ...(own ? [own] : []),
     AGENT_MEMORY_GLOBAL,
     ...input.namespaces.map((ns) => ns.name),
   ].filter((ns) => groups.has(ns));
@@ -672,18 +819,30 @@ function snippet(body: string, words: string[]): string {
 export function agentMemoryMarkdown({
   notes,
   namespaces,
+  agents = [],
   exported_at,
 }: {
   notes: readonly AgentMemoryNote[];
   namespaces: readonly AgentMemoryNamespace[];
+  /** Names of the agents whose own scopes are included. */
+  agents?: readonly { agent_id: string; name: string | null }[];
   exported_at: string;
 }): string {
-  const groups = new Map<string, AgentMemoryNote[]>();
-  for (const note of notes)
-    groups.set(note.namespace, [...(groups.get(note.namespace) ?? []), note]);
   const qualified =
     namespaces.length > 0 ||
     notes.some((note) => note.namespace !== AGENT_MEMORY_GLOBAL);
+  const agentNames = new Map(agents.map((a) => [a.agent_id, a.name]));
+  const agentLabel = (namespace: string) => {
+    const id = agentOfMemoryNamespace(namespace)!;
+    return `@${agentNames.get(id) ?? id}`;
+  };
+  const label = (note: AgentMemoryNote) =>
+    agentOfMemoryNamespace(note.namespace)
+      ? `${agentLabel(note.namespace)}/${note.name}`
+      : memoryRef(note.namespace, note.name, qualified);
+  const groups = new Map<string, AgentMemoryNote[]>();
+  for (const note of notes)
+    groups.set(note.namespace, [...(groups.get(note.namespace) ?? []), note]);
   const described = new Map(namespaces.map((ns) => [ns.name, ns.description]));
   const order = [
     AGENT_MEMORY_GLOBAL,
@@ -701,7 +860,9 @@ export function agentMemoryMarkdown({
       "",
       ns === AGENT_MEMORY_GLOBAL
         ? "## Global notes (every project)"
-        : `## Namespace ${ns}${described.get(ns) ? `: ${described.get(ns)}` : ""}`,
+        : agentOfMemoryNamespace(ns)
+          ? `## Own scope of ${agentLabel(ns)}`
+          : `## Namespace ${ns}${described.get(ns) ? `: ${described.get(ns)}` : ""}`,
     );
     for (const note of [...groups.get(ns)!].sort((a, b) =>
       a.name.localeCompare(b.name),
@@ -709,11 +870,15 @@ export function agentMemoryMarkdown({
       const read = note.last_read_at
         ? `, last read ${note.last_read_at.slice(0, 10)}`
         : "";
+      const by = note.written_by ? `, by @${note.written_by}` : "";
+      const expires = note.expires_at
+        ? `, expires ${note.expires_at.slice(0, 10)} unless used`
+        : "";
       out.push(
         "",
-        `### ${memoryRef(note.namespace, note.name, qualified)}`,
+        `### ${label(note)}`,
         "",
-        `_${note.description}_ (updated ${note.updated_at.slice(0, 10)}${read})`,
+        `_${note.description}_ (updated ${note.updated_at.slice(0, 10)}${by}${read}${expires})`,
         "",
         note.body,
       );

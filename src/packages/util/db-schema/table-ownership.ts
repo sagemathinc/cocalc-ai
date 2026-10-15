@@ -561,17 +561,20 @@ export const TABLE_OWNERSHIP = {
       "No rebuild: a lost row allows at most one more report turn for a message reported in the last week.",
   }),
 
-  ...entries(["agent_memory_accounts", "agent_memory_notes"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    secondary_reference_fields: {
-      project_id:
-        "Where a note was written, or which projects see a namespace: ranking and visibility of the account's own memory, not project state.",
+  ...entries(
+    ["agent_memory_accounts", "agent_memory_notes", "agent_memory_agents"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Where a note was written, or which projects see a namespace: ranking and visibility of the account's own memory, not project state.",
+      },
+      notes:
+        "Account-scoped agent memory (settings, one row per encrypted note, and the agents whose own scope it keeps), authoritative on the account home bay; every caller routes to it. Like the encrypted credential record it replaces, it does not move on account rehome.",
     },
-    notes:
-      "Account-scoped agent memory (settings and one row per encrypted note), authoritative on the account home bay; every caller routes to it. Like the encrypted credential record it replaces, it does not move on account rehome.",
-  }),
+  ),
 
   ...entries(["agent_memory_usage"], {
     ownership: "ephemeral",

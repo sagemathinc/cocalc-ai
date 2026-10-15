@@ -21,9 +21,13 @@ import {
 } from "@cocalc/database/settings/secret-settings";
 import { assertAccountWriteOnHomeBay } from "@cocalc/database/postgres/account-rehome-fence";
 import {
+  AGENT_MEMORY_AGENT_SCOPE,
   AGENT_MEMORY_GLOBAL,
   AGENT_MEMORY_LIMITS,
   agentMemoryMarkdown,
+  agentMemoryNamespace,
+  agentOfMemoryNamespace,
+  parseMemoryExpiry,
   buildMemoryIndex,
   memoryBytes,
   memoryRef,
@@ -38,6 +42,7 @@ import {
   validateMemoryNamespace,
   validateMemoryNamespaceDescription,
   validateMemoryWrite,
+  type AgentMemoryCaller,
   type AgentMemoryNamespace,
   type AgentMemoryNote,
   type AgentMemoryNoteSummary,
@@ -61,6 +66,9 @@ const GLOBAL = AGENT_MEMORY_GLOBAL;
 const STALE = Symbol("stale");
 // The turn index never shows more lines than this, so it decrypts no more.
 const INDEX_CANDIDATES = 400;
+const DAY_SECONDS = 24 * 60 * 60;
+// Notes past their expiry act as deleted until the sweep removes them.
+const LIVE = "(expires_at IS NULL OR expires_at > now())";
 
 type Rows = { rows: any[]; rowCount?: number | null };
 export type MemoryDb = {
@@ -188,7 +196,15 @@ type NoteRow = {
   updated_at: Date | string;
   last_read_at: Date | string | null;
   read_count: number;
+  written_by_agent_id?: string | null;
+  written_by_name?: string | null;
+  ttl_seconds?: number | null;
+  expires_at?: Date | string | null;
 };
+
+const NOTE_COLUMNS = `namespace, name, description, bytes, project_id, updated_at,
+  last_read_at, read_count, written_by_agent_id, written_by_name, ttl_seconds,
+  expires_at`;
 
 /**
  * Identifies a note's content, so a write can refuse to replace a change
@@ -206,6 +222,56 @@ function notAvailable(namespace: string) {
   return new Error(
     `memory namespace ${namespace} is not available in this project`,
   );
+}
+
+const noAgentScope = () =>
+  new Error(
+    "agent/<name> notes need a registered agent identity; this turn has none",
+  );
+
+function readOnlyScope(agent: string) {
+  return new Error(
+    `@${agent}/ notes belong to @${agent}: other agents can read them but only @${agent} writes them; save yours as agent/<name>`,
+  );
+}
+
+/** The guard against silently replacing what another writer saved. */
+function otherWriter(
+  ref: string,
+  row: { written_by_agent_id?: string | null; written_by_name?: string | null },
+  caller: AgentMemoryCaller | undefined,
+  what: "replace" | "delete" | "move",
+) {
+  return new Error(
+    `memory note ${ref} was last written by ${
+      row.written_by_name ? `@${row.written_by_name}` : "another agent"
+    }; to ${what} it, read it and pass the revision you read${
+      what === "replace"
+        ? caller
+          ? ", or save yours under another name or as agent/<name>"
+          : ", or save yours under another name"
+        : ""
+    }`,
+  );
+}
+
+const writtenByOther = (
+  row: { written_by_agent_id?: string | null },
+  caller: AgentMemoryCaller | undefined,
+) =>
+  row.written_by_agent_id != null &&
+  row.written_by_agent_id !== caller?.agent_id;
+
+/** A display name usable as @name, for an agent the account does not list. */
+function agentNameFallback(name: string): string {
+  const cleaned = `${name ?? ""}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^[^a-z]+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+  return cleaned || "agent";
 }
 
 export function createAgentMemory(
@@ -434,10 +500,10 @@ export function createAgentMemory(
     withBody = false,
   ): Promise<NoteRow[]> {
     const { rows } = await db.query(
-      `SELECT namespace, name, description, ${withBody ? "body," : ""} bytes, project_id,
-              updated_at, last_read_at, read_count
+      `SELECT ${withBody ? "body," : ""} ${NOTE_COLUMNS}
          FROM agent_memory_notes
-        WHERE account_id=$1 AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))`,
+        WHERE account_id=$1 AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
+          AND ${LIVE}`,
       [account_id, namespaces ?? null],
     );
     return rows;
@@ -463,6 +529,8 @@ export function createAgentMemory(
             : await decryptField(account_id, row, "body", row.body),
         updated_at: iso(row.updated_at)!,
         last_read_at: iso(row.last_read_at),
+        written_by: row.written_by_name ?? null,
+        expires_at: iso(row.expires_at),
       })),
     );
   }
@@ -486,6 +554,8 @@ export function createAgentMemory(
         bytes: Number(row.bytes),
         project_id: row.project_id,
         read_count: Number(row.read_count),
+        written_by: row.written_by_name ?? null,
+        expires_at: iso(row.expires_at),
       })),
     );
   }
@@ -500,13 +570,15 @@ export function createAgentMemory(
     if (ref.namespace) {
       if (!visible.includes(ref.namespace)) throw notAvailable(ref.namespace);
       const { rows } = await db.query(
-        "SELECT 1 FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
+        `SELECT 1 FROM agent_memory_notes
+          WHERE account_id=$1 AND namespace=$2 AND name=$3 AND ${LIVE}`,
         [account_id, ref.namespace, ref.name],
       );
       return rows.length ? ref.namespace : undefined;
     }
     const { rows } = await db.query(
-      "SELECT namespace FROM agent_memory_notes WHERE account_id=$1 AND name=$2 AND namespace = ANY($3::text[])",
+      `SELECT namespace FROM agent_memory_notes
+        WHERE account_id=$1 AND name=$2 AND namespace = ANY($3::text[]) AND ${LIVE}`,
       [account_id, ref.name, visible],
     );
     if (rows.length > 1)
@@ -555,7 +627,7 @@ export function createAgentMemory(
     const { rows } = await db.query(
       `SELECT count(*) FILTER (WHERE namespace=$2)::int AS in_namespace,
               count(*)::int AS notes, coalesce(sum(bytes),0)::bigint AS bytes
-         FROM agent_memory_notes WHERE account_id=$1`,
+         FROM agent_memory_notes WHERE account_id=$1 AND ${LIVE}`,
       [account_id, namespace],
     );
     return {
@@ -582,13 +654,20 @@ export function createAgentMemory(
       new Error(
         `agent memory ${what}; merge related notes and delete outdated ones first`,
       );
+    const agentScope = agentOfMemoryNamespace(namespace) != null;
+    const namespaceLimit = agentScope
+      ? AGENT_MEMORY_LIMITS.maxNotesPerAgent
+      : AGENT_MEMORY_LIMITS.maxNotesPerNamespace;
     if (
       add.namespaceNotes > 0 &&
-      now.inNamespace + add.namespaceNotes >
-        AGENT_MEMORY_LIMITS.maxNotesPerNamespace
+      now.inNamespace + add.namespaceNotes > namespaceLimit
     )
       throw full(
-        `already has ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes in ${namespace}`,
+        `already has ${namespaceLimit} notes in ${
+          agentScope
+            ? `your own scope (${AGENT_MEMORY_AGENT_SCOPE}/)`
+            : namespace
+        }`,
       );
     const accountFull =
       (add.accountNotes > 0 &&
@@ -615,8 +694,17 @@ export function createAgentMemory(
     description: string,
     body: string,
     project_id: string | null,
+    caller: AgentMemoryCaller | undefined,
+    // undefined keeps an existing note's expiry; null means never.
+    ttl_seconds: number | null | undefined,
   ): Promise<"created" | "updated"> {
     const bytes = memoryBytes(description) + memoryBytes(body);
+    // An expired note is gone: its name is free again.
+    await db.query(
+      `DELETE FROM agent_memory_notes
+        WHERE account_id=$1 AND namespace=$2 AND name=$3 AND NOT ${LIVE}`,
+      [account_id, namespace, name],
+    );
     const { rows } = await db.query(
       "SELECT bytes FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
       [account_id, namespace, name],
@@ -641,13 +729,30 @@ export function createAgentMemory(
       description,
       body,
     );
+    // A new note in an agent's own scope expires by default; elsewhere it
+    // is kept until deleted.
+    const ttl =
+      ttl_seconds !== undefined
+        ? ttl_seconds
+        : before === undefined && agentOfMemoryNamespace(namespace)
+          ? AGENT_MEMORY_LIMITS.agentNoteDefaultTtlDays * DAY_SECONDS
+          : undefined;
     await db.query(
       `INSERT INTO agent_memory_notes
-         (account_id, namespace, name, description, body, bytes, project_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+         (account_id, namespace, name, description, body, bytes, project_id,
+          written_by_agent_id, written_by_name, ttl_seconds, expires_at,
+          created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::int,
+               now() + make_interval(secs => $10::int), now(), now())
        ON CONFLICT (account_id, namespace, name) DO UPDATE SET
          description=EXCLUDED.description, body=EXCLUDED.body, bytes=EXCLUDED.bytes,
          project_id=COALESCE(EXCLUDED.project_id, agent_memory_notes.project_id),
+         written_by_agent_id=EXCLUDED.written_by_agent_id,
+         written_by_name=EXCLUDED.written_by_name,
+         ttl_seconds=CASE WHEN $11::boolean THEN EXCLUDED.ttl_seconds
+                          ELSE agent_memory_notes.ttl_seconds END,
+         expires_at=now() + make_interval(secs => CASE WHEN $11::boolean THEN EXCLUDED.ttl_seconds
+                          ELSE agent_memory_notes.ttl_seconds END),
          updated_at=now()`,
       [
         account_id,
@@ -657,6 +762,10 @@ export function createAgentMemory(
         encrypted.body,
         bytes,
         project_id,
+        caller?.agent_id ?? null,
+        caller?.name ?? null,
+        ttl ?? null,
+        ttl !== undefined,
       ],
     );
     return before === undefined ? "created" : "updated";
@@ -673,11 +782,16 @@ export function createAgentMemory(
     if (from === to) return;
     const { rows } = await db.query(
       `SELECT namespace, name, description, body, bytes FROM agent_memory_notes
-        WHERE account_id=$1 AND namespace=$2 AND name=$3`,
+        WHERE account_id=$1 AND namespace=$2 AND name=$3 AND ${LIVE}`,
       [account_id, from, name],
     );
     if (!rows[0])
       throw new Error(`no memory note named ${memoryRef(from, name, true)}`);
+    await db.query(
+      `DELETE FROM agent_memory_notes
+        WHERE account_id=$1 AND namespace=$2 AND name=$3 AND NOT ${LIVE}`,
+      [account_id, to, name],
+    );
     const { rows: taken } = await db.query(
       "SELECT 1 FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
       [account_id, to, name],
@@ -702,9 +816,17 @@ export function createAgentMemory(
       note.description,
       note.body,
     );
+    // A note promoted out of an agent's own scope is kept until deleted; one
+    // moved into it gets that scope's default expiry if it had none.
+    const ttl = agentOfMemoryNamespace(to)
+      ? `COALESCE(ttl_seconds, ${AGENT_MEMORY_LIMITS.agentNoteDefaultTtlDays * DAY_SECONDS})`
+      : agentOfMemoryNamespace(from)
+        ? "NULL::int"
+        : "ttl_seconds";
     // The ciphertexts are bound to the note's place, so they are rewritten.
     await db.query(
-      `UPDATE agent_memory_notes SET namespace=$4, description=$5, body=$6
+      `UPDATE agent_memory_notes SET namespace=$4, description=$5, body=$6,
+              ttl_seconds=${ttl}, expires_at=now() + make_interval(secs => ${ttl})
         WHERE account_id=$1 AND namespace=$2 AND name=$3`,
       [account_id, from, name, to, encrypted.description, encrypted.body],
     );
@@ -713,18 +835,46 @@ export function createAgentMemory(
   function exportMarkdown(
     notes: AgentMemoryNote[],
     namespaces: AgentMemoryNamespace[],
+    agents?: { agent_id: string; name: string | null }[],
   ) {
     return agentMemoryMarkdown({
       notes,
       namespaces,
+      agents,
       exported_at: new Date().toISOString(),
     });
+  }
+
+  /** Agents with a scope in this account's memory, for the owner. */
+  async function agentScopes(
+    db: MemoryDb,
+    account_id: string,
+    counts?: Record<string, number>,
+  ): Promise<{ agent_id: string; name: string | null; notes: number }[]> {
+    const all = counts ?? (await namespaceCounts(db, account_id)).counts;
+    const { rows } = await db.query(
+      "SELECT agent_id, name FROM agent_memory_agents WHERE account_id=$1",
+      [account_id],
+    );
+    const names = new Map<string, string>(
+      rows.map((row) => [`${row.agent_id}`.toLowerCase(), row.name]),
+    );
+    const scopes: { agent_id: string; name: string | null; notes: number }[] =
+      [];
+    for (const [namespace, notes] of Object.entries(all)) {
+      const agent_id = agentOfMemoryNamespace(namespace);
+      if (agent_id)
+        scopes.push({ agent_id, name: names.get(agent_id) ?? null, notes });
+    }
+    return scopes.sort((a, b) =>
+      (a.name ?? a.agent_id).localeCompare(b.name ?? b.agent_id),
+    );
   }
 
   async function namespaceCounts(db: MemoryDb, account_id: string) {
     const { rows } = await db.query(
       `SELECT namespace, count(*)::int AS notes, coalesce(sum(bytes),0)::bigint AS bytes
-         FROM agent_memory_notes WHERE account_id=$1 GROUP BY namespace`,
+         FROM agent_memory_notes WHERE account_id=$1 AND ${LIVE} GROUP BY namespace`,
       [account_id],
     );
     const counts: Record<string, number> = {};
@@ -738,12 +888,106 @@ export function createAgentMemory(
     return { counts, notes, bytes };
   }
 
+  /** A live note's authorship and content, or undefined. */
+  async function liveNote(
+    db: MemoryDb,
+    account_id: string,
+    namespace: string,
+    name: string,
+  ): Promise<
+    (NoteRow & { body: string; namespace: string; name: string }) | undefined
+  > {
+    const { rows } = await db.query(
+      `SELECT body, ${NOTE_COLUMNS} FROM agent_memory_notes
+        WHERE account_id=$1 AND namespace=$2 AND name=$3 AND ${LIVE}`,
+      [account_id, namespace, name],
+    );
+    return rows[0];
+  }
+
+  async function checkRevision(
+    account_id: string,
+    row: NoteRow & { body: string },
+    expected: string,
+    ref: string,
+  ) {
+    const [note] = await decryptRows(account_id, [row]);
+    if (memoryRevision(note.description, note.body) !== expected)
+      throw new Error(
+        `memory note ${ref} changed since you read it; read it again and merge your change`,
+      );
+  }
+
+  /** An agent by its name in this account: its Agents list, then memory. */
+  async function agentByName(
+    db: MemoryDb,
+    account_id: string,
+    name: string,
+  ): Promise<string | undefined> {
+    const { rows } = await db.query(
+      `SELECT agent_id FROM agent_personal_names
+        WHERE account_id=$1 AND name=$2 AND retired_at IS NULL`,
+      [account_id, name],
+    );
+    if (rows[0]) return rows[0].agent_id;
+    const { rows: known } = await db.query(
+      `SELECT agent_id FROM agent_memory_agents
+        WHERE account_id=$1 AND name=$2 ORDER BY last_turn_at DESC LIMIT 1`,
+      [account_id, name],
+    );
+    return known[0]?.agent_id;
+  }
+
+  /**
+   * The calling agent as this account names it (so @name works as in its
+   * Agents list), and a note that it had a turn: a scope whose agent has no
+   * turn for long is deleted.
+   */
+  async function resolveCaller(
+    account_id: string,
+    agent: AgentMemoryCaller,
+  ): Promise<AgentMemoryCaller> {
+    if (!isValidUUID(agent.agent_id)) throw new Error("invalid agent");
+    const db = pool();
+    const { rows } = await db.query(
+      `SELECT name FROM agent_personal_names
+        WHERE account_id=$1 AND agent_id=$2 AND retired_at IS NULL LIMIT 1`,
+      [account_id, agent.agent_id],
+    );
+    const caller = {
+      agent_id: agent.agent_id.toLowerCase(),
+      name: rows[0]?.name ?? agentNameFallback(agent.name),
+    };
+    try {
+      await db.query(
+        `INSERT INTO agent_memory_agents (account_id, agent_id, name, last_turn_at)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (account_id, agent_id) DO UPDATE
+           SET name=EXCLUDED.name, last_turn_at=now()
+         WHERE agent_memory_agents.name <> EXCLUDED.name
+            OR agent_memory_agents.last_turn_at < now() - interval '1 minute'`,
+        [account_id, caller.agent_id, caller.name],
+      );
+    } catch (err) {
+      // Only the inactivity sweep needs this; never fail a turn over it.
+      logger.warn("unable to record agent memory activity", {
+        account_id,
+        err: `${err}`,
+      });
+    }
+    return caller;
+  }
+
   return {
-    /** An operation requested by an agent turn running as account_id in project_id. */
+    /**
+     * An operation requested by an agent turn running as account_id in
+     * project_id; caller is the registered agent, from its authenticated run.
+     */
     async agent(
       account_id: string,
       project_id: string,
       request: AgentMemoryRequest,
+      agent?: AgentMemoryCaller,
     ): Promise<unknown> {
       validateAgentMemoryRequest(request);
       if (!isValidUUID(project_id)) throw new Error("invalid project");
@@ -760,8 +1004,16 @@ export function createAgentMemory(
           : 0,
       );
       if (!settings.enabled) throw new Error(AGENT_MEMORY_DISABLED);
+      const caller = agent ? await resolveCaller(account_id, agent) : undefined;
+      const own = caller ? agentMemoryNamespace(caller.agent_id) : undefined;
       const projectNamespaces = projectMemoryNamespaces(settings, project_id);
-      const visible = [GLOBAL, ...projectNamespaces.map((ns) => ns.name)];
+      // What this turn lists and searches: its own scope, then the shared
+      // notes it sees.
+      const visible = [
+        ...(own ? [own] : []),
+        GLOBAL,
+        ...projectNamespaces.map((ns) => ns.name),
+      ];
       const qualified = projectNamespaces.length > 0;
       const db = pool();
       // Changes recheck, under the account's lock, that memory is still on
@@ -773,50 +1025,109 @@ export function createAgentMemory(
         const namespaces = projectMemoryNamespaces(now, project_id);
         return {
           namespaces,
-          visible: [GLOBAL, ...namespaces.map((ns) => ns.name)],
+          visible: [
+            ...(own ? [own] : []),
+            GLOBAL,
+            ...namespaces.map((ns) => ns.name),
+          ],
         };
       };
+      // Where a note named by this caller lives: an agent scope, or the
+      // visible shared notes. Another agent's scope is read-only.
+      const scope = async (
+        tx: MemoryDb,
+        ref: AgentMemoryRef,
+      ): Promise<{ namespace: string; agent?: string } | undefined> => {
+        if (ref.agent === undefined) return undefined;
+        if (ref.agent === "self") {
+          if (!own) throw noAgentScope();
+          return { namespace: own };
+        }
+        if (caller && ref.agent === caller.name)
+          return { namespace: own!, agent: ref.agent };
+        const agent_id = await agentByName(tx, account_id, ref.agent);
+        if (!agent_id)
+          throw new Error(`no agent @${ref.agent} has memory notes here`);
+        return { namespace: agentMemoryNamespace(agent_id), agent: ref.agent };
+      };
+      // Only the caller's own scope and shared notes are ever changed, and
+      // memoryRef names the own scope agent/<name>.
+      const shown = memoryRef;
       switch (request.op) {
         case "list": {
-          if (request.namespace && !visible.includes(request.namespace))
-            throw notAvailable(request.namespace);
-          const rows = await noteRows(
-            db,
-            account_id,
-            request.namespace ? [request.namespace] : visible,
-          );
+          let namespaces = visible;
+          let label: string | undefined;
+          if (request.namespace !== undefined) {
+            const named = await listScope(db, request.namespace);
+            namespaces = [named.namespace];
+            label = named.agent;
+          }
+          const rows = await noteRows(db, account_id, namespaces);
           const notes = (await summaries(account_id, rows))
             .sort(
               (a, b) =>
-                visible.indexOf(a.namespace) - visible.indexOf(b.namespace) ||
+                namespaces.indexOf(a.namespace) -
+                  namespaces.indexOf(b.namespace) ||
                 a.name.localeCompare(b.name),
             )
             .map(
-              ({ namespace, name, description, updated_at, last_read_at }) => ({
-                name: memoryRef(namespace, name, qualified),
+              ({
                 namespace,
+                name,
                 description,
                 updated_at,
                 last_read_at,
+                written_by,
+                expires_at,
+              }) => ({
+                name:
+                  label && namespace !== own
+                    ? `@${label}/${name}`
+                    : memoryRef(namespace, name, qualified),
+                namespace: agentOfMemoryNamespace(namespace)
+                  ? namespace === own
+                    ? AGENT_MEMORY_AGENT_SCOPE
+                    : `@${label}`
+                  : namespace,
+                description,
+                updated_at,
+                last_read_at,
+                ...(written_by ? { written_by } : {}),
+                ...(expires_at ? { expires_at } : {}),
               }),
             );
           return { namespaces: projectNamespaces, notes };
         }
         case "read": {
           const ref = parseMemoryRef(request.name);
-          const namespace = await mustLocate(db, account_id, ref, visible);
+          const scoped = await scope(db, ref);
+          const namespace =
+            scoped?.namespace ??
+            (await mustLocate(db, account_id, ref, visible));
+          // Each read pushes a note's expiry out: a note in use stays.
           const { rows } = await db.query(
-            `UPDATE agent_memory_notes SET last_read_at=now(), read_count=read_count+1
-              WHERE account_id=$1 AND namespace=$2 AND name=$3
-              RETURNING namespace, name, description, body, updated_at`,
+            `UPDATE agent_memory_notes SET last_read_at=now(), read_count=read_count+1,
+                    expires_at=now() + make_interval(secs => ttl_seconds)
+              WHERE account_id=$1 AND namespace=$2 AND name=$3 AND ${LIVE}
+              RETURNING namespace, name, description, body, updated_at,
+                        written_by_name, expires_at`,
             [account_id, namespace, ref.name],
           );
           if (!rows[0]) throw new Error(`no memory note named ${request.name}`);
           const [note] = await decryptRows(account_id, rows);
           return {
             ...note,
-            name: memoryRef(namespace, ref.name, qualified),
+            name: scoped?.agent
+              ? `@${scoped.agent}/${ref.name}`
+              : memoryRef(namespace, ref.name, qualified),
+            namespace: agentOfMemoryNamespace(namespace)
+              ? scoped?.agent
+                ? `@${scoped.agent}`
+                : AGENT_MEMORY_AGENT_SCOPE
+              : namespace,
             last_read_at: undefined,
+            written_by: note.written_by ?? undefined,
+            expires_at: note.expires_at ?? undefined,
             revision: memoryRevision(note.description, note.body),
           };
         }
@@ -829,7 +1140,11 @@ export function createAgentMemory(
             results: searchMemoryNotes(notes, request.query, {
               limit: request.limit,
               qualified,
-            }),
+            }).map((result) =>
+              agentOfMemoryNamespace(result.namespace)
+                ? { ...result, namespace: AGENT_MEMORY_AGENT_SCOPE }
+                : result,
+            ),
             searched: notes.length,
           };
         }
@@ -837,6 +1152,12 @@ export function createAgentMemory(
           const { counts } = await namespaceCounts(db, account_id);
           return {
             global_notes: counts[GLOBAL] ?? 0,
+            ...(own
+              ? {
+                  agent_notes: counts[own] ?? 0,
+                  agent_note_limit: AGENT_MEMORY_LIMITS.maxNotesPerAgent,
+                }
+              : {}),
             namespaces: projectNamespaces.map((ns) => ({
               ...ns,
               notes: counts[ns.name] ?? 0,
@@ -856,51 +1177,78 @@ export function createAgentMemory(
           };
         }
         case "export": {
-          if (request.namespace && !visible.includes(request.namespace))
-            throw notAvailable(request.namespace);
+          const namespaces =
+            request.namespace !== undefined
+              ? [(await listScope(db, request.namespace)).namespace]
+              : visible;
           const notes = await decryptRows(
             account_id,
-            await noteRows(
-              db,
-              account_id,
-              request.namespace ? [request.namespace] : visible,
-              true,
-            ),
+            await noteRows(db, account_id, namespaces, true),
           );
           return {
             notes: notes.length,
-            markdown: exportMarkdown(notes, projectNamespaces),
+            markdown: exportMarkdown(
+              notes,
+              projectNamespaces,
+              await agentScopes(db, account_id),
+            ),
           };
         }
         case "write": {
           const valid = validateMemoryWrite(request);
+          const ttl =
+            request.expires_in === undefined
+              ? undefined
+              : parseMemoryExpiry(request.expires_in);
           return await transaction(account_id, async (tx) => {
             const now = await current(tx);
             const fullNames = now.namespaces.length > 0;
+            const scoped = await scope(tx, valid.ref);
+            if (scoped?.agent && scoped.namespace !== own)
+              throw readOnlyScope(scoped.agent);
             // An existing note is updated where it is; a new one goes to
             // the named namespace, or the project's default.
-            const found = await locate(tx, account_id, valid.ref, now.visible);
+            const found = scoped
+              ? (await liveNote(
+                  tx,
+                  account_id,
+                  scoped.namespace,
+                  valid.ref.name,
+                ))
+                ? scoped.namespace
+                : undefined
+              : await locate(
+                  tx,
+                  account_id,
+                  valid.ref,
+                  now.visible.filter((ns) => ns !== own),
+                );
+            const existing = found
+              ? await liveNote(tx, account_id, found, valid.ref.name)
+              : undefined;
             if (request.expected_revision !== undefined) {
-              if (!found)
+              if (!existing)
                 throw new Error(
                   `memory note ${request.name} no longer exists: it was deleted or moved since you read it`,
                 );
-              const { rows } = await tx.query(
-                `SELECT namespace, name, description, body FROM agent_memory_notes
-                  WHERE account_id=$1 AND namespace=$2 AND name=$3`,
-                [account_id, found, valid.ref.name],
+              await checkRevision(
+                account_id,
+                existing,
+                request.expected_revision,
+                shown(found!, valid.ref.name, fullNames),
               );
-              const [note] = await decryptRows(account_id, rows);
-              if (
-                memoryRevision(note.description, note.body) !==
-                request.expected_revision
-              )
-                throw new Error(
-                  `memory note ${memoryRef(found, valid.ref.name, fullNames)} changed since you read it; read it again and merge your change`,
-                );
-            }
+            } else if (existing && writtenByOther(existing, caller))
+              throw otherWriter(
+                shown(found!, valid.ref.name, fullNames),
+                existing,
+                caller,
+                "replace",
+              );
             const namespace =
-              found ?? valid.ref.namespace ?? defaultNamespace(now.namespaces);
+              found ??
+              scoped?.namespace ??
+              valid.ref.namespace ??
+              defaultNamespace(now.namespaces);
             await deps.assertWritable(tx, account_id);
             const saved = await writeNote(
               tx,
@@ -910,12 +1258,23 @@ export function createAgentMemory(
               valid.description,
               valid.body,
               project_id,
+              caller,
+              ttl,
+            );
+            const { rows: after } = await tx.query(
+              `SELECT expires_at FROM agent_memory_notes
+                WHERE account_id=$1 AND namespace=$2 AND name=$3`,
+              [account_id, namespace, valid.ref.name],
             );
             return {
-              name: memoryRef(namespace, valid.ref.name, fullNames),
-              namespace,
+              name: shown(namespace, valid.ref.name, fullNames),
+              namespace:
+                namespace === own ? AGENT_MEMORY_AGENT_SCOPE : namespace,
               saved,
               revision: memoryRevision(valid.description, valid.body),
+              ...(after[0]?.expires_at
+                ? { expires_at: iso(after[0].expires_at) }
+                : {}),
             };
           });
         }
@@ -923,42 +1282,121 @@ export function createAgentMemory(
           const ref = parseMemoryRef(request.name);
           return await transaction(account_id, async (tx) => {
             const now = await current(tx);
+            const scoped = await scope(tx, ref);
+            if (scoped?.agent && scoped.namespace !== own)
+              throw readOnlyScope(scoped.agent);
             // A missing note is an error, as for read and move, so it is
             // not mistaken for a deletion.
-            const namespace = await mustLocate(
+            const namespace =
+              scoped?.namespace ??
+              (await mustLocate(
+                tx,
+                account_id,
+                ref,
+                now.visible.filter((ns) => ns !== own),
+              ));
+            const existing = await liveNote(
               tx,
               account_id,
-              ref,
-              now.visible,
+              namespace,
+              ref.name,
             );
+            const fullNames = now.namespaces.length > 0;
+            if (!existing)
+              throw new Error(`no memory note named ${request.name}`);
+            if (request.expected_revision !== undefined)
+              await checkRevision(
+                account_id,
+                existing,
+                request.expected_revision,
+                shown(namespace, ref.name, fullNames),
+              );
+            else if (writtenByOther(existing, caller))
+              throw otherWriter(
+                shown(namespace, ref.name, fullNames),
+                existing,
+                caller,
+                "delete",
+              );
             await deps.assertWritable(tx, account_id);
             await tx.query(
               "DELETE FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
               [account_id, namespace, ref.name],
             );
             return {
-              name: memoryRef(namespace, ref.name, now.namespaces.length > 0),
-              namespace,
+              name: shown(namespace, ref.name, fullNames),
+              namespace:
+                namespace === own ? AGENT_MEMORY_AGENT_SCOPE : namespace,
               deleted: true,
             };
           });
         }
         case "move": {
           const ref = parseMemoryRef(request.name);
-          const to = validateMemoryNamespace(request.to);
           return await transaction(account_id, async (tx) => {
             const now = await current(tx);
-            if (!now.visible.includes(to)) throw notAvailable(to);
-            const from = await mustLocate(tx, account_id, ref, now.visible);
+            let to: string;
+            if (request.to === AGENT_MEMORY_AGENT_SCOPE) {
+              if (!own) throw noAgentScope();
+              to = own;
+            } else {
+              to = validateMemoryNamespace(request.to);
+              if (!now.visible.includes(to)) throw notAvailable(to);
+            }
+            const scoped = await scope(tx, ref);
+            if (scoped?.agent && scoped.namespace !== own)
+              throw readOnlyScope(scoped.agent);
+            const from =
+              scoped?.namespace ??
+              (await mustLocate(
+                tx,
+                account_id,
+                ref,
+                now.visible.filter((ns) => ns !== own),
+              ));
+            const fullNames = now.namespaces.length > 0;
+            const existing = await liveNote(tx, account_id, from, ref.name);
+            if (existing && request.expected_revision !== undefined)
+              await checkRevision(
+                account_id,
+                existing,
+                request.expected_revision,
+                shown(from, ref.name, fullNames),
+              );
+            else if (existing && writtenByOther(existing, caller))
+              throw otherWriter(
+                shown(from, ref.name, fullNames),
+                existing,
+                caller,
+                "move",
+              );
             await deps.assertWritable(tx, account_id);
             await moveNote(tx, account_id, from, ref.name, to, false);
             return {
-              name: memoryRef(to, ref.name, now.namespaces.length > 0),
-              from,
-              to,
+              name: shown(to, ref.name, fullNames),
+              from: from === own ? AGENT_MEMORY_AGENT_SCOPE : from,
+              to: to === own ? AGENT_MEMORY_AGENT_SCOPE : to,
             };
           });
         }
+      }
+
+      // The scope a list or export names: a shared namespace this project
+      // sees, the caller's own scope (`agent`) or another agent's (`@name`).
+      async function listScope(
+        tx: MemoryDb,
+        name: string,
+      ): Promise<{ namespace: string; agent?: string }> {
+        if (name === AGENT_MEMORY_AGENT_SCOPE) {
+          if (!own) throw noAgentScope();
+          return { namespace: own };
+        }
+        if (name.startsWith("@")) {
+          const scoped = await scope(tx, { name: "x", agent: name.slice(1) });
+          return scoped!;
+        }
+        if (!visible.includes(name)) throw notAvailable(name);
+        return { namespace: name };
       }
     },
 
@@ -966,12 +1404,18 @@ export function createAgentMemory(
     async turnIndex(
       account_id: string,
       project_id: string,
+      agent?: AgentMemoryCaller,
     ): Promise<{ notes: number; index: string } | undefined> {
       const settings = await settingsOf(account_id);
       if (!settings.enabled) return undefined;
       await deps.charge(account_id, "read");
+      const caller = agent ? await resolveCaller(account_id, agent) : undefined;
       const projectNamespaces = projectMemoryNamespaces(settings, project_id);
-      const visible = [GLOBAL, ...projectNamespaces.map((ns) => ns.name)];
+      const visible = [
+        ...(caller ? [agentMemoryNamespace(caller.agent_id)] : []),
+        GLOBAL,
+        ...projectNamespaces.map((ns) => ns.name),
+      ];
       const db = pool();
       const rows = await noteRows(db, account_id, visible);
       const ranked = rankMemoryNotes(
@@ -991,6 +1435,7 @@ export function createAgentMemory(
             "description",
             row.description,
           ),
+          written_by: row.written_by_name ?? null,
         })),
       );
       // Only what this project sees: nothing about other namespaces.
@@ -1005,7 +1450,77 @@ export function createAgentMemory(
           total: rows.length,
           namespaces: projectNamespaces,
           counts,
+          agent: caller,
         }),
+      };
+    },
+
+    /** The account removed this agent from its Agents: delete its scope. */
+    async agentRetired(
+      account_id: string,
+      agent_id: string,
+    ): Promise<{ deleted: number }> {
+      const namespace = agentMemoryNamespace(agent_id);
+      return await transaction(account_id, async (tx) => {
+        await deps.assertWritable(tx, account_id);
+        const { rowCount } = await tx.query(
+          "DELETE FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2",
+          [account_id, namespace],
+        );
+        await tx.query(
+          "DELETE FROM agent_memory_agents WHERE account_id=$1 AND agent_id=$2",
+          [account_id, agent_id.toLowerCase()],
+        );
+        return { deleted: rowCount ?? 0 };
+      });
+    },
+
+    /**
+     * Deletes expired notes and the scopes of agents that had no turn for
+     * agentInactiveDays, in bounded batches. Runs on each bay over the
+     * memory it keeps (that of accounts homed there).
+     */
+    async sweep({ batch = 1000 }: { batch?: number } = {}): Promise<{
+      expired: number;
+      inactive_agents: number;
+      inactive_notes: number;
+    }> {
+      const db = pool();
+      const { rowCount: expired } = await db.query(
+        `DELETE FROM agent_memory_notes WHERE ctid IN (
+           SELECT ctid FROM agent_memory_notes
+            WHERE expires_at IS NOT NULL AND expires_at <= now() LIMIT $1)`,
+        [batch],
+      );
+      const { rows: idle } = await db.query(
+        `SELECT account_id, agent_id FROM agent_memory_agents
+          WHERE last_turn_at < now() - make_interval(days => $1::int)
+          ORDER BY last_turn_at LIMIT $2`,
+        [AGENT_MEMORY_LIMITS.agentInactiveDays, batch],
+      );
+      let inactive_notes = 0;
+      for (const { account_id, agent_id } of idle) {
+        inactive_notes += await transaction(account_id, async (tx) => {
+          // Only if no turn came meanwhile: a turn records itself first.
+          const { rows: gone } = await tx.query(
+            `DELETE FROM agent_memory_agents
+              WHERE account_id=$1 AND agent_id=$2
+                AND last_turn_at < now() - make_interval(days => $3::int)
+              RETURNING agent_id`,
+            [account_id, agent_id, AGENT_MEMORY_LIMITS.agentInactiveDays],
+          );
+          if (!gone.length) return 0;
+          const { rowCount } = await tx.query(
+            "DELETE FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2",
+            [account_id, agentMemoryNamespace(agent_id)],
+          );
+          return rowCount ?? 0;
+        });
+      }
+      return {
+        expired: expired ?? 0,
+        inactive_agents: idle.length,
+        inactive_notes,
       };
     },
 
@@ -1034,6 +1549,7 @@ export function createAgentMemory(
               ...ns,
               notes: all.counts[ns.name] ?? 0,
             })),
+            agents: await agentScopes(db, account_id, all.counts),
             projects: settings.projects,
             limits: AGENT_MEMORY_LIMITS,
           };
@@ -1074,7 +1590,11 @@ export function createAgentMemory(
           );
           return {
             notes: notes.length,
-            markdown: exportMarkdown(notes, settings.namespaces),
+            markdown: exportMarkdown(
+              notes,
+              settings.namespaces,
+              await agentScopes(db, account_id),
+            ),
           };
         }
       }
@@ -1102,6 +1622,10 @@ export function createAgentMemory(
           case "delete-all": {
             const { rowCount } = await tx.query(
               "DELETE FROM agent_memory_notes WHERE account_id=$1",
+              [account_id],
+            );
+            await tx.query(
+              "DELETE FROM agent_memory_agents WHERE account_id=$1",
               [account_id],
             );
             await deps.legacy.remove(account_id, tx);

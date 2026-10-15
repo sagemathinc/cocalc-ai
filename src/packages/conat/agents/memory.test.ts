@@ -1,6 +1,10 @@
 import {
   AGENT_MEMORY_LIMITS,
   agentMemoryMarkdown,
+  agentMemoryNamespace,
+  agentOfMemoryNamespace,
+  parseMemoryExpiry,
+  validateMemoryNamespace,
   agentMemoryTurnContext,
   buildMemoryIndex,
   detectSecret,
@@ -534,4 +538,121 @@ test("rejects line and paragraph separators", () => {
       body: `a${paragraphSeparator}b`,
     }),
   ).toThrow(/control/);
+});
+
+describe("agent scopes and expiry", () => {
+  const AGENT = "33333333-3333-4333-8333-333333333333";
+
+  it("parses own and other agents' scope references", () => {
+    expect(parseMemoryRef("agent/waiting-on")).toEqual({
+      name: "waiting-on",
+      agent: "self",
+    });
+    expect(parseMemoryRef("@review/verdict")).toEqual({
+      name: "verdict",
+      agent: "review",
+    });
+    expect(() => parseMemoryRef("@Bad Name/x")).toThrow(/invalid agent name/);
+    expect(parseMemoryRef("dev/x")).toEqual({ namespace: "dev", name: "x" });
+  });
+
+  it("reserves agent as a namespace name and keys scopes by agent id", () => {
+    expect(() => validateMemoryNamespace("agent")).toThrow(
+      /not "global" or "agent"/,
+    );
+    const ns = agentMemoryNamespace(AGENT);
+    expect(ns).toBe(`agent:${AGENT}`);
+    expect(agentOfMemoryNamespace(ns)).toBe(AGENT);
+    expect(agentOfMemoryNamespace("dev")).toBeUndefined();
+    expect(memoryRef(ns, "x", true)).toBe("agent/x");
+  });
+
+  it("parses expiries counted from last use", () => {
+    expect(parseMemoryExpiry("12h")).toBe(12 * 3600);
+    expect(parseMemoryExpiry("30d")).toBe(30 * 86400);
+    expect(parseMemoryExpiry("never")).toBeNull();
+    for (const bad of ["0d", "1w", "-1d", "3651d", "", 7])
+      expect(() => parseMemoryExpiry(bad)).toThrow(/memory note expiry/);
+    expect(
+      validateAgentMemoryRequest({
+        action: "memory",
+        op: "write",
+        name: "agent/x",
+        description: "d",
+        body: "b",
+        expires_in: "7d",
+      }),
+    ).toBeTruthy();
+    expect(() =>
+      validateAgentMemoryRequest({
+        action: "memory",
+        op: "list",
+        namespace: "@Not Valid",
+      }),
+    ).toThrow(/invalid agent name/);
+    expect(
+      validateAgentMemoryRequest({
+        action: "memory",
+        op: "move",
+        name: "x",
+        to: "agent",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("lists the agent's own notes first and shows other writers", () => {
+    const own = agentMemoryNamespace(AGENT);
+    const at = "2026-10-15T00:00:00.000Z";
+    const index = buildMemoryIndex({
+      notes: [
+        {
+          namespace: "global",
+          name: "lesson",
+          description: "a lesson",
+          updated_at: at,
+          written_by: "review",
+        },
+        {
+          namespace: own,
+          name: "waiting-on",
+          description: "what I wait for",
+          updated_at: at,
+          written_by: "ops3",
+        },
+      ],
+      total: 2,
+      namespaces: [],
+      counts: { global: 1, [own]: 1 },
+      agent: { agent_id: AGENT, name: "ops3" },
+    });
+    const lines = index.split("\n");
+    expect(index).toContain("Your own scope: agent/<name>");
+    expect(lines.indexOf("- agent/waiting-on: what I wait for")).toBeLessThan(
+      lines.indexOf("- lesson: a lesson (by @review)"),
+    );
+    expect(lines).toContain("- lesson: a lesson (by @review)");
+  });
+
+  it("exports agent scopes under the agent's name", () => {
+    const markdown = agentMemoryMarkdown({
+      notes: [
+        {
+          namespace: agentMemoryNamespace(AGENT),
+          name: "waiting-on",
+          description: "d",
+          body: "b",
+          updated_at: "2026-10-15T00:00:00.000Z",
+          written_by: "ops3",
+          expires_at: "2026-11-14T00:00:00.000Z",
+        },
+      ],
+      namespaces: [],
+      agents: [{ agent_id: AGENT, name: "ops3" }],
+      exported_at: "2026-10-15T00:00:00.000Z",
+    });
+    expect(markdown).toContain("## Own scope of @ops3");
+    expect(markdown).toContain("### @ops3/waiting-on");
+    expect(markdown).toContain("by @ops3");
+    expect(markdown).toContain("expires 2026-11-14 unless used");
+  });
 });
