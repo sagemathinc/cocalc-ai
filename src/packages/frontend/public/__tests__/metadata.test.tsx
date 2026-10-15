@@ -341,6 +341,18 @@ describe("public route metadata", () => {
     expect(unknown.title).toBe("CoCalc Team | CoCalc");
   });
 
+  // Search results and link previews show this description.
+  it("describes the team page in one sentence", () => {
+    const team = getPublicRouteMetadata(
+      getPublicMetadataRouteFromPath("/about/team"),
+      { site_name: "CoCalc" },
+    );
+    expect(team.description).toBe(
+      "Meet the people at SageMath, Inc. who build CoCalc, the agent platform where your agents work alongside your team.",
+    );
+    expect(team.description.length).toBeLessThanOrEqual(160);
+  });
+
   it("lists only published team profiles in the sitemap", () => {
     expect(
       PUBLIC_SITEMAP_PATHS.filter((path) => path.startsWith("/about/team/")),
