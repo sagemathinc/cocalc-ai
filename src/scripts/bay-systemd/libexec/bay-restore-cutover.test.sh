@@ -44,7 +44,7 @@ sudo -n tee "${FAKE_ENGINE_DIR}/bay-restore-engine.py" > /dev/null <<EOF
 import json, os, sys
 config = json.load(open(sys.argv[2]))
 work = config["work_dir"]
-open("${LOG}", "a").write("engine\n")
+open("${LOG}", "a").write("engine fenced=" + ("yes" if os.path.exists("${TMP_ROOT}/fence") else "no") + "\n")
 os.makedirs(os.path.join(work, "postgres"))
 os.makedirs(os.path.join(work, "sync"))
 open(os.path.join(work, "postgres", "marker"), "w").write("restored\n")
@@ -87,6 +87,8 @@ case "\$1" in
       # Bay services running outside cocalc-bay.target.
       for unit in \$(ls "${UNITS}"); do echo "\$unit loaded active running \$unit"; done
     elif [[ "\$*" == *--type=timer* ]]; then
+      # None runs on a fresh VM (or after a fenced boot).
+      [[ ! -e "${TMP_ROOT}/no-timers" ]] || exit 0
       echo "cocalc-bay-sqlite-backup.timer loaded active waiting SQLite backup"
       echo "cocalc-bay-pgbackrest-diff.timer loaded active waiting diff"
     else
@@ -94,12 +96,17 @@ case "\$1" in
       echo "cocalc-bay-pgbackrest-status.service loaded inactive dead status"
     fi
     ;;
+  list-unit-files)
+    # Enabled timers (the only pattern bay-restore lists).
+    grep '\.timer\$' "${TMP_ROOT}/enabled-units" 2>/dev/null | while read -r unit; do echo "\$unit enabled enabled"; done
+    ;;
   is-enabled)
     grep -qx -- "\${@: -1}" "${TMP_ROOT}/enabled-units" 2>/dev/null
     exit
     ;;
   # Only the target is ever active once stopped (or never started).
   is-active)
+    [[ "\${@: -1}" == cocalc-bay-postgres.service && -e "${TMP_ROOT}/stuck-postgres" ]] && exit 0
     [[ "\${@: -1}" == cocalc-bay.target && -e "${TMP_ROOT}/target-active" ]]
     exit
     ;;
@@ -117,6 +124,10 @@ case "\$1" in
     fi
     shift
     for unit in "\$@"; do
+      if [[ -e "${TMP_ROOT}/fence" ]]; then
+        echo "skipped (fenced) \$unit" >> "${LOG}"
+        continue
+      fi
       case "\$unit" in
         cocalc-bay-frontdoor.service|cocalc-bay-cloudflared.service) touch "${UNITS}/\$unit" ;;
         cocalc-bay.target) touch "${TMP_ROOT}/target-active" ;;
@@ -135,7 +146,8 @@ setup() {
   mkdir -p "${TMP_ROOT}/bay/postgres" "${TMP_ROOT}/bay/sync"
   echo live > "${TMP_ROOT}/bay/postgres/marker"
   : > "$LOG"
-  rm -f "${TMP_ROOT}/fail-engine" "${TMP_ROOT}/fail-full" "${TMP_ROOT}/bay-procs"
+  rm -f "${TMP_ROOT}/fail-engine" "${TMP_ROOT}/fail-full" "${TMP_ROOT}/bay-procs" \
+    "${TMP_ROOT}/fence" "${TMP_ROOT}/stuck-postgres" "${TMP_ROOT}/no-timers"
   # The bay runs: its target, and the frontdoor and the tunnel outside it
   # (enabled, as installed). The fake systemctl runs as root and may own
   # target-active, so it is replaced rather than touched.
@@ -166,6 +178,7 @@ bay_restore() {
     COCALC_BAY_USER="$(id -un)" COCALC_BAY_GROUP="$(id -gn)" \
     COCALC_BAY_CURRENT_LINK="${TMP_ROOT}/current" \
     COCALC_BAY_RESTORE_ASSUME_TRUSTED_DIR="${ASSUME_TRUSTED_DIR}" \
+    COCALC_BAY_RESTORE_FENCE="${TMP_ROOT}/fence" COCALC_BAY_DEPLOY_LOCK="${TMP_ROOT}/deploy.lock" \
     COCALC_BAY_PGBACKREST_S3_BUCKET=b COCALC_BAY_PGBACKREST_S3_ENDPOINT=https://r2.invalid \
     COCALC_BAY_PGBACKREST_S3_ACCESS_KEY=k COCALC_BAY_PGBACKREST_S3_SECRET_KEY=s \
     COCALC_BAY_PGBACKREST_CIPHER_PASS=c COCALC_BAY_SQLITE_RUSTIC_PASSWORD=p \
@@ -226,6 +239,8 @@ start_services="$(line 'start cocalc-bay-cloudflared.service cocalc-bay-frontdoo
 [[ -e "${UNITS}/cocalc-bay-frontdoor.service" && -e "${UNITS}/cocalc-bay-cloudflared.service" ]] ||
   fail "the frontdoor and tunnel were not restarted"
 ! grep -q 'stop cocalc-bay-pgbackrest-status.service' "$LOG" || fail "stopped an inactive job"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "the cutover left the bay fenced"
+! grep -q '^skipped (fenced)' "$LOG" || fail "cutover: started a unit while fenced: $(cat "$LOG")"
 
 # Not healthy: timers stay stopped and are listed for the operator.
 work="${WORKS}/work2"
@@ -267,15 +282,20 @@ grep -q 'restore failed at stage restore-pgbackrest: fake failure' "${TMP_ROOT}/
 last_check="$(grep -n -F "pgrep -u $(id -un)" "$LOG" | tail -1 | cut -d: -f1)"
 (( last_check > $(line engine) && last_check < $(line 'start cocalc-bay.target') )) ||
   fail "restart_bay did not check for bay processes first: $(cat "$LOG")"
+grep -q '^engine fenced=yes' "$LOG" || fail "the engine ran unfenced: $(cat "$LOG")"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "a failed restore left the bay fenced"
+! grep -q '^skipped (fenced)' "$LOG" || fail "failed restore: started a unit while fenced: $(cat "$LOG")"
 
 # --no-cutover: the bay runs on its old data again; cutover works later.
 setup ""
 restore --work-dir "${WORKS}/r2" --no-cutover || { cat "${TMP_ROOT}/out" >&2; fail "restore --no-cutover failed"; }
 (( $(line engine) < $(line 'start cocalc-bay.target') )) || fail "--no-cutover did not restart the bay: $(cat "$LOG")"
 [[ "$(cat "${TMP_ROOT}/bay/postgres/marker")" == live ]] || fail "--no-cutover changed the live data"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "--no-cutover left the bay fenced"
 : > "$LOG"
 cutover "${WORKS}/r2" || { cat "${TMP_ROOT}/out" >&2; fail "cutover after --no-cutover failed"; }
 [[ "$(cat "${TMP_ROOT}/bay/postgres/marker")" == restored ]] || fail "later cutover did not swap"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "the later cutover left the bay fenced"
 
 # A full restore stops the bay once, before the engine, and starts it once,
 # on the restored data.
@@ -288,6 +308,9 @@ restore --work-dir "${WORKS}/r3" || { cat "${TMP_ROOT}/out" >&2; fail "restore f
   fail "full restore: wrong order: $(cat "$LOG")"
 (( $(line 'start cocalc-bay.target') < $(line 'start cocalc-bay-sqlite-backup.timer cocalc-bay-pgbackrest-diff.timer') )) ||
   fail "timers restarted before the bay: $(cat "$LOG")"
+grep -q '^engine fenced=yes' "$LOG" || fail "the engine ran unfenced: $(cat "$LOG")"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "a full restore left the bay fenced"
+! grep -q '^skipped (fenced)' "$LOG" || fail "full restore: started a unit while fenced: $(cat "$LOG")"
 
 # A fresh VM (mode B): nothing of the bay has run, but the frontdoor and the
 # tunnel are enabled, with the production tunnel's credentials. Another
@@ -298,7 +321,9 @@ fresh_vm() {
   rm -rf "$UNITS"
   mkdir -p "$UNITS"
   printf '%s\n' cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service \
-    cocalc-bay-sqlite-backup.service > "${TMP_ROOT}/enabled-units"
+    cocalc-bay-sqlite-backup.service cocalc-bay-sqlite-backup.timer > "${TMP_ROOT}/enabled-units"
+  echo "fenced by the operator" > "${TMP_ROOT}/fence"
+  touch "${TMP_ROOT}/no-timers"
 }
 ingress_down() {
   [[ -z "$(ls -A "$UNITS")" ]] && ! grep -E -q '^start .*(frontdoor|cloudflared)' "$LOG"
@@ -311,15 +336,19 @@ touch "${TMP_ROOT}/fail-engine"
 restore --work-dir "${WORKS}/r4" && fail "a failed fresh-VM restore reported success"
 ingress_down || fail "a failed fresh-VM restore started the frontdoor or tunnel: $(cat "$LOG")"
 ! grep -q '^start cocalc-bay.target' "$LOG" || fail "a failed fresh-VM restore started the bay: $(cat "$LOG")"
+# The operator's fence stays: after a reboot nothing of the empty bay starts.
+[[ -e "${TMP_ROOT}/fence" ]] || fail "a failed fresh-VM restore lifted the operator's fence"
 
 # --no-cutover likewise; the cutover later starts the ingress with the bay.
 fresh_vm
 restore --work-dir "${WORKS}/r5" --no-cutover || { cat "${TMP_ROOT}/out" >&2; fail "fresh-VM --no-cutover failed"; }
 ingress_down || fail "fresh-VM --no-cutover started the frontdoor or tunnel: $(cat "$LOG")"
+[[ -e "${TMP_ROOT}/fence" ]] || fail "fresh-VM --no-cutover lifted the operator's fence"
 : > "$LOG"
 cutover "${WORKS}/r5" || { cat "${TMP_ROOT}/out" >&2; fail "fresh-VM cutover after --no-cutover failed"; }
 [[ -e "${UNITS}/cocalc-bay-frontdoor.service" && -e "${UNITS}/cocalc-bay-cloudflared.service" ]] ||
   fail "the cutover did not start the frontdoor and tunnel: $(cat "$LOG")"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "the fresh-VM cutover left the bay fenced"
 
 # A successful restore starts the enabled ingress, after the restore, and
 # nothing else that is enabled.
@@ -331,6 +360,12 @@ restore --work-dir "${WORKS}/r6" || { cat "${TMP_ROOT}/out" >&2; fail "fresh-VM 
   fail "started an enabled unit that is not ingress: $(cat "$LOG")"
 (( $(line engine) < $(line 'start cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service') )) ||
   fail "fresh VM: started the frontdoor and tunnel before the restore: $(cat "$LOG")"
+grep -q '^engine fenced=yes' "$LOG" || fail "the fresh-VM engine ran unfenced: $(cat "$LOG")"
+# Its enabled timers, which never ran, start once the bay is healthy.
+grep -q '^start .*cocalc-bay-sqlite-backup.timer' "$LOG" ||
+  fail "a fresh-VM restore left the enabled backup timer stopped: $(cat "$LOG")"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "a fresh-VM restore left the bay fenced"
+! grep -q '^skipped (fenced)' "$LOG" || fail "fresh-VM restore: started a unit while fenced: $(cat "$LOG")"
 
 # --target-time keeps its microseconds.
 setup ""
@@ -339,5 +374,38 @@ bay_restore "${FAKE_ENGINE_DIR}/bay-restore" restore --yes --work-dir "${WORKS}/
   { cat "${TMP_ROOT}/out" >&2; fail "restore --target-time failed"; }
 grep -q 'to 2026-10-08 03:00:00.123456+00' "${TMP_ROOT}/out" ||
   fail "--target-time lost its fraction: $(cat "${TMP_ROOT}/out")"
+
+# A stop that fails changes nothing, so the fence it set is lifted again; an
+# operator's fence stays.
+setup ""
+touch "${TMP_ROOT}/stuck-postgres"
+restore --work-dir "${WORKS}/r8" && fail "restored past a PostgreSQL that did not stop"
+grep -q 'cocalc-bay-postgres did not stop' "${TMP_ROOT}/out" || fail "no stop failure: $(cat "${TMP_ROOT}/out")"
+[[ ! -e "${TMP_ROOT}/fence" ]] || fail "a failed stop left the bay fenced"
+fresh_vm
+touch "${TMP_ROOT}/stuck-postgres"
+restore --work-dir "${WORKS}/r9" && fail "restored past a PostgreSQL that did not stop"
+[[ -e "${TMP_ROOT}/fence" ]] || fail "a failed stop lifted the operator's fence"
+
+# One restore or deploy at a time: while a deploy holds the lock, a restore
+# or cutover is refused before it touches anything.
+setup ""
+touch "${TMP_ROOT}/healthy"
+flock -o "${TMP_ROOT}/deploy.lock" sleep 30 &
+holder=$!
+sleep 0.5
+restore --work-dir "${WORKS}/r10" && fail "restored while a deploy held the lock"
+grep -q 'a bay deploy or another restore is running' "${TMP_ROOT}/out" || fail "no lock refusal: $(cat "${TMP_ROOT}/out")"
+[[ ! -s "$LOG" && ! -e "${TMP_ROOT}/fence" ]] || fail "a refused restore touched the bay: $(cat "$LOG")"
+work="${WORKS}/work11"
+setup "$work"
+cutover "$work" && fail "cut over while a deploy held the lock"
+[[ ! -s "$LOG" ]] || fail "a refused cutover touched the bay: $(cat "$LOG")"
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+# Nothing the restore ran holds the lock afterwards (flock -o): a deploy can
+# take it at once.
+restore --work-dir "${WORKS}/r12" || { cat "${TMP_ROOT}/out" >&2; fail "restore after the lock was freed failed"; }
+flock -n "${TMP_ROOT}/deploy.lock" true || fail "the lock is still held after the restore"
 
 echo "bay-restore tests passed"

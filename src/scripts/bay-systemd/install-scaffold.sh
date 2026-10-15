@@ -134,8 +134,9 @@ for file in "${SCRIPT_DIR}/libexec/"*; do
   [[ "$file" == *.test.sh ]] && continue
   install -m 0755 "$file" "$TARGET_LIBEXEC_DIR/"
 done
-# bay-restore sources lib.sh, so root's copy sits beside it.
-install -m 0644 "${SCRIPT_DIR}/bin/lib.sh" "$TARGET_LIBEXEC_DIR/lib.sh"
+# The restore fence on every bay unit, and bay-restore with its lib.sh.
+"${SCRIPT_DIR}/install-restore-tools.sh" --root "$ROOT_DIR" \
+  --systemd-dir "$SYSTEMD_DIR" --libexec-dir "$LIBEXEC_DIR" --no-daemon-reload
 install -m 0440 "${SCRIPT_DIR}/sudoers/"* "$TARGET_SUDOERS_DIR/"
 install -m 0644 "${SCRIPT_DIR}/needrestart/cocalc-bay.conf" \
   "${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf"

@@ -15,6 +15,26 @@ other secrets, data) comes from the backups.
   every remaining process of the `cocalc-bay` account. Nothing of the bay's
   runs again until the restore has finished: root must not work on files that
   a process of the bay account could swap out underneath it.
+- **The bay is fenced until the cutover.** Before it stops anything,
+  `bay-restore` creates `/etc/cocalc/bay-restore-fence`. While that file
+  exists, no bay unit starts: not at boot, not from a timer, not through
+  `Restart=` (a drop-in on every `cocalc-bay*` unit makes the file a start
+  condition). So a reboot during a restore, which can take hours, does not
+  bring up a half-restored bay, its tunnel or its backup jobs. The cutover
+  lifts the fence once the verified data is in place. A failed restore and
+  `--no-cutover` lift the fence too, unless it was already there before the
+  restore (mode B, below). If `bay-restore` itself is killed, the fence
+  stays: run the restore again, or remove the file by hand to bring the bay
+  back on its current data. A bay deploy refuses to run against a fenced
+  bay: `bay-bootstrap-release.sh` checks before it stages anything, and
+  `upgrade-bay-release.sh` checks again before each restart.
+- **One restore or deploy at a time.** `bay-restore` (restore and cutover)
+  and `bay-bootstrap-release.sh` hold `/etc/cocalc/bay-deploy.lock` for their
+  whole run, as do `upgrade-bay-release.sh`'s restart steps. A deploy started
+  during a restore is refused, and so is a restore during a deploy, before
+  either changes anything. The drop-ins
+  and `bay-restore` are installed by `install-restore-tools.sh`, with every
+  release and, in mode B, from current main.
 - **The live data is not changed until the cutover.** The restore is built in
   a new work directory and verified there. Only then does the cutover move the
   live `postgres` and `sync` directories to `<work-dir>/pre-restore/`, move the
@@ -176,6 +196,9 @@ the hosts and in project backups.
    ```sh
    git clone https://github.com/sagemathinc/cocalc-ai.git && cd cocalc-ai
    git checkout <commit>
+   # The restore tooling comes from current main, whatever release is
+   # restored: an older release may lack the fence (step 4).
+   git worktree add ../restore-tools origin/main
    sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
    sudo chown cocalc-bay:cocalc-bay /mnt/cocalc-backups
    ```
@@ -184,9 +207,17 @@ the hosts and in project backups.
    PostgreSQL writes its local backups to `/mnt/cocalc-backups`, and does not
    start until the bay account owns it.
 
-4. **Install the master key** (from the human, as a file):
+4. **Fence the new bay, and install the master key** (from the human, as a
+   file). The release installed in step 6 enables the bay's units, including
+   the production tunnel, so that it comes up at boot. The fence (see "How
+   the restore works") keeps all of it down, across reboots, until the
+   cutover in step 8 has put restored data in place. It is installed from
+   current main, with the restore tooling, before any release: releases
+   older than the fence have neither its drop-ins nor a `bay-restore` that
+   lifts it, and installing them leaves both in place:
 
    ```sh
+   sudo ../restore-tools/src/scripts/bay-systemd/install-restore-tools.sh --fence
    sudo install -o root -g root -m 0600 ./site-master-key /etc/cocalc/site-master-key
    ```
 
@@ -223,9 +254,11 @@ the hosts and in project backups.
    there.
 
 6. **Install the release** without starting it (the escrowed env files are
-   kept; only missing ones are generated). This also installs `bay-restore`
-   in `/usr/local/libexec/cocalc-bay`. Use the published bay bundle of the
-   artifact from step 3, checked against the SHA-256 in its manifest:
+   kept; only missing ones are generated). Use the published bay bundle of
+   the artifact from step 3, checked against the SHA-256 in its manifest.
+   The release installs its own `bay-restore` in
+   `/usr/local/libexec/cocalc-bay`, so install the restore tooling from
+   current main again afterwards:
 
    ```sh
    A=https://software.cocalc.ai/software/artifacts/bay/<artifact_id>
@@ -233,7 +266,12 @@ the hosts and in project backups.
    curl -fsS "$A/manifest.json" | python3 -c 'import json, sys
    print(json.load(sys.stdin)["files"][0]["sha256"], " /tmp/cocalc-bay-runtime-linux-x64.tar.xz")' |
      sha256sum -c
-   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz
+   # Releases that know the fence refuse to install on a fenced bay without
+   # --fenced; older ones do not know the option.
+   FENCED=""
+   grep -q -- '--fenced)' ./src/scripts/bay-systemd/bay-bootstrap-release.sh && FENCED=--fenced
+   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh $FENCED --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz
+   sudo ../restore-tools/src/scripts/bay-systemd/install-restore-tools.sh
    ```
 
    (`--source "$PWD/src"` works too, but needs a full build of the checkout
@@ -248,21 +286,45 @@ the hosts and in project backups.
      sudo tar -xz -C /usr/local/bin rustic
    ```
 
-8. **Make sure the old bay is down, then restore and start the bay.** The new
-   VM runs the same Cloudflare tunnel as the old one. If both run it,
-   Cloudflare spreads requests over two separate bays, and both archive into
-   the same backup repository. So if the old VM still exists, stop it first
-   and confirm that it is stopped:
+8. **Make sure the old bay cannot come back, then restore and start the
+   bay.** The new VM runs the same Cloudflare tunnel as the old one, with the
+   same credentials. If both run it, Cloudflare spreads requests over two
+   separate bays, and both write to the same backup repository. Seeing no
+   tunnel connectors right now is not enough: GCP restarts a VM that went
+   down with its host or zone, and the old bay then reconnects. One of these
+   must hold before you go on:
+   - **The old VM is stopped or deleted, confirmed through the API.** A
+     stopped VM stays stopped:
 
-   ```sh
-   gcloud compute instances stop prod-bay-0 --project=projecthosts --zone=us-south1-a
-   gcloud compute instances describe prod-bay-0 --project=projecthosts \
-     --zone=us-south1-a --format='value(status)'   # must print TERMINATED
-   ```
+     ```sh
+     gcloud compute instances stop prod-bay-0 --project=projecthosts --zone=us-south1-a
+     gcloud compute instances describe prod-bay-0 --project=projecthosts \
+       --zone=us-south1-a --format='value(status)'   # must print TERMINATED
+     ```
 
-   If the old VM cannot be reached (for example, its zone is down), ask the
-   human to confirm in the Cloudflare dashboard that the tunnel shows no
-   connectors before you go on. Then:
+   - **If it cannot be reached (its zone is down), its credentials are
+     revoked.** It would come back with everything it had. With the human,
+     who has the Cloudflare login:
+     - revoke the bay's R2 tokens (R2 > Manage API tokens), create new ones
+       scoped to the bucket, and put them in `/etc/cocalc/bay-secrets.env` on
+       the new VM;
+     - revoke the Cloudflare API token the bay uses for its tunnel (server
+       setting "Project Hosts: Cloudflare Tunnel - API Token"), create a new
+       one with the same permissions, and add it to
+       `/etc/cocalc/bay-secrets.env` as
+       `COCALC_SETTING_PROJECT_HOSTS_CLOUDFLARE_TUNNEL_API_TOKEN=<token>`
+       (the hubs store it at start; remove the line afterwards, as it keeps
+       the setting read-only);
+     - delete the tunnel (Zero Trust > Networks > Tunnels, `hub-<hostname>`).
+       The new bay creates a new one and points DNS at it, and the old
+       tunnel secret no longer works;
+     - replace the host-owner SSH key: trust a new key on the project hosts
+       and remove the old public key (README.md, "Rotation").
+
+     Then rotate the rest as in step 10. Stop or delete the old VM as soon as
+     its zone is back.
+
+   Then:
 
    ```sh
    sudo /usr/local/libexec/cocalc-bay/bay-restore restore --latest --yes
@@ -272,9 +334,10 @@ the hosts and in project backups.
    its newest snapshot, moves any freshly initialized data aside, and starts
    the bay, with the frontdoor and the tunnel (enabled bay services outside
    `cocalc-bay.target`). Traffic reaches the new VM through the Cloudflare
-   tunnel, whose credentials came from the escrow; DNS does not change. If
-   the restore fails, or with `--no-cutover`, the frontdoor and the tunnel
-   stay down: the new VM's empty bay never takes traffic.
+   tunnel, whose credentials came from the escrow; DNS does not change. The
+   cutover lifts the fence from step 4. If the restore fails, or with
+   `--no-cutover`, the fence stays and the bay stays down, after a reboot
+   too: the new VM's empty bay never takes traffic.
 
 9. **Afterwards:**
    - confirm the site works;
@@ -300,11 +363,17 @@ the hosts and in project backups.
   - the bay is stopped, and its processes are gone, before the engine runs;
   - the bay restarts on its old data after a failure or with `--no-cutover`;
   - the cutover order, the unhealthy case and the backup warning are right;
+  - the bay is fenced while the engine runs; the cutover, a failed restore
+    and `--no-cutover` lift the fence, except one that was there before the
+    restore; a stop that fails lifts the fence it set;
   - on a fresh VM the enabled frontdoor and tunnel start with the restored
     bay, and stay down after a failure or with `--no-cutover`;
   - `--target-time` keeps its microseconds.
 - `libexec/bay-restore-engine.test.sh` checks the engine's PITR sentinel
   verdict, and that a missed target fails the drill at once.
+- `install-scaffold.test.sh` checks that the fence's drop-ins are installed
+  for every bay unit; `bay-bootstrap-release.test.sh` that a fenced bay takes
+  no deploy except a `--fenced` install, and never `--start`.
   - copies and work directories the bay account could change are refused.
 - `test/bay-restore-e2e.sh` runs `bay-restore` end to end on a disposable
   Ubuntu 24.04 VM against a local TLS S3 server: a point-in-time restore, a

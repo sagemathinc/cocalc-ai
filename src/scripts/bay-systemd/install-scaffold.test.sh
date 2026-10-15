@@ -48,6 +48,31 @@ LIBEXEC="${TARGET_ROOT}/usr/local/libexec/cocalc-bay"
 # So is bay-restore, with its engine and a copy of lib.sh.
 [[ -x "${LIBEXEC}/bay-restore" && -x "${LIBEXEC}/bay-restore-engine.py" && -f "${LIBEXEC}/lib.sh" ]]
 [[ ! -e "${LIBEXEC}/bay-restore-cutover.test.sh" ]]
+[[ ! -e "${LIBEXEC}/bay-restore-engine.test.sh" ]]
+# The restore fence holds every bay unit: the target, and by prefix drop-ins
+# all cocalc-bay-* services (template instances too), timers and targets.
+for dropin_dir in cocalc-bay.target.d cocalc-bay-.target.d cocalc-bay-.service.d cocalc-bay-.timer.d; do
+  grep -qx 'ConditionPathExists=!/etc/cocalc/bay-restore-fence' \
+    "${TARGET_ROOT}/etc/systemd/system/${dropin_dir}/restore-fence.conf"
+done
+# The scaffold never fences a bay itself.
+[[ ! -e "${TARGET_ROOT}/etc/cocalc/bay-restore-fence" ]]
+# A mode B rebuild installs the tooling, fenced, before any release.
+TOOLS_ROOT="${TMP_ROOT}/tools-rootfs"
+bash "${SCRIPT_DIR}/install-restore-tools.sh" --root "$TOOLS_ROOT" --fence
+[[ -e "${TOOLS_ROOT}/etc/cocalc/bay-restore-fence" ]]
+[[ -f "${TOOLS_ROOT}/etc/systemd/system/cocalc-bay-.service.d/restore-fence.conf" ]]
+cmp -s "${SCRIPT_DIR}/libexec/bay-restore" "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/bay-restore"
+[[ -x "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/bay-restore-engine.py" && -f "${TOOLS_ROOT}/usr/local/libexec/cocalc-bay/lib.sh" ]]
+# Custom destinations reach the restore tooling too: the drop-ins in the
+# custom systemd dir, bay-restore with its lib.sh in the custom libexec dir.
+CUSTOM_ROOT="${TMP_ROOT}/custom-rootfs"
+bash "${SCRIPT_DIR}/install-scaffold.sh" --root "$CUSTOM_ROOT" \
+  --systemd-dir /custom/systemd --libexec-dir /custom/libexec >/dev/null
+[[ -f "${CUSTOM_ROOT}/custom/systemd/cocalc-bay-.service.d/restore-fence.conf" ]]
+[[ ! -e "${CUSTOM_ROOT}/etc/systemd/system/cocalc-bay-.service.d" ]]
+[[ -x "${CUSTOM_ROOT}/custom/libexec/bay-restore" && -f "${CUSTOM_ROOT}/custom/libexec/lib.sh" ]]
+[[ ! -e "${CUSTOM_ROOT}/usr/local/libexec/cocalc-bay" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-restore" ]]
 [[ ! -e "${TARGET_ROOT}/opt/cocalc/bay/current/bin/bay-config-escrow-run" ]]
 grep -qx 'ExecStart=/usr/local/libexec/cocalc-bay/bay-config-escrow-run' \
