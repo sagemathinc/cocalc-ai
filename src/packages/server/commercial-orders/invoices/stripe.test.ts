@@ -1890,6 +1890,61 @@ describe("commercial Stripe invoices", () => {
     );
   });
 
+  it("does not record Stripe's out-of-band placeholder as a second payment", async () => {
+    // After invoices.pay(paid_out_of_band) the manual evidence row is the
+    // payment; the webhook's reconcile must not add Stripe's no-money
+    // invoice payment (no PaymentIntent or charge) next to it.
+    const invoice = invoiceFixture({ status: "paid" });
+    mockGetCommercialInvoice.mockResolvedValue(invoice);
+    stripe.invoices.retrieve.mockResolvedValue(
+      stripeInvoiceFixture({
+        status: "paid",
+        amount_due: 390000,
+        amount_remaining: 0,
+        amount_paid: 390000,
+        status_transitions: { paid_at: 1787529600 },
+        payments: {
+          data: [
+            {
+              id: "inpay_oob",
+              amount_paid: 390000,
+              amount_requested: 390000,
+              status: "paid",
+              status_transitions: { paid_at: 1787529600 },
+              payment: { type: "out_of_band_payment" },
+            },
+            {
+              id: "inpay_canceled",
+              amount_paid: null,
+              amount_requested: 390000,
+              status: "canceled",
+              payment: {
+                type: "payment_intent",
+                payment_intent: { id: "pi_canceled", status: "canceled" },
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    await reconcileStripeCommercialInvoice({
+      id: "co_1",
+      commercial_invoice_id: "ci_1",
+      reason: "Reconcile Stripe invoice",
+      event_source: "stripe-webhook",
+      event_idempotency_key: "evt_oob",
+    });
+
+    expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount_paid: "3900.0000000000",
+        collection_state: "paid",
+        provider_payments: [],
+      }),
+    );
+  });
+
   it("marks an open Stripe invoice paid out of band before recording manual evidence", async () => {
     const invoice = invoiceFixture({ status: "open" });
     const order = orderFixture({ invoices: [invoice] });

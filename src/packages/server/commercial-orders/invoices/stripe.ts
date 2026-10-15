@@ -434,12 +434,21 @@ function paymentMethod(payment: any): CommercialPaymentMethod {
   return "other";
 }
 
+// An invoice paid out of band (`invoices.pay` with paid_out_of_band) lists a
+// paid invoice payment with no PaymentIntent or charge: no money moved through
+// Stripe. That settlement is recorded as manual payment evidence, so storing
+// this placeholder as well would count the same payment twice.
+function movedMoneyThroughStripe(payment: any): boolean {
+  return !!(payment?.payment?.payment_intent || payment?.payment?.charge);
+}
+
 function normalizedPayments(invoice: any) {
   return (invoice?.payments?.data ?? [])
     .filter(
       (payment) =>
         payment?.id &&
-        (payment.status === "paid" || Number(payment.amount_paid ?? 0) > 0),
+        (payment.status === "paid" || Number(payment.amount_paid ?? 0) > 0) &&
+        movedMoneyThroughStripe(payment),
     )
     .map((payment) => {
       const underlying = payment?.payment?.payment_intent;
