@@ -59,7 +59,10 @@ export interface AcpChatContext {
   api_url?: string;
   // Browser session initiating this turn (for agent/browser automation routing).
   browser_id?: string;
-  // The initiating chat surface supports workbench tabs.
+  // Whether the turn publishes its durable results as workbench artifacts. On
+  // unless false: turns from surfaces without workbench tabs and turns started
+  // on the server (agent messages, sensor wakes) leave it unset, and still
+  // publish; the cards are usable there too.
   workbench?: boolean;
   // Schema-v2 identities for robust row targeting.
   message_id?: string;

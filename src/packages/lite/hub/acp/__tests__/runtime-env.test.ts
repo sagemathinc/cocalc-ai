@@ -68,25 +68,27 @@ describe("buildCodexRuntimeEnv", () => {
 
     expect(env.COCALC_BEARER_TOKEN).toBe("existing-bearer");
     expect(env.COCALC_AGENT_TOKEN).toBe("existing-bearer");
-    expect(env.COCALC_WORKBENCH).toBe("0");
+    // No surface flag (an agent message, sensor wake or scheduled prompt):
+    // workbench is on.
+    expect(env.COCALC_WORKBENCH).toBe("1");
     expect(issueToken).not.toHaveBeenCalled();
   });
 
-  it("derives workbench capability from the initiating surface, not inherited env", async () => {
+  it("derives workbench capability from the request (on unless false), not inherited env", async () => {
     process.env.COCALC_BEARER_TOKEN = "existing-bearer";
     const { buildCodexRuntimeEnv } = await import("../runtime-env");
-    for (const enabled of [false, true]) {
+    for (const enabled of [false, true, undefined]) {
       const env = await buildCodexRuntimeEnv({
         request: {
           prompt: "test",
-          chat: { workbench: enabled },
-          runtime_env: { COCALC_WORKBENCH: enabled ? "0" : "1" },
+          chat: enabled == null ? {} : { workbench: enabled },
+          runtime_env: { COCALC_WORKBENCH: enabled === false ? "1" : "0" },
         } as any,
         projectId: "project",
         includeCliBin: false,
         useContainer: false,
       });
-      expect(env.COCALC_WORKBENCH).toBe(enabled ? "1" : "0");
+      expect(env.COCALC_WORKBENCH).toBe(enabled === false ? "0" : "1");
     }
   });
 
