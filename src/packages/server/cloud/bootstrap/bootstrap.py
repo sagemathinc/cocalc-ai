@@ -5395,6 +5395,8 @@ OVERSIZED_FILES_MAX_PATHS = 20
 OVERSIZED_FILES_MAX_RECORD_BYTES = 1024 * 1024
 OVERSIZED_SCAN_MAX_SUBPATHS = 1000
 OVERSIZED_SCAN_MAX_RUNTIME_SECONDS = 10 * 60
+# One open directory per level: well below the open-file limit.
+OVERSIZED_SCAN_MAX_DEPTH = 512
 # The unprivileged caller cannot signal this root-owned helper, so its own
 # timeout cannot stop Rustic. Supervise every child here instead.
 RUSTIC_MAX_RUNTIME_SECONDS = 12 * 60 * 60
@@ -5838,42 +5840,76 @@ def add_oversized_file(report, path, size):
 def scan_oversized_files(
     datafd, *, max_file_bytes, one_file_system, deadline, report=None, prefix=""
 ):
-    """Find regular files Rustic will skip, without reading their contents."""
-    args = ["find", "."]
-    if one_file_system:
-        args.append("-xdev")
-    args += [
-        "(", "-name", ".snapshots", "-prune", ")",
-        "-o",
-        "(", "-type", "f", "-size", f"+{max_file_bytes}c",
-        "-printf", "%s %P\\0", ")",
-    ]
+    """Find regular files Rustic will skip, without reading their contents.
+
+    Each directory is opened relative to its parent without following
+    symlinks, so the walk cannot leave the tree. Unlike find, it does not
+    take a directory whose (device, inode) equals an ancestor's for a loop:
+    OverlayFS with xino=off, as project root filesystems are mounted, does
+    not give directories unique inode numbers, and find then fails on a loop
+    that does not exist. Without following symlinks there are no loops.
+    """
     if report is None:
         report = new_oversized_report(max_file_bytes)
-    pending = bytearray()
-
-    def on_stdout(chunk):
-        pending.extend(chunk)
-        while True:
-            end = pending.find(b"\0")
-            if end < 0:
-                break
-            size, _, path = bytes(pending[:end]).partition(b" ")
-            del pending[: end + 1]
-            add_oversized_file(report, prefix + os.fsdecode(path), int(size))
-        if len(pending) > OVERSIZED_FILES_MAX_RECORD_BYTES:
-            fail("oversized file scan produced an unbounded record")
-
-    status = run_supervised(
-        args,
-        deadline=deadline,
-        on_stdout=on_stdout,
-        cwd=f"/proc/self/fd/{datafd}",
-        env={"LANG": "C", "PATH": "/usr/bin:/bin"},
-        pass_fds=(datafd,),
-    )
-    if status != 0 or pending:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    stack = []
+    try:
+        rootfd = os.open(".", flags, dir_fd=datafd)
+        try:
+            root_dev = os.fstat(rootfd).st_dev
+            stack.append((rootfd, os.scandir(rootfd), prefix))
+        except BaseException:
+            os.close(rootfd)
+            raise
+        seen = 0
+        while stack:
+            fd, entries, rel = stack[-1]
+            entry = next(entries, None)
+            if entry is None:
+                entries.close()
+                os.close(fd)
+                stack.pop()
+                continue
+            seen += 1
+            if seen % 4096 == 0 and time.monotonic() > deadline:
+                fail("deadline exceeded; stopped the oversized file scan")
+            if entry.name == ".snapshots":
+                continue
+            try:
+                # The type comes from the directory listing; only regular
+                # files (for their size) and, with -xdev, directories (for
+                # their device) need a stat.
+                if entry.is_file(follow_symlinks=False):
+                    size = entry.stat(follow_symlinks=False).st_size
+                    if size > max_file_bytes:
+                        add_oversized_file(report, rel + entry.name, size)
+                    continue
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if (
+                    one_file_system
+                    and entry.stat(follow_symlinks=False).st_dev != root_dev
+                ):
+                    continue  # like find -xdev: not descended
+            except FileNotFoundError:
+                continue  # removed since it was listed
+            if len(stack) >= OVERSIZED_SCAN_MAX_DEPTH:
+                fail("directory tree too deep to scan for large files")
+            try:
+                child = os.open(entry.name, flags, dir_fd=fd)
+            except FileNotFoundError:
+                continue
+            try:
+                stack.append((child, os.scandir(child), f"{rel}{entry.name}/"))
+            except BaseException:
+                os.close(child)
+                raise
+    except OSError:
         fail("unable to scan for files larger than the backup limit")
+    finally:
+        for fd, entries, _rel in stack:
+            entries.close()
+            os.close(fd)
     return report
 
 

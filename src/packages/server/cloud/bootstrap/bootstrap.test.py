@@ -854,6 +854,71 @@ secret_access_key = "secret"
             with self.assertRaises(FileNotFoundError):
                 self.run_scan(root, "--subpath", "missing")
 
+    def scan_tree(self, root: Path, **kwargs) -> dict:
+        namespace = self.helper_namespace()
+        fd = os.open(root, namespace["O_PATH"] | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            return namespace["scan_oversized_files"](
+                fd,
+                max_file_bytes=kwargs.pop("max_file_bytes", 1_000_000_000),
+                one_file_system=kwargs.pop("one_file_system", True),
+                deadline=kwargs.pop("deadline", time.monotonic() + 60),
+                **kwargs,
+            )
+        finally:
+            os.close(fd)
+
+    def test_scan_oversized_files_walks_in_process(self) -> None:
+        # find judged directories by (device, inode) and failed on a loop
+        # that does not exist when OverlayFS (xino=off) gave a directory its
+        # ancestor's inode number; the walk runs no external command.
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "etc" / "X11" / "fonts" / "Type1").mkdir(parents=True)
+            make_sparse_file(root / "etc" / "X11" / "fonts" / "Type1" / "big", 2_000_000_000)
+            fd = os.open(root, namespace["O_PATH"] | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                with mock.patch.dict(
+                    namespace,
+                    {"run_supervised": mock.Mock(side_effect=AssertionError("ran a command"))},
+                ):
+                    report = namespace["scan_oversized_files"](
+                        fd,
+                        max_file_bytes=1_000_000_000,
+                        one_file_system=False,
+                        deadline=time.monotonic() + 60,
+                    )
+            finally:
+                os.close(fd)
+            self.assertEqual(
+                report["files"],
+                [{"path": "etc/X11/fonts/Type1/big", "size": 2_000_000_000}],
+            )
+
+    def test_scan_oversized_files_stops_at_deadline_and_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for i in range(5000):
+                (root / f"f{i}").touch()
+            with self.assertRaisesRegex(ValueError, "deadline exceeded"):
+                self.scan_tree(root, deadline=time.monotonic() - 1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            deep = Path(tmpdir)
+            depth = self.helper_namespace()["OVERSIZED_SCAN_MAX_DEPTH"]
+            fd = os.open(deep, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                # Created relative to each level: the full path is too long.
+                for _ in range(depth + 1):
+                    os.mkdir("d", dir_fd=fd)
+                    child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+                    os.close(fd)
+                    fd = child
+            finally:
+                os.close(fd)
+            with self.assertRaisesRegex(ValueError, "too deep"):
+                self.scan_tree(deep)
+
     def test_supervised_command_stops_at_deadline(self) -> None:
         run_supervised = self.helper_namespace()["run_supervised"]
         started = time.monotonic()
