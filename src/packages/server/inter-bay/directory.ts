@@ -107,7 +107,17 @@ export async function resolveProjectBays(
     }
     return result;
   }
-  const client = getInterBayFabricClient();
+  // Nothing more once the deadline has passed, not even a fabric client;
+  // without one, these projects are unresolved too.
+  if (deadline <= Date.now()) {
+    return result;
+  }
+  let client: ReturnType<typeof getInterBayFabricClient>;
+  try {
+    client = getInterBayFabricClient();
+  } catch {
+    return result;
+  }
   await mapParallelLimit(
     missing,
     async (project_id) => {

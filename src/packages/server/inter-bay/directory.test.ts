@@ -183,11 +183,32 @@ describe("inter-bay directory", () => {
 
   it("with a deadline already past, asks the directory nothing", async () => {
     queryMock.mockResolvedValue({ rows: [] });
+    const { getInterBayFabricClient } =
+      await import("@cocalc/server/inter-bay/fabric");
+    (getInterBayFabricClient as jest.Mock).mockClear();
     const { resolveProjectBays } = await import("./directory");
     await expect(
       resolveProjectBays(["proj-2"], { deadline: Date.now() - 1 }),
     ).resolves.toEqual(new Map());
     expect(requestMock).not.toHaveBeenCalled();
+    expect(getInterBayFabricClient).not.toHaveBeenCalled();
+  });
+
+  it("with a deadline, a missing fabric client leaves projects unresolved", async () => {
+    queryMock.mockResolvedValue({
+      rows: [{ project_id: "proj-1", bay_id: "bay-1" }],
+    });
+    const { getInterBayFabricClient } =
+      await import("@cocalc/server/inter-bay/fabric");
+    (getInterBayFabricClient as jest.Mock).mockImplementationOnce(() => {
+      throw new Error("missing inter-bay Conat credential");
+    });
+    const { resolveProjectBays } = await import("./directory");
+    await expect(
+      resolveProjectBays(["proj-1", "proj-2"], {
+        deadline: Date.now() + 1_000,
+      }),
+    ).resolves.toEqual(new Map([["proj-1", { bay_id: "bay-1", epoch: 0 }]]));
   });
 
   it("falls back across configured bays for project resolution", async () => {
