@@ -82,6 +82,7 @@ const describeDb =
 
 const tables = [
   "account_computers",
+  "account_computer_session_targets",
   "account_computer_requests",
   "account_computer_operations",
   "account_computer_challenges",
@@ -118,6 +119,7 @@ describeDb("a computer connected over conat", () => {
     version: 1,
     mode: "direct",
     duration: null,
+    lease_hours: 24,
     agent_network_id: network,
     network: "on",
     gpu: true,
@@ -152,8 +154,19 @@ describeDb("a computer connected over conat", () => {
     resetServerSettingsCache();
   }
 
+  /**
+   * The newest session, once its daemon has applied the computer's state
+   * (delivery runs here as on a hub): only then do operations reach it.
+   */
   async function session(): Promise<string> {
-    await until(() => sessions.length > 0);
+    const { currentSession } = await import("./sessions");
+    await until(
+      async () =>
+        sessions.length > 0 &&
+        (await currentSession(computer_id))?.session_id ===
+          sessions[sessions.length - 1],
+      15_000,
+    );
     return sessions[sessions.length - 1];
   }
 
@@ -197,6 +210,9 @@ describeDb("a computer connected over conat", () => {
     hub = connect({ address, systemAccountPassword: "secret", noCache: true });
     const { setRelayClientForTesting } = await import("./relay");
     setRelayClientForTesting(hub);
+    const delivery = await import("./delivery");
+    delivery.setDeliveryClientForTesting(hub);
+    delivery.startComputerStateDelivery();
 
     // Pair (the HTTP endpoints are covered elsewhere).
     const r = await import("./requests");
@@ -261,6 +277,7 @@ describeDb("a computer connected over conat", () => {
       name: "m1",
       key: computerKey,
       duration: null,
+      lease_hours: 24,
     };
     const { createLoginChallenge } = await import("./sessions");
     stop = new AbortController();
@@ -286,6 +303,7 @@ describeDb("a computer connected over conat", () => {
   });
 
   afterAll(async () => {
+    (await import("./delivery")).stopComputerStateDelivery();
     stop?.abort();
     await connector?.catch(() => {});
     hub?.close();

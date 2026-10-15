@@ -37,6 +37,8 @@ export interface ComputerSummary {
   /** Its connector is online now: a live session seen in the last 45 s. */
   connected: boolean;
   revoked_at: number | null;
+  /** Its certificate's end: after it the computer must be paired again. */
+  certificate_not_after: number | null;
   origin: string;
 }
 

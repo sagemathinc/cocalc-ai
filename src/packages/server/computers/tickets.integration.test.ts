@@ -46,6 +46,8 @@ const describeDb =
 
 const tables = [
   "account_computers",
+  "account_computer_sessions",
+  "account_computer_session_targets",
   "account_computer_requests",
   "account_computer_operations",
   "account_computer_jobs",
@@ -117,6 +119,7 @@ describeDb("computer tickets", () => {
       version: 1,
       mode: "direct",
       duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+      lease_hours: 24,
       agent_network_id: network,
       network: "on",
       gpu: true,
