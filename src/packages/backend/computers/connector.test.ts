@@ -47,6 +47,7 @@ describe("pairing as the machine", () => {
     version: 1,
     mode: "direct",
     duration: null,
+    lease_hours: 24,
     agent_network_id: network,
     network: "on",
     gpu: true,

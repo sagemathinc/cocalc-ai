@@ -23,9 +23,10 @@ import { hostname, homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import {
+  type ComputerPolicy,
+  leaseRule,
   parseComputerPolicy,
   parseRequestedPolicy,
-  type ComputerPolicy,
 } from "@cocalc/util/computers/policy";
 import {
   parseComputerCertificate,
@@ -297,6 +298,7 @@ export async function pairComputer({
       `  mode:     DIRECT: agents in that account's agent network run commands`,
       `            here as ${userInfo().username}, with all of your access`,
       `  time:     ${limit}`,
+      `  lease:    ${leaseRule(policy.lease_hours)}`,
       view.why ? `  why:      ${view.why}` : "",
     ]
       .filter(Boolean)

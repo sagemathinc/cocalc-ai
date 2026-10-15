@@ -79,6 +79,7 @@ describeDb("a computer's signed state", () => {
     version: 1,
     mode: "direct",
     duration: null,
+    lease_hours: 24,
     agent_network_id,
     network: "on",
     gpu: true,

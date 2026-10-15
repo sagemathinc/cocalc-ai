@@ -9,7 +9,14 @@
 // Design: src/.agents/computers-revocation-gate-2026-10-14.md (§9).
 // Real SQL (PGlite): run with COCALC_TEST_USE_PGLITE=1.
 
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -194,6 +201,7 @@ describeDb("revoking a computer stops its work", () => {
       version: 1,
       mode: "direct",
       duration: null,
+      lease_hours: 24,
       agent_network_id: network,
       network: "on",
       gpu: true,
@@ -697,6 +705,35 @@ describeDb("revoking a computer stops its work", () => {
     );
     expect(r.reply.result.stdout).toBe("newer\n");
     expect(c.finished).toBe(false);
+  });
+
+  it("the hard lease: back after more than 24 hours without CoCalc, its work is stopped; it is not ended, and new work runs", async () => {
+    const w = await world();
+    const c = w.start();
+    await w.ready(c);
+    const pids = await w.startWork();
+    // Control: restarting the connector keeps a job running.
+    await c.stop();
+    const again = w.start();
+    await w.ready(again);
+    expect(alive(pids.job)).toBe(true);
+    await again.stop();
+    // Off for a day and an hour (the lease is the default 24 hours).
+    const file = join(w.dir, "state", "daemon.json");
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved.effective_policy.lease_hours).toBe(24);
+    saved.renewal = { at: Date.now() - 25 * 3_600_000, boot: null };
+    writeFileSync(file, JSON.stringify(saved));
+    const back = w.start();
+    await until(() => !alive(pids.job), 30_000);
+    // Not an end: it logs in, gets the state (a renewal), and works again.
+    await w.ready(back);
+    expect(back.finished).toBe(false);
+    expect(w.endedOnDisk()).toBeNull();
+    const r: any = await w.relay(
+      await w.ticketFor("exec", { command: "echo renewed" }),
+    );
+    expect(r.reply.result.stdout).toBe("renewed\n");
   });
 
   // Last: it rotates this bay's signing key for the rest of the file.

@@ -121,6 +121,7 @@ describeDb("re-checking the projects a computer serves", () => {
       version: 1,
       mode: "direct",
       duration: null,
+      lease_hours: 24,
       agent_network_id: network,
       network: "on",
       gpu: true,

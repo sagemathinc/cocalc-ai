@@ -45,6 +45,7 @@ import type {
   ComputerEndReason,
   ComputerTicket,
 } from "@cocalc/util/computers/protocol";
+import { leaseHoursText } from "@cocalc/util/computers/policy";
 import { admit, RateLimiter, type AdmissionInput } from "./admission";
 import {
   systemBootClock,
@@ -162,6 +163,8 @@ export class ComputerDaemon {
     { controller: AbortController; agent_id: string; auth: ExecAuth }
   >();
   private ended = false;
+  /** The hard lease lapsed and its work was stopped (until a renewal). */
+  private lapsed = false;
   private timer?: ReturnType<typeof setInterval>;
   // Before anything else (messages arrive before they are authenticated), a
   // global bucket; after admission, one per agent.
@@ -212,6 +215,9 @@ export class ComputerDaemon {
       return { ok: false, refused: ["this computer is busy; try again"] };
     }
     this.tick();
+    if (!this.ended && this.leaseLapsed()) {
+      return { ok: false, refused: [this.lapseText()] };
+    }
     const admission = admit(input, {
       store: this.deps.store,
       hub_now: this.deps.hubClock.now(),
@@ -551,7 +557,7 @@ export class ComputerDaemon {
     const hubNow = this.deps.hubClock.now() ?? this.deps.clocks.wall();
     let applied: ReturnType<DaemonStore["applyState"]>;
     try {
-      applied = this.deps.store.applyState(envelope, hubNow);
+      applied = this.deps.store.applyState(envelope, hubNow, this.bootNow());
       this.deps.fault?.("state-saved");
     } finally {
       this.reconcile();
@@ -586,6 +592,11 @@ export class ComputerDaemon {
       else this.jobs.killAll(reason);
       return { cancelled, killed };
     }
+    if (this.leaseLapsed()) {
+      this.stopForLapse();
+      return { cancelled, killed };
+    }
+    this.lapsed = false;
     const { floors, policy_epoch } = store.state;
     const belowProject = (project_id: string, privacy_epoch: number) =>
       privacy_epoch < (floors.projects[project_id] ?? 0);
@@ -684,6 +695,7 @@ export class ComputerDaemon {
     if (this.ended || this.deps.store.ended != null) {
       return "the session on this computer has ended";
     }
+    if (this.leaseLapsed()) return this.lapseText();
     const state = this.deps.store.state;
     if (job.auth.computer_epoch < state.floors.computer_epoch) {
       return "authorization changed before it started";
@@ -719,8 +731,59 @@ export class ComputerDaemon {
     ) {
       this.endSession("this computer's certificate expired");
     }
+    // The hard lease, offline too: no contact for that long stops all work.
+    if (!this.ended && !this.lapsed && this.leaseLapsed()) {
+      this.stopForLapse();
+    }
     this.jobs.refresh(now);
     this.cleanups.drive(now);
+  }
+
+  /**
+   * Has the hard lease lapsed: no signed state from the home bay for
+   * lease_hours, by the (hub) wall clock or, on the same boot, by the time
+   * since boot (so moving the wall clock back doesn't stretch it)?
+   */
+  leaseLapsed(): boolean {
+    const leaseMs = this.deps.store.effectivePolicy.lease_hours * 3600_000;
+    const renewal = this.deps.store.renewal;
+    const now = this.deps.hubClock.now() ?? this.deps.clocks.wall();
+    if (now - renewal.at > leaseMs) return true;
+    const boot = this.deps.bootClock ?? systemBootClock;
+    if (renewal.boot != null && boot.bootId() === renewal.boot.boot_id) {
+      const since = boot.sinceBootMs();
+      if (since != null && since - renewal.boot.since_boot_ms > leaseMs) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Stop every exec and job: the hard lease lapsed (not an end). */
+  private stopForLapse(): void {
+    this.lapsed = true;
+    const reason = this.lapseText();
+    for (const [id, { controller }] of this.running) {
+      this.deps.fault?.("side-effect");
+      this.stopExec(id, controller);
+    }
+    this.deps.fault?.("side-effect");
+    this.jobs.killAll(reason);
+  }
+
+  private lapseText(): string {
+    return `this computer could not connect to CoCalc for ${leaseHoursText(
+      this.deps.store.effectivePolicy.lease_hours,
+    )}, so its jobs stopped; it runs work again once it reconnects`;
+  }
+
+  private bootNow(): { boot_id: string; since_boot_ms: number } | null {
+    const boot = this.deps.bootClock ?? systemBootClock;
+    const boot_id = boot.bootId();
+    const since_boot_ms = boot.sinceBootMs();
+    return boot_id != null && since_boot_ms != null
+      ? { boot_id, since_boot_ms }
+      : null;
   }
 
   /** Tell the hub something; never let that change an operation's outcome. */

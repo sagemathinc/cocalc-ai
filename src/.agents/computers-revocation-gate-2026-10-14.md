@@ -69,6 +69,33 @@ All of §9 is covered:
   certificate's retired key);
 - the load test: 250 due rows across two concurrent passes.
 
+## The hard lease (William, Oct 15)
+
+A middle path on top of all of the above. The design keeps work running
+unless signed proof says it must stop; the lease bounds the worst case
+without killing work over short outages:
+
+- `lease_hours` is part of the policy. It is set when the computer is
+  connected: default 24, a whole number from 1 to 8760.
+- Like every policy field, it is bound by the pairing transcript and the
+  certificate's policy hash. It can only be narrowed (shortened) later.
+- The rule, word for word everywhere (the request form's "?", the
+  approval, the machine's prompt, the CLI): "If this computer can't
+  connect to CoCalc for N hours, all its jobs stop. It runs work again
+  once it reconnects."
+- Each applied signed state renews the lease, as of its signed
+  `issued_at`. A connected computer gets one at every login (at least
+  every 15 minutes), so the lease needs no new messages. A replayed old
+  state renews nothing.
+- Expiry is checked by the daemon's enforcement timer, so it works
+  offline, against the wall clock and, on the same boot, the time since
+  boot. Expiry kills every job and exec and refuses work, through the
+  same paths as revocation.
+- A lapse is not an end: the next applied state clears it.
+- Limitation: the daemon enforces the lease. If its process is stopped,
+  detached jobs run on until it starts again; then they are killed at
+  once if the lease has lapsed.
+
 ## Invariants
 
 1. **Every daemon that may be running work applies the computer's current

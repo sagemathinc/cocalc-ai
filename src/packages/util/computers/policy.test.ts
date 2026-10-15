@@ -9,6 +9,7 @@ import {
   policyWideningReasons,
   PolicyError,
   type ComputerPolicy,
+  leaseRule,
 } from "./policy";
 
 const NETWORK = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
@@ -18,6 +19,7 @@ function isolated(overrides: Partial<ComputerPolicy> = {}): ComputerPolicy {
     version: 1,
     mode: "isolated",
     duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+    lease_hours: 24,
     agent_network_id: NETWORK,
     network: "on",
     gpu: false,
@@ -55,6 +57,7 @@ describe("parseComputerPolicy", () => {
       version: 1,
       mode: "direct",
       duration: { initial_seconds: 3600, max_seconds: 3600 },
+      lease_hours: 24,
       agent_network_id: NETWORK,
       ...directPolicyDefaults(),
     });
@@ -124,6 +127,36 @@ describe("parseComputerPolicy", () => {
         "localhost:5000/x",
       ],
     });
+  });
+});
+
+describe("the hard lease", () => {
+  it("is a required whole number of hours from 1 to 8760", () => {
+    expect(isolated().lease_hours).toBe(24);
+    expect(isolated({ lease_hours: 1 }).lease_hours).toBe(1);
+    expect(isolated({ lease_hours: 8760 }).lease_hours).toBe(8760);
+    for (const bad of [0, -1, 8761, 1.5, "24", null]) {
+      expect(() => isolated({ lease_hours: bad as any })).toThrow(
+        /lease_hours/,
+      );
+    }
+    const { lease_hours: _, ...missing } = isolated();
+    expect(() => parseComputerPolicy(missing)).toThrow(/lease_hours/);
+  });
+
+  it("a shorter lease is narrower; a longer one widens", () => {
+    const ceiling = isolated({ lease_hours: 24 });
+    expect(policyAtMost(isolated({ lease_hours: 2 }), ceiling)).toBe(true);
+    expect(
+      policyWideningReasons(isolated({ lease_hours: 48 }), ceiling),
+    ).toEqual(["the lease is longer than the ceiling's"]);
+  });
+
+  it("is said the same way everywhere", () => {
+    expect(leaseRule(24)).toBe(
+      "If this computer can't connect to CoCalc for 24 hours, all its jobs stop. It runs work again once it reconnects.",
+    );
+    expect(leaseRule(1)).toMatch(/for 1 hour,/);
   });
 });
 
@@ -247,6 +280,7 @@ describe("policy partial order (the daemon's 'never widen' rule)", () => {
       version: 1,
       mode: "direct",
       duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+      lease_hours: 24,
       agent_network_id: NETWORK,
       ...directPolicyDefaults(),
     });
@@ -263,6 +297,7 @@ describe("requested policies", () => {
     version: 1,
     mode: "isolated",
     duration: { initial_seconds: 3600, max_seconds: 8 * 3600 },
+    lease_hours: 24,
     agent_network_id: NETWORK,
     network: "on",
     gpu: false,
@@ -324,5 +359,17 @@ describe("requested policies", () => {
     const reasons = resolvedPolicyMismatches(requested, widened).join("; ");
     expect(reasons).toMatch(/gpu differs/);
     expect(reasons).toMatch(/mounts differ/);
+  });
+
+  it("the machine can't change the lease it was asked for", () => {
+    const requested = parseRequestedPolicy(request);
+    const longer = parseComputerPolicy({
+      ...request,
+      lease_hours: 8760,
+      mounts: [],
+    });
+    expect(resolvedPolicyMismatches(requested, longer).join("; ")).toMatch(
+      /lease_hours differs/,
+    );
   });
 });

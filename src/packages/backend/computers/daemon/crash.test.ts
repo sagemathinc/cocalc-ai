@@ -83,6 +83,7 @@ describe("crash points of applying a computer's state", () => {
     version: 1,
     mode: "direct",
     duration: null,
+    lease_hours: 24,
     agent_network_id,
     ...directPolicyDefaults(),
   });
@@ -131,8 +132,9 @@ describe("crash points of applying a computer's state", () => {
     });
   });
 
-  afterEach(() => {
-    for (const pid of pids.splice(0)) {
+  afterEach(async () => {
+    const left = pids.splice(0);
+    for (const pid of left) {
       try {
         process.kill(-pid, "SIGKILL");
       } catch {}
@@ -140,7 +142,14 @@ describe("crash points of applying a computer's state", () => {
         process.kill(pid, "SIGKILL");
       } catch {}
     }
-    rmSync(dir, { recursive: true, force: true });
+    // Work left running (on purpose) may still be writing its logs.
+    await until(() => left.every((pid) => !alive(pid)), 5000).catch(() => {});
+    rmSync(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   /** A ticketed operation as the hub would send it (at this privacy epoch). */

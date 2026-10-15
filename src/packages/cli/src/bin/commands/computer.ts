@@ -34,6 +34,11 @@ import {
   DEFAULT_EXEC_TIMEOUT_MS,
   MAX_EXEC_TIMEOUT_MS,
 } from "@cocalc/util/computers/operations";
+import {
+  DEFAULT_LEASE_HOURS,
+  MAX_LEASE_HOURS,
+  MIN_LEASE_HOURS,
+} from "@cocalc/util/computers/policy";
 import type { ProjectCommandDeps } from "./project";
 
 /** An exec is settled once refused, or done/failed/unknown on the computer. */
@@ -271,12 +276,18 @@ export function registerComputerCommand(
       "no time limit (a machine the owner keeps connected)",
     )
     .option(
+      "--lease-hours <n>",
+      `if the computer can't connect to CoCalc for this many hours, all its jobs stop; it runs work again once it reconnects (${MIN_LEASE_HOURS} to ${MAX_LEASE_HOURS}, default ${DEFAULT_LEASE_HOURS})`,
+      `${DEFAULT_LEASE_HOURS}`,
+    )
+    .option(
       "--network <id>",
       "agent network it serves (default: yours, if one)",
     )
     .action(async (name: string, opts, cmd) => {
       const hours = Number(opts.hours);
       const maxHours = Number(opts.maxHours);
+      const leaseHours = Number(opts.leaseHours);
       const policy: Record<string, unknown> = {
         version: 1,
         mode: "direct",
@@ -287,6 +298,7 @@ export function registerComputerCommand(
                 initial_seconds: Math.round(hours * 3600),
                 max_seconds: Math.round(Math.max(hours, maxHours) * 3600),
               },
+        lease_hours: leaseHours,
         network: "on",
         gpu: true,
         mounts: [],
@@ -390,7 +402,9 @@ export function registerComputerCommand(
       "<command...>",
       "after --: one quoted shell line ('du -sh ~/* | sort -h'), or a command and its arguments",
     )
-    .description("start a long-running job there (see jobs, logs, kill)")
+    .description(
+      "start a long-running job there (see jobs, logs, kill); every job stops if the computer can't connect to CoCalc for its lease (lease_hours in `computer show`)",
+    )
     .requiredOption("--description <text>", "what it is (others can see it)")
     .option("--name <name>", "a name for the job")
     .option("--exclusive", "refuse if another job has this name")

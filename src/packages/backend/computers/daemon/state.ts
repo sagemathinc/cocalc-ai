@@ -56,6 +56,17 @@ export interface PersistedDaemon {
   directory: { generation: number; keys: TrustedKey[] };
   /** Set (for good) when the home bay ended this computer. */
   ended?: { reason: ComputerEndReason } | null;
+  /**
+   * The hard lease's last renewal: the (hub) time of the newest signed
+   * state applied, and the same moment on this boot's clock where the OS
+   * has one, so a wall-clock jump can't stretch the lease.
+   */
+  renewal?: LeaseRenewal;
+}
+
+export interface LeaseRenewal {
+  at: number;
+  boot?: { boot_id: string; since_boot_ms: number } | null;
 }
 
 export class DaemonStateError extends Error {}
@@ -138,6 +149,8 @@ export class DaemonStore {
       effective_policy: ceiling,
       certificate,
       directory,
+      // Pairing is contact: the lease runs from now.
+      renewal: { at: now, boot: null },
     };
     const store = new DaemonStore(dir, data);
     store.save();
@@ -217,6 +230,13 @@ export class DaemonStore {
     return { raised };
   }
 
+  /** The hard lease's last renewal (pairing, then each signed state). */
+  get renewal(): LeaseRenewal {
+    return (
+      this.data.renewal ?? { at: this.data.certificate.payload.not_before }
+    );
+  }
+
   /** The home bay ended this computer for good (persisted), or null. */
   get ended(): PersistedDaemon["ended"] {
     return this.data.ended ?? null;
@@ -238,6 +258,7 @@ export class DaemonStore {
   applyState(
     envelope: unknown,
     hubNow: number,
+    boot?: { boot_id: string; since_boot_ms: number } | null,
   ): { state: ComputerState; envelope_hash: string } {
     const env = parseSignedEnvelope(envelope, parseComputerState, "state");
     const key = this.trustedKey(env.kid, this.state.home_bay_id, hubNow);
@@ -271,11 +292,28 @@ export class DaemonStore {
         policy_epoch = state.policy_epoch;
       }
     }
+    // Contact renews the hard lease, as of the state's own signed time (never
+    // later than now): replaying an old state renews nothing.
+    const renewedAt = Math.min(state.issued_at, hubNow);
+    const renewal =
+      renewedAt > this.renewal.at
+        ? {
+            at: renewedAt,
+            boot:
+              boot == null
+                ? null
+                : {
+                    boot_id: boot.boot_id,
+                    since_boot_ms: boot.since_boot_ms - (hubNow - renewedAt),
+                  },
+          }
+        : this.renewal;
     this.data = {
       ...this.data,
       state: { ...this.state, floors, policy_epoch },
       effective_policy: policy,
       ended: this.data.ended ?? state.ended ?? null,
+      renewal,
     };
     this.save();
     if (widening.length > 0) {

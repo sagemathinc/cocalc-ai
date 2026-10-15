@@ -82,6 +82,7 @@ describe("the computer daemon (direct mode)", () => {
     version: 1,
     mode: "direct",
     duration: null,
+    lease_hours: 24,
     agent_network_id,
     ...directPolicyDefaults(),
   });
@@ -522,6 +523,106 @@ describe("the computer daemon (direct mode)", () => {
       expect((reply as any).refused).toEqual([
         "the session on this computer has ended",
       ]);
+    });
+
+    it("the hard lease: no signed state for lease_hours stops every job and exec; a fresh state resumes work, an old one doesn't", async () => {
+      let shift = 0;
+      clocks = {
+        wall: () => Date.now() + shift,
+        continuous: systemClocks.continuous,
+      };
+      daemon = makeDaemon();
+      // A narrowed lease of 1 hour (the ceiling's is the default 24): the
+      // state that narrows it is itself contact.
+      const lease1 = { ...ceiling, lease_hours: 1 };
+      const narrow = stateEnvelope({ policy_epoch: 1, policy: lease1 });
+      daemon.applyState(narrow);
+      expect(store.effectivePolicy.lease_hours).toBe(1);
+      // Tickets in the (shifted) hub time, at the new policy epoch.
+      const at = (op: "run" | "exec", request: unknown) => {
+        const t = Date.now() + shift;
+        return message(op, request, {
+          ticket: {
+            policy_epoch: 1,
+            issued_at: t,
+            start_by: t + 30_000,
+            run_expires_at: t + 3_600_000,
+          },
+          attestation: { issued_at: t, not_after: t + 30_000 },
+        });
+      };
+      const started = ok(await daemon.handle(at("run", runJob("sleep 30"))));
+      const job_id = (started.result as any).job_id;
+      const execDone = daemon.handle(at("exec", exec("sleep 30")));
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "running";
+      });
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Two hours without contact (offline: only the enforcement timer).
+      shift = 2 * 3_600_000;
+      expect(daemon.leaseLapsed()).toBe(true);
+      daemon.tick();
+      await waitFor(() => {
+        daemon.jobs.refresh();
+        return daemon.jobs.get(job_id)?.state === "killed";
+      });
+      await execDone;
+      const refused = await daemon.handle(at("exec", exec("true")));
+      expect((refused as any).refused).toEqual([
+        expect.stringMatching(/could not connect to CoCalc for 1 hour/),
+      ]);
+      // Replaying the old state renews nothing.
+      daemon.applyState(narrow);
+      expect(daemon.leaseLapsed()).toBe(true);
+      // A fresh one does; it is not an end.
+      daemon.applyState(
+        stateEnvelope({
+          state_version: "2",
+          policy_epoch: 1,
+          policy: lease1,
+          issued_at: Date.now() + shift,
+        }),
+      );
+      expect(daemon.leaseLapsed()).toBe(false);
+      expect(daemon.sessionEnded).toBe(false);
+      expect(store.ended).toBeNull();
+      const again = ok(await daemon.handle(at("exec", exec("echo back"))));
+      expect((again.result as any).stdout).toBe("back\n");
+    });
+
+    it("the hard lease also counts time since boot, so setting the wall clock back doesn't stretch it", () => {
+      let since = 10_000;
+      let bootId = "boot-1";
+      const hubClock = new HubClock(clocks);
+      hubClock.observe(0);
+      daemon = new ComputerDaemon({
+        stateDir: dir,
+        store,
+        clocks,
+        hubClock,
+        session: new SessionClock(clocks, { deadline_ms: null, max_ms: null }),
+        workdir,
+        shell: "/bin/bash",
+        killGraceMs: 200,
+        bootClock: { bootId: () => bootId, sinceBootMs: () => since },
+      });
+      daemon.applyState(
+        stateEnvelope({
+          policy_epoch: 1,
+          policy: { ...ceiling, lease_hours: 1 },
+        }),
+      );
+      expect(store.renewal.boot?.boot_id).toBe("boot-1");
+      since += 30 * 60_000;
+      expect(daemon.leaseLapsed()).toBe(false);
+      // Two hours since boot, while the wall clock says no time passed.
+      since += 90 * 60_000;
+      expect(daemon.leaseLapsed()).toBe(true);
+      // After a reboot only the wall clock is left.
+      bootId = "boot-2";
+      expect(daemon.leaseLapsed()).toBe(false);
     });
 
     it("once ended, drain sees every job and exec gone, SIGKILL included, before the daemon may exit", async () => {

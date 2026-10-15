@@ -42,7 +42,7 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   }),
 }));
 
-import { ReconnectComputer } from "./computer-pairing";
+import { approvalText, ReconnectComputer } from "./computer-pairing";
 
 // Time-limited and still within its time: pairing again revokes the old one.
 const m1 = {
@@ -59,6 +59,7 @@ const m1 = {
     version: 1,
     mode: "direct",
     duration: { initial_seconds: 3600, max_seconds: 28_800 },
+    lease_hours: 24,
     agent_network_id: "n1",
     mounts: [],
   },
@@ -79,6 +80,7 @@ test("pairs again: the new request first, then the old computer is disconnected;
       policy: expect.objectContaining({
         agent_network_id: "n1",
         duration: { initial_seconds: 3600, max_seconds: 28_800 },
+        lease_hours: 24,
         mounts: [],
       }),
     }),
@@ -98,6 +100,33 @@ test("pairs again: the new request first, then the old computer is disconnected;
     ),
   ).toBeTruthy();
   expect(document.body.textContent).not.toContain(location.origin);
+});
+
+test("the hard lease is a form item (24 by default), and the request carries what is entered", async () => {
+  render(<ReconnectComputer computer={m1} />);
+  const input = screen.getByRole("spinbutton", { name: "Hard lease in hours" });
+  expect((input as HTMLInputElement).value).toBe("24");
+  await userEvent.clear(input);
+  await userEvent.type(input, "6");
+  await userEvent.click(screen.getByRole("button", { name: "Pair @m1 again" }));
+  await waitFor(() =>
+    expect(mockApi.createComputerRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        policy: expect.objectContaining({ lease_hours: 6 }),
+      }),
+    ),
+  );
+});
+
+test("approving says the rule", () => {
+  const text = approvalText({
+    agent_network: { members: [1, 2], title: "lab" },
+    machine: { user: "sage" },
+    requested_policy: { duration: null, lease_hours: 12 },
+  } as any);
+  expect(text).toContain(
+    "If this computer can't connect to CoCalc for 12 hours, all its jobs stop. It runs work again once it reconnects.",
+  );
 });
 
 test("if the request can't be made, the old computer is untouched", async () => {
