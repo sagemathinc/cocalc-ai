@@ -27,6 +27,7 @@ import {
 import {
   ACP_PROJECT_RESTART_FENCE_REASON,
   ACP_PROJECT_RESUME_FENCE_REASON,
+  ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
   countRunningAcpJobsForWorker,
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
@@ -629,12 +630,17 @@ async function requestWorkerDrain(
 export async function fenceProjectHostAcpWork({
   project_id,
   resume = false,
-  reason = resume
-    ? ACP_PROJECT_RESUME_FENCE_REASON
-    : ACP_PROJECT_RESTART_FENCE_REASON,
+  runtimeLost = false,
+  reason = runtimeLost
+    ? ACP_PROJECT_RUNTIME_LOST_FENCE_REASON
+    : resume
+      ? ACP_PROJECT_RESUME_FENCE_REASON
+      : ACP_PROJECT_RESTART_FENCE_REASON,
 }: {
   project_id: string;
   reason?: string;
+  /** The project's container disappeared (crash, OOM), not a stop. */
+  runtimeLost?: boolean;
   /** A restart or lost runtime: resume the work once the project runs
    * again. A stop leaves it stopped. Nothing runs until then either way. */
   resume?: boolean;

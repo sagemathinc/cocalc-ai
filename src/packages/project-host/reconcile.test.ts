@@ -362,7 +362,7 @@ describe("reconcileOnce", () => {
     expect(mockFence).toHaveBeenCalledWith({
       project_id,
       resume: true,
-      reason: "project stopped unexpectedly; work resumes when it runs again",
+      runtimeLost: true,
     });
     expect(mockResumeDiscovery).toHaveBeenCalledTimes(1);
   });
