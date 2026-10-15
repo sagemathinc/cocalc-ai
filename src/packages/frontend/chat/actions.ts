@@ -525,8 +525,9 @@ export class ChatActions extends Actions<ChatState> {
   // this prevents that at least.
   public chatStreams: Set<string> = new Set([]);
   public frameId: string = "";
-  // Surface capability only; each thread must separately opt in via acp_config.
-  public workbenchEnabled = false;
+  // Whether agent turns sent from here are workbench-enabled (publish their
+  // durable results as cards). On for every surface unless one turns it off.
+  public workbenchEnabled = true;
   // this might not be set for deprecated side chat:
   public frameTreeActions?: CodeEditorActions;
   public openExportModal?: (opts?: ChatExportOpenRequest) => void;

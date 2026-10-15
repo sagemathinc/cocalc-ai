@@ -55,7 +55,12 @@ test("a turn carries only its changing values", () => {
     `COCALC_WORKBENCH=1 ${CLI} project chat artifact publish --project `,
   );
   expect(prompt).toContain("--message-date 2026-09-30T00:00:00.000Z");
-  for (const workbench of [false, undefined]) {
+  // A turn without a surface flag (an agent message, sensor wake or
+  // scheduled prompt) has workbench too.
+  expect(harnessPrompt(request(undefined))).toContain(
+    "Workbench is enabled for this turn.",
+  );
+  for (const workbench of [false]) {
     const other = harnessPrompt(request(workbench));
     expect(other).toContain("Workbench is not enabled for this turn.");
     expect(other).toContain("Write mathematics as LaTeX");

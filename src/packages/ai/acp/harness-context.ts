@@ -85,10 +85,13 @@ export function harnessPrompt(
   };
   if (!context.path || !context.thread_id || !context.message_date)
     return request.prompt;
+  // On unless a surface explicitly turned it off: turns started by agent
+  // messages, sensor wakes and scheduled prompts carry no surface flag.
+  const workbench = request.chat?.workbench !== false;
   return `${inlineSessionGuidance ? `${harnessSessionGuidance(false)}\n` : ""}[CoCalc turn context]
-${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.\n` : ""}Workbench is ${request.chat?.workbench ? "enabled" : "not enabled"} for this turn.
+${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.\n` : ""}Workbench is ${workbench ? "enabled" : "not enabled"} for this turn.
 Publication context: ${JSON.stringify(context)}
-${turnEssentials(request.chat?.workbench === true, context)}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
+${turnEssentials(workbench, context)}${request.agent_memory_context ? `\n${request.agent_memory_context}` : ""}
 [/CoCalc turn context]
 
 ${request.prompt}`;

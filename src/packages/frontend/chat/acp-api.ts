@@ -531,7 +531,7 @@ export async function processAcpLLM({
   chatMetadata.thread_title = actions.getThreadMetadata?.(thread_id, {
     threadId: thread_id,
   })?.name;
-  chatMetadata.workbench = actions.workbenchEnabled === true;
+  chatMetadata.workbench = actions.workbenchEnabled !== false;
   let acknowledged = false;
   // Persist the pre-acknowledgement state before waiting for the chat file or
   // backend. This keeps the truthful "submitting" status visible when a newly

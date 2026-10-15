@@ -175,7 +175,7 @@ describe("processAcpLLM", () => {
   });
 
   it.each([
-    [undefined, false],
+    [undefined, true],
     [true, true],
     [false, false],
   ])("uses steer with surface=%s (workbench=%s)", async (surface, enabled) => {
@@ -1171,7 +1171,7 @@ describe("queued ACP controls", () => {
           user_parent_message_id: undefined,
           parent_message_id: "user-msg-missing",
           thread_id: "thread-missing",
-          workbench: false,
+          workbench: true,
         }),
       }),
       { timeout: expect.any(Number) },

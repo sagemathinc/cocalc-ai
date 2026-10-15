@@ -85,7 +85,8 @@ function makeSyncdb(initialState: string) {
 function makeChatActions(state: string) {
   const syncdb = makeSyncdb(state);
   return {
-    workbenchEnabled: false,
+    // The ChatActions default.
+    workbenchEnabled: true,
     sendChat: jest.fn(),
     getMessagesInThread: jest.fn(),
     clearAllFilters: jest.fn(),
@@ -146,7 +147,7 @@ describe("chat/register", () => {
         instanceKey: "onboarding",
         workbenchEnabled: enabled,
       });
-      expect(actions.workbenchEnabled).toBe(enabled === true);
+      expect(actions.workbenchEnabled).toBe(enabled !== false);
     },
   );
 
