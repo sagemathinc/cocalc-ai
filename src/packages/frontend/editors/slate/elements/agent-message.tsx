@@ -33,6 +33,8 @@ export interface AgentMessage extends SlateElement {
   source_label?: string;
   source_agent_id?: string;
   source_project_id?: string;
+  /** Waiting for the recipient's current turn to end (render state only). */
+  delivery?: "queued" | "queued-fallback";
 }
 
 function deliveryLabel(activity: AgentNetworkActivity): string {
@@ -105,8 +107,11 @@ export function agentMessageFromMarkdownFence({
   let source_agent_id: string | undefined;
   let source_project_id: string | undefined;
   let direction: "incoming" | "outgoing" | "report" | undefined;
+  let delivery: "queued" | "queued-fallback" | undefined;
   for (const token of tokens) {
-    if (
+    if (token === "delivery=queued" || token === "delivery=queued-fallback") {
+      delivery = token.slice(9) as "queued" | "queued-fallback";
+    } else if (
       token === "direction=incoming" ||
       token === "direction=outgoing" ||
       token === "direction=report"
@@ -138,6 +143,7 @@ export function agentMessageFromMarkdownFence({
     ...(source_agent_id ? { source_agent_id } : {}),
     ...(source_project_id ? { source_project_id } : {}),
     ...(direction ? { direction } : {}),
+    ...(delivery ? { delivery } : {}),
     children: markdown_to_slate(value, true),
   };
 }
@@ -347,6 +353,22 @@ export function AgentMessageElement({
       >
         <InfoCircleOutlined />
       </button>
+      {message.delivery && (
+        <div
+          contentEditable={false}
+          role="status"
+          style={{
+            flex: "1 0 100%",
+            color: UI_COLORS.warning,
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        >
+          {message.delivery === "queued"
+            ? "Queued: this Agent Network delivers messages when the recipient's current turn ends, not during it."
+            : "Queued: live delivery was unavailable, so this waits until the recipient's current turn ends."}
+        </div>
+      )}
       {expanded && (
         <div
           contentEditable={false}

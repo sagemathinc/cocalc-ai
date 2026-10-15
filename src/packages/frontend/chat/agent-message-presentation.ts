@@ -31,6 +31,11 @@ type AgentMessageEvidence = {
   source_label?: string;
   source_agent_id?: string;
   source_project_id?: string;
+  /**
+   * Shown only while the message waits: its network queues messages until the
+   * recipient's current turn ends. Rendering state, never saved with an edit.
+   */
+  delivery?: "queued" | "queued-fallback";
 };
 
 export function agentMessageDirectionFromMarkdown(
@@ -63,6 +68,7 @@ export function agentMessageFence(
     evidence?.source_project_id
       ? `project=${evidence.source_project_id}`
       : undefined,
+    evidence?.delivery ? `delivery=${evidence.delivery}` : undefined,
   ].filter(Boolean);
   const info = `agent-message${correlation}${metadata.length ? ` ${metadata.join(" ")}` : ""}`;
   return `${fence}${info}\n${value}\n${fence}`;
