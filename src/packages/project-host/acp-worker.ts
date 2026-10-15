@@ -1,4 +1,5 @@
 import { initAgentMemoryContextProvider } from "./acp/agent-memory-context";
+import { initAcpProjectMembership } from "./acp/project-membership";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
@@ -107,6 +108,7 @@ function configureProjectHostAcpRuntime(): void {
   wireSystemApi();
   wireHostsApi();
   wireNotificationsApi();
+  initAcpProjectMembership();
   setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {
     const accountId = `${account_id ?? ""}`.trim();
     if (accountId) {

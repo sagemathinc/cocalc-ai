@@ -183,6 +183,42 @@ export function getAcpSteer({
     .get(project_id, path, user_message_id) as AcpSteerRow | undefined;
 }
 
+/** Guidance handled for a thread in [since, until], newest first. */
+export function listHandledAcpSteersForThread({
+  project_id,
+  path,
+  thread_id,
+  since,
+  until,
+  limit = 20,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  since: number;
+  until: number;
+  limit?: number;
+}): AcpSteerRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND state = 'handled'
+         AND handled_at >= ? AND handled_at <= ?
+       ORDER BY handled_at DESC
+       LIMIT ?`,
+    )
+    .all(
+      project_id,
+      path,
+      thread_id,
+      since,
+      until,
+      Math.max(1, Math.floor(limit)),
+    ) as AcpSteerRow[];
+}
+
 export function listPendingAcpSteers(
   limit = 50,
   now = Date.now(),

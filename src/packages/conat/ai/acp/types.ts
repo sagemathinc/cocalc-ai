@@ -214,7 +214,9 @@ export type AcpControlResponse = {
     | "error"
     | "canceled"
     | "interrupted"
-    | "missing";
+    | "missing"
+    // A project restart holds the message; it runs once the project is back.
+    | "held";
 };
 
 export type AcpAttentionSourceKind =

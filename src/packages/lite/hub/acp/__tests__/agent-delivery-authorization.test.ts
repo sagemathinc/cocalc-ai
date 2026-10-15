@@ -3,6 +3,7 @@ import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
+  setAcpProjectMembershipChecker,
 } from "../agent-delivery-authorization";
 
 const request = (): AcpRequest => ({
@@ -175,4 +176,57 @@ test("logs never see a wake permit, and it is dropped once consumed", async () =
     authorizeSensorExecution: jest.fn(async () => {}),
   });
   expect(JSON.stringify(value)).not.toContain("secret-permit");
+});
+
+describe("project membership at execution", () => {
+  const api = {
+    authorizeRpcExecution: jest.fn(async () => {}),
+    authorizeSensorExecution: jest.fn(async () => {}),
+    authorizeRpcReportExecution: jest.fn(async () => {}),
+  };
+  const human = (): AcpRequest => {
+    const value = request();
+    delete value.chat!.agent_delivery_id;
+    delete value.chat!.agent_delivery_generation;
+    return value;
+  };
+  afterEach(() => setAcpProjectMembershipChecker(undefined));
+
+  test("a person's message runs only while they are a collaborator", async () => {
+    const members = new Set(["recipient"]);
+    const checker = jest.fn(({ account_id }) => members.has(account_id));
+    setAcpProjectMembershipChecker(checker);
+    await expect(
+      authorizeAgentDeliveryExecution(human(), api),
+    ).resolves.toBeUndefined();
+    expect(checker).toHaveBeenCalledWith({
+      account_id: "recipient",
+      project_id: "project",
+    });
+    members.delete("recipient");
+    await expect(authorizeAgentDeliveryExecution(human(), api)).rejects.toThrow(
+      "no longer a collaborator",
+    );
+  });
+
+  test("an unanswerable membership check fails closed", async () => {
+    setAcpProjectMembershipChecker(() => {
+      throw new Error("database unavailable");
+    });
+    await expect(authorizeAgentDeliveryExecution(human(), api)).rejects.toThrow(
+      "no longer a collaborator",
+    );
+    setAcpProjectMembershipChecker(() => true);
+    const noAccount = human();
+    noAccount.account_id = "";
+    await expect(
+      authorizeAgentDeliveryExecution(noAccount, api),
+    ).rejects.toThrow("no longer a collaborator");
+  });
+
+  test("without a checker (single-user Lite) nothing changes", async () => {
+    await expect(
+      authorizeAgentDeliveryExecution(human(), api),
+    ).resolves.toBeUndefined();
+  });
 });

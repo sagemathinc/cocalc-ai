@@ -183,6 +183,28 @@ import { getRecordedProjectVolumeIdentity } from "../sqlite/project-volumes";
 import { effectiveProjectVolumeQuotaBytes } from "../sqlite/volume-quota-overrides";
 
 const logger = getLogger("project-host:hub:projects");
+
+// The project runs: agent turns fenced by a restart (or a lost runtime)
+// resume now. Every successful start calls this, including one that found
+// the project already running.
+async function releaseFencedAgentWork(project_id: string): Promise<void> {
+  try {
+    const { releaseAcpProjectFenceResumesAfterStart } =
+      await import("@cocalc/lite/hub/acp");
+    const released = releaseAcpProjectFenceResumesAfterStart(project_id);
+    if (released > 0) {
+      logger.info("start: resuming agent work fenced by a restart", {
+        project_id,
+        released,
+      });
+    }
+  } catch (err) {
+    logger.warn("start: failed to resume fenced agent work", {
+      project_id,
+      err: `${err}`,
+    });
+  }
+}
 const CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS = 45_000;
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
 const SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS = Math.max(
@@ -2152,6 +2174,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
             async () => await runnerApi.status({ project_id }),
           );
           if (current?.state === "running" || current?.state === "starting") {
+            // A start still in progress releases when it finishes.
+            if (current.state === "running") {
+              await releaseFencedAgentWork(project_id);
+            }
             timings.phase_timings_ms.total = Object.values(
               timings.phase_timings_ms,
             ).reduce((sum, value) => sum + value, 0);
@@ -2577,6 +2603,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           runner_phase_timings_ms: runnerPhaseTimings,
         },
       });
+      await releaseFencedAgentWork(project_id);
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.
       ensureProjectRow({
@@ -2621,21 +2648,29 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     project_id,
     force,
     runtime_exit_reason,
+    resume_agent_turns = false,
   }: {
     project_id: string;
     force?: boolean;
     runtime_exit_reason?: ProjectState["runtime_exit_reason"];
+    /** Part of a restart: running agent turns resume after the next start. */
+    resume_agent_turns?: boolean;
   }): Promise<void> {
     const activity_id = `stop:${project_id}:${Date.now()}`;
     const { pauseHarnessDiscovery } =
       await import("@cocalc/lite/hub/acp/harness-runtime");
     const resumeDiscovery = pauseHarnessDiscovery(project_id);
     beginProjectHostActivity(activity_id, "stop");
-    logger.debug("stop: project-host request received", { project_id, force });
+    logger.debug("stop: project-host request received", {
+      project_id,
+      force,
+      resume_agent_turns,
+    });
+    const resume = resume_agent_turns === true;
     try {
       // ACP sidecars share the project network namespace. Release their live
       // runtimes before Podman removes the primary container they depend on.
-      await fenceProjectHostAcpWork({ project_id });
+      await fenceProjectHostAcpWork({ project_id, resume });
       const status = await runnerApi.stop({ project_id, force });
       noteProjectHostActivityProgress(activity_id);
       let finalState = status?.state ?? "opened";
@@ -2668,7 +2703,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         );
       }
       // Retain the post-stop sweep for late worker/queue completion races.
-      await fenceProjectHostAcpWork({ project_id });
+      await fenceProjectHostAcpWork({ project_id, resume });
       if (!syntheticRuntimeProbeProjects.has(project_id)) {
         try {
           const base = getMountPoint();

@@ -1626,7 +1626,11 @@ export async function startMasterRegistration({
     async startProjectIdempotent(opts) {
       return await startProjectRequest(opts, true);
     },
-    async stopProject({ project_id, runtime_lifecycle_revision }) {
+    async stopProject({
+      project_id,
+      runtime_lifecycle_revision,
+      resume_agent_turns,
+    }) {
       await awaitRuntimeReadyForControl("stopProject");
       if (!hubApi.projects?.stop) {
         throw Error("stop not available");
@@ -1636,6 +1640,7 @@ export async function startMasterRegistration({
         project_id,
         runtime_lifecycle_revision,
         require_runtime_lifecycle_revision: true,
+        resume_agent_turns: resume_agent_turns === true,
       } as any);
       return { project_id, state: (status as any)?.state };
     },

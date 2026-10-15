@@ -418,11 +418,14 @@ export class BaseProject extends EventEmitter {
     fence_inflight_start = false,
     require_host_fence = false,
     runtime_lifecycle_revision,
+    resume_agent_turns = false,
   }: {
     force?: boolean;
     fence_inflight_start?: boolean;
     require_host_fence?: boolean;
     runtime_lifecycle_revision?: number;
+    /** Part of a restart: running agent turns resume after the start. */
+    resume_agent_turns?: boolean;
   } = {}): Promise<void> => {
     await this.ensureLocalOwnership();
     if (isWorkspaceProjectRuntime()) {
@@ -446,6 +449,7 @@ export class BaseProject extends EventEmitter {
     if (require_host_fence) {
       await stopProjectOnHost(this.project_id, {
         runtime_lifecycle_revision,
+        ...(resume_agent_turns ? { resume_agent_turns: true } : {}),
       });
       return;
     }
@@ -465,11 +469,14 @@ export class BaseProject extends EventEmitter {
       );
       return;
     }
-    if (runtime_lifecycle_revision == null) {
+    if (runtime_lifecycle_revision == null && !resume_agent_turns) {
       await stopProjectOnHost(this.project_id);
     } else {
       await stopProjectOnHost(this.project_id, {
-        runtime_lifecycle_revision,
+        ...(runtime_lifecycle_revision == null
+          ? {}
+          : { runtime_lifecycle_revision }),
+        ...(resume_agent_turns ? { resume_agent_turns: true } : {}),
       });
     }
   };
@@ -490,6 +497,8 @@ export class BaseProject extends EventEmitter {
       fence_inflight_start: true,
       require_host_fence: true,
       runtime_lifecycle_revision,
+      // Agent turns cut off by the restart resume once it is running again.
+      resume_agent_turns: true,
     });
     await this.start({
       ...opts,

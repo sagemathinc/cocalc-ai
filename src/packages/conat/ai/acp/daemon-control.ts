@@ -40,6 +40,8 @@ interface AcpDaemonControlApi {
   fenceProject: (opts: {
     project_id: string;
     reason: string;
+    /** A restart: the fenced work resumes once the project runs again. */
+    resume?: boolean;
   }) => Promise<AcpProjectFenceResult>;
 }
 
@@ -97,6 +99,7 @@ export async function initAcpDaemonControlService({
   fenceProject: (opts: {
     project_id: string;
     reason: string;
+    resume?: boolean;
   }) => Promise<AcpProjectFenceResult> | AcpProjectFenceResult;
 }) {
   return await client.service<AcpDaemonControlApi>(
@@ -108,7 +111,11 @@ export async function initAcpDaemonControlService({
       async requestDrain(opts?: { reason?: string | null }) {
         return await requestDrain(opts);
       },
-      async fenceProject(opts: { project_id: string; reason: string }) {
+      async fenceProject(opts: {
+        project_id: string;
+        reason: string;
+        resume?: boolean;
+      }) {
         return await fenceProject(opts);
       },
     },

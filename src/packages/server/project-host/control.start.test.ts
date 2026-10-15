@@ -2120,5 +2120,16 @@ describe("startProjectOnHost placement", () => {
       project_id: "proj-1",
       runtime_lifecycle_revision: 7,
     });
+
+    // A restart asks the host to resume the agent turns the stop cuts off.
+    await stopProjectOnHost("proj-1", {
+      runtime_lifecycle_revision: 8,
+      resume_agent_turns: true,
+    });
+    expect(stopProject).toHaveBeenLastCalledWith({
+      project_id: "proj-1",
+      runtime_lifecycle_revision: 8,
+      resume_agent_turns: true,
+    });
   });
 });

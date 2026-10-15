@@ -358,7 +358,12 @@ describe("reconcileOnce", () => {
       http_port: null,
       ssh_port: null,
     });
-    expect(mockFence).toHaveBeenCalledWith({ project_id });
+    // A lost runtime is treated like a restart: the turns resume later.
+    expect(mockFence).toHaveBeenCalledWith({
+      project_id,
+      resume: true,
+      runtimeLost: true,
+    });
     expect(mockResumeDiscovery).toHaveBeenCalledTimes(1);
   });
 

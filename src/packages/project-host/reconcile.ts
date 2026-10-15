@@ -224,7 +224,12 @@ async function reportRuntimeLost(project_id: string, now: number) {
       try {
         const { fenceProjectHostAcpWork } =
           await import("./hub/acp/worker-manager");
-        await fenceProjectHostAcpWork({ project_id });
+        // Like a restart: the agent turns resume once the project runs again.
+        await fenceProjectHostAcpWork({
+          project_id,
+          resume: true,
+          runtimeLost: true,
+        });
         recordRuntimeLost(project_id, now);
       } finally {
         resumeDiscovery();

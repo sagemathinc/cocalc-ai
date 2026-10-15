@@ -1615,6 +1615,8 @@ export async function stopProjectOnHost(
   opts?: {
     timeout_ms?: number;
     runtime_lifecycle_revision?: number;
+    /** Part of a restart: running agent turns resume after the next start. */
+    resume_agent_turns?: boolean;
   },
 ): Promise<void> {
   const runtime_lifecycle_revision =
@@ -1628,6 +1630,7 @@ export async function stopProjectOnHost(
     const response = await client.stopProject({
       project_id,
       runtime_lifecycle_revision,
+      ...(opts?.resume_agent_turns ? { resume_agent_turns: true } : {}),
     });
     await saveProjectStateSnapshot(project_id, response.state ?? "opened");
   } catch (err) {

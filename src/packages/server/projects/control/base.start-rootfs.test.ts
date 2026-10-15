@@ -250,6 +250,7 @@ describe("BaseProject.start RootFS sealing", () => {
     );
     expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
       runtime_lifecycle_revision: 7,
+      resume_agent_turns: true,
     });
     expect(startProjectOnHostMock).not.toHaveBeenCalled();
 
