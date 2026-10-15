@@ -5395,6 +5395,8 @@ OVERSIZED_FILES_MAX_PATHS = 20
 OVERSIZED_FILES_MAX_RECORD_BYTES = 1024 * 1024
 OVERSIZED_SCAN_MAX_SUBPATHS = 1000
 OVERSIZED_SCAN_MAX_RUNTIME_SECONDS = 10 * 60
+# One open directory per level: well below the open-file limit.
+OVERSIZED_SCAN_MAX_DEPTH = 512
 # The unprivileged caller cannot signal this root-owned helper, so its own
 # timeout cannot stop Rustic. Supervise every child here instead.
 RUSTIC_MAX_RUNTIME_SECONDS = 12 * 60 * 60
@@ -5777,6 +5779,11 @@ def terminate_process_group(proc):
     proc.wait()
 
 
+# The caller (sudo) as of this helper's start: a helper reparented since
+# then has lost its caller, also between supervised commands.
+CALLER_PID = os.getppid()
+
+
 def run_supervised(args, *, deadline, quiet=False, on_stdout=None, **kwargs):
     """Run args in its own process group and never leave it running.
 
@@ -5784,7 +5791,12 @@ def run_supervised(args, *, deadline, quiet=False, on_stdout=None, **kwargs):
     the whole group when the caller disappears, the deadline passes, or this
     helper is interrupted, and return the exit status otherwise.
     """
-    caller = os.getppid()
+    caller = CALLER_PID
+    if os.getppid() != caller:
+        fail(f"caller exited; not starting {os.path.basename(args[0])}")
+    # A shared deadline (several scans, then Rustic) may already be spent.
+    if time.monotonic() >= deadline:
+        fail(f"deadline exceeded; not starting {os.path.basename(args[0])}")
     if on_stdout is not None:
         stdout = subprocess.PIPE
     else:
@@ -5835,18 +5847,74 @@ def add_oversized_file(report, path, size):
         report["files"].append({"path": path, "size": size})
 
 
+# The oversized-file walk, run by scan_oversized_files as a supervised child
+# with the tree as its working directory. It prints find's former records
+# ("<size> <path>\0"). Each directory is opened relative to its parent
+# without following symlinks, so the walk cannot leave the tree; and unlike
+# find it does not take a directory whose (device, inode) equals an
+# ancestor's for a loop: OverlayFS with xino=off, as project root filesystems
+# are mounted, does not give directories unique inode numbers, and find then
+# failed on a loop that does not exist. Without symlinks there are no loops.
+# Arguments: max file bytes, 1 for -xdev, maximum depth.
+OVERSIZED_WALK_PROGRAM = """
+import os, sys
+limit, xdev, max_depth = int(sys.argv[1]), sys.argv[2] == "1", int(sys.argv[3])
+out = sys.stdout.buffer
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+try:
+    root = os.open(".", flags)
+    root_dev = os.fstat(root).st_dev
+    stack = [(root, os.scandir(root), b"")]
+    while stack:
+        fd, entries, rel = stack[-1]
+        entry = next(entries, None)
+        if entry is None:
+            entries.close()
+            os.close(fd)
+            stack.pop()
+            continue
+        if entry.name == ".snapshots":
+            continue
+        name = os.fsencode(entry.name)
+        try:
+            # The type comes from the listing: only regular files (for their
+            # size) and, with -xdev, directories (for their device) are stat'ed.
+            if entry.is_file(follow_symlinks=False):
+                size = entry.stat(follow_symlinks=False).st_size
+                if size > limit:
+                    out.write(b"%d %s\\0" % (size, rel + name))
+                continue
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            if xdev and entry.stat(follow_symlinks=False).st_dev != root_dev:
+                continue
+            if len(stack) >= max_depth:
+                sys.exit("directory tree too deep to scan for large files")
+            child = os.open(entry.name, flags, dir_fd=fd)
+        except FileNotFoundError:
+            continue  # removed since it was listed
+        stack.append((child, os.scandir(child), rel + name + b"/"))
+    out.flush()
+except OSError as err:
+    sys.exit(f"oversized file scan: {err.strerror}")
+"""
+
+
 def scan_oversized_files(
     datafd, *, max_file_bytes, one_file_system, deadline, report=None, prefix=""
 ):
     """Find regular files Rustic will skip, without reading their contents."""
-    args = ["find", "."]
-    if one_file_system:
-        args.append("-xdev")
-    args += [
-        "(", "-name", ".snapshots", "-prune", ")",
-        "-o",
-        "(", "-type", "f", "-size", f"+{max_file_bytes}c",
-        "-printf", "%s %P\\0", ")",
+    # Isolated: the working directory is the user's tree, which must not
+    # supply modules to a root Python.
+    args = [
+        sys.executable or "/usr/bin/python3",
+        "-I",
+        "-S",
+        "-c",
+        OVERSIZED_WALK_PROGRAM,
+        str(max_file_bytes),
+        "1" if one_file_system else "0",
+        str(OVERSIZED_SCAN_MAX_DEPTH),
     ]
     if report is None:
         report = new_oversized_report(max_file_bytes)
