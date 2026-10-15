@@ -27,6 +27,7 @@ import {
   rollbackProjectHostOverSshInternal,
   reconcileHostRuntimeDeploymentsInternal,
   reconcileHostSoftwareInternal,
+  recordConvergedProjectHostUpgradeInternal,
   removeSelfHostConnectorInternal,
   restartHostInternal,
   rolloutComponentsForUpgradeResults,
@@ -2379,6 +2380,16 @@ async function handleOp(op: LroSummary): Promise<void> {
                 err: `${err}`,
               },
             );
+            // The lost reply skipped recording the host's desired versions.
+            if (input?.record_runtime_deployments !== false) {
+              await recordConvergedProjectHostUpgradeInternal({
+                account_id,
+                host_id,
+                version: convergedVersion,
+                targets: input?.targets ?? [],
+                align_runtime_stack: input?.align_runtime_stack,
+              });
+            }
             const recoveryComponents =
               delayedProjectHostConvergenceRolloutComponents({
                 targets: input?.targets ?? [],

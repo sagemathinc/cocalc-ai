@@ -33,6 +33,7 @@ import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
 type AutomaticQueueSkipReason =
   | "host_missing"
   | "host_not_running"
+  | "host_upgrade_in_flight"
   | "no_reconcile_needed"
   | "observation_failed";
 
@@ -122,6 +123,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   normalizeManagedComponentKindsForDedupe,
   reconcile_lro_kind,
   automatic_reason,
+  hostUpgradeInFlight,
 }: {
   host_id: string;
   reason?: string;
@@ -153,6 +155,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   ) => ManagedComponentKind[];
   reconcile_lro_kind: HostLroKind;
   automatic_reason: string;
+  hostUpgradeInFlight?: (host_id: string) => Promise<boolean>;
 }): Promise<RuntimeReconcileQueued> {
   const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
   if (!row) {
@@ -160,6 +163,11 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   }
   if (!running_statuses.has(`${row?.status ?? ""}`.toLowerCase())) {
     return { queued: false, host_id: row.id, reason: "host_not_running" };
+  }
+  // The upgrade records the host's new desired versions only when it ends;
+  // reconciling to the old ones meanwhile would undo it.
+  if (await hostUpgradeInFlight?.(row.id)) {
+    return { queued: false, host_id: row.id, reason: "host_upgrade_in_flight" };
   }
   const status = await getHostRuntimeDeploymentStatusInternal({
     id: row.id,
@@ -225,6 +233,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
   createHostLro,
   hostUpgradeDedupeKey,
   upgrade_lro_kind,
+  hostUpgradeInFlight,
 }: {
   host_id: string;
   running_statuses: Set<string>;
@@ -250,6 +259,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
     targets: HostSoftwareUpgradeTarget[];
   }) => string;
   upgrade_lro_kind: HostLroKind;
+  hostUpgradeInFlight?: (host_id: string) => Promise<boolean>;
 }): Promise<ArtifactReconcileQueued> {
   const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
   if (!row) {
@@ -257,6 +267,11 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
   }
   if (!running_statuses.has(`${row?.status ?? ""}`.toLowerCase())) {
     return { queued: false, host_id: row.id, reason: "host_not_running" };
+  }
+  // A project-host upgrade restarts the host, which re-registers before the
+  // upgrade has recorded its target: "converging" here would revert it.
+  if (await hostUpgradeInFlight?.(row.id)) {
+    return { queued: false, host_id: row.id, reason: "host_upgrade_in_flight" };
   }
   const status = await getHostRuntimeDeploymentStatusInternal({
     id: row.id,

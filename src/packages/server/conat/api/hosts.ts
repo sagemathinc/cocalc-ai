@@ -6692,6 +6692,29 @@ async function listActiveHostLrosForKinds({
   );
 }
 
+// Upgrades and rollouts restart project-host, which then registers before the
+// op has recorded the host's new desired versions; automatic convergence
+// waits for them.  Bounded by age, so a stuck op cannot block it forever.
+const HOST_SOFTWARE_CHANGE_LRO_KINDS = [
+  HOST_UPGRADE_LRO_KIND,
+  HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
+] as const;
+const HOST_SOFTWARE_CHANGE_IN_FLIGHT_MAX_AGE_MS = 20 * 60_000;
+
+async function hostSoftwareChangeInFlight(host_id: string): Promise<boolean> {
+  const now = Date.now();
+  return (
+    await listActiveHostLrosForKinds({
+      host_id,
+      kinds: HOST_SOFTWARE_CHANGE_LRO_KINDS,
+    })
+  ).some(
+    (op) =>
+      now - new Date(op.created_at as any).getTime() <
+      HOST_SOFTWARE_CHANGE_IN_FLIGHT_MAX_AGE_MS,
+  );
+}
+
 async function assertNoPendingDestructiveHostOp(host_id: string) {
   const active = await listActiveHostLrosForKinds({
     host_id,
@@ -9553,6 +9576,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
       reason:
         | "host_missing"
         | "host_not_running"
+        | "host_upgrade_in_flight"
         | "no_reconcile_needed"
         | "observation_failed";
       observation_error?: string;
@@ -9582,6 +9606,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
     normalizeManagedComponentKindsForDedupe,
     reconcile_lro_kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
     automatic_reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+    hostUpgradeInFlight: hostSoftwareChangeInFlight,
   });
 }
 
@@ -9596,6 +9621,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
       reason:
         | "host_missing"
         | "host_not_running"
+        | "host_upgrade_in_flight"
         | "no_reconcile_needed"
         | "observation_failed";
       observation_error?: string;
@@ -9622,6 +9648,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
     createHostLro,
     hostUpgradeDedupeKey,
     upgrade_lro_kind: HOST_UPGRADE_LRO_KIND,
+    hostUpgradeInFlight: hostSoftwareChangeInFlight,
   });
 }
 
@@ -10221,6 +10248,50 @@ export async function listHostSoftwareVersions({
     os,
     arch,
     history_limit,
+  });
+}
+
+// An upgrade whose reply was lost (project-host restarted during the call)
+// but that the host was then seen to complete: record the desired versions
+// a normal success records, or automatic convergence would revert it.
+export async function recordConvergedProjectHostUpgradeInternal({
+  account_id,
+  host_id,
+  version,
+  targets,
+  align_runtime_stack,
+}: {
+  account_id?: string;
+  host_id: string;
+  version: string;
+  targets?: HostSoftwareUpgradeTarget[];
+  align_runtime_stack?: boolean;
+}): Promise<void> {
+  const results: HostSoftwareUpgradeResponse["results"] = [
+    { artifact: "project-host", version, status: "updated" },
+  ];
+  const deployments = normalizeRuntimeDeploymentUpserts([
+    ...runtimeDeploymentsForUpgradeResults(results, {
+      alignRuntimeStack: align_runtime_stack,
+      alignedProjectHostVersion: version,
+    }),
+    ...runtimeDeploymentsForComponentRollout({
+      components: rolloutComponentsForUpgradeResultsInternal(results, {
+        targets,
+        alignRuntimeStack: !!align_runtime_stack,
+      }),
+      desired_version: version,
+      reason: "host_software_upgrade",
+    }),
+  ]);
+  if (!deployments.length) return;
+  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
+  await setProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id,
+    requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+    deployments,
+    replace: false,
   });
 }
 

@@ -8642,3 +8642,64 @@ describe("hosts.recordClaudeSubscriptionUsage", () => {
     ).toBe(false);
   });
 });
+
+describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
+  beforeEach(() => {
+    queryMock = jest.fn(async (sql: string) =>
+      sql.includes("FROM project_hosts")
+        ? { rows: [{ id: HOST_ID, status: "running", metadata: {} }] }
+        : { rows: [] },
+    );
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+  });
+
+  it("records what a successful project-host upgrade records", async () => {
+    const { recordConvergedProjectHostUpgradeInternal } =
+      await import("./hosts");
+    await recordConvergedProjectHostUpgradeInternal({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      version: "ph-v2",
+      targets: [{ artifact: "project-host", version: "ph-v2" }],
+    });
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenCalledTimes(1);
+    const call = setProjectHostRuntimeDeploymentsMock.mock.calls[0][0];
+    expect(call).toMatchObject({
+      scope_type: "host",
+      host_id: HOST_ID,
+      requested_by: ACCOUNT_ID,
+      replace: false,
+    });
+    expect(
+      call.deployments.map(
+        (d: any) => `${d.target_type}:${d.target}=${d.desired_version}`,
+      ),
+    ).toEqual(["artifact:project-host=ph-v2", "component:project-host=ph-v2"]);
+  });
+
+  it("aligns the whole runtime stack when the upgrade did", async () => {
+    const { recordConvergedProjectHostUpgradeInternal } =
+      await import("./hosts");
+    await recordConvergedProjectHostUpgradeInternal({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      version: "ph-v2",
+      targets: [{ artifact: "project-host", version: "ph-v2" }],
+      align_runtime_stack: true,
+    });
+    const deployments =
+      setProjectHostRuntimeDeploymentsMock.mock.calls[0][0].deployments;
+    expect(
+      deployments.map((d: any) => `${d.target_type}:${d.target}`).sort(),
+    ).toEqual([
+      "artifact:project-host",
+      "component:acp-worker",
+      "component:conat-persist",
+      "component:conat-router",
+      "component:project-host",
+    ]);
+    expect(deployments.every((d: any) => d.desired_version === "ph-v2")).toBe(
+      true,
+    );
+  });
+});
