@@ -8745,6 +8745,35 @@ describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
     ).toEqual(["artifact:project-host=ph-v2", "component:project-host=ph-v2"]);
   });
 
+  it("checks the requested targets even when it must not record desired versions", async () => {
+    installedArtifacts = [
+      {
+        artifact: "tools",
+        current_version: "tools-v1",
+        installed_versions: ["tools-v1"],
+      },
+    ];
+    const { recordConvergedProjectHostUpgradeInternal } =
+      await import("./hosts");
+    const result = await recordConvergedProjectHostUpgradeInternal({
+      host_id: HOST_ID,
+      version: "ph-v2",
+      targets: [
+        // Current before, but not after: not a proven no-op.
+        { artifact: "tools", version: "tools-v2" },
+        { artifact: "bootstrap-environment", version: "boot-v2" },
+        { artifact: "project-host", version: "ph-v2" },
+      ],
+      previous_versions: { tools: "tools-v2" },
+      record: false,
+    });
+    expect(result.unconfirmed.map((t) => t.artifact).sort()).toEqual([
+      "bootstrap-environment",
+      "tools",
+    ]);
+    expect(setProjectHostRuntimeDeploymentsMock).not.toHaveBeenCalled();
+  });
+
   it("records what a successful project-host upgrade records", async () => {
     const { recordConvergedProjectHostUpgradeInternal } =
       await import("./hosts");

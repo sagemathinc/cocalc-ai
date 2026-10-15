@@ -10285,7 +10285,8 @@ export async function observeHostArtifactVersionsInternal(
 // artifact only if this upgrade changed it: the host runs the requested
 // version now and did not before (previous_versions, observed before the
 // upgrade).  Anything else requested is returned as unconfirmed, including a
-// bootstrap-environment target, which is only applied after a reply.
+// bootstrap-environment target, which is only applied after a reply.  The
+// targets are always checked; the desired rows are written only if `record`.
 export async function recordConvergedProjectHostUpgradeInternal({
   account_id,
   host_id,
@@ -10293,6 +10294,7 @@ export async function recordConvergedProjectHostUpgradeInternal({
   targets,
   align_runtime_stack,
   previous_versions,
+  record = true,
 }: {
   account_id?: string;
   host_id: string;
@@ -10300,6 +10302,7 @@ export async function recordConvergedProjectHostUpgradeInternal({
   targets?: HostSoftwareUpgradeTarget[];
   align_runtime_stack?: boolean;
   previous_versions?: Record<string, string | undefined>;
+  record?: boolean;
 }): Promise<{ unconfirmed: HostSoftwareUpgradeTarget[] }> {
   const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
   const otherTargets = (targets ?? []).filter(
@@ -10336,8 +10339,8 @@ export async function recordConvergedProjectHostUpgradeInternal({
       ? `${previous_versions?.[runtimeTarget] ?? ""}`.trim()
       : "";
     const now = runtimeTarget && `${observed.get(runtimeTarget) ?? ""}`.trim();
-    if (wanted && before && before === wanted) {
-      // Already current before the upgrade: a no-op, recorded by nothing.
+    if (wanted && before === wanted && now === wanted) {
+      // Current before and after the upgrade: a no-op, recorded by nothing.
       continue;
     }
     if (wanted && before && now === wanted) {
@@ -10364,7 +10367,7 @@ export async function recordConvergedProjectHostUpgradeInternal({
       reason: "host_software_upgrade",
     }),
   ]);
-  if (deployments.length > 0) {
+  if (record && deployments.length > 0) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",
       host_id,

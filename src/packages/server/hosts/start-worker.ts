@@ -2415,19 +2415,18 @@ async function handleOp(op: LroSummary): Promise<void> {
                 err: `${err}`,
               },
             );
-            // The lost reply skipped recording the host's desired versions.
-            let unconfirmedTargets: HostSoftwareUpgradeTarget[] = [];
-            if (input?.record_runtime_deployments !== false) {
-              ({ unconfirmed: unconfirmedTargets } =
-                await recordConvergedProjectHostUpgradeInternal({
-                  account_id,
-                  host_id,
-                  version: convergedVersion,
-                  targets: input?.targets ?? [],
-                  align_runtime_stack: input?.align_runtime_stack,
-                  previous_versions: previousArtifactVersions,
-                }));
-            }
+            // The lost reply skipped checking the other requested artifacts
+            // and recording the host's desired versions (if requested).
+            const { unconfirmed: unconfirmedTargets } =
+              await recordConvergedProjectHostUpgradeInternal({
+                account_id,
+                host_id,
+                version: convergedVersion,
+                targets: input?.targets ?? [],
+                align_runtime_stack: input?.align_runtime_stack,
+                previous_versions: previousArtifactVersions,
+                record: input?.record_runtime_deployments !== false,
+              });
             const unconfirmedError = unconfirmedTargets.length
               ? `project-host ${convergedVersion} is running after the upgrade lost its reply, but these requested artifacts are not confirmed on the host: ${unconfirmedTargets
                   .map(
