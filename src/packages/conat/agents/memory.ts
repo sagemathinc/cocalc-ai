@@ -197,9 +197,16 @@ export function validateMemoryName(name: unknown): string {
 
 export function validateMemoryNamespace(
   namespace: unknown,
-  { allowGlobal = true } = {},
+  {
+    allowGlobal = true,
+    // A namespace named "agent" from before agent scopes existed: kept and
+    // managed by the owner, but agent/<name> now means an agent's own scope.
+    allowLegacyAgent = false,
+  } = {},
 ): string {
   if (namespace === AGENT_MEMORY_GLOBAL && allowGlobal) return namespace;
+  if (namespace === AGENT_MEMORY_AGENT_SCOPE && allowLegacyAgent)
+    return namespace;
   if (
     typeof namespace !== "string" ||
     !NAMESPACE_RE.test(namespace) ||
@@ -229,7 +236,7 @@ export function agentOfMemoryNamespace(namespace: string): string | undefined {
 export function validateOwnerMemoryNamespace(namespace: unknown): string {
   if (typeof namespace === "string" && agentOfMemoryNamespace(namespace))
     return namespace;
-  return validateMemoryNamespace(namespace);
+  return validateMemoryNamespace(namespace, { allowLegacyAgent: true });
 }
 
 const AGENT_NAME_RE = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -510,7 +517,10 @@ export function validateAgentMemoryOwnerRequest(
       validateMemoryNamespaceDescription(r.description);
       break;
     case "namespace-delete":
-      validateMemoryNamespace(r.name, { allowGlobal: false });
+      validateMemoryNamespace(r.name, {
+        allowGlobal: false,
+        allowLegacyAgent: true,
+      });
       break;
     case "set-project-namespaces":
       if (typeof r.project_id !== "string" || !UUID_RE.test(r.project_id))
@@ -523,7 +533,10 @@ export function validateAgentMemoryOwnerRequest(
           `a project can have at most ${AGENT_MEMORY_LIMITS.maxNamespacesPerProject} memory namespaces`,
         );
       for (const ns of r.namespaces)
-        validateMemoryNamespace(ns, { allowGlobal: false });
+        validateMemoryNamespace(ns, {
+          allowGlobal: false,
+          allowLegacyAgent: true,
+        });
       if (new Set(r.namespaces).size !== r.namespaces.length)
         throw new Error("duplicate memory namespace");
       break;
@@ -544,7 +557,10 @@ export function parseAgentMemorySettings(row: {
     throw new Error("stored agent memory has too many namespaces");
   const seen = new Set<string>();
   const parsed = namespaces.map((ns: any) => {
-    const name = validateMemoryNamespace(ns?.name, { allowGlobal: false });
+    const name = validateMemoryNamespace(ns?.name, {
+      allowGlobal: false,
+      allowLegacyAgent: true,
+    });
     if (seen.has(name))
       throw new Error("stored agent memory has duplicate namespaces");
     seen.add(name);
@@ -574,9 +590,14 @@ export function projectMemoryNamespaces(
   project_id: string,
 ): AgentMemoryNamespace[] {
   const byName = new Map(settings.namespaces.map((ns) => [ns.name, ns]));
-  return (settings.projects[project_id] ?? [])
-    .map((name) => byName.get(name))
-    .filter((ns): ns is AgentMemoryNamespace => ns != null);
+  return (
+    (settings.projects[project_id] ?? [])
+      // A legacy namespace named agent would read as an agent's own scope;
+      // only the owner sees it (in Settings) and can move its notes.
+      .filter((name) => name !== AGENT_MEMORY_AGENT_SCOPE)
+      .map((name) => byName.get(name))
+      .filter((ns): ns is AgentMemoryNamespace => ns != null)
+  );
 }
 
 // ---- The turn index ----

@@ -567,6 +567,37 @@ describe("agent scopes and expiry", () => {
     expect(memoryRef(ns, "x", true)).toBe("agent/x");
   });
 
+  it("keeps a namespace named agent from before scopes for the owner", () => {
+    expect(
+      parseAgentMemorySettings({
+        enabled: true,
+        namespaces: [{ name: "agent" }],
+        projects: { [P1]: ["agent"] },
+      }).namespaces,
+    ).toEqual([{ name: "agent" }]);
+    expect(
+      validateAgentMemoryOwnerRequest({
+        op: "delete",
+        namespace: "agent",
+        name: "x",
+      }),
+    ).toBeTruthy();
+    // Agents do not see it: agent/<name> means their own scope.
+    expect(
+      projectMemoryNamespaces(
+        parseAgentMemorySettings({
+          enabled: true,
+          namespaces: [{ name: "agent" }, { name: "dev" }],
+          projects: { [P1]: ["agent", "dev"] },
+        }),
+        P1,
+      ),
+    ).toEqual([{ name: "dev" }]);
+    expect(() =>
+      validateAgentMemoryOwnerRequest({ op: "namespace-save", name: "agent" }),
+    ).toThrow(/not "global" or "agent"/);
+  });
+
   it("parses expiries counted from last use", () => {
     expect(parseMemoryExpiry("12h")).toBe(12 * 3600);
     expect(parseMemoryExpiry("30d")).toBe(30 * 86400);
