@@ -3,20 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export type LeaveOrDeleteProjectResult = {
-  project_id: string;
-  action:
-    | "removed_self"
-    | "transferred"
-    | "hard_deleted"
-    | "hard_delete_queued"
-    | "error";
-  new_owner_account_id?: string;
-  op_id?: string;
-  error?: string;
-  // E.g. OUTCOME_UNKNOWN (its bay did not answer) or fresh_auth_required.
-  code?: string | number;
-};
+import type { LeaveOrDeleteProjectResult } from "@cocalc/conat/hub/api/projects";
+export type { LeaveOrDeleteProjectResult };
 
 export type BulkLeaveOrDeleteProgressPhase = "submitting" | "waiting" | "done";
 
