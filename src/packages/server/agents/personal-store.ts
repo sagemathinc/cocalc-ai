@@ -41,6 +41,7 @@ import {
   bumpComputersForNetwork,
   networkHasComputerAccess,
 } from "@cocalc/server/computers/computers";
+import { kickComputerStateDelivery } from "@cocalc/server/computers/delivery";
 
 const MAX_ACTIVE_NETWORKS = 100;
 const MAX_RETAINED_NETWORKS = 1000;
@@ -1408,6 +1409,13 @@ export class PersonalAgentStore {
         return updated.agent_network_id;
       },
     );
+    // Committed: deliver the bumped computers' state now.
+    if (
+      options.action === "remove-member" ||
+      options.action === "pause" ||
+      options.action === "close"
+    )
+      void kickComputerStateDelivery();
     return this.networkById(account, agent_network_id);
   }
 
@@ -1709,7 +1717,7 @@ export class PersonalAgentStore {
   async setControls(account: string, opts: SetPersonalMessagingStateOptions) {
     if (!["pause", "resume", "revoke_all"].includes(opts.action))
       throw new Error("invalid messaging control");
-    return this.locked(account, async (db, controls) => {
+    const result = await this.locked(account, async (db, controls) => {
       const generation =
         opts.action === "revoke_all"
           ? controls.generation + 1
@@ -1729,5 +1737,8 @@ export class PersonalAgentStore {
       if (opts.action !== "resume") await bumpComputersForAccount(db, account);
       return row;
     });
+    // Committed: deliver the bumped computers' state now.
+    if (opts.action !== "resume") void kickComputerStateDelivery();
+    return result;
   }
 }

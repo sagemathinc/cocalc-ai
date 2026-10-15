@@ -63,6 +63,7 @@ import {
   startConatApiBackgroundWorkers,
 } from "@cocalc/server/conat";
 import { initConatServer } from "@cocalc/server/conat/socketio";
+import { enableComputerStateDeliveryWakes } from "@cocalc/server/computers/delivery";
 import initHttpRedirect from "./servers/http-redirect";
 import { addErrorListeners } from "@cocalc/server/metrics/error-listener";
 import * as MetricsRecorder from "@cocalc/server/metrics/metrics-recorder";
@@ -280,6 +281,8 @@ async function startServer(): Promise<void> {
   // This loads from the database credentials to use Conat.
   setWorkerStartupPhase("conat-configuration");
   await loadConatConfiguration();
+  // Kicks from processes that don't deliver computer state wake one that does.
+  enableComputerStateDeliveryWakes();
 
   let strictCloudflareProxy: (() => boolean) | undefined;
   if (program.conatRouter || program.conatServer) {

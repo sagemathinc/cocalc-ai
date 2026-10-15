@@ -30,6 +30,7 @@ import { canonicalHash } from "@cocalc/backend/computers/crypto";
 import type { Client } from "@cocalc/conat/core/client";
 import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
 import {
+  COMPUTER_STATE_WAKE_SUBJECT,
   computerOpSubject,
   computerReplySubject,
   type ComputerOpMessage,
@@ -38,6 +39,7 @@ import {
 import { STATE_VERSION_PATTERN } from "@cocalc/util/computers/protocol";
 import { HUB_PROCESS, hubClient } from "./relay";
 import { computerStateSnapshot } from "./state";
+import { FailureLog } from "./failure-log";
 
 const logger = getLogger("server:computers:delivery");
 
@@ -54,7 +56,6 @@ const MAX_IN_FLIGHT = 8;
 /** Nobody subscribed yet (a session that just logged in): retry soon. */
 const NO_SUBSCRIBER_RETRY_MS = 250;
 const MAX_BACKOFF_MS = 60_000;
-const POLL_MS = 1_000;
 
 /** An ack is tiny; anything bigger is refused before reassembly. */
 const ACK_RECEIVE_LIMITS: ReceiveLimits = {
@@ -103,7 +104,8 @@ export async function deliverDueStates(): Promise<number> {
     const results = await Promise.all(
       claimed.map((t) =>
         deliverOne(t).catch((err) => {
-          logger.warn("delivering a computer state failed", err);
+          targetErrors += 1;
+          problems.failed(err);
           return false;
         }),
       ),
@@ -337,50 +339,202 @@ function backoff(attempts: number): number {
   return Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempts, 16));
 }
 
-let running: Promise<void> | undefined;
-let again = false;
-let timer: ReturnType<typeof setInterval> | undefined;
+/** Nothing owed: look again this often anyway (a lost wake costs at most this). */
+export const IDLE_POLL_MS = 30_000;
+/** The soonest a pass follows one that left a retry due. */
+export const MIN_POLL_MS = 250;
+/** After a failed pass (the database is away): 1 s, 2 s, ... up to this. */
+export const MAX_ERROR_BACKOFF_MS = 30_000;
+/** The first pass after a hub starts (sessions owed state from before). */
+const FIRST_POLL_MS = 1_000;
 
 /**
- * Run a pass now (coalesced with one in progress), if this process
- * delivers at all; other hubs pick the change up at their next poll.
+ * When the next pass runs: soon after a failure (backing off), when the
+ * earliest owed target is due, and otherwise at the idle poll.
+ */
+export function nextPassDelay({
+  enabled,
+  failures,
+  dueInMs,
+}: {
+  enabled: boolean;
+  failures: number;
+  dueInMs: number | null;
+}): number {
+  if (failures > 0) {
+    return Math.min(
+      MAX_ERROR_BACKOFF_MS,
+      1000 * 2 ** Math.min(failures - 1, 16),
+    );
+  }
+  if (!enabled || dueInMs == null) return IDLE_POLL_MS;
+  return Math.min(IDLE_POLL_MS, Math.max(MIN_POLL_MS, dueInMs));
+}
+
+/** How long until the earliest target is due (null: none is owed). */
+async function nextDueInMs(): Promise<number | null> {
+  const { rows } = await getPool().query(
+    `SELECT EXTRACT(EPOCH FROM
+              min(COALESCE(lease_until, now())) - now()) * 1000 AS ms
+       FROM account_computer_session_targets`,
+  );
+  const ms = rows[0]?.ms;
+  return ms == null ? null : Math.max(0, Number(ms));
+}
+
+let started = false;
+let running: Promise<void> | undefined;
+let again = false;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let delayMs: number | undefined;
+let failures = 0;
+let targetErrors = 0;
+let wakeSub: { close: () => void } | undefined;
+let wakesEnabled = false;
+const problems = new FailureLog(logger, "computer state delivery");
+
+/**
+ * Something is owed (a login, a revocation, a narrowing): deliver now. In
+ * a process that delivers this runs a pass (coalesced with one in
+ * progress); elsewhere it wakes one process that does. A lost wake costs
+ * at most IDLE_POLL_MS.
  */
 export function kickComputerStateDelivery(): Promise<void> {
-  if (timer == null) return Promise.resolve();
+  if (!started) {
+    wakeDeliveringHub();
+    return Promise.resolve();
+  }
   if (running != null) {
     again = true;
     return running;
   }
+  if (timer != null) clearTimeout(timer);
+  timer = undefined;
   running = (async () => {
+    let delay = IDLE_POLL_MS;
     try {
       do {
         again = false;
-        // Off (the default): no computer can connect, so there is no one to
-        // deliver to, and the poll must not query the database every second
-        // on every hub. Owed targets wait until computers are turned on.
-        // Settings are cached, so this check costs no query.
-        if ((await getServerSettings()).computers_enabled !== true) break;
-        await deliverDueStates();
-      } while (again);
-    } catch (err) {
-      logger.warn("computer state delivery pass failed", err);
+        delay = await runPass();
+      } while (again && failures === 0 && started);
     } finally {
       running = undefined;
+      schedule(delay);
     }
   })();
   return running;
 }
 
-/** Every hub process delivers (claims never overlap). */
-export function startComputerStateDelivery(): void {
-  if (timer != null) return;
-  timer = setInterval(() => {
+async function runPass(): Promise<number> {
+  try {
+    // Off (the default): no computer can connect, so there is no one to
+    // deliver to, and an idle hub must not query the database. Owed targets
+    // wait until computers are turned on. Settings are cached, so this
+    // check costs no query.
+    const enabled = (await getServerSettings()).computers_enabled === true;
+    let dueInMs: number | null = null;
+    if (enabled) {
+      targetErrors = 0;
+      await deliverDueStates();
+      dueInMs = await nextDueInMs();
+    }
+    failures = 0;
+    if (targetErrors === 0) problems.succeeded();
+    return nextPassDelay({ enabled, failures, dueInMs });
+  } catch (err) {
+    failures += 1;
+    problems.failed(err);
+    return nextPassDelay({ enabled: true, failures, dueInMs: null });
+  }
+}
+
+function schedule(ms: number): void {
+  if (!started) return;
+  if (timer != null) clearTimeout(timer);
+  delayMs = ms;
+  timer = setTimeout(() => {
+    timer = undefined;
     void kickComputerStateDelivery();
-  }, POLL_MS);
+  }, ms);
   timer.unref?.();
 }
 
+/** Tests: how long until the next scheduled pass (undefined: none). */
+export function nextComputerStateDeliveryDelayForTesting(): number | undefined {
+  return timer == null ? undefined : delayMs;
+}
+
+/**
+ * How long after a computer's login its first delivery starts. Its daemon
+ * subscribes right after the login, but a push published within a few
+ * milliseconds of that subscription can be lost (seen in the e2e tests: a
+ * publish that counted the daemon as a subscriber never reached it), which
+ * costs an ack wait and a backoff, about 12 s. The old 1 s poll rarely
+ * published that early; this waits as long as that poll ever did.
+ */
+export const LOGIN_DELIVERY_DELAY_MS = 1_000;
+
+/** A computer logged in: its new session owes the computer's state. */
+export function kickComputerStateDeliveryAfterLogin(): void {
+  const t = setTimeout(() => {
+    void kickComputerStateDelivery();
+  }, LOGIN_DELIVERY_DELAY_MS);
+  t.unref?.();
+}
+
+/**
+ * Every hub process delivers (claims never overlap); one of them answers
+ * each wake.
+ */
+export function startComputerStateDelivery(): void {
+  if (started) return;
+  started = true;
+  failures = 0;
+  void listenForWakes();
+  schedule(FIRST_POLL_MS);
+}
+
 export function stopComputerStateDelivery(): void {
-  if (timer != null) clearInterval(timer);
+  started = false;
+  if (timer != null) clearTimeout(timer);
   timer = undefined;
+  wakeSub?.close();
+  wakeSub = undefined;
+}
+
+/**
+ * A hub process that doesn't deliver (a conat router answering a
+ * computer's login, say) passes its kicks on to one that does.
+ */
+export function enableComputerStateDeliveryWakes(): void {
+  wakesEnabled = true;
+}
+
+function wakeDeliveringHub(): void {
+  if (!wakesEnabled) return;
+  try {
+    deliveryClient().publishSync(COMPUTER_STATE_WAKE_SUBJECT, null);
+  } catch (err) {
+    logger.debug("waking computer state delivery failed", `${err}`);
+  }
+}
+
+async function listenForWakes(): Promise<void> {
+  try {
+    const sub = await deliveryClient().subscribe(COMPUTER_STATE_WAKE_SUBJECT, {
+      queue: "computer-state-delivery",
+    });
+    if (!started || wakeSub != null) {
+      sub.close();
+      return;
+    }
+    wakeSub = sub;
+    for await (const _ of sub) {
+      void kickComputerStateDelivery();
+    }
+  } catch (err) {
+    // Best effort: without wakes, other processes' changes wait for the
+    // idle poll.
+    logger.debug("listening for computer state wakes failed", `${err}`);
+  }
 }

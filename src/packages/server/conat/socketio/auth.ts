@@ -82,6 +82,7 @@ import {
   loginComputer,
   sessionIsCurrent,
 } from "@cocalc/server/computers/sessions";
+import { kickComputerStateDeliveryAfterLogin } from "@cocalc/server/computers/delivery";
 import {
   COMPUTERS_DISABLED,
   computersEnabled,
@@ -385,6 +386,8 @@ export async function getUser(
     if (options?.revalidation) throw Error("computer logins are single use");
     if (!(await computersEnabled())) throw Error(COMPUTERS_DISABLED);
     const s = await loginComputer(computerLogin);
+    // The new session owes the computer's state before it may do anything.
+    kickComputerStateDeliveryAfterLogin();
     const user: ComputerUser = {
       computer_id: s.computer_id,
       computer_account_id: s.account_id,

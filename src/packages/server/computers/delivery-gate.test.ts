@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The delivery poll runs on every hub every second: with computers off (the
+// The delivery poll runs on every hub: with computers off (the
 // default) a pass must not touch the database.
 
 const query = jest.fn(async () => ({ rows: [], rowCount: 0 }));

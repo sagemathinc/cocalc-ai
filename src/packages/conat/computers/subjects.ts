@@ -14,6 +14,12 @@
 
 import { isValidUUID } from "@cocalc/util/misc";
 
+/**
+ * Hub -> hub: a computer's state is owed, deliver it now. Hub processes
+ * only: no account, project, host or computer may use it.
+ */
+export const COMPUTER_STATE_WAKE_SUBJECT = "hub.computer-state.wake.v1";
+
 /** A hub process id or correlation token: one plain subject segment. */
 const TOKEN = /^[A-Za-z0-9_-]{1,64}$/;
 
