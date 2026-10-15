@@ -345,6 +345,8 @@ test("disabling ACP leaves native admission and stored queued-job cancellation a
       project_id,
       path: job.path,
       user_message_id: job.user_message_id,
+      account_id: job.account_id!,
+      thread_id: job.thread_id,
     }),
   ).toMatchObject({ state: "canceled", request_json: snapshot });
   expect(decodeAcpJobRequest(getAcpJobByOpId(job.op_id)!)).toMatchObject({

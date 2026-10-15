@@ -548,7 +548,17 @@ describe("acp job queue ordering", () => {
       project_id: queued.project_id,
       path: queued.path,
       user_message_id: queued.user_message_id,
+      account_id: queued.account_id,
+      thread_id: queued.thread_id,
     };
+    // Only the turn's owner can cancel or resend it, held or not.
+    const other = {
+      ...key,
+      account_id: "00000000-1000-4000-8000-0000000000ff",
+    };
+    expect(cancelQueuedAcpJob(other)).toBeUndefined();
+    expect(resendCanceledAcpJob(other)).toBeUndefined();
+    expect(acpJobHasLiveFenceResume(getAcpJobByOpId(queued.op_id))).toBe(true);
     // Resend cannot run it while the restart holds it.
     expect(resendCanceledAcpJob(key)).toMatchObject({
       state: "canceled",
@@ -1057,6 +1067,8 @@ describe("acp job queue ordering", () => {
       project_id: newer.project_id,
       path: newer.path,
       user_message_id: newer.user_message_id,
+      account_id: newer.account_id!,
+      thread_id: newer.thread_id,
     });
 
     const queued = listQueuedAcpJobsForThread({
@@ -1681,6 +1693,8 @@ describe("acp job queue ordering", () => {
       project_id: queued.project_id,
       path: queued.path,
       user_message_id: queued.user_message_id,
+      account_id: queued.account_id!,
+      thread_id: queued.thread_id,
     });
     expect(canceled?.state).toBe("canceled");
 
@@ -1688,6 +1702,8 @@ describe("acp job queue ordering", () => {
       project_id: queued.project_id,
       path: queued.path,
       user_message_id: queued.user_message_id,
+      account_id: queued.account_id!,
+      thread_id: queued.thread_id,
     });
     expect(resent?.state).toBe("queued");
 
@@ -1728,6 +1744,8 @@ describe("acp job queue ordering", () => {
         project_id: job.project_id,
         path: job.path,
         user_message_id: job.user_message_id,
+        account_id: job.account_id!,
+        thread_id: job.thread_id,
         modelRecovery: {
           account_id: request.account_id,
           thread_id: job.thread_id,
@@ -1773,6 +1791,8 @@ describe("acp job queue ordering", () => {
       project_id: job.project_id,
       path: job.path,
       user_message_id: job.user_message_id,
+      account_id: job.account_id!,
+      thread_id: job.thread_id,
       fundingRecovery: {
         account_id: request.account_id,
         thread_id: job.thread_id,
@@ -1797,6 +1817,8 @@ describe("acp job queue ordering", () => {
       project_id: job.project_id,
       path: job.path,
       user_message_id: job.user_message_id,
+      account_id: job.account_id!,
+      thread_id: job.thread_id,
       fundingRecovery: {
         account_id: request.account_id,
         thread_id: job.thread_id,
@@ -1869,6 +1891,47 @@ describe("acp job queue ordering", () => {
     expect(resendCanceledAcpJob(options)).toBeUndefined();
   });
 
+  it("cancels, resends or reprioritizes only the sender's own turn in its thread", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-owner-only",
+        assistantMessageId: "assistant-owner-only",
+        assistantDate: "2026-03-08T00:00:20.000Z",
+      }),
+    );
+    const key = {
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    };
+    const owner = {
+      account_id: queued.account_id!,
+      thread_id: queued.thread_id,
+    };
+    for (const other of [
+      { ...owner, account_id: "00000000-1000-4000-8000-0000000000ff" },
+      { ...owner, thread_id: "other-thread" },
+    ]) {
+      expect(cancelQueuedAcpJob({ ...key, ...other })).toBeUndefined();
+      expect(reprioritizeAcpJobImmediate({ ...key, ...other })).toBeUndefined();
+    }
+    expect(getAcpJobByOpId(queued.op_id)).toMatchObject({
+      state: "queued",
+      priority: 0,
+    });
+
+    expect(cancelQueuedAcpJob({ ...key, ...owner })?.state).toBe("canceled");
+    expect(
+      resendCanceledAcpJob({
+        ...key,
+        ...owner,
+        account_id: "00000000-1000-4000-8000-0000000000ff",
+      }),
+    ).toBeUndefined();
+    expect(getAcpJobByOpId(queued.op_id)?.state).toBe("canceled");
+    expect(resendCanceledAcpJob({ ...key, ...owner })?.state).toBe("queued");
+  });
+
   it("can resend a terminal error job", async () => {
     const queued = enqueueAcpJob(
       makeRequest({
@@ -1895,6 +1958,8 @@ describe("acp job queue ordering", () => {
       project_id: queued.project_id,
       path: queued.path,
       user_message_id: queued.user_message_id,
+      account_id: queued.account_id!,
+      thread_id: queued.thread_id,
     });
     expect(resent?.state).toBe("queued");
     expect(resent).toMatchObject({
