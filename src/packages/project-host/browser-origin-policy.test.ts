@@ -287,6 +287,45 @@ describe("project-host browser origin policy", () => {
       },
     );
 
+    it("binds file reads on a private app hostname to that app's project", async () => {
+      const rewrite = createPrivateAppHostnameRequestRewriter({
+        trace: async () => ({
+          matched: true,
+          project_id,
+          app_id: "x",
+          base_path: "/apps/x",
+        }),
+      });
+      const other = "00000000-1000-4000-8000-0000000000aa";
+      const fileReq = async (
+        headers: Record<string, string>,
+        target: string,
+      ) => {
+        const r: any = {
+          method: "GET",
+          url: `/${target}/files/a.txt`,
+          headers: { host: "dev-1.app.example", ...headers },
+        };
+        await rewrite(r);
+        return r;
+      };
+      for (const headers of [
+        { origin: "https://dev-1.app.example" },
+        { "sec-fetch-site": "same-origin" },
+      ]) {
+        expect(
+          ambientCookieRejection(await fileReq(headers, other), "file", other),
+        ).toBeDefined();
+        expect(
+          ambientCookieRejection(
+            await fileReq(headers, project_id),
+            "file",
+            project_id,
+          ),
+        ).toBeUndefined();
+      }
+    });
+
     it("lets an HTML preview on the host load its relative files", () => {
       for (const dest of ["image", "style", "script", "empty"]) {
         expect(
