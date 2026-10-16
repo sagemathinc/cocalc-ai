@@ -4,43 +4,35 @@
  */
 
 // The owner's computers, from a signed-in browser session. Agents never use
-// this API (they use `cocalc computer` with their runtime identity), so every
-// method requires a bound human session: an agent acting through an account
-// API key can't approve, extend or read computers. Approve and extend also
-// need fresh authentication, checked at the account's home bay.
-// Plan: src/.agents/computers-plan-2026-10-11.md.
+// this API (they run commands through their project host), so every method
+// requires a bound human session: an agent acting through an account API key
+// can't approve or read computers. Approve also needs fresh authentication,
+// checked at the account's home bay.
+// Design: src/.agents/computers-direct-host-2026-10-16.md.
 
 import type {
   ComputerRequestSummary,
   ComputerSummary,
   CreatedComputerRequest,
 } from "@cocalc/util/computers/api";
-import type { ComputerPolicy } from "@cocalc/util/computers/policy";
 import { authFirstRequireAccountWithBoundSession } from "./util";
 
 export interface ComputersApi {
   listComputers(opts?: { account_id?: string }): Promise<ComputerSummary[]>;
-  getComputer(opts: {
-    account_id?: string;
-    computer: string;
-  }): Promise<ComputerSummary>;
   listComputerRequests(opts?: {
     account_id?: string;
   }): Promise<ComputerRequestSummary[]>;
   createComputerRequest(opts: {
     account_id?: string;
     name: string;
-    policy: unknown;
-    why?: string;
+    project_id: string;
   }): Promise<CreatedComputerRequest>;
   approveComputerRequest(opts: {
     account_id?: string;
     session_hash?: string;
     request_id: string;
-    transcript_hash: string;
-    /** The agent network generation the owner was shown. */
-    agent_network_generation: string;
-  }): Promise<{ computer_id: string; policy: ComputerPolicy }>;
+    pairing_phrase: string;
+  }): Promise<{ computer_id: string }>;
   declineComputerRequest(opts: {
     account_id?: string;
     request_id: string;
@@ -48,42 +40,20 @@ export interface ComputersApi {
   revokeComputer(opts: {
     account_id?: string;
     computer_id: string;
-  }): Promise<{ epoch: number }>;
-  extendComputer(opts: {
-    account_id?: string;
-    session_hash?: string;
-    computer_id: string;
-    seconds: number;
-  }): Promise<{ deadline: number }>;
+  }): Promise<void>;
   renameComputer(opts: {
     account_id?: string;
     computer_id: string;
     name: string;
   }): Promise<void>;
-  setComputerNotes(opts: {
-    account_id?: string;
-    computer: string;
-    notes: string;
-    expected_revision: number;
-    locked?: boolean;
-  }): Promise<{ notes_revision: number }>;
-  setComputerEffectivePolicy(opts: {
-    account_id?: string;
-    computer_id: string;
-    policy: unknown;
-  }): Promise<{ policy_epoch: number }>;
 }
 
 export const computers = {
   listComputers: authFirstRequireAccountWithBoundSession,
-  getComputer: authFirstRequireAccountWithBoundSession,
   listComputerRequests: authFirstRequireAccountWithBoundSession,
   createComputerRequest: authFirstRequireAccountWithBoundSession,
   approveComputerRequest: authFirstRequireAccountWithBoundSession,
   declineComputerRequest: authFirstRequireAccountWithBoundSession,
   revokeComputer: authFirstRequireAccountWithBoundSession,
-  extendComputer: authFirstRequireAccountWithBoundSession,
   renameComputer: authFirstRequireAccountWithBoundSession,
-  setComputerNotes: authFirstRequireAccountWithBoundSession,
-  setComputerEffectivePolicy: authFirstRequireAccountWithBoundSession,
 };

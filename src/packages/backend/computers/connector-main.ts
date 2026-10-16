@@ -8,6 +8,8 @@
 //
 //   node cocalc-computer.js connect https://cocalc.ai/c/R-...
 //   node cocalc-computer.js daemon [computer_id]
+//
+// Design: src/.agents/computers-direct-host-2026-10-16.md.
 
 import { createInterface } from "node:readline/promises";
 import {

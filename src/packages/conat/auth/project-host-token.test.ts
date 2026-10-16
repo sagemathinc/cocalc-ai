@@ -3,8 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import {
+  COMPUTER_TOKEN_MAX_TTL_SECONDS,
+  COMPUTER_TOKEN_TTL_SECONDS,
+  issueProjectHostComputerToken,
   issueProjectHostAuthToken,
   issueProjectHostApiKeyAuthToken,
   issueProjectHostApiKeyHttpToken,
@@ -373,5 +376,105 @@ describe("project-host API key child tokens", () => {
         now_ms: nowMs,
       }),
     ).toThrow("invalid token signature");
+  });
+});
+
+describe("project-host computer tokens", () => {
+  const computerId = "00000000-0000-4000-8000-000000000005";
+  const issue = (extra: object = {}) =>
+    issueProjectHostComputerToken({
+      host_id: hostId,
+      computer_id: computerId,
+      account_id: accountId,
+      project_id: projectId,
+      private_key: privateKeyPem,
+      now_ms: 1_000_000,
+      ...extra,
+    });
+  const verify = (token: string, now_ms = 1_000_000) =>
+    verifyProjectHostAuthToken({
+      token,
+      host_id: hostId,
+      public_key: publicKeyPem,
+      now_ms,
+    });
+  /** Re-sign changed claims with the real key: only the checks can refuse. */
+  const resign = (token: string, change: (claims: any) => void) => {
+    const parts = token.split(".");
+    const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+    change(claims);
+    parts[1] = Buffer.from(JSON.stringify(claims)).toString("base64url");
+    parts[2] = sign(
+      null,
+      Buffer.from(`${parts[0]}.${parts[1]}`),
+      privateKey,
+    ).toString("base64url");
+    return parts.join(".");
+  };
+
+  it("binds the computer, its account and its one project", () => {
+    const { token, expires_at } = issue();
+    expect(verify(token)).toMatchObject({
+      act: "computer",
+      sub: computerId,
+      v: "phat-computer-v1",
+      computer: { account_id: accountId, project_id: projectId },
+    });
+    expect(expires_at).toBe((1000 + COMPUTER_TOKEN_TTL_SECONDS) * 1000);
+  });
+
+  it("ends exactly at its expiry, with no clock tolerance", () => {
+    const { token, expires_at } = issue();
+    expect(() => verify(token, expires_at - 1000)).not.toThrow();
+    expect(() => verify(token, expires_at)).toThrow("expired");
+  });
+
+  it("refuses a lifetime beyond the maximum, or a bad identity", () => {
+    expect(() =>
+      issue({ ttl_seconds: COMPUTER_TOKEN_MAX_TTL_SECONDS + 1 }),
+    ).toThrow();
+    expect(() => issue({ project_id: "nope" })).toThrow();
+    expect(() =>
+      verify(resign(issue().token, (c) => (c.exp = c.iat + 3600))),
+    ).toThrow("expired");
+  });
+
+  it("is its own kind: no other actor or version carries a computer binding", () => {
+    const { token } = issue();
+    for (const change of [
+      (c) => (c.act = "account"),
+      (c) => (c.v = "phat-v1"),
+      (c) => (c.auth_actor = "agent"),
+      (c) => (c.computer.extra = 1),
+      (c) => delete c.computer,
+      (c) => (c.computer.project_id = "nope"),
+    ]) {
+      expect(() => verify(resign(token, change))).toThrow();
+    }
+    // An account token may not smuggle in a computer binding.
+    const account = issueProjectHostAuthToken({
+      host_id: hostId,
+      account_id: accountId,
+      private_key: privateKeyPem,
+      now_ms: 1_000_000,
+    }).token;
+    expect(() =>
+      verify(
+        resign(account, (c) => {
+          c.computer = { account_id: accountId, project_id: projectId };
+        }),
+      ),
+    ).toThrow("computer");
+  });
+
+  it("is only for its host", () => {
+    expect(() =>
+      verifyProjectHostAuthToken({
+        token: issue().token,
+        host_id: "00000000-0000-4000-8000-000000000009",
+        public_key: publicKeyPem,
+        now_ms: 1_000_000,
+      }),
+    ).toThrow("audience");
   });
 });

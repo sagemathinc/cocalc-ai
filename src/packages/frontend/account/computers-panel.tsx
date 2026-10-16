@@ -3,10 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Computers connected for your agents: open requests (with the line to run
-// on the machine), approving a paired machine after checking its pairing
-// phrase (fresh auth), and revoking. Plan:
-// src/.agents/computers-plan-2026-10-11.md ("How it looks to the human").
+// Your computers: connect one to a project, approve a machine after checking
+// its pairing phrase (fresh auth), and revoke. Design:
+// src/.agents/computers-direct-host-2026-10-16.md.
 
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Space, Table, Tag, Typography } from "antd";
@@ -19,15 +18,15 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { useAgentNetworks } from "@cocalc/frontend/agents/api";
 import {
   approvalText,
   approveRequest,
   computersApi as api,
-  errorText,
+  ConnectComputer,
   ConnectOnMachine,
-  ReconnectComputer,
-  timeLimit,
+  errorText,
+  projectTitle,
+  useComputerProjects,
 } from "./computer-pairing";
 import {
   computerState,
@@ -35,9 +34,8 @@ import {
   STATE_COLOR,
   STATE_LABEL,
 } from "./computer-state";
-import { LeaseSummary } from "./computer-lease";
 
-const OPEN = new Set(["pending", "paired"]);
+const OPEN = new Set(["pending", "claimed"]);
 /** Expired requests stay listed this long, so the owner sees what happened. */
 const SHOW_EXPIRED_MS = 60 * 60 * 1000;
 
@@ -51,12 +49,10 @@ export function ComputersPanel() {
   const [computers, setComputers] = useState<ComputerSummary[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const lock = useRef(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
-  const [reconnecting, setReconnecting] = useState<ComputerSummary>();
-  const { directory: networks } = useAgentNetworks(true);
-  const networkTitle = (id: string) =>
-    networks?.networks.find((n) => n.agent_network_id === id)?.title;
+  const projects = useComputerProjects();
 
   async function refresh() {
     try {
@@ -103,7 +99,7 @@ export function ComputersPanel() {
   }
 
   function approve(r: ComputerRequestSummary) {
-    if (r.transcript_hash == null || r.agent_network == null) return;
+    if (r.pairing_phrase == null) return;
     Modal.confirm({
       title: `Connect ${r.machine?.hostname ?? "this machine"} as @${r.name}?`,
       width: 560,
@@ -115,7 +111,7 @@ export function ComputersPanel() {
           <Typography.Text strong code style={{ fontSize: "16px" }}>
             {r.pairing_phrase}
           </Typography.Text>
-          <div>{approvalText(r)}</div>
+          <div>{approvalText(r, projectTitle(projects, r.project_id))}</div>
         </Space>
       ),
       okText: "Approve",
@@ -126,14 +122,20 @@ export function ComputersPanel() {
     });
   }
 
-  if (requests.length === 0 && computers.length === 0 && !error) {
-    return null;
-  }
   return (
     <Space orientation="vertical" style={{ width: "100%", maxWidth: 1000 }}>
       <Typography.Title level={4} style={{ marginBottom: 0 }}>
         Computers
       </Typography.Title>
+      <span>
+        Connect a machine (a laptop, a server) to one of your projects, and
+        anything running in that project, agents included, can run commands
+        there as you. The machine connects out to the project&apos;s host: it
+        needs no open port, and you can revoke it here at any time.
+      </span>
+      <div>
+        <Button onClick={() => setConnecting(true)}>Connect a computer…</Button>
+      </div>
       {error && (
         <div role="alert">
           <Alert
@@ -157,9 +159,7 @@ export function ComputersPanel() {
               render: (_, r) => (
                 <Space orientation="vertical" size={0}>
                   <b>@{r.name}</b>
-                  {r.why && <span>{r.why}</span>}
-                  <span>{timeLimit(r.requested_policy)}</span>
-                  <LeaseSummary policy={r.requested_policy} />
+                  <span>For {projectTitle(projects, r.project_id)}</span>
                 </Space>
               ),
             },
@@ -168,12 +168,7 @@ export function ComputersPanel() {
               title: "State",
               render: (_, r) =>
                 stateNow(r, Date.now()) === "expired" ? (
-                  <Space orientation="vertical" size={0}>
-                    <Tag>expired</Tag>
-                    <span>
-                      Not approved in time. Ask the agent for a new request.
-                    </span>
-                  </Space>
+                  <Tag>expired</Tag>
                 ) : r.state === "pending" ? (
                   <Space
                     orientation="vertical"
@@ -188,7 +183,7 @@ export function ComputersPanel() {
                   </Space>
                 ) : (
                   <Space orientation="vertical" size={0}>
-                    <Tag color="blue">machine paired</Tag>
+                    <Tag color="blue">machine answered</Tag>
                     <span>
                       {r.machine?.user}@{r.machine?.hostname} ({r.machine?.os}{" "}
                       {r.machine?.arch})
@@ -206,7 +201,7 @@ export function ComputersPanel() {
               render: (_, r) =>
                 stateNow(r, Date.now()) === "expired" ? null : (
                   <Space>
-                    {r.state === "paired" && (
+                    {r.state === "claimed" && (
                       <Button
                         type="primary"
                         disabled={busy}
@@ -247,14 +242,9 @@ export function ComputersPanel() {
                 <Space orientation="vertical" size={0}>
                   <b>@{c.name}</b>
                   <span>
-                    {c.machine_user}@{c.hostname} ({c.os} {c.arch}), {c.mode}
+                    {c.machine_user}@{c.hostname} ({c.os} {c.arch})
                   </span>
-                  {networkTitle(c.agent_network_id) && (
-                    <span>
-                      For the {networkTitle(c.agent_network_id)} network
-                    </span>
-                  )}
-                  <LeaseSummary policy={c.effective_policy} />
+                  <span>For {projectTitle(projects, c.project_id)}</span>
                 </Space>
               ),
             },
@@ -270,97 +260,61 @@ export function ComputersPanel() {
             },
             {
               key: "seen",
-              title: "Last seen",
-              render: (_, c) =>
-                c.connected ? (
-                  "now"
-                ) : c.last_seen ? (
-                  <TimeAgo date={c.last_seen} />
-                ) : (
-                  "never"
-                ),
-            },
-            {
-              key: "until",
-              title: "Until",
+              title: "Last connected",
               render: (_, c) =>
                 c.revoked_at ? (
                   <span>
-                    disconnected <TimeAgo date={c.revoked_at} />
+                    revoked <TimeAgo date={c.revoked_at} />
                   </span>
-                ) : c.deadline ? (
-                  <TimeAgo date={c.deadline} />
-                ) : c.certificate_not_after ? (
-                  <span title="Its certificate ends then: connect it again to keep using it.">
-                    <TimeAgo date={c.certificate_not_after} />
-                  </span>
+                ) : c.connected_at ? (
+                  <TimeAgo date={c.connected_at} />
                 ) : (
-                  "no limit"
+                  "never"
                 ),
             },
             {
               key: "actions",
               title: "",
               align: "right",
-              render: (_, c) => {
-                const state = computerState(c);
-                return (
-                  <Space>
-                    {state !== "connected" && (
-                      <Button
-                        type={state === "offline" ? "primary" : "default"}
-                        disabled={busy}
-                        onClick={() => setReconnecting(c)}
-                      >
-                        Reconnect…
-                      </Button>
-                    )}
-                    {state !== "ended" && (
-                      <Button
-                        danger
-                        disabled={busy}
-                        onClick={() =>
-                          Modal.confirm({
-                            title: `Disconnect @${c.name}?`,
-                            content:
-                              "New operations are refused at once and the machine's connection is closed within seconds. Commands and jobs already running there are NOT stopped yet: stop them on the machine if needed.",
-                            okText: "Disconnect",
-                            okButtonProps: { danger: true },
-                            onOk: () =>
-                              act(() =>
-                                api().revokeComputer({
-                                  computer_id: c.computer_id,
-                                }),
-                              ),
-                          })
-                        }
-                      >
-                        Disconnect
-                      </Button>
-                    )}
-                  </Space>
-                );
-              },
+              render: (_, c) =>
+                computerState(c) === "ended" ? null : (
+                  <Button
+                    danger
+                    disabled={busy}
+                    onClick={() =>
+                      Modal.confirm({
+                        title: `Revoke @${c.name}?`,
+                        content:
+                          "Its project can't use it any more: its connection is closed within seconds, every command it is running is stopped, and its connector ends. Connect it again to use it.",
+                        okText: "Revoke",
+                        okButtonProps: { danger: true },
+                        onOk: () =>
+                          act(() =>
+                            api().revokeComputer({
+                              computer_id: c.computer_id,
+                            }),
+                          ),
+                      })
+                    }
+                  >
+                    Revoke
+                  </Button>
+                ),
             },
           ]}
         />
       )}
       <Modal
-        open={reconnecting != null}
-        title={reconnecting ? `Reconnect @${reconnecting.name}` : ""}
+        open={connecting}
+        title="Connect a computer"
         footer={null}
         destroyOnHidden
         onCancel={() => {
-          setReconnecting(undefined);
+          setConnecting(false);
           void refresh();
         }}
       >
-        {reconnecting && (
-          <ReconnectComputer
-            computer={reconnecting}
-            onDone={() => void refresh()}
-          />
-        )}
+        <ConnectComputer onDone={() => void refresh()} />
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>

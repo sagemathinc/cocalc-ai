@@ -36,11 +36,6 @@ import {
 } from "@cocalc/conat/agents/personal";
 import type { AgentStore } from "./store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
-import {
-  bumpComputersForAccount,
-  bumpComputersForNetwork,
-  networkHasComputerAccess,
-} from "@cocalc/server/computers/computers";
 
 const MAX_ACTIVE_NETWORKS = 100;
 const MAX_RETAINED_NETWORKS = 1000;
@@ -1317,14 +1312,6 @@ export class PersonalAgentStore {
         );
         if (options.action === "resume" && projectSet.size > 1 && !fresh)
           throw new Error("fresh_auth_required");
-        // Adding a member or resuming a network that a computer serves gives
-        // agents access to that computer.
-        if (
-          (options.action === "add-member" || options.action === "resume") &&
-          !fresh &&
-          (await networkHasComputerAccess(db, account, row.agent_network_id))
-        )
-          throw new Error("fresh_auth_required");
         if (
           options.action === "set-delivery" &&
           options.delivery_mode === "live" &&
@@ -1415,12 +1402,6 @@ export class PersonalAgentStore {
           binding,
           row.agent_network_id,
         );
-        if (
-          options.action === "remove-member" ||
-          options.action === "pause" ||
-          options.action === "close"
-        )
-          await bumpComputersForNetwork(db, account, row.agent_network_id);
         return updated.agent_network_id;
       },
     );
@@ -1757,7 +1738,6 @@ export class PersonalAgentStore {
           "UPDATE agent_networks SET state='closed',generation=$2,updated_at=now(),closed_at=now() WHERE account_id=$1 AND state<>'closed'",
           [account, randomUUID()],
         );
-      if (opts.action !== "resume") await bumpComputersForAccount(db, account);
       return row;
     });
   }

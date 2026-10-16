@@ -3,30 +3,26 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Getting a computer connected again, step by step: resume one without a
-// time limit, or pair it again (the line to run on the machine, then the
-// phrase to check and approve). Used by the settings panel, the send check
-// for @computer mentions, and the composer's Computers dialog. Design:
-// src/.agents/computers-lifecycle-ui-2026-10-12.md.
+// Connecting a computer, step by step: pick its name and the one project it
+// serves, run the line on the machine, then compare the phrase and approve.
+// Used by the settings panel and the composer's Computers dialog. Design:
+// src/.agents/computers-direct-host-2026-10-16.md.
 
-import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Space, Typography } from "antd";
-import type {
-  ComputerRequestSummary,
-  ComputerSummary,
-} from "@cocalc/util/computers/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Input, Select, Space, Typography } from "antd";
+import type { ComputerRequestSummary } from "@cocalc/util/computers/api";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { computerState, reconnectKind } from "./computer-state";
-import { LeaseInput } from "./computer-lease";
-import { DEFAULT_LEASE_HOURS, leaseRule } from "@cocalc/util/computers/policy";
 import { CommandLine } from "@cocalc/frontend/components/command-line";
 
 export const computersApi = () => webapp_client.conat_client.hub.computers;
+
+const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
 /**
  * The one line to run on the machine: it installs or upgrades cocalc if
@@ -72,29 +68,49 @@ export function errorText(err: unknown): string {
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
-export function timeLimit(policy: {
-  duration: null | { initial_seconds: number; max_seconds: number };
-}) {
-  if (policy?.duration == null) return "no time limit";
-  const { initial_seconds, max_seconds } = policy.duration;
-  return `${Math.round(initial_seconds / 60)} min (at most ${Math.round(max_seconds / 3600)} h)`;
+/** The projects a computer can serve: those whose one collaborator is you. */
+export function useComputerProjects(): { project_id: string; title: string }[] {
+  const accountId = useTypedRedux("account", "account_id");
+  const projectMap = useTypedRedux("projects", "project_map");
+  return useMemo(() => {
+    const out: { project_id: string; title: string }[] = [];
+    projectMap?.forEach((project, project_id) => {
+      const users = project?.get("users");
+      if (
+        project?.get("deleted") ||
+        users?.size !== 1 ||
+        users.getIn([accountId, "group"]) !== "owner"
+      ) {
+        return;
+      }
+      out.push({ project_id, title: project.get("title") || project_id });
+    });
+    return out.sort((a, b) => a.title.localeCompare(b.title));
+  }, [projectMap, accountId]);
 }
 
-/** What approving lets the network's agents do, said before it happens. */
-export function approvalText(r: ComputerRequestSummary): string {
-  const members = r.agent_network?.members.length ?? 0;
-  const policy = r.resolved_policy ?? r.requested_policy;
-  return `DIRECT mode: the ${members} agent${members === 1 ? "" : "s"} in the ${r.agent_network?.title ?? "?"} network will be able to run any command there as ${r.machine?.user}, with all of that user's access, for ${timeLimit(policy)}. ${leaseRule(policy?.lease_hours ?? DEFAULT_LEASE_HOURS)}`;
+export function projectTitle(
+  projects: { project_id: string; title: string }[],
+  project_id: string,
+): string {
+  return projects.find((p) => p.project_id === project_id)?.title ?? project_id;
+}
+
+/** What approving lets the project do, said before it happens. */
+export function approvalText(
+  r: ComputerRequestSummary,
+  project: string,
+): string {
+  return `Anything running in the project "${project}" (agents included) will be able to run any command there as ${r.machine?.user}, with all of that user's access, until you revoke it.`;
 }
 
 export async function approveRequest(r: ComputerRequestSummary) {
-  if (r.transcript_hash == null || r.agent_network == null) {
+  if (r.pairing_phrase == null) {
     throw Error("This request isn't ready to approve.");
   }
   await computersApi().approveComputerRequest({
     request_id: r.request_id,
-    transcript_hash: r.transcript_hash,
-    agent_network_generation: r.agent_network.generation,
+    pairing_phrase: r.pairing_phrase,
   });
 }
 
@@ -110,6 +126,7 @@ export function PairingSteps({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const projects = useComputerProjects();
   const done = useRef(false);
 
   useEffect(() => {
@@ -151,7 +168,7 @@ export function PairingSteps({
   const expired =
     request != null &&
     (request.state === "expired" ||
-      ((request.state === "pending" || request.state === "paired") &&
+      ((request.state === "pending" || request.state === "claimed") &&
         request.expires_at <= Date.now()));
   return (
     <Space orientation="vertical" style={{ width: "100%" }}>
@@ -165,6 +182,11 @@ export function PairingSteps({
         />
       ) : request.state === "declined" ? (
         <Alert type="warning" title="This pairing was declined." />
+      ) : request.state === "invalidated" ? (
+        <Alert
+          type="warning"
+          title="Two machines claimed this pairing, so it is no longer valid. Start again."
+        />
       ) : request.state === "approved" ? (
         <Alert type="success" title={`Connected: @${request.name}.`} />
       ) : request.state === "pending" ? (
@@ -189,7 +211,9 @@ export function PairingSteps({
           <Typography.Text strong code style={{ fontSize: "16px" }}>
             {request.pairing_phrase}
           </Typography.Text>
-          <span>{approvalText(request)}</span>
+          <span>
+            {approvalText(request, projectTitle(projects, request.project_id))}
+          </span>
           <Button
             type="primary"
             disabled={busy}
@@ -204,128 +228,76 @@ export function PairingSteps({
   );
 }
 
-/**
- * Reconnect a computer that isn't connected: resume one without a time limit
- * by running its connector again, or pair it again (same name, network and
- * time limit).
- */
-export function ReconnectComputer({
-  computer,
+/** Name it, pick its project, then follow the pairing. */
+export function ConnectComputer({
+  defaultProjectId,
   onDone,
 }: {
-  computer: ComputerSummary;
+  defaultProjectId?: string;
   onDone?: () => void;
 }) {
-  const [mode, setMode] = useState(() => reconnectKind(computer));
-  const [leaseHours, setLeaseHours] = useState(
-    computer.effective_policy?.lease_hours ?? DEFAULT_LEASE_HOURS,
+  const projects = useComputerProjects();
+  const [name, setName] = useState("");
+  const [projectId, setProjectId] = useState<string | undefined>(
+    projects.some((p) => p.project_id === defaultProjectId)
+      ? defaultProjectId
+      : undefined,
   );
   const [request_id, setRequestId] = useState<string>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const pairing = useRef(false);
-  const c = computer;
-  const ended = computerState(c) === "ended";
 
-  // Resuming: say so as soon as it is back.
-  useEffect(() => {
-    if (mode !== "resume") return;
-    let alive = true;
-    const timer = setInterval(async () => {
-      try {
-        const now = await computersApi().getComputer({
-          computer: c.computer_id,
-        });
-        if (alive && now.connected) {
-          clearInterval(timer);
-          onDone?.();
-        }
-      } catch {}
-    }, 3000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [mode, c.computer_id]);
-
-  async function pairAgain() {
-    if (pairing.current) return;
-    pairing.current = true;
+  if (request_id != null) {
+    return <PairingSteps request_id={request_id} onDone={onDone} />;
+  }
+  async function create() {
+    if (projectId == null) return;
     setBusy(true);
     setError("");
     try {
-      // The new request first: if that fails, the old computer is untouched.
-      const { request_id } = await computersApi().createComputerRequest({
-        name: c.name,
-        policy: {
-          ...c.effective_policy,
-          lease_hours: leaseHours,
-          mounts: [],
-          agent_network_id: c.agent_network_id,
-        },
-        why: `Reconnect @${c.name}`,
+      const created = await computersApi().createComputerRequest({
+        name,
+        project_id: projectId,
       });
-      setRequestId(request_id);
-      if (!ended) {
-        // Its key was only in its connector, so it can't come back; approval
-        // gives its name to the new one once it is disconnected.
-        try {
-          await computersApi().revokeComputer({ computer_id: c.computer_id });
-        } catch (err) {
-          setError(
-            `${errorText(err)} Disconnect the old @${c.name} in Settings before approving the new one.`,
-          );
-        }
-      }
+      setRequestId(created.request_id);
     } catch (err) {
       setError(errorText(err));
     } finally {
-      pairing.current = false;
       setBusy(false);
     }
-  }
-
-  if (request_id != null) {
-    return (
-      <Space orientation="vertical" style={{ width: "100%" }}>
-        {error && <Alert type="warning" title={error} />}
-        <PairingSteps request_id={request_id} onDone={onDone} />
-      </Space>
-    );
   }
   return (
     <Space orientation="vertical" style={{ width: "100%" }}>
       {error && <Alert type="error" title={error} />}
-      {mode === "resume" ? (
-        <>
-          <span>
-            @{c.name} has no time limit, so it resumes when its connector runs
-            again. On {c.machine_user}@{c.hostname}, run:
-          </span>
-          <Typography.Text code copyable>
-            cocalc computer daemon
-          </Typography.Text>
-          <span>This updates as soon as it is back.</span>
-          <Button type="link" onClick={() => setMode("pair")}>
-            The machine lost its key: pair it again instead
-          </Button>
-        </>
-      ) : (
-        <>
-          <span>
-            Pair @{c.name} again, with the same name, network and time limit.
-            {ended
-              ? ""
-              : " Its connector stopped, and a computer with a time limit can't resume, so the current @" +
-                c.name +
-                " is disconnected first."}
-          </span>
-          <LeaseInput value={leaseHours} onChange={setLeaseHours} />
-          <Button type="primary" disabled={busy} onClick={pairAgain}>
-            Pair @{c.name} again
-          </Button>
-        </>
-      )}
+      <span>
+        A computer serves one project: anything running there, agents included,
+        can run commands on it as you. So it can only serve a project whose one
+        collaborator is you.
+      </span>
+      <Input
+        addonBefore="@"
+        placeholder="name, e.g. laptop"
+        value={name}
+        status={name && !NAME.test(name) ? "error" : undefined}
+        onChange={(e) => setName(e.target.value.trim().toLowerCase())}
+      />
+      <Select
+        style={{ width: "100%" }}
+        placeholder="The project it serves"
+        value={projectId}
+        onChange={setProjectId}
+        options={projects.map((p) => ({ value: p.project_id, label: p.title }))}
+        notFoundContent="No project has you as its only collaborator."
+        showSearch
+        optionFilterProp="label"
+      />
+      <Button
+        type="primary"
+        disabled={busy || !NAME.test(name) || projectId == null}
+        onClick={create}
+      >
+        Next
+      </Button>
     </Space>
   );
 }

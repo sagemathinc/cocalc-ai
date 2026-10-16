@@ -3,11 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  acceptDirectoryKeys,
-  getBaySigningKey,
-  localPublishedSigningKeys,
-} from "@cocalc/server/computers/signing-keys";
 import { lastKnownSeedRead } from "@cocalc/server/inter-bay/last-known-seed-read";
 import type { BayInfo } from "@cocalc/conat/hub/api/system";
 import type {
@@ -226,24 +221,6 @@ export async function registerBayPresenceLocal(
   const bay_id = trim(request.bay_id);
   if (!bay_id) {
     throw new Error("bay_id is required");
-  }
-  const published = request.computer_signing_keys;
-  if (published != null) {
-    // The typed inter-bay service has already checked that source_bay_id is
-    // the authenticated calling bay (its bay credential); the keys must be
-    // that same bay's, so a bay can publish keys only for itself.
-    if (trim(published.source_bay_id) !== bay_id) {
-      logger.warn("computer signing keys for another bay ignored", {
-        bay_id,
-        source_bay_id: published.source_bay_id,
-      });
-    } else
-      await acceptDirectoryKeys(bay_id, published.keys).catch((err) => {
-        logger.warn("computer signing keys not recorded", {
-          bay_id,
-          err: `${err}`,
-        });
-      });
   }
   const existing = await getEntryLocal(bay_id);
   const managedTunnel = await getManagedTunnelLocal(bay_id);
@@ -475,30 +452,7 @@ export async function buildLocalBayRegistration(): Promise<BayRegistryRegisterRe
     public_origin: (await getBayPublicOrigin(bay_id)) ?? null,
     public_target: getCurrentBayPublicTarget() ?? null,
     public_target_kind: getCurrentBayPublicTarget() ? "hostname" : null,
-    computer_signing_keys: await computerSigningKeysForRegistration(),
   };
-}
-
-/**
- * This bay's public keys for computers, creating the first one if needed so
- * it is in the seed's directory before this bay signs anything. Never fails
- * the heartbeat.
- */
-async function computerSigningKeysForRegistration(): Promise<
-  BayRegistryRegisterRequest["computer_signing_keys"]
-> {
-  try {
-    await getBaySigningKey();
-    return {
-      source_bay_id: getConfiguredBayId(),
-      keys: await localPublishedSigningKeys(),
-    };
-  } catch (err) {
-    logger.warn("computer signing keys unavailable for registration", {
-      err: `${err}`,
-    });
-    return undefined;
-  }
 }
 
 async function heartbeatOnce(): Promise<void> {

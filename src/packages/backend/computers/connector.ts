@@ -4,90 +4,64 @@
  */
 
 // The computer's side of CoCalc (`cocalc computer connect`): pair with an
-// account, then run the daemon and keep a conat session to the home bay.
-// Plan: src/.agents/computers-plan-2026-10-11.md (part 4b, revision 3).
+// account, then serve the one project it is attached to.
+// Design: src/.agents/computers-direct-host-2026-10-16.md.
 //
-// Each session is its own conat connection: a fresh single-use challenge, a
-// login signed by the computer's key, and subjects bound to that session.
-// Conat's own reconnection is off (it would replay a consumed login); when
-// a session ends (disconnect, lease, revocation) the loop logs in again.
+// - Pairing (the account's home bay): claim the request, show the phrase,
+//   wait for the owner's approval. The secret the claim returned becomes
+//   this computer's token.
+// - Serving: ask the home bay for a short-lived token for the project's
+//   host, connect to that host directly (like a browser), and answer exec
+//   and hello requests from the project. Commands never pass through the
+//   hub. Before the host token expires, connect again, then close the old
+//   connection; answers always go back on the newest one.
+// - Revoked: the home bay says so when asked for a token. Every running
+//   command is stopped and the connector ends for good.
+// - A command runs only while the computer stays connected: an unplanned
+//   drop stops every running command. Delivery is at most once; the asker
+//   gets an error and decides whether to retry.
 //
 // Files (owner-only, under ~/.local/share/cocalc/computers/<computer_id>):
-//   connection.json  site, computer id and name
-//   key.pem          the computer's private key, only for a computer without
-//                    a time limit (a time-limited one keeps it in memory, so
-//                    its session never outlives this process)
-//   state/           the daemon's state, ledger, jobs and output
+//   connection.json  site, computer id, name, project, and the token
 
 import { hostname, homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import {
-  type ComputerPolicy,
-  leaseRule,
-  parseComputerPolicy,
-  parseRequestedPolicy,
-} from "@cocalc/util/computers/policy";
-import {
-  parseComputerCertificate,
-  parsePairingTranscript,
-  parseSignedEnvelope,
-  site as protocolSite,
-  SIGNED_KINDS,
-} from "@cocalc/util/computers/protocol";
-import { UNSAFE_TEXT_CHARS } from "@cocalc/util/computers/canonical";
+import { existsSync, readdirSync } from "node:fs";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
-  computerOpSubject,
-  computerSubjectAllowed,
-  isSubjectToken,
-  type ComputerOpMessage,
-  type ComputerPush,
-  type ComputerPushAck,
-  type ComputerReplyMessage,
+  HOST_TOKEN_REFRESH_MS,
+  type HostConnection,
+  type PairingClaim,
+} from "@cocalc/util/computers/api";
+import {
+  OperationError,
+  parseExecRequest,
+} from "@cocalc/util/computers/operations";
+import {
+  computerExecSubject,
+  computerHelloSubject,
+  type ComputerExecReply,
+  type ComputerHello,
 } from "@cocalc/conat/computers/subjects";
 import { connect, type Client } from "@cocalc/conat/core/client";
-import {
-  generateAgreementKey,
-  generateSigningKey,
-  keyPairFromPrivatePem,
-  policyHash,
-  privateKeyToPem,
-  randomNonce,
-  signEnvelope,
-  transcriptHash,
-  transcriptPairingPhrase,
-  type KeyPair,
-} from "./crypto";
-import {
-  signChallengeRequest,
-  signComputerLogin,
-  isLoginEnded,
-  type LoginChallengeAnswer,
-  type LoginChallengeView,
-} from "./login";
+import { REPLY_HEADER } from "@cocalc/conat/core/message-headers";
 import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
-import {
-  ensurePrivateDir,
-  readJson,
-  writeDurable,
-  writeDurableJson,
-} from "./daemon/durable";
-import { DaemonStore } from "./daemon/state";
-import { ComputerDaemon } from "./daemon/daemon";
-import { HubClock, SessionClock, systemClocks } from "./daemon/clock";
+import { ensurePrivateDir, readJson, writeDurableJson } from "./durable";
+import { runExec } from "./exec";
 
 /**
- * Raw limits on what the hub may send, enforced before reassembly: an
- * operation message is a ticket, a proof and a request (stdin is at most
- * 1 MiB, base64).
+ * Raw limits on what a request may be, enforced before reassembly: an exec
+ * request is a command (32 KB) and at most 1 MiB of stdin, base64.
  */
-export const OP_RECEIVE_LIMITS: ReceiveLimits = {
+export const REQUEST_RECEIVE_LIMITS: ReceiveLimits = {
   maxMessageBytes: 4 * 1024 * 1024,
   maxInflightBytes: 16 * 1024 * 1024,
   maxInflightMessages: 16,
   maxFragmentsPerMessage: 64,
 };
+
+/** Commands running here at once; more are refused. */
+export const MAX_RUNNING = 16;
 
 export interface ConnectorIO {
   log(message: string): void;
@@ -100,14 +74,8 @@ export interface Connection {
   origin: string;
   computer_id: string;
   name: string;
-  key: KeyPair;
-  /**
-   * For end-to-end encryption to this computer (not used yet). Only in
-   * memory for a time-limited computer, like its signing key.
-   */
-  agreement?: KeyPair;
-  /** From pairing: the session's limits (null: none). */
-  duration: ComputerPolicy["duration"];
+  project_id: string;
+  token: string;
 }
 
 /** Where computers keep their files (XDG data dir). */
@@ -145,18 +113,19 @@ export function parsePairingUrl(url: string): {
   return { origin: u.origin, request_id: m[1] };
 }
 
-/** The pairing endpoints answer with small JSON objects. */
+/** The computers endpoints answer with small JSON objects. */
 export const MAX_RESPONSE_BYTES = 256 * 1024;
 export const REQUEST_TIMEOUT_MS = 30_000;
 
 /** A failure that may pass: the site unreachable, restarting (5xx) or slow. */
-class TransientError extends Error {}
+export class TransientError extends Error {}
+/** The site says this computer is revoked: it ends for good. */
+export class RevokedError extends Error {}
+/** An answer bigger than we read: not something waiting fixes. */
+class TooLargeError extends Error {}
 
 /** How long pairing waits for the owner while the site can't be reached. */
 const MAX_APPROVAL_WAIT_MS = 70 * 60 * 1000;
-
-/** An answer bigger than we read: not something waiting fixes. */
-class TooLargeError extends Error {}
 
 /** Sleep, but wake up "stopped" as soon as the caller aborts. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -185,7 +154,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * caller's abort signal, a byte cap read before parsing, and error text
  * cleaned before anyone prints it.
  */
-async function post<T>(
+export async function post<T>(
   origin: string,
   path: string,
   body: object,
@@ -225,7 +194,11 @@ async function post<T>(
       `${origin} answered ${res.status} without JSON`,
     );
   }
-  if (data?.error != null) throw new Error(clean(data.error, 300));
+  if (data?.error != null) {
+    const message = clean(data.error, 300);
+    if (data.revoked === true) throw new RevokedError(message);
+    throw new (data.transient === true ? TransientError : Error)(message);
+  }
   if (!res.ok) {
     throw new (res.status >= 500 ? TransientError : Error)(
       `${origin} answered ${res.status}`,
@@ -252,9 +225,31 @@ async function readCapped(res: Response, max: number): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+const SECRET = /^[A-Za-z0-9_-]{43}$/;
+const PHRASE = /^[a-z]+(?:-[a-z]+){3}$/;
+/** Control and bidi characters: never printed from the server as is. */
+const UNSAFE_TEXT =
+  /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
+/** Server text for the terminal: no control or bidi characters, bounded. */
+function clean(value: unknown, max: number): string {
+  return `${value ?? ""}`.replace(UNSAFE_TEXT, "?").slice(0, max);
+}
+
+/** This machine, as the owner will see it. */
+function machine() {
+  return {
+    hostname: hostname().slice(0, 255),
+    os: process.platform,
+    arch: process.arch,
+    user: userInfo().username,
+  };
+}
+
 /**
- * Pair this machine: show the request, resolve the policy, claim it with
- * fresh keys, show the pairing phrase, and wait for the owner's approval.
+ * Pair this machine: show the request, claim it, show the pairing phrase,
+ * and wait for the owner's approval.
  */
 export async function pairComputer({
   url,
@@ -268,87 +263,49 @@ export async function pairComputer({
   signal?: AbortSignal;
 }): Promise<Connection> {
   const { origin, request_id } = parsePairingUrl(url);
-  // Nothing from the server is trusted as is: every field is parsed, and
-  // identities come from the signed certificate and our own resolved policy.
-  const view = parseView(
-    await post<unknown>(origin, "pairing/view", { request_id }, signal),
-    request_id,
+  const view: any = await post<unknown>(
     origin,
+    "pairing/view",
+    { request_id },
+    signal,
   );
+  if (view?.request_id !== request_id || !NAME.test(`${view?.name}`)) {
+    throw new Error("the server's answer is malformed");
+  }
   if (view.state !== "pending") {
-    throw new Error(`this request is ${view.state}; make a new one in CoCalc`);
+    throw new Error(
+      `this request is ${clean(view.state, 40)}; make a new one in CoCalc`,
+    );
   }
-  const requested = parseRequestedPolicy(view.requested_policy);
-  if (requested.mode !== "direct") {
-    throw new Error("only direct mode is supported so far");
-  }
-  if (requested.mounts.length > 0) {
-    throw new Error("a direct-mode computer has no mounts");
-  }
-  const policy = parseComputerPolicy({ ...requested, mounts: [] });
-  const limit =
-    policy.duration == null
-      ? "no time limit"
-      : `${Math.round(policy.duration.initial_seconds / 60)} minutes (at most ${Math.round(policy.duration.max_seconds / 3600)} hours)`;
   io.log(
     [
       `${origin} asks to connect this computer:`,
-      `  account:  ${view.account_label}`,
+      `  account:  ${clean(view.account_label, 200).replace(/\s+/g, " ")}`,
       `  name:     ${view.name}`,
-      `  mode:     DIRECT: agents in that account's agent network run commands`,
-      `            here as ${userInfo().username}, with all of your access`,
-      `  time:     ${limit}`,
-      `  lease:    ${leaseRule(policy.lease_hours)}`,
-      view.why ? `  why:      ${view.why}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+      `  access:   FULL: anything running in one of that account's projects`,
+      `            can run commands here as ${userInfo().username}, with all of`,
+      `            your access, until it is revoked in CoCalc`,
+    ].join("\n"),
   );
-  // Always asked: connecting gives that account full trust here.
+  // Always asked: connecting gives that project full trust here.
   if (!(await io.confirm("Connect this computer?"))) {
     throw new Error("not connected");
   }
-
-  const key = generateSigningKey();
-  const agreement = generateAgreementKey();
-  const transcript = parsePairingTranscript({
-    type: "cocalc-computer-pairing",
-    version: 1,
-    site: view.site,
-    cluster_id: view.cluster_id,
-    request_id,
-    account_id: view.account_id,
-    policy_hash: policyHash(policy),
-    signing_key: key.fingerprint,
-    agreement_key: agreement.fingerprint,
-    client_nonce: randomNonce(),
-    server_nonce: view.server_nonce,
-    machine: {
-      hostname: hostname().slice(0, 255),
-      os: process.platform,
-      arch: process.arch,
-      user: userInfo().username,
-    },
-  });
-  const ours = transcriptHash(transcript);
-  const submitted: any = await post<unknown>(
+  const claim = await post<PairingClaim>(
     origin,
-    "pairing/submit",
-    {
-      request_id,
-      transcript: signEnvelope(SIGNED_KINDS.transcript, transcript, key),
-      signing_public_key: key.publicDer,
-      resolved_policy: policy,
-    },
+    "pairing/claim",
+    { request_id, machine: machine() },
     signal,
   );
-  if (submitted?.transcript_hash !== ours) {
-    throw new Error("the server answered for another pairing");
+  if (
+    claim?.request_id !== request_id ||
+    !SECRET.test(`${claim?.secret}`) ||
+    !PHRASE.test(`${claim?.pairing_phrase}`)
+  ) {
+    throw new Error("the server's answer is malformed");
   }
-  // The phrase is ours to compute: it comes from the transcript we signed.
-  const pairing_phrase = transcriptPairingPhrase(transcript);
   io.log(
-    `\nPairing phrase:  ${pairing_phrase}\n\nApprove it in CoCalc, after checking it shows exactly this phrase. Waiting...`,
+    `\nPairing phrase:  ${claim.pairing_phrase}\n\nApprove it in CoCalc, after checking it shows exactly this phrase. Waiting...`,
   );
 
   // People take a while to approve, and the site may restart meanwhile:
@@ -363,7 +320,7 @@ export async function pairComputer({
       status = await post<unknown>(
         origin,
         "pairing/status",
-        { request_id, transcript_hash: ours },
+        { request_id, secret: claim.secret },
         signal,
       );
     } catch (err) {
@@ -384,149 +341,54 @@ export async function pairComputer({
     if (status?.state === "approved") break;
     if (status?.state === "expired") {
       throw new Error(
-        "The request expired before it was approved. Ask for a new one in CoCalc and run its line again.",
+        "The request expired before it was approved. Make a new one in CoCalc and run its line again.",
       );
     }
     if (status?.state === "declined") {
       throw new Error("The request was declined in CoCalc.");
     }
-    if (status?.state !== "paired" && status?.state !== "pending") {
+    if (status?.state !== "claimed") {
       throw new Error(`The request is ${clean(status?.state, 40)}.`);
     }
     await sleep(pollMs, signal);
   }
-  const certificate = parseSignedEnvelope(
-    status.certificate,
-    parseComputerCertificate,
-    "certificate",
-  );
-  const c = certificate.payload;
-  // Everything the certificate binds must be what we paired.
-  if (
-    c.signing_key !== key.fingerprint ||
-    c.signing_public_key !== key.publicDer ||
-    c.agreement_key !== agreement.fingerprint ||
-    c.transcript_hash !== ours ||
-    c.ceiling_hash !== policyHash(policy) ||
-    c.account_id !== view.account_id ||
-    c.site !== view.site ||
-    c.cluster_id !== view.cluster_id
-  ) {
-    throw new Error("the certificate is not for this pairing");
+  if (!isValidUUID(status.computer_id) || !isValidUUID(status.project_id)) {
+    throw new Error("the server's answer is malformed");
   }
-  const computer_id = c.computer_id; // a UUID: the parser checked
-  // The name the person at the machine confirmed; the status's is unsigned.
-  const name = view.name;
+  const computer_id: string = status.computer_id;
   const dir = join(computersDir(), computer_id);
-  // Never clobber another pairing's files (keys, ledger, jobs).
   if (existsSync(dir)) {
     throw new Error(
       `${dir} already exists; this computer id is already paired here`,
     );
   }
   ensurePrivateDir(dir);
-  // Checks the certificate's signature against the home bay's key in the
-  // directory (which DaemonStore validates key by key).
-  DaemonStore.create(join(dir, "state"), {
-    certificate,
-    ceiling: policy,
-    directory: Array.isArray(status.directory) ? status.directory : [],
-    computer_key: key.fingerprint,
-    agent_network_id: policy.agent_network_id,
-  });
   const connection: Connection = {
     dir,
     origin,
     computer_id,
-    name,
-    key,
-    agreement,
-    duration: policy.duration,
+    // The name the person at the machine confirmed.
+    name: view.name,
+    project_id: status.project_id,
+    token: claim.secret,
   };
   writeDurableJson(join(dir, "connection.json"), {
     origin,
     computer_id,
-    name,
-    duration: policy.duration,
+    name: connection.name,
+    project_id: connection.project_id,
+    token: connection.token,
   });
-  if (policy.duration == null) {
-    writeDurable(join(dir, "key.pem"), privateKeyToPem(key.privateKey));
-    // Kept for end-to-end encryption to this computer (not used yet).
-    writeDurable(
-      join(dir, "agreement.pem"),
-      privateKeyToPem(agreement.privateKey),
-    );
-  }
-  io.log(`Approved: this computer is @${name}.`);
+  io.log(`Approved: this computer is @${connection.name}.`);
   return connection;
 }
 
-const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-
-/** Server text for the terminal: no control or bidi characters, bounded. */
-function clean(value: unknown, max: number): string {
-  return `${value ?? ""}`.replace(UNSAFE_TEXT_CHARS_GLOBAL, "?").slice(0, max);
-}
-
-const UNSAFE_TEXT_CHARS_GLOBAL = new RegExp(UNSAFE_TEXT_CHARS.source, "gu");
-
-interface ParsedView {
-  site: string;
-  cluster_id: string;
-  account_id: string;
-  account_label: string;
-  name: string;
-  requested_policy: unknown;
-  why: string;
-  server_nonce: string;
-  state: string;
-}
-
-function parseView(input: any, request_id: string, origin: string): ParsedView {
-  if (input == null || typeof input !== "object") {
-    throw new Error("the server's answer is malformed");
-  }
-  if (input.request_id !== request_id) {
-    throw new Error("the server answered for another request");
-  }
-  if (!isValidUUID(input.account_id) || !NAME.test(`${input.name}`)) {
-    throw new Error("the server's answer is malformed");
-  }
-  if (
-    typeof input.server_nonce !== "string" ||
-    !/^[A-Za-z0-9_-]{43}$/.test(input.server_nonce)
-  ) {
-    throw new Error("the server's answer is malformed");
-  }
-  let site: string;
-  try {
-    site = protocolSite(input.site);
-  } catch {
-    throw new Error("the server's answer is malformed");
-  }
-  // The site the computer is paired with (and its certificate names) is the
-  // one this machine actually talked to.
-  if (site !== protocolSite(origin)) {
-    throw new Error(
-      `this pairing line is for ${clean(site, 200)}, not ${origin}`,
-    );
-  }
-  return {
-    site,
-    cluster_id: `${input.cluster_id}`,
-    account_id: input.account_id,
-    account_label: clean(input.account_label, 200).replace(/\s+/g, " "),
-    name: input.name,
-    requested_policy: input.requested_policy,
-    why: clean(input.why, 1000),
-    server_nonce: input.server_nonce,
-    state: clean(input.state, 40),
-  };
-}
-
-/** A connected computer without a time limit, from its files. */
+/** A paired computer, from its files. */
 export function loadConnection(computer_id?: string): Connection {
   const root = computersDir();
+  if (computer_id != null && !isValidUUID(computer_id)) {
+    throw new Error("a computer id is a UUID");
+  }
   const ids =
     computer_id != null
       ? [computer_id]
@@ -535,30 +397,33 @@ export function loadConnection(computer_id?: string): Connection {
             .filter((d) => d.isDirectory())
             .map((d) => d.name)
         : [];
-  if (computer_id != null && !isValidUUID(computer_id)) {
-    throw new Error("a computer id is a UUID");
-  }
   const found = ids.filter(
-    (id) => isValidUUID(id) && existsSync(join(root, id, "key.pem")),
+    (id) => isValidUUID(id) && existsSync(join(root, id, "connection.json")),
   );
   if (found.length !== 1) {
     throw new Error(
       found.length === 0
-        ? "no connected computer here (a time-limited one ends with its process: connect again)"
+        ? "no connected computer here: connect it with the line CoCalc shows"
         : `several computers here; name one: ${found.join(", ")}`,
     );
   }
   const dir = join(root, found[0]);
   const c = readJson<any>(join(dir, "connection.json"));
-  if (c == null) throw new Error("this computer's files are incomplete");
-  const pem = readFileSync(join(dir, "key.pem"), "utf8");
+  if (
+    c == null ||
+    !isValidUUID(c.computer_id) ||
+    !isValidUUID(c.project_id) ||
+    !SECRET.test(`${c.token}`)
+  ) {
+    throw new Error("this computer's files are incomplete");
+  }
   return {
     dir,
     origin: c.origin,
     computer_id: c.computer_id,
     name: c.name,
-    key: keyPairFromPrivatePem(pem),
-    duration: c.duration ?? null,
+    project_id: c.project_id,
+    token: c.token,
   };
 }
 
@@ -566,275 +431,249 @@ export interface RunOptions {
   connection: Connection;
   io: ConnectorIO;
   signal?: AbortSignal;
-  /** Tests: how to get a challenge and open a conat connection. */
-  challenge?: () => Promise<LoginChallengeAnswer>;
-  openConat?: (auth: object) => Client;
-  /** Log in again this long before the lease (15 min) ends. */
-  sessionMs?: number;
-  /** Tests: called once each session is subscribed. */
-  onSession?: (session_id: string) => void;
+  /** Tests: how to get a host token and open a conat connection. */
+  hostConnection?: () => Promise<HostConnection>;
+  openConat?: (host: HostConnection) => Client;
+  /** Connect again this often (before the host token expires). */
+  refreshMs?: number;
+  /** Tests: called once each connection is subscribed. */
+  onConnected?: (host: HostConnection) => void;
+}
+
+/** One connection to the host, serving until replaced or dropped. */
+interface Session {
+  client: Client;
+  /** Resolves when the host drops it (or it is closed). */
+  dropped: Promise<void>;
+  /** A newer connection took over: close this one (not a drop). */
+  retire(): void;
 }
 
 /**
- * Run the daemon and keep a session to the home bay until stopped (or the
- * session's time is over).
+ * Serve the computer's project until stopped, or until the site says the
+ * computer is revoked (then every running command is stopped).
  */
 export async function runConnector(opts: RunOptions): Promise<void> {
   const { connection, io, signal } = opts;
-  const store = DaemonStore.open(join(connection.dir, "state"));
-  if (store == null) throw new Error("this computer has no daemon state");
-  const clocks = systemClocks;
-  const hubClock = new HubClock(clocks);
-  const session = new SessionClock(clocks, {
-    deadline_ms:
-      connection.duration == null
-        ? null
-        : connection.duration.initial_seconds * 1000,
-    max_ms:
-      connection.duration == null
-        ? null
-        : connection.duration.max_seconds * 1000,
-  });
-  const daemon = new ComputerDaemon({
-    stateDir: join(connection.dir, "state"),
-    store,
-    clocks,
-    hubClock,
-    session,
-    workdir: homedir(),
-    onError: (err) => io.log(`daemon: ${err}`),
-  });
-  daemon.start();
-  const challenge =
-    opts.challenge ??
+  const refreshMs = opts.refreshMs ?? HOST_TOKEN_REFRESH_MS;
+  const hostConnection =
+    opts.hostConnection ??
     (() =>
-      post<LoginChallengeAnswer>(
+      post<HostConnection>(
         connection.origin,
-        "session/challenge",
-        {
-          request: signChallengeRequest({
-            certificate: store.certificate,
-            key: connection.key,
-          }),
-        },
+        "connect",
+        { computer_id: connection.computer_id, token: connection.token },
         signal,
       ));
   const openConat =
     opts.openConat ??
-    ((auth: object) =>
+    ((host: HostConnection) =>
       connect({
-        address: connection.origin,
+        address: host.address,
         noCache: true,
+        // A new token for each connection: never replay an old one.
         reconnection: false,
         // A computer may not subscribe to _INBOX (and makes no requests).
         disableInbox: true,
-        auth,
+        auth: { bearer: host.token },
       } as any));
-  let backoff = 1000;
-  try {
-    while (!signal?.aborted && !daemon.sessionEnded) {
-      try {
-        await oneSession({
-          ...opts,
-          store,
-          daemon,
-          hubClock,
-          challenge,
-          openConat,
-        });
-        backoff = 1000;
-      } catch (err) {
-        io.log(`connection: ${(err as Error).message ?? err}`);
-        backoff = Math.min(backoff * 2, 60_000);
-      }
-      if (signal?.aborted || daemon.sessionEnded) break;
-      // Stopping wakes it at once (the backoff can be a minute).
-      await sleep(backoff * (0.5 + Math.random()), signal).catch(() => {});
-    }
-  } finally {
-    // Ended: every job was told to stop; see them gone (SIGKILL after the
-    // grace period) before this process may exit. The rest is re-driven at
-    // the next start.
-    if (daemon.sessionEnded && !(await daemon.drain())) {
-      io.log(
-        "some jobs had not stopped yet; they are stopped at the next start",
-      );
-    }
-    daemon.stop();
-  }
-  if (daemon.sessionEnded) io.log("this computer's session has ended");
-}
+  // Every running command, and how to stop it (its whole process group).
+  const running = new Map<Promise<void>, AbortController>();
+  const stopRunning = () => {
+    for (const stop of running.values()) stop.abort();
+  };
+  let current: Session | undefined;
 
-async function oneSession({
-  connection,
-  io,
-  signal,
-  store,
-  daemon,
-  hubClock,
-  challenge,
-  openConat,
-  sessionMs = 14 * 60 * 1000,
-  onSession,
-}: RunOptions & {
-  store: DaemonStore;
-  daemon: ComputerDaemon;
-  hubClock: HubClock;
-  challenge: () => Promise<LoginChallengeAnswer>;
-  openConat: (auth: object) => Client;
-}): Promise<void> {
-  const opening = await challenge();
-  if (isLoginEnded(opening)) {
-    // The home bay ended this computer while it was away. Only a signed
-    // state acts (it throws otherwise, and the loop retries); once applied,
-    // every job is stopped and the connector stops for good.
-    daemon.applyState(opening.ended);
-    if (daemon.sessionEnded) return;
-    throw new TransientError("the site answered without a login challenge");
-  }
-  const c: LoginChallengeView = opening;
-  const login = signComputerLogin({
-    challenge: c,
-    certificate: store.certificate,
-    key: connection.key,
-  });
-  const session_id = c.challenge_id;
-  const client = openConat({ computer_login: login });
-  let sub: Awaited<ReturnType<Client["subscribe"]>> | undefined;
-  const end = () => sub?.close();
-  const timer = setTimeout(end, sessionMs);
-  signal?.addEventListener("abort", end);
+  /**
+   * An answer goes back on the newest connection: a command may outlive the
+   * connection (and host token) it came on. Without one, it has nowhere to
+   * go, and the command was stopped anyway (see onDropped).
+   */
+  const answer = async (reply_subject: string, data: unknown) => {
+    await current?.client.publish(reply_subject, data).catch(() => {});
+  };
+
+  const handlers: SessionHandlers = {
+    exec: (mesg) => {
+      const reply_subject = replySubject(mesg);
+      if (reply_subject == null) return;
+      const stop = new AbortController();
+      const task = (async () => {
+        const result = await execReply(mesg.data, running.size, stop.signal);
+        await answer(reply_subject, result);
+      })().finally(() => running.delete(task));
+      running.set(task, stop);
+    },
+    hello: (mesg) => {
+      const hello: ComputerHello = {
+        v: 1,
+        computer_id: connection.computer_id,
+        name: connection.name,
+        ...machine(),
+        running: running.size,
+      };
+      void mesg.respond(hello).catch(() => {});
+    },
+    // A command runs only while the computer is connected: dropped (the
+    // host refused it, or the network went away), its answer would be lost
+    // and its project may no longer be allowed to use it.
+    onDropped: stopRunning,
+  };
+
+  let backoff = 1000;
+  let unreachable = false;
   try {
-    sub = await client.subscribe(
-      computerOpSubject(connection.computer_id, session_id),
-      { receiveLimits: OP_RECEIVE_LIMITS },
-    );
-    client.conn?.on?.("disconnect", end);
-    io.log(`connected (@${connection.name})`);
-    onSession?.(session_id);
-    for await (const mesg of sub) {
-      const op = validOp(mesg.data, connection.computer_id, session_id);
-      if (op == null) continue;
-      if (typeof op.hub_now === "number") {
-        hubClock.observe(op.hub_now - systemClocks.wall());
-      }
-      if (op.push != null) {
-        // Applied (and every job reconciled) before the next message is
-        // read; then the ack, bounded: after "ended" the hub may already
-        // have dropped this socket, and a publish on it can hang forever.
-        const ack = applyPush(daemon, op.push);
-        await publishBounded(
-          client,
-          op.reply_subject,
-          { v: 1, correlation: op.correlation, reply: ack },
-          daemon.sessionEnded ? ENDED_ACK_WAIT_MS : ACK_WAIT_MS,
-        ).catch((err) => io.log(`ack: ${err}`));
-        // Ended: over for good.
-        if (daemon.sessionEnded) break;
+    while (!signal?.aborted) {
+      let host: HostConnection;
+      try {
+        host = await hostConnection();
+      } catch (err) {
+        if (err instanceof RevokedError) {
+          io.log(`This computer was revoked in CoCalc: ${err.message}`);
+          return;
+        }
+        if (signal?.aborted) break;
+        if (!unreachable) {
+          io.log(`connection: ${(err as Error).message ?? err}`);
+          unreachable = true;
+        }
+        backoff = Math.min(backoff * 2, 60_000);
+        await sleep(backoff * (0.5 + Math.random()), signal).catch(() => {});
         continue;
       }
-      void answer({ client, daemon, op }).catch((err) =>
-        io.log(`answer: ${err}`),
+      let next: Session;
+      try {
+        next = await openSession(openConat(host), host, connection, handlers);
+      } catch (err) {
+        if (signal?.aborted) break;
+        io.log(`connection: ${(err as Error).message ?? err}`);
+        backoff = Math.min(backoff * 2, 60_000);
+        await sleep(backoff * (0.5 + Math.random()), signal).catch(() => {});
+        continue;
+      }
+      // Make before break: the new connection serves before the old closes.
+      const previous = current;
+      current = next;
+      previous?.retire();
+      if (unreachable || backoff > 1000) io.log("connected again");
+      else io.log(`connected (@${connection.name})`);
+      unreachable = false;
+      backoff = 1000;
+      opts.onConnected?.(host);
+      const until = Math.min(
+        refreshMs,
+        Math.max(0, host.expires_at - Date.now() - 60_000),
+      );
+      // Until it is time for a new token, or the host drops this one; then
+      // the timer must not outlive the wait (it would keep this process up).
+      const wake = new AbortController();
+      await Promise.race([
+        sleep(
+          until,
+          signal ? AbortSignal.any([signal, wake.signal]) : wake.signal,
+        ).catch(() => {}),
+        next.dropped,
+      ]);
+      wake.abort();
+    }
+  } finally {
+    // Stopped or revoked: stop every command, then let them answer.
+    stopRunning();
+    await Promise.allSettled([...running.keys()]);
+    current?.retire();
+  }
+}
+
+interface SessionHandlers {
+  exec: (mesg: any) => void;
+  hello: (mesg: any) => void;
+  onDropped: () => void;
+}
+
+/** The requester's reply inbox, if this is a request. */
+function replySubject(mesg: any): string | undefined {
+  const subject = mesg?.headers?.[REPLY_HEADER];
+  return typeof subject === "string" && subject.startsWith("_INBOX.")
+    ? subject
+    : undefined;
+}
+
+async function openSession(
+  client: Client,
+  host: HostConnection,
+  connection: Connection,
+  handlers: SessionHandlers,
+): Promise<Session> {
+  let closed = false;
+  let retired = false;
+  let onDropped: () => void = () => {};
+  const dropped = new Promise<void>((resolve) => (onDropped = resolve));
+  const subs: { close(): void }[] = [];
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    if (!retired) handlers.onDropped();
+    onDropped();
+    for (const sub of subs) sub.close();
+    client.close();
+  };
+  try {
+    const queue = `computer-${connection.computer_id}`;
+    const exec = await client.subscribe(
+      computerExecSubject(host.project_id, host.computer_id),
+      { queue, receiveLimits: REQUEST_RECEIVE_LIMITS },
+    );
+    subs.push(exec);
+    const hello = await client.subscribe(
+      computerHelloSubject(host.project_id),
+      {
+        queue,
+        receiveLimits: REQUEST_RECEIVE_LIMITS,
+      },
+    );
+    subs.push(hello);
+    client.conn?.on?.("disconnect", close);
+    void (async () => {
+      for await (const mesg of hello) handlers.hello(mesg);
+    })();
+    void (async () => {
+      for await (const mesg of exec) handlers.exec(mesg);
+    })();
+  } catch (err) {
+    retired = true; // never served: nothing of its own to stop
+    close();
+    throw err;
+  }
+  return {
+    client,
+    dropped,
+    retire: () => {
+      retired = true;
+      close();
+    },
+  };
+}
+
+async function execReply(
+  data: any,
+  alreadyRunning: number,
+  stop: AbortSignal,
+): Promise<ComputerExecReply> {
+  try {
+    if (alreadyRunning >= MAX_RUNNING) {
+      throw new OperationError(
+        `${MAX_RUNNING} commands are already running here; wait for one to finish`,
       );
     }
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", end);
-    sub?.close();
-    client.close();
-  }
-}
-
-/**
- * Apply a signed push from the home bay. Anything that doesn't verify is
- * refused and changes nothing.
- */
-export function applyPush(
-  daemon: ComputerDaemon,
-  push: ComputerPush,
-): ComputerPushAck {
-  try {
-    if (push != null && typeof push === "object" && "state" in push) {
-      return { ok: true, ...daemon.applyState(push.state) };
-    }
-    return { ok: false, error: "unknown push" };
+    if (data?.v !== 1) throw new OperationError("unknown request version");
+    const request = parseExecRequest(data.request);
+    const result = await runExec(request, { workdir: homedir(), signal: stop });
+    return { v: 1, ok: true, result };
   } catch (err) {
     return {
+      v: 1,
       ok: false,
-      error: `${(err as Error)?.message ?? err}`.slice(0, 300),
+      error: clean((err as Error)?.message ?? err, 1000),
     };
   }
-}
-
-/** How long a push's ack may take to publish (ended: a last chance). */
-const ACK_WAIT_MS = 10_000;
-const ENDED_ACK_WAIT_MS = 2_000;
-
-/**
- * A well-formed op message for this session: a reply subject of this very
- * session ending in its correlation (conat auth refuses anything else
- * anyway), and exactly one of an operation or a push.
- */
-function validOp(
-  data: unknown,
-  computer_id: string,
-  session_id: string,
-): (ComputerOpMessage & { reply_subject: string }) | null {
-  const op = data as Partial<ComputerOpMessage> | null;
-  if (
-    op == null ||
-    op.v !== 1 ||
-    !isSubjectToken(op.correlation) ||
-    typeof op.reply_subject !== "string" ||
-    !computerSubjectAllowed(computer_id, session_id, op.reply_subject, "pub") ||
-    !op.reply_subject.endsWith(`.${op.correlation}`) ||
-    (op.message == null) === (op.push == null)
-  ) {
-    return null;
-  }
-  return op as ComputerOpMessage & { reply_subject: string };
-}
-
-async function publishBounded(
-  client: Client,
-  subject: string,
-  out: ComputerReplyMessage,
-  ms: number,
-): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      client.publish(subject, out),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("publish timed out")), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-async function answer({
-  client,
-  daemon,
-  op,
-}: {
-  client: Client;
-  daemon: ComputerDaemon;
-  op: ComputerOpMessage & { reply_subject: string };
-}): Promise<void> {
-  const received_at = systemClocks.continuous();
-  if (op.message == null) return;
-  const reply = await daemon.handle({
-    ticket: op.message.ticket,
-    proof: op.message.proof,
-    request: op.message.request,
-    received_at,
-  });
-  const out: ComputerReplyMessage = {
-    v: 1,
-    correlation: op.correlation,
-    reply,
-  };
-  await client.publish(op.reply_subject, out);
 }

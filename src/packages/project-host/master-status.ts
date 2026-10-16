@@ -3,6 +3,7 @@
 // project's newest state, then retain a 15s reconciliation scan for outages or
 // process restarts. This prevents delayed starting reports from racing newer
 // running reports while keeping the master view convergent during disconnects.
+import { applyComputerAccess } from "./computers";
 import type { Client } from "@cocalc/conat/core/client";
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -526,7 +527,19 @@ async function reportProjectProvisionedToMaster(
   }
 }
 
-async function reportPendingStates() {
+/**
+ * One status pass at a time: a slow pass must never finish after a newer
+ * one (an old "computers on" would otherwise undo a newer "off").
+ */
+let statusPass: Promise<void> | undefined;
+function reportPendingStates(): Promise<void> {
+  statusPass ??= reportPendingStatesOnce().finally(() => {
+    statusPass = undefined;
+  });
+  return statusPass;
+}
+
+async function reportPendingStatesOnce() {
   if (!statusClient || !hostInfo) return;
   const pending = listUnreportedProjects();
   for (const row of pending) {
@@ -542,6 +555,21 @@ async function reportPendingStates() {
   await reportPendingProvisioning();
   await reportPendingProjectTouches();
   await syncAccountRevocationsFromMaster();
+  await syncComputerAccessFromMaster();
+}
+
+/** The computers switch and recent revocations (see ./computers.ts). */
+async function syncComputerAccessFromMaster() {
+  if (!statusClient || !hostInfo) return;
+  try {
+    applyComputerAccess(
+      await statusClient.syncComputerAccess({ host_id: hostInfo.host_id }),
+    );
+  } catch (err) {
+    // Unchanged until the next sync: a revocation also arrives as
+    // dropComputer, and every computer token expires within minutes.
+    logger.debug("syncComputerAccessFromMaster failed", { err });
+  }
 }
 
 async function reportPendingProvisioning() {

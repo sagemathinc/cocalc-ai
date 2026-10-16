@@ -18,7 +18,6 @@ import { startAgentMessagingMaintenance } from "./maintenance";
 import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
 import { withMemoryHome } from "./memory-home";
 import { agentSensorRequest } from "./sensors";
-import { agentComputerRequest } from "@cocalc/server/computers/agent";
 import { startSensorScheduler } from "./sensor-scheduler";
 
 const logger = getLogger("agents:messaging");
@@ -58,10 +57,6 @@ export async function acceptAgentMessage(
       request,
     )) as AgentInspectionResult;
   }
-  if (request.action === "computer") {
-    // Computers belong to the run's account; the project must be private.
-    return (await agentComputerRequest(run, request)) as AgentInspectionResult;
-  }
   return {
     identity: source,
     run_id,
@@ -71,7 +66,6 @@ export async function acceptAgentMessage(
       "whoami",
       "memory",
       "sensor",
-      "computer",
       "destinations",
       "send",
       "broadcast",

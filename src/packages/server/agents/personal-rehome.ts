@@ -23,18 +23,11 @@ export const EXTERNAL_AGENT_STATE_TABLES = [
   "agent_external_inbox",
 ] as const;
 
-/** Computers are signed for their home bay (home_epoch): no rehome while any
- * remain, including their requests and audit. */
+/** Computers live at their account's home bay: no rehome while any remain,
+ * including their pairing requests. */
 export const COMPUTER_STATE_TABLES = [
-  "account_computers",
-  "account_computer_requests",
-  "account_computer_operations",
-  "account_computer_jobs",
-  "account_computer_ticket_log",
-  "account_computer_challenges",
-  "account_computer_sessions",
-  "account_computer_relays",
-  "account_computer_session_targets",
+  "paired_computers",
+  "computer_pairing_requests",
 ] as const;
 
 export type PersonalAuthorityDb = {
