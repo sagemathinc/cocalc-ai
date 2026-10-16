@@ -69,6 +69,7 @@ beforeEach(() => {
         notes: state.notes.filter((n: any) => n.namespace === ns.name).length,
       })),
       projects: state.projects,
+      agents: state.agents ?? [],
     };
     switch (req.op) {
       case "status":
@@ -179,6 +180,39 @@ test("notes are reviewed by namespace, filtered, moved and deleted", async () =>
     op: "delete",
     namespace: "dev",
     name: "deploy",
+  });
+});
+
+test("each agent's own notes are a group, with writers and expiry shown", async () => {
+  const AGENT = "44444444-4444-4444-8444-444444444444";
+  state.enabled = true;
+  state.agents = [{ agent_id: AGENT, name: "ops3", notes: 1 }];
+  state.notes = [
+    note("global", "prefs", { written_by: "review" }),
+    note(`agent:${AGENT}`, "waiting-on", {
+      written_by: "ops3",
+      expires_at: "2026-11-14T00:00:00.000Z",
+    }),
+  ];
+  render(<AgentMemoryPanel />);
+  await screen.findByText("On");
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Review notes" }));
+  });
+  expect(await screen.findByText("@ops3: its own notes")).toBeTruthy();
+  expect(screen.getByText("by @review")).toBeTruthy();
+  expect(screen.getByText("expires 2026-11-14")).toBeTruthy();
+  // An agent's note can be promoted to shared memory.
+  expect(screen.getByLabelText("Move note waiting-on")).toBeTruthy();
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete note waiting-on" }),
+    );
+  });
+  expect(manageAgentMemory).toHaveBeenCalledWith({
+    op: "delete",
+    namespace: `agent:${AGENT}`,
+    name: "waiting-on",
   });
 });
 

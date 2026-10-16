@@ -12,11 +12,19 @@ import { Typography } from "antd";
 import type { CSSProperties } from "react";
 import {
   COCALC_CLI_DOWNLOAD_URL,
-  COCALC_CLI_INSTALL_COMMAND,
+  cocalcCliInstallCommand,
 } from "@cocalc/util/consts/ui";
 import { A, CopyToClipBoard } from "@cocalc/frontend/components";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 
 const { Text } = Typography;
+
+/** The install command for this site, which serves the CLI at /cli/install.sh. */
+export function siteCliInstallCommand(): string {
+  const origin =
+    typeof window === "undefined" ? "<hub-url>" : window.location.origin;
+  return cocalcCliInstallCommand(`${origin}${appBasePath.replace(/\/+$/, "")}`);
+}
 
 export function InstallCocalcCli({
   title = "Install CoCalc CLI",
@@ -29,7 +37,7 @@ export function InstallCocalcCli({
     <div style={style}>
       <Text strong>{title}</Text>
       <CopyToClipBoard
-        value={COCALC_CLI_INSTALL_COMMAND}
+        value={siteCliInstallCommand()}
         inputWidth="100%"
         inputStyle={{ minWidth: 0 }}
         outerStyle={{ width: "100%" }}

@@ -12,7 +12,11 @@ import {
   buildAcpChatContext,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  CONTEXT_NOT_SYNCED_ERROR,
+  contextStamp,
   messagesSinceContextCleared,
+  storedSessionInContext,
+  threadContext,
   resolveHarnessSessionId,
   type CodexThreadConfig,
 } from "@cocalc/chat";
@@ -24,6 +28,7 @@ import {
   parentMessageId,
 } from "./access";
 import { type ChatActions } from "./actions";
+import { hasAcpGuidanceReceipt } from "./message-state";
 import {
   markCodexResponseTrace,
   recordCodexBackendAcknowledged,
@@ -51,6 +56,30 @@ let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
 const ACP_ACK_MAX_ATTEMPTS = 5;
 const ACP_ACK_BACKOFF_MS = 2000;
+
+// This browser's view of a thread's context, for controls that replay a
+// stored request: the hub waits for that clear before acting on it. Nothing
+// to wait for in a thread that was never cleared.
+function callerContextStamp(actions: ChatActions, threadId: string) {
+  const context = threadContext(
+    actions.getThreadMetadata?.(threadId, { threadId }),
+    actions.getMessagesInThread?.(threadId) ?? [],
+  );
+  return context.generation ? contextStamp(context) : {};
+}
+
+// The hub saves the guidance receipt before a steer RPC returns, so by then
+// the row may already be final; setting "sent" again would leave it stuck.
+function guidanceAlreadyDelivered(syncdb: any, messageId: string): boolean {
+  try {
+    let row = syncdb?.get_one?.({ event: "chat", message_id: messageId });
+    if (typeof row?.toJS === "function") row = row.toJS();
+    return hasAcpGuidanceReceipt(row?.acp_guidance_delivered_at_ms);
+  } catch {
+    // A closed SyncDB throws; the state writes below already tolerate that.
+    return false;
+  }
+}
 
 export function sanitizeSharedCodexConfig(
   config: Partial<CodexThreadConfig> & { credentialId?: string },
@@ -429,9 +458,14 @@ export async function processAcpLLM({
   // most recent ACP assistant message in this thread so follow-up turns still
   // resume the same Codex session.
   // Nothing before a "Context cleared" line counts.
+  const threadMessages = actions.getMessagesInThread?.(thread_id) ?? [];
+  const context = threadContext(threadMetadata, threadMessages);
   const sinceCleared = messagesSinceContextCleared(
-    actions.getMessagesInThread?.(thread_id) ?? [],
+    threadMessages,
+    context.clearedAtMs,
   );
+  // A session saved by a turn from before the latest clear does not count.
+  const stored = storedSessionInContext(threadMetadata, context);
   const inferredSessionId = (() => {
     const threadMessages = sinceCleared.messages;
     for (let i = threadMessages.length - 1; i >= 0; i--) {
@@ -445,10 +479,11 @@ export async function processAcpLLM({
   })();
   const effectiveSessionId = runtime
     ? resolveHarnessSessionId(
-        threadMetadata?.agent_session_id,
+        stored ? threadMetadata?.agent_session_id : undefined,
         inferredSessionId,
       )
-    : (normalizeCodexSessionId(config.sessionId) ?? inferredSessionId);
+    : ((stored ? normalizeCodexSessionId(config.sessionId) : undefined) ??
+      inferredSessionId);
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
@@ -467,6 +502,10 @@ export async function processAcpLLM({
   ) => {
     const messageIdKey = `message:${user_message_id}`;
     let next = store.get("acpState");
+    if (state === "sent" && guidanceAlreadyDelivered(syncdb, user_message_id)) {
+      store.setState({ acpState: next.delete(messageIdKey) });
+      return;
+    }
     if (state) {
       next = next.set(messageIdKey, state);
     } else {
@@ -494,7 +533,7 @@ export async function processAcpLLM({
 
   const sessionKey = runtime
     ? effectiveSessionId
-    : (effectiveSessionId ?? sinceCleared.clearedMessageId ?? thread_id);
+    : (effectiveSessionId ?? (context.generation || thread_id));
   const ensureChatStatePersisted = async (): Promise<void> => {
     if (typeof syncdb?.save !== "function") return;
     await syncdb.save();
@@ -532,6 +571,7 @@ export async function processAcpLLM({
     threadId: thread_id,
   })?.name;
   chatMetadata.workbench = actions.workbenchEnabled !== false;
+  Object.assign(chatMetadata, contextStamp(context));
   let acknowledged = false;
   // Persist the pre-acknowledgement state before waiting for the chat file or
   // backend. This keeps the truthful "submitting" status visible when a newly
@@ -551,10 +591,7 @@ export async function processAcpLLM({
         ? undefined
         : buildCodexAcpConfig({
             path,
-            config:
-              effectiveSessionId != null
-                ? { ...config, sessionId: effectiveSessionId }
-                : config,
+            config: { ...config, sessionId: effectiveSessionId },
             model: normalizedModel,
             maxConcurrentSubagents,
           }),
@@ -723,6 +760,13 @@ export async function sendQueuedAcpTurnImmediately({
     sendMode?: "immediate";
   }): void => {
     let next = store.get("acpState") ?? new Map();
+    if (
+      state === "sent" &&
+      guidanceAlreadyDelivered(actions.syncdb, messageId)
+    ) {
+      store.setState({ acpState: next.delete(`message:${messageId}`) });
+      return;
+    }
     if (state) {
       next = next.set(`message:${messageId}`, state);
     } else {
@@ -758,6 +802,7 @@ export async function sendQueuedAcpTurnImmediately({
       thread_id: threadId,
       user_message_id: messageId,
       action: "send_immediately",
+      ...callerContextStamp(actions, threadId),
     });
     if (!result?.ok) {
       setLocalState({
@@ -861,6 +906,7 @@ export async function resendCanceledAcpTurn({
           : "resend",
       ...(modelRecovery ? { model_recovery: modelRecovery } : {}),
       ...(paymentRecovery ? { payment_recovery: paymentRecovery } : {}),
+      ...callerContextStamp(actions, threadId),
     });
     if (result?.ok) {
       cleanupGeneratedAcpFailureReplies({ actions, messageId, threadId });
@@ -888,6 +934,9 @@ export async function resendCanceledAcpTurn({
       messageId,
       state: "not-sent",
     });
+    // Retryable in a moment: tell the user rather than fail silently.
+    if (`${(err as Error)?.message ?? err}`.includes(CONTEXT_NOT_SYNCED_ERROR))
+      throw err;
     console.error("ACP resend failed", err);
     return false;
   }

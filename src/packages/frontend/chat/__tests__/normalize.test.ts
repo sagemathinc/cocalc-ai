@@ -542,6 +542,44 @@ describe("handleSyncDBChange", () => {
 });
 
 describe("initFromSyncDB", () => {
+  it("treats sent guidance with a delivery receipt as finished", () => {
+    const store = new MockStore();
+    const row = (message_id: string, extra: any = {}) => ({
+      event: "chat",
+      sender_id: "user-1",
+      date: new Date("2024-01-02T03:04:05.000Z"),
+      message_id,
+      thread_id: "thread-guidance",
+      acp_state: "sent",
+      history: [],
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      ...extra,
+    });
+    initFromSyncDB({
+      syncdb: new MockSyncDB([
+        {
+          event: "chat-thread-state",
+          sender_id: "__thread_state__",
+          date: new Date("2024-01-02T03:05:00.000Z"),
+          thread_id: "thread-guidance",
+          active_message_id: "msg-turn",
+          state: "error",
+        },
+        // Steered into a turn that has since ended: no reply of its own.
+        row("msg-delivered", {
+          acp_guidance_delivered_at_ms: 1704164700000,
+          acp_send_mode: "immediate",
+        }),
+        // Not yet acknowledged by the runtime: still in flight.
+        row("msg-in-flight"),
+      ]),
+      store,
+    });
+    expect(store.state.acpState?.get("message:msg-delivered")).toBeUndefined();
+    expect(store.state.acpState?.get("message:msg-in-flight")).toBe("sent");
+    expect(store.state.acpState?.get("thread:thread-guidance")).toBe("error");
+  });
+
   it("hydrates acpState from persisted thread-state rows", () => {
     const store = new MockStore();
     const runningDate = new Date("2024-01-02T03:04:05.000Z");

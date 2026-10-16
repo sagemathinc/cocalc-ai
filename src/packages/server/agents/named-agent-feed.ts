@@ -45,6 +45,11 @@ export const namedAgentHooks: PersonalAgentHooks = {
     });
   },
 
+  async retireMemory(account_id: string, agent_id: string) {
+    const { withMemoryHome } = await import("./memory-home");
+    await withMemoryHome(account_id, { kind: "agent-retired", agent_id });
+  },
+
   payments: loadAgentPayments,
   backgroundRepair: true,
 };

@@ -18,6 +18,7 @@ import {
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
+  cancelQueuedAcpJobForControl,
   cancelQueuedRecoveryJobsForThread,
   clearAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
@@ -531,6 +532,35 @@ describe("acp job queue ordering", () => {
     );
   });
 
+  it("leaves a restart's hold alone when a send-now finds the job already held", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-held-send-now",
+        assistantMessageId: "assistant-held-send-now",
+        assistantDate: "2026-10-15T00:00:00.000Z",
+      }) as any,
+    );
+    const key = {
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+      account_id: queued.account_id,
+      thread_id: queued.thread_id,
+    };
+    // The restart fence lands between the send-now's checks and its claim.
+    fenceAcpJobsForProject({
+      project_id: queued.project_id,
+      reason: "project restarted",
+      resume: true,
+    });
+    expect(cancelQueuedAcpJobForControl(key)).toMatchObject({
+      canceled: false,
+      job: { state: "canceled" },
+    });
+    // Still held for resume: the send-now did not end the user's turn.
+    expect(acpJobHasLiveFenceResume(getAcpJobByOpId(queued.op_id))).toBe(true);
+  });
+
   it("lets a cancel end a held message and refuses to resend it while held", () => {
     const queued = enqueueAcpJob(
       makeRequest({
@@ -808,6 +838,54 @@ describe("acp job queue ordering", () => {
 
     expect(recovery).toBeUndefined();
     expect(listQueuedAcpJobs()).toHaveLength(2);
+  });
+
+  it("does not count a canceled newer message as superseding, unless a fence holds it", () => {
+    const source = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-supersede-source",
+        assistantMessageId: "assistant-supersede-source",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }) as any,
+    );
+    const newer = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-supersede-newer",
+        assistantMessageId: "assistant-supersede-newer",
+        assistantDate: "2026-03-08T00:01:00.000Z",
+      }) as any,
+    );
+    const superseded = () =>
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard: {
+          source_op_id: source.op_id,
+          source_created_at: source.created_at,
+        },
+      });
+    expect(superseded()).toBe(true);
+
+    // Held by a restart: it may still run.
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET state = 'canceled', recovery_code = ? WHERE op_id = ?",
+      )
+      .run(ACP_FENCE_INTENT_RESUME_PENDING, newer.op_id);
+    expect(superseded()).toBe(true);
+
+    // Canceled by a stop: the intent only tells the sender; it never runs.
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_code = ? WHERE op_id = ?")
+      .run(ACP_FENCE_INTENT_STOPPED, newer.op_id);
+    expect(superseded()).toBe(false);
+
+    // Canceled for good: it never runs.
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET recovery_code = NULL WHERE op_id = ?")
+      .run(newer.op_id);
+    expect(superseded()).toBe(false);
   });
 
   it("uses insertion order for supersession within one millisecond", () => {

@@ -8,6 +8,7 @@ import initSitemap, {
   publicSitemapPaths,
   PUBLIC_SITEMAP_PATHS,
 } from "./sitemap";
+import { UNPUBLISHED_TEAM_PROFILE_SLUGS } from "@cocalc/util/public-about-content";
 import { getPublicFeatureIndexPages } from "@cocalc/util/public-feature-pages";
 import { docsPath, listDocsEntries } from "@cocalc/docs";
 
@@ -226,6 +227,24 @@ describe("public sitemap", () => {
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("redirects unpublished team profiles to the listed team page", async () => {
+    const paths = await publicSitemapPaths(requestFor("cocalc.ai"));
+    expect(paths).toContain("/about/team");
+    for (const slug of UNPUBLISHED_TEAM_PROFILE_SLUGS) {
+      expect(paths).not.toContain(`/about/team/${slug}`);
+      for (const path of [`/about/team/${slug}`, `/about/team/${slug}/`]) {
+        const response = await fetch(`${origin}${path}`, {
+          redirect: "manual",
+        });
+        expect({
+          location: response.headers.get("location"),
+          path,
+          status: response.status,
+        }).toEqual({ location: "/about/team", path, status: 301 });
+      }
+    }
   });
 });
 

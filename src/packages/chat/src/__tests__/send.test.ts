@@ -237,15 +237,69 @@ test("a Context cleared line ends session inference; Codex is keyed by the line"
       thread,
       rows,
       prompt: "hello",
-    }).request.session_id;
-  expect(send(before)).toBe("old-codex-session");
+    }).request;
+  expect(send(before).session_id).toBe("old-codex-session");
+  expect(send(before).chat.context_generation).toBe("");
+  const after = send([
+    ...before,
+    row("2026-10-04T00:01:00.000Z", {
+      message_id: "cleared",
+      acp_context_cleared: true,
+    }),
+  ]);
+  expect(after.session_id).toBe("cleared");
+  // The hub uses this to spot a session chosen before a later clear.
+  expect(after.chat.context_generation).toBe("cleared");
+});
+
+test("a clear outlives its archived line, and old-context sessions do not count", () => {
+  const row = (date: string, extra: Record<string, unknown>) => ({
+    event: "chat",
+    thread_id: "thread",
+    date,
+    ...extra,
+  });
+  // Rotation archived the "Context cleared" line but kept the thread root,
+  // which still names the old session.
+  const rows = [
+    row("2026-10-04T00:00:00.000Z", {
+      message_id: "root",
+      acp_thread_id: "old-codex-session",
+    }),
+  ];
+  const send = (config: Record<string, unknown>) =>
+    prepareChatSend({
+      projectId: "project",
+      accountId: "account",
+      path: "a.chat",
+      thread: {
+        ...buildThreadConfigRecord({
+          thread_id: "thread",
+          updated_by: "account",
+          agent_kind: "acp",
+          acp_config: { model: "gpt-5.5" },
+        }),
+        ...config,
+      },
+      rows,
+      prompt: "hello",
+    }).request;
+  const cleared = {
+    context_generation: "cleared",
+    context_cleared_at: "2026-10-04T00:01:00.000Z",
+  };
+  expect(send(cleared).session_id).toBe("cleared");
+  expect(send(cleared).chat.context_generation).toBe("cleared");
+  // A turn from before the clear saved its session, and that change merged.
+  const merged = {
+    ...cleared,
+    acp_config: { model: "gpt-5.5", sessionId: "old-codex-session" },
+    agent_session_generation: "",
+  };
+  expect(send(merged).session_id).toBe("cleared");
+  expect(send(merged).config?.sessionId).toBeUndefined();
+  // Saved in the current context: resumed.
   expect(
-    send([
-      ...before,
-      row("2026-10-04T00:01:00.000Z", {
-        message_id: "cleared",
-        acp_context_cleared: true,
-      }),
-    ]),
-  ).toBe("cleared");
+    send({ ...merged, agent_session_generation: "cleared" }).session_id,
+  ).toBe("old-codex-session");
 });

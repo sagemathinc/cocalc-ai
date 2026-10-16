@@ -13,7 +13,10 @@
 
 import type { Request, Response, Router } from "express";
 import siteURL from "@cocalc/database/settings/site-url";
-import { installScript } from "@cocalc/server/cli-distribution/install-script";
+import {
+  installScript,
+  legacyInstallScript,
+} from "@cocalc/server/cli-distribution/install-script";
 import {
   CliReleases,
   NotFound,
@@ -77,21 +80,28 @@ export default function initCliDistribution(
     }),
   );
 
-  router.get(
-    "/cli/install.sh",
-    handle(async (r, _req, res) => {
-      const site = await r.site();
-      const { text, manifest } = await r.manifest(site.manifest);
-      const script = installScript({
-        origin: await origin(),
-        manifestHash: site.manifest,
-        manifestSize: Buffer.byteLength(text),
-        manifest,
-      });
+  const installHandler = handle(async (r, _req, res) => {
+    const site = await r.site();
+    const { text, manifest } = await r.manifest(site.manifest);
+    const script = installScript({
+      origin: await origin(),
+      manifestHash: site.manifest,
+      manifestSize: Buffer.byteLength(text),
+      manifest,
+    });
+    res.set("Cache-Control", "public, max-age=60");
+    res.type("text/plain; charset=utf-8").send(script);
+  });
+  router.get("/cli/install.sh", async (req: Request, res: Response) => {
+    if (getReleases() == null) {
+      // No CLI releases here: the standalone installer, so the install
+      // commands this site shows (SSH, compute VMs, docs) still work.
       res.set("Cache-Control", "public, max-age=60");
-      res.type("text/plain; charset=utf-8").send(script);
-    }),
-  );
+      res.type("text/plain; charset=utf-8").send(legacyInstallScript());
+      return;
+    }
+    await installHandler(req, res);
+  });
 
   router.get(
     "/cli/manifests/:name",

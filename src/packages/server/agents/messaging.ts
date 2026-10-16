@@ -45,6 +45,8 @@ export async function acceptAgentMessage(
       kind: "agent",
       project_id: source.project_id,
       request,
+      // Authorship and the agent's own scope, from the authenticated run.
+      agent: { agent_id: source.agent_id, name: source.name },
     });
   }
   if (request.action === "sensor") {

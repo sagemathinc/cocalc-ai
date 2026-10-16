@@ -135,6 +135,18 @@ export function startAgentMessagingMaintenance(): () => void {
     } catch (error) {
       logger.warn("agent messaging maintenance failed", { error });
       delay = 60_000;
+    }
+    try {
+      // Expired notes already act as deleted; this reclaims them, and drops
+      // the own scope of agents that had no turn for a long time.
+      const { agentMemory } = await import("./memory");
+      const swept = await agentMemory().sweep({ batch: BATCH });
+      if (Object.values(swept).some(Boolean))
+        logger.info("swept agent memory", swept);
+      if (swept.expired >= BATCH || swept.inactive_agents >= BATCH)
+        delay = Math.min(delay, 1_000);
+    } catch (error) {
+      logger.warn("agent memory sweep failed", { error });
     } finally {
       schedule(delay);
     }

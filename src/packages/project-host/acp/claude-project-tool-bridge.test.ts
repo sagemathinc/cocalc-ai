@@ -541,6 +541,54 @@ test("trusted MCP helper executes only through the scoped project socket", async
     });
     expect(badRevision.result?.isError ?? !!badRevision.error).toBe(true);
     expect(execute.mock.calls.length).toBe(calls);
+    // Own-scope notes with an expiry; another agent's scope is readable.
+    const ok = async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: JSON.stringify({ ok: true, data: {} }),
+      stderr: "",
+    });
+    execute.mockImplementationOnce(ok);
+    await request(37, "tools/call", {
+      name: "memory_write",
+      arguments: {
+        name: "agent/waiting-on",
+        description: "d",
+        body: "b",
+        expires_in: "7d",
+      },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toMatch(
+      /memory write 'agent\/waiting-on' .* --stdin --expires '7d'$/,
+    );
+    execute.mockImplementationOnce(ok);
+    await request(38, "tools/call", {
+      name: "memory_read",
+      arguments: { name: "@review/verdict" },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toContain(
+      "project chat memory read '@review/verdict'",
+    );
+    execute.mockImplementationOnce(ok);
+    await request(39, "tools/call", {
+      name: "memory_delete",
+      arguments: { name: "verdict", expected_revision: "0123456789abcdef" },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toMatch(
+      /memory delete 'verdict' --expect-revision '0123456789abcdef'$/,
+    );
+    const before = execute.mock.calls.length;
+    const badExpiry = await request(40, "tools/call", {
+      name: "memory_write",
+      arguments: {
+        name: "agent/x",
+        description: "d",
+        body: "b",
+        expires_in: "7d'; rm -rf ~; '",
+      },
+    });
+    expect(badExpiry.result?.isError ?? !!badExpiry.error).toBe(true);
+    expect(execute.mock.calls.length).toBe(before);
     const called = await request(3, "tools/call", {
       name: "project_exec",
       arguments: { script: "pwd", cwd: "/home/user" },
@@ -646,7 +694,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(8);
+    expect(execute).toHaveBeenCalledTimes(11);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

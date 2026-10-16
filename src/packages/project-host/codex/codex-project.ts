@@ -10,6 +10,7 @@ import {
   syncCliConnectorTokens,
   writeCliConnectorTools,
 } from "./cli-connector-files";
+import { agentNetworkSelfContext } from "./agent-network-self";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -814,11 +815,44 @@ export async function createProjectCliTokenLease({
       turn_id: active.turn_id,
     });
   };
+  // Agents otherwise guess the @name peers use for them (an identity's own
+  // name and appearance differ from it), and sign messages wrongly.
+  const networkSelfTurnContext = async (): Promise<string | undefined> => {
+    const identity = identityLease?.currentRun;
+    if (closed || !identity) return undefined;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const self = await Promise.race([
+        hubApi.agent.describeNetworkSelf({
+          account_id: resolvedAccountId,
+          agent_id: identity.agent_id,
+          source_project_id: projectId,
+          run_id: identity.run_id,
+        }),
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), 5_000);
+        }),
+      ]);
+      return agentNetworkSelfContext(self);
+    } catch (err) {
+      logger.debug("agent network name unavailable for this turn", {
+        projectId,
+        err: `${err}`,
+      });
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const beginConnectorTurn = async (
     chat: AcpChatContext,
   ): Promise<string | undefined> => {
     await beginConnectorTurnCredentials(chat);
-    return cliConnectorTurnContext(cliTokens);
+    const parts = [
+      await networkSelfTurnContext(),
+      cliConnectorTurnContext(cliTokens),
+    ].filter(Boolean);
+    return parts.length ? parts.join("\n") : undefined;
   };
   const beginConnectorTurnCredentials = async (
     chat: AcpChatContext,

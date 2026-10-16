@@ -200,10 +200,11 @@ when Windows signing is disabled.
 
 ## Install
 
-Linux and macOS:
+Linux and macOS (from your CoCalc site, which serves the installer at
+`/cli/install.sh`):
 
-```bash
-curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash
+```sh
+curl -fsSL https://cocalc.ai/cli/install.sh | sh
 ```
 
 Windows PowerShell:

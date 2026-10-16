@@ -86,6 +86,3 @@ export function getPublicHomeHighlights(
     (highlight) => highlight !== PUBLIC_HOME_AGENTS_HIGHLIGHT,
   );
 }
-
-export const PUBLIC_HOME_TRUST_LINE =
-  "Developed by SageMath, Inc. · Collaborative computing online since 2013";

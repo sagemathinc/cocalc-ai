@@ -1113,7 +1113,7 @@ function CocalcLaunchpadPage() {
 
 function CocalcPlusPage() {
   const installCommand =
-    "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
+    "curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh";
   const detailItems = [
     {
       body: "Individual users who want a local CoCalc project environment before choosing hosted collaboration or a shared deployment.",
@@ -1160,7 +1160,7 @@ function CocalcPlusPage() {
           </Paragraph>
           <CodeBlock ariaLabel="Install command" code={installCommand} />
           <Flex gap={12} wrap>
-            <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
+            <Button href="https://software.cocalc.ai/software/plus/install.sh">
               Open install script
             </Button>
           </Flex>

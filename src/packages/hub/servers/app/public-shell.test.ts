@@ -2,6 +2,11 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+import {
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_TEAM_MEMBERS,
+  UNPUBLISHED_TEAM_PROFILE_SLUGS,
+} from "@cocalc/util/public-about-content";
 import { PUBLIC_FEATURE_PAGES } from "@cocalc/util/public-feature-pages";
 import {
   PUBLIC_BODY_PLACEHOLDER,
@@ -216,7 +221,7 @@ describe("public shell rendering", () => {
 
   it.each([
     ["/guides", "guides", "Durable collaborative projects"],
-    ["/about", "about", "Building the future of collaborative computation."],
+    ["/about", "about", PUBLIC_ABOUT_HEADLINE],
     ["/about/team", "about-team", "Blaec Bejarano, CSO"],
     ["/about/team/william-stein", "about-team-member", "William Stein"],
     ["/support", "support", "Find the right next step"],
@@ -765,7 +770,7 @@ describe("public shell rendering", () => {
   it("responds 200 for known detail slugs", async () => {
     for (const path of [
       "/docs/collaboration/chat",
-      "/about/team/harald-schilly",
+      "/about/team/blaec-bejarano",
       "/policies/privacy",
       "/features/jupyter-notebook",
       "/features/compare",
@@ -784,6 +789,86 @@ jest.mock("@cocalc/backend/base-path", () => ({
   __esModule: true,
   default: "/",
 }));
+
+// Old links to a profile that is no longer published must neither 404 nor
+// serve an empty profile with a 200.
+describe("unpublished team profiles", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(["/", "/prefix"])(
+    "redirect permanently to the team page under %s",
+    async (basePath) => {
+      jest.replaceProperty(
+        jest.requireMock("@cocalc/backend/base-path"),
+        "default",
+        basePath,
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const slug of UNPUBLISHED_TEAM_PROFILE_SLUGS) {
+        for (const [req, expected] of [
+          [request(`/about/team/${slug}`), `${prefix}/about/team`],
+          [request(`/about/team/${slug}/`), `${prefix}/about/team`],
+          [
+            request(`/about/team/${slug}`, { x: "1" }),
+            `${prefix}/about/team?x=1`,
+          ],
+          [
+            request("/static/public.html", {
+              target: `${prefix}/about/team/${slug}`,
+            }),
+            `${prefix}/about/team`,
+          ],
+        ] as const) {
+          const { redirectTo } = await renderPublicShell(req);
+          expect({ url: req.url, redirectTo }).toEqual({
+            url: req.url,
+            redirectTo: expected,
+          });
+        }
+      }
+      for (const path of [
+        "/about/team",
+        ...PUBLIC_TEAM_MEMBERS.map(({ slug }) => `/about/team/${slug}`),
+      ]) {
+        const { redirectTo, status } = await renderPublicShell(request(path));
+        expect({ path, redirectTo, status }).toEqual({
+          path,
+          redirectTo: undefined,
+          status: 200,
+        });
+      }
+    },
+  );
+
+  it("answers with a cacheable 301 to the team page", async () => {
+    const result = await new Promise<{
+      headers: Record<string, string>;
+      redirect?: [number, string];
+    }>((resolve) => {
+      const headers: Record<string, string> = {};
+      const res: any = {
+        setHeader: (name: string, value: string) => {
+          headers[name.toLowerCase()] = value;
+        },
+        vary: (name: string) => {
+          headers.vary = name;
+        },
+        redirect: (status: number, location: string) =>
+          resolve({ headers, redirect: [status, location] }),
+        status: () => res,
+        type: () => res,
+        send: () => resolve({ headers }),
+      };
+      servePublicShell(
+        request(`/about/team/${UNPUBLISHED_TEAM_PROFILE_SLUGS[0]}`),
+        res,
+      );
+    });
+    expect(result.redirect).toEqual([301, "/about/team"]);
+    expect(result.headers["cache-control"]).toBe("public, max-age=300");
+    expect(result.headers.vary).toBe("Host");
+  });
+});
 
 describe("research compute shell availability", () => {
   afterEach(() => jest.restoreAllMocks());

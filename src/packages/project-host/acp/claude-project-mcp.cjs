@@ -179,14 +179,15 @@ const tools = [
   {
     name: "memory_list",
     description:
-      "List the persistent memory notes this project sees (name, one-line description, last update): global notes (every project of the account) and notes in the namespaces the owner attached to this project. Memory belongs to the account this turn runs as and keeps up to 2000 notes, 500 per namespace (the global notes count as one). It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
+      "List the persistent memory notes this project sees (name, one-line description, last update, who wrote it): your own scope (agent/name), global notes (every project of the account) and notes in the namespaces the owner attached to this project. Memory belongs to the account this turn runs as and keeps up to 2000 notes, 500 per namespace (the global notes count as one), 100 in your own scope. It works only after that account's owner turns it on in Settings > AI; otherwise these tools return an error.",
     inputSchema: {
       type: "object",
       properties: {
         namespace: {
           type: "string",
-          pattern: "^[a-z0-9][a-z0-9-]{0,31}$",
-          description: "Only this namespace, or global",
+          pattern: "^@?[a-z0-9][a-z0-9-]{0,31}$",
+          description:
+            "Only this namespace, global, agent (your own scope) or @agent-name (another agent's scope, read-only)",
         },
       },
       additionalProperties: false,
@@ -214,15 +215,16 @@ const tools = [
   {
     name: "memory_read",
     description:
-      "Read the full text of one memory note and its revision (pass that to memory_write as expected_revision when updating a note others may change).",
+      "Read the full text of one memory note, who last wrote it, and its revision (pass that as expected_revision to replace or delete a note another agent wrote, or one others may change).",
     inputSchema: {
       type: "object",
       properties: {
         name: {
           type: "string",
-          pattern: "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+          pattern:
+            "^(?:(?:@[a-z][a-z0-9-]{0,31}|[a-z0-9][a-z0-9-]{0,31})/)?[a-z0-9][a-z0-9-]{0,63}$",
           description:
-            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed",
+            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed, agent/name for your own scope, @agent-name/name for another agent's",
         },
       },
       required: ["name"],
@@ -232,7 +234,7 @@ const tools = [
   {
     name: "memory_write",
     description:
-      "Create or replace one memory note: a single fact worth knowing in future sessions (user preferences and corrections, project conventions, how to build/test/deploy, lessons from mistakes). Reuse an existing name to update a note rather than adding a near-duplicate; an existing note is updated where it is. A new note goes to this project's namespace, unless named global/name (for notes that apply in every project, such as the user's general preferences) or namespace/name. Never store secrets or credentials. Body up to 8000 characters.",
+      "Create or replace one memory note: a single fact worth knowing in future sessions (user preferences and corrections, project conventions, how to build/test/deploy, lessons from mistakes). Reuse an existing name to update a note rather than adding a near-duplicate; an existing note is updated where it is. A new note goes to this project's namespace, unless named global/name (for notes that apply in every project, such as the user's general preferences) or namespace/name. Keep your own working state (what you are waiting on, what you changed, how to resume) as agent/name: only you write and list those, and they expire after 30 days unused unless expires_in says otherwise. Replacing a note another agent wrote needs expected_revision from memory_read. Never store secrets or credentials. Body up to 8000 characters.",
     inputSchema: {
       type: "object",
       properties: {
@@ -240,7 +242,7 @@ const tools = [
           type: "string",
           pattern: "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
           description:
-            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed",
+            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed, agent/name for your own scope",
         },
         description: {
           type: "string",
@@ -253,6 +255,12 @@ const tools = [
           description:
             "The revision memory_read returned: the write fails instead of replacing a change made since that read",
         },
+        expires_in: {
+          type: "string",
+          pattern: "^(?:[1-9][0-9]{0,4}[hd]|never)$",
+          description:
+            "Delete the note after this long without a read or write, such as 12h or 7d, or never. Default: never, 30d in your own scope; an update keeps the note's expiry",
+        },
       },
       required: ["name", "description", "body"],
       additionalProperties: false,
@@ -260,7 +268,8 @@ const tools = [
   },
   {
     name: "memory_delete",
-    description: "Delete a memory note that is wrong or no longer useful.",
+    description:
+      "Delete a memory note that is wrong or no longer useful. Deleting a note another agent wrote needs expected_revision from memory_read.",
     inputSchema: {
       type: "object",
       properties: {
@@ -268,7 +277,12 @@ const tools = [
           type: "string",
           pattern: "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
           description:
-            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed",
+            "Short kebab-case note name, such as deploy-lite4b; namespace/name or global/name when needed, agent/name for your own scope",
+        },
+        expected_revision: {
+          type: "string",
+          pattern: "^[0-9a-f]{16}$",
+          description: "The revision memory_read returned",
         },
       },
       required: ["name"],

@@ -72,6 +72,11 @@ export interface PersonalAgentHooks {
   ): Promise<void>;
   upsert?(account: string, agent: NamedAgent): Promise<void>;
   remove?(account: string, endpoint: AgentEndpoint): Promise<void>;
+  /**
+   * Removed from Agents: delete the agent's own scope in the account's
+   * memory. Not best effort: a failure aborts the removal.
+   */
+  retireMemory?(account: string, agent_id: string): Promise<void>;
   /** This account's payment selections for the agents' conversations. */
   payments?(account: string, agents: NamedAgent[]): Promise<void>;
   /** Reconcile snapshots in the background when listing (production). */
@@ -462,6 +467,17 @@ export class PersonalAgentStore {
 
   async retire(account: string, opts: RetireNamedAgentOptions): Promise<void> {
     validateAgentEndpoint(opts.endpoint);
+    // The agent's own memory scope goes first: if deleting it fails, nothing
+    // is removed and the person can retry, rather than being told its notes
+    // are gone while they remain. Its notes in shared memory stay, still
+    // showing who wrote them.
+    try {
+      await this.hooks.retireMemory?.(account, opts.endpoint.agent_id);
+    } catch (err) {
+      throw new Error(
+        `unable to delete the agent's own memory notes, so it was not removed; try again (${err})`,
+      );
+    }
     await this.locked(account, async (db) => {
       await db.query(
         "DELETE FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3",
@@ -1621,10 +1637,22 @@ export class PersonalAgentStore {
     for (const row of rows)
       networks.push(await this.network(this.db, account, row));
     const peers = new Map<string, AgentNetworkDiscovery["peers"][number]>();
+    const self: NonNullable<AgentNetworkDiscovery["self"]> = { networks: [] };
     for (const network of networks)
       for (const member of network.members) {
         if (member.removed_at) continue;
-        if (this.findMember([member], source)) continue;
+        if (this.findMember([member], source)) {
+          const name =
+            member.kind === "registered" ? member.name : member.label;
+          if (name && !self.name) self.name = name;
+          self.networks.push({
+            agent_network_id: network.agent_network_id,
+            title: network.title,
+            delivery_mode: network.delivery_mode,
+            generation: network.generation,
+          });
+          continue;
+        }
         const key =
           member.kind === "registered"
             ? `registered/${member.endpoint.project_id}/${member.endpoint.agent_id}`
@@ -1644,7 +1672,10 @@ export class PersonalAgentStore {
         });
         peers.set(key, current);
       }
-    return { peers: [...peers.values()] };
+    return {
+      peers: [...peers.values()],
+      ...(self.networks.length ? { self } : {}),
+    };
   }
 
   async observeActivity(account: string, activity: AgentNetworkActivity) {

@@ -170,9 +170,7 @@ describe("SSHPanel", () => {
 
     expect(apiKeys).not.toHaveBeenCalled();
     expect(
-      screen.getByText(
-        "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
-      ),
+      screen.getByText("curl -fsSL http://localhost/cli/install.sh | sh"),
     ).toBeTruthy();
     expect(
       screen.getByText("cocalc --api 'http://localhost' auth login"),

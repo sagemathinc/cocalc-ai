@@ -282,6 +282,9 @@ function hasNewerNonRecoveryAcpJobInDatabase({
   if (!Number.isFinite(sourceSequence)) {
     return false;
   }
+  // A message that was canceled never runs, so it supersedes nothing; one a
+  // restart holds (a live resume intent) may still run.  A stop's intent
+  // (fence:stopped) only tells the sender; that message never runs either.
   const row = db
     .prepare(
       `SELECT 1
@@ -291,9 +294,19 @@ function hasNewerNonRecoveryAcpJobInDatabase({
          AND thread_id = ?
          AND recovery_parent_op_id IS NULL
          AND rowid > ?
+         AND (
+           state != 'canceled'
+           OR recovery_code IN (${LIVE_RESUME_PLACEHOLDERS})
+         )
        LIMIT 1`,
     )
-    .get(project_id, path, thread_id, sourceSequence);
+    .get(
+      project_id,
+      path,
+      thread_id,
+      sourceSequence,
+      ...ACP_FENCE_LIVE_RESUME_INTENTS,
+    );
   return row != null;
 }
 
@@ -1190,6 +1203,61 @@ export function moveAcpJobFenceIntent({
   );
 }
 
+/**
+ * A fenced turn's resume found newer messages that run instead.  The check ran
+ * before the chat was updated, so recheck it in the same transaction that
+ * ends the resume: if those messages were canceled meanwhile, hand the resume
+ * back ("resume") instead of ending it.  "lost": the claim is no longer ours.
+ */
+export function finishSupersededFencedResume({
+  op_id,
+  project_id,
+  path,
+  thread_id,
+  guard,
+}: {
+  op_id: string;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  guard: AcpJobSupersessionGuard;
+}): "finished" | "resume" | "lost" {
+  ensureInit();
+  const db = getAcpDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = db
+      .prepare(`SELECT recovery_code FROM ${TABLE} WHERE op_id = ?`)
+      .get(op_id) as { recovery_code?: string | null } | undefined;
+    if (current?.recovery_code !== ACP_FENCE_INTENT_RESUMING) {
+      db.exec("COMMIT");
+      return "lost";
+    }
+    const superseded = hasNewerNonRecoveryAcpJobInDatabase({
+      db,
+      project_id,
+      path,
+      thread_id,
+      guard,
+    });
+    db.prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = ?, updated_at = ?
+       WHERE op_id = ? AND recovery_code = ?`,
+    ).run(
+      superseded ? null : ACP_FENCE_INTENT_RESUME_READY,
+      Date.now(),
+      op_id,
+      ACP_FENCE_INTENT_RESUMING,
+    );
+    db.exec("COMMIT");
+    return superseded ? "finished" : "resume";
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 /** The project runs again: resumes fenced within maxAgeMs become ready. */
 export function releaseAcpProjectFenceResumes({
   project_id,
@@ -1511,18 +1579,13 @@ export function cancelQueuedAcpJob({
       thread_id,
       ...ACP_FENCE_LIVE_RESUME_INTENTS,
     );
-    db.prepare(
-      `UPDATE ${TABLE}
-        SET state = 'canceled',
-            updated_at = ?,
-            finished_at = ?
-        WHERE project_id = ?
-          AND path = ?
-          AND user_message_id = ?
-          AND account_id = ?
-          AND thread_id = ?
-          AND state = 'queued'`,
-    ).run(now, now, project_id, path, user_message_id, account_id, thread_id);
+    takeQueuedAcpJob(db, now, {
+      project_id,
+      path,
+      user_message_id,
+      account_id,
+      thread_id,
+    });
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -1537,6 +1600,60 @@ export function cancelQueuedAcpJob({
   });
   mirrorAcpJobSession(job);
   return job;
+}
+
+function takeQueuedAcpJob(
+  db: ReturnType<typeof getAcpDatabase>,
+  now: number,
+  {
+    project_id,
+    path,
+    user_message_id,
+    account_id,
+    thread_id,
+  }: {
+    project_id: string;
+    path: string;
+    user_message_id: string;
+  } & AcpJobOwner,
+): boolean {
+  return (
+    Number(
+      db
+        .prepare(
+          `UPDATE ${TABLE}
+        SET state = 'canceled',
+            updated_at = ?,
+            finished_at = ?
+        WHERE project_id = ?
+          AND path = ?
+          AND user_message_id = ?
+          AND account_id = ?
+          AND thread_id = ?
+          AND state = 'queued'`,
+        )
+        .run(now, now, project_id, path, user_message_id, account_id, thread_id)
+        .changes,
+    ) > 0
+  );
+}
+
+// Take a queued job out of the queue for a control that acts on the message
+// (send now). Unlike an explicit cancel it changes nothing else (a job a
+// restart is holding keeps its resume intent), and it reports whether this
+// call took the job: the control owns the message only if it did.
+export function cancelQueuedAcpJobForControl(
+  owner: {
+    project_id: string;
+    path: string;
+    user_message_id: string;
+  } & AcpJobOwner,
+): { job: AcpJobRow | undefined; canceled: boolean } {
+  ensureInit();
+  const canceled = takeQueuedAcpJob(getAcpDatabase(), Date.now(), owner);
+  const job = getOwnedAcpJob(owner);
+  mirrorAcpJobSession(job);
+  return { job, canceled };
 }
 
 function cancelQueuedRecoveryJobsForThreadInDatabase({

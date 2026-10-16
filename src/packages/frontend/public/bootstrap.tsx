@@ -13,6 +13,7 @@ import {
   setPublicNavigationListener,
 } from "./navigation";
 import {
+  getPublicRedirectPath,
   getPublicRouteFromPath,
   isPublicTarget,
   preservePublicTargetFragment,
@@ -30,6 +31,12 @@ export async function init(): Promise<void> {
     window.location.search,
   );
   const initialUrl = new URL(initialPath, "https://example.invalid");
+  // A page opened at a URL that moved for good starts at its new address,
+  // which also replaces the old one in the address bar below.
+  const movedToPath = getPublicRedirectPath(initialUrl.pathname);
+  if (movedToPath != null) {
+    initialUrl.pathname = movedToPath;
+  }
 
   function PublicBootstrapApp() {
     const [routePath, setRoutePath] = useState(
@@ -75,7 +82,16 @@ export async function init(): Promise<void> {
 
   const root = createRoot(document.getElementById("cocalc-webapp-container")!);
   root.render(<PublicBootstrapApp />);
-  if (isPublicTarget(target)) {
+  if (movedToPath != null) {
+    window.history.replaceState(
+      {},
+      "",
+      preservePublicTargetFragment(
+        `${initialUrl.pathname}${initialUrl.search}${initialUrl.hash}`,
+        fragment,
+      ),
+    );
+  } else if (isPublicTarget(target)) {
     window.history.replaceState(
       {},
       "",

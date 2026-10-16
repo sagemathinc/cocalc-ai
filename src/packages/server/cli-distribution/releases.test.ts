@@ -285,6 +285,46 @@ describe("install.sh", () => {
     expect(script).not.toMatch(/curl[^\n]* -[A-Za-z]*L/);
   });
 
+  it("accepts glibc with musl also installed; names missing libraries", () => {
+    // Refuse musl only when glibc is absent (getconf), not because
+    // /lib/ld-musl-* exists.
+    expect(script).toContain("! getconf GNU_LIBC_VERSION");
+    if (process.platform !== "linux" || process.arch !== "x64") return;
+    // A pinned Node already in place (so nothing is downloaded) that can't
+    // start, and an ldd that reports libatomic missing, as in ubuntu:24.04.
+    const home = mkdtempSync(join(tmpdir(), "cli-install-"));
+    const nodeDir = join(
+      home,
+      ".local/share/cocalc/cli/node",
+      s.manifest.node.platforms["linux-x64"].sha256,
+      "bin",
+    );
+    mkdirSync(nodeDir, { recursive: true });
+    writeFileSync(join(nodeDir, "node"), "bin");
+    chmodSync(join(nodeDir, "node"), 0o700);
+    const fakeBin = join(home, "fake-bin");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "ldd"),
+      "#!/bin/sh\necho '\tlibatomic.so.1 => not found'\necho '\tlibc.so.6 => /lib/libc.so.6'\n",
+    );
+    chmodSync(join(fakeBin, "ldd"), 0o755);
+    let stderr = "";
+    try {
+      execFileSync("sh", [], {
+        input: script,
+        env: { HOME: home, PATH: `${fakeBin}:/usr/bin:/bin` },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err: any) {
+      stderr = `${err.stderr}`;
+    }
+    expect(stderr).toContain(
+      "Node needs system libraries that are missing: libatomic.so.1",
+    );
+    expect(stderr).toContain("sudo apt-get install libatomic1");
+  });
+
   it("refuses an origin that could break out of quoting", () => {
     expect(() =>
       installScript({

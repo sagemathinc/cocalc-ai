@@ -3,9 +3,20 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-// Runs inside the project. A short stdin lease prevents an orphan command when
-// the host or Podman client disappears without delivering a signal in-container.
-export const SANDBOX_COMMAND_SUPERVISOR = String.raw`
+// How long the in-project supervisor keeps a command without a heartbeat. The
+// host writes one every second, and a host or Podman client that goes away
+// closes stdin, which stops the command at once; the lease only covers a client
+// that hangs without exiting. It must outlast host event-loop stalls: under heavy
+// disk I/O those reach minutes (alpha host1, 2026-10-15: up to 130 s), and the
+// old 5 s lease killed every running agent command with exit 130. Keep it well
+// above the longest stall seen, with room for the host to catch up.
+export const SANDBOX_COMMAND_LEASE_MS = 300_000;
+
+// Runs inside the project. A stdin lease prevents an orphan command when the
+// host or Podman client disappears without delivering a signal in-container.
+export const sandboxCommandSupervisor = (
+  leaseMs: number = SANDBOX_COMMAND_LEASE_MS,
+): string => String.raw`
 const { spawn } = require("node:child_process");
 let child;
 let stopped = false;
@@ -21,7 +32,7 @@ const stop = () => {
   kill();
 };
 const timer = setInterval(() => {
-  if (Date.now() - lastHeartbeat > 5000) stop();
+  if (Date.now() - lastHeartbeat > ${Math.floor(leaseMs)}) stop();
 }, 1000);
 process.stdin.on("data", () => { lastHeartbeat = Date.now(); });
 process.stdin.on("end", stop);
@@ -46,6 +57,8 @@ child.once("exit", (code) => {
   process.exit(stopped ? 130 : code ?? 1);
 });
 `;
+
+export const SANDBOX_COMMAND_SUPERVISOR = sandboxCommandSupervisor();
 
 // Verify the *exec process*, not merely its host launcher, before project code
 // can fork. An OCI runtime that moves exec into the main container cgroup must

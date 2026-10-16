@@ -325,10 +325,26 @@ export function registerAgentCommands(
     )
     .action(async (_opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const identity = await sendIdentityMessage(
+        { action: "whoami" },
+        globals.api,
+      );
+      // Best effort: an identity outside any network, or an older hub, has
+      // no network name; whoami still answers.
+      const self = await sendIdentityMessage(
+        { version: 3, action: "destinations" },
+        globals.api,
+      )
+        .then((directory) =>
+          friendlyAgentSelf(directory as AgentNetworkDiscovery),
+        )
+        .catch(() => undefined);
       emitSuccess(
         { globals },
         `${prefix} whoami`,
-        await sendIdentityMessage({ action: "whoami" }, globals.api),
+        self && identity && typeof identity === "object"
+          ? { ...identity, as_seen_by_peers: self }
+          : identity,
       );
     });
   agent
@@ -554,7 +570,7 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   const memory = chat
     .command("memory")
     .description(
-      `account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials. Notes are global (every project) or in a namespace the owner attached to this project; name them <name>, <namespace>/<name> or global/<name>. Memory keeps up to ${AGENT_MEMORY_LIMITS.maxNotes} notes, ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} per namespace (the global notes count as one)`,
+      `account-scoped agent memory for this turn's account (the owner must enable it in Settings > AI); uses the runtime agent identity, never account credentials. Notes are global (every project) or in a namespace the owner attached to this project; name them <name>, <namespace>/<name> or global/<name>. Each agent also has its own scope for working state, agent/<name>: only it writes and lists those notes, other agents can read them as @agent-name/<name>, and they expire after ${AGENT_MEMORY_LIMITS.agentNoteDefaultTtlDays} days unused unless written with --expires. Notes show which agent wrote them; to replace or delete another agent's note, pass the revision you read (--expect-revision). Memory keeps up to ${AGENT_MEMORY_LIMITS.maxNotes} notes, ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} per namespace (the global notes count as one), ${AGENT_MEMORY_LIMITS.maxNotesPerAgent} in an agent's own scope`,
     );
   const stdinText = async () => {
     let value = "";
@@ -574,7 +590,10 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     .description(
       "list the notes this project sees (name, description, last update)",
     )
-    .option("--namespace <namespace>", "only this namespace (or global)")
+    .option(
+      "--namespace <namespace>",
+      "only this namespace (or global, agent for your own scope, @agent-name for another agent's)",
+    )
     .action(async (opts, cmd) =>
       memoryRequest(
         cmd,
@@ -621,7 +640,7 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   memory
     .command("write <name> [body...]")
     .description(
-      "create or replace a note: one durable fact, never secrets (use --stdin for multiline bodies). An existing note is updated where it is; a new one goes to the project's namespace unless named global/<name> or <namespace>/<name>",
+      "create or replace a note: one durable fact, never secrets (use --stdin for multiline bodies). An existing note is updated where it is; a new one goes to the project's namespace unless named global/<name>, <namespace>/<name> or agent/<name> (your own scope)",
     )
     .requiredOption(
       "--description <text>",
@@ -633,7 +652,11 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     )
     .option(
       "--expect-revision <revision>",
-      "only replace the note if it is unchanged since a read returned this revision",
+      "only replace the note if it is unchanged since a read returned this revision (required for a note another agent wrote)",
+    )
+    .option(
+      "--expires <duration>",
+      `delete the note after this long without a read or write: 12h, 7d, ... or never (default: never; ${AGENT_MEMORY_LIMITS.agentNoteDefaultTtlDays}d for agent/<name>; an update keeps the note's expiry)`,
     )
     .action(async (name: string, body: string[], opts, cmd) =>
       memoryRequest(
@@ -647,6 +670,7 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
           ...(opts.expectRevision
             ? { expected_revision: opts.expectRevision }
             : {}),
+          ...(opts.expires ? { expires_in: opts.expires } : {}),
         },
         "project chat memory write",
       ),
@@ -654,22 +678,45 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   memory
     .command("move <name> <namespace>")
     .description(
-      "move a note to another namespace this project sees, or to global",
+      "move a note to another namespace this project sees, to global, or to agent (your own scope); moving a note out of your own scope keeps it until deleted",
     )
-    .action(async (name: string, to: string, _opts, cmd) =>
+    .option(
+      "--expect-revision <revision>",
+      "the revision a read returned (required for a note another agent wrote)",
+    )
+    .action(async (name: string, to: string, opts, cmd) =>
       memoryRequest(
         cmd,
-        { action: "memory", op: "move", name, to },
+        {
+          action: "memory",
+          op: "move",
+          name,
+          to,
+          ...(opts.expectRevision
+            ? { expected_revision: opts.expectRevision }
+            : {}),
+        },
         "project chat memory move",
       ),
     );
   memory
     .command("delete <name>")
     .description("delete a note that is wrong or no longer useful")
-    .action(async (name: string, _opts, cmd) =>
+    .option(
+      "--expect-revision <revision>",
+      "the revision a read returned (required for a note another agent wrote)",
+    )
+    .action(async (name: string, opts, cmd) =>
       memoryRequest(
         cmd,
-        { action: "memory", op: "delete", name },
+        {
+          action: "memory",
+          op: "delete",
+          name,
+          ...(opts.expectRevision
+            ? { expected_revision: opts.expectRevision }
+            : {}),
+        },
         "project chat memory delete",
       ),
     );
@@ -688,7 +735,10 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
   memory
     .command("export")
     .description("the notes this project sees as one Markdown document")
-    .option("--namespace <namespace>", "only this namespace (or global)")
+    .option(
+      "--namespace <namespace>",
+      "only this namespace (or global, agent, @agent-name)",
+    )
     // Not --output: that is the global output format option.
     .option("--out <path>", "write the Markdown to this file")
     .action(async (opts, cmd) => {
@@ -711,8 +761,23 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
     });
 }
 
-export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
+// How peers see this agent: the @name they send to, per network. The identity
+// record's own name and appearance are not that name.
+export function friendlyAgentSelf(directory: AgentNetworkDiscovery) {
+  if (!directory.self) return undefined;
   return {
+    ...(directory.self.name ? { name: directory.self.name } : {}),
+    networks: directory.self.networks.map(({ title, delivery_mode }) => ({
+      title,
+      delivery_mode,
+    })),
+  };
+}
+
+export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
+  const you = friendlyAgentSelf(directory);
+  return {
+    ...(you ? { you } : {}),
     peers: directory.peers.map(({ member, same_project, networks }) => ({
       kind: member.kind,
       name: member.kind === "registered" ? member.name : member.label,

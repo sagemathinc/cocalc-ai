@@ -4154,10 +4154,8 @@ export function MyAgentsWorkspacePage({
           workbenchEnabled: true,
         });
       await waitForChatReady(chatActions);
-      if (chatActions.hasActiveAgentTurn(agent.thread_id))
-        throw new Error(
-          "This agent is still working. Stop it or wait for its current and queued messages to finish, then clear its context.",
-        );
+      const blocked = chatActions.agentContextClearBlocked(agent.thread_id);
+      if (blocked) throw new Error(blocked);
       if (!chatActions.clearAgentContext(agent.thread_id))
         throw new Error("Unable to clear this agent's context");
       await chatActions.syncdb?.save();
@@ -4498,7 +4496,7 @@ export function MyAgentsWorkspacePage({
     Modal.confirm({
       title: `Remove @${agent.name} from Agents?`,
       content:
-        "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Networks keep their records, but this agent becomes unavailable to those networks.",
+        "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Networks keep their records, but this agent becomes unavailable to those networks. Its own working notes in your agent memory are deleted; notes it saved to shared memory stay.",
       okText: "Remove from Agents",
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -4524,7 +4522,7 @@ export function MyAgentsWorkspacePage({
     Modal.confirm({
       title: `Remove ${list.length} agents from Agents?`,
       content:
-        "This frees their named-agent slots. Conversations and artifacts are preserved, and historical Agent Networks keep their records, but these agents become unavailable to those networks.",
+        "This frees their named-agent slots. Conversations and artifacts are preserved, and historical Agent Networks keep their records, but these agents become unavailable to those networks. Their own working notes in your agent memory are deleted; notes they saved to shared memory stay.",
       okText: `Remove ${list.length} agents`,
       okButtonProps: { danger: true },
       onOk: async () => {

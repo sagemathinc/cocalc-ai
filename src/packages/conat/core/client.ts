@@ -804,6 +804,10 @@ export class Client extends EventEmitter {
       if (typeof ack == "function") {
         ack();
       }
+      // close() deletes this.options; a late info event must not touch it.
+      if (this.isClosed()) {
+        return;
+      }
       const firstTime = this.info == null;
       this.info = info;
       const prefixChanged =
@@ -1193,7 +1197,8 @@ export class Client extends EventEmitter {
   };
 
   private getInbox = reuseInFlight(async (): Promise<EventEmitter> => {
-    if (this.options.disableInbox) {
+    // options is deleted by close(); a closed client fails below with "closed".
+    if (this.options?.disableInbox) {
       throw new ConatError("this client has no inbox (disableInbox)", {
         code: 400,
       });
