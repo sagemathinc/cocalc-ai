@@ -11,7 +11,8 @@
 // - reserve: the account's AI usage windows must all have room for the
 //   upper bound, and the site pool must too; the hold is a row in
 //   ai_usage_log (counted by every window at once) and a global hold.
-// - commit: the provider's reported cost, at most the hold.
+// - commit: the provider's reported cost, all of it. A cost above the hold
+//   (which max_price should prevent) is recorded in full and alerted.
 // - release: both holds go.
 // Stale holds (a hub that died mid-call) are removed after 5 minutes, as
 // speech's are.
