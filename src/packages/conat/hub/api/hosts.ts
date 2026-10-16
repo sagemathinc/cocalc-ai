@@ -997,6 +997,8 @@ export interface HostStorageAdmissionMetrics {
   state_ms_total?: Record<HostStoragePressureState, number>;
   /** Scheduled snapshots admitted at the recovery pace. */
   recovery_paced_total?: number;
+  /** In recovery: when the next scheduled snapshot may start. */
+  recovery_snapshot_next_at?: string;
   starvation_override_total?: number;
   /** Deferred background operations, by reason. */
   deferred_by_reason?: Record<string, number>;

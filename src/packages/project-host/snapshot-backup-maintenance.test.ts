@@ -1788,23 +1788,51 @@ describe("snapshot-backup-maintenance", () => {
         controller.admit(request),
       );
       // Not overdue long enough for overrides: only the recovery pace runs.
-      rows = rows.map((row) => ({
-        ...row,
-        last_changed: "2026-09-27T11:30:00Z",
+      // The oldest change is d's, then c's, b's and a's.
+      rows = ["a", "b", "c", "d"].map((project_id, i) => ({
+        project_id,
+        last_changed: new Date(
+          Date.parse("2026-09-27T11:30:00Z") - i * 60_000,
+        ).toISOString(),
         backup_due_since: null,
+        snapshots: {},
+        backups: {},
       }));
-      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+      // The bay keeps each reported retry time, so deferral backoff applies.
+      reportProjectMaintenanceMock.mockImplementation(async (report) => {
+        if (report.kind !== "snapshot") return;
+        rows = rows.map((row) =>
+          row.project_id === report.project_id
+            ? { ...row, snapshot_retry_at: report.retry_at ?? null }
+            : row,
+        );
+      });
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = `${24 * 60 * 60_000}`;
+      const { startProjectSnapshotBackupMaintenance } =
         await import("./snapshot-backup-maintenance");
-      for (let i = 0; i < 6; i++) {
-        await sweep({ hostId: "host-1" });
-        await jest.advanceTimersByTimeAsync(10_000);
+      const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+      const startedAt = Date.now();
+      try {
+        // Timer-driven wakes alone, no further full sweep: the deferral
+        // backoff (48-72 s) and the event-batch retry (60 s) used to set the
+        // pace instead of the 20 s recovery pace.
+        await jest.advanceTimersByTimeAsync(100_000);
+      } finally {
+        stop();
       }
       expect(controller.getStatus().pressure_state).toBe("recovery");
-      expect(timesOf("snapshot").length).toBeGreaterThanOrEqual(2);
+      expect(timesOf("snapshot").length).toBe(4);
+      expect(timesOf("snapshot")[3] - startedAt).toBeLessThan(100_000);
       expectSpacing("snapshot", 20_000);
-      expect(
-        controller.getStatus().recovery_paced_total,
-      ).toBeGreaterThanOrEqual(2);
+      // The longest waiting first.
+      expect(attempts.filter((a) => a.startsWith("snapshot:"))).toEqual([
+        "snapshot:d",
+        "snapshot:c",
+        "snapshot:b",
+        "snapshot:a",
+      ]);
+      expect(controller.getStatus().recovery_paced_total).toBe(4);
       // It passes the mutation-boundary recheck like an override.
       expect(mutationContextMock).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -116,6 +116,49 @@ function queuesForHost(hostId: string) {
 let scheduleListing: Promise<HostProjectMaintenanceSchedule[]> | undefined;
 let inventoryVersion = 0;
 let starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
+// Snapshots deferred by storage recovery. The oldest due one is woken for each
+// recovery-paced slot instead of waiting out its 48-72 s deferral backoff;
+// the rest keep that backoff, so a long backlog does not retry every slot.
+const recoveryWaiting = new Map<string, { dueAt: number; seenAt: number }>();
+// Entries not deferred again within this long have left the backlog.
+const RECOVERY_WAITING_TTL_MS = 10 * 60_000;
+// The slot is open but something else holds it, such as running scheduled
+// work or a lifecycle gate: check again after about one pace.
+const RECOVERY_BLOCKED_RETRY_MS = 20_000;
+
+function recoveryWaitingHead(now = Date.now()): string | undefined {
+  let head: string | undefined;
+  let headDueAt = Number.POSITIVE_INFINITY;
+  for (const [projectId, { dueAt, seenAt }] of recoveryWaiting) {
+    if (now - seenAt > RECOVERY_WAITING_TTL_MS) {
+      recoveryWaiting.delete(projectId);
+    } else if (dueAt < headDueAt) {
+      head = projectId;
+      headDueAt = dueAt;
+    }
+  }
+  return head;
+}
+
+function recoverySnapshotNextAt(): number | undefined {
+  return parseTimestampMs(
+    getStorageAdmissionStatus()?.recovery_snapshot_next_at,
+  );
+}
+
+// When the oldest snapshot waiting on recovery should try again.
+function recoverySnapshotWakeAt(now = Date.now()): number | undefined {
+  const next = recoverySnapshotNextAt();
+  if (next == null) return;
+  return next > now ? next : now + RECOVERY_BLOCKED_RETRY_MS;
+}
+
+// The oldest waiting snapshot ignores its deferral backoff once a recovery
+// slot is open, so it does not lose the slot to its own earlier deferral.
+function recoverySlotOpenFor(projectId: string, now = Date.now()): boolean {
+  const next = recoverySnapshotNextAt();
+  return next != null && next <= now && recoveryWaitingHead(now) === projectId;
+}
 
 function parsePositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
@@ -1084,6 +1127,27 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     }
   };
   for (const row of rows) rememberRowFutureDue(row);
+  // Track a finished snapshot attempt (dueAt set when storage recovery
+  // deferred it) and return its retry time. The oldest waiting snapshot
+  // retries at the next recovery slot; when that is another project, wake it.
+  const recoveryPacedRetry = (
+    projectId: string,
+    recoveryDueAt: number | null | undefined,
+    retry: string | null,
+  ): string | null => {
+    const at = Date.now();
+    if (recoveryDueAt != null) {
+      recoveryWaiting.set(projectId, { dueAt: recoveryDueAt, seenAt: at });
+    } else {
+      recoveryWaiting.delete(projectId);
+    }
+    const head = recoveryWaitingHead(at);
+    const wakeAt = head ? recoverySnapshotWakeAt(at) : undefined;
+    if (!head || wakeAt == null) return retry;
+    if (head === projectId) return new Date(wakeAt).toISOString();
+    onFutureDue?.(head, wakeAt);
+    return retry;
+  };
   const snapshotRows = orderProjectMaintenance(rows, (row) => {
     const due = snapshotDueAt(
       row,
@@ -1298,8 +1362,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     await queues.snapshot.submit({
       detach,
       onError: onDetachedError("snapshot"),
-      rows: snapshotRows.filter((row) =>
-        actionableMaintenance(row, "snapshot", queuedAt),
+      rows: snapshotRows.filter(
+        (row) =>
+          actionableMaintenance(row, "snapshot", queuedAt) ||
+          (recoverySlotOpenFor(row.project_id, queuedAt) &&
+            actionableMaintenance(
+              { ...row, snapshot_retry_at: null },
+              "snapshot",
+              queuedAt,
+            )),
       ),
       observedAt: listingVersion,
       parallelism,
@@ -1319,7 +1390,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         if (
           !project_id ||
           schedule.disabled ||
-          (parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() ||
+          ((parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() &&
+            !recoverySlotOpenFor(project_id)) ||
           ((dueAt == null || dueAt > Date.now()) &&
             !reconciliationDue(row, "snapshot", Date.now())) ||
           inFlightSnapshots.has(project_id)
@@ -1405,7 +1477,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                   : outcome === "deferred"
                     ? "snapshot_not_created"
                     : undefined);
-          const nextRetry = retryAt(outcome, row.snapshot_failures ?? 0);
+          const nextRetry = recoveryPacedRetry(
+            project_id,
+            reason === "io_pressure_recovery" ? dueAt : null,
+            retryAt(outcome, row.snapshot_failures ?? 0),
+          );
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           if (intervalWaiting && nextSnapshotDueAt != null) {
             onFutureDue?.(project_id, nextSnapshotDueAt);
@@ -1460,7 +1536,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             project_id,
             err: `${err}`,
           });
-          const nextRetry = retryAt("failed", (row.snapshot_failures ?? 0) + 1);
+          const nextRetry = recoveryPacedRetry(
+            project_id,
+            null,
+            retryAt("failed", (row.snapshot_failures ?? 0) + 1),
+          );
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
@@ -1940,6 +2020,7 @@ export const _test = {
   maintenanceMemoryDecision,
   resetStarvationQueue: () => {
     starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
+    recoveryWaiting.clear();
   },
   backupDueAt,
   snapshotDueAt,

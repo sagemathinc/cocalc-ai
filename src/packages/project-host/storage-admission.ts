@@ -430,7 +430,9 @@ export function createStorageAdmissionController(
   const activeByPriority = emptyActiveCounts();
   let starvationOverrideActive = false;
   let recoveryPacedActive = false;
-  let lastRecoveryPacedAt: number | undefined;
+  // One start clock for every scheduled snapshot admitted in recovery,
+  // paced or starvation override, so together they keep the pace.
+  let lastRecoverySnapshotAt: number | undefined;
   let recoveryPacedTotal = 0;
   let starvationOverrideTotal = 0;
   const deferredByReason: Record<string, number> = {};
@@ -571,6 +573,17 @@ export function createStorageAdmissionController(
           Math.max(0, lastInputs.sampled_at_ms - stateSince),
       },
       recovery_paced_total: recoveryPacedTotal,
+      ...(mode === "enforce" &&
+      recoverySnapshotIntervalMs > 0 &&
+      pressureState === "recovery"
+        ? {
+            recovery_snapshot_next_at: iso(
+              lastRecoverySnapshotAt == null
+                ? lastInputs.sampled_at_ms
+                : lastRecoverySnapshotAt + recoverySnapshotIntervalMs,
+            ),
+          }
+        : {}),
       starvation_override_total: starvationOverrideTotal,
       deferred_by_reason: { ...deferredByReason },
       ...(lastTransitionReason
@@ -660,6 +673,14 @@ export function createStorageAdmissionController(
         : backgroundReason(current)
       : undefined;
     const wouldDefer = reason != null;
+    const decidedAtMs = now();
+    const recoverySnapshot =
+      operation_kind === "scheduled_snapshot" &&
+      reason === "io_pressure_recovery" &&
+      recoverySnapshotIntervalMs > 0;
+    const recoverySnapshotDue =
+      lastRecoverySnapshotAt == null ||
+      decidedAtMs - lastRecoverySnapshotAt >= recoverySnapshotIntervalMs;
     const starvationOverride =
       mode === "enforce" &&
       background &&
@@ -668,22 +689,20 @@ export function createStorageAdmissionController(
       wouldDefer &&
       !starvationOverrideActive &&
       activeByPriority.scheduled === 0 &&
+      // An overdue snapshot in recovery also waits for the recovery pace.
+      (!recoverySnapshot || recoverySnapshotDue) &&
       starvationOverrideAllowed(current, allow_starvation_override);
     // Scheduled snapshots keep flowing in recovery, one at a time at a
     // steady pace; never in contended or emergency, nor past lifecycle gates.
-    const decidedAtMs = now();
     const recoveryPaced =
       mode === "enforce" &&
-      operation_kind === "scheduled_snapshot" &&
-      reason === "io_pressure_recovery" &&
+      recoverySnapshot &&
       !starvationOverride &&
-      recoverySnapshotIntervalMs > 0 &&
       !recoveryPacedActive &&
       // Never alongside other scheduled storage work, e.g. a backup admitted
       // before the host entered recovery (as for starvation overrides).
       activeByPriority.scheduled === 0 &&
-      (lastRecoveryPacedAt == null ||
-        decidedAtMs - lastRecoveryPacedAt >= recoverySnapshotIntervalMs);
+      recoverySnapshotDue;
     const admitted =
       mode !== "enforce" || !wouldDefer || starvationOverride || recoveryPaced;
     if (admitted) {
@@ -693,8 +712,10 @@ export function createStorageAdmissionController(
       }
       if (recoveryPaced) {
         recoveryPacedActive = true;
-        lastRecoveryPacedAt = decidedAtMs;
         recoveryPacedTotal += 1;
+      }
+      if (recoverySnapshot && (recoveryPaced || starvationOverride)) {
+        lastRecoverySnapshotAt = decidedAtMs;
       }
       admittedTotal += 1;
       activeByPriority[spec.priority] += 1;

@@ -465,6 +465,56 @@ describe("storage admission controller", () => {
     });
   });
 
+  it("keeps overdue snapshot overrides on the same recovery pace", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    controller.sample();
+    expect(controller.getStatus().recovery_snapshot_next_at).toBe(
+      new Date(now).toISOString(),
+    );
+    const paced = controller.admit({ operation_kind: "scheduled_snapshot" });
+    expect(paced.recovery_paced).toBe(true);
+    paced.release();
+    const pacedAt = now;
+    expect(controller.getStatus().recovery_snapshot_next_at).toBe(
+      new Date(pacedAt + 20_000).toISOString(),
+    );
+    // An overdue snapshot cannot start between paced ones...
+    now += 5_000;
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_snapshot",
+        allow_starvation_override: true,
+      }),
+    ).toMatchObject({ admitted: false, starvation_override: false });
+    // ...nor a backup override (still allowed) restart the snapshot clock.
+    const backup = controller.admit({
+      operation_kind: "scheduled_backup",
+      allow_starvation_override: true,
+    });
+    expect(backup.starvation_override).toBe(true);
+    backup.release();
+    now = pacedAt + 20_000;
+    const override = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
+    });
+    expect(override.starvation_override).toBe(true);
+    override.release();
+    // The override restarted the shared clock.
+    now += 10_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).admitted,
+    ).toBe(false);
+    now += 10_000;
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
   it("does not pace a snapshot alongside scheduled work that is still running", () => {
     const controller = create();
     // A backup admitted while normal keeps running into recovery.
