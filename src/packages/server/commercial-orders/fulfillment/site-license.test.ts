@@ -484,6 +484,12 @@ describe("commercial site-license fulfillment", () => {
     ["without a named license", {}, undefined],
     ["with a license plan", { terms_snapshot: undefined }, "sl_1"],
     ["that is unpaid", { collection_state: "open" }, "sl_1"],
+    ["that is waived", { collection_state: "waived" }, "sl_1"],
+    [
+      "that is complimentary",
+      { collection_mode: "complimentary", collection_state: "waived" },
+      "sl_1",
+    ],
   ])("still rejects a complete order %s", async (_label, changes, existing) => {
     const base = orderFixture({
       workflow_state: "complete",

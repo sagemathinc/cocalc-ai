@@ -247,7 +247,8 @@ function isLinkOnlyCompletedOrder(
     !order.site_license_id &&
     order.fulfillment_state === "not_provisioned" &&
     order.terms_snapshot?.site_license == null &&
-    collectionSatisfied(order) &&
+    // Paid only: waived or complimentary orders keep the normal rules.
+    order.collection_state === "paid" &&
     !!normalizedSiteLicenseId(existingSiteLicenseId)
   );
 }
