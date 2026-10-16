@@ -678,13 +678,17 @@ describe("project-host HTTP session cookie", () => {
   describe("origin of cookie-authenticated requests", () => {
     const savedSiteUrl = process.env.COCALC_SITE_URL;
     const savedMode = process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+    const savedPublicUrl = process.env.PROJECT_HOST_PUBLIC_URL;
     beforeEach(() => {
       process.env.COCALC_SITE_URL = "https://cocalc.example";
+      process.env.PROJECT_HOST_PUBLIC_URL = "https://host-1.cocalc.example";
       delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
     });
     afterEach(() => {
       if (savedSiteUrl == null) delete process.env.COCALC_SITE_URL;
       else process.env.COCALC_SITE_URL = savedSiteUrl;
+      if (savedPublicUrl == null) delete process.env.PROJECT_HOST_PUBLIC_URL;
+      else process.env.PROJECT_HOST_PUBLIC_URL = savedPublicUrl;
       if (savedMode == null)
         delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
       else process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY = savedMode;
@@ -1097,6 +1101,41 @@ describe("project-host HTTP session cookie", () => {
     );
     expect(res.statusCode).toBe(200);
     expect(res.end).not.toHaveBeenCalled();
+  });
+
+  it("does not apply share or viewer file access to an app path with a nested file marker", async () => {
+    const share_id = "00000000-1000-4000-8000-000000000042";
+    const visitor_id = "00000000-1000-4000-8000-000000000043";
+    getRowMock.mockReturnValue({ users: {} });
+    mockCallHub.mockResolvedValue({
+      project_id,
+      share_id,
+      read_policy: { rules: [{ action: "include", path: "**" }] },
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id: visitor_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
+        "x-forwarded-proto": "https",
+      },
+      method: "GET",
+      socket: {},
+      url: `/${project_id}/apps/x/${project_id}/files/probe?viewer=1&share=${share_id}`,
+    } as any;
+    const res = createResponse();
+    res.end = jest.fn();
+
+    await expect(
+      auth.authorizeHttpRequest(req, res, project_id),
+    ).rejects.toThrow("not a collaborator");
+    expect(mockCallHub).not.toHaveBeenCalled();
   });
 
   it("authorizes inline public share file previews for signed-in non-collaborators", async () => {

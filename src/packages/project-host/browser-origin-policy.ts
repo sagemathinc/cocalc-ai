@@ -12,10 +12,11 @@ periodically), COCALC_SITE_URL, and COCALC_PROJECT_HOST_ALLOWED_ORIGINS.
 Pages served by the project host itself run project-controlled code, so its
 own origin is approved only for proxied app routes (an app talking to
 itself), never for files, uploads, the session bootstrap or Conat. On a
-private app hostname it is further bound to that app's project. On the shared
-host hostname it is not bound to a project: path-based apps (e.g. JupyterLab
-at /<project_id>/port/...) need it, and only separate content origins can
-remove that residual risk.
+private app hostname it is further bound to that app's project. On the host's
+public hostname (PROJECT_HOST_PUBLIC_URL) it is not bound to a project:
+path-based apps (e.g. JupyterLab at /<project_id>/port/...) need it, so any
+active content there can act on every project's app routes for the viewer.
+Only separate content origins can remove that residual risk.
 
 With an Origin header, it must be approved (see above). Without one:
 - non-GET/HEAD requests are refused (browsers send Origin on them);
@@ -134,14 +135,29 @@ function isOwnOrigin(origin: string, req: Req): boolean {
   return url.protocol === "https:" || isLocalHostname(url.hostname);
 }
 
-// The own-origin allowance for app routes; on a private app hostname only for
-// that app's own project.
+// The own-origin allowance for app routes: on a private app hostname only for
+// that app's own project; unbound only on the host's own public hostname
+// (PROJECT_HOST_PUBLIC_URL). Any other hostname, including a private hostname
+// whose lookup failed, gets no allowance.
 function ownAppOriginAllowed(
   req: Req,
   project_id: string | undefined,
 ): boolean {
   const privateProject = getPrivateAppHostnameProject(req as IncomingMessage);
-  return privateProject == null || privateProject === project_id;
+  if (privateProject != null) return privateProject === project_id;
+  return isCanonicalHost(req);
+}
+
+function isCanonicalHost(req: Req): boolean {
+  const publicUrl = `${process.env.PROJECT_HOST_PUBLIC_URL ?? ""}`.trim();
+  const host = header(req, "host").toLowerCase();
+  if (!publicUrl || !host) return false;
+  try {
+    const canonical = new URL(publicUrl);
+    return new URL(`${canonical.protocol}//${host}`).host === canonical.host;
+  } catch {
+    return false;
+  }
 }
 
 // The one route classifier: main.ts dispatch uses it too, so a path can't be

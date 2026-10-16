@@ -16,9 +16,11 @@ describe("project-host browser origin policy", () => {
     site: process.env.COCALC_SITE_URL,
     extra: process.env.COCALC_PROJECT_HOST_ALLOWED_ORIGINS,
     mode: process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY,
+    publicUrl: process.env.PROJECT_HOST_PUBLIC_URL,
   };
   beforeEach(() => {
     process.env.COCALC_SITE_URL = "https://cocalc.example/base";
+    process.env.PROJECT_HOST_PUBLIC_URL = "https://host-1.cocalc.example";
     delete process.env.COCALC_PROJECT_HOST_ALLOWED_ORIGINS;
     delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
     resetHubBrowserOriginsForTests();
@@ -28,6 +30,7 @@ describe("project-host browser origin policy", () => {
       ["COCALC_SITE_URL", saved.site],
       ["COCALC_PROJECT_HOST_ALLOWED_ORIGINS", saved.extra],
       ["COCALC_PROJECT_HOST_ORIGIN_POLICY", saved.mode],
+      ["PROJECT_HOST_PUBLIC_URL", saved.publicUrl],
     ] as const) {
       if (value == null) delete process.env[name];
       else process.env[name] = value;
@@ -251,6 +254,36 @@ describe("project-host browser origin policy", () => {
         ),
       ).toBeUndefined();
     });
+
+    it.each([
+      [
+        "a failed lookup",
+        async () => {
+          throw new Error("hub unavailable");
+        },
+      ],
+      ["no match", async () => ({ matched: false })],
+    ])(
+      "gives no own-origin allowance to a non-canonical host after %s",
+      async (_, trace) => {
+        const rewrite = createPrivateAppHostnameRequestRewriter({
+          trace: trace as any,
+        });
+        const other = "00000000-1000-4000-8000-0000000000aa";
+        for (const headers of [
+          { origin: "https://dev-1.app.example" },
+          { "sec-fetch-site": "same-origin" },
+        ]) {
+          const r: any = {
+            method: "GET",
+            url: `/${other}/apps/x/`,
+            headers: { host: "dev-1.app.example", ...headers },
+          };
+          await rewrite(r);
+          expect(ambientCookieRejection(r, "app", other)).toBeDefined();
+        }
+      },
+    );
 
     it("allows same-origin subresources on app routes", () => {
       expect(

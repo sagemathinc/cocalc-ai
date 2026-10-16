@@ -374,7 +374,7 @@ function parseReadOnlyDownloadRequest({
   }
   try {
     const parsed = new URL(req.url ?? "/", "http://project-host.local");
-    if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
+    if (classifyProjectRoute(req, project_id) !== "file") return;
     if (parsed.searchParams.get("viewer") !== "1") return;
     const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
     if (share_id) {
@@ -737,9 +737,8 @@ export function createProjectHostHttpProxyAuth({
     }
     try {
       const url = new URL(req.url ?? "/", "http://project-host.local");
-      const isProjectFileRequest = url.pathname.includes(
-        `/${project_id}/files/`,
-      );
+      const isProjectFileRequest =
+        classifyProjectRoute(req, project_id) === "file";
       const isExplicitDownload = url.searchParams.has("download");
       if (isProjectFileRequest && !isExplicitDownload) {
         stripQueryToken(req);
