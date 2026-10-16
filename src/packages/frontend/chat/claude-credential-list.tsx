@@ -4,6 +4,7 @@
  */
 
 import { Progress, Radio, Tooltip, Typography } from "antd";
+import { useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import {
@@ -26,12 +27,15 @@ export function ClaudeUsageLimitWarning({
 }: {
   window: ClaudeUsageWindow;
 }) {
+  const [open, setOpen] = useState(false);
   const projection = window.projection;
   if (!projection) return null;
   const name = window.name.replace(/\s*\(.*\)$/, "").toLowerCase();
   return (
     <Tooltip
-      trigger={["hover", "click"]}
+      open={open}
+      onOpenChange={setOpen}
+      trigger={["hover", "focus", "click"]}
       title={
         <>
           At this rate, the {name} limit is reached{" "}
@@ -41,14 +45,33 @@ export function ClaudeUsageLimitWarning({
         </>
       }
     >
-      <span
-        role="img"
-        tabIndex={0}
+      <button
+        type="button"
         aria-label={`${window.name}: on pace to reach the limit before it resets (about ${projection.percentAtReset}%)`}
-        style={{ color: UI_COLORS.warning, cursor: "pointer" }}
+        // Inside a payment row: inspecting the warning must not select it.
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.stopPropagation();
+            setOpen(false);
+          }
+        }}
+        style={{
+          appearance: "none",
+          border: 0,
+          background: "transparent",
+          padding: 0,
+          color: UI_COLORS.warning,
+          cursor: "pointer",
+          lineHeight: 1,
+        }}
       >
         <Icon name="warning" />
-      </span>
+      </button>
     </Tooltip>
   );
 }

@@ -203,7 +203,7 @@ test("a window on pace to hit its limit shows a warning", async () => {
   );
   await userEvent.setup().tab();
   expect(
-    await screen.findByRole("img", {
+    await screen.findByRole("button", {
       name: /This week: on pace to reach the limit before it resets \(about 105%\)/,
     }),
   ).toBeTruthy();

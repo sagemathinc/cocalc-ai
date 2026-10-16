@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ClaudeCredentialList } from "../claude-credential-list";
 
@@ -70,13 +70,27 @@ test("one row per payment method, with every subscription's usage and the select
   expect(screen.getByText("60%")).toBeTruthy();
   expect(screen.getByText("No usage reported yet")).toBeTruthy();
   expect(
-    screen.getByRole("img", { name: /This week: on pace to reach the limit/ }),
+    screen.getByRole("button", {
+      name: /This week: on pace to reach the limit/,
+    }),
   ).toBeTruthy();
   expect(screen.getByText(/It may be out of date/)).toBeTruthy();
   expect(
     screen.getByText("Anthropic bills API usage to the key owner"),
   ).toBeTruthy();
-  await userEvent.setup().click(screen.getByRole("radio", { name: /office/ }));
+  const user = userEvent.setup();
+  // Review on #1114: inspecting the warning of another subscription must not
+  // switch the agent's payment method.
+  const warning = screen.getByRole("button", {
+    name: /This week: on pace to reach the limit/,
+  });
+  await user.click(warning);
+  expect(onChange).not.toHaveBeenCalled();
+  expect(await screen.findByRole("tooltip")).toBeTruthy();
+  // Keyboard: Escape closes it, focus opens it again.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  await user.click(screen.getByRole("radio", { name: /office/ }));
   expect(onChange).toHaveBeenCalledWith(`account-subscription:${office}`);
 });
 
