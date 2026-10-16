@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -73,6 +73,80 @@ describe("master-key-lifecycle", () => {
         deriveSiteMasterKey(siteKey, "project-backup-repo-secrets:v1"),
       ),
     ).toBe(false);
+  });
+
+  it("gives concurrent first-boot callers the same site master key", async () => {
+    const secretsDir = join(dir, "secrets");
+    const keys = await Promise.all(
+      Array.from({ length: 8 }, () => getOrCreateSiteMasterKey({ secretsDir })),
+    );
+    for (const key of keys) expect(key.equals(keys[0])).toBe(true);
+    expect(
+      (await getOrCreateSiteMasterKey({ secretsDir })).equals(keys[0]),
+    ).toBe(true);
+  });
+
+  it("leaves no temporary key copy when writing the new key fails", async () => {
+    const secretsDir = join(dir, "secrets");
+    const fsp = require("node:fs/promises");
+    const realWriteFile = fsp.writeFile;
+    const spy = jest
+      .spyOn(fsp, "writeFile")
+      .mockImplementationOnce(async (path: string, data: string, opts: any) => {
+        // A partial write: the file exists, then the disk fills up.
+        await realWriteFile(path, data.slice(0, 5), opts);
+        throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+      });
+    try {
+      await expect(getOrCreateSiteMasterKey({ secretsDir })).rejects.toThrow(
+        "no space left",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readdirSync(secretsDir)).toEqual([]);
+  });
+
+  it("reports both errors when writing fails and cleanup fails too", async () => {
+    const secretsDir = join(dir, "secrets");
+    const fsp = require("node:fs/promises");
+    const realWriteFile = fsp.writeFile;
+    const write = jest
+      .spyOn(fsp, "writeFile")
+      .mockImplementationOnce(async (path: string, data: string, opts: any) => {
+        await realWriteFile(path, data.slice(0, 5), opts);
+        throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+      });
+    const remove = jest
+      .spyOn(fsp, "unlink")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("not permitted"), { code: "EPERM" }),
+      );
+    try {
+      await expect(getOrCreateSiteMasterKey({ secretsDir })).rejects.toThrow(
+        /no space left; could not remove temporary site master key copy .*\.tmp/,
+      );
+    } finally {
+      write.mockRestore();
+      remove.mockRestore();
+    }
+  });
+
+  it("reports a temporary key copy it could not remove", async () => {
+    const secretsDir = join(dir, "secrets");
+    const fsp = require("node:fs/promises");
+    const spy = jest
+      .spyOn(fsp, "unlink")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("not permitted"), { code: "EPERM" }),
+      );
+    try {
+      await expect(getOrCreateSiteMasterKey({ secretsDir })).rejects.toThrow(
+        /could not remove temporary site master key copy/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("exports and restores an encrypted site master key backup", async () => {

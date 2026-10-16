@@ -368,9 +368,68 @@ export async function getOrCreateSiteMasterKey(
       `site master key is required but missing at ${file.path}; provision it before startup`,
     );
   }
-  const key = randomBytes(32);
-  await writeSiteMasterKeyFile({ path: file.path, key, overwrite: false });
-  return key;
+  return await createSiteMasterKeyFile(file.path, randomBytes(32));
+}
+
+// First boot can run several callers at once (in one process or several).
+// Publish the new key with link(), which never replaces an existing file and
+// never exposes a partly written one: whoever loses the race uses the
+// winner's key instead of failing.
+async function createSiteMasterKeyFile(
+  path: string,
+  key: Buffer,
+): Promise<Buffer> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  let result: Buffer;
+  try {
+    await writeFile(tmp, key.toString("base64"), { mode: 0o600, flag: "wx" });
+    await chmod(tmp, 0o600);
+    await link(tmp, path);
+    result = key;
+  } catch (err: any) {
+    // EEXIST from link: another caller published first; use its key.
+    try {
+      if (err?.code !== "EEXIST" || !(await pathExists(path))) throw err;
+      result = await readMasterKeyFile(path);
+    } catch (failure: any) {
+      try {
+        await removeTempKeyFile(tmp);
+      } catch (cleanup: any) {
+        // Both matter: why creation failed, and which key copy is left.
+        throw Object.assign(
+          new Error(
+            `${failure?.message ?? failure}; ${cleanup?.message ?? cleanup}`,
+          ),
+          { cause: failure },
+        );
+      }
+      throw failure;
+    }
+  }
+  // A leftover temp file is a second copy of the key: never ignore it.
+  await removeTempKeyFile(tmp);
+  return result;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeTempKeyFile(tmp: string): Promise<void> {
+  try {
+    await unlink(tmp);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return;
+    throw new Error(
+      `could not remove temporary site master key copy ${tmp}; delete it: ${err?.message ?? err}`,
+    );
+  }
 }
 
 export function deriveSiteMasterKey(
