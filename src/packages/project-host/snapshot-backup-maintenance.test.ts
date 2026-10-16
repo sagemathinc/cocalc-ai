@@ -1761,86 +1761,110 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
-    it("keeps snapshots flowing at the recovery pace on a host stuck in recovery", async () => {
-      // 2026-10-16: prod hosts at 1-5% stall sat in recovery for hours with
-      // only one override every five minutes.
-      const { createStorageAdmissionController } = jest.requireActual(
-        "./storage-admission",
-      );
-      full = 10;
-      const controller = createStorageAdmissionController({
-        mode: "enforce",
-        readInputs: () => ({
-          sampled_at_ms: Date.now(),
-          host_io_full_avg10: full,
-          starting_projects: 0,
-          stopping_projects: 0,
-          btrfs_mutation_locks: 0,
-          btrfs_mutation_waiters: 0,
-        }),
-      });
-      full = 3.5;
-      controller.sample();
-      getStorageAdmissionStatusMock.mockImplementation(() =>
-        controller.getStatus(),
-      );
-      admitStorageOperationMock.mockImplementation((request) =>
-        controller.admit(request),
-      );
-      // Not overdue long enough for overrides: only the recovery pace runs.
-      // The oldest change is d's, then c's, b's and a's.
-      rows = ["a", "b", "c", "d"].map((project_id, i) => ({
-        project_id,
-        last_changed: new Date(
-          Date.parse("2026-09-27T11:30:00Z") - i * 60_000,
-        ).toISOString(),
-        backup_due_since: null,
-        snapshots: {},
-        backups: {},
-      }));
-      // The bay keeps each reported retry time, so deferral backoff applies.
-      reportProjectMaintenanceMock.mockImplementation(async (report) => {
-        if (report.kind !== "snapshot") return;
-        rows = rows.map((row) =>
-          row.project_id === report.project_id
-            ? { ...row, snapshot_retry_at: report.retry_at ?? null }
-            : row,
+    it.each([0, 25_000])(
+      "keeps snapshots flowing at the recovery pace on a host stuck in recovery (snapshots taking %i ms)",
+      async (runtimeMs) => {
+        // 2026-10-16: prod hosts at 1-5% stall sat in recovery for hours with
+        // only one override every five minutes.
+        runScheduledSnapshotMaintenanceMock.mockImplementation(
+          async ({ project_id }) => {
+            attempts.push(`snapshot:${project_id}`);
+            attemptTimes.push(Date.now());
+            await new Promise((resolve) => setTimeout(resolve, runtimeMs));
+            throw new Error("snapshot failed");
+          },
         );
-      });
-      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
-      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = `${24 * 60 * 60_000}`;
-      const { startProjectSnapshotBackupMaintenance } =
-        await import("./snapshot-backup-maintenance");
-      const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
-      const startedAt = Date.now();
-      try {
-        // Timer-driven wakes alone, no further full sweep: the deferral
-        // backoff (48-72 s) and the event-batch retry (60 s) used to set the
-        // pace instead of the 20 s recovery pace.
-        await jest.advanceTimersByTimeAsync(100_000);
-      } finally {
-        stop();
-      }
-      expect(controller.getStatus().pressure_state).toBe("recovery");
-      expect(timesOf("snapshot").length).toBe(4);
-      expect(timesOf("snapshot")[3] - startedAt).toBeLessThan(100_000);
-      expectSpacing("snapshot", 20_000);
-      // The longest waiting first.
-      expect(attempts.filter((a) => a.startsWith("snapshot:"))).toEqual([
-        "snapshot:d",
-        "snapshot:c",
-        "snapshot:b",
-        "snapshot:a",
-      ]);
-      expect(controller.getStatus().recovery_paced_total).toBe(4);
-      // It passes the mutation-boundary recheck like an override.
-      expect(mutationContextMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          operation_class: "scheduled_snapshot",
-          starvation_override: true,
-        }),
-      );
-    });
+        const { createStorageAdmissionController } = jest.requireActual(
+          "./storage-admission",
+        );
+        full = 10;
+        const controller = createStorageAdmissionController({
+          mode: "enforce",
+          readInputs: () => ({
+            sampled_at_ms: Date.now(),
+            host_io_full_avg10: full,
+            starting_projects: 0,
+            stopping_projects: 0,
+            btrfs_mutation_locks: 0,
+            btrfs_mutation_waiters: 0,
+          }),
+        });
+        full = 3.5;
+        controller.sample();
+        getStorageAdmissionStatusMock.mockImplementation(() =>
+          controller.getStatus(),
+        );
+        admitStorageOperationMock.mockImplementation((request) =>
+          controller.admit(request),
+        );
+        // Not overdue long enough for overrides: only the recovery pace runs.
+        // The oldest change is d's, then c's, b's and a's.
+        rows = ["a", "b", "c", "d"].map((project_id, i) => ({
+          project_id,
+          last_changed: new Date(
+            Date.parse("2026-09-27T11:30:00Z") - i * 60_000,
+          ).toISOString(),
+          backup_due_since: null,
+          snapshots: {},
+          backups: {},
+        }));
+        // The bay keeps each reported retry time, so deferral backoff applies.
+        reportProjectMaintenanceMock.mockImplementation(async (report) => {
+          if (report.kind !== "snapshot") return;
+          rows = rows.map((row) =>
+            row.project_id === report.project_id
+              ? { ...row, snapshot_retry_at: report.retry_at ?? null }
+              : row,
+          );
+        });
+        process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+        process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = `${24 * 60 * 60_000}`;
+        // More than one lane slot, so a woken project does not simply queue
+        // behind the running snapshot.
+        process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM = "2";
+        const { startProjectSnapshotBackupMaintenance } =
+          await import("./snapshot-backup-maintenance");
+        const stop = startProjectSnapshotBackupMaintenance({
+          hostId: "host-1",
+        });
+        const startedAt = Date.now();
+        try {
+          // Timer-driven wakes alone, no further full sweep: the deferral
+          // backoff (48-72 s) and the event-batch retry (60 s) used to set the
+          // pace instead of the 20 s recovery pace.
+          await jest.advanceTimersByTimeAsync(110_000);
+        } finally {
+          stop();
+        }
+        expect(controller.getStatus().pressure_state).toBe("recovery");
+        const times = timesOf("snapshot");
+        expect(times.length).toBe(4);
+        expect(times[3] - startedAt).toBeLessThan(110_000);
+        expectSpacing("snapshot", 20_000);
+        // The pace counts from starts: a snapshot longer than the pace is
+        // followed promptly, not after its runtime plus another 20 s.
+        for (let i = 1; i < times.length; i++) {
+          expect(times[i] - times[i - 1]).toBeLessThan(
+            Math.max(runtimeMs, 20_000) + 10_000,
+          );
+        }
+        // The longest waiting first.
+        expect(attempts.filter((a) => a.startsWith("snapshot:"))).toEqual([
+          "snapshot:d",
+          "snapshot:c",
+          "snapshot:b",
+          "snapshot:a",
+        ]);
+        expect(controller.getStatus().recovery_paced_total).toBe(4);
+        // It passes the mutation-boundary recheck like an override.
+        expect(mutationContextMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            operation_class: "scheduled_snapshot",
+            starvation_override: true,
+          }),
+        );
+      },
+    );
 
     it("takes the longest-overdue project first", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =

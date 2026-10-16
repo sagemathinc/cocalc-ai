@@ -146,11 +146,20 @@ function recoverySnapshotNextAt(): number | undefined {
   );
 }
 
-// When the oldest snapshot waiting on recovery should try again.
-function recoverySnapshotWakeAt(now = Date.now()): number | undefined {
+// After another attempt finished, its admission ticket is already released:
+// an open slot is free now, so wake the next snapshot right away.
+const RECOVERY_HANDOFF_MS = 1_000;
+
+// When the oldest snapshot waiting on recovery should try again. `blocked`
+// means an attempt was just refused although the slot may be open.
+function recoverySnapshotWakeAt(
+  now: number,
+  { blocked }: { blocked: boolean },
+): number | undefined {
   const next = recoverySnapshotNextAt();
   if (next == null) return;
-  return next > now ? next : now + RECOVERY_BLOCKED_RETRY_MS;
+  if (next > now) return next;
+  return now + (blocked ? RECOVERY_BLOCKED_RETRY_MS : RECOVERY_HANDOFF_MS);
 }
 
 // The oldest waiting snapshot ignores its deferral backoff once a recovery
@@ -1142,7 +1151,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       recoveryWaiting.delete(projectId);
     }
     const head = recoveryWaitingHead(at);
-    const wakeAt = head ? recoverySnapshotWakeAt(at) : undefined;
+    // Only a recovery deferral of this attempt says the slot is held.
+    const wakeAt = head
+      ? recoverySnapshotWakeAt(at, { blocked: recoveryDueAt != null })
+      : undefined;
     if (!head || wakeAt == null) return retry;
     if (head === projectId) return new Date(wakeAt).toISOString();
     onFutureDue?.(head, wakeAt);
