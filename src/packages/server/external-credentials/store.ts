@@ -117,8 +117,34 @@ function validatePayload(payload: string): void {
   }
 }
 
-// Shape of Date.toISOString(); Date.parse then rejects impossible dates.
-const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+// Shape of Date.toISOString().
+const ISO_UTC_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
+/**
+ * A strict ISO UTC timestamp, or undefined. Date.parse normalizes impossible
+ * dates (Feb 31 becomes Mar 3, 24:00 the next day), so the parsed instant
+ * must give back exactly the written calendar fields.
+ */
+export function parseStrictIsoUtc(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = ISO_UTC_TIMESTAMP.exec(value);
+  if (!match) return undefined;
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return undefined;
+  const date = new Date(at);
+  const fields = [
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    date.getUTCSeconds(),
+  ];
+  return fields.every((field, i) => field === Number(match[i + 1]))
+    ? at
+    : undefined;
+}
 
 function selectorValues(selector: ExternalCredentialSelector) {
   return [
@@ -511,10 +537,8 @@ WHERE ${ownershipClause(1)} AND revoked IS NULL
       );
       const now = Date.now();
       const active = rows.filter(({ expiry }) => {
-        if (typeof expiry !== "string" || !ISO_UTC_TIMESTAMP.test(expiry))
-          return true;
-        const at = Date.parse(expiry);
-        return !Number.isFinite(at) || at > now;
+        const at = parseStrictIsoUtc(expiry);
+        return at === undefined || at > now;
       }).length;
       if (active >= limit) {
         throw new Error(`at most ${limit} active credentials are allowed`);

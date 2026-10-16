@@ -15,6 +15,7 @@ import {
   getExternalCredential,
   hasExternalCredential,
   listExternalCredentials,
+  parseStrictIsoUtc,
   revokeExternalCredential,
   touchExternalCredential,
   updateExternalCredentialById,
@@ -277,9 +278,36 @@ describeDb("create limit", () => {
     await expect(create()).rejects.toThrow("at most 2");
   });
 
+  test("an impossible past date still counts (no calendar normalization)", async () => {
+    // Review on #1113: Date.parse turns 2020-02-31 into 2020-03-02, a past
+    // instant, which would have freed the slot.
+    await create({ expires_at: "2020-02-31T00:00:00Z" });
+    await create({ expires_at: "2021-02-29T00:00:00Z" });
+    await expect(create()).rejects.toThrow("at most 2");
+  });
+
   test("a non-string expiry still counts", async () => {
     await create({ expires_at: 12345 });
     await create();
     await expect(create()).rejects.toThrow("at most 2");
   });
+});
+
+test("strict ISO UTC parsing rejects calendar-normalized values", () => {
+  expect(parseStrictIsoUtc("2026-10-16T17:30:00.000Z")).toBe(
+    Date.UTC(2026, 9, 16, 17, 30),
+  );
+  expect(parseStrictIsoUtc("2024-02-29T00:00:00Z")).toBe(Date.UTC(2024, 1, 29));
+  for (const value of [
+    "2026-02-31T00:00:00Z",
+    "2025-02-29T00:00:00Z",
+    "2026-10-16T24:00:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-99-99T00:00:00Z",
+    "2026-10-16T17:30:00+02:00",
+    "soon",
+    12345,
+    undefined,
+  ])
+    expect(parseStrictIsoUtc(value)).toBeUndefined();
 });
