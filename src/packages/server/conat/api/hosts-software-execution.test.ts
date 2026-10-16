@@ -2125,6 +2125,90 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     ]);
   });
 
+  describe("bounded managed component verification", () => {
+    const row = {
+      id: "host-1",
+      status: "running",
+      metadata: { owner: "account-1", software: { project_host: "ph-v1" } },
+    };
+    const common = {
+      account_id: "account-1",
+      id: "host-1",
+      components: ["conat-router"] as any,
+      reason: "host_software_upgrade",
+      loadHostForStartStop: async () => row,
+      assertHostRunningForUpgrade: () => undefined,
+      waitForHostHeartbeatAfter: async () => undefined,
+      installedProjectHostArtifactVersion: (r: any) =>
+        r?.metadata?.software?.project_host,
+      recordProjectHostLocalRollbackInternal: async () => ({
+        host_id: "host-1",
+        rollback_version: "ph-v1",
+        source: "host-agent" as const,
+      }),
+      project_host_local_rollback_error_code: "project_host_local_rollback",
+      setLastKnownGoodArtifactVersionInternal: async () => undefined,
+      runtimeDeploymentsForComponentRollout: () => [],
+      requestedByForRuntimeDeployments: () => "account-1",
+      setProjectHostRuntimeDeployments: async () => undefined,
+      loadEffectiveRuntimeDeployments: async () => [],
+      projectHostRolloutPollMs: 0,
+    };
+    const never = () => new Promise<never>(() => undefined);
+
+    it("ends when creating the status client never returns (alpha, 2026-10-16)", async () => {
+      const rolloutClient = {
+        getRuntimeLog: async ({ source }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => {
+          throw new Error("socket has been disconnected");
+        },
+      };
+      let calls = 0;
+      const hostControlClient = jest.fn(async () => {
+        calls += 1;
+        // The rollout's own client works; every later one hangs, as right
+        // after a project-host restart.
+        return calls === 1 ? rolloutClient : await never();
+      });
+      const startedAt = Date.now();
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: hostControlClient as any,
+          projectHostRolloutSettleTimeoutMs: 50,
+          hostControlClientTimeoutMs: 100,
+        }),
+      ).rejects.toThrow(/managed component alignment could not be verified/);
+      // Without the bounds this never settles (the hung client is awaited).
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      expect(hostControlClient.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it("does not let hanging diagnostics hold the rollout error", async () => {
+      const startedAt = Date.now();
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: async () => ({
+            getRuntimeLog: never,
+            rolloutManagedComponents: async () => {
+              throw new Error("project-host conat router exited");
+            },
+          }),
+          projectHostRolloutSettleTimeoutMs: 5,
+          rolloutDiagnosticTimeoutMs: 50,
+        }),
+      ).rejects.toThrow(
+        /rollout request error: project-host conat router exited/,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    });
+  });
+
   it("uses the effective runtime deployment target as the desired project-host version", async () => {
     const runtimeDeploymentsForComponentRollout = jest.fn(() => []);
     const upgradeSoftware = jest.fn(async () => ({

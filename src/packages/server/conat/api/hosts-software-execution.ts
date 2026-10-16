@@ -49,6 +49,13 @@ const PROJECT_HOST_ROLLOUT_POLL_MS = 5_000;
 const PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS = 30_000;
 const HOST_UPGRADE_CONTROL_PREFLIGHT_TIMEOUT_MS = 8_000;
 const MANAGED_COMPONENT_ROLLOUT_RPC_TIMEOUT_MS = 30_000;
+// Creating a host-control client resolves routes and may wait on a connection
+// to a host that is restarting; it must not block a rollout indefinitely.
+const HOST_CONTROL_CLIENT_TIMEOUT_MS = 30_000;
+// Collecting host logs for a rollout error must not hold the operation open:
+// the host may be the very thing that is not answering.
+const ROLLOUT_DIAGNOSTIC_TIMEOUT_MS = 30_000;
+const ROLLOUT_DIAGNOSTIC_CALL_TIMEOUT_MS = 10_000;
 
 export type HostSoftwareRolloutProgressUpdate = {
   rollout_phase: string;
@@ -713,6 +720,7 @@ async function enrichManagedComponentRolloutError({
   err,
   client,
   components,
+  timeoutMs = ROLLOUT_DIAGNOSTIC_TIMEOUT_MS,
 }: {
   err: unknown;
   client: {
@@ -722,13 +730,20 @@ async function enrichManagedComponentRolloutError({
     }) => Promise<{ source: string; lines: number; text: string }>;
   };
   components: HostManagedComponentRolloutRequest["components"];
+  timeoutMs?: number;
 }): Promise<Error> {
   const sections: string[] = [];
+  const deadline = Date.now() + timeoutMs;
   for (const source of uniqueRuntimeLogSourcesForComponents(components)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     try {
-      const log = await client.getRuntimeLog({
-        source,
-        lines: ROLLOUT_DIAGNOSTIC_LINES,
+      const log = await withTimeout({
+        promise: client.getRuntimeLog({
+          source,
+          lines: ROLLOUT_DIAGNOSTIC_LINES,
+        }),
+        timeoutMs: Math.min(ROLLOUT_DIAGNOSTIC_CALL_TIMEOUT_MS, remaining),
       });
       const text = trimRuntimeLogText(log.text);
       if (!text) continue;
@@ -1058,6 +1073,8 @@ export async function rolloutHostManagedComponentsInternalHelper({
   projectHostRolloutPollMs = PROJECT_HOST_ROLLOUT_POLL_MS,
   projectHostRolloutMinObservationMs = PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS,
   managedComponentRolloutRpcTimeoutMs = MANAGED_COMPONENT_ROLLOUT_RPC_TIMEOUT_MS,
+  hostControlClientTimeoutMs = HOST_CONTROL_CLIENT_TIMEOUT_MS,
+  rolloutDiagnosticTimeoutMs = ROLLOUT_DIAGNOSTIC_TIMEOUT_MS,
   onProgress,
 }: {
   account_id?: string;
@@ -1155,6 +1172,8 @@ export async function rolloutHostManagedComponentsInternalHelper({
   projectHostRolloutPollMs?: number;
   projectHostRolloutMinObservationMs?: number;
   managedComponentRolloutRpcTimeoutMs?: number;
+  hostControlClientTimeoutMs?: number;
+  rolloutDiagnosticTimeoutMs?: number;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -1337,7 +1356,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
     let hostAgentStatus: HostAgentStatus | undefined;
     observedProjectHostPids = [];
     try {
-      statusClient = await hostControlClient(id, 30_000);
+      statusClient = await withTimeout({
+        promise: hostControlClient(id, 30_000),
+        timeoutMs: hostControlClientTimeoutMs,
+      });
       if (typeof statusClient.getManagedComponentStatus === "function") {
         const statuses = await withTimeout({
           promise: statusClient.getManagedComponentStatus(),
@@ -1499,11 +1521,22 @@ export async function rolloutHostManagedComponentsInternalHelper({
       rollout_target_version: desiredVersion,
     });
     const verifyStartedAt = Date.now();
+    // Every step below is bounded by what is left of the settle window. One
+    // call that never returned (a host-control client right after the
+    // project-host restart) left an upgrade "verifying" for 50 minutes.
+    const remainingMs = () =>
+      Math.max(
+        1,
+        verifyStartedAt + projectHostRolloutSettleTimeoutMs - Date.now(),
+      );
     let lastFailures: string[] = [];
     let lastError: unknown;
     while (Date.now() - verifyStartedAt <= projectHostRolloutSettleTimeoutMs) {
       try {
-        const statusClient = await hostControlClient(id, 30_000);
+        const statusClient = await withTimeout({
+          promise: hostControlClient(id, 30_000),
+          timeoutMs: Math.min(hostControlClientTimeoutMs, remainingMs()),
+        });
         if (typeof statusClient.getManagedComponentStatus !== "function") {
           throw new Error(
             "host control client does not support managed component status",
@@ -1511,7 +1544,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
         }
         const statuses = await withTimeout({
           promise: statusClient.getManagedComponentStatus(),
-          timeoutMs: managedComponentRolloutRpcTimeoutMs,
+          timeoutMs: Math.min(
+            managedComponentRolloutRpcTimeoutMs,
+            remainingMs(),
+          ),
         });
         lastFailures = managedComponentAlignmentFailures({
           statuses,
@@ -1540,8 +1576,19 @@ export async function rolloutHostManagedComponentsInternalHelper({
           break;
         }
       }
-      await delay(projectHostRolloutPollMs);
-      refreshedRow = await loadHostForStartStop(id, account_id);
+      if (Date.now() - verifyStartedAt > projectHostRolloutSettleTimeoutMs) {
+        break;
+      }
+      await delay(Math.min(projectHostRolloutPollMs, remainingMs()));
+      try {
+        refreshedRow = await withTimeout({
+          promise: loadHostForStartStop(id, account_id),
+          timeoutMs: Math.min(hostControlClientTimeoutMs, remainingMs()),
+        });
+      } catch (err) {
+        // Keep the last row; the next status read decides.
+        lastError ??= err;
+      }
     }
     if (lastError != null) {
       const err = new Error(
@@ -1555,6 +1602,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
             ),
             client,
             components,
+            timeoutMs: rolloutDiagnosticTimeoutMs,
           });
     }
     if (lastFailures.length > 0) {
@@ -1569,6 +1617,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
             ),
             client,
             components,
+            timeoutMs: rolloutDiagnosticTimeoutMs,
           });
     }
     await onProgress?.({
