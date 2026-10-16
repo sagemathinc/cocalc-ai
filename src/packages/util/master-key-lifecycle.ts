@@ -51,8 +51,7 @@ export type SiteMasterKeyPurpose =
   | "bay-config-escrow:v1";
 
 export type LegacyMasterKeyId =
-  | "legacy-secret-settings"
-  | "legacy-project-backups";
+  "legacy-secret-settings" | "legacy-project-backups";
 
 export type MasterKeyFileSource =
   | "option"
@@ -158,8 +157,7 @@ interface EncryptedSiteMasterKeyBackup {
 }
 
 export type SiteMasterKeyBackup =
-  | PlainSiteMasterKeyBackup
-  | EncryptedSiteMasterKeyBackup;
+  PlainSiteMasterKeyBackup | EncryptedSiteMasterKeyBackup;
 
 function normalizePath(path?: string): string | undefined {
   const trimmed = `${path ?? ""}`.trim();
@@ -368,9 +366,30 @@ export async function getOrCreateSiteMasterKey(
       `site master key is required but missing at ${file.path}; provision it before startup`,
     );
   }
-  const key = randomBytes(32);
-  await writeSiteMasterKeyFile({ path: file.path, key, overwrite: false });
-  return key;
+  return await createSiteMasterKeyFile(file.path, randomBytes(32));
+}
+
+// First boot can run several callers at once (in one process or several).
+// Publish the new key with link(), which never replaces an existing file and
+// never exposes a partly written one: whoever loses the race uses the
+// winner's key instead of failing.
+async function createSiteMasterKeyFile(
+  path: string,
+  key: Buffer,
+): Promise<Buffer> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tmp, key.toString("base64"), { mode: 0o600, flag: "wx" });
+  try {
+    await chmod(tmp, 0o600);
+    await link(tmp, path);
+    return key;
+  } catch (err: any) {
+    if (err?.code !== "EEXIST") throw err;
+    return await readMasterKeyFile(path);
+  } finally {
+    await unlink(tmp).catch(() => {});
+  }
 }
 
 export function deriveSiteMasterKey(

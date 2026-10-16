@@ -75,6 +75,17 @@ describe("master-key-lifecycle", () => {
     ).toBe(false);
   });
 
+  it("gives concurrent first-boot callers the same site master key", async () => {
+    const secretsDir = join(dir, "secrets");
+    const keys = await Promise.all(
+      Array.from({ length: 8 }, () => getOrCreateSiteMasterKey({ secretsDir })),
+    );
+    for (const key of keys) expect(key.equals(keys[0])).toBe(true);
+    expect(
+      (await getOrCreateSiteMasterKey({ secretsDir })).equals(keys[0]),
+    ).toBe(true);
+  });
+
   it("exports and restores an encrypted site master key backup", async () => {
     const sourceSecrets = join(dir, "source");
     const targetSecrets = join(dir, "target");
