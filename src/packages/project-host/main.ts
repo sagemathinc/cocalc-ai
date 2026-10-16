@@ -217,7 +217,11 @@ import { startExamWatchdog } from "./exam/controller";
 import { getExamUsageAccountId } from "./exam/usage";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { startGcpPreemptionWatcher } from "./gcp-preemption";
-import { corsOrigin, setHubBrowserOrigins } from "./browser-origin-policy";
+import {
+  checkAmbientCookieRequest,
+  corsOrigin,
+  setHubBrowserOrigins,
+} from "./browser-origin-policy";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -964,6 +968,11 @@ export async function main(
   });
   app.post(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
     setBrowserSessionCorsHeaders(req, res);
+    // Refuse foreign pages before any cookie is issued or cleared.
+    if (!checkAmbientCookieRequest(req, "bootstrap")) {
+      res.status(403).json({ error: "cross-site request refused" });
+      return;
+    }
     const authHeader = `${req.headers.authorization ?? ""}`;
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
     if (!match?.[1]?.trim()) {
@@ -1416,15 +1425,25 @@ export async function main(
       });
     },
   });
-  try {
-    const { url, browser_origins } = await hubApi.system.getPublicSiteUrl({
-      host_id: hostId,
-    });
-    process.env.COCALC_SITE_URL = url;
-    setHubBrowserOrigins(browser_origins ?? []);
-  } catch (err) {
-    logger.warn("unable to resolve public CoCalc site URL", { err: `${err}` });
-  }
+  // The site URL and the browser origins allowed to use project-host cookies.
+  // Refreshed periodically so bay changes don't need a host restart; a failed
+  // or empty refresh keeps the last known-good origins.
+  const refreshPublicSiteUrl = async () => {
+    try {
+      const { url, browser_origins } = await hubApi.system.getPublicSiteUrl({
+        host_id: hostId,
+      });
+      process.env.COCALC_SITE_URL = url;
+      setHubBrowserOrigins(browser_origins ?? []);
+    } catch (err) {
+      logger.warn("unable to resolve public CoCalc site URL", {
+        err: `${err}`,
+      });
+    }
+  };
+  await refreshPublicSiteUrl();
+  const publicSiteUrlTimer = setInterval(refreshPublicSiteUrl, 10 * 60_000);
+  publicSiteUrlTimer.unref?.();
   const stopReconciler = startReconciler(undefined, {
     reconcileProjectCgroup: async ({ project_id, run_quota, force }) =>
       await reconcileProjectCgroup({
@@ -1518,6 +1537,7 @@ export async function main(
     sharedBrowserService?.close?.();
     masterRegistration?.stop();
     stopReconciler?.();
+    clearInterval(publicSiteUrlTimer);
     stopDataPermissionHardener?.();
     stopRuntimeConformanceMonitor?.();
     stopRuntimePostureMonitor?.();

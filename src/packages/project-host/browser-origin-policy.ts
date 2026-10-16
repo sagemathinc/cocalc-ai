@@ -1,23 +1,33 @@
 /*
-Which web origins may use the project-host's browser cookies.
+Which web pages may use the project-host's browser cookies.
 
 The project-host browser-session and HTTP-session cookies are ambient: the
-browser attaches them to any request for this host, including requests made
-by pages on unrelated sites. A request (or websocket) authenticated only by
-such a cookie is therefore accepted only when it comes from an allowed origin:
+browser attaches them to requests for this host no matter which page made the
+request. A request (or websocket) authenticated only by such a cookie is
+accepted only when the browser shows it was made by an approved page.
 
-- the CoCalc site and bay public origins, as reported by the hub
-  (system.getPublicSiteUrl), falling back to COCALC_SITE_URL;
-- the request's own host (same-origin pages, e.g. a private app hostname
-  fetching from itself);
-- extra origins in COCALC_PROJECT_HOST_ALLOWED_ORIGINS (comma separated).
+Approved origins (exact scheme://host[:port]) are the CoCalc site and bay
+public origins sent by the hub (system.getPublicSiteUrl, refreshed
+periodically), COCALC_SITE_URL, and COCALC_PROJECT_HOST_ALLOWED_ORIGINS.
+Pages served by the project host itself run project-controlled code, so its
+own origin is approved only for proxied app routes (an app talking to
+itself), never for files, uploads, the session bootstrap or Conat.
 
-A request without an Origin header is allowed unless the browser says it is a
-cross-site subresource (Sec-Fetch-Site: cross-site and not a navigation), so
-links, downloads and iframes opened from the app keep working.
+With an Origin header, it must be approved (see above). Without one:
+- non-GET/HEAD requests are refused (browsers send Origin on them);
+- requests without fetch metadata are allowed: every browser that sends
+  cookies to other sites also sends Sec-Fetch-Site, so these come from
+  non-browser clients or old browsers that block third-party cookies;
+- Sec-Fetch-Site: none (typed URL, bookmark) is allowed;
+- a Referer from an approved origin is allowed (the app's <img>, iframes,
+  links; the app sends strict-origin-when-cross-origin);
+- same-origin subresources are allowed on app routes;
+- a user-activated top-level explicit download (?download) of a file is
+  allowed;
+- everything else is refused.
 
-COCALC_PROJECT_HOST_ORIGIN_POLICY=report logs violations instead of rejecting
-them (an escape hatch while rolling out); "off" disables the check.
+COCALC_PROJECT_HOST_ORIGIN_POLICY=report logs violations but behaves as
+before (including CORS); "off" disables checks and logging.
 */
 
 import type { IncomingMessage } from "node:http";
@@ -26,12 +36,30 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("project-host:browser-origin-policy");
 
 export type OriginPolicyMode = "enforce" | "report" | "off";
+export type AmbientRoute = "file" | "upload" | "app" | "bootstrap" | "conat";
+
+type Req = Pick<IncomingMessage, "headers"> & { method?: string };
 
 let hubOrigins: string[] = [];
 
-export function normalizeBrowserOrigin(value: unknown): string | undefined {
+// A serialized http(s) origin exactly as browsers send it, lowercased.
+export function parseOrigin(value: unknown): string | undefined {
   const raw = `${value ?? ""}`.trim();
   if (!raw || raw === "null") return;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return;
+    if (url.origin.toLowerCase() !== raw.toLowerCase()) return;
+    return url.origin.toLowerCase();
+  } catch {
+    return;
+  }
+}
+
+// The origin of a configured URL (site URL with a base path, etc.).
+function originOfUrl(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return;
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:" && url.protocol !== "http:") return;
@@ -41,10 +69,15 @@ export function normalizeBrowserOrigin(value: unknown): string | undefined {
   }
 }
 
+// Replace the hub-supplied origins. An empty list (old hub, failed lookup)
+// keeps the last known-good set.
 export function setHubBrowserOrigins(origins: unknown[]): void {
-  hubOrigins = origins
-    .map(normalizeBrowserOrigin)
-    .filter((x): x is string => !!x);
+  const parsed = origins.map(originOfUrl).filter((x): x is string => !!x);
+  if (parsed.length > 0) hubOrigins = parsed;
+}
+
+export function resetHubBrowserOriginsForTests(): void {
+  hubOrigins = [];
 }
 
 export function originPolicyMode(): OriginPolicyMode {
@@ -54,104 +87,149 @@ export function originPolicyMode(): OriginPolicyMode {
   return value === "report" || value === "off" ? value : "enforce";
 }
 
-export function allowedBrowserOrigins(): Set<string> {
+export function approvedBrowserOrigins(): Set<string> {
   const origins = new Set(hubOrigins);
   for (const value of [
     process.env.COCALC_SITE_URL,
     ...`${process.env.COCALC_PROJECT_HOST_ALLOWED_ORIGINS ?? ""}`.split(","),
   ]) {
-    const origin = normalizeBrowserOrigin(value);
+    const origin = originOfUrl(value);
     if (origin) origins.add(origin);
   }
   return origins;
 }
 
-function header(req: Pick<IncomingMessage, "headers">, name: string): string {
+function header(req: Req, name: string): string {
   const value = req.headers[name];
   return `${Array.isArray(value) ? value[0] : (value ?? "")}`.trim();
 }
 
-function requestHostnames(req: Pick<IncomingMessage, "headers">): string[] {
-  const hosts: string[] = [];
-  for (const value of [
-    header(req, "host"),
-    header(req, "x-forwarded-host").split(",")[0],
-  ]) {
-    const host = value.trim().toLowerCase();
-    if (!host) continue;
-    try {
-      hosts.push(new URL(`http://${host}`).hostname);
-    } catch {
-      // ignore malformed host headers
-    }
-  }
-  return hosts;
+function isLocalHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.endsWith(".localhost")
+  );
 }
 
-export function isAllowedBrowserOrigin(
-  origin: string | undefined,
-  req: Pick<IncomingMessage, "headers">,
-): boolean {
-  const normalized = normalizeBrowserOrigin(origin);
-  if (!normalized) return false;
-  if (allowedBrowserOrigins().has(normalized)) return true;
-  // Same origin as the request itself.
-  return requestHostnames(req).includes(new URL(normalized).hostname);
+// Whether origin is this request's own origin. Uses the Host header only (a
+// browser cannot set it for another site); the scheme must be https except on
+// localhost.
+function isOwnOrigin(origin: string, req: Req): boolean {
+  const host = header(req, "host").toLowerCase();
+  if (!host) return false;
+  const url = new URL(origin);
+  if (url.host !== host) return false;
+  return url.protocol === "https:" || isLocalHostname(url.hostname);
+}
+
+export function classifyProjectRoute(
+  req: Req & { url?: string },
+  project_id: string,
+): AmbientRoute {
+  let pathname = "";
+  try {
+    pathname = new URL(req.url ?? "/", "http://project-host.local").pathname;
+  } catch {
+    return "app";
+  }
+  if (pathname.startsWith(`/${project_id}/files/`)) return "file";
+  if (pathname === `/${project_id}/upload`) return "upload";
+  return "app";
+}
+
+function isExplicitDownload(req: Req & { url?: string }): boolean {
+  try {
+    return new URL(
+      req.url ?? "/",
+      "http://project-host.local",
+    ).searchParams.has("download");
+  } catch {
+    return false;
+  }
 }
 
 // Why a cookie-authenticated request must be refused, or undefined if it is
 // acceptable.
 export function ambientCookieRejection(
-  req: Pick<IncomingMessage, "headers">,
+  req: Req & { url?: string },
+  route: AmbientRoute,
 ): string | undefined {
-  const origin = header(req, "origin");
-  if (origin) {
-    return isAllowedBrowserOrigin(origin, req)
-      ? undefined
-      : "origin not allowed";
+  const approved = approvedBrowserOrigins();
+  const originHeader = header(req, "origin");
+  if (originHeader) {
+    const origin = parseOrigin(originHeader);
+    if (!origin) return "invalid or opaque origin";
+    if (approved.has(origin)) return;
+    if (route === "app" && isOwnOrigin(origin, req)) return;
+    return "origin not allowed";
   }
+  const method = (req.method ?? "GET").toUpperCase();
+  if (route === "conat") return; // browsers always send Origin on websockets
+  if (method !== "GET" && method !== "HEAD") return "no origin";
   const site = header(req, "sec-fetch-site").toLowerCase();
-  const mode = header(req, "sec-fetch-mode").toLowerCase();
-  if (site === "cross-site" && mode !== "navigate") {
-    return "cross-site subresource";
+  if (!site || site === "none") return;
+  const referer = header(req, "referer");
+  if (referer) {
+    const origin = originOfUrl(referer);
+    if (origin && approved.has(origin)) return;
   }
-  return;
+  if (route === "app" && site === "same-origin") return;
+  if (
+    route === "file" &&
+    header(req, "sec-fetch-mode").toLowerCase() === "navigate" &&
+    header(req, "sec-fetch-dest").toLowerCase() === "document" &&
+    header(req, "sec-fetch-user") === "?1" &&
+    isExplicitDownload(req)
+  ) {
+    return;
+  }
+  return "not from an approved page";
 }
 
 const lastLogged = new Map<string, number>();
 
-// Returns true when the request may proceed. Logs at most once a minute per
-// (reason, origin) so a misconfigured allowlist is visible without flooding.
-export function checkAmbientCookieRequest(
-  req: Pick<IncomingMessage, "headers">,
-  context: string,
-): boolean {
-  const mode = originPolicyMode();
-  if (mode === "off") return true;
-  const reason = ambientCookieRejection(req);
-  if (!reason) return true;
+function logRejection(req: Req, context: string, reason: string): void {
   const origin = header(req, "origin") || "(none)";
   const key = `${context}|${reason}|${origin}`;
   const now = Date.now();
-  if (now - (lastLogged.get(key) ?? 0) > 60_000) {
-    lastLogged.set(key, now);
-    if (lastLogged.size > 1000) lastLogged.clear();
-    logger.warn("cookie-authenticated request from a disallowed origin", {
-      context,
-      reason,
-      origin: origin.slice(0, 200),
-      sec_fetch_site: header(req, "sec-fetch-site").slice(0, 40),
-      mode,
-    });
-  }
+  if (now - (lastLogged.get(key) ?? 0) < 60_000) return;
+  lastLogged.set(key, now);
+  if (lastLogged.size > 1000) lastLogged.clear();
+  logger.warn("cookie-authenticated request from an unapproved page", {
+    context,
+    reason,
+    origin: origin.slice(0, 200),
+    sec_fetch_site: header(req, "sec-fetch-site").slice(0, 40),
+    sec_fetch_dest: header(req, "sec-fetch-dest").slice(0, 40),
+    mode: originPolicyMode(),
+  });
+}
+
+// Returns true when the request may proceed (always, in report and off mode).
+export function checkAmbientCookieRequest(
+  req: Req & { url?: string },
+  route: AmbientRoute,
+  context: string = route,
+): boolean {
+  const mode = originPolicyMode();
+  if (mode === "off") return true;
+  const reason = ambientCookieRejection(req, route);
+  if (!reason) return true;
+  logRejection(req, context, reason);
   return mode === "report";
 }
 
-// CORS: reflect the request Origin only when it is allowed.
-export function corsOrigin(
-  req: Pick<IncomingMessage, "headers">,
-): string | undefined {
-  const origin = header(req, "origin");
-  if (!origin || !isAllowedBrowserOrigin(origin, req)) return;
-  return origin;
+// The value for Access-Control-Allow-Origin, if any. Only approved origins
+// get credentialed CORS; report and off mode keep the old behavior of
+// reflecting any origin.
+export function corsOrigin(req: Req): string | undefined {
+  const originHeader = header(req, "origin");
+  if (!originHeader) return;
+  const mode = originPolicyMode();
+  const origin = parseOrigin(originHeader);
+  if (origin && approvedBrowserOrigins().has(origin)) return originHeader;
+  if (mode === "enforce") return;
+  if (mode === "report") logRejection(req, "cors", "origin not allowed");
+  return originHeader;
 }

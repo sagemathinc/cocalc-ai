@@ -681,7 +681,11 @@ describe("project-host HTTP session cookie", () => {
       else process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY = savedMode;
     });
 
-    const request = (headers: Record<string, string>, cookie?: string) =>
+    const request = (
+      headers: Record<string, string>,
+      cookie?: string,
+      url = `/${project_id}/files/notes.txt`,
+    ) =>
       ({
         headers: {
           cookie:
@@ -696,30 +700,44 @@ describe("project-host HTTP session cookie", () => {
           "x-forwarded-proto": "https",
           ...headers,
         },
+        method: "GET",
         socket: {},
-        url: `/${project_id}/files/notes.txt`,
+        url,
       }) as any;
 
     it.each([
       ["a foreign origin", { origin: "https://evil.example" }],
       ["an opaque origin", { origin: "null" }],
+      ["the host's own origin", { origin: "https://host-1.cocalc.example" }],
       [
         "a cross-site subresource without an origin",
         { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors" },
       ],
-    ])("refuses the browser session cookie from %s", async (_, headers) => {
-      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
-      await expect(
-        auth.authorizeHttpRequest(
-          request(headers),
-          createResponse(),
-          project_id,
-        ),
-      ).rejects.toThrow("cross-site request refused");
-      await expect(
-        auth.authorizeUpgradeRequest(request(headers), project_id),
-      ).rejects.toThrow("cross-site request refused");
-    });
+      [
+        "a foreign iframe",
+        {
+          "sec-fetch-site": "cross-site",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-dest": "iframe",
+          referer: "https://evil.example/",
+        },
+      ],
+    ])(
+      "refuses file access by browser session cookie from %s",
+      async (_, headers) => {
+        const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+        await expect(
+          auth.authorizeHttpRequest(
+            request(headers),
+            createResponse(),
+            project_id,
+          ),
+        ).rejects.toThrow("cross-site request refused");
+        await expect(
+          auth.authorizeUpgradeRequest(request(headers), project_id),
+        ).rejects.toThrow("cross-site request refused");
+      },
+    );
 
     it("refuses the HTTP session cookie from a foreign origin", async () => {
       const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
@@ -735,21 +753,83 @@ describe("project-host HTTP session cookie", () => {
 
     it.each([
       ["the site origin", { origin: "https://cocalc.example" }],
-      ["its own origin", { origin: "https://host-1.cocalc.example" }],
       [
-        "a navigation",
-        { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" },
+        "an app page (Referer)",
+        {
+          "sec-fetch-site": "same-site",
+          "sec-fetch-dest": "iframe",
+          referer: "https://cocalc.example/",
+        },
       ],
+      ["a typed URL", { "sec-fetch-site": "none" }],
       ["a request without fetch metadata", {}],
-    ])("accepts the browser session cookie from %s", async (_, headers) => {
+    ])(
+      "accepts file access by browser session cookie from %s",
+      async (_, headers) => {
+        const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+        await expect(
+          auth.authorizeHttpRequest(
+            request(headers),
+            createResponse(),
+            project_id,
+          ),
+        ).resolves.toBeUndefined();
+      },
+    );
+
+    it("accepts an app talking to its own origin", async () => {
       const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
       await expect(
         auth.authorizeHttpRequest(
-          request(headers),
+          request(
+            { origin: "https://host-1.cocalc.example" },
+            undefined,
+            `/${project_id}/apps/python-hello/api`,
+          ),
           createResponse(),
           project_id,
         ),
       ).resolves.toBeUndefined();
+    });
+
+    it("prefers an explicit bearer over refused cookies, and never falls back", async () => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      const now_s = Math.floor(Date.now() / 1000);
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        sub: account_id,
+        act: "account",
+        iat: now_s,
+        exp: now_s + 600,
+      });
+      const foreign = {
+        origin: "https://evil.example",
+        authorization: "Bearer explicit-token",
+      };
+      await expect(
+        auth.authorizeHttpRequest(
+          request(foreign),
+          createResponse(),
+          project_id,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        auth.authorizeUpgradeRequest(request(foreign), project_id),
+      ).resolves.toMatchObject({ account_id });
+
+      // An invalid explicit bearer fails even with an approved cookie.
+      mockVerifyProjectHostAuthToken.mockImplementation(() => {
+        throw new Error("bad token");
+      });
+      await expect(
+        auth.authorizeHttpRequest(
+          request({
+            origin: "https://cocalc.example",
+            authorization: "Bearer bad-token",
+          }),
+          createResponse(),
+          project_id,
+        ),
+      ).rejects.toThrow("bad token");
     });
 
     it("only logs in report mode", async () => {

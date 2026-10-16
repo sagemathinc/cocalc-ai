@@ -338,7 +338,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       if (
         !checkAmbientCookieRequest(
           { headers: socket?.handshake?.headers ?? {} },
-          "conat browser session",
+          "conat",
         )
       ) {
         throw new Error("cross-site connection refused");
