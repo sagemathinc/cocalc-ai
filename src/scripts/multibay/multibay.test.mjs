@@ -1306,7 +1306,9 @@ describe("sensor budgets on the account's home bay", () => {
       home_bay_id: ATTACHED,
       name: "carol",
     });
-    project_id = await createProject(alice.client, "sensor budgets");
+    // alice's own project: a new one would use up her project limit, which
+    // later scenarios need.
+    project_id = alice.project;
     assert.equal(await owningBay(project_id), SEED);
     // Two wakes a day: the watcher cap against churn is then 4 x 2 = 8.
     await runInBay(
