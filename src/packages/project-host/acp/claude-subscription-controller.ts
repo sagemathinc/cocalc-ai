@@ -45,6 +45,7 @@ import {
 } from "./claude-project-tool-bridge";
 import {
   createRenewableCliLease,
+  leasedProjectExecutor,
   type RenewableCliLease,
 } from "./claude-cli-lease";
 import {
@@ -511,30 +512,19 @@ ${skill}
     };
     toolBridge = await createClaudeProjectToolBridge(
       projectId,
-      async (script, cwd, signal, options) => {
-        // After a fence the tool layer only gets here once the runtime has
-        // proved every fenced job's processes are gone: issue a fresh lease.
-        const env = cliEnvFor(await leases.acquire());
-        let result;
-        try {
-          result = await sandboxExec({
+      leasedProjectExecutor({
+        leases,
+        envFor: cliEnvFor,
+        execute: (env, script, cwd, signal, options) =>
+          sandboxExec({
             project_id: projectId,
             script,
             cwd: cwd ?? binding.profile.cwd,
             env,
             signal,
             ...options,
-          });
-        } catch (error) {
-          await leases.retire();
-          throw error;
-        }
-        if (result.cleanupConfirmed !== true) {
-          // Fence CLI authority independently of process/container cleanup.
-          await leases.retire();
-        }
-        return result;
-      },
+          }),
+      }),
       async () => {
         await getClaudeSubscriptionCredential({
           projectId,

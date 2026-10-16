@@ -3,7 +3,10 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { createRenewableCliLease } from "./claude-cli-lease";
+import {
+  createRenewableCliLease,
+  leasedProjectExecutor,
+} from "./claude-cli-lease";
 
 function fakeLeases() {
   const created: { id: number; closed: boolean; close: () => Promise<void> }[] =
@@ -30,19 +33,34 @@ test("reuses the live lease", async () => {
   expect(create).toHaveBeenCalledTimes(1);
 });
 
-test("a fence retires the lease, and the next command gets a fresh one", async () => {
+test("a fence holds new leases until reopened, then the next command gets a fresh one", async () => {
   // ops3 on alpha, 2026-10-15: after one unconfirmed job cleanup the session's
   // identity file was gone for every later command and turn.
   const { created, create } = fakeLeases();
   const leases = createRenewableCliLease(create);
   const first = await leases.acquire();
-  await leases.retire();
+  const { reopen, closed } = leases.retire();
+  await closed;
   expect(first.closed).toBe(true);
   expect(leases.current).toBeUndefined();
+  await expect(leases.acquire()).rejects.toThrow("paused");
+  reopen();
   const second = await leases.acquire();
   expect(second).not.toBe(first);
   expect(second.closed).toBe(false);
   expect(created).toHaveLength(2);
+});
+
+test("every fence must be lifted", async () => {
+  const { create } = fakeLeases();
+  const leases = createRenewableCliLease(create);
+  await leases.acquire();
+  const a = leases.retire();
+  const b = leases.retire();
+  a.reopen();
+  await expect(leases.acquire()).rejects.toThrow("paused");
+  b.reopen();
+  await expect(leases.acquire()).resolves.toBeDefined();
 });
 
 test("concurrent commands share one renewal", async () => {
@@ -62,8 +80,8 @@ test("a lease created across a fence is discarded", async () => {
     return await create();
   });
   const renewing = leases.acquire();
-  // Another job's cleanup is unconfirmed while the renewal is in flight.
-  await leases.retire();
+  // Another command's cleanup is unconfirmed while the renewal is in flight.
+  leases.retire().reopen();
   release();
   await expect(renewing).rejects.toThrow("revoked");
   expect(created[0].closed).toBe(true);
@@ -92,4 +110,107 @@ test("no credentials is an error, not a lease", async () => {
   await expect(leases.acquire()).rejects.toThrow(
     "Scoped Claude CLI credentials unavailable",
   );
+});
+
+describe("leased project executor", () => {
+  const signal = new AbortController().signal;
+  const options = () => ({
+    timeoutMs: 1000,
+    onOutput: () => {},
+    onCleanupConfirmed: jest.fn(),
+  });
+
+  test("an unconfirmed command keeps new leases fenced until its own proof", async () => {
+    const { created, create } = fakeLeases();
+    const leases = createRenewableCliLease(create);
+    let proveFirst!: () => void;
+    let finishFirst!: () => void;
+    const execute = jest.fn(async (env, script, _cwd, _signal, opts) => {
+      if (script === "first") {
+        proveFirst = opts.onCleanupConfirmed;
+        await new Promise<void>((resolve) => (finishFirst = resolve));
+        return { stdout: "", stderr: "", code: null, cleanupConfirmed: false };
+      }
+      opts.onCleanupConfirmed();
+      return {
+        stdout: env.LEASE,
+        stderr: "",
+        code: 0,
+        cleanupConfirmed: true,
+      };
+    });
+    const executor = leasedProjectExecutor({
+      leases,
+      envFor: (lease) => ({ LEASE: `${lease.id}` }),
+      execute,
+    });
+    const first = executor("first", undefined, signal, options());
+    await new Promise((resolve) => setImmediate(resolve));
+    finishFirst();
+    await first;
+    expect(created[0].closed).toBe(true);
+    // A command arriving now, before the tool layer has fenced itself, must
+    // not get fresh credentials while the first command may still run.
+    const early = options();
+    const blocked = await executor("second", undefined, signal, early);
+    expect(blocked).toMatchObject({ code: null, cleanupConfirmed: true });
+    expect(blocked.stderr).toMatch(/not started.*Nothing ran/);
+    expect(early.onCleanupConfirmed).toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    // The runtime's late recovery proves the first command's cleanup.
+    proveFirst();
+    const after = await executor("third", undefined, signal, options());
+    expect(after).toMatchObject({ stdout: "2", cleanupConfirmed: true });
+  });
+
+  test("a proof that arrives before the result does not leave a fence up", async () => {
+    const { create } = fakeLeases();
+    const leases = createRenewableCliLease(create);
+    const executor = leasedProjectExecutor({
+      leases,
+      envFor: () => ({}),
+      execute: async (_env, _script, _cwd, _signal, opts) => {
+        opts.onCleanupConfirmed();
+        return { stdout: "", stderr: "", code: null, cleanupConfirmed: false };
+      },
+    });
+    await executor("x", undefined, signal, options());
+    await expect(leases.acquire()).resolves.toBeDefined();
+  });
+
+  test("failing to issue a lease is reported as not started, not as a lost job", async () => {
+    const leases = createRenewableCliLease<{
+      close: () => Promise<void>;
+    }>(async () => {
+      throw Error("bearer issuance failed");
+    });
+    const execute = jest.fn();
+    const executor = leasedProjectExecutor({
+      leases,
+      envFor: () => ({}),
+      execute,
+    });
+    const opts = options();
+    const result = await executor("x", undefined, signal, opts);
+    expect(result).toMatchObject({ code: null, cleanupConfirmed: true });
+    expect(result.stderr).toContain("bearer issuance failed");
+    expect(opts.onCleanupConfirmed).toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("a command that throws stays fenced: there is no proof", async () => {
+    const { create } = fakeLeases();
+    const leases = createRenewableCliLease(create);
+    const executor = leasedProjectExecutor({
+      leases,
+      envFor: () => ({}),
+      execute: async () => {
+        throw Error("transport lost");
+      },
+    });
+    await expect(executor("x", undefined, signal, options())).rejects.toThrow(
+      "transport lost",
+    );
+    await expect(leases.acquire()).rejects.toThrow("paused");
+  });
 });
