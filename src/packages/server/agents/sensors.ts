@@ -371,8 +371,9 @@ async function createWatcher(
       : new Date(Date.now() + 30_000);
   const sensor_id = randomUUID();
   // Counted on the account's home bay, whichever bay this project is on: a
-  // few active at once, and no more set per day than the account may be
-  // woken. Finishing or deleting a watcher never resets the daily count.
+  // few active at once, refused once the day's wakes are used up, and a
+  // generous daily cap against churn. Finishing or deleting a watcher never
+  // resets the daily counts.
   await sensorBudget.reserveWatcher({
     account_id: run.account_id,
     project_id: agent.project_id,
