@@ -1864,3 +1864,31 @@ it("does not let another account or thread control a queued turn", async () => {
     request_json,
   });
 });
+
+it("the same guidance sent twice as its turn ends starts one turn", async () => {
+  // Board answers (Sagebrush's board-host-protocol.md, Delivery): two tabs
+  // can send the same submission, as the same user message, while the
+  // agent's turn is ending. Each send has its own assistant message, but
+  // the guidance must become exactly one new turn.
+  mockSteer.mockResolvedValue({ state: "missing" }); // the turn just ended
+  const send = (assistant: string) =>
+    acpTestInternals.handleAcpSteerRequest({
+      ...turnRequest(undefined),
+      chat: {
+        ...turnRequest(undefined).chat!,
+        parent_message_id: "board-answers-user-message",
+        message_id: assistant,
+      },
+    } as AcpSteerRequest);
+  const results = await Promise.all([
+    send("assistant-tab-1"),
+    send("assistant-tab-2"),
+  ]);
+  for (const { state } of results)
+    expect(["queued", "running"]).toContain(state);
+  const jobs = getAcpDatabase()
+    .prepare("SELECT * FROM acp_jobs")
+    .all() as any[];
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0].user_message_id).toBe("board-answers-user-message");
+});
