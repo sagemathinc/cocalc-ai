@@ -46,6 +46,7 @@ export class WidgetManager {
   private state_lock: Set<string> = new Set();
   private watching: Set<string> = new Set();
   public k3dObjectIds = new Set<number>();
+  private closed = false;
 
   constructor({
     ipywidgets_state,
@@ -63,13 +64,37 @@ export class WidgetManager {
     this.manager = createWidgetManager(provider);
 
     this.initAllModels();
-    this.ipywidgets_state.on("change", async (keys) => {
-      for (const key of keys) {
-        const [, model_id, type] = JSON.parse(key);
-        this.handleIpwidgetsTableChange({ model_id, type });
-      }
-    });
+    this.ipywidgets_state.on("change", this.handleStateChange);
   }
+
+  private handleStateChange = async (keys) => {
+    if (this.closed) return;
+    for (const key of keys) {
+      const [, model_id, type] = JSON.parse(key);
+      this.handleIpwidgetsTableChange({ model_id, type });
+    }
+  };
+
+  isClosed = (): boolean => this.closed;
+
+  // Stop all widget activity: no more state updates are applied, no messages
+  // go to the kernel, and every model is closed (which removes its views).
+  // Used when the notebook stops being trusted. The shared ipywidgets_state
+  // itself belongs to the syncdb and stays open.
+  close = (): void => {
+    if (this.closed) return;
+    this.closed = true;
+    this.ipywidgets_state.removeListener("change", this.handleStateChange);
+    const models = (this.manager as any)?._models ?? {};
+    for (const id of Object.keys(models)) {
+      Promise.resolve(models[id])
+        .then((model) => {
+          // comm_closed=true: our comm's close() is not implemented.
+          model?.close?.(true);
+        })
+        .catch(() => {});
+    }
+  };
 
   private initAllModels = async () => {
     /*
@@ -84,7 +109,7 @@ VBox([s1, s2])
     if (this.ipywidgets_state.get_state() == "init") {
       await once(this.ipywidgets_state, "ready");
     }
-    if (this.ipywidgets_state.get_state() != "ready") {
+    if (this.ipywidgets_state.get_state() != "ready" || this.closed) {
       return;
     }
     for (const { model_id, type } of this.ipywidgets_state.keys()) {
@@ -542,6 +567,7 @@ VBox([s1, s2])
   }): Promise<IClassicComm> => {
     log("openCommChannel", { comm_id, target_name, data, buffers, _metadata });
     const { sendCommMessageToKernel } = this.actions;
+    const isClosed = this.isClosed;
 
     // TODO: we do not currently have anything at all that
     // routes messages to this.
@@ -571,6 +597,11 @@ VBox([s1, s2])
         buffers?: ArrayBuffer[] | ArrayBufferView[],
       ): string {
         log("comm.send", { data, buffers, metadata, callbacks });
+        if (isClosed()) {
+          throw Error(
+            "widgets are disabled because the notebook is not trusted",
+          );
+        }
         const msg_id = uuid();
         sendCommMessageToKernel({
           msg_id,

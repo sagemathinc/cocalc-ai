@@ -5,10 +5,10 @@ import { IpyWidget } from "../ipywidget";
 register(
   "application/vnd.jupyter.widget-view+json",
   10,
-  ({ value, actions, id }) => {
+  ({ value, actions, id, trust }) => {
     return (
       <div style={{ margin: "15px 0" }}>
-        <IpyWidget value={value} actions={actions} id={id} />
+        <IpyWidget value={value} actions={actions} id={id} trust={trust} />
       </div>
     );
 

@@ -38,7 +38,15 @@ interface WidgetProps {
   id?: string;
 }
 
-export function IpyWidget({ id: cell_id, value, actions }: WidgetProps) {
+export function IpyWidget({
+  id: cell_id,
+  value,
+  actions,
+  trust: trustProp,
+}: WidgetProps) {
+  // Some output renderers don't pass trust; fall back to the notebook's own
+  // trust state (the widget manager only exists while it is trusted).
+  const trust = trustProp ?? !!actions?.store?.get("trust");
   // console.log("IpyWidget", { value: value.toJS(), actions });
   const [unknown, setUnknown] = useState<boolean>(false);
   const divRef = useRef<any>(null);
@@ -58,6 +66,9 @@ export function IpyWidget({ id: cell_id, value, actions }: WidgetProps) {
     let canceled = false;
     valueRef.current = value;
     setUnknown(false);
+    if (!trust) {
+      return;
+    }
     void (async () => {
       const ipywidgets_state = actions?.widget_manager?.ipywidgets_state;
       if (ipywidgets_state == null) {
@@ -120,10 +131,10 @@ ax.plot(x, y)
     return () => {
       canceled = true;
     };
-  }, [actions, value]);
+  }, [actions, value, trust]);
 
   useEffect(() => {
-    if (actions == null || !isVisible || !isReady) {
+    if (!trust || actions == null || !isVisible || !isReady) {
       // console.log("IpyWidget: not rendering due to actions=null");
       return;
     }
@@ -155,7 +166,32 @@ ax.plot(x, y)
     return () => {
       $(div).empty();
     };
-  }, [isVisible, isReady]);
+  }, [isVisible, isReady, trust]);
+
+  if (!trust) {
+    // Widget state saved in the notebook can contain HTML and load code, so
+    // widgets are active output: shown only in a trusted notebook.
+    return (
+      <Alert
+        showIcon
+        style={{ margin: "15px" }}
+        type="info"
+        title="Widget not shown because this notebook is not trusted."
+        description={
+          actions != null ? (
+            <Button
+              size="small"
+              onClick={() => {
+                void actions.trust_notebook();
+              }}
+            >
+              Trust notebook...
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  }
 
   if (unknown) {
     const msg = "Run cell to load widget";

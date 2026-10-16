@@ -32,6 +32,7 @@ describe("IpyWidget initialization", () => {
         <IpyWidget
           value={Map({ model_id: "model-1" })}
           actions={actions as any}
+          trust
         />,
       );
       await act(async () => {
@@ -69,6 +70,7 @@ describe("IpyWidget initialization", () => {
       <IpyWidget
         value={Map({ model_id: "model-1" })}
         actions={actions as any}
+        trust
       />,
     );
 
@@ -83,4 +85,43 @@ describe("IpyWidget initialization", () => {
       expect(state.getSerializedModelState).toHaveBeenCalledWith("model-1");
     });
   });
+
+  it.each([false, undefined])(
+    "shows a passive placeholder and touches no widget state when trust is %s",
+    async (trust) => {
+      const renderWidget = jest.fn(async () => {});
+      const getSerializedModelState = jest.fn(() => ({
+        _model_name: "HTMLModel",
+      }));
+      const trustNotebook = jest.fn(async () => {});
+      const actions = {
+        store: { get: (key: string) => (key == "trust" ? false : undefined) },
+        trust_notebook: trustNotebook,
+        widget_manager: {
+          ipywidgets_state: {
+            get_state: () => "ready",
+            getSerializedModelState,
+          },
+          manager: { render: renderWidget },
+        },
+      };
+      const { getByText } = render(
+        <IpyWidget
+          value={Map({ model_id: "model-1" })}
+          actions={actions as any}
+          trust={trust}
+        />,
+      );
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(
+        getByText("Widget not shown because this notebook is not trusted."),
+      ).toBeTruthy();
+      expect(getSerializedModelState).not.toHaveBeenCalled();
+      expect(renderWidget).not.toHaveBeenCalled();
+      getByText("Trust notebook...").click();
+      expect(trustNotebook).toHaveBeenCalledTimes(1);
+    },
+  );
 });
