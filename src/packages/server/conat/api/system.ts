@@ -1,4 +1,3 @@
-import { boardDecideLocal } from "@cocalc/server/ai/board-decide-service";
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
@@ -7147,18 +7146,6 @@ export async function synthesizeChatSpeech(
         account_id: opts.account_id,
       })
     : await synthesizeChatSpeechLocal(opts);
-}
-
-/** A Sagebrush board's decide call, on the account's home bay, where its
- * AI allowance lives. */
-export async function boardDecide(
-  opts: Parameters<typeof boardDecideLocal>[0],
-) {
-  if (!opts.account_id) throw Error("must be signed in");
-  const client = await getChatSpeechHomeClient(opts.account_id);
-  return client
-    ? await client.boardDecide({ ...opts, account_id: opts.account_id })
-    : await boardDecideLocal(opts);
 }
 
 export async function cancelChatSpeech(

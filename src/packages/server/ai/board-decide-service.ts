@@ -29,14 +29,22 @@ function codedError(message: string, code: number): Error {
   return err;
 }
 
+/** This call's configuration, read once: the key when checking is on and
+ * a key is set, else undefined. Never logged. */
+async function decideConfig(): Promise<{ apiKey: string } | undefined> {
+  const settings: any = await getServerSettings();
+  const key =
+    typeof settings.openrouter_api_key === "string"
+      ? settings.openrouter_api_key.trim()
+      : "";
+  return settings.board_decide_enabled === true && key
+    ? { apiKey: key }
+    : undefined;
+}
+
 /** Whether this site checks board answers (the switch and a key). */
 export async function boardDecideEnabled(): Promise<boolean> {
-  const settings: any = await getServerSettings();
-  return (
-    settings.board_decide_enabled === true &&
-    typeof settings.openrouter_api_key === "string" &&
-    settings.openrouter_api_key.trim() !== ""
-  );
+  return (await decideConfig()) != null;
 }
 
 export async function boardDecideLocal({
@@ -51,7 +59,10 @@ export async function boardDecideLocal({
   answer: string;
 }): Promise<DecideResult> {
   if (!account_id) throw codedError("must be signed in", 401);
-  if (!(await boardDecideEnabled())) {
+  // One snapshot for the whole call: the key that admitted it is the key
+  // it uses, and removing the key refuses new calls before any reservation.
+  const config = await decideConfig();
+  if (!config) {
     throw codedError("Checking answers isn't available on this site.", 503);
   }
   return await boardDecide({
@@ -61,11 +72,7 @@ export async function boardDecideLocal({
     answer,
     provider: openRouterDecideProvider({
       model: BOARD_DECIDE_MODEL,
-      // Read at the call, so a changed key applies at once; never logged.
-      apiKey: async () => {
-        const key = ((await getServerSettings()) as any).openrouter_api_key;
-        return typeof key === "string" && key.trim() ? key.trim() : undefined;
-      },
+      apiKey: async () => config.apiKey,
     }),
     funding: siteFundedDecideFunding({ model: BOARD_DECIDE_MODEL }),
   });

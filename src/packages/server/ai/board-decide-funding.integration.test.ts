@@ -58,7 +58,13 @@ describe("site-funded board decide", () => {
     ]);
     await r.commit(1);
     expect(await rows(requestId)).toEqual([{ tag: "board-decide", cost: 1 }]);
-    await expect(r.commit(3)).rejects.toThrow("exceeds");
+  });
+
+  it("records a cost above the hold in full", async () => {
+    const requestId = uuid();
+    const r = await funding.reserve({ accountId, requestId, microusd: 2 });
+    await r.commit(5);
+    expect(await rows(requestId)).toEqual([{ tag: "board-decide", cost: 5 }]);
   });
 
   it("releases a hold when the call fails", async () => {

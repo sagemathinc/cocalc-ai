@@ -16,7 +16,9 @@
 // Stale holds (a hub that died mid-call) are removed after 5 minutes, as
 // speech's are.
 
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { uuid } from "@cocalc/util/misc";
 import { ensureAccountUsageWindowsForEvent } from "@cocalc/server/membership/usage-windows";
 import { AI_USAGE_UNITS_PER_DOLLAR } from "./usage-units";
 import { ensureExactAIUsageSchema } from "./save-response";
@@ -31,6 +33,7 @@ const RESERVATION_TAG = "board-decide-reservation";
 const COMMITTED_TAG = "board-decide";
 const RESERVATION_TTL_MS = 5 * 60_000;
 const PRICE_VERSION = "board-decide-2026-10-16";
+const logger = getLogger("server:ai:board-decide-funding");
 
 function codedError(message: string, code: number): Error {
   const err = new Error(message);
@@ -146,18 +149,51 @@ export function siteFundedDecideFunding({
       }
       return {
         async commit(costMicrousd: number) {
-          if (
-            !Number.isSafeInteger(costMicrousd) ||
-            costMicrousd <= 0 ||
-            costMicrousd > microusd
-          ) {
-            throw new Error("decide settlement exceeds its reservation");
+          if (!Number.isSafeInteger(costMicrousd) || costMicrousd <= 0) {
+            throw new Error("decide cost must be a positive safe integer");
           }
+          // A cost above the hold is never discarded: the account's row
+          // records all of it, the site pool gets the excess as a hold of
+          // its own, and it is logged as an error to alert admins. The
+          // reservation is a real bound (max_price), so this should not
+          // happen.
+          const excess = Math.max(0, costMicrousd - microusd);
           await finishSiteFundedSpeechGlobal({
             requestId,
             status: "committed",
-            costMicrousd,
+            costMicrousd: Math.min(costMicrousd, microusd),
           });
+          if (excess > 0) {
+            logger.error("board decide cost exceeded its reservation", {
+              accountId,
+              requestId,
+              reservedMicrousd: microusd,
+              costMicrousd,
+            });
+            const excessId = uuid();
+            try {
+              await reserveSiteFundedSpeechGlobal({
+                accountId,
+                requestId: excessId,
+                reservedMicrousd: excess,
+              });
+              await finishSiteFundedSpeechGlobal({
+                requestId: excessId,
+                status: "committed",
+                costMicrousd: excess,
+              });
+            } catch (err) {
+              logger.error(
+                "board decide excess not recorded in the site pool",
+                {
+                  accountId,
+                  requestId,
+                  excessMicrousd: excess,
+                  err: `${err}`,
+                },
+              );
+            }
+          }
           const { rows } = await getPool().query(
             `UPDATE ai_usage_log SET input=$3, tag=$4, cost_microusd=$5
              WHERE account_id=$1 AND funded_event_id=$2 AND tag=$6

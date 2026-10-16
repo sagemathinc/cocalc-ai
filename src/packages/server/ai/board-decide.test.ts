@@ -280,12 +280,12 @@ test("only the question's own options come back, with probabilities in [0, 1]", 
   });
 });
 
-test("the cost committed is never more than was reserved", async () => {
+test("a cost above the reservation is committed in full, never clamped", async () => {
   const { funding, events } = fakeFunding();
   const provider = fakeProvider({
     options: [],
     confidence: 0.5,
-    inputTokens: 10_000_000,
+    costMicrousd: 10_000_000,
   });
   await boardDecide({
     accountId: ACCOUNT,
@@ -296,5 +296,6 @@ test("the cost committed is never more than was reserved", async () => {
     funding,
   });
   const reserved = Number(events[0].split(" ")[1]);
-  expect(events[1]).toBe(`commit ${reserved}`);
+  expect(reserved).toBeLessThan(10_000_000);
+  expect(events[1]).toBe("commit 10000000");
 });

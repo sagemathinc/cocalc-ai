@@ -67,3 +67,47 @@ test("on with a key: enabled", async () => {
   });
   expect(await boardDecideEnabled()).toBe(true);
 });
+
+test("one configuration read per call: the key that admitted it is the key it uses", async () => {
+  // The key is removed right after the first read: the call must still use
+  // the key that admitted it, and never read the settings again.
+  mockSettings
+    .mockResolvedValueOnce({
+      board_decide_enabled: true,
+      openrouter_api_key: "k1",
+    })
+    .mockResolvedValue({ board_decide_enabled: true, openrouter_api_key: "" });
+  const commit = jest.fn(async () => {});
+  mockReserve.mockResolvedValue({ commit, release: jest.fn(async () => {}) });
+  const fetchMock = jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      answers: {
+        reader_answer: {
+          type: "choice",
+          choice: "one-orbit-correct",
+          probabilities: {
+            "one-orbit-correct": 0.9,
+            "confuses-with-faithful": 0.1,
+          },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 100, output_tokens: 0, cost: 0.0000042 },
+    }),
+  }));
+  const realFetch = global.fetch;
+  (global as any).fetch = fetchMock;
+  try {
+    const result = await boardDecideLocal(request);
+    expect(result.options[0].name).toBe("one-orbit-correct");
+  } finally {
+    (global as any).fetch = realFetch;
+  }
+  expect(mockSettings).toHaveBeenCalledTimes(1);
+  expect((fetchMock.mock.calls[0] as any)[1].headers.Authorization).toBe(
+    "Bearer k1",
+  );
+  expect(commit).toHaveBeenCalledWith(5);
+});

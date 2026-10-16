@@ -49,16 +49,16 @@ export function openRouterDecideProvider({
   const microusdPerToken = usdPerMillionInputTokens; // $/1e6 tokens = µ$/token
   return {
     maxCostMicrousd(question, answer) {
-      // A generous upper bound: at most one token per character, plus room
-      // for the request's own structure.
-      const characters =
-        question.prompt.length +
-        answer.length +
-        question.options.reduce(
-          (n, o) => n + o.name.length + (o.about?.length ?? 0),
-          0,
-        );
-      return (characters + 2_000) * microusdPerToken;
+      // A real bound: input tokens can't outnumber the request body's UTF-8
+      // bytes (every token covers at least one byte), the price per input
+      // token is capped by max_price, and output and per-request charges
+      // are capped at 0. A 25% margin covers the provider's own framing.
+      const bytes = new TextEncoder().encode(
+        JSON.stringify(
+          decisionsRequest(model, question, answer, usdPerMillionInputTokens),
+        ),
+      ).length;
+      return bytes * microusdPerToken * 1.25;
     },
     async decide(question, answer, signal) {
       const key = await apiKey();
@@ -70,7 +70,9 @@ export function openRouterDecideProvider({
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(decisionsRequest(model, question, answer)),
+        body: JSON.stringify(
+          decisionsRequest(model, question, answer, usdPerMillionInputTokens),
+        ),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
       if (!response.ok) {
@@ -86,6 +88,7 @@ export function decisionsRequest(
   model: string,
   question: DecideQuestion,
   answer: string,
+  usdPerMillionInputTokens: number,
 ) {
   const criteria: Record<string, string> = {};
   for (const { name, about } of question.options) {
@@ -101,7 +104,16 @@ export function decisionsRequest(
         criteria,
       },
     },
-    provider: { zdr: true, data_collection: "deny" },
+    provider: {
+      zdr: true,
+      data_collection: "deny",
+      // The price CoCalc reserves for: no provider may charge more.
+      max_price: {
+        prompt: usdPerMillionInputTokens,
+        completion: 0,
+        request: 0,
+      },
+    },
   };
 }
 

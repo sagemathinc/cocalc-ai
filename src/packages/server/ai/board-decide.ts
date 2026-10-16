@@ -232,11 +232,12 @@ export async function boardDecide({
     throw codedError("The answer couldn't be checked. Try again.", 502);
   }
   // Commit what the provider reports (the reservation when it reports
-  // nothing), never more than was reserved.
+  // nothing). A cost above the reservation is never clamped: the funding
+  // records all of it and alerts.
   const reported = result?.costMicrousd;
   const cost =
     typeof reported === "number" && Number.isFinite(reported) && reported >= 0
-      ? Math.min(reserved, Math.max(1, Math.ceil(reported)))
+      ? Math.max(1, Math.ceil(reported))
       : reserved;
   await reservation.commit(cost);
   return sanitizeDecideResult(valid.question, result);

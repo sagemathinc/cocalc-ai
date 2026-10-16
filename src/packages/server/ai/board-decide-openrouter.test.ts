@@ -42,7 +42,9 @@ const RESPONSE = {
 };
 
 test("the request: the answer as state, the board's question and options, zero data retention", () => {
-  expect(decisionsRequest("typesafe/jev-1.14", question, ANSWER)).toEqual({
+  expect(
+    decisionsRequest("typesafe/jev-1.14", question, ANSWER, 0.042),
+  ).toEqual({
     model: "typesafe/jev-1.14",
     state: ANSWER,
     questions: {
@@ -56,7 +58,11 @@ test("the request: the answer as state, the board's question and options, zero d
         },
       },
     },
-    provider: { zdr: true, data_collection: "deny" },
+    provider: {
+      zdr: true,
+      data_collection: "deny",
+      max_price: { prompt: 0.042, completion: 0, request: 0 },
+    },
   });
 });
 
@@ -134,8 +140,24 @@ test("no key: not configured, and nothing is sent", async () => {
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
-test("the cost bound covers the reported cost of a typical call", () => {
+test("the cost bound: the request's bytes at the capped price, with a margin", () => {
   const provider = openRouterDecideProvider({ apiKey: async () => "k" });
-  // 143 input tokens at $0.042 per million: 6 micro-dollars, well under the bound.
+  const bytes = new TextEncoder().encode(
+    JSON.stringify(
+      decisionsRequest("typesafe/jev-1.14", question, ANSWER, 0.042),
+    ),
+  ).length;
+  // Input tokens can't outnumber the body's UTF-8 bytes; max_price caps the
+  // price per token and charges nothing else, so this bounds the bill.
+  expect(provider.maxCostMicrousd(question, ANSWER)).toBeCloseTo(
+    bytes * 0.042 * 1.25,
+    9,
+  );
+  // Non-ASCII text counts its bytes, not its characters.
+  const wide = "é".repeat(100);
+  expect(provider.maxCostMicrousd(question, wide)).toBeGreaterThan(
+    provider.maxCostMicrousd(question, "e".repeat(100)),
+  );
+  // A typical call (143 tokens: 6 micro-dollars) is well inside it.
   expect(provider.maxCostMicrousd(question, ANSWER)).toBeGreaterThan(6);
 });
