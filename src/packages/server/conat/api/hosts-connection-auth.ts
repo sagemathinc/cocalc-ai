@@ -319,6 +319,7 @@ export async function syncProjectUsersOnHostForBrowserAccess({
       runtime_lifecycle_revision: Number(
         remote.runtime_lifecycle_revision ?? 0,
       ),
+      users_revision: remote.users_revision,
     });
     return;
   }

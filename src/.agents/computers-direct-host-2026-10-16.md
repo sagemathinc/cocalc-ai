@@ -94,10 +94,20 @@ sources:
 Until the hub has reported the switch on, computers are refused (fail
 closed).
 
-Open before enabling: the host's copy of each project's collaborators is
-not versioned. Browser, API-key and agent token issuance push whole copies,
-and an older copy can overwrite a newer one that just added a collaborator,
-until the next resync. A follow-up PR versions that copy (review of #1108).
+The host's copy of each project's collaborators is versioned by the owning
+bay's `runtime_authority_revision`, which the projects trigger raises with
+every change of users and which is read in the same query as the list it
+versions. Every path that sends a list carries it:
+- token issuance (`syncProjectUsersOnHost`);
+- the change poll and the reconcile;
+- project start;
+- the inter-bay project reference.
+
+The host keeps only the newest copy (`project-host/sqlite/projects.ts`,
+like `run_quota`). Once a versioned copy is stored, an unversioned one is
+ignored, and computers are served only from a versioned copy. So a list
+loaded before a collaborator change and delivered after it can't bring the
+old collaborators back (second review of #1108).
 
 The host's copy of each project's collaborators is kept current by the
 normal collaborator updates. The hub never pushes it when issuing a

@@ -285,6 +285,8 @@ export interface ProjectReference {
   users?: Record<string, any>;
   api_key_membership_revocation?: unknown;
   runtime_lifecycle_revision?: number;
+  /** runtime_authority_revision, read with users (see project-host updateProjectUsers). */
+  users_revision?: number;
   allow_collaborator_destructive_storage_actions?: boolean | null;
 }
 

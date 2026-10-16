@@ -37,6 +37,7 @@ type LocalProjectReferenceRow = {
   users: Record<string, any> | null;
   api_key_membership_revocation?: unknown;
   runtime_lifecycle_revision: number | null;
+  users_revision?: number | string | null;
   allow_collaborator_destructive_storage_actions: boolean | null;
 };
 
@@ -52,6 +53,9 @@ function projectReferenceFromLocalRow(
     users: row.users ?? {},
     api_key_membership_revocation: row.api_key_membership_revocation,
     runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
+    ...(row.users_revision == null
+      ? {}
+      : { users_revision: Number(row.users_revision) }),
     allow_collaborator_destructive_storage_actions:
       row.allow_collaborator_destructive_storage_actions,
   };
@@ -77,6 +81,7 @@ async function loadLocalProjectReference({
         COALESCE(users, '{}'::jsonb) AS users,
         api_key_membership_revocations->$2::text AS api_key_membership_revocation,
         runtime_lifecycle_revision,
+        COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
         allow_collaborator_destructive_storage_actions
       FROM projects
       WHERE project_id = $1
@@ -109,6 +114,7 @@ async function loadLocalProjectReferences(
         usage_account_id,
         COALESCE(users, '{}'::jsonb) AS users,
         runtime_lifecycle_revision,
+        COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
         allow_collaborator_destructive_storage_actions
       FROM projects
       WHERE project_id = ANY($1::uuid[])

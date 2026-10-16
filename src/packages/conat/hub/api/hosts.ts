@@ -2328,6 +2328,9 @@ export interface Hosts {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
+    /** runtime_authority_revision, read with users. */
+    users_revision?: number;
     env?: ProjectEnv;
     autostart_enabled?: boolean | null;
     project_secrets_cache?: ProjectSecretsRuntimeCache;

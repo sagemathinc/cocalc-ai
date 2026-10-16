@@ -757,6 +757,7 @@ type StartMetadata = {
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   secrets?: Record<string, string>;
@@ -767,6 +768,8 @@ type StartMetadata = {
 
 type LocalProjectOptions = CreateProjectOptions & {
   users?: any;
+  /** See updateProjectUsers. */
+  users_revision?: number;
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
@@ -896,6 +899,7 @@ async function resolveStartMetadata({
         resolved = {
           title: authoritative.title ?? existing?.title,
           users: authoritative.users,
+          users_revision: authoritative.users_revision,
           image: resolved.image ?? authoritative.image ?? undefined,
           authorized_keys:
             resolved.authorized_keys ?? authoritative.authorized_keys,
@@ -1054,9 +1058,14 @@ export function ensureProjectRow({
     }
     if ((opts as any)?.users !== undefined) {
       row.users = (opts as any).users;
-      // [ ] TODO -- for now we always included the default user;
-      // this is obviously temporary
-      row.users[account_id] = { group: "owner" };
+      if (opts.users_revision != null) {
+        // The owning bay's list, as it is: nobody added here.
+        row.users_revision = opts.users_revision;
+      } else {
+        // [ ] TODO -- for now we always included the default user;
+        // this is obviously temporary
+        row.users[account_id] = { group: "owner" };
+      }
     }
     row.local_only = opts.local_only === true;
     row.exam_run_id = opts.exam_run_id ?? null;
@@ -2373,6 +2382,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           opts: {
             title: startMetadata.title,
             users: startMetadata.users,
+            users_revision: startMetadata.users_revision,
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             run_quota_revision: startMetadata.run_quota_revision,
@@ -2536,6 +2546,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           opts: {
             title: startMetadata.title,
             users: startMetadata.users,
+            users_revision: startMetadata.users_revision,
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             run_quota_revision: startMetadata.run_quota_revision,
@@ -2611,6 +2622,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         opts: {
           title: resolved?.title,
           users: resolved?.users,
+          users_revision: resolved?.users_revision,
           authorized_keys: resolved?.authorized_keys,
           run_quota: resolved?.run_quota,
           run_quota_revision: resolved?.run_quota_revision,
@@ -3837,10 +3849,13 @@ export async function updateProjectUsers({
   project_id,
   users,
   runtime_lifecycle_revision,
+  users_revision,
 }: {
   project_id: string;
   users?: any;
   runtime_lifecycle_revision?: number;
+  /** Only the newest collaborator list is kept (sqlite/projects.ts). */
+  users_revision?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
@@ -3851,7 +3866,7 @@ export async function updateProjectUsers({
     fn: async () => {
       // Store collaborator map in the generic sqlite row mirror used by conat auth.
       // This is separate from the concrete projects SQL table schema.
-      upsertProject({ project_id, users });
+      upsertProject({ project_id, users, users_revision });
       clearProjectHostConatAuthCaches();
     },
   });

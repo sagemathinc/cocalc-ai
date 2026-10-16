@@ -214,6 +214,8 @@ export type ProjectMeta = {
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  /** runtime_authority_revision, read with users. */
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -781,6 +783,7 @@ export async function loadProject(
               owning_bay_id, run_quota,
               COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision,
               COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
+              COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
               env, autostart_enabled
          FROM projects
         WHERE project_id=$1`,
@@ -815,6 +818,10 @@ export async function loadProject(
     authorized_keys,
     run_quota_revision: Number(rows[0].run_quota_revision ?? 0),
     runtime_lifecycle_revision: Number(rows[0].runtime_lifecycle_revision ?? 0),
+    users_revision:
+      rows[0].users_revision == null
+        ? undefined
+        : Number(rows[0].users_revision),
     project_secrets_cache: include_start_metadata
       ? await getProjectSecretsRuntimeCache({ project_id })
       : undefined,
@@ -1182,6 +1189,7 @@ async function registerProjectOnHost({
     project_id,
     title: meta.title,
     users: meta.users,
+    users_revision: meta.users_revision,
     image: meta.image,
     ensure_volume: false,
     // Register or refresh the project metadata on the chosen host first, then
@@ -1432,6 +1440,7 @@ export async function startProjectOnHost(
       start_metadata: {
         title: meta.title,
         users: meta.users,
+        users_revision: meta.users_revision,
         image: meta.image,
         authorized_keys: meta.authorized_keys,
         run_quota,
@@ -1702,6 +1711,7 @@ export async function syncProjectUsersOnHost({
       project_id,
       users: meta.users ?? {},
       runtime_lifecycle_revision: Number(meta.runtime_lifecycle_revision ?? 0),
+      users_revision: meta.users_revision,
     });
   } catch (err) {
     log.warn("syncProjectUsersOnHost failed", {

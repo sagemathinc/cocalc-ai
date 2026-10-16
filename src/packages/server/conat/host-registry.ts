@@ -363,7 +363,10 @@ type HostRestartRecoveryProject = {
 };
 
 type HostRestartRecoveryMetadataStatus =
-  "queued" | "running" | "finished" | "failed";
+  | "queued"
+  | "running"
+  | "finished"
+  | "failed";
 
 function recoveryInflightKey(
   host_id: string,
@@ -1812,6 +1815,7 @@ export async function initHostRegistryService() {
           project_id: string;
           users: any;
           runtime_lifecycle_revision: number;
+          users_revision: number;
           updated_ms: number;
         }>(
           `
@@ -1819,6 +1823,7 @@ export async function initHostRegistryService() {
               project_id,
               COALESCE(users, '{}'::jsonb) AS users,
               COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
+              COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
               FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1
@@ -1856,6 +1861,7 @@ export async function initHostRegistryService() {
           project_id: string;
           users: any;
           runtime_lifecycle_revision: number;
+          users_revision: number;
           updated_ms: number;
         }>(
           `
@@ -1863,6 +1869,7 @@ export async function initHostRegistryService() {
               project_id,
               COALESCE(users, '{}'::jsonb) AS users,
               COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
+              COALESCE(runtime_authority_revision, 0)::bigint AS users_revision,
               FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1
