@@ -1478,9 +1478,8 @@ export async function rolloutHostManagedComponentsInternalHelper({
       } catch {
         // Keep the last row; the observation below still reads the host.
       }
-      if (Date.now() >= settleDeadline) {
-        break;
-      }
+      // Always take this observation (as before): past the deadline its calls
+      // are capped to the minimum, and the loop condition then ends the loop.
       await refreshProjectHostObservation(settleDeadline);
       replacementObserved = projectHostProcessWasReplaced({
         baselinePids: baselineProjectHostPids,

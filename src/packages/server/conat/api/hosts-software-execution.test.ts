@@ -2188,17 +2188,28 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       expect(hostControlClient.mock.calls.length).toBeGreaterThan(1);
     });
 
-    const settled = async (p: Promise<unknown>) =>
-      await Promise.race([
-        p.then(
-          () => "resolved",
-          () => "rejected",
-        ),
-        new Promise((resolve) => setTimeout(() => resolve("hung"), 3_000)),
-      ]);
+    // Settles a rollout or reports "hung" after 3 s, recording the error.
+    const settled = async (
+      p: Promise<unknown>,
+    ): Promise<{ outcome: string; error?: unknown }> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          p.then(
+            () => ({ outcome: "resolved" }),
+            (error) => ({ outcome: "rejected", error }),
+          ),
+          new Promise<{ outcome: string }>((resolve) => {
+            timer = setTimeout(() => resolve({ outcome: "hung" }), 3_000);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
 
     it("ends when the first host-control client never returns", async () => {
-      const outcome = await settled(
+      const { outcome, error } = await settled(
         rolloutHostManagedComponentsInternalHelper({
           ...common,
           hostControlClient: never as any,
@@ -2207,6 +2218,9 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         }),
       );
       expect(outcome).toBe("rejected");
+      expect(`${error}`).toMatch(
+        /managed component rollout RPC did not return/,
+      );
     });
 
     it("ends when a project-host settle reload never returns", async () => {
@@ -2226,7 +2240,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         // The row reads before the settle loop work; every later one hangs.
         return loads <= 2 ? row : await never();
       });
-      const outcome = await settled(
+      const { outcome, error } = await settled(
         rolloutHostManagedComponentsInternalHelper({
           ...common,
           components: ["project-host"] as any,
@@ -2248,7 +2262,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
           hostControlClientTimeoutMs: 1_000,
         }),
       );
-      expect(outcome).not.toBe("hung");
+      expect(outcome).toBe("rejected");
+      expect(`${error}`).toMatch(/did not replace the running process/);
       expect(loadHostForStartStop.mock.calls.length).toBeGreaterThan(2);
     });
 
