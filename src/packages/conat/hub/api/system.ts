@@ -154,6 +154,7 @@ export const system = {
   transcribeChatAudio: authFirstRequireAccount,
   synthesizeChatSpeech: authFirstRequireAccount,
   cancelChatSpeech: authFirstRequireAccount,
+  boardDecide: authFirstRequireAccount,
   getCodexPaymentSource: authFirstRequireAccountOrHostWithAccountTarget,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
@@ -2932,6 +2933,15 @@ export interface System {
     account_id?: string;
     request_id: string;
   }) => Promise<{ canceled: boolean }>;
+
+  /** A Sagebrush board's decide call: the reader's answer classified into
+   * one of the question's own options (server/ai/board-decide.ts). */
+  boardDecide: (opts: {
+    account_id?: string;
+    request_id: string;
+    question: { prompt: string; options: { name: string; about?: string }[] };
+    answer: string;
+  }) => Promise<{ options: { name: string; p: number }[]; confidence: number }>;
 
   getCodexPaymentSource: (opts: {
     account_id?: string;

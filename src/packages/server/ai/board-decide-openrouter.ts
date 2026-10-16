@@ -106,7 +106,7 @@ export function decisionsRequest(
 }
 
 export function parseDecisionsResponse(
-  question: DecideQuestion,
+  _question: DecideQuestion,
   body: unknown,
 ): DecideProviderResult {
   const answer = (body as any)?.answers?.[QUESTION];
