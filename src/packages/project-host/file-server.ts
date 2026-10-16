@@ -248,7 +248,10 @@ import {
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
-import { isMissingRusticRepositoryError } from "./backup-index-errors";
+import {
+  isMissingRusticRepositoryError,
+  looksLikeMissingBackupBucketError,
+} from "./backup-index-errors";
 import { listBackupIds, listRestoreBackups } from "./restore-backup-inventory";
 import {
   checkManagedBackupAllowedBestEffort,
@@ -1767,15 +1770,6 @@ const backupConfigCache = new Map<
 let backupConfigInvalidationSub: any = null;
 const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
 const BACKUP_CONFIG_FETCH_TIMEOUT_MS = 2 * 60 * 1000;
-
-function looksLikeMissingBackupBucketError(err: unknown): boolean {
-  const s = `${err ?? ""}`.toLowerCase();
-  return (
-    s.includes("nosuchbucket") ||
-    s.includes("specified bucket does not exist") ||
-    s.includes("path `config` does not exist")
-  );
-}
 
 export async function invalidateBackupConfig(
   project_id?: string,
