@@ -587,6 +587,40 @@ describe("a context clear after admission", () => {
     expect(mockSteer).not.toHaveBeenCalled();
   });
 
+  it("lets only one of two concurrent send-nows act on a job", async () => {
+    const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
+    mockSteer.mockResolvedValue({ state: "steered" });
+    const control = () =>
+      acpTestInternals.handleAcpControlRequest({
+        ...sendNow(job.user_message_id),
+        context_generation: undefined,
+        context_cleared_at: undefined,
+      });
+    const results = await Promise.all([control(), control()]);
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+  });
+
+  it("keeps a cancel that races a send-now", async () => {
+    const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
+    // The steer finds no live turn, so the send-now puts the job back.
+    mockSteer.mockResolvedValue({ state: "missing" });
+    const sendNowResult = acpTestInternals.handleAcpControlRequest({
+      ...sendNow(job.user_message_id),
+      context_generation: undefined,
+      context_cleared_at: undefined,
+    });
+    const cancelResult = acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: accountId,
+      ...threadKey,
+      user_message_id: job.user_message_id,
+    } as any);
+    await Promise.all([sendNowResult, cancelResult]);
+    expect(await cancelResult).toMatchObject({ ok: true, state: "canceled" });
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+  });
+
   it("does not steer guidance into a turn of another context", () => {
     const writer = (generation: string, cleared = false) => ({
       contextClearedSinceStart: () => cleared,

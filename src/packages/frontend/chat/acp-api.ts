@@ -12,6 +12,7 @@ import {
   buildAcpChatContext,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  CONTEXT_NOT_SYNCED_ERROR,
   contextStamp,
   messagesSinceContextCleared,
   storedSessionInContext,
@@ -933,6 +934,9 @@ export async function resendCanceledAcpTurn({
       messageId,
       state: "not-sent",
     });
+    // Retryable in a moment: tell the user rather than fail silently.
+    if (`${(err as Error)?.message ?? err}`.includes(CONTEXT_NOT_SYNCED_ERROR))
+      throw err;
     console.error("ACP resend failed", err);
     return false;
   }

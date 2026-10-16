@@ -1550,9 +1550,32 @@ export function cancelQueuedAcpJob({
   path: string;
   user_message_id: string;
 } & AcpJobOwner): AcpJobRow | undefined {
+  return cancelQueuedAcpJobForControl({
+    project_id,
+    path,
+    user_message_id,
+    account_id,
+    thread_id,
+  }).job;
+}
+
+// Also reports whether this call moved the job out of the queue, so a caller
+// that acts on the message (send now) owns it only if it did the cancel.
+export function cancelQueuedAcpJobForControl({
+  project_id,
+  path,
+  user_message_id,
+  account_id,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  user_message_id: string;
+} & AcpJobOwner): { job: AcpJobRow | undefined; canceled: boolean } {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  let canceled = false;
   db.exec("BEGIN IMMEDIATE");
   try {
     // A message a restart is holding is canceled too: it must not resume.
@@ -1579,8 +1602,11 @@ export function cancelQueuedAcpJob({
       thread_id,
       ...ACP_FENCE_LIVE_RESUME_INTENTS,
     );
-    db.prepare(
-      `UPDATE ${TABLE}
+    canceled =
+      Number(
+        db
+          .prepare(
+            `UPDATE ${TABLE}
         SET state = 'canceled',
             updated_at = ?,
             finished_at = ?
@@ -1590,7 +1616,17 @@ export function cancelQueuedAcpJob({
           AND account_id = ?
           AND thread_id = ?
           AND state = 'queued'`,
-    ).run(now, now, project_id, path, user_message_id, account_id, thread_id);
+          )
+          .run(
+            now,
+            now,
+            project_id,
+            path,
+            user_message_id,
+            account_id,
+            thread_id,
+          ).changes,
+      ) > 0;
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -1604,7 +1640,7 @@ export function cancelQueuedAcpJob({
     thread_id,
   });
   mirrorAcpJobSession(job);
-  return job;
+  return { job, canceled };
 }
 
 function cancelQueuedRecoveryJobsForThreadInDatabase({

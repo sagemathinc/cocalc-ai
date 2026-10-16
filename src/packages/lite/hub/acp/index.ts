@@ -104,6 +104,7 @@ import {
   buildChatMessage,
   buildThreadStateRecord,
   computeChatIntegrityReport,
+  CONTEXT_NOT_SYNCED_ERROR,
   contextStamp,
   preferredThreadConfigRecord,
   threadConfigRowRank,
@@ -189,6 +190,7 @@ import {
   ACP_PROJECT_RESUME_FENCE_REASON,
   ACP_PROJECT_RUNTIME_LOST_FENCE_REASON,
   cancelQueuedAcpJob,
+  cancelQueuedAcpJobForControl,
   claimNextQueuedAcpJobForThread,
   clearAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
@@ -12141,13 +12143,53 @@ async function assertCallerContextSynced({
     fn: async (syncdb) =>
       hubThreadContext(syncdb, thread_id).clearedAtMs >= clearedAt,
   });
-  if (!synced)
-    throw Error(
-      "This conversation's latest Clear context has not reached its project yet; try again in a moment.",
-    );
+  if (!synced) throw Error(CONTEXT_NOT_SYNCED_ERROR);
+}
+
+// Controls that change one message's job (cancel, send now, resend) run one
+// at a time per message: otherwise two could each act on the same job, e.g.
+// both steer it, or a send-now could requeue a job someone just canceled.
+const messageControlChains = new Map<string, Promise<unknown>>();
+
+function serializeMessageControl<T>(
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const next = (messageControlChains.get(key) ?? Promise.resolve())
+    .catch(() => {})
+    .then(fn);
+  const tail = next.catch(() => {});
+  messageControlChains.set(key, tail);
+  void tail.then(() => {
+    if (messageControlChains.get(key) === tail)
+      messageControlChains.delete(key);
+  });
+  return next;
 }
 
 async function handleAcpControlRequest(
+  request: AcpControlRequest,
+): Promise<AcpControlResponse> {
+  if (
+    request.action === "cancel" ||
+    request.action === "send_immediately" ||
+    request.action === "resend" ||
+    request.action === "resend_with_model" ||
+    request.action === "resend_with_payment"
+  ) {
+    const key = [
+      request.project_id,
+      request.path,
+      request.user_message_id,
+    ].join("\0");
+    return await serializeMessageControl(key, () =>
+      handleAcpControlRequestNow(request),
+    );
+  }
+  return await handleAcpControlRequestNow(request);
+}
+
+async function handleAcpControlRequestNow(
   request: AcpControlRequest,
 ): Promise<AcpControlResponse> {
   const project_id = `${request.project_id ?? ""}`.trim();
@@ -12334,14 +12376,15 @@ async function handleAcpControlRequest(
     });
   }
   if (request.action === "send_immediately") {
-    const row = cancelQueuedAcpJob({
+    const { job: row, canceled } = cancelQueuedAcpJobForControl({
       project_id,
       path,
       user_message_id,
       account_id: request.account_id,
       thread_id,
     });
-    if (!row || row.state !== "canceled") {
+    // Only the control that took the job out of the queue may act on it.
+    if (!row || !canceled) {
       return { ok: false, state: row?.state ?? "missing" };
     }
 

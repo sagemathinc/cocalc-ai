@@ -1129,6 +1129,31 @@ describe("queued ACP controls", () => {
     expect(acpState.get("message:user-msg-queued")).toBe("not-sent");
   });
 
+  it("reports a resend that must wait for a clear to sync", async () => {
+    mockControlAcp.mockRejectedValue(
+      Error(
+        "This conversation's latest Clear context has not reached its project yet; try again in a moment.",
+      ),
+    );
+    const acpState = new FakeAcpState();
+    const actions: any = {
+      store: {
+        get: (key: string) =>
+          ({ project_id: "proj", path: "x.chat", acpState })[key],
+        setState: jest.fn(),
+      },
+      syncdb: { set: jest.fn(), commit: jest.fn() },
+      getMessagesInThread: jest.fn(() => []),
+    };
+    await expect(
+      resendCanceledAcpTurn({
+        actions,
+        message: { message_id: "m-1", thread_id: "t-1" } as any,
+      }),
+    ).rejects.toThrow(/try again in a moment/);
+    expect(acpState.get("message:m-1")).toBe("not-sent");
+  });
+
   it("updates local state after resending a not-sent turn", async () => {
     mockControlAcp.mockResolvedValue({ ok: true, state: "queued" });
     const acpState = new FakeAcpState();

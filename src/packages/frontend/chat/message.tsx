@@ -3149,7 +3149,9 @@ export default function Message({
   };
   const handleResendNotSent = () => {
     if (!actions) return;
-    void resendCanceledAcpTurn({ actions, message });
+    resendCanceledAcpTurn({ actions, message }).catch((err) =>
+      antdMessage.error(`${err?.message ?? err}`),
+    );
   };
 
   const acpStateToRender = useMemo(() => {

@@ -125,6 +125,11 @@ export function threadContext(
   return context;
 }
 
+// A replay control (send now, resend) that follows a clear the project has
+// not synced yet is refused with this; retrying a moment later works.
+export const CONTEXT_NOT_SYNCED_ERROR =
+  "This conversation's latest Clear context has not reached its project yet; try again in a moment.";
+
 // The request fields that record which context a session was chosen in.
 export function contextStamp(context: ThreadContext): {
   context_generation: string;
