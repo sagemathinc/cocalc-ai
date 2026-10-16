@@ -1712,3 +1712,103 @@ describe("computers across bays", () => {
     );
   }
 });
+
+describe("an agent's own network name across bays", () => {
+  // Erin is homed on the attached bay, so her agent names and Agent Networks
+  // live there; her agent runs in a seed-owned project, so only the seed can
+  // prove the run. An agent asking for its own @name crosses both ways: to
+  // the account's home for discovery, and back to the project's bay for the
+  // run principal (agent.describeNetworkSelf, after its host check).
+  let erin;
+  let project;
+  const agent = randomUUID();
+  const peer = randomUUID();
+  const run = randomUUID();
+
+  before(async () => {
+    erin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "erin",
+    });
+    erin.client = await client(erin);
+    project = await createProject(alice.client, "agent-names");
+    await invite(alice, erin, project);
+    await eventually(() => listed(erin.client, project), {
+      what: "the project in erin's list",
+    });
+    assert.equal(await owningBay(project), SEED);
+    // The agents and an issued run, on the project's bay.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { agentStore } = server("agents/store.js");
+       for (const [id, thread] of [[${JSON.stringify(agent)}, "ops"], [${JSON.stringify(peer)}, "reviewer"]])
+         await getPool().query(
+           "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,'/home/user/agents.chat',$3,'claude-1',$4)",
+           [id, ${JSON.stringify(project)}, thread, ${JSON.stringify(erin.account_id)}]);
+       const db = agentStore();
+       await db.issue(await db.get(${JSON.stringify(agent)}), ${JSON.stringify(run)}, ${JSON.stringify(erin.account_id)});`,
+    );
+    // Erin's names for them and her network, at her home.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const crypto = require("node:crypto");
+       const account = ${JSON.stringify(erin.account_id)};
+       const project = ${JSON.stringify(project)};
+       for (const [id, name, thread] of [[${JSON.stringify(agent)}, "ops1", "ops"], [${JSON.stringify(peer)}, "review", "reviewer"]])
+         await getPool().query(
+           "INSERT INTO agent_personal_names(account_id,name,project_id,agent_id,metadata) VALUES($1,$2,$3,$4,$5)",
+           [account, name, project, id, { path: "/home/user/agents.chat", thread_id: thread }]);
+       const network = crypto.randomUUID();
+       await getPool().query(
+         "INSERT INTO agent_networks(agent_network_id,account_id,title,generation,created_by,delivery_mode) VALUES($1,$2,'cocalc-dev',$3,$2,'live')",
+         [network, account, crypto.randomUUID()]);
+       for (const id of [${JSON.stringify(agent)}, ${JSON.stringify(peer)}])
+         await getPool().query(
+           "INSERT INTO agent_network_members(agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by) VALUES($1,'registered',$2,$2,$3,$4)",
+           [network, id, project, account]);`,
+    );
+  });
+
+  async function discover(run_id) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { withPersonalHome } = server("agents/personal.js");
+       return await withPersonalHome(${JSON.stringify(erin.account_id)}, {
+         action: "discoverNetworks",
+         options: {
+           source: { agent_id: ${JSON.stringify(agent)}, project_id: ${JSON.stringify(project)} },
+           run_id: ${JSON.stringify(run_id)},
+         },
+       });`,
+    );
+  }
+
+  it("names the agent as its peers see it, from the account's home bay", async () => {
+    const found = await discover(run);
+    assert.equal(found.self?.name, "ops1");
+    assert.deepEqual(
+      found.self.networks.map(({ title, delivery_mode }) => ({
+        title,
+        delivery_mode,
+      })),
+      [{ title: "cocalc-dev", delivery_mode: "live" }],
+    );
+    // The asker is not its own peer.
+    assert.deepEqual(
+      found.peers.map(({ member }) => member.name),
+      ["review"],
+    );
+  });
+
+  it("refuses a run the project's bay never issued", async () => {
+    await assert.rejects(
+      discover(randomUUID()),
+      /expired, revoked, or invalid/,
+    );
+  });
+});

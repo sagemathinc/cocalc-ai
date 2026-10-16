@@ -1637,10 +1637,22 @@ export class PersonalAgentStore {
     for (const row of rows)
       networks.push(await this.network(this.db, account, row));
     const peers = new Map<string, AgentNetworkDiscovery["peers"][number]>();
+    const self: NonNullable<AgentNetworkDiscovery["self"]> = { networks: [] };
     for (const network of networks)
       for (const member of network.members) {
         if (member.removed_at) continue;
-        if (this.findMember([member], source)) continue;
+        if (this.findMember([member], source)) {
+          const name =
+            member.kind === "registered" ? member.name : member.label;
+          if (name && !self.name) self.name = name;
+          self.networks.push({
+            agent_network_id: network.agent_network_id,
+            title: network.title,
+            delivery_mode: network.delivery_mode,
+            generation: network.generation,
+          });
+          continue;
+        }
         const key =
           member.kind === "registered"
             ? `registered/${member.endpoint.project_id}/${member.endpoint.agent_id}`
@@ -1660,7 +1672,10 @@ export class PersonalAgentStore {
         });
         peers.set(key, current);
       }
-    return { peers: [...peers.values()] };
+    return {
+      peers: [...peers.values()],
+      ...(self.networks.length ? { self } : {}),
+    };
   }
 
   async observeActivity(account: string, activity: AgentNetworkActivity) {

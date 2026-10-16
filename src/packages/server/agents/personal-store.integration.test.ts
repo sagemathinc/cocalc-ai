@@ -657,11 +657,12 @@ describeDb("account-home Agent Networks", () => {
       },
       8,
     );
-    expect(
-      (await store.discover(account, source, run_id)).peers.map(
-        ({ member }) => member.member_id,
-      ),
-    ).toEqual([secondPeer.agent_id]);
+    const found = await store.discover(account, source, run_id);
+    expect(found.peers.map(({ member }) => member.member_id)).toEqual([
+      secondPeer.agent_id,
+    ]);
+    // The asker learns its own network membership, not as a peer.
+    expect(found.self?.networks.map(({ title }) => title)).toContain("Rejoin");
     await store.updateNetwork(
       account,
       {
