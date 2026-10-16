@@ -2465,6 +2465,7 @@ export async function getProjectStartMetadataLocal({
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2480,7 +2481,8 @@ export async function getProjectStartMetadataLocal({
     ({ rows } = await pool().query(
       `SELECT title, users, rootfs_image AS image, run_quota,
               COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision,
-              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision, env,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
+              COALESCE(runtime_authority_revision, 0)::bigint AS users_revision, env,
               autostart_enabled
          FROM projects
         WHERE project_id=$1
@@ -2526,6 +2528,9 @@ export async function getProjectStartMetadataLocal({
     run_quota: row.run_quota ?? undefined,
     run_quota_revision: Number(row.run_quota_revision ?? 0),
     runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
+    ...(row.users_revision == null
+      ? {}
+      : { users_revision: Number(row.users_revision) }),
     env: row.env ?? undefined,
     autostart_enabled: row.autostart_enabled,
     project_secrets_cache: await getProjectSecretsRuntimeCache({ project_id }),

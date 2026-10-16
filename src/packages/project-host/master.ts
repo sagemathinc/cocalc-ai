@@ -1679,11 +1679,13 @@ export async function startMasterRegistration({
       project_id,
       users,
       runtime_lifecycle_revision,
+      users_revision,
     }) {
       await updateProjectUsers({
         project_id,
         users,
         runtime_lifecycle_revision,
+        users_revision,
       });
     },
     async dropComputer({ computer_id }) {
@@ -2318,6 +2320,7 @@ export async function startMasterRegistration({
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      users_revision?: number;
       updated_ms: number;
     }>,
   ): Promise<number> => {
@@ -2332,6 +2335,10 @@ export async function startMasterRegistration({
           runtime_lifecycle_revision: Number(
             row?.runtime_lifecycle_revision ?? 0,
           ),
+          users_revision:
+            row?.users_revision == null
+              ? undefined
+              : Number(row.users_revision),
         });
         applied += 1;
       } catch (err) {

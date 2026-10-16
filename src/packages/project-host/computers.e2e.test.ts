@@ -99,6 +99,7 @@ function soloProject(owner = ACCOUNT_ID) {
     project_id: PROJECT_ID,
     secret_token: SECRET,
     users: { [owner]: { group: "owner" } },
+    users_revision: 1,
   };
 }
 

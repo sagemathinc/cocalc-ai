@@ -60,6 +60,8 @@ export interface HostProjectStartMetadata {
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  /** See updateProjectUsers. */
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -855,6 +857,12 @@ export interface HostControlApi {
     project_id: string;
     users?: any;
     runtime_lifecycle_revision?: number;
+    /**
+     * The owning bay's runtime_authority_revision, read with users: it
+     * changes with every collaborator change, so the host keeps only the
+     * newest copy (an older one arriving late must never replace it).
+     */
+    users_revision?: number;
   }) => Promise<void>;
   /**
    * A paired computer was revoked: refuse it from now on (its socket closes
@@ -1288,6 +1296,7 @@ export interface HostRegistryApi {
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      users_revision?: number;
       updated_ms: number;
     }>;
     next_since_ms: number;
@@ -1302,6 +1311,7 @@ export interface HostRegistryApi {
       project_id: string;
       users: any;
       runtime_lifecycle_revision: number;
+      users_revision?: number;
       updated_ms: number;
     }>;
     as_of_ms: number;
