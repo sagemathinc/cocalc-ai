@@ -269,7 +269,16 @@ describeDb("create limit", () => {
   });
 
   test("an unparseable expiry still counts", async () => {
-    await create({ expires_at: "soon" });
+    // Shaped like a timestamp but impossible: must not abort the transaction.
+    await create({ expires_at: "2026-99-99T00:00:00Z" });
+    await expect(create({ expires_at: "soon" })).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(create()).rejects.toThrow("at most 2");
+  });
+
+  test("a non-string expiry still counts", async () => {
+    await create({ expires_at: 12345 });
     await create();
     await expect(create()).rejects.toThrow("at most 2");
   });

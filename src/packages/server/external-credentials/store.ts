@@ -117,6 +117,9 @@ function validatePayload(payload: string): void {
   }
 }
 
+// Shape of Date.toISOString(); Date.parse then rejects impossible dates.
+const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
 function selectorValues(selector: ExternalCredentialSelector) {
   return [
     selector.provider,
@@ -495,24 +498,25 @@ WHERE id=$1 AND revoked IS NULL
     if (maxActive != null) {
       const limit = Math.max(1, Math.floor(maxActive));
       // An expired credential (by its policy's metadata timestamp) stays
-      // listed but no longer takes a slot. Unparseable values still count.
+      // listed but no longer takes a slot. Anything that does not parse as a
+      // past time still counts; parsing here never aborts the transaction.
       const expiryKey = limitExpiryMetadataKeyForCredentialSelector(normalized);
-      const { rows } = await client.query<{ count: string }>(
+      const { rows } = await client.query<{ expiry: unknown }>(
         `
-SELECT COUNT(*)::text AS count
+SELECT CASE WHEN $7::text IS NULL THEN NULL ELSE metadata->>$7::text END AS expiry
 FROM external_credentials
 WHERE ${ownershipClause(1)} AND revoked IS NULL
-  AND CASE
-        WHEN $7::text IS NULL OR NOT (metadata ? $7::text) THEN TRUE
-        WHEN metadata->>$7::text ~
-             '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
-          THEN (metadata->>$7::text)::timestamptz > NOW()
-        ELSE TRUE
-      END
         `,
         [...selectorValues(normalized), expiryKey ?? null],
       );
-      if (Number(rows[0]?.count ?? 0) >= limit) {
+      const now = Date.now();
+      const active = rows.filter(({ expiry }) => {
+        if (typeof expiry !== "string" || !ISO_UTC_TIMESTAMP.test(expiry))
+          return true;
+        const at = Date.parse(expiry);
+        return !Number.isFinite(at) || at > now;
+      }).length;
+      if (active >= limit) {
         throw new Error(`at most ${limit} active credentials are allowed`);
       }
     }
