@@ -30,6 +30,7 @@ import {
   cancelSiteLicensePoolRequest,
   cleanupSiteLicenseAccessForAccountDeletionOnSeed,
   getVerifiedEmailAddressesForAccount,
+  isSiteLicenseProvisionRejected,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
@@ -1072,6 +1073,28 @@ describe("site license seat pools", () => {
         ],
       }),
     ).rejects.toThrow(`site license domain 'dept.${domain}' overlaps`);
+
+    // The rollback wrote nothing, so the rejection is marked as definite.
+    const rejection = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id: second_owner_account_id,
+      name: "Duplicate Campus",
+      organization_name: "Other University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    }).catch((err) => err);
+    expect(`${rejection}`).toContain("overlaps");
+    expect(isSiteLicenseProvisionRejected(rejection)).toBe(true);
+    expect(isSiteLicenseProvisionRejected(Error("other"))).toBe(false);
   });
 
   it("indexes active site license domains for seed-global conflict checks", async () => {

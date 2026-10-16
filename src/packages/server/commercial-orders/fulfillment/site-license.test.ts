@@ -34,6 +34,7 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     mockArchiveSiteLicensePool(...args),
   getSiteLicenseOverview: (...args: any[]) =>
     mockGetSiteLicenseOverview(...args),
+  isSiteLicenseProvisionRejected: (err: any) => err?.rejectedBeforeCommit,
   removeSiteLicenseManager: (...args: any[]) =>
     mockRemoveSiteLicenseManager(...args),
   setSiteLicenseManager: (...args: any[]) => mockSetSiteLicenseManager(...args),
@@ -368,6 +369,34 @@ describe("commercial site-license fulfillment", () => {
       result: { site_license_id: "sl_1", recovered: true },
     });
   });
+
+  it.each([
+    ["rejected before commit", true, "failed"],
+    ["with an unknown outcome", false, "indeterminate"],
+  ])(
+    "records a license creation %s as %s",
+    async (_, rejectedBeforeCommit, status) => {
+      const err = Object.assign(
+        Error("site license domain 'example.edu' overlaps"),
+        { rejectedBeforeCommit },
+      );
+      mockAdminProvisionSiteLicense.mockRejectedValue(err);
+
+      await expect(
+        provisionCommercialSiteLicense({
+          id: "co_1",
+          account_id: "admin-1",
+          expected_version: 7,
+          reason: "Provision accepted pilot",
+        }),
+      ).rejects.toThrow("overlaps");
+
+      expect(mockSetCommercialProviderOperationStatus).toHaveBeenLastCalledWith(
+        { id: "op_1", status, error: err },
+      );
+      expect(mockSetCommercialFulfillment).not.toHaveBeenCalled();
+    },
+  );
 
   it("removes managers not present in the approved plan", async () => {
     const order = orderFixture({ site_license_id: "sl_1" });
