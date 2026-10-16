@@ -66,10 +66,9 @@ function useClaudeCredential(
 ): ExternalCredentialInfo | undefined {
   const [row, setRow] = useState<ExternalCredentialInfo>();
   useEffect(() => {
-    if (!credentialId) {
-      setRow(undefined);
-      return;
-    }
+    // Never show another credential's name while (or if) this one loads.
+    setRow(undefined);
+    if (!credentialId) return;
     let active = true;
     const load = () =>
       void listClaudeCredentials()

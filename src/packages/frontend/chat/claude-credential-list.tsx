@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { Progress, Radio, Tooltip, Typography } from "antd";
+import { Progress, Radio, Typography } from "antd";
 import { useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
@@ -13,6 +13,7 @@ import {
   type ClaudeUsageWindow,
 } from "@cocalc/util/ai/claude-usage";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { newAgentClaudeCredentialOptions } from "@cocalc/frontend/agents/claude-credential-options";
@@ -33,6 +34,10 @@ export function ClaudeUsageLimitWarning({
   const name = window.name.replace(/\s*\(.*\)$/, "").toLowerCase();
   return (
     <Tooltip
+      // Tapping it is how a phone sees the estimate; it is information, not
+      // a button hint, so the hide-tooltips setting does not apply.
+      allow_touch
+      ignore_hide_setting
       open={open}
       onOpenChange={setOpen}
       trigger={["hover", "focus", "click"]}

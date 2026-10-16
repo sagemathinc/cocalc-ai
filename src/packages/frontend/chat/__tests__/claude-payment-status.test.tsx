@@ -4,12 +4,14 @@ import userEvent from "@testing-library/user-event";
 import {
   ClaudePaymentStatus,
   clearClaudeCredentialsForTests,
+  useClaudePaymentLabel,
 } from "../claude-payment-status";
 import { writeHarnessCredentialSelection } from "../harness-credential-selection";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "account-a",
+  useAccountOtherSetting: () => undefined,
   redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
@@ -207,4 +209,34 @@ test("a window on pace to hit its limit shows a warning", async () => {
       name: /This week: on pace to reach the limit before it resets \(about 105%\)/,
     }),
   ).toBeTruthy();
+});
+
+test("switching the selection never shows the previous credential's name", async () => {
+  // Review on #1114: the phone summary kept the old row while the new one
+  // loaded, and forever if that load failed.
+  choose("account-subscription");
+  listCredentials.mockResolvedValue(credential({ label: "Alpha" }));
+  function Label() {
+    return <span>label: {useClaudePaymentLabel("project-a", "thread-a")}</span>;
+  }
+  render(<Label />);
+  expect(await screen.findByText("label: Alpha")).toBeTruthy();
+  clearClaudeCredentialsForTests();
+  listCredentials.mockRejectedValue(new Error("hub unavailable"));
+  act(() =>
+    writeHarnessCredentialSelection({
+      accountId: "account-a",
+      projectId: "project-a",
+      threadKey: "thread-a",
+      credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "00000000-0000-4000-8000-000000000002",
+      },
+    }),
+  );
+  expect(await screen.findByText("label: Claude subscription")).toBeTruthy();
+  await waitFor(() => expect(listCredentials).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("label: Alpha")).toBeNull();
 });
