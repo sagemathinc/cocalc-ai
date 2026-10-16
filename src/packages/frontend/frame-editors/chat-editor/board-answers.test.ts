@@ -350,3 +350,49 @@ describe("delivery", () => {
     ).toHaveLength(2);
   });
 });
+
+describe("one row per submission", () => {
+  test("two deliveries of the same id at once write one message", async () => {
+    const rows: string[] = [];
+    let saved!: () => void;
+    const chat = {
+      getMessagesInThread: () => [{}],
+      getMessageById: () => undefined, // neither sees the other's row yet
+      reserveChatSendIdentity: () => ({
+        date: `${rows.length}`,
+        message_id: "x",
+        thread_id: "t",
+      }),
+      sendChat: (opts: any) => {
+        rows.push(opts.chatIdentity.message_id);
+        return "date";
+      },
+      syncdb: { save: () => new Promise<void>((r) => (saved = r)) },
+    };
+    const submission: any = {
+      id: ID,
+      name: null,
+      revision: null,
+      page: { number: 1 },
+      answers: {},
+      notes: {},
+      comment: "",
+    };
+    const a = deliverBoardAnswers({
+      chat,
+      threadId: "t",
+      submission,
+      stale: false,
+    });
+    const b = deliverBoardAnswers({
+      chat,
+      threadId: "t",
+      submission,
+      stale: false,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    saved();
+    await Promise.all([a, b]);
+    expect(rows).toHaveLength(1);
+  });
+});

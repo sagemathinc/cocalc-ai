@@ -108,25 +108,55 @@ export function formatBoardAnswers({
   return lines.join("\n");
 }
 
-export async function deliverBoardAnswers({
-  chat,
-  threadId,
-  submission,
-  file,
-  stale,
-}: {
+// Deliveries in flight in this page, by message id. A submission id comes
+// from one frame (the frame makes it at Submit and keeps nothing), so a
+// repeat reaches the same page; two cards given the same id share one
+// delivery instead of each writing a row (rows are keyed by date too).
+const inFlight = new Map<string, Promise<void>>();
+
+export async function deliverBoardAnswers(opts: {
   chat: BoardAnswersChat;
   threadId: string;
   submission: Submission;
   file?: string;
   stale: boolean;
 }): Promise<void> {
+  const messageId = await boardAnswersMessageId(
+    opts.threadId,
+    opts.submission.id,
+  );
+  const running = inFlight.get(messageId);
+  if (running) return await running;
+  const delivery = deliverOnce(opts, messageId);
+  inFlight.set(messageId, delivery);
+  try {
+    await delivery;
+  } finally {
+    inFlight.delete(messageId);
+  }
+}
+
+async function deliverOnce(
+  {
+    chat,
+    threadId,
+    submission,
+    file,
+    stale,
+  }: {
+    chat: BoardAnswersChat;
+    threadId: string;
+    submission: Submission;
+    file?: string;
+    stale: boolean;
+  },
+  messageId: string,
+): Promise<void> {
   if (!threadId || !chat.getMessagesInThread(threadId)?.length) {
     throw new BoardAnswersRefusal(
       "Not sent: the board's conversation isn't available. Reopen it and try again.",
     );
   }
-  const messageId = await boardAnswersMessageId(threadId, submission.id);
   if (chat.getMessageById(messageId) == null) {
     const reserved = chat.reserveChatSendIdentity({
       reply_thread_id: threadId,
