@@ -1050,6 +1050,35 @@ describe("queued ACP controls", () => {
     );
   });
 
+  it("tells the hub which clear a send-now follows", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true, state: "queued" });
+    const acpState = new FakeAcpState();
+    const actions: any = {
+      store: {
+        get: (key: string) =>
+          ({ project_id: "proj", path: "x.chat", acpState })[key],
+        setState: jest.fn(),
+      },
+      syncdb: { set: jest.fn(), commit: jest.fn() },
+      getThreadMetadata: () => ({
+        context_generation: "cleared-1",
+        context_cleared_at: "2026-10-16T00:00:00.000Z",
+      }),
+      getMessagesInThread: () => [],
+    };
+    await sendQueuedAcpTurnImmediately({
+      actions,
+      message: { message_id: "m-1", thread_id: "t-1" } as any,
+    });
+    expect(mockControlAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "send_immediately",
+        context_generation: "cleared-1",
+        context_cleared_at: "2026-10-16T00:00:00.000Z",
+      }),
+    );
+  });
+
   it("still succeeds when the chat closed while send-now was in flight", async () => {
     mockControlAcp.mockResolvedValue({ ok: true, state: "running" });
     const acpState = new FakeAcpState();

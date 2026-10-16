@@ -198,6 +198,10 @@ export type AcpControlRequest =
         payment_source: CodexPaymentSourcePreference;
         credential_id?: string;
       };
+      // The caller's view of the thread's context (send now and resends): the
+      // hub waits until it has synced that clear before replaying anything.
+      context_generation?: string;
+      context_cleared_at?: string;
     };
 
 export type AcpControlResponse = {

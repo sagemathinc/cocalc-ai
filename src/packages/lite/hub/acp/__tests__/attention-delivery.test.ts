@@ -547,6 +547,54 @@ describe("a context clear after admission", () => {
     await expect(prepare(source)).rejects.toThrow("chat unavailable");
   });
 
+  it("holds a send-now until the hub has synced the caller's clear", async () => {
+    // Queued before the clear, so stamped with the old (empty) generation.
+    const queued = turnRequest({ model: "gpt-6-astra", sessionId });
+    queued.session_id = sessionId;
+    queued.chat!.context_generation = "";
+    const job = enqueueAcpJob(queued);
+    mockSteer.mockResolvedValue({ state: "steered" });
+    // The caller already saw the clear; it reaches this hub a bit later.
+    setTimeout(() => Object.assign(rows[0], clearedConfig), 50);
+    const result = await acpTestInternals.handleAcpControlRequest({
+      action: "send_immediately",
+      account_id: accountId,
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      user_message_id: job.user_message_id,
+      context_generation: "cleared-1",
+      context_cleared_at: cleared.date,
+    } as any);
+    // Never steered into the old context: it waits to run fresh.
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, state: "queued" });
+  });
+
+  it("gives up if the caller's clear never reaches the hub", async () => {
+    await expect(
+      acpTestInternals.awaitCallerContext({
+        client: {} as Client,
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        request: { context_cleared_at: cleared.date },
+        timeoutMs: 150,
+      }),
+    ).rejects.toThrow(/has not reached its project yet/);
+    Object.assign(rows[0], clearedConfig);
+    await expect(
+      acpTestInternals.awaitCallerContext({
+        client: {} as Client,
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        request: { context_cleared_at: cleared.date },
+        timeoutMs: 150,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("does not steer guidance into a turn of another context", () => {
     const writer = (generation: string, cleared = false) => ({
       contextClearedSinceStart: () => cleared,

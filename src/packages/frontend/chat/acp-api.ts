@@ -56,6 +56,17 @@ const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
 const ACP_ACK_MAX_ATTEMPTS = 5;
 const ACP_ACK_BACKOFF_MS = 2000;
 
+// This browser's view of a thread's context, for controls that replay a
+// stored request: the hub waits for that clear before acting on it. Nothing
+// to wait for in a thread that was never cleared.
+function callerContextStamp(actions: ChatActions, threadId: string) {
+  const context = threadContext(
+    actions.getThreadMetadata?.(threadId, { threadId }),
+    actions.getMessagesInThread?.(threadId) ?? [],
+  );
+  return context.generation ? contextStamp(context) : {};
+}
+
 // The hub saves the guidance receipt before a steer RPC returns, so by then
 // the row may already be final; setting "sent" again would leave it stuck.
 function guidanceAlreadyDelivered(syncdb: any, messageId: string): boolean {
@@ -790,6 +801,7 @@ export async function sendQueuedAcpTurnImmediately({
       thread_id: threadId,
       user_message_id: messageId,
       action: "send_immediately",
+      ...callerContextStamp(actions, threadId),
     });
     if (!result?.ok) {
       setLocalState({
@@ -893,6 +905,7 @@ export async function resendCanceledAcpTurn({
           : "resend",
       ...(modelRecovery ? { model_recovery: modelRecovery } : {}),
       ...(paymentRecovery ? { payment_recovery: paymentRecovery } : {}),
+      ...callerContextStamp(actions, threadId),
     });
     if (result?.ok) {
       cleanupGeneratedAcpFailureReplies({ actions, messageId, threadId });
