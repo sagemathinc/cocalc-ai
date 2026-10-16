@@ -124,4 +124,43 @@ describe("IpyWidget initialization", () => {
       expect(trustNotebook).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("removes a view that finishes rendering after trust is lost", async () => {
+    let finish: () => void = () => {};
+    const renderWidget = jest.fn(
+      (_id: string, div: HTMLElement) =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            const view = document.createElement("div");
+            view.className = "late-widget-view";
+            div.appendChild(view);
+            resolve();
+          };
+        }),
+    );
+    const actions = {
+      store: { get: () => false },
+      trust_notebook: jest.fn(),
+      widget_manager: {
+        ipywidgets_state: {
+          get_state: () => "ready",
+          getSerializedModelState: () => ({ _model_name: "IntSliderModel" }),
+        },
+        manager: { render: renderWidget },
+      },
+    };
+    const value = Map({ model_id: "model-1" });
+    const { container, rerender } = render(
+      <IpyWidget value={value} actions={actions as any} trust />,
+    );
+    await waitFor(() => expect(renderWidget).toHaveBeenCalledTimes(1));
+    rerender(
+      <IpyWidget value={value} actions={actions as any} trust={false} />,
+    );
+    await act(async () => {
+      finish();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(container.querySelector(".late-widget-view")).toBeNull();
+  });
 });

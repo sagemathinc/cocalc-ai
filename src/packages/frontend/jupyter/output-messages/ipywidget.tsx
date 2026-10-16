@@ -161,9 +161,11 @@ ax.plot(x, y)
       // console.log("IpyWidget: not rendering due to manager not being set");
       return;
     }
-    render({ manager, id, div });
+    let canceled = false;
+    render({ manager, id, div, isCanceled: () => canceled });
 
     return () => {
+      canceled = true;
       $(div).empty();
     };
   }, [isVisible, isReady, trust]);
@@ -254,9 +256,15 @@ function observeDiv(div) {
 }
 
 // Inside the render function, after the widget is rendered, observe the div
-async function render({ manager, id, div }) {
+async function render({ manager, id, div, isCanceled }) {
   try {
     await manager.render(id, div);
+    if (isCanceled()) {
+      // Trust was lost or the output went away while the view was being
+      // created: don't leave a late view behind.
+      $(div).empty();
+      return;
+    }
 
     // Observe div for changes -- see https://github.com/sagemathinc/cocalc/issues/8042
     observeDiv(div);
