@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -84,6 +84,44 @@ describe("master-key-lifecycle", () => {
     expect(
       (await getOrCreateSiteMasterKey({ secretsDir })).equals(keys[0]),
     ).toBe(true);
+  });
+
+  it("leaves no temporary key copy when writing the new key fails", async () => {
+    const secretsDir = join(dir, "secrets");
+    const fsp = require("node:fs/promises");
+    const realWriteFile = fsp.writeFile;
+    const spy = jest
+      .spyOn(fsp, "writeFile")
+      .mockImplementationOnce(async (path: string, data: string, opts: any) => {
+        // A partial write: the file exists, then the disk fills up.
+        await realWriteFile(path, data.slice(0, 5), opts);
+        throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+      });
+    try {
+      await expect(getOrCreateSiteMasterKey({ secretsDir })).rejects.toThrow(
+        "no space left",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readdirSync(secretsDir)).toEqual([]);
+  });
+
+  it("reports a temporary key copy it could not remove", async () => {
+    const secretsDir = join(dir, "secrets");
+    const fsp = require("node:fs/promises");
+    const spy = jest
+      .spyOn(fsp, "unlink")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("not permitted"), { code: "EPERM" }),
+      );
+    try {
+      await expect(getOrCreateSiteMasterKey({ secretsDir })).rejects.toThrow(
+        /could not remove temporary site master key copy/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("exports and restores an encrypted site master key backup", async () => {

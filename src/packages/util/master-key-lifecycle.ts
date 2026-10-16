@@ -51,7 +51,8 @@ export type SiteMasterKeyPurpose =
   | "bay-config-escrow:v1";
 
 export type LegacyMasterKeyId =
-  "legacy-secret-settings" | "legacy-project-backups";
+  | "legacy-secret-settings"
+  | "legacy-project-backups";
 
 export type MasterKeyFileSource =
   | "option"
@@ -157,7 +158,8 @@ interface EncryptedSiteMasterKeyBackup {
 }
 
 export type SiteMasterKeyBackup =
-  PlainSiteMasterKeyBackup | EncryptedSiteMasterKeyBackup;
+  | PlainSiteMasterKeyBackup
+  | EncryptedSiteMasterKeyBackup;
 
 function normalizePath(path?: string): string | undefined {
   const trimmed = `${path ?? ""}`.trim();
@@ -379,16 +381,44 @@ async function createSiteMasterKeyFile(
 ): Promise<Buffer> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(tmp, key.toString("base64"), { mode: 0o600, flag: "wx" });
+  let result: Buffer;
   try {
+    await writeFile(tmp, key.toString("base64"), { mode: 0o600, flag: "wx" });
     await chmod(tmp, 0o600);
     await link(tmp, path);
-    return key;
+    result = key;
   } catch (err: any) {
-    if (err?.code !== "EEXIST") throw err;
-    return await readMasterKeyFile(path);
-  } finally {
-    await unlink(tmp).catch(() => {});
+    // EEXIST from link: another caller published first; use its key.
+    try {
+      if (err?.code !== "EEXIST" || !(await pathExists(path))) throw err;
+      result = await readMasterKeyFile(path);
+    } catch (failure) {
+      await removeTempKeyFile(tmp).catch(() => {});
+      throw failure;
+    }
+  }
+  // A leftover temp file is a second copy of the key: never ignore it.
+  await removeTempKeyFile(tmp);
+  return result;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeTempKeyFile(tmp: string): Promise<void> {
+  try {
+    await unlink(tmp);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return;
+    throw new Error(
+      `could not remove temporary site master key copy ${tmp}; delete it: ${err?.message ?? err}`,
+    );
   }
 }
 
