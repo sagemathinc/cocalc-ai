@@ -19,6 +19,14 @@ to its first "ready", and the frame is mounted only after the text has been
 read; Refresh reads the file again and mounts a new frame. A later document in
 the same frame gets nothing.
 
+Answers (Sagebrush's web/board-host-protocol.md), only where the card is
+given a way to deliver them: the frame is loaded with a fresh nonce in its
+fragment. The first "ready" carrying it, from a frame that has loaded one
+document, gets the board with one end of a new MessageChannel, and the
+user's submissions arrive only on that port (board-answers-channel.ts). A
+second load closes the channel. A frame without the nonce gets the board
+with no port, and so shows no Submit.
+
 The frame has an opaque origin, so posts to it use "*". Showing a board sends
 its complete text and name to the configured origin, as the card says. Edits
 in the frame stay there: the file is not changed.
@@ -35,23 +43,40 @@ import {
   BOARD_FRAME_SANDBOX,
   BOARD_PREVIEW_LIMIT,
 } from "./board-artifact-frame";
+import {
+  openAnswersChannel,
+  type DeliverBoardAnswers,
+} from "./board-answers-channel";
 
 export default function BoardArtifact({
   path,
   frameUrl,
   historical = false,
   onToolbarActions,
+  deliverAnswers,
+  revision,
 }: {
   path: string;
   frameUrl: string;
   historical?: boolean;
   onToolbarActions?: (actions: FileArtifactAction[]) => void;
+  /** Given only where the user may answer the board's questions: then the
+   * frame gets a nonce and its first document a port (Submit). */
+  deliverAnswers?: DeliverBoardAnswers;
+  /** The artifact's current revision, posted with the board. */
+  revision?: string | null;
 }) {
   const compact = onToolbarActions !== undefined;
   const { actions } = useProjectContext();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  // The text read for one frame: `id` is that frame's key.
-  const [board, setBoard] = useState<{ id: number; text: string }>();
+  // The text read for one frame: `id` is that frame's key, `nonce` the
+  // secret in its address that only the document it loads first has.
+  const [board, setBoard] = useState<{
+    id: number;
+    text: string;
+    nonce: string;
+    revision: string | null;
+  }>();
   const [error, setError] = useState("");
   const [frameError, setFrameError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -60,6 +85,18 @@ export default function BoardArtifact({
   boardRef.current = board;
   // The frame (by key) that has been sent its board.
   const answeredRef = useRef<number | undefined>(undefined);
+  // The frame (by key) and how many documents it has loaded: a second one
+  // is a document this card didn't load, and gets no answers channel.
+  const loadsRef = useRef<{ id?: number; loads: number }>({ loads: 0 });
+  const channelRef = useRef<{ close: () => void } | undefined>(undefined);
+  const deliverRef = useRef(deliverAnswers);
+  deliverRef.current = deliverAnswers;
+  const revisionRef = useRef(revision ?? null);
+  revisionRef.current = revision ?? null;
+  const closeChannel = () => {
+    channelRef.current?.close();
+    channelRef.current = undefined;
+  };
   const name = path.split("/").pop() ?? path;
   const site = new URL(frameUrl).host;
 
@@ -87,7 +124,13 @@ export default function BoardArtifact({
         if (bytes.byteLength > BOARD_PREVIEW_LIMIT) throw tooLarge;
         const text =
           typeof raw === "string" ? raw : new TextDecoder().decode(bytes);
-        if (!cancelled) setBoard({ id: refresh, text });
+        if (!cancelled)
+          setBoard({
+            id: refresh,
+            text,
+            nonce: crypto.randomUUID(),
+            revision: revisionRef.current,
+          });
       } catch (err) {
         if (!cancelled) setError(String(err));
       } finally {
@@ -110,11 +153,41 @@ export default function BoardArtifact({
       if (data.sagebrush === "ready") {
         // Only the frame's first document, the one its src loaded.
         if (answeredRef.current === current.id) return;
+        const loads = loadsRef.current;
+        if (loads.id === current.id && loads.loads > 1) return;
         answeredRef.current = current.id;
-        frame.postMessage(
-          { sagebrush: "board", version: 1, text: current.text, name },
-          "*",
-        );
+        const deliver = deliverRef.current;
+        if (
+          deliver &&
+          typeof data.nonce === "string" &&
+          data.nonce === current.nonce
+        ) {
+          // The answers channel: one port, for this document only.
+          const posted = {
+            text: current.text,
+            name,
+            revision: current.revision,
+          };
+          const channel = new MessageChannel();
+          closeChannel();
+          channelRef.current = openAnswersChannel({
+            port: channel.port1,
+            posted,
+            deliver,
+            isCurrentRevision: (r) => r === revisionRef.current,
+          });
+          frame.postMessage(
+            { sagebrush: "board", version: 1, ...posted },
+            "*",
+            [channel.port2],
+          );
+        } else {
+          // No nonce (or no answers here): the board, without Submit.
+          frame.postMessage(
+            { sagebrush: "board", version: 1, text: current.text, name },
+            "*",
+          );
+        }
       } else if (
         data.sagebrush === "error" &&
         answeredRef.current === current.id
@@ -127,6 +200,14 @@ export default function BoardArtifact({
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [name]);
+
+  useEffect(() => closeChannel, [board?.id]);
+
+  const onFrameLoad = (id: number) => {
+    const loads = loadsRef.current;
+    if (loads.id !== id) loadsRef.current = { id, loads: 1 };
+    else if (++loads.loads > 1) closeChannel();
+  };
 
   const openInProject = () => {
     void actions?.open_file({ path }).catch((err) => setError(String(err)));
@@ -209,7 +290,10 @@ export default function BoardArtifact({
         <iframe
           key={board.id}
           ref={frameRef}
-          src={frameUrl}
+          src={
+            deliverAnswers ? `${frameUrl}#sb-nonce=${board.nonce}` : frameUrl
+          }
+          onLoad={() => onFrameLoad(board.id)}
           sandbox={BOARD_FRAME_SANDBOX}
           title={`Sagebrush board: ${name}`}
           style={{

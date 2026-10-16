@@ -204,3 +204,145 @@ test("frame URLs and board paths", () => {
   expect(isBoardPath("/a/b/Plan.Board.JSON")).toBe(true);
   expect(isBoardPath("/a/b/plan.json")).toBe(false);
 });
+
+describe("the answers bootstrap (board-host-protocol.md)", () => {
+  const deliver = jest.fn().mockResolvedValue(undefined);
+
+  // test/setup.js's MessageChannel only carries port2 -> port1; these tests
+  // need both directions and close(), as in a browser.
+  class TestPort {
+    other?: TestPort;
+    closed = false;
+    onmessage: ((e: { data: unknown }) => void) | null = null;
+    postMessage(data: unknown) {
+      const to = this.other;
+      if (this.closed || !to) return;
+      setTimeout(() => {
+        if (!to.closed && !this.closed) to.onmessage?.({ data });
+      }, 0);
+    }
+    close() {
+      this.closed = true;
+    }
+  }
+  class TestChannel {
+    port1 = new TestPort();
+    port2 = new TestPort();
+    constructor() {
+      this.port1.other = this.port2;
+      this.port2.other = this.port1;
+    }
+  }
+  const realChannel = (globalThis as any).MessageChannel;
+  beforeAll(() => {
+    (globalThis as any).MessageChannel = TestChannel;
+  });
+  afterAll(() => {
+    (globalThis as any).MessageChannel = realChannel;
+  });
+
+  async function renderAnswering() {
+    render(
+      <BoardArtifact
+        path={PATH}
+        frameUrl={FRAME}
+        deliverAnswers={deliver}
+        revision="pub-1"
+      />,
+    );
+    const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+    await screen.findByText("Current saved board");
+    const nonce = new URL(frame.getAttribute("src")!).hash.replace(
+      "#sb-nonce=",
+      "",
+    );
+    return { frame, posted: watch(frame), nonce };
+  }
+
+  // The reply on a granted port, if any, within a moment.
+  function replyOn(port: any, message: unknown): Promise<unknown> {
+    return new Promise((resolve) => {
+      port.onmessage = (e) => resolve(e.data);
+      port.postMessage(message);
+      setTimeout(() => resolve(undefined), 200);
+    });
+  }
+  const SUBMIT = {
+    sagebrush: "answers",
+    version: 1,
+    id: "0d9f3b6e-6a31-4c2f-9d6b-0f6f2c1b7a11",
+    name: "overnight.board.json",
+    revision: "pub-1",
+    page: { number: 1 },
+    answers: {},
+    notes: {},
+    comment: "",
+  };
+
+  test("the frame is loaded with a fresh nonce in its fragment", async () => {
+    const { frame, nonce } = await renderAnswering();
+    expect(frame.getAttribute("src")).toBe(`${FRAME}#sb-nonce=${nonce}`);
+    expect(nonce).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test("the first ready with the nonce gets the board, its revision and a port", async () => {
+    const { frame, posted, nonce } = await renderAnswering();
+    fromFrame(frame, { ...READY, nonce });
+    expect(posted).toHaveBeenCalledTimes(1);
+    const [message, target, transfer] = posted.mock.calls[0];
+    expect(message).toEqual({
+      sagebrush: "board",
+      version: 1,
+      text: TEXT,
+      name: "overnight.board.json",
+      revision: "pub-1",
+    });
+    expect(target).toBe("*");
+    expect(transfer).toHaveLength(1);
+    expect(transfer[0]).toBeInstanceOf(TestPort);
+    // The port answers: here the pending package's check refuses, in its words.
+    const reply: any = await replyOn(transfer[0], SUBMIT);
+    expect(reply).toMatchObject({ sagebrush: "refused", id: SUBMIT.id });
+    expect(deliver).not.toHaveBeenCalled();
+    fromFrame(frame, { ...READY, nonce }); // a second ready: nothing more
+    expect(posted).toHaveBeenCalledTimes(1);
+  });
+
+  test("a ready without the nonce gets the board without a port (no Submit)", async () => {
+    const { frame, posted } = await renderAnswering();
+    fromFrame(frame, { ...READY, nonce: "not-the-nonce" });
+    expect(posted).toHaveBeenCalledTimes(1);
+    expect(posted.mock.calls[0][2]).toBeUndefined();
+    expect(posted.mock.calls[0][0]).toEqual({
+      sagebrush: "board",
+      version: 1,
+      text: TEXT,
+      name: "overnight.board.json",
+    });
+  });
+
+  test("a document that replaced the first one gets nothing", async () => {
+    const { frame, posted, nonce } = await renderAnswering();
+    fireEvent.load(frame);
+    fireEvent.load(frame); // a second document in the frame
+    fromFrame(frame, { ...READY, nonce });
+    expect(posted).not.toHaveBeenCalled();
+  });
+
+  test("a second load closes a granted channel", async () => {
+    const { frame, posted, nonce } = await renderAnswering();
+    fromFrame(frame, { ...READY, nonce });
+    fireEvent.load(frame);
+    const port = posted.mock.calls[0][2][0];
+    expect(await replyOn(port, SUBMIT)).toMatchObject({ sagebrush: "refused" });
+    fireEvent.load(frame); // another document: the channel closes
+    expect(await replyOn(port, SUBMIT)).toBeUndefined();
+  });
+
+  test("without delivery (read-only views) there is no nonce and no port", async () => {
+    const { frame, posted } = await renderBoard();
+    expect(frame.getAttribute("src")).toBe(FRAME);
+    fromFrame(frame, { ...READY, nonce: "anything" });
+    expect(posted.mock.calls[0][2]).toBeUndefined();
+  });
+});
