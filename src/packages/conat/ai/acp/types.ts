@@ -71,6 +71,10 @@ export interface AcpChatContext {
   parent_message_id?: string;
   // Stamped by the harness on durable questions, never inferred from later turns.
   harness_session_id?: string;
+  // The thread's context generation (latest "Context cleared" line id, "" for
+  // none) the session in this request was chosen under. Set by the sender;
+  // the hub replaces it with the generation the turn actually runs in.
+  context_generation?: string;
   // Marks that this user message was sent via "Send Immediately" while an ACP
   // turn was active, so the backend can preserve continue semantics.
   send_mode?: "immediate";

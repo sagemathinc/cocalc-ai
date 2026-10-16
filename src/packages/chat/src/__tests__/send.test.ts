@@ -237,15 +237,17 @@ test("a Context cleared line ends session inference; Codex is keyed by the line"
       thread,
       rows,
       prompt: "hello",
-    }).request.session_id;
-  expect(send(before)).toBe("old-codex-session");
-  expect(
-    send([
-      ...before,
-      row("2026-10-04T00:01:00.000Z", {
-        message_id: "cleared",
-        acp_context_cleared: true,
-      }),
-    ]),
-  ).toBe("cleared");
+    }).request;
+  expect(send(before).session_id).toBe("old-codex-session");
+  expect(send(before).chat.context_generation).toBe("");
+  const after = send([
+    ...before,
+    row("2026-10-04T00:01:00.000Z", {
+      message_id: "cleared",
+      acp_context_cleared: true,
+    }),
+  ]);
+  expect(after.session_id).toBe("cleared");
+  // The hub uses this to spot a session chosen before a later clear.
+  expect(after.chat.context_generation).toBe("cleared");
 });

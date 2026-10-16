@@ -134,6 +134,7 @@ export function prepareChatSend({
       }),
     }),
     thread_title: thread.name,
+    context_generation: sinceCleared.clearedMessageId ?? "",
   };
   const request: AcpRequest & { chat: AcpChatContext } = {
     project_id: projectId,

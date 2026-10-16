@@ -2,7 +2,6 @@
 
 import { Map as iMap } from "immutable";
 import { ChatActions } from "../actions";
-import { initFromSyncDB } from "../sync";
 
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
@@ -16,16 +15,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 const THREAD = "thread-1";
-
-class MockStore {
-  state: any = {};
-  setState(update: any) {
-    this.state = { ...this.state, ...update };
-  }
-  get(key: string) {
-    return this.state[key];
-  }
-}
 
 function makeActions(acpState: iMap<string, string>, messages: any[]): any {
   const actions: any = new (ChatActions as any)("proj-1", "x.chat");
@@ -53,79 +42,33 @@ const message = {
   date: "2026-10-06T04:59:00.000Z",
   message_id: "message-1",
   thread_id: THREAD,
-  // A finished turn can keep its raw row state; only the derived state counts.
-  acp_state: "sent",
   history: [],
 };
 
 describe("clearAgentContext", () => {
+  // The hub fences a turn that started before the clear (it neither saves its
+  // session back nor takes guidance), so clearing never waits for one.
   it.each([
-    ["a running thread", iMap({ [`thread:${THREAD}`]: "running" })],
-    ["a queued message", iMap({ "message:message-1": "queue" })],
-    [
-      "a message keyed by date",
-      iMap({ [`${new Date(message.date).valueOf()}`]: "sending" }),
-    ],
-  ])("refuses while the thread has %s", (_label, acpState) => {
+    ["idle", iMap({ [`thread:${THREAD}`]: "completed" })],
+    ["running a turn", iMap({ [`thread:${THREAD}`]: "running" })],
+    ["holding a queued message", iMap({ "message:message-1": "queue" })],
+    ["sending a message", iMap({ "message:message-1": "sending" })],
+  ])("clears a thread that is %s", (_label, acpState) => {
     const actions = makeActions(acpState as iMap<string, string>, [message]);
-    expect(actions.hasActiveAgentTurn(THREAD)).toBe(true);
-    expect(actions.clearAgentContext(THREAD)).toBe(false);
-    expect(actions.setThreadConfigRecord).not.toHaveBeenCalled();
-    expect(actions.syncdb.set).not.toHaveBeenCalled();
-  });
-
-  it("ignores a message state left over from a send long ago", () => {
-    // Sent yesterday, never acknowledged or answered; the thread is idle.
-    const old = { ...message, date: "2026-10-05T04:59:00.000Z" };
-    for (const state of ["sent", "sending", "queue"]) {
-      const actions = makeActions(iMap({ "message:message-1": state }), [old]);
-      expect(actions.hasActiveAgentTurn(THREAD)).toBe(false);
-    }
-    // The thread's own state still counts however old its messages are.
-    const running = makeActions(
-      iMap({ [`thread:${THREAD}`]: "queue", "message:message-1": "sent" }),
-      [old],
-    );
-    expect(running.hasActiveAgentTurn(THREAD)).toBe(true);
-  });
-
-  it("clears a thread whose only sent rows are delivered guidance", () => {
-    const guidance = {
-      ...message,
-      acp_guidance_delivered_at_ms: 1791780000000,
-      acp_send_mode: "immediate",
-    };
-    const store = new MockStore();
-    initFromSyncDB({
-      syncdb: {
-        get: () => [
-          {
-            event: "chat-thread-state",
-            thread_id: THREAD,
-            active_message_id: "message-0",
-            state: "error",
-          },
-          guidance,
-        ],
-      },
-      store,
-    });
-    const actions = makeActions(store.state.acpState, [guidance]);
-    expect(actions.hasActiveAgentTurn(THREAD)).toBe(false);
-    expect(actions.clearAgentContext(THREAD)).toBe(true);
-  });
-
-  it("clears an idle thread", () => {
-    const actions = makeActions(
-      iMap({ [`thread:${THREAD}`]: "completed", "message:message-1": "done" }),
-      [message],
-    );
-    expect(actions.hasActiveAgentTurn(THREAD)).toBe(false);
     expect(actions.clearAgentContext(THREAD)).toBe(true);
     expect(actions.setThreadConfigRecord).toHaveBeenCalledWith(
       THREAD,
       { agent_session_id: "" },
       { threadId: THREAD },
     );
+    // The marker's id is the thread's new context generation.
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thread_id: THREAD,
+        parent_message_id: "message-1",
+        acp_context_cleared: true,
+      }),
+    );
+    expect(actions.syncdb.commit).toHaveBeenCalled();
   });
 });

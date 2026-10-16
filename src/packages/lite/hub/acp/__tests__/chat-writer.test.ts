@@ -3722,6 +3722,68 @@ describe("ChatStreamWriter", () => {
       writer.dispose?.(true);
     },
   );
+
+  it.each(["acp", "codex"] as const)(
+    "does not save a %s session back after the context was cleared",
+    async (runtimeKind) => {
+      const metadata = {
+        ...baseMetadata,
+        message_date: new Date(200).toISOString(),
+        sender_id: "codex-agent",
+        thread_id: "cleared-thread",
+        context_generation: "",
+      } as AcpChatContext;
+      const config = {
+        event: "chat-thread-config",
+        sender_id: threadConfigSenderId("cleared-thread"),
+        date: CHAT_THREAD_META_ROW_DATE,
+        thread_id: "cleared-thread",
+        acp_config: { model: "gpt-5.3-codex" },
+      };
+      const rows: any[] = [config];
+      const sets: any[] = [];
+      const syncdb: any = {
+        isReady: () => true,
+        get: () => rows,
+        get_one: (where: any) =>
+          rows.find((row) =>
+            Object.entries(where).every(([k, v]) => row[k] === v),
+          ),
+        set: (val: any) => {
+          sets.push(val);
+          rows.push({ ...val });
+        },
+        commit: jest.fn(),
+        save: jest.fn(async () => {}),
+        close: async () => {},
+      };
+      const writer: any = new ChatStreamWriter({
+        metadata,
+        client: makeFakeClient(),
+        approverAccountId: "u",
+        syncdbOverride: syncdb,
+        runtimeKind,
+        logStoreFactory: () => ({ set: async () => {} }) as any,
+      });
+      await writer.waitUntilReady();
+      expect(writer.contextClearedSinceStart()).toBe(false);
+      // Someone clears the context while this turn is still running.
+      rows.push({
+        event: "chat",
+        thread_id: "cleared-thread",
+        message_id: "cleared-1",
+        date: new Date(300).toISOString(),
+        sender_id: "u",
+        acp_context_cleared: true,
+      });
+      expect(writer.contextClearedSinceStart()).toBe(true);
+      await writer.persistSessionId("old-context-session");
+      expect(
+        sets.filter((row) => row.event === "chat-thread-config"),
+      ).toHaveLength(0);
+      writer.dispose?.(true);
+    },
+  );
 });
 
 describe("async attention answers", () => {

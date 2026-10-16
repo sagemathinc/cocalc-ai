@@ -84,6 +84,26 @@ export function messagesSinceContextCleared<T extends ChatRowLike>(
   return { messages };
 }
 
+// A thread's context generation: the id of its latest "Context cleared" line
+// at or before `atMs` ("" if none). A turn keeps the generation it started
+// in, and must not save its session back once the thread has moved on.
+export function contextGeneration(
+  messages: Iterable<ChatRowLike>,
+  atMs = Infinity,
+): string {
+  let latest = -Infinity;
+  let generation = "";
+  for (const row of messages) {
+    if (!isContextClearedMarker(row)) continue;
+    const date = new Date(rowField(row, "date") as any).valueOf();
+    const id = rowField(row, "message_id");
+    if (!(date <= atMs) || date < latest || typeof id !== "string") continue;
+    latest = date;
+    generation = id;
+  }
+  return generation;
+}
+
 export function normalizeCodexMention(model?: string): string | undefined {
   if (!model || model === "codex-agent") return undefined;
   return model;

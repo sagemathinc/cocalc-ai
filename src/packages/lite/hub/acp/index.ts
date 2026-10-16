@@ -104,6 +104,7 @@ import {
   buildChatMessage,
   buildThreadStateRecord,
   computeChatIntegrityReport,
+  contextGeneration,
   deriveAcpLogRefs,
   threadStateRecordKey,
   threadConfigRecordKey,
@@ -1399,6 +1400,25 @@ function syncdbRowsMatching(
   ) as Record<string, unknown>[];
 }
 
+function threadContextGeneration(syncdb: SyncDB, threadId: string): string {
+  return contextGeneration(
+    syncdbRowsMatching(syncdb, { event: "chat", thread_id: threadId }),
+  );
+}
+
+// The generation a request's session was chosen under: stamped by current
+// senders; for older ones, the latest "Context cleared" line before its
+// message. Undefined when unknown.
+function requestContextGeneration(
+  request: AcpRequest,
+  rows: Iterable<Record<string, unknown>>,
+): string | undefined {
+  const stamped = request.chat?.context_generation;
+  if (typeof stamped === "string") return stamped;
+  const at = Date.parse(`${request.chat?.user_message_date ?? ""}`);
+  return Number.isFinite(at) ? contextGeneration(rows, at) : undefined;
+}
+
 function threadConfigRowRank(
   row: Record<string, unknown>,
   threadId: string,
@@ -2210,6 +2230,8 @@ export class ChatStreamWriter {
   private disposePromise?: Promise<void>;
   private saveChain: Promise<void> = Promise.resolve();
   private sessionKey?: string;
+  // The thread's context generation this turn runs in; see contextGeneration.
+  private contextGeneration?: string;
   private logStore?: AKV<AcpStreamMessage[]>;
   private ownsLogStore = false;
   private logStoreName: string;
@@ -2321,6 +2343,21 @@ export class ChatStreamWriter {
   private resolvedThreadId(): string | undefined {
     const threadId = `${this.metadata.thread_id ?? ""}`.trim();
     return threadId || undefined;
+  }
+
+  // True once someone cleared the thread's context after this turn started.
+  contextClearedSinceStart(): boolean {
+    const threadId = this.resolvedThreadId();
+    if (!threadId || !this.syncdb || this.contextGeneration == null)
+      return false;
+    try {
+      return (
+        threadContextGeneration(this.syncdb, threadId) !==
+        this.contextGeneration
+      );
+    } catch {
+      return false;
+    }
   }
 
   private markIntegrityDirty(reason: string): void {
@@ -3020,6 +3057,11 @@ export class ChatStreamWriter {
       }
     }
     this.observePatchflowVersions("init:ready");
+    const stamped = this.metadata.context_generation;
+    this.contextGeneration =
+      typeof stamped === "string"
+        ? stamped
+        : threadContextGeneration(db, `${this.metadata.thread_id}`);
     let current = this.findChatRow();
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
@@ -4760,6 +4802,8 @@ export class ChatStreamWriter {
   private async patchThreadConfig(
     patch: Record<string, unknown>,
     required = false,
+    // Checked synchronously with the write; false skips it.
+    stillValid?: () => boolean,
   ): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) {
@@ -4778,6 +4822,7 @@ export class ChatStreamWriter {
           throw Error("Missing chat thread identity for goal change");
         return;
       }
+      if (stillValid && !stillValid()) return;
       const threadCfgCurrent = preferredThreadConfigRow(this.syncdb, threadId);
       const base = this.toPlainRecord(threadCfgCurrent);
       replaceThreadScopedRow(this.syncdb, THREAD_CONFIG_EVENT, threadId, {
@@ -4805,10 +4850,17 @@ export class ChatStreamWriter {
     if (this.closed || !this.syncdb) return;
     const threadId = this.resolvedThreadId();
     if (!threadId) return;
+    // Once the context was cleared after this turn started, its session
+    // belongs to the old context: saving it would make the next turn resume it.
+    const sameContext = () => !this.contextClearedSinceStart();
     const currentRow = preferredThreadConfigRow(this.syncdb, threadId);
     if (this.runtimeKind === "acp") {
       if (this.recordField(currentRow, "agent_session_id") !== sessionId)
-        await this.patchThreadConfig({ agent_session_id: sessionId });
+        await this.patchThreadConfig(
+          { agent_session_id: sessionId },
+          false,
+          sameContext,
+        );
       return;
     }
     const currentConfig = this.recordField<any>(currentRow, "acp_config");
@@ -4817,12 +4869,16 @@ export class ChatStreamWriter {
         ? currentConfig.toJS()
         : (currentConfig ?? {});
     if (currentConfigObj?.sessionId === sessionId) return;
-    await this.patchThreadConfig({
-      acp_config: {
-        ...(currentConfigObj as Record<string, unknown>),
-        sessionId,
+    await this.patchThreadConfig(
+      {
+        acp_config: {
+          ...(currentConfigObj as Record<string, unknown>),
+          sessionId,
+        },
       },
-    });
+      false,
+      sameContext,
+    );
   }
 
   public readPendingGoal = (): CodexGoalCommand | undefined => {
@@ -8742,7 +8798,22 @@ function queuedConversationSession(syncdb: SyncDB, request: AcpRequest) {
   // Execution must keep it to retire a warm worker, not resume its cached client.
   if (current.runtime && thread.agent_session_id === "")
     current.session_id = "";
-  return queuedAgentSession(request, current);
+  const threadRows = rows.filter(
+    (row) => row?.event === "chat" && row.thread_id === thread.thread_id,
+  );
+  const generation = contextGeneration(threadRows);
+  const chosenIn = requestContextGeneration(request, threadRows);
+  // The context was cleared after this request chose its session: that
+  // session is gone, so run in the current one rather than fail as replaced.
+  const stale = chosenIn != null && chosenIn !== generation;
+  return {
+    ...queuedAgentSession(
+      stale ? { ...request, session_id: undefined } : request,
+      current,
+    ),
+    context_generation: generation,
+    stale,
+  };
 }
 
 async function prepareQueuedUserMessageForExecution({
@@ -8763,10 +8834,14 @@ async function prepareQueuedUserMessageForExecution({
   latestContent?: string;
   currentAgentConfig?: AcpRequest["config"];
   currentAgentSessionId?: string;
+  contextGeneration?: string;
+  staleSession?: boolean;
 }> {
   let latestContent: string | undefined;
   let currentAgentConfig: AcpRequest["config"] | undefined;
   let currentAgentSessionId: string | undefined;
+  let contextGeneration: string | undefined;
+  let staleSession: boolean | undefined;
   await withChatSyncDB({
     client,
     project_id,
@@ -8784,6 +8859,21 @@ async function prepareQueuedUserMessageForExecution({
         const queued = queuedConversationSession(syncdb, request);
         currentAgentConfig = queued.config;
         currentAgentSessionId = queued.session_id;
+        contextGeneration = queued.context_generation;
+      } else if (request) {
+        // A browser-built Codex request keeps its session unless the context
+        // was cleared after it was built; then it runs in the current one.
+        try {
+          const queued = queuedConversationSession(syncdb, request);
+          contextGeneration = queued.context_generation;
+          if (queued.stale) {
+            staleSession = true;
+            currentAgentConfig = queued.config;
+            currentAgentSessionId = queued.session_id;
+          }
+        } catch (err) {
+          logger.debug("could not check the queued turn's context", err);
+        }
       }
       if (current != null) {
         latestContent = getLatestQueuedUserMessageContent(
@@ -8846,7 +8936,13 @@ async function prepareQueuedUserMessageForExecution({
       }
     },
   });
-  return { latestContent, currentAgentConfig, currentAgentSessionId };
+  return {
+    latestContent,
+    currentAgentConfig,
+    currentAgentSessionId,
+    contextGeneration,
+    staleSession,
+  };
 }
 
 async function markRecoveryMessageSuperseded({
@@ -9883,6 +9979,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   let latestQueuedMessageContent: string | undefined;
   let currentAgentConfig: AcpRequest["config"] | undefined;
   let currentAgentSessionId: string | undefined;
+  let contextGeneration: string | undefined;
+  let staleSession = false;
   try {
     const prepared = await prepareQueuedUserMessageForExecution({
       client: conatClient,
@@ -9895,6 +9993,8 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     latestQueuedMessageContent = prepared.latestContent;
     currentAgentConfig = prepared.currentAgentConfig;
     currentAgentSessionId = prepared.currentAgentSessionId;
+    contextGeneration = prepared.contextGeneration;
+    staleSession = prepared.staleSession === true;
   } catch (err) {
     logger.warn("failed preparing queued acp user message for execution", {
       job: job.op_id,
@@ -9934,6 +10034,20 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   ) {
     refreshedRequest.config = currentAgentConfig;
     refreshedRequest.session_id = currentAgentSessionId;
+  } else if (staleSession) {
+    // Only the session moves to the current context; the browser's other
+    // settings for this turn stay as sent.
+    refreshedRequest.config = {
+      ...refreshedRequest.config,
+      sessionId: currentAgentConfig?.sessionId,
+    };
+    refreshedRequest.session_id = currentAgentSessionId;
+  }
+  if (contextGeneration != null && refreshedRequest.chat) {
+    refreshedRequest.chat = {
+      ...refreshedRequest.chat,
+      context_generation: contextGeneration,
+    };
   }
   refreshedRequest.prompt = maybeDecorateQueuedPromptForJob({
     prompt: refreshedRequest.prompt ?? "",
@@ -10352,6 +10466,9 @@ async function trySteerCandidateIds({
   const writer = findChatWriter({ threadId, chat });
   writer?.assertSteerPrincipal(request.account_id);
   assertRunningJobSteerPrincipal(request);
+  // A turn that started before the context was cleared finishes in the old
+  // context; guidance sent now belongs to the next, fresh turn.
+  if (writer?.contextClearedSinceStart()) return { state: "not_steerable" };
   for (const id of candidateIds ?? []) {
     const trimmed = `${id ?? ""}`.trim();
     if (trimmed) {
@@ -11798,7 +11915,8 @@ async function attemptAcpSteerRequest(
       path: request.chat.path,
       fn: async (syncdb) => queuedConversationSession(syncdb, request),
     });
-    if (!session.session_id) return { state: "not_steerable" };
+    // Written before a later context clear: run it as the next turn instead.
+    if (session.stale || !session.session_id) return { state: "not_steerable" };
     request = { ...request, session_id: session.session_id };
   }
 

@@ -409,6 +409,67 @@ it("preserves the explicit reset marker instead of inferring old history", async
   expect((await prepare()).currentAgentSessionId).toBe("replacement-session");
 });
 
+describe("a context clear after admission", () => {
+  const cleared = {
+    event: "chat",
+    thread_id: record.thread_id,
+    message_id: "cleared-1",
+    date: "2026-09-05T08:00:00.000Z",
+    sender_id: accountId,
+    acp_context_cleared: true,
+  };
+  const prepare = (request: AcpRequest) =>
+    acpTestInternals.prepareQueuedUserMessageForExecution({
+      client: {} as Client,
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      user_message_id: enqueueAcpJob(request).user_message_id,
+      request,
+    });
+
+  it("runs a queued Claude message fresh instead of failing", async () => {
+    const source = { ...claudeTurnRequest(), session_id: sessionId };
+    source.chat!.context_generation = "";
+    rows[0].agent_runtime = source.runtime;
+    rows[0].agent_session_id = "";
+    rows.push(cleared);
+    const prepared = await prepare(source);
+    expect(prepared.currentAgentSessionId).toBe("");
+    expect(prepared.contextGeneration).toBe("cleared-1");
+  });
+
+  it("moves a queued Codex message to the fresh context", async () => {
+    const source = turnRequest({ model: "gpt-6-astra", sessionId });
+    source.session_id = sessionId;
+    source.chat!.context_generation = "";
+    delete rows[0].acp_config.sessionId;
+    rows.push(cleared);
+    const prepared = await prepare(source);
+    expect(prepared.staleSession).toBe(true);
+    // A cleared Codex thread is keyed by its "Context cleared" line.
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
+    expect(prepared.currentAgentConfig?.sessionId).toBeUndefined();
+    expect(prepared.contextGeneration).toBe("cleared-1");
+  });
+
+  it("dates an unstamped request against the clear", async () => {
+    const before = turnRequest({ model: "gpt-6-astra", sessionId });
+    before.session_id = sessionId;
+    before.chat!.user_message_date = "2026-09-05T07:59:00.000Z";
+    rows.push(cleared);
+    expect((await prepare(before)).staleSession).toBe(true);
+    const after = turnRequest({ model: "gpt-6-astra", sessionId: "new" });
+    after.session_id = "new";
+    after.chat!.message_id = "assistant-after";
+    after.chat!.parent_message_id = "user-after";
+    after.chat!.user_message_date = "2026-09-05T08:01:00.000Z";
+    const prepared = await prepare(after);
+    expect(prepared.staleSession).toBeUndefined();
+    expect(prepared.contextGeneration).toBe("cleared-1");
+  });
+});
+
 it.each(["", "replacement-session"])(
   "rejects late first-turn Claude answers after context changed to %j",
   async (currentSession) => {

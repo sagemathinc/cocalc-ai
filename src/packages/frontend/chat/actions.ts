@@ -132,8 +132,6 @@ const logger = getLogger("frontend:chat:actions");
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const warnedMissingThreadIds = new Set<string>();
 let lastGeneratedChatMessageMs = 0;
-// Longer than a send can take: acp-api.ts retries its ack for up to 10 minutes.
-const AGENT_SEND_IN_FLIGHT_MS = 15 * 60 * 1000;
 
 export function shouldOptimisticallyStopGeneratingLocally(opts?: {
   threadId?: string;
@@ -1283,42 +1281,11 @@ export class ChatActions extends Actions<ChatState> {
     return thread_id;
   };
 
-  // True while the thread has an agent turn running, starting, or queued.
-  hasActiveAgentTurn = (threadKey: string): boolean => {
-    const thread_id = this.normalizeThreadId(threadKey);
-    if (!thread_id) return false;
-    const acpState = this.store?.get("acpState");
-    const active = (state: unknown) =>
-      typeof state === "string" &&
-      ["queue", "sending", "sent", "running"].includes(
-        state.trim().toLowerCase(),
-      );
-    // The thread-state row is authoritative for turns the runtime has taken.
-    if (active(acpState?.get?.(`thread:${thread_id}`))) return true;
-    // A message's own state only covers the hand-off before the runtime takes
-    // it. That state is written by the sending browser and stays behind if no
-    // reply or receipt ever clears it, so it stops counting once the send
-    // could no longer be in progress.
-    const recentSince =
-      webapp_client.server_time().valueOf() - AGENT_SEND_IN_FLIGHT_MS;
-    for (const message of this.getMessagesInThread(thread_id) ?? []) {
-      const message_id = `${(message as any)?.message_id ?? ""}`.trim();
-      const date = new Date((message as any)?.date ?? NaN).valueOf();
-      if (!(date >= recentSince)) continue;
-      if (
-        (message_id && active(acpState?.get?.(`message:${message_id}`))) ||
-        (Number.isFinite(date) && active(acpState?.get?.(`${date}`)))
-      ) {
-        return true;
-      }
-    }
-    return false;
-  };
-
   // Clear the agent's context in place: its next turn starts a new session, and
   // a "Context cleared" line marks where. Earlier messages stay visible.
-  // Refuses while a turn is active or queued: that turn would finish by saving
-  // its old session id again, so the next message would resume it.
+  // Works at any time. That line's id is the thread's new context generation:
+  // a turn already running finishes in the old context, and the hub neither
+  // saves its session back nor steers new guidance into it.
   clearAgentContext = (threadKey: string): boolean => {
     if (!this.isSyncdbReady()) {
       this.warnSyncdbNotReady();
@@ -1326,7 +1293,6 @@ export class ChatActions extends Actions<ChatState> {
     }
     const thread_id = this.normalizeThreadId(threadKey);
     if (!thread_id) return false;
-    if (this.hasActiveAgentTurn(thread_id)) return false;
     const metadata = this.getThreadMetadata(threadKey, { threadId: thread_id });
     if (metadata?.agent_runtime != null) {
       // The stored empty session id is the harness's explicit reset marker.

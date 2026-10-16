@@ -4154,10 +4154,6 @@ export function MyAgentsWorkspacePage({
           workbenchEnabled: true,
         });
       await waitForChatReady(chatActions);
-      if (chatActions.hasActiveAgentTurn(agent.thread_id))
-        throw new Error(
-          "This agent is still working. Stop it or wait for its current and queued messages to finish, then clear its context.",
-        );
       if (!chatActions.clearAgentContext(agent.thread_id))
         throw new Error("Unable to clear this agent's context");
       await chatActions.syncdb?.save();

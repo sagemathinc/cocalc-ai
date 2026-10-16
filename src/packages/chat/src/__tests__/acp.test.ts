@@ -4,6 +4,7 @@ import {
   appendStreamMessage,
   appendStreamMessages,
   buildCodexAcpConfig,
+  contextGeneration,
   getAgentMessageTexts,
   getBestResponseText,
   getInterruptedResponseMarkdown,
@@ -1274,5 +1275,32 @@ describe("tokenBeforeFinalDot", () => {
     tokenBeforeFinalDot(`${"a".repeat(2_000_000)}.x`);
     tokenBeforeFinalDot(`${"a ".repeat(1_000_000)}.`);
     expect(Date.now() - started).toBeLessThan(500);
+  });
+});
+
+describe("contextGeneration", () => {
+  const marker = (message_id: string, date: string) => ({
+    event: "chat",
+    message_id,
+    date,
+    acp_context_cleared: true,
+  });
+  const rows = [
+    { event: "chat", message_id: "m1", date: "2026-10-01T00:00:00.000Z" },
+    marker("clear-2", "2026-10-03T00:00:00.000Z"),
+    marker("clear-1", "2026-10-02T00:00:00.000Z"),
+  ];
+
+  it("is the latest Context cleared line, in date order", () => {
+    expect(contextGeneration([])).toBe("");
+    expect(contextGeneration(rows.slice(0, 1))).toBe("");
+    expect(contextGeneration(rows)).toBe("clear-2");
+  });
+
+  it("can be read as of a time", () => {
+    const at = (iso: string) => contextGeneration(rows, Date.parse(iso));
+    expect(at("2026-10-01T12:00:00.000Z")).toBe("");
+    expect(at("2026-10-02T12:00:00.000Z")).toBe("clear-1");
+    expect(at("2026-10-03T00:00:00.000Z")).toBe("clear-2");
   });
 });
