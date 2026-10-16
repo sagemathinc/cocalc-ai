@@ -1,12 +1,17 @@
 /** @jest-environment jsdom */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ClaudePaymentStatus } from "../claude-payment-status";
+import {
+  ClaudePaymentStatus,
+  clearClaudeCredentialsForTests,
+  useClaudePaymentLabel,
+} from "../claude-payment-status";
 import { writeHarnessCredentialSelection } from "../harness-credential-selection";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "account-a",
+  useAccountOtherSetting: () => undefined,
   redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
@@ -45,6 +50,7 @@ const hour = 3600;
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
+  clearClaudeCredentialsForTests();
 });
 
 test("payment status shows saved subscription limits on focus and dismisses with Escape", async () => {
@@ -69,7 +75,8 @@ test("payment status shows saved subscription limits on focus and dismisses with
       onConfigure={configure}
     />,
   );
-  expect(listCredentials).not.toHaveBeenCalled();
+  // One list call names the footer button; opening reloads the usage.
+  await waitFor(() => expect(listCredentials).toHaveBeenCalledTimes(1));
   const user = userEvent.setup();
   await user.tab();
   expect(
@@ -155,4 +162,87 @@ test("API-key modes show billing text, not subscription usage", async () => {
     await screen.findByText("Anthropic bills API usage to the key owner."),
   ).toBeTruthy();
   expect(screen.queryByText(/% used/)).toBeNull();
+});
+
+test("the footer names the selected subscription, as the user named it", async () => {
+  // William, 2026-10-16: the footer said only "Claude subscription".
+  choose("account-subscription");
+  listCredentials.mockResolvedValue(credential({ label: "claude1@sagemath" }));
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: "claude1@sagemath: payment settings",
+    }),
+  ).toBeTruthy();
+});
+
+test("a window on pace to hit its limit shows a warning", async () => {
+  choose("account-subscription");
+  const now = Math.floor(Date.now() / 1000);
+  listCredentials.mockResolvedValue(
+    credential({
+      claude_usage: {
+        observed_at: new Date(now * 1000).toISOString(),
+        // 60% used with 3 of 7 days left: about 105% by the reset.
+        windows: {
+          seven_day: { utilization: 0.6, resets_at: now + 72 * hour },
+        },
+      },
+    }),
+  );
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  await userEvent.setup().tab();
+  expect(
+    await screen.findByRole("button", {
+      name: /This week: on pace to reach the limit before it resets \(about 105%\)/,
+    }),
+  ).toBeTruthy();
+});
+
+test("switching the selection never shows the previous credential's name", async () => {
+  // Review on #1114: the phone summary kept the old row while the new one
+  // loaded, and forever if that load failed.
+  choose("account-subscription");
+  listCredentials.mockResolvedValue(credential({ label: "Alpha" }));
+  const rendered: (string | undefined)[] = [];
+  function Label() {
+    const label = useClaudePaymentLabel("project-a", "thread-a");
+    rendered.push(label);
+    return <span>label: {label}</span>;
+  }
+  render(<Label />);
+  expect(await screen.findByText("label: Alpha")).toBeTruthy();
+  clearClaudeCredentialsForTests();
+  listCredentials.mockRejectedValue(new Error("hub unavailable"));
+  const switchedAt = rendered.length;
+  act(() =>
+    writeHarnessCredentialSelection({
+      accountId: "account-a",
+      projectId: "project-a",
+      threadKey: "thread-a",
+      credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "00000000-0000-4000-8000-000000000002",
+      },
+    }),
+  );
+  expect(await screen.findByText("label: Claude subscription")).toBeTruthy();
+  await waitFor(() => expect(listCredentials).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("label: Alpha")).toBeNull();
+  // Not even for one render after the switch.
+  expect(rendered.slice(switchedAt)).not.toContain("Alpha");
 });
