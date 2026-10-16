@@ -7,9 +7,10 @@
 // host writes one every second, and a host or Podman client that goes away
 // closes stdin, which stops the command at once; the lease only covers a client
 // that hangs without exiting. It must outlast host event-loop stalls: under heavy
-// disk I/O those reach tens of seconds (alpha host1, 2026-10-15: up to 130 s),
-// and the old 5 s lease killed every running agent command with exit 130.
-export const SANDBOX_COMMAND_LEASE_MS = 120_000;
+// disk I/O those reach minutes (alpha host1, 2026-10-15: up to 130 s), and the
+// old 5 s lease killed every running agent command with exit 130. Keep it well
+// above the longest stall seen, with room for the host to catch up.
+export const SANDBOX_COMMAND_LEASE_MS = 300_000;
 
 // Runs inside the project. A stdin lease prevents an orphan command when the
 // host or Podman client disappears without delivering a signal in-container.

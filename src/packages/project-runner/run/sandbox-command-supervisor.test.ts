@@ -101,12 +101,15 @@ function leaseHarness(supervisor: string) {
   };
 }
 
-test("a host stall of several seconds does not kill the command", () => {
+test("a host stall longer than any seen does not kill the command", () => {
   // Alpha host1, 2026-10-15: acp-worker event-loop stalls of 2-130 s under
   // disk load killed agent commands with exit 130 under the old 5 s lease.
-  expect(SANDBOX_COMMAND_LEASE_MS).toBeGreaterThanOrEqual(60_000);
+  const longestObservedStallMs = 130_000;
+  expect(SANDBOX_COMMAND_LEASE_MS).toBeGreaterThanOrEqual(
+    2 * longestObservedStallMs,
+  );
   const lease = leaseHarness(SANDBOX_COMMAND_SUPERVISOR);
-  lease.advance(10_000);
+  lease.advance(longestObservedStallMs + 5_000);
   expect(lease.killed()).toBe(false);
   lease.heartbeat();
   lease.advance(SANDBOX_COMMAND_LEASE_MS - 1_000);
