@@ -19,9 +19,12 @@ const rid = () => `00000000-0000-4000-8000-${`${++n}`.padStart(12, "0")}`;
 const question = {
   prompt: "What does it mean for a group action to be transitive?",
   options: [
-    "one-orbit-correct",
-    "confuses-transitive-with-2-transitive",
-    "confuses-with-faithful",
+    {
+      name: "one-orbit-correct",
+      about: "Any point can be moved to any other.",
+    },
+    { name: "confuses-transitive-with-2-transitive" },
+    { name: "confuses-with-faithful" },
   ],
 };
 
@@ -32,8 +35,7 @@ function fakeProvider(
   const calls: any[] = [];
   return {
     calls,
-    microusdPerInputToken: 0.042,
-    maxInputTokens: (q, a) => 100 + q.prompt.length + a.length,
+    maxCostMicrousd: (q, a) => 0.042 * (1000 + q.prompt.length + a.length),
     decide: async (q, a) => {
       calls.push({ q, a });
       if (fail) throw new Error("provider said: secret upstream detail");
@@ -44,7 +46,7 @@ function fakeProvider(
             { name: "one-orbit-correct", p: 0.15 },
           ],
           confidence: 0.9,
-          inputTokens: 120,
+          costMicrousd: 5.04,
         }
       );
     },
@@ -90,7 +92,7 @@ test("an answer is classified into the question's own options, and paid for", as
   expect(provider.calls[0].a).toBe(
     "any point can be moved to any other pair of points",
   );
-  // reserved an upper bound, committed the reported tokens (120 * 0.042 -> 6)
+  // reserved an upper bound, committed the reported cost (5.04 -> 6 micro-dollars)
   expect(events[0]).toMatch(/^reserve \d+$/);
   expect(events[1]).toBe("commit 6");
 });
@@ -263,7 +265,6 @@ test("only the question's own options come back, with probabilities in [0, 1]", 
       { name: 5 as any, p: 0.5 },
     ],
     confidence: 2,
-    inputTokens: 10,
   });
   expect(sanitized).toEqual({
     options: [

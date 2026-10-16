@@ -23,6 +23,7 @@ export const DECIDE_LIMITS = {
   promptCharacters: 4_000,
   options: 32,
   optionNameCharacters: 80,
+  optionAboutCharacters: 1_000,
   callsPerAccountPerMinute: 20,
 } as const;
 
@@ -31,22 +32,26 @@ const RATE_WINDOW_MS = 60_000;
 export interface DecideQuestion {
   /** The question's text, from the posted board. */
   prompt: string;
-  /** Its self-describing option names, from the posted board. */
-  options: string[];
+  /** Its self-describing options, from the posted board: the name carries
+   * the meaning, `about` (Markdown) only clarifies it. */
+  options: DecideOption[];
+}
+
+export interface DecideOption {
+  name: string;
+  about?: string;
 }
 
 export interface DecideProviderResult {
   options: { name: string; p: number }[];
   confidence: number;
-  /** As reported by the provider, for the cost. */
-  inputTokens: number;
+  /** The call's cost as the provider reports it, in micro-dollars. */
+  costMicrousd?: number;
 }
 
 export interface DecideProvider {
-  /** An upper bound on the input tokens of a request, before sending it. */
-  maxInputTokens(question: DecideQuestion, answer: string): number;
-  /** Micro-dollars per input token (output is free for Jev). */
-  microusdPerInputToken: number;
+  /** An upper bound on a request's cost in micro-dollars, before sending it. */
+  maxCostMicrousd(question: DecideQuestion, answer: string): number;
   decide(
     question: DecideQuestion,
     answer: string,
@@ -132,23 +137,30 @@ export function validateDecideRequest(
     throw codedError("This question can't be checked.", 400);
   }
   const names = new Set<string>();
-  for (const name of options) {
+  const clean: DecideOption[] = [];
+  for (const option of options) {
+    const name = (option as DecideOption)?.name;
+    const about = (option as DecideOption)?.about;
     if (
       typeof name !== "string" ||
       !name.trim() ||
       name.length > DECIDE_LIMITS.optionNameCharacters ||
-      names.has(name)
+      names.has(name) ||
+      (about != null &&
+        (typeof about !== "string" ||
+          about.length > DECIDE_LIMITS.optionAboutCharacters))
     ) {
       throw codedError("This question can't be checked.", 400);
     }
     names.add(name);
+    clean.push(about?.trim() ? { name, about: about.trim() } : { name });
   }
   const text = typeof answer === "string" ? answer.trim() : "";
   if (!text) throw codedError("There is no answer to check.", 400);
   if (text.length > DECIDE_LIMITS.answerCharacters) {
     throw codedError("The answer is too long to check.", 400);
   }
-  return { question: { prompt, options: [...options] }, answer: text };
+  return { question: { prompt, options: clean }, answer: text };
 }
 
 /** Only the question's own option names, with probabilities in [0, 1],
@@ -157,7 +169,7 @@ export function sanitizeDecideResult(
   question: DecideQuestion,
   result: DecideProviderResult,
 ): DecideResult {
-  const allowed = new Set(question.options);
+  const allowed = new Set(question.options.map((o) => o.name));
   const seen = new Set<string>();
   const clamp = (x: unknown) =>
     typeof x === "number" && Number.isFinite(x)
@@ -203,10 +215,9 @@ export async function boardDecide({
   const valid = validateDecideRequest(question, answer);
   checkRate(accountId, now);
   claimRequestId(accountId, requestId, now);
-  const maxTokens = provider.maxInputTokens(valid.question, valid.answer);
   const reserved = Math.max(
     1,
-    Math.ceil(maxTokens * provider.microusdPerInputToken),
+    Math.ceil(provider.maxCostMicrousd(valid.question, valid.answer)),
   );
   const reservation = await funding.reserve({
     accountId,
@@ -220,15 +231,13 @@ export async function boardDecide({
     await reservation.release();
     throw codedError("The answer couldn't be checked. Try again.", 502);
   }
-  // Commit what the provider reports, never more than was reserved.
-  const tokens =
-    Number.isFinite(result?.inputTokens) && result.inputTokens > 0
-      ? result.inputTokens
-      : maxTokens;
-  const cost = Math.min(
-    reserved,
-    Math.max(1, Math.ceil(tokens * provider.microusdPerInputToken)),
-  );
+  // Commit what the provider reports (the reservation when it reports
+  // nothing), never more than was reserved.
+  const reported = result?.costMicrousd;
+  const cost =
+    typeof reported === "number" && Number.isFinite(reported) && reported >= 0
+      ? Math.min(reserved, Math.max(1, Math.ceil(reported)))
+      : reserved;
   await reservation.commit(cost);
   return sanitizeDecideResult(valid.question, result);
 }
