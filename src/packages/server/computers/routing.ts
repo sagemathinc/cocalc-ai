@@ -3,10 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Where computer operations run: everything at the account's home bay,
-// project attestations at the project's owning bay. Fresh auth for the
-// human-only widenings (approve, extend) is checked at the home bay, as for
-// connectors. Plan: src/.agents/computers-plan-2026-10-11.md ("Multi-bay").
+// Where computer calls run: everything at the account's home bay. Fresh auth
+// for approval is checked there, as for connectors.
+// Design: src/.agents/computers-direct-host-2026-10-16.md.
 
 import {
   createInterBayComputersClient,
@@ -18,28 +17,14 @@ import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
-import { attestProjectLocal, explainProjectIneligibility } from "./attestation";
-import {
-  extendComputer,
-  getComputerByRef,
-  getComputerForAgent,
-  listComputersForAgent,
-  listComputers,
-  renameComputer,
-  revokeComputer,
-  setComputerNotes,
-  setEffectivePolicy,
-} from "./computers";
+import { listComputers, renameComputer, revokeComputer } from "./computers";
 import {
   approveComputerRequest,
   createComputerRequest,
   declineComputerRequest,
-  getPairingView,
   listComputerRequests,
-  submitPairing,
 } from "./requests";
 import { computersSite } from "./site";
-import { issueComputerTicket } from "./tickets";
 
 async function requireFreshAuth(account_id: string, session_hash?: string) {
   await requireDangerousSessionAuth({
@@ -64,52 +49,28 @@ export const computersAtThisBay: InterBayComputersApi = {
       pairing_url: `${origin}/c/${r.request_id}`,
     }));
   },
-  getPairingView: async ({ request_id }) => await getPairingView(request_id),
-  submitPairing: async (opts) => await submitPairing(opts),
   approveRequest: async ({
     account_id,
     session_hash,
     request_id,
-    transcript_hash,
-    agent_network_generation,
+    pairing_phrase,
   }) => {
     await requireFreshAuth(account_id, session_hash);
     return await approveComputerRequest({
       account_id,
       request_id,
-      transcript_hash,
-      agent_network_generation,
+      pairing_phrase,
     });
   },
   declineRequest: async (opts) => await declineComputerRequest(opts),
   list: async ({ account_id }) => await listComputers(account_id),
-  listForAgent: async ({ account_id, agent_id, project_id }) =>
-    await listComputersForAgent(account_id, agent_id, project_id),
-  getForAgent: async ({ account_id, agent_id, project_id, computer }) =>
-    await getComputerForAgent(account_id, agent_id, project_id, computer),
-  get: async ({ account_id, computer }) =>
-    await getComputerByRef(account_id, computer),
   revoke: async (opts) => await revokeComputer(opts),
-  extend: async ({ account_id, session_hash, computer_id, seconds }) => {
-    await requireFreshAuth(account_id, session_hash);
-    return await extendComputer({ account_id, computer_id, seconds });
-  },
   rename: async (opts) => await renameComputer(opts),
-  setNotes: async ({ account_id, computer, ...rest }) => {
-    const { computer_id } = await getComputerByRef(account_id, computer);
-    return await setComputerNotes({ account_id, computer_id, ...rest });
-  },
-  setEffectivePolicy: async (opts) => await setEffectivePolicy(opts),
-  issueTicket: async (opts) =>
-    await issueComputerTicket({ ...opts, operation: opts.operation as any }),
-  attestProject: async (opts) => await attestProjectLocal(opts),
-  explainProjectIneligibility: async (opts) =>
-    await explainProjectIneligibility(opts),
 };
 
 /**
  * The line the owner runs on the computer: this (home) bay's public origin
- * and the request id. The machine talks to the pairing endpoints there.
+ * and the request id. The machine talks to the computers endpoints there.
  */
 export async function pairingUrl(request_id: string): Promise<string> {
   return `${await pairingOrigin()}/c/${request_id}`;

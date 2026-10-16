@@ -26,6 +26,21 @@ import {
 import { isProjectViewerRole } from "@cocalc/util/project-access";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
+import {
+  isComputerPrincipal,
+  type ComputerPrincipal,
+} from "@cocalc/conat/computers/principal";
+import {
+  computerPrincipalAllows,
+  computerSubjectRequesterAllows,
+  isComputerSubject,
+} from "@cocalc/conat/computers/subjects";
+import {
+  computerStillAllowed,
+  isComputerDropped,
+  projectServesComputer,
+} from "./computers";
+import { computersEnabledOnHost } from "./sqlite/computer-access";
 import { isProjectHostApiKeySubjectAllowed } from "@cocalc/conat/auth/project-host-api-key-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
@@ -129,13 +144,30 @@ function userFromBearerToken({
 }: {
   token: string;
   host_id: string;
-}): CoCalcUser {
+}): CoCalcUser | ComputerPrincipal {
   const claims = verifyProjectHostAuthToken({
     token,
     host_id,
     // Verify-only key: project-host does not get signing capability.
     public_key: getProjectHostAuthPublicKey(),
   });
+  if (claims.act === "computer") {
+    const { account_id, project_id } = claims.computer!;
+    if (!computersEnabledOnHost()) throw new Error("computers are turned off");
+    if (isComputerDropped(claims.sub)) throw new Error("computer revoked");
+    if (!projectServesComputer(project_id, account_id)) {
+      throw new Error(
+        "this computer's project isn't here, or has collaborators besides its owner",
+      );
+    }
+    return {
+      auth_actor: "computer",
+      computer_id: claims.sub,
+      computer_account_id: account_id,
+      computer_project_id: project_id,
+      auth_lease_exp_s: claims.exp,
+    };
+  }
   if (claims.act === "hub") {
     return { hub_id: claims.sub || "hub" };
   }
@@ -322,6 +354,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     const token = readBearerToken(socket);
     if (token) {
       const user = userFromBearerToken({ token, host_id });
+      if (isComputerPrincipal(user)) return user;
       if (user.account_id) {
         if (getProjectHostManagedEgressBlockedMessage(user.account_id)) {
           throwManagedEgressBlocked(user.account_id);
@@ -412,6 +445,15 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     if (user == null || user?.error) {
       return false;
     }
+    // A paired computer: its own subjects and replies, while its token,
+    // revocation and project still allow it ("" is the server's periodic
+    // recheck of the socket itself).
+    if (isComputerPrincipal(user)) {
+      return (
+        computerStillAllowed(user) &&
+        (subject === "" || computerPrincipalAllows(user, subject, type))
+      );
+    }
 
     const userType = getCoCalcUserType(user);
     if (userType === "hub") {
@@ -440,6 +482,18 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     }
 
     const userId = getCoCalcUserId(user);
+    // Computers serve exactly one project: only that project's processes
+    // (its secret, or an agent token bound to it) may ask them, and nobody
+    // but the computers receives there.
+    if (isComputerSubject(subject)) {
+      const project_id =
+        userType === "project"
+          ? userId
+          : user.auth_actor === "agent"
+            ? user.auth_project_id
+            : undefined;
+      return computerSubjectRequesterAllows(project_id, subject, type);
+    }
     if (user.auth_actor === "agent") {
       if (!user.auth_project_id) return false;
       const projectSubject = extractProjectSubject(subject);

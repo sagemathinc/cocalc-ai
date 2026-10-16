@@ -856,6 +856,11 @@ export interface HostControlApi {
     users?: any;
     runtime_lifecycle_revision?: number;
   }) => Promise<void>;
+  /**
+   * A paired computer was revoked: refuse it from now on (its socket closes
+   * at the next recheck, within 15 s). See project-host/computers.ts.
+   */
+  dropComputer: (opts: { computer_id: string }) => Promise<void>;
   updateProjectRunQuota: (opts: {
     project_id: string;
     run_quota?: any;
@@ -1245,6 +1250,14 @@ export interface HostStatusApi {
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
+  /**
+   * Computers on this host (every 15 s): whether the site's computers switch
+   * is on, and the computers of its projects revoked recently enough that a
+   * token issued before could still be valid. See project-host/computers.ts.
+   */
+  syncComputerAccess: (opts: {
+    host_id: string;
+  }) => Promise<{ enabled: boolean; revoked: string[] }>;
 }
 
 type HostMaintenanceApi = Pick<

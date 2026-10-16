@@ -26,6 +26,8 @@ function validate(account_id: string, request: AgentMemoryHomeRequest) {
   )
     return;
   if (request?.kind === "owner") return;
+  if (request?.kind === "agent-retired" && isValidUUID(request.agent_id))
+    return;
   throw new Error("invalid agent memory request");
 }
 
@@ -64,10 +66,19 @@ export const memoryHomeControl: AgentRpcControlApi["memory"] = async ({
         account_id,
         request.project_id,
         request.request,
+        request.agent,
       );
     case "turn-index":
-      return (await memory.turnIndex(account_id, request.project_id)) ?? null;
+      return (
+        (await memory.turnIndex(
+          account_id,
+          request.project_id,
+          request.agent,
+        )) ?? null
+      );
     case "owner":
       return await memory.owner(account_id, request.request);
+    case "agent-retired":
+      return await memory.agentRetired(account_id, request.agent_id);
   }
 };

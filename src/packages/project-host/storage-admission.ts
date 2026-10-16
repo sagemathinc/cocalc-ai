@@ -30,6 +30,13 @@ const logger = getLogger("project-host:storage-admission");
 const PROJECT_POOL_IO_PRESSURE =
   "/sys/fs/cgroup/cocalc-project-pool/io.pressure";
 const BEES_IO_PRESSURE = "/sys/fs/cgroup/cocalc-bees/io.pressure";
+const MAINTENANCE_IO_PRESSURE = "/sys/fs/cgroup/cocalc-maintenance/io.pressure";
+const MAINTENANCE_IO_MAX = "/sys/fs/cgroup/cocalc-maintenance/io.max";
+const MAINTENANCE_IO_STAT = "/sys/fs/cgroup/cocalc-maintenance/io.stat";
+const DISKSTATS = "/proc/diskstats";
+// Busy fraction below which a disk counts as idle for attributing a
+// maintenance stall to its own io.max throttle.
+const DEFAULT_MAINTENANCE_IDLE_UTILIZATION = 0.5;
 const RUNTIME_STORAGE = "/usr/local/sbin/cocalc-runtime-storage";
 const DEFAULT_SAMPLE_MS = 5_000;
 const DEFAULT_CONTENDED_FULL_AVG10 = 5;
@@ -44,6 +51,16 @@ type StorageAdmissionInputs = {
   host_io_full_avg10?: number;
   project_pool_io_full_avg10?: number;
   bees_io_full_avg10?: number;
+  maintenance_io_full_avg10?: number;
+  // Whether cocalc-maintenance has a finite io.max. Only then is its stall
+  // the throttle's own doing rather than real disk contention.
+  maintenance_io_capped?: boolean;
+  // Whether every disk maintenance did I/O on during the last interval was
+  // mostly idle. cgroup PSI covers all devices and directions, and the cap
+  // covers only some (rustic's cache is on the uncapped root disk), so a cap
+  // alone does not prove a stall is the throttle's doing; a stall while the
+  // disks it uses are idle does.
+  maintenance_disks_idle?: boolean;
   starting_projects: number;
   stopping_projects: number;
   btrfs_mutation_locks: number;
@@ -112,6 +129,116 @@ function readIoFullAvg10(path: string): number | undefined {
   }
 }
 
+// io.max lines are "<major:minor> rbps=<n|max> wbps=... riops=... wiops=...";
+// a cleared limit is all "max" (or no line at all).
+function ioMaxCapped(text: string): boolean {
+  for (const line of text.split("\n")) {
+    for (const field of line.trim().split(/\s+/).slice(1)) {
+      const value = field.split("=")[1];
+      if (value && value !== "max") return true;
+    }
+  }
+  return false;
+}
+
+function readIoMaxCapped(path: string): boolean {
+  try {
+    return ioMaxCapped(readFileSync(path, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+type DiskActivity = {
+  at_ms: number;
+  // Per "major:minor": milliseconds the device was busy (diskstats io_ticks).
+  busy_ms: Map<string, number>;
+  // Per "major:minor": I/Os maintenance completed there (io.stat).
+  maintenance_ios: Map<string, number>;
+};
+
+function parseDiskstatsBusyMs(text: string): Map<string, number> {
+  const busy = new Map<string, number>();
+  for (const line of text.split("\n")) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 13) continue;
+    const ticks = Number(fields[12]);
+    if (Number.isFinite(ticks)) busy.set(`${fields[0]}:${fields[1]}`, ticks);
+  }
+  return busy;
+}
+
+function parseIoStatIos(text: string): Map<string, number> {
+  const ios = new Map<string, number>();
+  for (const line of text.split("\n")) {
+    const [device, ...fields] = line.trim().split(/\s+/);
+    if (!device || !fields.length) continue;
+    let total = 0;
+    for (const field of fields) {
+      const [key, value] = field.split("=");
+      if (key === "rios" || key === "wios" || key === "dios") {
+        const n = Number(value);
+        if (Number.isFinite(n)) total += n;
+      }
+    }
+    ios.set(device, total);
+  }
+  return ios;
+}
+
+function readDiskActivity(now: number): DiskActivity | undefined {
+  try {
+    return {
+      at_ms: now,
+      busy_ms: parseDiskstatsBusyMs(readFileSync(DISKSTATS, "utf8")),
+      maintenance_ios: parseIoStatIos(
+        readFileSync(MAINTENANCE_IO_STAT, "utf8"),
+      ),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+// True only when maintenance did I/O in the interval and every device it used
+// was busy less than maxUtilization of the time. Unknown means false, so the
+// stall keeps counting as host pressure.
+function maintenanceStallOnIdleDisks(
+  previous: DiskActivity | undefined,
+  next: DiskActivity | undefined,
+  maxUtilization: number,
+): boolean {
+  if (!previous || !next) return false;
+  const elapsed = next.at_ms - previous.at_ms;
+  if (!(elapsed > 0)) return false;
+  let used = 0;
+  for (const [device, ios] of next.maintenance_ios) {
+    if (ios - (previous.maintenance_ios.get(device) ?? 0) <= 0) continue;
+    used++;
+    const before = previous.busy_ms.get(device);
+    const after = next.busy_ms.get(device);
+    if (before == null || after == null) return false;
+    if ((after - before) / elapsed >= maxUtilization) return false;
+  }
+  return used > 0;
+}
+
+let lastDiskActivity: DiskActivity | undefined;
+
+function readMaintenanceDisksIdle(): boolean {
+  const next = readDiskActivity(Date.now());
+  const idle = maintenanceStallOnIdleDisks(
+    lastDiskActivity,
+    next,
+    finiteNonNegative(
+      process.env.COCALC_PROJECT_HOST_STORAGE_MAINTENANCE_IDLE_UTILIZATION,
+      DEFAULT_MAINTENANCE_IDLE_UTILIZATION,
+    ),
+  );
+  lastDiskActivity = next;
+  return idle;
+}
+
 function defaultReadInputs(): StorageAdmissionInputs {
   const projectCounts = countProjectsByStates(["starting", "stopping"]);
   const locks = getBtrfsMutationLockStatus();
@@ -121,6 +248,9 @@ function defaultReadInputs(): StorageAdmissionInputs {
     host_io_full_avg10: hostIoFullAvg10,
     project_pool_io_full_avg10: readIoFullAvg10(PROJECT_POOL_IO_PRESSURE),
     bees_io_full_avg10: readIoFullAvg10(BEES_IO_PRESSURE),
+    maintenance_io_full_avg10: readIoFullAvg10(MAINTENANCE_IO_PRESSURE),
+    maintenance_io_capped: readIoMaxCapped(MAINTENANCE_IO_MAX),
+    maintenance_disks_idle: readMaintenanceDisksIdle(),
     starting_projects: projectCounts.starting ?? 0,
     stopping_projects: projectCounts.stopping ?? 0,
     btrfs_mutation_locks: locks.length,
@@ -141,23 +271,49 @@ function maxDefined(...values: Array<number | undefined>): number | undefined {
   return defined.length > 0 ? Math.max(...defined) : undefined;
 }
 
-function uncontainedIoFullAvg10(
-  host: number | undefined,
-  projectPool: number | undefined,
-  bees: number | undefined,
+// A maintenance stall is discounted only with a finite cap AND idle disks:
+// without a cap (I/O policy disabled or observe), or while a disk it uses is
+// busy (e.g. rustic's cache on the uncapped root disk), it is real contention
+// and must count as host pressure.
+function throttledMaintenanceIoFullAvg10(
+  inputs: StorageAdmissionInputs,
 ): number | undefined {
+  return inputs.maintenance_io_capped && inputs.maintenance_disks_idle
+    ? inputs.maintenance_io_full_avg10
+    : undefined;
+}
+
+function uncontainedIoFullAvg10(
+  inputs: StorageAdmissionInputs,
+): number | undefined {
+  const host = inputs.host_io_full_avg10;
   if (host == null || !Number.isFinite(host)) return undefined;
-  // Root PSI includes project-pool stalls caused by our own io.max limits and
-  // BEES workers waiting on their expected background reads. Neither should
-  // be counted again as uncontained pressure. The maximum is used because
-  // cgroup PSI intervals can overlap and therefore are not additive.
-  return Math.max(0, host - (maxDefined(projectPool, bees) ?? 0));
+  // Root PSI includes project-pool stalls caused by our own io.max limits,
+  // BEES workers waiting on their expected background reads, and backups or
+  // snapshots stalled by the maintenance cgroup's io.max throttle. None of
+  // these should be counted again as uncontained pressure. The maximum is used
+  // because cgroup PSI intervals can overlap and therefore are not additive.
+  return Math.max(
+    0,
+    host -
+      (maxDefined(
+        inputs.project_pool_io_full_avg10,
+        inputs.bees_io_full_avg10,
+        throttledMaintenanceIoFullAvg10(inputs),
+      ) ?? 0),
+  );
 }
 
 function effectiveIoFullAvg10(
   inputs: StorageAdmissionInputs,
 ): number | undefined {
-  if (inputs.bees_io_full_avg10 == null) {
+  // A throttled BEES or maintenance task stalls on its own io.max limit even
+  // on an idle disk; that wait is the containment working, not contention.
+  const background = maxDefined(
+    inputs.bees_io_full_avg10,
+    throttledMaintenanceIoFullAvg10(inputs),
+  );
+  if (background == null) {
     return maxDefined(
       inputs.host_io_full_avg10,
       inputs.project_pool_io_full_avg10,
@@ -167,7 +323,7 @@ function effectiveIoFullAvg10(
     inputs.project_pool_io_full_avg10,
     inputs.host_io_full_avg10 == null
       ? undefined
-      : Math.max(0, inputs.host_io_full_avg10 - inputs.bees_io_full_avg10),
+      : Math.max(0, inputs.host_io_full_avg10 - background),
   );
 }
 
@@ -322,11 +478,7 @@ export function createStorageAdmissionController(
 
   const status = (): HostStorageAdmissionMetrics => {
     const effective = effectiveIoFullAvg10(lastInputs);
-    const uncontained = uncontainedIoFullAvg10(
-      lastInputs.host_io_full_avg10,
-      lastInputs.project_pool_io_full_avg10,
-      lastInputs.bees_io_full_avg10,
-    );
+    const uncontained = uncontainedIoFullAvg10(lastInputs);
     return {
       schema_version: 1,
       collected_at: iso(lastInputs.sampled_at_ms),
@@ -343,6 +495,17 @@ export function createStorageAdmissionController(
         : {}),
       ...(lastInputs.bees_io_full_avg10 != null
         ? { bees_io_full_avg10: lastInputs.bees_io_full_avg10 }
+        : {}),
+      ...(lastInputs.maintenance_io_full_avg10 != null
+        ? {
+            maintenance_io_full_avg10: lastInputs.maintenance_io_full_avg10,
+          }
+        : {}),
+      ...(lastInputs.maintenance_io_capped != null
+        ? { maintenance_io_capped: lastInputs.maintenance_io_capped }
+        : {}),
+      ...(lastInputs.maintenance_disks_idle != null
+        ? { maintenance_disks_idle: lastInputs.maintenance_disks_idle }
         : {}),
       ...(uncontained != null
         ? { uncontained_io_full_avg10: uncontained }
@@ -611,5 +774,9 @@ export function resetStorageAdmissionControllerForTest(): void {
 
 export const _test = {
   configuredMode,
+  ioMaxCapped,
+  parseDiskstatsBusyMs,
+  parseIoStatIos,
+  maintenanceStallOnIdleDisks,
   maxDefined,
 };

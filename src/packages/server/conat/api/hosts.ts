@@ -2979,10 +2979,14 @@ export async function getAgentMemoryContext({
   host_id,
   project_id,
   owner_account_id,
+  chat_path,
+  thread_id,
 }: {
   host_id?: string;
   project_id: string;
   owner_account_id: string;
+  chat_path?: string;
+  thread_id?: string;
 }): Promise<{ notes: number; index: string } | null> {
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
@@ -2994,10 +2998,31 @@ export async function getAgentMemoryContext({
     owner_account_id,
   });
   const { withMemoryHome } = await import("@cocalc/server/agents/memory-home");
+  // The registered agent of this chat thread, if any: its own scope comes
+  // first in the index. Identities live with the project, on this bay.
+  let agent: { agent_id: string; name: string } | undefined;
+  if (typeof chat_path === "string" && typeof thread_id === "string") {
+    try {
+      const { agentStore } = await import("@cocalc/server/agents/store");
+      const identity = await agentStore().find(
+        project_id,
+        chat_path,
+        thread_id,
+      );
+      if (identity)
+        agent = { agent_id: identity.agent_id, name: identity.name };
+    } catch (err) {
+      logger.debug("agent memory context: no agent identity", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+  }
   return (
     (await withMemoryHome(owner_account_id, {
       kind: "turn-index",
       project_id,
+      ...(agent ? { agent } : {}),
     })) ?? null
   );
 }

@@ -34,7 +34,10 @@ import {
   configureBtrfsBackgroundMutationGuard,
   withBtrfsMutationContext,
 } from "./operation-cache";
-import { TEMP_RUSTIC_SNAPSHOT_PREFIX } from "./snapshots";
+import {
+  RollingSnapshotRetentionSkipped,
+  TEMP_RUSTIC_SNAPSHOT_PREFIX,
+} from "./snapshots";
 
 describe("parseRusticSnapshotsOutput", () => {
   it("parses grouped rustic snapshot JSON", () => {
@@ -395,6 +398,61 @@ describe("scheduled backup replacement", () => {
       { limit: 1, runner },
     );
     expect(backup).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a scheduled backup's upload wrapper through to the backup", async () => {
+    const { rustic, snapshots } = volume();
+    const wrapUpload = jest.fn();
+    const backup = jest.fn(async (opts) => {
+      expect(opts.wrapUpload).toBe(wrapUpload);
+      const created = {
+        id: "new",
+        time: new Date("2026-09-23T00:00:00.000Z"),
+        tags: opts.tags,
+        summary: {},
+        snapshotGeneration: 1,
+      };
+      snapshots.push(created);
+      return created;
+    });
+    (rustic as any).backup = backup;
+    await rustic.update(
+      { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+      { limit: 1, wrapUpload },
+    );
+    expect(backup).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips all retention when the volume changed during the upload", async () => {
+    const { rustic, snapshots } = volume();
+    // Old enough that rolling retention would otherwise delete it.
+    snapshots.unshift({
+      id: "expired",
+      time: new Date("2026-01-01T00:00:00.000Z"),
+      tags: [],
+      summary: {},
+    });
+    (rustic as any).backup = jest.fn(async ({ tags }) => {
+      snapshots.push({
+        id: "uploaded",
+        time: new Date(),
+        tags,
+        summary: {},
+      });
+      throw new RollingSnapshotRetentionSkipped("project_volume_archiving");
+    });
+    await expect(
+      rustic.update(
+        { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+        { limit: 5 },
+      ),
+    ).rejects.toBeInstanceOf(RollingSnapshotRetentionSkipped);
+    expect((rustic as any).forget).not.toHaveBeenCalled();
+    expect(snapshots.map(({ id }) => id)).toEqual([
+      "expired",
+      "old",
+      "uploaded",
+    ]);
   });
 
   it("uses the normal limit when no replacement slot is needed", async () => {
@@ -979,6 +1037,79 @@ describe("SubvolumeRustic.backup", () => {
     expect(backupFsRusticMock).not.toHaveBeenCalled();
     expect(created).toEqual(
       expect.objectContaining({ id: "snap-runner", oversized_files }),
+    );
+  });
+
+  it("uploads inside the wrapper, after creating the temporary snapshot", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const order: string[] = [];
+    btrfsMock.mockImplementation(async ({ args }) => {
+      if (args?.[0] === "subvolume" && args?.[1] === "show") {
+        return { stdout: "Generation: 42\n" };
+      }
+      order.push(`btrfs ${args?.[1]}`);
+    });
+    const runner = jest.fn(async () => {
+      order.push("upload");
+      return {
+        time: "2026-04-30T21:00:00.000Z",
+        id: "snap-runner",
+        summary: {},
+      };
+    });
+    const wrapUpload = jest.fn(async (upload) => {
+      order.push("unlock");
+      try {
+        return await upload();
+      } finally {
+        order.push("relock");
+      }
+    });
+
+    const created = await rustic.backup({ runner, wrapUpload });
+
+    expect(created.id).toBe("snap-runner");
+    expect(order).toEqual([
+      "btrfs snapshot",
+      "unlock",
+      "upload",
+      "relock",
+      "btrfs delete",
+    ]);
+  });
+
+  it("deletes the temporary snapshot when the upload wrapper rejects", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const runner = jest.fn(async () => ({
+      time: "2026-04-30T21:00:00.000Z",
+      id: "snap-runner",
+      summary: {},
+    }));
+    await expect(
+      rustic.backup({
+        runner,
+        wrapUpload: async (upload) => {
+          await upload();
+          throw new RollingSnapshotRetentionSkipped(
+            "project_volume_lifecycle_changed",
+          );
+        },
+      }),
+    ).rejects.toBeInstanceOf(RollingSnapshotRetentionSkipped);
+    expect(btrfsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: expect.arrayContaining(["subvolume", "delete"]),
+      }),
     );
   });
 

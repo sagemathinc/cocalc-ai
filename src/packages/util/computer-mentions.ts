@@ -4,9 +4,9 @@
  */
 
 // @name references to the account's computers in chat (plan:
-// src/.agents/computers-plan-2026-10-11.md). A reference is identity only:
+// src/.agents/computers-direct-host-2026-10-16.md). A reference is identity only:
 // it tells the agent which computer the person means; using it is checked
-// when the agent asks for a ticket, as always.
+// by the project host, as always.
 
 export interface ComputerMentionReference {
   version: 1;
@@ -92,7 +92,7 @@ export function computerMentionsNote(
   return [
     "Computers mentioned in this human turn (the person's own machines connected to CoCalc; identity only, not permission):",
     ...references.map((r) => `- @${r.name}: computer ${r.computer_id}`),
-    "Address each by its exact id, not its @name (a name can later belong to another computer): run commands with `cocalc computer exec ID -- 'a shell line'` (it waits; see --timeout), or start longer work with `cocalc computer run ID --description ... -- ...` (`cocalc computer --help`).",
-    "If you can't use one (it isn't in `cocalc computer list`, or the command is refused), tell the person you don't have access to it; don't request a new computer for it.",
+    "Address each by its exact id, not its @name (a name can later belong to another computer): run commands with `cocalc computer exec ID -- 'a shell line'` (it waits; see --timeout). For work that should keep going, start it in the background there, e.g. `nohup ... > log 2>&1 &`.",
+    "A computer serves only the one project it is attached to. If you can't use one (it isn't in `cocalc computer list`, or the command is refused), tell the person; they connect computers in CoCalc's settings.",
   ].join("\n");
 }

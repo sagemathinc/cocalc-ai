@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { computerAccessForHost } from "@cocalc/server/computers/computers";
 import { conat } from "@cocalc/backend/conat";
 import {
   createHostStatusService,
@@ -738,6 +739,12 @@ export async function initHostStatusService() {
           [host_id, accepted_project_ids, checkedAt, getConfiguredBayId()],
         );
         return { delete_project_ids };
+      },
+      async syncComputerAccess({ host_id }) {
+        if (!host_id) {
+          throw Error("host_id is required");
+        }
+        return await computerAccessForHost(host_id);
       },
       async syncAccountRevocations({
         host_id,

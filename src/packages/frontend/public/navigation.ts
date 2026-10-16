@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { isPublicTarget } from "./routes";
+import { getPublicRedirectPath, isPublicTarget } from "./routes";
 
 type PublicNavigationListener = (pathname: string, search: string) => void;
 
@@ -65,6 +65,12 @@ export function navigatePublic(href: string, replace = false): void {
   if (url == null) {
     window.location.assign(href);
     return;
+  }
+  // Follow a permanent redirect before the address enters the history, as
+  // the browser would for a full page load.
+  const redirectPath = getPublicRedirectPath(url.pathname);
+  if (redirectPath != null) {
+    url.pathname = redirectPath;
   }
   const next = `${url.pathname}${url.search}${url.hash}`;
   if (replace) {

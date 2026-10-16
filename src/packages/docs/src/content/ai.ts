@@ -169,8 +169,10 @@ Only the account that originally registered the agent can use **Start new
 thread**. Everyone following that shared agent then sees its new conversation.
 
 This does not delete messages, undo file changes, or reset the software
-environment. Finish or cancel running and queued work, and disable scheduled
-work before continuing.
+environment. **Clear context** works at any time: a running turn, or a queued
+message starting at that same moment, finishes with the old context; later
+turns start fresh. Before **Start new
+thread**, finish or cancel running and queued work, and disable scheduled work.
 
 ## Copy an agent from the CLI
 

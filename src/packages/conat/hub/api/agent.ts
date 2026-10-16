@@ -87,6 +87,7 @@ export const agent = {
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
   reportRuntime: authFirstRequireHostWithAccountTarget,
+  describeNetworkSelf: authFirstRequireHostWithAccountTarget,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
@@ -582,6 +583,20 @@ export interface AgentApi {
       provider: AgentPaymentProvider;
     },
   ): Promise<ResolvedAgentPaymentSelection>;
+  /**
+   * Host starting a turn of an issued identity run: the @name peers use for
+   * this agent and its networks, for the turn context. Undefined when the
+   * agent is in no network.
+   */
+  describeNetworkSelf(
+    opts: AgentHostAuth & {
+      agent_id: string;
+      source_project_id: string;
+      run_id: string;
+    },
+  ): Promise<
+    import("@cocalc/conat/agents/personal").AgentNetworkSelf | undefined
+  >;
   /** Host admitting a turn: which runtime the agent uses. */
   reportRuntime(
     opts: AgentHostAuth & {

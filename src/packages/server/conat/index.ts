@@ -74,7 +74,6 @@ import { startFrontendAssetHealthMaintenance } from "@cocalc/server/monitoring/f
 import { startProjectArchiveLifecycleMaintenance } from "@cocalc/server/projects/archive-lifecycle-maintenance";
 import { startCommercialReceivablesMaintenance } from "@cocalc/server/commercial-orders/maintenance";
 import { startCrmOutreachWorker } from "@cocalc/server/crm/outreach/worker";
-import { startComputerStateDelivery } from "@cocalc/server/computers/delivery";
 
 export { loadConatConfiguration };
 
@@ -136,8 +135,6 @@ export function startConatApiBackgroundWorkers(): void {
     );
   }
   startMoveLroWorker();
-  // Signed state (revocation, floors, policy) to connected computers.
-  startComputerStateDelivery();
   startBackgroundAutoGrowMaintenance();
   startDedicatedHostSpendMaintenance();
   startHostAvailabilityMaintenance();

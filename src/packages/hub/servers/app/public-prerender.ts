@@ -25,14 +25,18 @@ import {
   PUBLIC_FEATURES_SECONDARY_CTA,
 } from "@cocalc/util/public-features-index";
 import {
+  getPublicAboutIntro,
   getPublicTeamMember,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
-  PUBLIC_ABOUT_INTRO,
-  PUBLIC_ABOUT_MISSION,
+  PUBLIC_ABOUT_HISTORY,
   PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_ABOUT_TRUST,
+  PUBLIC_TEAM_BILLING_CONTACT,
   PUBLIC_TEAM_MEMBERS,
+  type PublicAboutTextPart,
 } from "@cocalc/util/public-about-content";
 import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import {
@@ -41,11 +45,11 @@ import {
 } from "@cocalc/util/public-guides";
 import {
   getPublicHomeHighlights,
+  isPublicCocalcAiSite,
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_INTRO,
   PUBLIC_HOME_SECONDARY_CTA,
-  PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
 import { getDocsEntry } from "@cocalc/docs";
 import {
@@ -160,7 +164,6 @@ function renderHome(
   <ul>${getPublicHomeHighlights(config)
     .map((highlight) => `<li>${htmlEscape(highlight)}</li>`)
     .join("")}</ul>
-  <p>${htmlEscape(PUBLIC_HOME_TRUST_LINE)}</p>
 </header>
 <section>
   <h2>Agents work where your project lives.</h2>
@@ -568,15 +571,51 @@ ${groups}
 </main>`;
 }
 
-function renderAboutOverview(basePath: string): string {
+// Shared About text, as the React page renders it: links resolve against the
+// site's base path.
+function renderAboutText(
+  basePath: string,
+  parts: readonly PublicAboutTextPart[],
+): string {
+  return parts
+    .map(({ path, text }) =>
+      path == null ? htmlEscape(text) : publicLink(basePath, path, text),
+    )
+    .join("");
+}
+
+function renderAboutOverview(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   const principles = PUBLIC_ABOUT_PRINCIPLES.map(
     ({ body, title }) =>
       `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
   ).join("");
+  // As on the React page, a fact with a path links its value and detail.
+  const facts = PUBLIC_ABOUT_TRUST.facts
+    .map(({ detail, path, value }) => {
+      const content = `<strong>${htmlEscape(value)}</strong> ${htmlEscape(
+        detail,
+      )}`;
+      return `<li>${
+        path == null
+          ? content
+          : `<a href="${htmlEscape(publicPath(basePath, path))}">${content}</a>`
+      }</li>`;
+    })
+    .join("");
+  const { link, note } = PUBLIC_ABOUT_TRUST;
   const audiences = PUBLIC_ABOUT_AUDIENCES.map(
     ({ body, title }) =>
       `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
   ).join("");
+  const timeline = PUBLIC_ABOUT_HISTORY.timeline
+    .map(
+      ({ body, year }) =>
+        `<li><strong>${htmlEscape(year)}</strong> ${htmlEscape(body)}</li>`,
+    )
+    .join("");
   const team = PUBLIC_TEAM_MEMBERS.map(
     ({ name, slug, title }) =>
       `<li>${publicLink(
@@ -585,19 +624,37 @@ function renderAboutOverview(basePath: string): string {
         `${name}, ${title}`,
       )}</li>`,
   ).join("");
+  // The React page ends with PublicNextStep, the shared call to action that
+  // no crawler fallback renders, so its heading is not repeated here.
   return `<main data-cocalc-public-prerender="about" style="${ARTICLE_STYLE}">
 <header>
   <p>SageMath, Inc. · The company behind CoCalc</p>
   <h1>${htmlEscape(PUBLIC_ABOUT_HEADLINE)}</h1>
-  <p>${htmlEscape(PUBLIC_ABOUT_INTRO)}</p>
+  <p>${renderAboutText(
+    basePath,
+    getPublicAboutIntro(isPublicCocalcAiSite(config)),
+  )}</p>
 </header>
 <section>
-  <h2>Our mission</h2>
-  <p>${htmlEscape(PUBLIC_ABOUT_MISSION)}</p>
+  <p>How we build</p>
+  <h2>${htmlEscape(PUBLIC_ABOUT_PRINCIPLES_HEADLINE)}</h2>
   <p>${htmlEscape(PUBLIC_ABOUT_REASON)}</p>
+  <ul>${principles}</ul>
 </section>
-<section><h2>How we build</h2><ul>${principles}</ul></section>
+<section>
+  <p>${htmlEscape(PUBLIC_ABOUT_TRUST.eyebrow)}</p>
+  <h2>${htmlEscape(PUBLIC_ABOUT_TRUST.headline)}</h2>
+  <p>${htmlEscape(PUBLIC_ABOUT_TRUST.intro)}</p>
+  <ul>${facts}</ul>
+  <p><strong>${htmlEscape(note.title)}</strong> ${htmlEscape(note.body)}</p>
+  <p>${publicLink(basePath, link.path, link.label)}</p>
+</section>
 <section><h2>Who we serve</h2><ul>${audiences}</ul></section>
+<section>
+  <p>${htmlEscape(PUBLIC_ABOUT_HISTORY.eyebrow)}</p>
+  <h2>${htmlEscape(PUBLIC_ABOUT_HISTORY.headline)}</h2>
+  <ul>${timeline}</ul>
+</section>
 <section><h2>Meet the team</h2><ul>${team}</ul><p>${publicLink(
     basePath,
     "about/team",
@@ -606,16 +663,26 @@ function renderAboutOverview(basePath: string): string {
 </main>`;
 }
 
-function renderAboutTeam(basePath: string): string {
+function renderAboutTeam(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   const members = PUBLIC_TEAM_MEMBERS.map(
     ({ cardText, name, slug, title }) => `<li>
   <h2>${publicLink(basePath, `about/team/${slug}`, `${name}, ${title}`)}</h2>
   <p>${htmlEscape(cardText)}</p>
 </li>`,
   ).join("");
+  const { label, path, text, url } = PUBLIC_TEAM_BILLING_CONTACT;
+  const billingHref = isPublicCocalcAiSite(config)
+    ? publicPath(basePath, path)
+    : url;
   return `<main data-cocalc-public-prerender="about-team" style="${ARTICLE_STYLE}">
 <header><p>SageMath, Inc.</p><h1>Meet the people behind CoCalc</h1></header>
 <ul>${members}</ul>
+<p>${htmlEscape(text)} <a href="${htmlEscape(billingHref)}">${htmlEscape(
+    label,
+  )}</a>.</p>
 <p>${publicLink(basePath, "about", "About CoCalc")}</p>
 </main>`;
 }
@@ -634,12 +701,16 @@ function renderAboutTeamMember(basePath: string, slug?: string): string {
 </main>`;
 }
 
-function renderAbout(route: PublicMetadataRoute, basePath: string): string {
+function renderAbout(
+  route: PublicMetadataRoute,
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
   switch (route.route?.view) {
     case "about":
-      return renderAboutOverview(basePath);
+      return renderAboutOverview(basePath, config);
     case "about-team":
-      return renderAboutTeam(basePath);
+      return renderAboutTeam(basePath, config);
     case "about-team-member":
       return renderAboutTeamMember(basePath, route.route.teamSlug);
     // Events are database-backed. Do not render a static list that could
@@ -747,7 +818,7 @@ export function renderPublicRoutePrerender(
     return renderGuides(basePath, resolvedConfig);
   }
   if (route.section === "about") {
-    return renderAbout(route, basePath);
+    return renderAbout(route, basePath, resolvedConfig);
   }
   if (route.section === "support") {
     return renderSupport(route, basePath);

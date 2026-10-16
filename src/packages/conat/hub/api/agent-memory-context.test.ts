@@ -17,6 +17,27 @@ describe("hosts.getAgentMemoryContext auth", () => {
     });
   });
 
+  it("keeps the turn's chat thread, so the index can list its agent's notes", async () => {
+    const args = await hosts.getAgentMemoryContext({
+      args: [
+        {
+          project_id: PROJECT,
+          owner_account_id: ACCOUNT,
+          chat_path: "/home/user/a.chat",
+          thread_id: "t1",
+        },
+      ],
+      host_id: HOST,
+    });
+    expect(args[0]).toEqual({
+      project_id: PROJECT,
+      owner_account_id: ACCOUNT,
+      chat_path: "/home/user/a.chat",
+      thread_id: "t1",
+      host_id: HOST,
+    });
+  });
+
   it("strips account_id, so the account must not be sent that way", async () => {
     const args = await hosts.getAgentMemoryContext({
       args: [{ project_id: PROJECT, account_id: ACCOUNT }],

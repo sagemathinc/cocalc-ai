@@ -34,7 +34,6 @@ import {
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_INTRO,
   PUBLIC_HOME_SECONDARY_CTA,
-  PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
@@ -476,16 +475,6 @@ function Hero({
             </li>
           ))}
         </ul>
-        <Paragraph
-          className="cocalc-public-home-trust-line"
-          style={{
-            color: PUBLIC_COLORS.mutedText,
-            fontSize: PUBLIC_TYPE.caption,
-            margin: 0,
-          }}
-        >
-          {PUBLIC_HOME_TRUST_LINE}
-        </Paragraph>
       </Flex>
       <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
         <img

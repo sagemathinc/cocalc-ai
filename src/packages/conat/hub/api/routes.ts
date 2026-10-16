@@ -28,6 +28,22 @@ export type HubApiRoute =
       // by its link token. Its owning bay is the project's.
       owner: "collab-invite";
       key: (args: any[]) => unknown;
+    }
+  | {
+      // Several projects, possibly on several bays. The call runs once per
+      // owning bay, with the project ids cut down to that bay's projects, and
+      // the per-project results are merged in input order. The method takes
+      // `project_ids` in its first argument, returns one result per project
+      // (with `project_id`), and reports any project its bay does not own as
+      // a per-project error.
+      owner: "projects";
+      key: (args: any[]) => unknown;
+      /** The method's result for a project whose bay failed or did not answer. */
+      errorResult: (
+        project_id: string,
+        error: string,
+        code?: string | number,
+      ) => Record<string, unknown>;
     };
 
 export type CollabInviteRouteKey = { invite_id?: string; token?: string };
@@ -55,12 +71,21 @@ const collabInviteFromOpts: HubApiRoute = {
   }),
 };
 
+const hiddenProjects: HubApiRoute = {
+  owner: "projects",
+  key: (args) => args?.[0]?.project_ids,
+  errorResult: (project_id, error) => ({ project_id, success: false, error }),
+};
+
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
   "projects.getProjectAddress": projectFromOpts,
   "projects.getProjectActiveOperation": projectFromOpts,
+  // Hiding is per account, but stored in each project's users map.
+  "projects.setProjectHidden": projectFromOpts,
+  "projects.setProjectsHidden": hiddenProjects,
   // Host placement and moves run where the project, its runtime slot and its
   // operations live; fresh auth for a move asks the caller's home bay.
   "projects.moveProject": projectFromOpts,
@@ -145,6 +170,8 @@ export function hubApiRouteKey(
   route: HubApiRoute,
   args: any[],
 ): string | CollabInviteRouteKey | undefined {
+  // A call on several projects is split by bay instead (splitProjectIds).
+  if (route.owner === "projects") return;
   const key = route.key(args);
   if (route.owner === "project") {
     return typeof key === "string" && isValidUUID(key) ? key : undefined;
@@ -162,4 +189,45 @@ export function hubApiRouteKey(
     out.token = token;
   }
   return out.invite_id || out.token ? out : undefined;
+}
+
+// A call on several projects takes at most this many ids.
+export const MAX_PROJECTS_PER_CALL = 1000;
+
+/**
+ * Project ids as a call on several projects uses them: trimmed, valid UUIDs
+ * in lower case (as the database returns them), empty ones dropped,
+ * duplicates removed, in order. Throws on more than MAX_PROJECTS_PER_CALL.
+ */
+export function normalizeProjectIds(project_ids: unknown[]): string[] {
+  if (project_ids.length > MAX_PROJECTS_PER_CALL) {
+    throw new Error(
+      `at most ${MAX_PROJECTS_PER_CALL} projects may be given in one call`,
+    );
+  }
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const project_id of project_ids) {
+    let id = `${project_id ?? ""}`.trim();
+    if (!id) continue;
+    if (isValidUUID(id)) id = id.toLowerCase();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * The project ids of a call on several projects, normalized as the method
+ * normalizes them, or undefined if the call has no list.
+ */
+export function splitProjectIds(
+  route: HubApiRoute,
+  args: any[],
+): string[] | undefined {
+  if (route.owner !== "projects") return;
+  const ids = route.key(args);
+  if (!Array.isArray(ids)) return;
+  return normalizeProjectIds(ids);
 }

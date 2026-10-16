@@ -4,7 +4,6 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { listSigningKeyDirectoryLocal } from "@cocalc/server/computers/signing-keys";
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
 import { createInterBaySessionAuthHandler } from "@cocalc/conat/inter-bay/session-auth";
@@ -596,7 +595,6 @@ import {
   setSiteSettingsOnSeed,
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
-import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
@@ -772,7 +770,6 @@ async function startBayRegistryService(): Promise<void> {
   const impl: InterBayBayRegistryApi = {
     register: async (opts) => await registerBayPresenceLocal(opts),
     list: async (opts) => await listBayRegistryLocal(opts),
-    computerSigningKeys: async () => await listSigningKeyDirectoryLocal(),
   };
   services.push(
     ...createInterBayBayRegistryHandlers({
@@ -2696,12 +2693,6 @@ async function startProjectCollabInviteService(): Promise<void> {
       await leaveOrDeleteProjectsForAccount({
         account_id,
         project_ids,
-      }),
-    setProjectsHidden: async ({ account_id, project_ids, hide }) =>
-      await setLocalProjectsHidden({
-        account_id,
-        project_ids,
-        hide,
       }),
     respond: async ({
       account_id,

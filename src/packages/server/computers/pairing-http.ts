@@ -3,44 +3,47 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The unauthenticated pairing endpoints the machine calls while it pairs
-// (/api/v2/computers/pairing/*). Nothing here grants access: the owner still
-// approves the transcript with fresh auth. The request id is not secret, so
-// these are rate-limited per address, and a second claimant invalidates the
-// request instead of replacing the first key.
-// Plan: src/.agents/computers-plan-2026-10-11.md ("Enrollment").
+// The endpoints a machine calls (/api/v2/computers/*): pairing, then a host
+// token every few minutes. Pairing grants nothing by itself: the owner
+// approves with fresh auth. The request id is not secret, so these are
+// rate-limited per address, and a second claim invalidates the request.
+// Design: src/.agents/computers-direct-host-2026-10-16.md.
 
-import type { PairingStatus, PairingView } from "@cocalc/util/computers/api";
-import { CanonicalEncodingError } from "@cocalc/util/computers/canonical";
-import { ProtocolError } from "@cocalc/util/computers/protocol";
-import { PolicyError } from "@cocalc/util/computers/policy";
+import type {
+  HostConnection,
+  PairingClaim,
+  PairingStatus,
+} from "@cocalc/util/computers/api";
+import { OperationError } from "@cocalc/util/computers/operations";
 import getLogger from "@cocalc/backend/logger";
 import {
   ComputerRequestError,
+  claimComputerRequest,
   getPairingStatus,
   getPairingView,
-  submitPairing,
 } from "./requests";
 import {
-  ComputerSessionError,
-  createLoginChallenge,
-  type LoginChallenge,
-  type LoginEnded,
-} from "./sessions";
+  ComputerRevokedError,
+  ComputerUnavailableError,
+  connectComputer,
+} from "./computers";
 import { assertComputersEnabled } from "./enabled";
 
 const logger = getLogger("server:computers:pairing-http");
 
-/** Per address, per minute: reads (view and status polling) and claims. */
+/** Per address, per minute. */
 export const PAIRING_READS_PER_MINUTE = 120;
-export const PAIRING_SUBMITS_PER_MINUTE = 10;
+export const PAIRING_CLAIMS_PER_MINUTE = 10;
+export const CONNECTS_PER_MINUTE = 60;
 const MAX_TRACKED_ADDRESSES = 10_000;
 
-type Kind = "read" | "submit";
-const windows = new Map<
-  string,
-  { start: number; read: number; submit: number }
->();
+type Kind = "read" | "claim" | "connect";
+const LIMITS: Record<Kind, number> = {
+  read: PAIRING_READS_PER_MINUTE,
+  claim: PAIRING_CLAIMS_PER_MINUTE,
+  connect: CONNECTS_PER_MINUTE,
+};
+const windows = new Map<string, { start: number } & Record<Kind, number>>();
 
 function admit(address: string, kind: Kind, now: number): void {
   const key = address || "unknown";
@@ -52,17 +55,15 @@ function admit(address: string, kind: Kind, now: number): void {
       }
       // Still full of live windows: refuse rather than grow without bound.
       if (windows.size >= MAX_TRACKED_ADDRESSES) {
-        throw new ComputerRequestError("too many pairing attempts; try again");
+        throw new ComputerUnavailableError("too many requests; try again");
       }
     }
-    w = { start: now, read: 0, submit: 0 };
+    w = { start: now, read: 0, claim: 0, connect: 0 };
     windows.set(key, w);
   }
-  const limit =
-    kind === "read" ? PAIRING_READS_PER_MINUTE : PAIRING_SUBMITS_PER_MINUTE;
-  if (w[kind] >= limit) {
-    throw new ComputerRequestError(
-      "too many pairing attempts from this address; try again in a minute",
+  if (w[kind] >= LIMITS[kind]) {
+    throw new ComputerUnavailableError(
+      "too many requests from this address; try again in a minute",
     );
   }
   w[kind] += 1;
@@ -72,28 +73,34 @@ export function resetPairingRateLimitForTesting(): void {
   windows.clear();
 }
 
+export type PairingResult<T> =
+  | T
+  | { error: string; revoked?: true; transient?: true };
+
 /** Errors a caller may see; anything else is logged and reported generically. */
-function publicError(err: unknown): { error: string } {
-  if (
-    err instanceof ComputerRequestError ||
-    err instanceof ComputerSessionError ||
-    err instanceof ProtocolError ||
-    err instanceof CanonicalEncodingError ||
-    err instanceof PolicyError
-  ) {
+function publicError(err: unknown): {
+  error: string;
+  revoked?: true;
+  transient?: true;
+} {
+  if (err instanceof ComputerRevokedError) {
+    return { error: err.message, revoked: true };
+  }
+  if (err instanceof ComputerUnavailableError) {
+    return { error: err.message, transient: true };
+  }
+  if (err instanceof ComputerRequestError || err instanceof OperationError) {
     return { error: err.message };
   }
-  logger.warn("pairing request failed", err);
-  return { error: "pairing failed; try again" };
+  logger.warn("computer request failed", err);
+  return { error: "that failed; try again", transient: true };
 }
-
-export type PairingResult<T> = T | { error: string };
 
 export async function pairingView(
   params: { request_id?: unknown },
   address: string,
   now = Date.now(),
-): Promise<PairingResult<PairingView>> {
+): Promise<PairingResult<Awaited<ReturnType<typeof getPairingView>>>> {
   try {
     admit(address, "read", now);
     await assertComputersEnabled();
@@ -103,24 +110,17 @@ export async function pairingView(
   }
 }
 
-export async function pairingSubmit(
-  params: {
-    request_id?: unknown;
-    transcript?: unknown;
-    signing_public_key?: unknown;
-    resolved_policy?: unknown;
-  },
+export async function pairingClaim(
+  params: { request_id?: unknown; machine?: unknown },
   address: string,
   now = Date.now(),
-): Promise<PairingResult<{ pairing_phrase: string; transcript_hash: string }>> {
+): Promise<PairingResult<PairingClaim>> {
   try {
-    admit(address, "submit", now);
+    admit(address, "claim", now);
     await assertComputersEnabled();
-    return await submitPairing({
+    return await claimComputerRequest({
       request_id: `${params.request_id ?? ""}`,
-      transcript: params.transcript,
-      signing_public_key: `${params.signing_public_key ?? ""}`,
-      resolved_policy: params.resolved_policy,
+      machine: params.machine,
       now,
     });
   } catch (err) {
@@ -129,16 +129,15 @@ export async function pairingSubmit(
 }
 
 export async function pairingStatus(
-  params: { request_id?: unknown; transcript_hash?: unknown },
+  params: { request_id?: unknown; secret?: unknown },
   address: string,
   now = Date.now(),
 ): Promise<PairingResult<PairingStatus>> {
   try {
     admit(address, "read", now);
-    await assertComputersEnabled();
     return await getPairingStatus({
       request_id: `${params.request_id ?? ""}`,
-      transcript_hash: `${params.transcript_hash ?? ""}`,
+      secret: params.secret,
       now,
     });
   } catch (err) {
@@ -146,19 +145,18 @@ export async function pairingStatus(
   }
 }
 
-/**
- * A connected computer asks for a login challenge (see sessions.ts). An
- * ended computer is told so (signed) even with the site's switch off.
- */
-export async function sessionChallenge(
-  params: { request?: unknown },
+/** A paired computer asks where to connect (its project's host). */
+export async function computerConnect(
+  params: { computer_id?: unknown; token?: unknown },
   address: string,
   now = Date.now(),
-): Promise<PairingResult<LoginChallenge | LoginEnded>> {
+): Promise<PairingResult<HostConnection>> {
   try {
-    admit(address, "submit", now);
-    return await createLoginChallenge(params.request, now, {
-      assertEnabled: assertComputersEnabled,
+    admit(address, "connect", now);
+    return await connectComputer({
+      computer_id: params.computer_id,
+      token: params.token,
+      now,
     });
   } catch (err) {
     return publicError(err);

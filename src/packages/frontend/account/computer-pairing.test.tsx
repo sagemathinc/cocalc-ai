@@ -1,32 +1,31 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { fromJS } from "immutable";
 
-const calls: string[] = [];
+const ME = "11111111-1111-4111-8111-111111111111";
+const OTHER = "22222222-2222-4222-8222-222222222222";
+const SOLO = "33333333-3333-4333-8333-333333333333";
+const SHARED = "44444444-4444-4444-8444-444444444444";
+
+let mockRequest: any = {
+  request_id: "R-NEW",
+  name: "m1",
+  project_id: SOLO,
+  state: "pending",
+  pairing_phrase: null,
+  machine: null,
+  expires_at: Date.now() + 3_600_000,
+  // The home bay's URL: not this browser's origin.
+  pairing_url: "https://bay-2.example.com/c/R-NEW",
+};
 const mockApi = {
-  createComputerRequest: jest.fn(async () => {
-    calls.push("create");
-    return {
-      request_id: "R-NEW",
-      expires_at: Date.now() + 3_600_000,
-      pairing_url: "https://bay-2.example.com/c/R-NEW",
-    };
-  }),
-  revokeComputer: jest.fn(async () => {
-    calls.push("revoke");
-    return { epoch: 2 };
-  }),
-  listComputerRequests: jest.fn(async () => [
-    {
-      request_id: "R-NEW",
-      name: "m1",
-      state: "pending",
-      expires_at: Date.now() + 3_600_000,
-      // The home bay's URL: not this browser's origin.
-      pairing_url: "https://bay-2.example.com/c/R-NEW",
-    },
-  ]),
-  getComputer: jest.fn(),
-  approveComputerRequest: jest.fn(),
+  createComputerRequest: jest.fn(async () => ({
+    request_id: "R-NEW",
+    expires_at: Date.now() + 3_600_000,
+    pairing_url: "https://bay-2.example.com/c/R-NEW",
+  })),
+  listComputerRequests: jest.fn(async () => [mockRequest]),
+  approveComputerRequest: jest.fn(async () => ({ computer_id: "c" })),
 };
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: { conat_client: { hub: { computers: mockApi } } },
@@ -41,52 +40,43 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
     freshAuthModalProps: {},
   }),
 }));
-
-import { approvalText, ReconnectComputer } from "./computer-pairing";
-
-// Time-limited and still within its time: pairing again revokes the old one.
-const m1 = {
-  computer_id: "1a057860-889d-461a-9073-4b8c69d65123",
-  name: "m1",
-  hostname: "studio.local",
-  machine_user: "sage",
-  agent_network_id: "n1",
-  connected: false,
-  revoked_at: null,
-  certificate_not_after: null,
-  deadline: Date.now() + 1_800_000,
-  effective_policy: {
-    version: 1,
-    mode: "direct",
-    duration: { initial_seconds: 3600, max_seconds: 28_800 },
-    lease_hours: 24,
-    agent_network_id: "n1",
-    mounts: [],
+const mockProjects = fromJS({
+  [SOLO]: { title: "Solo", users: { [ME]: { group: "owner" } } },
+  [SHARED]: {
+    title: "Shared",
+    users: { [ME]: { group: "owner" }, [OTHER]: { group: "collaborator" } },
   },
-} as any;
+});
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: (store: string, key: string) =>
+    store === "account" && key === "account_id" ? ME : mockProjects,
+}));
+
+import {
+  ConnectComputer,
+  PairingSteps,
+  approvalText,
+} from "./computer-pairing";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  calls.length = 0;
 });
 
-test("pairs again: the new request first, then the old computer is disconnected; the line is the home bay's", async () => {
-  render(<ReconnectComputer computer={m1} />);
-  await userEvent.click(screen.getByRole("button", { name: "Pair @m1 again" }));
-  await waitFor(() => expect(calls).toEqual(["create", "revoke"]));
-  expect(mockApi.createComputerRequest).toHaveBeenCalledWith(
-    expect.objectContaining({
-      name: "m1",
-      policy: expect.objectContaining({
-        agent_network_id: "n1",
-        duration: { initial_seconds: 3600, max_seconds: 28_800 },
-        lease_hours: 24,
-        mounts: [],
-      }),
-    }),
-  );
-  // The one line comes from the home bay (the pairing line's origin), and
-  // the bare command is there for people who already have cocalc.
+test("only projects whose one collaborator is you can have a computer", async () => {
+  render(<ConnectComputer />);
+  await userEvent.click(screen.getByRole("combobox"));
+  expect(screen.getAllByText("Solo").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Shared")).toBeNull();
+});
+
+test("a request names the computer and its project; the line is the home bay's", async () => {
+  render(<ConnectComputer defaultProjectId={SOLO} />);
+  await userEvent.type(screen.getByPlaceholderText("name, e.g. laptop"), "m1");
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(mockApi.createComputerRequest).toHaveBeenCalledWith({
+    name: "m1",
+    project_id: SOLO,
+  });
   await waitFor(() =>
     expect(
       screen.getByText(
@@ -102,66 +92,34 @@ test("pairs again: the new request first, then the old computer is disconnected;
   expect(document.body.textContent).not.toContain(location.origin);
 });
 
-test("the hard lease is a form item (24 by default), and the request carries what is entered", async () => {
-  render(<ReconnectComputer computer={m1} />);
-  const input = screen.getByRole("spinbutton", {
-    name: "Stop all work after hours without CoCalc",
-  });
-  expect((input as HTMLInputElement).value).toBe("24");
-  await userEvent.clear(input);
-  await userEvent.type(input, "6");
-  await userEvent.click(screen.getByRole("button", { name: "Pair @m1 again" }));
+test("approval sends the phrase the owner saw, and says what it allows", async () => {
+  mockRequest = {
+    ...mockRequest,
+    state: "claimed",
+    pairing_phrase: "acorn-amber-anchor-apple",
+    machine: {
+      user: "sage",
+      hostname: "studio.local",
+      os: "darwin",
+      arch: "arm64",
+    },
+  };
+  render(<PairingSteps request_id="R-NEW" />);
   await waitFor(() =>
-    expect(mockApi.createComputerRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        policy: expect.objectContaining({ lease_hours: 6 }),
-      }),
-    ),
+    expect(screen.getByText("acorn-amber-anchor-apple")).toBeTruthy(),
   );
+  expect(document.body.textContent).toContain(
+    'Anything running in the project "Solo"',
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  expect(mockApi.approveComputerRequest).toHaveBeenCalledWith({
+    request_id: "R-NEW",
+    pairing_phrase: "acorn-amber-anchor-apple",
+  });
 });
 
 test("approving says the rule", () => {
-  const text = approvalText({
-    agent_network: { members: [1, 2], title: "lab" },
-    machine: { user: "sage" },
-    requested_policy: { duration: null, lease_hours: 12 },
-  } as any);
-  expect(text).toContain(
-    "If this computer can't connect to CoCalc for 12 hours, all its jobs stop. It runs work again once it reconnects.",
+  expect(approvalText({ machine: { user: "sage" } } as any, "Solo")).toBe(
+    'Anything running in the project "Solo" (agents included) will be able to run any command there as sage, with all of that user\'s access, until you revoke it.',
   );
-});
-
-test("if the request can't be made, the old computer is untouched", async () => {
-  mockApi.createComputerRequest.mockRejectedValueOnce(
-    Error("too many open requests"),
-  );
-  render(<ReconnectComputer computer={m1} />);
-  await userEvent.click(screen.getByRole("button", { name: "Pair @m1 again" }));
-  await waitFor(() =>
-    expect(document.body.textContent).toContain("Too many open requests."),
-  );
-  expect(mockApi.revokeComputer).not.toHaveBeenCalled();
-});
-
-test("a double click makes one request", async () => {
-  let release: () => void = () => {};
-  mockApi.createComputerRequest.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        release = () =>
-          resolve({
-            request_id: "R-NEW",
-            expires_at: Date.now() + 3_600_000,
-            pairing_url: "https://bay-2.example.com/c/R-NEW",
-          });
-      }) as any,
-  );
-  render(<ReconnectComputer computer={m1} />);
-  const button = screen.getByRole("button", { name: "Pair @m1 again" });
-  await act(async () => {
-    button.click();
-    button.click();
-  });
-  await act(async () => release());
-  expect(mockApi.createComputerRequest).toHaveBeenCalledTimes(1);
 });

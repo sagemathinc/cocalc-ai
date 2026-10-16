@@ -73,11 +73,6 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** Not disconnected and not past its time. */
-export function isLive(c: ComputerSummary, now = Date.now()): boolean {
-  return c.revoked_at == null && (c.deadline == null || c.deadline > now);
-}
-
 export function useComputers(enabled: boolean): ComputerSummary[] {
   const [, setVersion] = useState(0);
   useEffect(() => {

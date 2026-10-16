@@ -95,10 +95,17 @@ export function FreshConversationModal({
           under Past Threads.
         </Radio>
       </Radio.Group>
-      <p>
-        Finish or cancel running and queued work first. Disable scheduled work
-        before continuing.
-      </p>
+      {mode === "clear" ? (
+        <p>
+          A turn already running, or a queued message starting at that same
+          moment, finishes with the old context. Later turns start fresh.
+        </p>
+      ) : (
+        <p>
+          Finish or cancel running and queued work first. Disable scheduled work
+          before continuing.
+        </p>
+      )}
       {agent && (
         <>
           <Button

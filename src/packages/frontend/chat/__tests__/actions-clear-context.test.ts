@@ -42,38 +42,57 @@ const message = {
   date: "2026-10-06T04:59:00.000Z",
   message_id: "message-1",
   thread_id: THREAD,
-  // A finished turn can keep its raw row state; only the derived state counts.
-  acp_state: "sent",
   history: [],
 };
 
 describe("clearAgentContext", () => {
+  // The hub fences a turn that started before the clear (it neither saves its
+  // session back nor takes guidance), so clearing never waits for one.
   it.each([
-    ["a running thread", iMap({ [`thread:${THREAD}`]: "running" })],
-    ["a queued message", iMap({ "message:message-1": "queue" })],
-    [
-      "a message keyed by date",
-      iMap({ [`${new Date(message.date).valueOf()}`]: "sending" }),
-    ],
-  ])("refuses while the thread has %s", (_label, acpState) => {
+    ["idle", iMap({ [`thread:${THREAD}`]: "completed" })],
+    ["running a turn", iMap({ [`thread:${THREAD}`]: "running" })],
+    ["holding a queued message", iMap({ "message:message-1": "queue" })],
+    ["sending a message", iMap({ "message:message-1": "sending" })],
+  ])("clears a thread that is %s", (_label, acpState) => {
     const actions = makeActions(acpState as iMap<string, string>, [message]);
-    expect(actions.hasActiveAgentTurn(THREAD)).toBe(true);
-    expect(actions.clearAgentContext(THREAD)).toBe(false);
-    expect(actions.setThreadConfigRecord).not.toHaveBeenCalled();
-    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    expect(actions.clearAgentContext(THREAD)).toBe(true);
+    // The marker's id is the thread's new context generation, also kept in
+    // the thread config, which outlives archived chat rows.
+    const [, patch] = actions.setThreadConfigRecord.mock.calls[0];
+    expect(patch).toEqual({
+      agent_session_id: "",
+      context_generation: expect.any(String),
+      context_cleared_at: expect.any(String),
+    });
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message_id: patch.context_generation,
+        date: patch.context_cleared_at,
+        thread_id: THREAD,
+        parent_message_id: "message-1",
+        acp_context_cleared: true,
+      }),
+    );
+    expect(actions.syncdb.commit).toHaveBeenCalled();
   });
 
-  it("clears an idle thread", () => {
-    const actions = makeActions(
-      iMap({ [`thread:${THREAD}`]: "completed", "message:message-1": "done" }),
-      [message],
-    );
-    expect(actions.hasActiveAgentTurn(THREAD)).toBe(false);
+  it("waits for a turn on a hub without the context fence", () => {
+    const actions = makeActions(iMap(), [message]);
+    const state = (row: object) =>
+      (actions.syncdb.get_one = jest.fn(() => ({
+        event: "chat-thread-state",
+        thread_id: THREAD,
+        ...row,
+      })));
+    state({ state: "running" });
+    expect(actions.agentContextClearBlocked(THREAD)).toMatch(/older version/);
+    expect(actions.clearAgentContext(THREAD)).toBe(false);
+    expect(actions.setThreadConfigRecord).not.toHaveBeenCalled();
+    // Idle on the same hub: nothing to fence.
+    state({ state: "error" });
+    expect(actions.agentContextClearBlocked(THREAD)).toBeUndefined();
+    // Running on a fenced hub.
+    state({ state: "running", context_fence: 1 });
     expect(actions.clearAgentContext(THREAD)).toBe(true);
-    expect(actions.setThreadConfigRecord).toHaveBeenCalledWith(
-      THREAD,
-      { agent_session_id: "" },
-      { threadId: THREAD },
-    );
   });
 });

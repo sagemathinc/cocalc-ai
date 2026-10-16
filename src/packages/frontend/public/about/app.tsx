@@ -3,18 +3,23 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 
 import { Button, Flex, Tag, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
+  getPublicAboutIntro,
   PUBLIC_ABOUT_AUDIENCES,
   PUBLIC_ABOUT_HEADLINE,
-  PUBLIC_ABOUT_INTRO,
-  PUBLIC_ABOUT_MISSION,
+  PUBLIC_ABOUT_HISTORY,
   PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
   PUBLIC_ABOUT_REASON,
+  PUBLIC_ABOUT_TRUST,
+  PUBLIC_TEAM_BILLING_CONTACT,
+  type PublicAboutTextPart,
 } from "@cocalc/util/public-about-content";
+import { isPublicCocalcAiSite } from "@cocalc/util/public-home-content";
 import type { NewsItem } from "@cocalc/util/types/news";
 
 import {
@@ -79,6 +84,10 @@ const ABOUT_PAGE_CSS = `
     padding-bottom: 20px;
   }
 
+  .cocalc-about-index > section {
+    scroll-margin-top: var(--cocalc-public-anchor-offset);
+  }
+
   .cocalc-about-hero {
     background:
       radial-gradient(circle at 88% 18%, ${alpha(PUBLIC_COLORS.accent, 0.22)}, transparent 28%),
@@ -87,27 +96,22 @@ const ABOUT_PAGE_CSS = `
     border-radius: ${PUBLIC_RADIUS.media}px;
     box-shadow: ${PUBLIC_ELEVATION.lg};
     color: ${PUBLIC_COLORS.footerText};
-    display: grid;
-    gap: 48px;
-    grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.55fr);
     overflow: hidden;
     padding: clamp(28px, 5vw, 58px);
     position: relative;
   }
 
-  .cocalc-about-hero-proof {
-    align-self: stretch;
-    background: ${alpha(PUBLIC_COLORS.onPrimary, 0.1)};
-    border: 1px solid ${alpha(PUBLIC_COLORS.onPrimary, 0.2)};
-    border-radius: ${PUBLIC_RADIUS.media}px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 280px;
-    padding: 26px;
+  /* The hero stays dark in both themes, so its text links are white. The
+     public page CSS underlines them. */
+  .cocalc-about-hero .ant-typography a:not(.ant-btn) {
+    color: ${PUBLIC_COLORS.onPrimary};
   }
 
-  .cocalc-about-mission-grid,
+  .cocalc-about-hero .ant-typography a:not(.ant-btn):focus-visible {
+    outline: 2px solid ${PUBLIC_COLORS.accent};
+    outline-offset: 2px;
+  }
+
   .cocalc-about-founder {
     display: grid;
     gap: 32px;
@@ -123,7 +127,9 @@ const ABOUT_PAGE_CSS = `
     gap: 16px;
   }
 
-  .cocalc-about-principles {
+  .cocalc-about-principles,
+  .cocalc-about-facts,
+  .cocalc-about-timeline {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -131,13 +137,8 @@ const ABOUT_PAGE_CSS = `
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .cocalc-about-facts,
-  .cocalc-about-timeline {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-
   .cocalc-about-team-preview {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cocalc-about-founder-photo {
@@ -150,25 +151,17 @@ const ABOUT_PAGE_CSS = `
     width: 100%;
   }
 
+  /* The principle cards hold a few sentences each, too long for three narrow
+     columns on tablets or at 200% zoom, so they stack here. */
   @media (max-width: 900px) {
-    .cocalc-about-hero,
-    .cocalc-about-mission-grid,
-    .cocalc-about-founder {
+    .cocalc-about-founder,
+    .cocalc-about-principles {
       grid-template-columns: 1fr;
-    }
-
-    .cocalc-about-hero-proof {
-      min-height: 0;
     }
 
     .cocalc-about-audiences,
     .cocalc-about-team-preview {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .cocalc-about-facts,
-    .cocalc-about-timeline {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
 
@@ -177,7 +170,6 @@ const ABOUT_PAGE_CSS = `
       gap: 38px;
     }
 
-    .cocalc-about-principles,
     .cocalc-about-audiences,
     .cocalc-about-facts,
     .cocalc-about-timeline,
@@ -186,45 +178,6 @@ const ABOUT_PAGE_CSS = `
     }
   }
 `;
-
-const COMPANY_FACTS = [
-  { detail: "Collaborative computing online", value: "Since 2013" },
-  { detail: "SageMath, Inc.", value: "Incorporated 2016" },
-  {
-    detail: "Independent security audit",
-    href: publicPath("policies/trust"),
-    value: "SOC 2",
-  },
-  {
-    detail: "Verified privacy program",
-    href: publicPath("policies/trust"),
-    value: "GDPR",
-  },
-  { detail: "Hosted and customer-operated", value: "Flexible deployment" },
-];
-
-const COMPANY_TIMELINE = [
-  {
-    body: "William Stein starts SageMath to build a viable open alternative for mathematical computation.",
-    year: "2004",
-  },
-  {
-    body: "SageMathCloud launches, bringing open technical software into a collaborative browser workspace.",
-    year: "2013",
-  },
-  {
-    body: "SageMath, Inc. is incorporated in Delaware to sustain and grow CoCalc for the long term.",
-    year: "2016",
-  },
-  {
-    body: "William leaves his full professorship to focus on SageMath, Inc. and CoCalc full-time.",
-    year: "2019",
-  },
-  {
-    body: "CoCalc connects people and AI in durable computational environments across cloud and private deployments.",
-    year: "Today",
-  },
-];
 
 function Eyebrow({ children }: { children: string }) {
   return (
@@ -263,7 +216,24 @@ function IconTile({ icon }: { icon: IconName }) {
   );
 }
 
-function AboutOverview() {
+// Shared About text, with its links resolved against the site's base path.
+function AboutText({ parts }: { parts: readonly PublicAboutTextPart[] }) {
+  return (
+    <>
+      {parts.map(({ path, text }, index) =>
+        path == null ? (
+          <Fragment key={index}>{text}</Fragment>
+        ) : (
+          <a href={publicPath(path)} key={index}>
+            {text}
+          </a>
+        ),
+      )}
+    </>
+  );
+}
+
+function AboutOverview({ config }: { config?: PublicConfig }) {
   const founder = getTeamMember("william-stein")!;
 
   return (
@@ -287,13 +257,13 @@ function AboutOverview() {
           </div>
           <div>
             <Title
-              level={2}
+              level={1}
               style={{
                 color: PUBLIC_COLORS.onPrimary,
                 fontSize: "clamp(36px, 5vw, 58px)",
                 lineHeight: 1.04,
                 margin: 0,
-                maxWidth: 720,
+                maxWidth: 820,
               }}
             >
               {PUBLIC_ABOUT_HEADLINE}
@@ -304,131 +274,41 @@ function AboutOverview() {
                 fontSize: PUBLIC_TYPE.lead,
                 lineHeight: 1.65,
                 margin: "22px 0 0",
-                maxWidth: 700,
+                maxWidth: 760,
               }}
             >
-              {PUBLIC_ABOUT_INTRO}
+              <AboutText
+                parts={getPublicAboutIntro(isPublicCocalcAiSite(config))}
+              />
             </Paragraph>
           </div>
           <Flex gap={12} wrap>
-            <Button href="#mission" size="large" type="primary">
-              Our mission
+            <Button href="#how-we-build" size="large" type="primary">
+              How we build
             </Button>
             <Button ghost href={publicPath("about/team")} size="large">
               Meet the team
             </Button>
           </Flex>
         </Flex>
-        <div className="cocalc-about-hero-proof">
-          <div>
-            <div
-              style={{
-                color: PUBLIC_COLORS.accent,
-                fontSize: "clamp(48px, 7vw, 78px)",
-                fontWeight: PUBLIC_WEIGHT.bold,
-                letterSpacing: "-0.05em",
-                lineHeight: 1,
-              }}
-            >
-              2013
-            </div>
-            <div
-              style={{
-                color: PUBLIC_COLORS.onPrimary,
-                fontSize: PUBLIC_TYPE.lead,
-                marginTop: 8,
-              }}
-            >
-              CoCalc goes online
-            </div>
-          </div>
-          <Flex gap={8} wrap>
-            {["Persistent Linux", "Shared projects", "People + AI"].map(
-              (label) => (
-                <Tag
-                  key={label}
-                  style={{
-                    background: alpha(PUBLIC_COLORS.onPrimary, 0.1),
-                    borderColor: alpha(PUBLIC_COLORS.onPrimary, 0.22),
-                    color: PUBLIC_COLORS.onPrimary,
-                    margin: 0,
-                  }}
-                >
-                  {label}
-                </Tag>
-              ),
-            )}
-          </Flex>
-        </div>
       </section>
 
-      <section
-        aria-label="CoCalc mission"
-        className="cocalc-about-mission-grid"
-        id="mission"
-      >
-        <div
-          style={{
-            background: PUBLIC_COLORS.surface,
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PUBLIC_RADIUS.media,
-            boxShadow: PUBLIC_ELEVATION.panel,
-            padding: "clamp(26px, 4vw, 44px)",
-          }}
-        >
-          <Eyebrow>Our mission</Eyebrow>
-          <Title
-            level={2}
-            style={{
-              fontSize: "clamp(30px, 4vw, 46px)",
-              lineHeight: 1.12,
-              margin: "14px 0 18px",
-            }}
-          >
-            {PUBLIC_ABOUT_MISSION}
+      <section aria-label="How we build" id="how-we-build">
+        <Flex gap={10} style={{ marginBottom: 22 }} vertical>
+          <Eyebrow>How we build</Eyebrow>
+          <Title level={2} style={{ margin: 0 }}>
+            {PUBLIC_ABOUT_PRINCIPLES_HEADLINE}
           </Title>
           <Paragraph
             style={{
               color: PUBLIC_COLORS.mutedText,
               fontSize: PUBLIC_TYPE.lead,
-              lineHeight: 1.65,
               margin: 0,
-            }}
-          >
-            CoCalc turns that mission into persistent, backed-up environments
-            where computation, communication, and review stay connected.
-          </Paragraph>
-        </div>
-        <div
-          style={{
-            alignContent: "center",
-            background: PUBLIC_COLORS.brandTint,
-            border: `1px solid ${PUBLIC_COLORS.brandSubtle}`,
-            borderRadius: PUBLIC_RADIUS.media,
-            display: "grid",
-            gap: 18,
-            padding: "clamp(24px, 4vw, 38px)",
-          }}
-        >
-          <Eyebrow>Why CoCalc exists</Eyebrow>
-          <Paragraph
-            style={{
-              fontSize: PUBLIC_TYPE.lead,
-              lineHeight: 1.65,
-              margin: 0,
+              maxWidth: "72ch",
             }}
           >
             {PUBLIC_ABOUT_REASON}
           </Paragraph>
-        </div>
-      </section>
-
-      <section aria-label="How CoCalc fulfills its mission">
-        <Flex gap={10} style={{ marginBottom: 22 }} vertical>
-          <Eyebrow>How we build</Eyebrow>
-          <Title level={2} style={{ margin: 0 }}>
-            Open tools inside durable shared projects.
-          </Title>
         </Flex>
         <div className="cocalc-about-principles">
           {PUBLIC_ABOUT_PRINCIPLES.map((principle) => (
@@ -454,9 +334,9 @@ function AboutOverview() {
 
       <section aria-label="Company maturity and trust">
         <Flex gap={10} style={{ marginBottom: 22 }} vertical>
-          <Eyebrow>Built for the long term</Eyebrow>
+          <Eyebrow>{PUBLIC_ABOUT_TRUST.eyebrow}</Eyebrow>
           <Title level={2} style={{ margin: 0 }}>
-            A mature company behind critical computational work.
+            {PUBLIC_ABOUT_TRUST.headline}
           </Title>
           <Paragraph
             style={{
@@ -466,13 +346,11 @@ function AboutOverview() {
               maxWidth: "72ch",
             }}
           >
-            SageMath, Inc. develops and operates CoCalc with the security,
-            privacy, deployment flexibility, and operational discipline expected
-            by individuals and institutions.
+            {PUBLIC_ABOUT_TRUST.intro}
           </Paragraph>
         </Flex>
         <div className="cocalc-about-facts">
-          {COMPANY_FACTS.map((fact) => {
+          {PUBLIC_ABOUT_TRUST.facts.map((fact) => {
             const content = (
               <>
                 <div
@@ -506,8 +384,8 @@ function AboutOverview() {
               padding: 18,
               textDecoration: "none",
             } as const;
-            return fact.href ? (
-              <a href={fact.href} key={fact.value} style={style}>
+            return fact.path ? (
+              <a href={publicPath(fact.path)} key={fact.value} style={style}>
                 {content}
               </a>
             ) : (
@@ -538,16 +416,15 @@ function AboutOverview() {
             />
             <div>
               <div style={{ fontWeight: PUBLIC_WEIGHT.bold }}>
-                Security and privacy are operating requirements.
+                {PUBLIC_ABOUT_TRUST.note.title}
               </div>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                Review independent assurance, privacy commitments, and data
-                processing terms.
+                {PUBLIC_ABOUT_TRUST.note.body}
               </div>
             </div>
           </Flex>
-          <Button href={publicPath("policies/trust")}>
-            Trust and compliance
+          <Button href={publicPath(PUBLIC_ABOUT_TRUST.link.path)}>
+            {PUBLIC_ABOUT_TRUST.link.label}
           </Button>
         </div>
       </section>
@@ -582,13 +459,13 @@ function AboutOverview() {
 
       <section aria-label="CoCalc company history">
         <Flex gap={10} style={{ marginBottom: 22 }} vertical>
-          <Eyebrow>Our path</Eyebrow>
+          <Eyebrow>{PUBLIC_ABOUT_HISTORY.eyebrow}</Eyebrow>
           <Title level={2} style={{ margin: 0 }}>
-            Built from computational mathematics, for work far beyond it.
+            {PUBLIC_ABOUT_HISTORY.headline}
           </Title>
         </Flex>
         <div className="cocalc-about-timeline">
-          {COMPANY_TIMELINE.map((item) => (
+          {PUBLIC_ABOUT_HISTORY.timeline.map((item) => (
             <div
               key={item.year}
               style={{
@@ -732,47 +609,56 @@ function AboutOverview() {
   );
 }
 
-function AboutTeamPage() {
+function AboutTeamPage({ config }: { config?: PublicConfig }) {
+  const billingHref = isPublicCocalcAiSite(config)
+    ? publicPath(PUBLIC_TEAM_BILLING_CONTACT.path)
+    : PUBLIC_TEAM_BILLING_CONTACT.url;
   return (
-    <PublicGrid columns={2}>
-      {TEAM_MEMBERS.map((member) => (
-        <PublicCard
-          href={publicPath(`about/team/${member.slug}`)}
-          key={member.email}
-          title={`${member.name}, ${member.title}`}
-        >
-          <div
-            style={{
-              alignContent: "start",
-              display: "grid",
-              gap: 12,
-              height: "100%",
-            }}
+    <>
+      <PublicGrid columns={2}>
+        {TEAM_MEMBERS.map((member) => (
+          <PublicCard
+            href={publicPath(`about/team/${member.slug}`)}
+            key={member.email}
+            title={`${member.name}, ${member.title}`}
           >
             <div
               style={{
-                alignItems: "start",
+                alignContent: "start",
                 display: "grid",
-                gap: 24,
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+                gap: 12,
+                height: "100%",
               }}
             >
-              <Paragraph>{member.cardText}</Paragraph>
-              <img
-                alt={member.imageAlt}
-                src={member.imageSrc}
+              <div
                 style={{
-                  borderRadius: PUBLIC_RADIUS.media,
-                  objectFit: "cover",
-                  width: "100%",
+                  alignItems: "start",
+                  display: "grid",
+                  gap: 24,
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
                 }}
-              />
+              >
+                <Paragraph>{member.cardText}</Paragraph>
+                <img
+                  alt={member.imageAlt}
+                  src={member.imageSrc}
+                  style={{
+                    borderRadius: PUBLIC_RADIUS.media,
+                    objectFit: "cover",
+                    width: "100%",
+                  }}
+                />
+              </div>
             </div>
-          </div>
-        </PublicCard>
-      ))}
-    </PublicGrid>
+          </PublicCard>
+        ))}
+      </PublicGrid>
+      <Paragraph style={{ margin: 0, textAlign: "center" }}>
+        {PUBLIC_TEAM_BILLING_CONTACT.text}{" "}
+        <a href={billingHref}>{PUBLIC_TEAM_BILLING_CONTACT.label}</a>.
+      </Paragraph>
+    </>
   );
 }
 
@@ -1030,19 +916,24 @@ export default function PublicAboutApp({
   }, [title]);
 
   return (
-    <PublicSectionShell active="about" config={config} title={title}>
+    <PublicSectionShell
+      active="about"
+      config={config}
+      // The overview's hero carries the page's H1, as in the crawler fallback.
+      title={initialRoute.view === "about" ? undefined : title}
+    >
       {initialRoute.view === "about-events" ? (
         <AboutEventsPage />
       ) : initialRoute.view === "about-team" ? (
-        <AboutTeamPage />
+        <AboutTeamPage config={config} />
       ) : initialRoute.view === "about-team-member" ? (
         <AboutTeamMemberPage slug={initialRoute.teamSlug} />
       ) : (
         <>
-          <AboutOverview />
+          <AboutOverview config={config} />
           <PublicNextStep
             authenticated={!!config?.is_authenticated}
-            heading="Bring your next computational project to CoCalc."
+            heading="Start your next project with an agent."
           />
         </>
       )}

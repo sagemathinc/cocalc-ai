@@ -12,9 +12,7 @@ const PERMANENT_PATHS = new Set([
   "/about",
   "/about/events",
   "/about/team",
-  "/about/team/andrey-novoseltsev",
   "/about/team/blaec-bejarano",
-  "/about/team/harald-schilly",
   "/about/team/william-stein",
   "/ar",
   "/br",
@@ -78,6 +76,14 @@ const PERMANENT_PATHS = new Set([
   "/support/new",
   "/tr",
   "/zh",
+]);
+
+// Paths whose canonical destination on cocalc.ai is another path. Team
+// profiles that cocalc.ai no longer publishes redirect there to the team
+// page, so they go straight to it.
+const PERMANENT_PATH_MOVES = new Map([
+  ["/about/team/andrey-novoseltsev", "/about/team"],
+  ["/about/team/harald-schilly", "/about/team"],
 ]);
 
 const REMOVED_PATH_ROOTS = ["/github", "/gist", "/rajacuan"];
@@ -159,6 +165,15 @@ export function classifyUrl(value) {
       kind: "cambridge",
       location: targetUrl(source, `/share/Cambridge${suffix}`),
       status: 301,
+    };
+  }
+
+  const movedTo = PERMANENT_PATH_MOVES.get(pathname);
+  if (movedTo != null) {
+    return {
+      kind: "permanent",
+      location: targetUrl(source, movedTo),
+      status: 308,
     };
   }
 

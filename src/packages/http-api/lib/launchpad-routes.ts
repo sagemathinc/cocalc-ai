@@ -26,9 +26,9 @@ import accountSendVerificationEmail from "../pages/api/v2/accounts/send-verifica
 import accountSetEmailAddress from "../pages/api/v2/accounts/set-email-address";
 import cliSetup from "../pages/api/v2/cli/setup";
 import computersPairingView from "../pages/api/v2/computers/pairing/view";
-import computersPairingSubmit from "../pages/api/v2/computers/pairing/submit";
+import computersPairingClaim from "../pages/api/v2/computers/pairing/claim";
 import computersPairingStatus from "../pages/api/v2/computers/pairing/status";
-import computersSessionChallenge from "../pages/api/v2/computers/session/challenge";
+import computersConnect from "../pages/api/v2/computers/connect";
 
 export function getLaunchpadApiV2Routes(): ApiV2RouteEntry[] {
   return [
@@ -61,11 +61,8 @@ export function getLaunchpadApiV2Routes(): ApiV2RouteEntry[] {
     { path: "/cli/setup", handler: cliSetup },
     // A computer pairs and logs in through these (cocalc computer connect).
     { path: "/computers/pairing/view", handler: computersPairingView },
-    { path: "/computers/pairing/submit", handler: computersPairingSubmit },
+    { path: "/computers/pairing/claim", handler: computersPairingClaim },
     { path: "/computers/pairing/status", handler: computersPairingStatus },
-    {
-      path: "/computers/session/challenge",
-      handler: computersSessionChallenge,
-    },
+    { path: "/computers/connect", handler: computersConnect },
   ];
 }

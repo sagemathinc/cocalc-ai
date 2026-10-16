@@ -11,9 +11,21 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import * as authApi from "@cocalc/frontend/auth/api";
+import {
+  getPublicAboutIntro,
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_HISTORY,
+  PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+  PUBLIC_ABOUT_TRUST,
+  PUBLIC_TEAM_BILLING_CONTACT,
+  PUBLIC_TEAM_MEMBERS,
+  UNPUBLISHED_TEAM_PROFILE_SLUGS,
+} from "@cocalc/util/public-about-content";
 import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
 import {
   membershipPriceDisplay,
@@ -33,6 +45,7 @@ import { getNewsRouteFromPath } from "../news/routes";
 import type { PublicPoliciesRoute } from "../policies/routes";
 import { getPoliciesRouteFromPath } from "../policies/routes";
 import {
+  getPublicRedirectPath,
   getPublicRouteFromPath,
   isPublicTarget,
   preservePublicTargetFragment,
@@ -101,6 +114,11 @@ function canonicalHref(): string | null {
       .querySelector('link[data-cocalc-public-route-meta="canonical"]')
       ?.getAttribute("href") ?? null
   );
+}
+
+// Shared About text as readers see it, links included.
+function aboutText(parts: readonly { text: string }[]): string {
+  return parts.map(({ text }) => text).join("");
 }
 
 async function renderPublicApp(ui: React.ReactElement) {
@@ -236,6 +254,35 @@ describe("section route parsers", () => {
       section: "not-found",
     });
   });
+
+  // The hub answers these URLs with a 301 (hub/servers/app/public-shell.ts);
+  // the client router sends in-app links to the same place.
+  it.each(UNPUBLISHED_TEAM_PROFILE_SLUGS)(
+    "sends the unpublished team profile %s to the team page",
+    (slug) => {
+      expect(getPublicRedirectPath(publicPath(`about/team/${slug}`))).toBe(
+        publicPath("about/team"),
+      );
+      expect(getPublicRedirectPath(publicPath(`about/team/${slug}/`))).toBe(
+        publicPath("about/team"),
+      );
+    },
+  );
+
+  it("leaves published team profiles and other pages where they are", () => {
+    for (const path of [
+      "about",
+      "about/team",
+      ...PUBLIC_TEAM_MEMBERS.map(({ slug }) => `about/team/${slug}`),
+      "about/team/not-a-person",
+      "features/ai",
+    ]) {
+      expect({ path, to: getPublicRedirectPath(publicPath(path)) }).toEqual({
+        path,
+        to: undefined,
+      });
+    }
+  });
 });
 
 describe("PublicApp", () => {
@@ -256,7 +303,8 @@ describe("PublicApp", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "About CoCalc",
+        level: 1,
+        name: PUBLIC_ABOUT_HEADLINE,
       }),
     ).not.toBeNull();
   });
@@ -288,23 +336,193 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "About CoCalc" }),
-    ).not.toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: /Make serious computational work easy to share/i,
+    // The company statement is the page's only H1, in the hero, as in the
+    // crawler fallback; the browser title still reads "About CoCalc".
+    const hero = screen.getByRole("region", {
+      name: "SageMath, Inc. and CoCalc",
+    });
+    expect(screen.getAllByRole("heading", { level: 1 })).toEqual([
+      within(hero).getByRole("heading", {
+        level: 1,
+        name: PUBLIC_ABOUT_HEADLINE,
       }),
+    ]);
+    expect(document.title).toBe("About CoCalc");
+    expect(
+      within(hero).getByText("SageMath, Inc. · The company behind CoCalc"),
+    ).not.toBeNull();
+    // Away from cocalc.ai, the lead names Codex only.
+    expect(
+      within(hero).getByText(aboutText(getPublicAboutIntro(false))),
+    ).not.toBeNull();
+    expect(hero.textContent).not.toMatch(/Claude/);
+
+    const principles = screen.getByRole("region", { name: "How we build" });
+    expect(
+      within(principles).getByRole("heading", { level: 2 }).textContent,
+    ).toBe(PUBLIC_ABOUT_PRINCIPLES_HEADLINE);
+    expect(
+      within(principles)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(PUBLIC_ABOUT_PRINCIPLES.map(({ title }) => title));
+    expect(PUBLIC_ABOUT_PRINCIPLES).toHaveLength(3);
+
+    // The trust section and the history render the shared words, as the
+    // crawler fallback does.
+    const trust = screen.getByRole("region", {
+      name: "Company maturity and trust",
+    });
+    expect(within(trust).getByText(PUBLIC_ABOUT_TRUST.eyebrow)).not.toBeNull();
+    expect(within(trust).getByRole("heading", { level: 2 }).textContent).toBe(
+      PUBLIC_ABOUT_TRUST.headline,
+    );
+    expect(within(trust).getByText(PUBLIC_ABOUT_TRUST.intro)).not.toBeNull();
+    for (const { detail, path, value } of PUBLIC_ABOUT_TRUST.facts) {
+      if (path == null) {
+        expect(within(trust).getByText(value)).not.toBeNull();
+        expect(within(trust).getByText(detail)).not.toBeNull();
+      } else {
+        expect(
+          within(trust).getByRole("link", { name: `${value} ${detail}` }),
+        ).toHaveAttribute("href", publicPath(path));
+      }
+    }
+    expect(
+      within(trust).getByText(PUBLIC_ABOUT_TRUST.note.title),
     ).not.toBeNull();
     expect(
-      screen.getByText("SageMath, Inc. · The company behind CoCalc"),
+      within(trust).getByText(PUBLIC_ABOUT_TRUST.note.body),
     ).not.toBeNull();
-    expect(screen.getByText("Incorporated 2016")).not.toBeNull();
-    expect(screen.getByText("SOC 2")).not.toBeNull();
+    const history = screen.getByRole("region", {
+      name: "CoCalc company history",
+    });
+    expect(
+      within(history).getByText(PUBLIC_ABOUT_HISTORY.eyebrow),
+    ).not.toBeNull();
+    expect(within(history).getByRole("heading", { level: 2 }).textContent).toBe(
+      PUBLIC_ABOUT_HISTORY.headline,
+    );
+    for (const { body, year } of PUBLIC_ABOUT_HISTORY.timeline) {
+      expect(within(history).getByText(year)).not.toBeNull();
+      expect(within(history).getByText(body)).not.toBeNull();
+    }
+
+    // The overview keeps its trust and events links.
+    expect(screen.getByRole("link", { name: /SOC 2/ })).toHaveAttribute(
+      "href",
+      publicPath("policies/trust"),
+    );
+    expect(
+      screen.getByRole("link", { name: PUBLIC_ABOUT_TRUST.link.label }),
+    ).toHaveAttribute("href", publicPath("policies/trust"));
+    expect(screen.getByRole("link", { name: "Events" })).toHaveAttribute(
+      "href",
+      publicPath("about/events"),
+    );
     expect(
       screen.getByRole("heading", { name: "Leadership and team" }),
     ).not.toBeNull();
     expect(screen.queryByText("Upcoming events")).toBeNull();
+    // The "since 2013" trust statistic is retired, in the hero and the facts,
+    // and the page gives no incorporation year.
+    expect(document.body.textContent).not.toMatch(
+      /since 2013|goes online|Collaborative computing online|Incorporated/i,
+    );
+  });
+
+  // On cocalc.ai the lead names Claude and links it to the Claude guide, which
+  // states its preview status, so the page itself does not.
+  it("links the About lead's Claude mention to its guide on cocalc.ai", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.ai",
+          site_name: "CoCalc",
+        }}
+        initialRoute={aboutRoute({ view: "about" })}
+      />,
+    );
+
+    const hero = screen.getByRole("region", {
+      name: "SageMath, Inc. and CoCalc",
+    });
+    const claude = within(hero).getByRole("link", { name: "Claude" });
+    expect(claude).toHaveAttribute("href", publicPath("docs/ai/claude-code"));
+    expect(claude.parentElement?.textContent).toBe(
+      aboutText(getPublicAboutIntro(true)),
+    );
+
+    // The link is in the tab order, before the hero's buttons.
+    const howWeBuild = within(hero).getByRole("link", {
+      name: "How we build",
+    });
+    claude.focus();
+    await user.tab();
+    expect(howWeBuild).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(claude).toHaveFocus();
+  });
+
+  // Vendor names stay out of the H1 and the title; the lead names Codex, and
+  // Claude on cocalc.ai, never the Claude Code product name or a maturity
+  // label.
+  it("keeps the About statement within the naming rules", () => {
+    const [otherSiteLead, cocalcAiLead] = [false, true].map((onCocalcAi) =>
+      aboutText(getPublicAboutIntro(onCocalcAi)),
+    );
+    expect(PUBLIC_ABOUT_HEADLINE).not.toMatch(
+      /Codex|Claude|OpenAI|Anthropic|ChatGPT/,
+    );
+    expect(otherSiteLead).toMatch(/ Codex is built in\.$/);
+    expect(cocalcAiLead).toMatch(
+      / Codex is built in, and Claude is available where the site enables it\.$/,
+    );
+    for (const text of [
+      PUBLIC_ABOUT_HEADLINE,
+      otherSiteLead,
+      cocalcAiLead,
+      PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+      ...PUBLIC_ABOUT_PRINCIPLES.flatMap(({ body, title }) => [body, title]),
+    ]) {
+      expect(text).not.toMatch(
+        /Claude Code|experimental|preview|beta|alpha|workspace|open source|source-available|licen[cs]e/i,
+      );
+    }
+  });
+
+  it("lets keyboard users move from the About hero to its sections", async () => {
+    const user = userEvent.setup();
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={aboutRoute({ view: "about" })}
+      />,
+    );
+
+    const hero = screen.getByRole("region", {
+      name: "SageMath, Inc. and CoCalc",
+    });
+    const howWeBuild = within(hero).getByRole("link", {
+      name: "How we build",
+    });
+    const meetTeam = within(hero).getByRole("link", { name: "Meet the team" });
+    expect(howWeBuild).toHaveAttribute("href", "#how-we-build");
+    expect(document.getElementById("how-we-build")).toBe(
+      screen.getByRole("region", { name: "How we build" }),
+    );
+    expect(meetTeam).toHaveAttribute("href", publicPath("about/team"));
+
+    howWeBuild.focus();
+    await user.tab();
+    expect(meetTeam).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(howWeBuild).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(window.location.hash).toBe("#how-we-build");
+    window.history.replaceState({}, "", "/");
   });
 
   it("renders and updates managed public-route head metadata", async () => {
@@ -333,7 +551,7 @@ describe("PublicApp", () => {
       expect(canonicalHref()).toBe("https://cocalc.ai/about"),
     );
     expect(headMeta('meta[name="description"]')).toContain(
-      "mission, history, people, and operating principles behind CoCalc",
+      "the agent platform where your agents work alongside your team",
     );
   });
 
@@ -995,8 +1213,61 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("William Stein, Founder and CEO")).not.toBeNull();
-    expect(screen.getByText("Harald Schilly, CTO")).not.toBeNull();
+    // One card per published profile, and nothing else links to a profile.
+    const profileLinks = screen
+      .getAllByRole("link")
+      .filter((link) =>
+        link.getAttribute("href")?.startsWith(publicPath("about/team/")),
+      );
+    expect(profileLinks.map((link) => link.getAttribute("href"))).toEqual(
+      PUBLIC_TEAM_MEMBERS.map(({ slug }) => publicPath(`about/team/${slug}`)),
+    );
+    expect(PUBLIC_TEAM_MEMBERS.map(({ slug }) => slug)).toEqual([
+      "william-stein",
+      "blaec-bejarano",
+    ]);
   });
+
+  // SageMath, Inc. answers these on cocalc.ai's support page; another site's
+  // own support page belongs to that site's operator.
+  it.each([
+    {
+      config: {
+        cocalc_product: "launchpad",
+        dns: "cocalc.ai",
+        site_name: "CoCalc",
+      },
+      href: publicPath("support"),
+      site: "cocalc.ai",
+    },
+    {
+      config: {
+        cocalc_product: "launchpad",
+        dns: "launchpad.example.edu",
+        site_name: "Launchpad",
+      },
+      href: "https://cocalc.ai/support",
+      site: "another site",
+    },
+  ])(
+    "sends quotes and invoices to cocalc.ai's support page from the team page on $site",
+    async ({ config, href }) => {
+      await renderPublicApp(
+        <PublicApp
+          config={config}
+          initialRoute={aboutRoute({ view: "about-team" })}
+        />,
+      );
+
+      const contact = screen.getByRole("link", {
+        name: PUBLIC_TEAM_BILLING_CONTACT.label,
+      });
+      expect(contact).toHaveAttribute("href", href);
+      expect(contact.parentElement?.textContent).toBe(
+        `${PUBLIC_TEAM_BILLING_CONTACT.text} ${PUBLIC_TEAM_BILLING_CONTACT.label}.`,
+      );
+    },
+  );
 
   it("renders an individual team profile", async () => {
     await renderPublicApp(
@@ -2514,7 +2785,10 @@ describe("feature configuration loading", () => {
     global.fetch = jest.fn(() => customize.promise) as typeof fetch;
     render(<PublicApp initialRoute={aboutRoute({ view: "about" })} />);
     expect(
-      await screen.findByRole("heading", { name: "About CoCalc" }),
+      await screen.findByRole("heading", {
+        level: 1,
+        name: PUBLIC_ABOUT_HEADLINE,
+      }),
     ).not.toBeNull();
     expectNoCompute();
   });

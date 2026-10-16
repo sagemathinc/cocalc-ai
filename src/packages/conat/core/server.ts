@@ -299,7 +299,7 @@ export type AllowFunction = (opts: {
 export interface Options {
   /** Called once when an authenticated socket goes away (with its user). */
   onDisconnect?: (user: any) => void;
-  /** How often a connected computer's session is rechecked (default 15 s). */
+  /** How often a connected computer is rechecked (default 15 s). */
   computerRevalidationMs?: number;
   id?: string;
   httpServer?;
@@ -1996,10 +1996,9 @@ export class ConatServer extends EventEmitter {
           }, 15_000)
         : undefined;
     apiKeyRefreshTimer?.unref?.();
-    // A computer's session (see server/computers/sessions.ts) can be revoked,
-    // reclaimed or outlived by its computer's epoch at any time: recheck the
-    // session (which also records it alive) and every interest it holds
-    // (isAllowed rechecks the session row, uncached), and drop the socket the
+    // A paired computer (on its project's host: project-host/computers.ts)
+    // can be revoked, or its project can gain a collaborator, at any time:
+    // recheck it ("") and every interest it holds, and drop the socket the
     // moment any is refused, errs, or takes longer than 10 s.
     let computerRefreshInFlight = false;
     const computerRevalidationMs =

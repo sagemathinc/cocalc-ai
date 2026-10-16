@@ -56,6 +56,24 @@ export function projectRecoveryDueAt(
   ).toISOString();
 }
 
+// While scheduled work is deferred or failing, the host keeps retrying against
+// the due time it first reported (backupDueAt/snapshotDueAt in project-host).
+// Use that time here too: projectRecoveryDueAt alone moves with last_changed,
+// so every edit to an actively used project would restart its delay and hide
+// work that has been failing for days.
+export function pinnedRecoveryDueAt(
+  due: string | null,
+  lastSuccess: Date | null,
+  report: { outcome: string | null; due_at: Date | null } | undefined,
+): string | null {
+  if (due == null || report?.due_at == null) return due;
+  if (report.outcome !== "deferred" && report.outcome !== "failed") return due;
+  if (lastSuccess != null && lastSuccess >= report.due_at) return due;
+  return report.due_at.getTime() < Date.parse(due)
+    ? report.due_at.toISOString()
+    : due;
+}
+
 export function snapshotScheduleRevision(
   schedule: SnapshotSchedule | null | undefined,
 ): string {
@@ -571,22 +589,33 @@ export async function getProjectRecoveryStatusLocal(
       report.reconciled_schedule_revision !==
         snapshotScheduleRevision(project.snapshots)
     ) {
-      status.snapshot_due_at = projectRecoveryDueAt(
-        project.last_changed,
-        status.snapshot?.latest_snapshot_at
-          ? new Date(status.snapshot.latest_snapshot_at)
-          : null,
-        { ...DEFAULT_SNAPSHOT_COUNTS, ...project.snapshots },
-        true,
+      const latestSnapshot = status.snapshot?.latest_snapshot_at
+        ? new Date(status.snapshot.latest_snapshot_at)
+        : null;
+      status.snapshot_due_at = pinnedRecoveryDueAt(
+        projectRecoveryDueAt(
+          project.last_changed,
+          latestSnapshot,
+          { ...DEFAULT_SNAPSHOT_COUNTS, ...project.snapshots },
+          true,
+        ),
+        latestSnapshot,
+        report,
       );
     }
   }
   if (!status.backup_disabled) {
-    status.backup_due_at = projectRecoveryDueAt(
-      project.last_changed,
+    status.backup_due_at = pinnedRecoveryDueAt(
+      projectRecoveryDueAt(
+        project.last_changed,
+        project.last_backup,
+        { ...DEFAULT_BACKUP_COUNTS, ...project.backups },
+        false,
+      ),
       project.last_backup,
-      { ...DEFAULT_BACKUP_COUNTS, ...project.backups },
-      false,
+      reports.find(
+        (entry) => entry.kind === "backup" && entry.host_id === project.host_id,
+      ),
     );
   }
   if (
@@ -933,12 +962,14 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     snapshot_class: string | null;
     snapshot_outcome: string | null;
     snapshot_failures: number | null;
+    snapshot_status_due_at: Date | null;
     reconciled_change_at: Date | null;
     reconciled_schedule_revision: string | null;
     backup_observed_at: Date | null;
     backup_class: string | null;
     backup_outcome: string | null;
     backup_failures: number | null;
+    backup_status_due_at: Date | null;
     snapshot_objective_due_at: Date | null;
     snapshot_objective_succeeded_at: Date | null;
     snapshot_objective_cancelled_at: Date | null;
@@ -1022,6 +1053,44 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     }
     return group;
   };
+  const dueTimes = (
+    row: HealthRow,
+  ): { snapshot: string | null; backup: string | null } => ({
+    snapshot:
+      row.snapshots?.disabled === true ||
+      (row.last_changed != null &&
+        row.reconciled_change_at != null &&
+        row.last_changed <= row.reconciled_change_at &&
+        row.reconciled_schedule_revision ===
+          snapshotScheduleRevision(row.snapshots))
+        ? null
+        : pinnedRecoveryDueAt(
+            projectRecoveryDueAt(
+              row.last_changed,
+              row.snapshot_at,
+              { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
+              true,
+            ),
+            row.snapshot_at,
+            {
+              outcome: row.snapshot_outcome,
+              due_at: row.snapshot_status_due_at,
+            },
+          ),
+    backup:
+      row.backups?.disabled === true
+        ? null
+        : pinnedRecoveryDueAt(
+            projectRecoveryDueAt(
+              row.last_changed,
+              row.last_backup,
+              { ...DEFAULT_BACKUP_COUNTS, ...row.backups },
+              false,
+            ),
+            row.last_backup,
+            { outcome: row.backup_outcome, due_at: row.backup_status_due_at },
+          ),
+  });
   const now = Date.now();
   let cursor: string | null = null;
   while (true) {
@@ -1042,11 +1111,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
               s.storage_service_class AS snapshot_class,
               s.outcome AS snapshot_outcome,
               s.consecutive_failures AS snapshot_failures,
+              s.due_at AS snapshot_status_due_at,
               s.reconciled_change_at, s.reconciled_schedule_revision,
               b.observed_at AS backup_observed_at,
               b.storage_service_class AS backup_class,
               b.outcome AS backup_outcome,
               b.consecutive_failures AS backup_failures,
+              b.due_at AS backup_status_due_at,
               so.due_at AS snapshot_objective_due_at,
               so.succeeded_at AS snapshot_objective_succeeded_at,
               so.cancelled_at AS snapshot_objective_cancelled_at,
@@ -1076,29 +1147,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     >();
     const payersByProject = new Map<string, string>();
     for (const row of rows) {
-      const snapshotDue =
-        row.snapshots?.disabled === true ||
-        (row.last_changed != null &&
-          row.reconciled_change_at != null &&
-          row.last_changed <= row.reconciled_change_at &&
-          row.reconciled_schedule_revision ===
-            snapshotScheduleRevision(row.snapshots))
-          ? null
-          : projectRecoveryDueAt(
-              row.last_changed,
-              row.snapshot_at,
-              { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
-              true,
-            );
-      const backupDue =
-        row.backups?.disabled === true
-          ? null
-          : projectRecoveryDueAt(
-              row.last_changed,
-              row.last_backup,
-              { ...DEFAULT_BACKUP_COUNTS, ...row.backups },
-              false,
-            );
+      const { snapshot: snapshotDue, backup: backupDue } = dueTimes(row);
       const overdue =
         (snapshotDue != null && Date.parse(snapshotDue) < now) ||
         (backupDue != null && Date.parse(backupDue) < now);
@@ -1160,20 +1209,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           health.unknown_snapshot_status++;
           group.unknown_count++;
         }
-        const reconciled =
-          row.last_changed != null &&
-          row.reconciled_change_at != null &&
-          row.last_changed <= row.reconciled_change_at &&
-          row.reconciled_schedule_revision ===
-            snapshotScheduleRevision(row.snapshots);
-        const due = reconciled
-          ? null
-          : projectRecoveryDueAt(
-              row.last_changed,
-              row.snapshot_at,
-              { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
-              true,
-            );
+        const due = dueTimes(row).snapshot;
         if (due != null) {
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
           // A full host reconciliation may take an hour. After that, missing
@@ -1236,12 +1272,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           health.unknown_backup_status++;
           group.unknown_count++;
         }
-        const due = projectRecoveryDueAt(
-          row.last_changed,
-          row.last_backup,
-          { ...DEFAULT_BACKUP_COUNTS, ...row.backups },
-          false,
-        );
+        const due = dueTimes(row).backup;
         if (due != null) {
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
           if (

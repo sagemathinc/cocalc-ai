@@ -54,7 +54,7 @@ import {
   init as createConatServer,
   type Options,
 } from "@cocalc/conat/core/server";
-import { getUser, isAllowed, onUserDisconnect } from "./auth";
+import { getUser, isAllowed } from "./auth";
 import { dnsScan, localAddress, SCAN_INTERVAL } from "./dns-scan";
 import { handleHealth } from "./health";
 import { handleMetrics, initMetrics } from "./metrics";
@@ -182,7 +182,6 @@ export async function init(
   const opts = {
     getUser,
     isAllowed,
-    onDisconnect: onUserDisconnect,
     systemAccountPassword:
       options.systemAccountPassword ?? (await secureRandomString(64)),
     clusterLinkPassword:

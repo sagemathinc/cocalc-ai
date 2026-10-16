@@ -83,6 +83,7 @@ import {
   isBtrfsSubvolume,
 } from "@cocalc/file-server/btrfs/subvolume";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
+import { RollingSnapshotRetentionSkipped } from "@cocalc/file-server/btrfs/snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
@@ -174,6 +175,7 @@ import {
   invalidateProjectVolumeLifecycle,
   withCurrentProjectVolumeLifecycleLock,
   withProjectVolumeLifecycleLock,
+  type ProjectVolumeLifecycleLock,
 } from "./project-volume-lifecycle";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
@@ -255,6 +257,7 @@ import {
 import {
   confirmedBackupForIds,
   parseCreatedBackupSnapshot,
+  trackUploadedBackups,
 } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
@@ -4608,12 +4611,16 @@ async function updateBackupsUnlocked({
   limit,
   knownLastBackupAt,
   stage_durations_ms,
+  timeout_ms,
+  wrapUpload,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
   stage_durations_ms?: Record<string, number>;
+  timeout_ms?: number;
+  wrapUpload?: <T>(upload: () => Promise<T>) => Promise<T>;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
@@ -4637,6 +4644,22 @@ async function updateBackupsUnlocked({
       ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
       : undefined;
   const createdBackupIds = new Set<string>();
+  const uploads = trackUploadedBackups(wrapUpload);
+  const recordBackupEgress = async (
+    backup: ReturnType<typeof parseCreatedBackupSnapshot>,
+  ) => {
+    if (!backup?.summary) return;
+    await recordManagedBackupEgressBestEffort({
+      project_id,
+      backup_id: backup.id,
+      tags:
+        legacyInitialBackupOverride == null
+          ? undefined
+          : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
+      summary: backup.summary,
+      managed_egress_override: legacyInitialBackupOverride,
+    });
+  };
   const stageDurations = stage_durations_ms ?? {};
   let bytesScanned: number | undefined;
   let bytesUploaded: number | undefined;
@@ -4651,6 +4674,8 @@ async function updateBackupsUnlocked({
       try {
         await refreshed.rustic.update(counts, {
           limit,
+          timeout: timeout_ms,
+          wrapUpload: uploads.wrapUpload,
           // Same privileged, size-limited backup as manual backups, so a huge
           // sparse file cannot occupy every scheduled backup of this host.
           runner: async ({ src, host, timeout, tags, parent, progress }) => {
@@ -4728,20 +4753,17 @@ async function updateBackupsUnlocked({
               if (Number.isFinite(uploaded) && uploaded >= 0) {
                 bytesUploaded = (bytesUploaded ?? 0) + uploaded;
               }
-              await recordManagedBackupEgressBestEffort({
-                project_id,
-                backup_id: backup.id,
-                tags:
-                  legacyInitialBackupOverride == null
-                    ? undefined
-                    : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
-                summary: backup.summary,
-                managed_egress_override: legacyInitialBackupOverride,
-              });
+              await recordBackupEgress(backup);
             }
           },
         });
       } catch (err) {
+        // An upload that committed before the failure (the volume changed,
+        // confirmation failed, ...) is in the repository and spent managed
+        // egress even though afterCreate never recorded it.
+        for (const backup of uploads.unaccounted(createdBackupIds)) {
+          await recordBackupEgress(backup);
+        }
         if (createdBackupIds.size === 0) throw err;
         retentionError = err;
       }
@@ -4811,6 +4833,26 @@ async function updateBackupsUnlocked({
   };
 }
 
+// Why scheduled backup work must not touch this volume now, if anything.
+async function backupVolumeUnavailableReason(
+  project_id: string,
+  expectedLifecycleGeneration: number,
+): Promise<string | undefined> {
+  if (
+    currentProjectVolumeLifecycleGeneration(project_id) !==
+    expectedLifecycleGeneration
+  ) {
+    return "project_volume_lifecycle_changed";
+  }
+  const volume = await getVolumeUnchecked(project_id);
+  if (!(await exists(volume.path))) {
+    return "project_volume_unavailable";
+  }
+  if (await isSubvolumeReadonly(volume.path)) {
+    return "project_volume_archiving";
+  }
+}
+
 async function updateBackupsIfVolumeCurrent({
   project_id,
   counts,
@@ -4818,6 +4860,7 @@ async function updateBackupsIfVolumeCurrent({
   knownLastBackupAt,
   expectedLifecycleGeneration,
   stage_durations_ms,
+  timeout_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
@@ -4825,6 +4868,7 @@ async function updateBackupsIfVolumeCurrent({
   knownLastBackupAt?: string | null;
   expectedLifecycleGeneration: number;
   stage_durations_ms?: Record<string, number>;
+  timeout_ms?: number;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
@@ -4833,37 +4877,76 @@ async function updateBackupsIfVolumeCurrent({
   bytes_scanned?: number;
   bytes_uploaded?: number;
 }> {
-  const result = await withCurrentProjectVolumeLifecycleLock(
-    project_id,
-    expectedLifecycleGeneration,
-    async () => {
-      const volume = await getVolumeUnchecked(project_id);
-      if (!(await exists(volume.path))) {
-        logger.info(
-          "skipping backup maintenance because project data is unavailable",
-          { project_id },
-        );
-        return {
-          created: false,
-          deferred_reason: "project_volume_unavailable",
-        };
+  // The lifecycle lock fences retention against archival and deletion
+  // (d5b107cc0d) and keeps creation of the temporary snapshot consistent. The
+  // upload only reads that separate read-only snapshot, so it runs without the
+  // lock: otherwise a scratch reset, and with it a start of this project,
+  // waits for the whole upload. Retention after the upload runs under the lock
+  // again, only if the volume is still the one this backup started from.
+  const wrapUpload =
+    (lock: ProjectVolumeLifecycleLock) =>
+    async <T>(upload: () => Promise<T>): Promise<T> => {
+      let uploaded: T | undefined;
+      let uploadFailed = false;
+      let uploadError: unknown;
+      try {
+        uploaded = await lock.unlocked(upload);
+      } catch (err) {
+        uploadFailed = true;
+        uploadError = err;
       }
-      if (await isSubvolumeReadonly(volume.path)) {
-        logger.info(
-          "skipping backup maintenance because project archival is in progress",
-          { project_id },
-        );
-        return { created: false, deferred_reason: "project_volume_archiving" };
-      }
-      return await updateBackupsUnlocked({
+      const reason = await backupVolumeUnavailableReason(
         project_id,
-        counts,
-        limit,
-        knownLastBackupAt,
-        stage_durations_ms,
-      });
-    },
-  );
+        expectedLifecycleGeneration,
+      );
+      if (reason) throw new RollingSnapshotRetentionSkipped(reason);
+      if (uploadFailed) throw uploadError;
+      return uploaded as T;
+    };
+  let result: Awaited<ReturnType<typeof updateBackupsUnlocked>> | undefined;
+  try {
+    result = await withCurrentProjectVolumeLifecycleLock(
+      project_id,
+      expectedLifecycleGeneration,
+      async (lock) => {
+        const reason = await backupVolumeUnavailableReason(
+          project_id,
+          expectedLifecycleGeneration,
+        );
+        if (reason) {
+          logger.info("skipping backup maintenance for unavailable volume", {
+            project_id,
+            reason,
+          });
+          return {
+            created: false,
+            deferred_reason: reason,
+            stage_durations_ms: stage_durations_ms ?? {},
+          };
+        }
+        return await updateBackupsUnlocked({
+          project_id,
+          counts,
+          limit,
+          knownLastBackupAt,
+          stage_durations_ms,
+          timeout_ms,
+          wrapUpload: wrapUpload(lock),
+        });
+      },
+    );
+  } catch (err) {
+    if (!(err instanceof RollingSnapshotRetentionSkipped)) throw err;
+    logger.info("project volume changed during scheduled backup upload", {
+      project_id,
+      reason: err.reason,
+    });
+    return {
+      created: false,
+      deferred_reason: err.reason,
+      stage_durations_ms,
+    };
+  }
   if (result === undefined) {
     logger.info(
       "skipping stale backup maintenance after project volume lifecycle changed",
@@ -4913,12 +4996,15 @@ export async function runScheduledBackupMaintenance({
   limit = 30,
   knownLastBackupAt,
   stage_durations_ms,
+  timeout_ms,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
   stage_durations_ms?: Record<string, number>;
+  // Defaults to the 30 minute rustic backup limit.
+  timeout_ms?: number;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
@@ -4942,6 +5028,7 @@ export async function runScheduledBackupMaintenance({
           knownLastBackupAt,
           stage_durations_ms,
           expectedLifecycleGeneration,
+          timeout_ms,
         }),
     })) ?? { created: false, deferred_reason: "backup_capacity_busy" }
   );

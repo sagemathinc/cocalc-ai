@@ -23,9 +23,11 @@ on:
         required: false
         default: false
 
+# Jobs run on GitHub-hosted ubuntu-24.04 unless the repository variable
+# CI_RUNNER names another runner label (e.g. a self-hosted runner).
 jobs:
   plan:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has_tests: ${{ steps.plan.outputs.has_tests }}
@@ -73,7 +75,7 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.has_tests == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
 
     steps:
       - uses: actions/checkout@v5
@@ -125,7 +127,7 @@ jobs:
 
   checks:
     needs: plan
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
 
     steps:
       - uses: actions/checkout@v5
@@ -166,7 +168,7 @@ jobs:
   test:
     needs: [plan, build]
     if: needs.plan.outputs.has_tests == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 15
 
     strategy:
@@ -278,7 +280,7 @@ jobs:
   multibay:
     needs: [plan, build]
     if: needs.plan.outputs.has_tests == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 25
 
     steps:

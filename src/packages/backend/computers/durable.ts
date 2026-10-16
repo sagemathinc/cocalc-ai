@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Small files the daemon must not lose or half-write: written to a temporary
+// Small files the connector must not lose or half-write: written to a temporary
 // file, fsynced, renamed over the target, and the directory fsynced. A crash
 // leaves either the old or the new content, never a mix.
 
