@@ -178,6 +178,42 @@ test("structured agent messages show their text instead of JSON", () => {
   expect(screen.getByText("Raw message")).toBeInTheDocument();
 });
 
+test("a message waiting in a queued network says so", () => {
+  // 2026-10-15: queued messages sat for an hour under a running turn, looking
+  // delivered and ignored.
+  const element = agentMessageFromMarkdownFence({
+    info: `agent-message ${agent_network_id} ${attempt_id} direction=incoming from=%40ops1 delivery=queued`,
+    value: "Overlap question",
+  });
+  expect(element).toMatchObject({ delivery: "queued" });
+  render(
+    <AgentMessageElement attributes={{} as any} element={element as any}>
+      Overlap question
+    </AgentMessageElement>,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "delivers messages when the recipient's current turn ends",
+  );
+});
+
+test("a delivered message has no queue notice", () => {
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={
+        {
+          type: "agent-message",
+          source_label: "@ops1",
+          children: [{ text: "Delivered" }],
+        } as any
+      }
+    >
+      Delivered
+    </AgentMessageElement>,
+  );
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
 test("a delivery report is about the agent, not from it", () => {
   const element = agentMessageFromMarkdownFence({
     info: "agent-message direction=report from=%40reviewer",

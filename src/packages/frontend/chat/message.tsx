@@ -169,6 +169,7 @@ import {
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
   agentMessageFence,
+  agentMessageWaitingDelivery,
   sensorWakePresentation,
   stripAgentRpcPrompt,
 } from "./agent-message-presentation";
@@ -450,7 +451,11 @@ function sensorWakeLabel(
   };
 }
 
-function rpcSourceAttribution(message: ChatMessageTyped):
+function rpcSourceAttribution(
+  message: ChatMessageTyped,
+  // This message has not been delivered to its recipient's turn yet.
+  waiting = false,
+):
   | {
       label: string;
       source_label: string;
@@ -459,6 +464,7 @@ function rpcSourceAttribution(message: ChatMessageTyped):
       direction: "incoming" | "report";
       agent_network_id?: string;
       attempt_id?: string;
+      delivery?: "queued" | "queued-fallback";
     }
   | undefined {
   const raw = field<any>(message, "agent_rpc");
@@ -484,6 +490,13 @@ function rpcSourceAttribution(message: ChatMessageTyped):
         ? rpc.agent_network_id
         : undefined,
     attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
+    // Say why it has not started instead of looking delivered and ignored.
+    ...(() => {
+      const delivery = report
+        ? undefined
+        : agentMessageWaitingDelivery(rpc, waiting);
+      return delivery ? { delivery } : {};
+    })(),
   };
   if (source.kind === "external") {
     return {
@@ -575,7 +588,7 @@ export default function Message({
     () => is_editing(message, account_id),
     [message, account_id],
   );
-  const rpcAttribution = rpcSourceAttribution(message);
+  const rpcAttribution = rpcSourceAttribution(message, acpState === "queue");
   // A turn a sensor started is stored under the approving person too. That
   // person still owns the turn (its state, Cancel); only how it looks says
   // it came from the sensor (see notFromSender).
