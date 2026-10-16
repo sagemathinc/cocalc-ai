@@ -118,10 +118,17 @@ describe("project-host browser origin policy", () => {
       ).toBeUndefined();
     });
 
-    it("approves the host's own origin only for app routes", () => {
+    it("approves the host's own origin for apps and file reads only", () => {
       const own = req({ origin: "https://host-1.cocalc.example" });
       expect(ambientCookieRejection(own, "app")).toBeUndefined();
-      for (const route of ["file", "upload", "bootstrap", "conat"] as const) {
+      expect(ambientCookieRejection(own, "file")).toBeUndefined();
+      expect(
+        ambientCookieRejection(
+          req({ origin: "https://host-1.cocalc.example" }, "POST"),
+          "file",
+        ),
+      ).toBe("origin not allowed");
+      for (const route of ["upload", "bootstrap", "conat"] as const) {
         expect(ambientCookieRejection(own, route)).toBe("origin not allowed");
       }
       // Same host but another scheme or port is not the same origin.
@@ -184,11 +191,6 @@ describe("project-host browser origin policy", () => {
       ["a same-site sibling", "same-site", "https://sibling.cocalc.example/"],
       ["a foreign site", "cross-site", "https://evil.example/page"],
       ["a page without a referrer", "cross-site", ""],
-      [
-        "the host's own pages",
-        "same-origin",
-        "https://host-1.cocalc.example/x",
-      ],
     ])("refuses file subresources from %s", (_, site, referer) => {
       expect(
         ambientCookieRejection(
@@ -284,6 +286,35 @@ describe("project-host browser origin policy", () => {
         }
       },
     );
+
+    it("lets an HTML preview on the host load its relative files", () => {
+      for (const dest of ["image", "style", "script", "empty"]) {
+        expect(
+          ambientCookieRejection(
+            req({
+              "sec-fetch-site": "same-origin",
+              "sec-fetch-dest": dest,
+              referer: `https://host-1.cocalc.example/${project_id}/files/a.html`,
+            }),
+            "file",
+          ),
+        ).toBeUndefined();
+      }
+      // Only on the host's own public hostname.
+      expect(
+        ambientCookieRejection(
+          {
+            method: "GET",
+            url: `/${project_id}/files/a.txt`,
+            headers: {
+              host: "other-host.example",
+              "sec-fetch-site": "same-origin",
+            },
+          },
+          "file",
+        ),
+      ).toBe("not from an approved page");
+    });
 
     it("allows same-origin subresources on app routes", () => {
       expect(

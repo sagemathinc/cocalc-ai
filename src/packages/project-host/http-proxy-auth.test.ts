@@ -721,7 +721,6 @@ describe("project-host HTTP session cookie", () => {
     it.each([
       ["a foreign origin", { origin: "https://evil.example" }],
       ["an opaque origin", { origin: "null" }],
-      ["the host's own origin", { origin: "https://host-1.cocalc.example" }],
       [
         "a cross-site subresource without an origin",
         { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors" },
@@ -776,6 +775,11 @@ describe("project-host HTTP session cookie", () => {
         },
       ],
       ["a typed URL", { "sec-fetch-site": "none" }],
+      ["the host's own origin", { origin: "https://host-1.cocalc.example" }],
+      [
+        "the host's own page (HTML preview assets)",
+        { "sec-fetch-site": "same-origin" },
+      ],
     ])(
       "accepts file access by browser session cookie from %s",
       async (_, headers) => {

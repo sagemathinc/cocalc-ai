@@ -11,12 +11,15 @@ public origins sent by the hub (system.getPublicSiteUrl, refreshed
 periodically), COCALC_SITE_URL, and COCALC_PROJECT_HOST_ALLOWED_ORIGINS.
 Pages served by the project host itself run project-controlled code, so its
 own origin is approved only for proxied app routes (an app talking to
-itself), never for files, uploads, the session bootstrap or Conat. On a
-private app hostname it is further bound to that app's project. On the host's
-public hostname (PROJECT_HOST_PUBLIC_URL) it is not bound to a project:
-path-based apps (e.g. JupyterLab at /<project_id>/port/...) need it, so any
-active content there can act on every project's app routes for the viewer.
-Only separate content origins can remove that residual risk.
+itself) and for reading files (GET/HEAD: an HTML preview loading its relative
+images, CSS and scripts, PDF range requests, media seeking), never for
+uploads, the session bootstrap or Conat. On a private app hostname it is
+further bound to that app's project. On the host's public hostname
+(PROJECT_HOST_PUBLIC_URL) it is not bound to a project: path-based apps (e.g.
+JupyterLab at /<project_id>/port/...) need it, so any active content there can
+act on every project's app routes and read files the viewer can read. That
+residual is accepted for now (William, Oct 16 2026); only separate content
+origins remove it.
 
 With an Origin header, it must be approved (see above). Without one:
 - non-GET/HEAD requests are refused (browsers send Origin on them);
@@ -188,6 +191,14 @@ function isExplicitDownload(req: Req & { url?: string }): boolean {
   }
 }
 
+// Routes where the host's own pages may use the cookie: apps, and reading
+// files.
+function ownOriginRoute(req: Req, route: AmbientRoute): boolean {
+  if (route === "app") return true;
+  const method = (req.method ?? "GET").toUpperCase();
+  return route === "file" && (method === "GET" || method === "HEAD");
+}
+
 // Why a cookie-authenticated request must be refused, or undefined if it is
 // acceptable.
 export function ambientCookieRejection(
@@ -202,7 +213,7 @@ export function ambientCookieRejection(
     if (!origin) return "invalid or opaque origin";
     if (approved.has(origin)) return;
     if (
-      route === "app" &&
+      ownOriginRoute(req, route) &&
       isOwnOrigin(origin, req) &&
       ownAppOriginAllowed(req, project_id)
     ) {
@@ -222,7 +233,7 @@ export function ambientCookieRejection(
     if (origin && approved.has(origin)) return;
   }
   if (
-    route === "app" &&
+    ownOriginRoute(req, route) &&
     site === "same-origin" &&
     ownAppOriginAllowed(req, project_id)
   ) {
