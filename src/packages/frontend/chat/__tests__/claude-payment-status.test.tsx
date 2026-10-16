@@ -216,13 +216,17 @@ test("switching the selection never shows the previous credential's name", async
   // loaded, and forever if that load failed.
   choose("account-subscription");
   listCredentials.mockResolvedValue(credential({ label: "Alpha" }));
+  const rendered: (string | undefined)[] = [];
   function Label() {
-    return <span>label: {useClaudePaymentLabel("project-a", "thread-a")}</span>;
+    const label = useClaudePaymentLabel("project-a", "thread-a");
+    rendered.push(label);
+    return <span>label: {label}</span>;
   }
   render(<Label />);
   expect(await screen.findByText("label: Alpha")).toBeTruthy();
   clearClaudeCredentialsForTests();
   listCredentials.mockRejectedValue(new Error("hub unavailable"));
+  const switchedAt = rendered.length;
   act(() =>
     writeHarnessCredentialSelection({
       accountId: "account-a",
@@ -239,4 +243,6 @@ test("switching the selection never shows the previous credential's name", async
   expect(await screen.findByText("label: Claude subscription")).toBeTruthy();
   await waitFor(() => expect(listCredentials).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("label: Alpha")).toBeNull();
+  // Not even for one render after the switch.
+  expect(rendered.slice(switchedAt)).not.toContain("Alpha");
 });

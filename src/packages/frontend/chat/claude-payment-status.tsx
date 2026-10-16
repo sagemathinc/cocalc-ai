@@ -86,7 +86,9 @@ function useClaudeCredential(
       window.removeEventListener(CLAUDE_CREDENTIALS_EVENT, load);
     };
   }, [credentialId]);
-  return row;
+  // Synchronous guard: the render right after a switch still holds the old
+  // row until the effect clears it.
+  return row?.id === credentialId ? row : undefined;
 }
 
 /**
