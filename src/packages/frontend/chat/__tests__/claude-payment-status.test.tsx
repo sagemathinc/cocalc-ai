@@ -1,7 +1,10 @@
 /** @jest-environment jsdom */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ClaudePaymentStatus } from "../claude-payment-status";
+import {
+  ClaudePaymentStatus,
+  clearClaudeCredentialsForTests,
+} from "../claude-payment-status";
 import { writeHarnessCredentialSelection } from "../harness-credential-selection";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -45,6 +48,7 @@ const hour = 3600;
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
+  clearClaudeCredentialsForTests();
 });
 
 test("payment status shows saved subscription limits on focus and dismisses with Escape", async () => {
@@ -69,7 +73,8 @@ test("payment status shows saved subscription limits on focus and dismisses with
       onConfigure={configure}
     />,
   );
-  expect(listCredentials).not.toHaveBeenCalled();
+  // One list call names the footer button; opening reloads the usage.
+  await waitFor(() => expect(listCredentials).toHaveBeenCalledTimes(1));
   const user = userEvent.setup();
   await user.tab();
   expect(
@@ -155,4 +160,51 @@ test("API-key modes show billing text, not subscription usage", async () => {
     await screen.findByText("Anthropic bills API usage to the key owner."),
   ).toBeTruthy();
   expect(screen.queryByText(/% used/)).toBeNull();
+});
+
+test("the footer names the selected subscription, as the user named it", async () => {
+  // William, 2026-10-16: the footer said only "Claude subscription".
+  choose("account-subscription");
+  listCredentials.mockResolvedValue(credential({ label: "claude1@sagemath" }));
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: "claude1@sagemath: payment settings",
+    }),
+  ).toBeTruthy();
+});
+
+test("a window on pace to hit its limit shows a warning", async () => {
+  choose("account-subscription");
+  const now = Math.floor(Date.now() / 1000);
+  listCredentials.mockResolvedValue(
+    credential({
+      claude_usage: {
+        observed_at: new Date(now * 1000).toISOString(),
+        // 60% used with 3 of 7 days left: about 105% by the reset.
+        windows: {
+          seven_day: { utilization: 0.6, resets_at: now + 72 * hour },
+        },
+      },
+    }),
+  );
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  await userEvent.setup().tab();
+  expect(
+    await screen.findByRole("img", {
+      name: /This week: on pace to reach the limit before it resets \(about 105%\)/,
+    }),
+  ).toBeTruthy();
 });

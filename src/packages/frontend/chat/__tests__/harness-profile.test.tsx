@@ -181,7 +181,7 @@ test("Claude project-key warning is shown only in its focused dialog", async () 
     /project code can use the key through Claude's active relay/,
   );
   expect(
-    screen.getByRole("combobox", { name: "Claude credential" }),
+    screen.getByRole("radiogroup", { name: "Claude credential" }),
   ).toBeTruthy();
   const user = userEvent.setup();
   await user.click(

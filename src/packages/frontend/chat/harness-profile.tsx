@@ -30,9 +30,11 @@ import {
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionManage } from "./claude-subscription-manage";
+import { ClaudeCredentialList } from "./claude-credential-list";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import {
   ClaudePaymentStatus,
+  setClaudeCredentials,
   useClaudePaymentLabel,
 } from "./claude-payment-status";
 import {
@@ -42,7 +44,6 @@ import {
 import { Icon } from "@cocalc/frontend/components/icon";
 import { AgentSpeedControl } from "./agent-speed-control";
 import {
-  newAgentClaudeCredentialOptions,
   newAgentClaudeCredentialValue,
   preferredClaudeCredential,
 } from "@cocalc/frontend/agents/claude-credential-options";
@@ -202,6 +203,10 @@ function ClaudeCredentialControl({
       window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     };
   }, [accountId, projectId, threadKey]);
+  // Renames, connects and disconnects here show in the footer at once.
+  useEffect(() => {
+    if (credentialsLoaded) setClaudeCredentials(credentials);
+  }, [credentials, credentialsLoaded]);
   const selectedSubscription = value.startsWith("account-subscription:")
     ? credentials.find(
         (row) =>
@@ -209,21 +214,12 @@ function ClaudeCredentialControl({
           row.id === value.slice("account-subscription:".length),
       )
     : undefined;
-  const credentialOptions = newAgentClaudeCredentialOptions(credentials);
-  if (!credentialOptions.some((option) => option.value === value)) {
-    credentialOptions.push({
-      value,
-      label: !credentialsLoaded
-        ? "Loading..."
-        : "Selected connection unavailable",
-    });
-  }
   return (
     <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-      <Select
-        aria-label="Claude credential"
+      <ClaudeCredentialList
+        credentials={credentials}
         value={value}
-        options={credentialOptions}
+        loaded={credentialsLoaded}
         onChange={(next) => {
           const credential = next.startsWith("account-subscription:")
             ? {
@@ -252,7 +248,6 @@ function ClaudeCredentialControl({
           });
           setValue(next);
         }}
-        style={{ width: "100%" }}
       />
       {value === "project-secret" && (
         <Button onClick={() => setSecretsOpen(true)}>

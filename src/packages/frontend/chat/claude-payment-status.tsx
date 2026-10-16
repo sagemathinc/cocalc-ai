@@ -14,6 +14,96 @@ import {
   readHarnessCredentialSelection,
 } from "./harness-credential-selection";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { ClaudeUsageLimitWarning } from "./claude-credential-list";
+
+const CLAUDE_CREDENTIALS_EVENT = "cocalc:claude-credentials";
+const CLAUDE_CREDENTIALS_MAX_AGE_MS = 60_000;
+let claudeCredentials:
+  | { at: number; promise: Promise<ExternalCredentialInfo[]> }
+  | undefined;
+
+/**
+ * The account's Claude credentials (one list call, shared by every footer),
+ * reused for a minute unless fresh is asked for.
+ */
+export function listClaudeCredentials(
+  fresh = false,
+): Promise<ExternalCredentialInfo[]> {
+  if (
+    fresh ||
+    !claudeCredentials ||
+    Date.now() - claudeCredentials.at > CLAUDE_CREDENTIALS_MAX_AGE_MS
+  ) {
+    const promise = webapp_client.conat_client.hub.system
+      .listExternalCredentials({ provider: "anthropic", scope: "account" })
+      .catch((err) => {
+        if (claudeCredentials?.promise === promise)
+          claudeCredentials = undefined;
+        throw err;
+      });
+    claudeCredentials = { at: Date.now(), promise };
+    void promise.then(
+      () => window.dispatchEvent(new Event(CLAUDE_CREDENTIALS_EVENT)),
+      () => {},
+    );
+  }
+  return claudeCredentials.promise;
+}
+
+/** Settings changed the list (connect, rename, disconnect): show it at once. */
+export function setClaudeCredentials(rows: ExternalCredentialInfo[]): void {
+  claudeCredentials = { at: Date.now(), promise: Promise.resolve(rows) };
+  window.dispatchEvent(new Event(CLAUDE_CREDENTIALS_EVENT));
+}
+
+export function clearClaudeCredentialsForTests(): void {
+  claudeCredentials = undefined;
+}
+
+// The selected account credential's row, kept current as the list changes.
+function useClaudeCredential(
+  credentialId: string | undefined,
+): ExternalCredentialInfo | undefined {
+  const [row, setRow] = useState<ExternalCredentialInfo>();
+  useEffect(() => {
+    if (!credentialId) {
+      setRow(undefined);
+      return;
+    }
+    let active = true;
+    const load = () =>
+      void listClaudeCredentials()
+        .then((rows) => {
+          if (active)
+            setRow(
+              rows.find(({ id, revoked }) => id === credentialId && !revoked),
+            );
+        })
+        .catch(() => {});
+    load();
+    window.addEventListener(CLAUDE_CREDENTIALS_EVENT, load);
+    return () => {
+      active = false;
+      window.removeEventListener(CLAUDE_CREDENTIALS_EVENT, load);
+    };
+  }, [credentialId]);
+  return row;
+}
+
+/**
+ * The footer name of a payment source: a subscription's own name (its label,
+ * else plan and email), an API key's label, else the generic kind.
+ */
+export function claudePaymentName(
+  mode: string | undefined,
+  row: ExternalCredentialInfo | undefined,
+): string {
+  const label = claudePaymentLabel(mode);
+  if (!row) return label;
+  if (mode === "account-subscription") return claudeSubscriptionName(row, true);
+  const named = `${row.metadata?.label ?? ""}`.trim();
+  return mode === "account-api-key" && named ? named : label;
+}
 
 export function claudePaymentLabel(mode: string | undefined): string {
   return mode === "account-subscription"
@@ -39,10 +129,18 @@ export function useClaudePaymentLabel(
       window.removeEventListener("storage", update);
     };
   }, []);
-  if (!projectId || !threadKey) return undefined;
-  return claudePaymentLabel(
-    readHarnessCredentialSelection({ accountId, projectId, threadKey })?.mode,
+  const selection =
+    projectId && threadKey
+      ? readHarnessCredentialSelection({ accountId, projectId, threadKey })
+      : undefined;
+  const row = useClaudeCredential(
+    selection?.mode === "account-subscription" ||
+      selection?.mode === "account-api-key"
+      ? selection.credentialId
+      : undefined,
   );
+  if (!projectId || !threadKey) return undefined;
+  return claudePaymentName(selection?.mode, row);
 }
 
 export function ClaudePaymentStatus({
@@ -96,22 +194,16 @@ function PaymentStatus({
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [credential, setCredential] = useState<ExternalCredentialInfo>();
+  const credential = useClaudeCredential(credentialId);
   const [loading, setLoading] = useState(false);
   const subscription = mode === "account-subscription";
   const label = claudePaymentLabel(mode);
+  // Opening the details reloads, so the usage shown is the latest stored.
   useEffect(() => {
     if (!open || !credentialId) return;
     let active = true;
     setLoading(true);
-    void webapp_client.conat_client.hub.system
-      .listExternalCredentials({ provider: "anthropic", scope: "account" })
-      .then((rows) => {
-        if (active)
-          setCredential(
-            rows.find(({ id, revoked }) => id === credentialId && !revoked),
-          );
-      })
+    void listClaudeCredentials(true)
       .catch(() => {})
       .finally(() => {
         if (active) setLoading(false);
@@ -124,6 +216,7 @@ function PaymentStatus({
     subscription && credential
       ? claudeSubscriptionName(credential)
       : credential?.metadata?.label;
+  const buttonLabel = claudePaymentName(mode, credential);
   // Saved from the limits Claude reports with each response of a turn.
   const usage = claudeSubscriptionUsage(
     credential?.metadata?.[CLAUDE_USAGE_METADATA_KEY],
@@ -158,7 +251,8 @@ function PaymentStatus({
                 {usage?.windows.map((window) => (
                   <div key={window.name} style={{ marginTop: 12 }}>
                     <div>
-                      {window.name}: {window.usedPercent}% used
+                      {window.name}: {window.usedPercent}% used{" "}
+                      <ClaudeUsageLimitWarning window={window} />
                     </div>
                     <Progress
                       percent={window.usedPercent}
@@ -211,10 +305,10 @@ function PaymentStatus({
             event.stopPropagation();
           }
         }}
-        aria-label={`${label}: payment settings`}
+        aria-label={`${buttonLabel}: payment settings`}
         aria-haspopup="dialog"
       >
-        {label}
+        {buttonLabel}
       </Button>
     </Popover>
   );
