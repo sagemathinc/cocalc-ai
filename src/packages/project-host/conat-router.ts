@@ -32,7 +32,10 @@ import {
   PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
 } from "@cocalc/conat/auth/project-host-http";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
-import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
+import {
+  createProxyHandlers,
+  guardUpgradeSocket,
+} from "@cocalc/project-proxy/proxy";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { isValidUUID } from "@cocalc/util/misc";
 import { examHostnameFromPublicHostname } from "@cocalc/util/project-host-exam-hostname";
@@ -617,6 +620,8 @@ export function attachProjectHostConatRouterProxy({
   });
   for (const ingressServer of ingressServers) {
     ingressServer.prependListener("upgrade", async (req, socket, head) => {
+      // Before the await: see guardUpgradeSocket.
+      guardUpgradeSocket(socket);
       await rewriteIngressRequest?.(req);
       if (
         shouldRouteProjectHostIngressToApp(req) ||

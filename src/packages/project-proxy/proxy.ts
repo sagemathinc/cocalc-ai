@@ -372,6 +372,7 @@ export function createProxyHandlers({
     socket: Socket,
     head: Buffer,
   ) => {
+    guardUpgradeSocket(socket);
     try {
       await rewriteRequest?.(req);
       const { target, handled } = await resolveTarget(req);
@@ -405,6 +406,22 @@ export function createProxyHandlers({
 }
 
 // Express-friendly wrapper used by project-host.
+const guardedUpgradeSockets = new WeakSet<Duplex>();
+
+// Node's HTTP server leaves an upgraded socket without an 'error' listener,
+// and http-proxy adds one only once proxy.ws runs. A client that resets its
+// connection while an upgrade handler awaits (rewrite, route lookup) would
+// raise an uncaught ECONNRESET and kill the process serving every
+// connection. Call this synchronously, before any await.
+export function guardUpgradeSocket(socket: Duplex): void {
+  if (guardedUpgradeSockets.has(socket)) return;
+  guardedUpgradeSockets.add(socket);
+  socket.on("error", (err) => {
+    logger.debug("upgrade socket error", { err: `${err}` });
+    socket.destroy();
+  });
+}
+
 export function attachProjectProxy({
   httpServer,
   httpServers,
@@ -540,6 +557,7 @@ export function attachProjectProxy({
   app.use(handleRequest);
 
   const handleUpgrade = async (req, socket, head) => {
+    guardUpgradeSocket(socket);
     await rewriteRequest?.(req);
     // Only proxy project-scoped websocket upgrades.
     if (!parseProjectId(req.url)) return;

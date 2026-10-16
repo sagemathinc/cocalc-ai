@@ -251,6 +251,72 @@ describe("project proxy upstream boundary metering", () => {
     }
   });
 
+  // 2026-10-16: an upgrade socket reset while its route was being resolved
+  // raised an uncaught ECONNRESET that killed the project-host router.
+  it.each(["createProxyHandlers", "attachProjectProxy"])(
+    "survives a client reset while %s resolves an upgrade route",
+    async (mode) => {
+      let release!: () => void;
+      const routeGate = new Promise<void>((done) => {
+        release = done;
+      });
+      let routeRequested!: () => void;
+      const requested = new Promise<void>((done) => {
+        routeRequested = done;
+      });
+      const resolveTarget = async () => {
+        routeRequested();
+        await routeGate;
+        return { handled: false };
+      };
+      const app = express();
+      const server = http.createServer(app);
+      if (mode === "createProxyHandlers") {
+        const { handleUpgrade } = createProxyHandlers({ resolveTarget });
+        server.on("upgrade", (req, socket, head) => {
+          void handleUpgrade(req, socket as any, head);
+        });
+      } else {
+        attachProjectProxy({ httpServer: server, app, resolveTarget });
+      }
+      const serverSockets: Array<import("node:stream").Duplex> = [];
+      server.prependListener("upgrade", (_req, socket) =>
+        serverSockets.push(socket),
+      );
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const client = connect({ host: "127.0.0.1", port });
+        client.on("error", () => {});
+        await once(client, "connect");
+        client.write(
+          `GET /${PROJECT_ID}/port/9999/ HTTP/1.1\r\n` +
+            "Host: 127.0.0.1\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Upgrade: websocket\r\n\r\n",
+        );
+        await requested;
+        // Not events.once: it would reject on the very "error" under test.
+        const closed = new Promise((done) =>
+          serverSockets[0].once("close", done),
+        );
+        client.resetAndDestroy();
+        await closed;
+        release();
+        await new Promise((done) => setTimeout(done, 50));
+        // Still serving.
+        const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+        await response.text();
+        expect(response.status).toBeGreaterThan(0);
+      } finally {
+        release();
+        server.closeAllConnections();
+        await closeServer(server);
+      }
+    },
+  );
+
   it("attaches websocket upgrades to every ingress listener", async () => {
     const upstreamCookies: Array<string | undefined> = [];
     const upstream = http.createServer();
