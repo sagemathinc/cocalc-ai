@@ -5,6 +5,7 @@ jest.mock("@cocalc/backend/sandbox/rustic", () => ({
 
 import rustic from "@cocalc/backend/sandbox/rustic";
 import {
+  listBackupIds,
   listRestoreBackups,
   parseRestoreBackupInventory,
 } from "./restore-backup-inventory";
@@ -107,4 +108,51 @@ it("redacts execution failures and rejects directory repository auto-initializat
     listRestoreBackups({ ...opts, profilePath: "/synthetic/directory" }),
   ).rejects.toThrow("requires a repository profile");
   expect(run).not.toHaveBeenCalled();
+});
+
+describe("listBackupIds", () => {
+  const older = {
+    ...snapshot,
+    id: "b".repeat(64),
+    time: "2025-12-01T00:00:00Z",
+  };
+
+  it("lists a profile repository with the bounded inventory, never the browser, oldest first", async () => {
+    run.mockResolvedValue({
+      code: 0,
+      stdout: inventory([snapshot, older]),
+      stderr: "",
+    });
+    const browse = jest.fn();
+    await expect(listBackupIds({ ...opts, browse })).resolves.toEqual([
+      { id: older.id, time: new Date(older.time) },
+      { id: snapshot.id, time: new Date(snapshot.time) },
+    ]);
+    expect(browse).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(
+      ["snapshots", "--json"],
+      expect.objectContaining({ host: snapshot.hostname, timeout: 60_000 }),
+    );
+  });
+
+  it("propagates inventory failures instead of reporting no backups", async () => {
+    run.mockResolvedValue({ code: 1, stdout: "", stderr: "timeout" });
+    await expect(listBackupIds({ ...opts, browse: jest.fn() })).rejects.toThrow(
+      /restore backup inventory/,
+    );
+  });
+
+  it("browses a directory repository, which has no profile", async () => {
+    const browse = jest.fn().mockResolvedValue([
+      { id: "x", time: new Date(2), summary: { a: 1 } },
+      { id: "y", time: new Date(1), summary: {} },
+    ]);
+    await expect(
+      listBackupIds({ ...opts, profilePath: "/synthetic/directory", browse }),
+    ).resolves.toEqual([
+      { id: "y", time: new Date(1) },
+      { id: "x", time: new Date(2) },
+    ]);
+    expect(run).not.toHaveBeenCalled();
+  });
 });

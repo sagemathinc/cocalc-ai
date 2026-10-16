@@ -249,7 +249,7 @@ import {
   projectRusticRestore,
 } from "./project-rustic";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
-import { listRestoreBackups } from "./restore-backup-inventory";
+import { listBackupIds, listRestoreBackups } from "./restore-backup-inventory";
 import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
@@ -1896,7 +1896,7 @@ async function reportBackupSuccess(
 async function getLatestKnownBackupId(
   project_id: string,
 ): Promise<string | undefined> {
-  const backups = await getBackups({ project_id, indexed_only: true });
+  const backups = await listProjectBackupIds(project_id);
   return backups.at(-1)?.id;
 }
 
@@ -4149,12 +4149,7 @@ async function createBackup({
         op: "createBackup",
         run: async () => {
           const existingBackups =
-            limit == null
-              ? []
-              : await getBackups({
-                  project_id,
-                  indexed_only: true,
-                });
+            limit == null ? [] : await listProjectBackupIds(project_id);
           const retention = planBackupRetention({
             backups: existingBackups,
             limit,
@@ -5065,6 +5060,16 @@ export async function getBackups({
     }
     throw err;
   }
+}
+
+export async function listProjectBackupIds(
+  project_id: string,
+): Promise<{ id: string; time: Date }[]> {
+  return await listBackupIds({
+    profilePath: await resolveRusticRepo(project_id),
+    projectId: project_id,
+    browse: async () => await getBackups({ project_id }),
+  });
 }
 
 async function getBackupFiles({

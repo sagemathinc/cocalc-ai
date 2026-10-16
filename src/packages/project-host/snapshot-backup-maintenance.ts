@@ -22,7 +22,7 @@ import {
   onProjectProvisionedReported,
 } from "./master-status";
 import {
-  getBackups,
+  listProjectBackupIds,
   runScheduledBackupMaintenance,
   runScheduledSnapshotMaintenance,
 } from "./file-server";
@@ -1495,7 +1495,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             // The bay may have committed recordProjectBackup even when its RPC
             // acknowledgement timed out. Verify that exact recovery point is
             // still visible in the off-host repository before clearing debt.
-            const backups = await getBackups({ project_id });
+            const backups = await listProjectBackupIds(project_id);
             const confirmed = backups.find(
               (backup) => Math.abs(backup.time.getTime() - lastBackup) < 1_000,
             );

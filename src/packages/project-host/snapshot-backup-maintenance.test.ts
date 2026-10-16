@@ -3,7 +3,7 @@ const confirmProjectMaintenanceAssignmentMock = jest.fn();
 const getMasterConatClientMock = jest.fn();
 const runScheduledSnapshotMaintenanceMock = jest.fn();
 const runScheduledBackupMaintenanceMock = jest.fn();
-const getBackupsMock = jest.fn();
+const listProjectBackupIdsMock = jest.fn();
 const admitStorageOperationMock = jest.fn();
 const getStorageAdmissionStatusMock = jest.fn();
 const releaseStorageOperationMock = jest.fn();
@@ -66,7 +66,7 @@ jest.mock("./master-status", () => ({
 
 jest.mock("./file-server", () => ({
   __esModule: true,
-  getBackups: (...args: any[]) => getBackupsMock(...args),
+  listProjectBackupIds: (...args: any[]) => listProjectBackupIdsMock(...args),
   runScheduledSnapshotMaintenance: (...args: any[]) =>
     runScheduledSnapshotMaintenanceMock(...args),
   runScheduledBackupMaintenance: (...args: any[]) =>
@@ -124,7 +124,7 @@ describe("snapshot-backup-maintenance", () => {
     ]);
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);
     runScheduledBackupMaintenanceMock.mockResolvedValue(undefined);
-    getBackupsMock.mockResolvedValue([]);
+    listProjectBackupIdsMock.mockResolvedValue([]);
     reportProjectMaintenanceMock.mockResolvedValue(undefined);
     listPendingMaintenanceReportsMock.mockReturnValue([]);
     listLeasedMaintenanceSchedulesMock.mockReturnValue([]);
@@ -1341,10 +1341,10 @@ describe("snapshot-backup-maintenance", () => {
       await import("./snapshot-backup-maintenance");
 
     await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
-    expect(getBackupsMock).toHaveBeenCalledWith({ project_id: "proj-1" });
+    expect(listProjectBackupIdsMock).toHaveBeenCalledWith("proj-1");
     expect(reportProjectMaintenanceMock).not.toHaveBeenCalled();
 
-    getBackupsMock.mockResolvedValue([
+    listProjectBackupIdsMock.mockResolvedValue([
       { id: "confirmed-id", time: new Date(backupTime) },
     ]);
     await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
@@ -1387,7 +1387,7 @@ describe("snapshot-backup-maintenance", () => {
     await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
     expect(reportProjectMaintenanceMock).not.toHaveBeenCalled();
 
-    getBackupsMock.mockResolvedValue([
+    listProjectBackupIdsMock.mockResolvedValue([
       { id: "confirmed-id", time: new Date(backupTime) },
     ]);
     await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
