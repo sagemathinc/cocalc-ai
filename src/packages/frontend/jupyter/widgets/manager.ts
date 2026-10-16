@@ -47,6 +47,8 @@ export class WidgetManager {
   private watching: Set<string> = new Set();
   public k3dObjectIds = new Set<number>();
   private closed = false;
+  // React roots of nested Output widget content, unmounted on close().
+  public outputRoots = new Set<ReactDOM.Root>();
 
   constructor({
     ipywidgets_state,
@@ -62,6 +64,7 @@ export class WidgetManager {
     }
     const provider = new Environment(this);
     this.manager = createWidgetManager(provider);
+    this.guardCodeActivation();
 
     this.initAllModels();
     this.ipywidgets_state.on("change", this.handleStateChange);
@@ -76,6 +79,30 @@ export class WidgetManager {
   };
 
   isClosed = (): boolean => this.closed;
+
+  // Every model and view class the widget library uses is loaded through
+  // loadClass, and every model and view is created through new_model,
+  // create_view or render. Refuse these once closed, and recheck after a
+  // class finishes loading, so no widget code (module, constructor,
+  // deserializer, view.render) starts after close(). Constructing a model or
+  // view happens synchronously right after its class resolves.
+  private guardCodeActivation = (): void => {
+    const manager = this.manager as any;
+    const guard = (name: string, recheckAfter: boolean) => {
+      const original = manager?.[name];
+      if (typeof original != "function") return;
+      manager[name] = async (...args) => {
+        this.assertOpen();
+        const result = await original.apply(manager, args);
+        if (recheckAfter) this.assertOpen();
+        return result;
+      };
+    };
+    guard("loadClass", true);
+    guard("new_model", false);
+    guard("create_view", false);
+    guard("render", false);
+  };
 
   // Stop all widget activity: no more state updates are applied, no messages
   // go to the kernel, and every model is closed (which removes its views).
@@ -97,6 +124,12 @@ export class WidgetManager {
     for (const id of Object.keys(manager?._models ?? {})) {
       closeModel(manager._models[id]);
     }
+    for (const root of this.outputRoots) {
+      try {
+        root.unmount();
+      } catch {}
+    }
+    this.outputRoots.clear();
     // Work that started before close() (e.g. a model whose state was still
     // loading) may register a model afterwards: close those as they appear.
     if (manager != null) {
@@ -492,6 +525,8 @@ VBox([s1, s2])
     // and RTC.
     const deserialized: DeserializedModelState = {};
     await this.setBuffers(model_id, serialized_state);
+    // Deserializers are widget code.
+    this.assertOpen();
     for (const k in serialized_state) {
       const deserialize = serializers[k]?.deserialize;
       if (
@@ -750,7 +785,9 @@ class Environment implements WidgetEnvironment {
     }
 
     log("getSerializedModelState", { model_id, state });
-    setTimeout(() => this.manager.watchModel(model_id), 1);
+    setTimeout(() => {
+      this.manager.watchModel(model_id).catch(() => {});
+    }, 1);
 
     if (state._model_module == "k3d") {
       if (state.object_ids != null) {
@@ -819,6 +856,7 @@ class Environment implements WidgetEnvironment {
       ),
     );
     const root = ReactDOM.createRoot(myDiv);
+    this.manager.outputRoots.add(root);
     root.render(component);
   }
 }
