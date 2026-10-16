@@ -1332,6 +1332,7 @@ ${details}
     // type = assigned, collected, graded, peer-assigned, peer-collected
     switch (type) {
       case "assigned":
+        if (!(await this.course_actions.save_course_project_files())) return;
         // make sure listing is up to date, since it sets "has_student_subdir",
         // which impacts the distribute semantics.
         await this.update_listing(assignment_id);
@@ -1369,6 +1370,7 @@ ${details}
       new_only ? "who have not already received it" : ""
     }`;
     const short_desc = "copy to student";
+    if (!(await this.course_actions.save_course_project_files())) return;
     await this.update_listing(assignment_id); // make sure this is up to date
     if (this.course_actions.is_closed()) return;
     await this.copy_assignment_create_due_date_file(assignment_id);
@@ -1647,6 +1649,7 @@ ${details}
       this.course_actions.set_error("Select at least one assignment file.");
       return;
     }
+    if (!(await this.course_actions.save_course_project_files())) return;
     await this.update_listing(assignment_id);
     if (this.course_actions.is_closed()) return;
     const { store, assignment } = this.course_actions.resolve({
