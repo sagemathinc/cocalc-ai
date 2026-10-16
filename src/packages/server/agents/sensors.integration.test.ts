@@ -99,6 +99,7 @@ import {
   setSensorIssueHookForTests,
   startSensorScheduler,
 } from "./sensor-scheduler";
+import { WATCHERS_PER_WAKE } from "./sensor-budget";
 
 const HOST = "44444444-4444-4444-8444-444444444444";
 
@@ -1336,11 +1337,17 @@ describeDb("agent sensors", () => {
       // The woken turn starts (consuming its wake), then cleans up.
       const { authorization, prompt, path, thread_id } =
         host.deliverAgentSensorWake.mock.calls[i][0];
-      await authorizeSensorExecutionLocal(owner, project_id, HOST, authorization, {
-        prompt_sha256: sha(prompt),
-        path,
-        thread_id,
-      });
+      await authorizeSensorExecutionLocal(
+        owner,
+        project_id,
+        HOST,
+        authorization,
+        {
+          prompt_sha256: sha(prompt),
+          path,
+          thread_id,
+        },
+      );
       await agentSensorRequest(run, agent, {
         action: "sensor",
         op: "delete",
@@ -1348,7 +1355,31 @@ describeDb("agent sensors", () => {
       });
     }
     expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(3);
-    await expect(watch()).rejects.toThrow(/at most 3 watchers a day/);
+    // The wakes are spent: a new watcher could never wake the agent.
+    await expect(watch()).rejects.toThrow(/used all 3 wakes/);
+  });
+
+  test("watchers that never fire do not use the wake budget; churn is capped", async () => {
+    limits.sensor_max_wakes_per_day = 2;
+    const watch = () =>
+      agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "watch",
+        watch: { type: "file", path: "out.txt" },
+      }) as any;
+    // Set and deleted before firing: once the cap was the wake budget (2).
+    for (let i = 0; i < 2 * WATCHERS_PER_WAKE; i++) {
+      const { sensor } = await watch();
+      await agentSensorRequest(run, agent, {
+        action: "sensor",
+        op: "delete",
+        sensor_id: sensor.sensor_id,
+      });
+    }
+    expect(host.deliverAgentSensorWake).not.toHaveBeenCalled();
+    await expect(watch()).rejects.toThrow(
+      new RegExp(`at most ${2 * WATCHERS_PER_WAKE} watchers a day`),
+    );
   });
 
   test("wakes are limited per account across sensors, and deleting one does not reset it", async () => {
