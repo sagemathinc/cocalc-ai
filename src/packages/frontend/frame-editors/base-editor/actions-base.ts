@@ -2387,7 +2387,9 @@ export class BaseEditorActions<
   }
 
   private openAnywaysModalIsOpen = false;
-  async save(explicit: boolean): Promise<void> {
+  // With strict, a failed save to disk is also thrown to the caller, e.g.,
+  // so course assign can refuse to copy a stale file.
+  async save(explicit: boolean, opts?: { strict?: boolean }): Promise<void> {
     if (
       !this.store.get("is_loaded") ||
       this._syncstring == null ||
@@ -2435,6 +2437,7 @@ export class BaseEditorActions<
           error: "Error saving file -- has_unsaved_changes",
         });
       }
+      if (opts?.strict) throw err;
     } finally {
       this.setState({ is_saving: false });
     }

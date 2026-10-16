@@ -1517,8 +1517,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     await project_file.save(opts.path, this.redux, this.project_id);
   }
 
-  // Save all open files in this project
-  async save_all_files(): Promise<void> {
+  // Save all open files in this project. With strict, throw if saving any
+  // of them to disk fails.
+  async save_all_files(opts?: { strict?: boolean }): Promise<void> {
     if (this.isViewerProjectUser()) {
       return;
     }
@@ -1540,7 +1541,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         // that has not yet been initialized).
         return;
       }
-      saves.push(project_file.save(path, this.redux, this.project_id));
+      saves.push(project_file.save(path, this.redux, this.project_id, opts));
     });
     await Promise.all(saves);
   }

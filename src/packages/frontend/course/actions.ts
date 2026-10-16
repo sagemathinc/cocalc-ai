@@ -321,6 +321,24 @@ export class CourseActions extends Actions<CourseState> {
     this.last_collaborator_state = users;
   };
 
+  // Copies to students read files as saved on disk, so every file open in the
+  // course project must be saved first, or students get stale (even empty)
+  // files. Returns false, after reporting the error, if saving fails.
+  save_course_project_files = async (): Promise<boolean> => {
+    try {
+      const project_id = this.get_store().get("course_project_id");
+      await this.redux
+        .getProjectActions(project_id)
+        .save_all_files({ strict: true });
+      return true;
+    } catch (err) {
+      this.set_error(
+        `Nothing was copied to students, since saving open files in the course project failed: ${err}`,
+      );
+      return false;
+    }
+  };
+
   // Set the error.  Use error="" to explicitly clear the existing set error.
   // If there is an error already set, then the new error is just
   // appended to the existing one.
