@@ -24,9 +24,10 @@ import {
   writeProjectFile,
 } from "./claude-project-file-tools";
 import {
+  parseMemoryExpiry,
   parseMemoryRef,
-  validateMemoryNamespace,
   validateMemoryRevision,
+  validateMemoryScopeName,
 } from "@cocalc/conat/agents/memory";
 
 // Room for project_write_file content (1 MB, JSON-escaped).
@@ -117,14 +118,19 @@ export async function runAgentMemoryTool(
 ): Promise<unknown> {
   const b64 = (value: unknown) =>
     Buffer.from(String(value ?? ""), "utf8").toString("base64");
-  // `name`, `namespace/name` or `global/name`, validated before the shell.
+  // `name`, `namespace/name`, `global/name`, `agent/name` or `@agent/name`,
+  // validated before the shell.
   const name = () => {
     parseMemoryRef(args.name);
     return shellQuote(String(args.name));
   };
   let script: string;
+  const expect =
+    args.expected_revision == null
+      ? ""
+      : ` --expect-revision ${shellQuote(validateMemoryRevision(args.expected_revision))}`;
   if (tool === "memory_list")
-    script = `${COCALC_CLI} project chat memory list${args.namespace == null ? "" : ` --namespace ${shellQuote(validateMemoryNamespace(args.namespace))}`}`;
+    script = `${COCALC_CLI} project chat memory list${args.namespace == null ? "" : ` --namespace ${shellQuote(validateMemoryScopeName(args.namespace))}`}`;
   else if (tool === "memory_read")
     script = `${COCALC_CLI} project chat memory read ${name()}`;
   else if (tool === "memory_search") {
@@ -133,13 +139,14 @@ export async function runAgentMemoryTool(
       throw Error("limit must be an integer");
     script = `${COCALC_CLI} project chat memory search${limit} -- "$(printf %s '${b64(args.query)}' | base64 -d)"`;
   } else if (tool === "memory_delete")
-    script = `${COCALC_CLI} project chat memory delete ${name()}`;
+    script = `${COCALC_CLI} project chat memory delete ${name()}${expect}`;
   else if (tool === "memory_write") {
-    const expect =
-      args.expected_revision == null
+    if (args.expires_in != null) parseMemoryExpiry(args.expires_in);
+    const expires =
+      args.expires_in == null
         ? ""
-        : ` --expect-revision ${shellQuote(validateMemoryRevision(args.expected_revision))}`;
-    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${name()} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin${expect}`;
+        : ` --expires ${shellQuote(String(args.expires_in))}`;
+    script = `printf %s '${b64(args.body)}' | base64 -d | ${COCALC_CLI} project chat memory write ${name()} --description "$(printf %s '${b64(args.description)}' | base64 -d)" --stdin${expect}${expires}`;
   } else throw Error("Unsupported project tool");
   const out = await runCaptured(execute, script, signal, 1_000_000);
   // Results come on stdout; a failure's JSON on stderr. Either way the tool

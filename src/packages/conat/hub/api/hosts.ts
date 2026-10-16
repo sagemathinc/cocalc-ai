@@ -2343,10 +2343,14 @@ export interface Hosts {
   // Saved-note index for a turn the account runs in this project; null when
   // the account has not enabled agent memory. The account is passed as
   // owner_account_id because host auth reserves account_id for the caller.
+  // With the turn's chat path and thread, the index also lists that agent's
+  // own scope.
   getAgentMemoryContext: (opts: {
     host_id?: string;
     project_id: string;
     owner_account_id: string;
+    chat_path?: string;
+    thread_id?: string;
   }) => Promise<{ notes: number; index: string } | null>;
   // Claude subscription limits reported during a turn, saved on the
   // credential. The owner is owner_account_id: host auth strips account_id.

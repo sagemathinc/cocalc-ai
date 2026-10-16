@@ -416,6 +416,9 @@ let attachmentBlobReader: AttachmentBlobReader | undefined;
 type AgentMemoryContextProvider = (opts: {
   projectId: string;
   accountId: string;
+  /** The turn's chat, so the index can list its agent's own notes. */
+  chatPath?: string;
+  threadId?: string;
 }) => Promise<{ notes: number; index: string } | null>;
 let agentMemoryContextProvider: AgentMemoryContextProvider | undefined;
 
@@ -431,12 +434,18 @@ export function setAgentMemoryContextProvider(
 async function loadAgentMemoryContext(
   projectId: string,
   accountId: string,
+  chat?: { path?: string; thread_id?: string },
 ): Promise<{ context?: string; event?: AcpStreamEvent }> {
   if (!agentMemoryContextProvider || !accountId) return {};
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      agentMemoryContextProvider({ projectId, accountId }),
+      agentMemoryContextProvider({
+        projectId,
+        accountId,
+        chatPath: chat?.path,
+        threadId: chat?.thread_id,
+      }),
       new Promise<"timeout">((resolve) => {
         timer = setTimeout(() => resolve("timeout"), 5_000);
       }),
@@ -8234,7 +8243,11 @@ async function executeAcpRequest({
         // the qualified Claude harness; any wire value is dropped.
         const memory =
           !harness || isQualifiedClaudeCodeProfile(request.runtime?.profile)
-            ? await loadAgentMemoryContext(projectId, request.account_id)
+            ? await loadAgentMemoryContext(
+                projectId,
+                request.account_id,
+                request.chat,
+              )
             : {};
         if (memory.event) {
           await wrappedStream({ type: "event", event: memory.event });
