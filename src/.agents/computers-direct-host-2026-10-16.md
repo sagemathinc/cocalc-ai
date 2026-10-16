@@ -76,17 +76,40 @@ computer of P answers.
 The conat server checks a computer socket again every 15 s; revalidation
 is keyed on `user.computer_id`. That check refuses the socket if any of
 these holds:
-- the computer was revoked (the host's memory, filled by the hub's
-  `dropComputer` call);
+- the computer was revoked, or the site's computers switch is off;
 - the project gained a collaborator;
 - the token has expired.
+
+Revocations and the switch live in the host's SQLite database
+(`project-host/sqlite/computer-access.ts`). The host's sockets are held by
+separate conat router processes, so in-memory state in the master would
+never reach them (review of #1108). The master writes the database from two
+sources:
+- the hub's `dropComputer` call;
+- the host's existing 15 s status sync, through a new
+  `syncComputerAccess` call. It returns the switch and the computers of
+  the host's projects revoked within a token's lifetime, so a lost
+  `dropComputer` is made up within seconds.
+
+Until the hub has reported the switch on, computers are refused (fail
+closed).
+
+The host's copy of each project's collaborators is kept current by the
+normal collaborator updates. The hub never pushes it when issuing a
+computer token: an older copy sent then could overwrite a newer one that
+just added a collaborator (review of #1108). Versioning that copy, which
+the browser token path also needs, is a separate change.
+
+**Turning the site's switch off.** Each host learns it at its next status
+sync (within 15 s) and drops every computer.
 
 **Revoking.**
 - The hub marks the computer revoked.
 - It calls `dropComputer` on the project's host.
 - The host closes the socket within 15 s, and the connector kills
   everything it started.
-- If that call is lost, the token's 10-minute lifetime is the bound.
+- If that call is lost, the next status sync (15 s) delivers it; the
+  token's 10-minute lifetime is the last bound.
 
 ## Stage 1 limits
 

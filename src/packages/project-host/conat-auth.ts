@@ -40,6 +40,7 @@ import {
   isComputerDropped,
   projectServesComputer,
 } from "./computers";
+import { computersEnabledOnHost } from "./sqlite/computer-access";
 import { isProjectHostApiKeySubjectAllowed } from "@cocalc/conat/auth/project-host-api-key-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
@@ -151,6 +152,7 @@ function userFromBearerToken({
   });
   if (claims.act === "computer") {
     const { account_id, project_id } = claims.computer!;
+    if (!computersEnabledOnHost()) throw new Error("computers are turned off");
     if (isComputerDropped(claims.sub)) throw new Error("computer revoked");
     if (!projectServesComputer(project_id, account_id)) {
       throw new Error(

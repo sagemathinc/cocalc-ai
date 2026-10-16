@@ -11,7 +11,10 @@
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
-import { issueProjectHostComputerToken } from "@cocalc/conat/auth/project-host-token";
+import {
+  COMPUTER_TOKEN_MAX_TTL_SECONDS,
+  issueProjectHostComputerToken,
+} from "@cocalc/conat/auth/project-host-token";
 import {
   ONLINE_WITHIN_MS,
   type ComputerSummary,
@@ -21,10 +24,9 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { resolveHostConnectionLocal } from "@cocalc/server/conat/api/hosts";
-import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { assertComputersAuthority, type Queryable } from "./authority";
-import { assertComputersEnabled } from "./enabled";
+import { assertComputersEnabled, computersEnabled } from "./enabled";
 import {
   ComputerRequestError,
   computerName,
@@ -200,6 +202,28 @@ export async function dropOnHosts(
 }
 
 /**
+ * What a project host needs to know about computers, every 15 s: the site's
+ * switch, and the computers of its projects revoked within a host token's
+ * lifetime (so a lost dropComputer call is made up within seconds).
+ */
+export async function computerAccessForHost(
+  host_id: string,
+): Promise<{ enabled: boolean; revoked: string[] }> {
+  const { rows } = await getPool().query(
+    `SELECT c.computer_id FROM paired_computers c
+       JOIN projects p ON p.project_id = c.project_id
+      WHERE p.host_id = $1
+        AND c.revoked_at > now() - make_interval(secs => $2)
+      LIMIT 1000`,
+    [host_id, COMPUTER_TOKEN_MAX_TTL_SECONDS + 60],
+  );
+  return {
+    enabled: await computersEnabled(),
+    revoked: rows.map((r) => r.computer_id),
+  };
+}
+
+/**
  * A paired computer asks where to connect. Answers its project's host and a
  * short-lived token for it, after checking: its token, not revoked,
  * computers on, the project still has only its owner, and it has a host
@@ -260,11 +284,10 @@ export async function connectComputer({
       "its project's host can't be reached directly right now",
     );
   }
-  // The host decides from its own copy of the project's collaborators.
-  await syncProjectUsersOnHost({
-    project_id: row.project_id,
-    expected_host_id: host_id,
-  });
+  // The host decides from its own copy of the project's collaborators,
+  // which collaborator changes keep current. Never pushed from here: an
+  // older copy sent now could overwrite a newer one (a collaborator just
+  // added) and leave the computer allowed.
   const { token: hostToken, expires_at } = issueProjectHostComputerToken({
     host_id,
     computer_id,

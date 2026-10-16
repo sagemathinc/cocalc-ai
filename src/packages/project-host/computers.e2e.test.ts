@@ -7,6 +7,7 @@ it. Design: src/.agents/computers-direct-host-2026-10-16.md.
 pnpm test `pwd`/computers.e2e.test.ts
 */
 
+import { execFileSync } from "node:child_process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,12 +24,31 @@ const OTHER_PROJECT_ID = "00000000-1000-4000-8000-000000000011";
 const HOST_ID = "00000000-1000-4000-8000-000000000099";
 const SECRET = "project-secret";
 
+// The host's database, shared by its processes: this test process is the
+// conat router; revocations and the switch are written by another process,
+// as the master writes them in production.
+const SQLITE_DIR = mkdtempSync(join(tmpdir(), "computers-host-db-"));
+process.env.COCALC_LITE_SQLITE_FILENAME = join(SQLITE_DIR, "host.db");
+
+/** Run f in a separate node process against the same host database. */
+function inMasterProcess(code: string): void {
+  execFileSync(
+    process.execPath,
+    [
+      "-e",
+      `const c = require(${JSON.stringify(join(__dirname, "dist", "computers.js"))}); ${code}`,
+    ],
+    { env: process.env, stdio: "pipe", timeout: 30_000 },
+  );
+}
+
 // The host's copy of each project's collaborators: tests change it.
 const mockProjects: Record<string, any> = {};
 jest.mock("./sqlite/projects", () => ({
   getProject: (project_id: string) => mockProjects[project_id],
 }));
 jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
+  ...jest.requireActual("@cocalc/lite/hub/sqlite/database"),
   getRow: (_table: string, key: string) =>
     mockProjects[JSON.parse(key).project_id],
 }));
@@ -67,7 +87,10 @@ import {
 } from "@cocalc/backend/computers/connector";
 import type { HostConnection } from "@cocalc/util/computers/api";
 import { createProjectHostConatAuth } from "./conat-auth";
-import { dropComputer, resetComputersForTesting } from "./computers";
+import {
+  resetComputerAccessForTesting,
+  setComputersEnabledOnHost,
+} from "./sqlite/computer-access";
 
 jest.setTimeout(60_000);
 
@@ -229,7 +252,8 @@ describe("a computer on its project's host", () => {
   });
 
   beforeEach(() => {
-    resetComputersForTesting();
+    resetComputerAccessForTesting();
+    setComputersEnabledOnHost(true);
     mockProjects[PROJECT_ID] = soloProject();
     mockProjects[OTHER_PROJECT_ID] = {
       ...soloProject(),
@@ -240,7 +264,9 @@ describe("a computer on its project's host", () => {
   afterAll(async () => {
     for (const c of clients) c.close();
     await server?.close();
-    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    for (const dir of [...dirs, SQLITE_DIR]) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("runs a command for the project's processes and agents, and says hello", async () => {
@@ -345,7 +371,8 @@ describe("a computer on its project's host", () => {
     const pid = Number(readFileSync(pidFile, "utf8"));
     const started = Date.now();
     revoked = true;
-    dropComputer(m.computer_id);
+    // The hub's dropComputer reaches the master, another process.
+    inMasterProcess(`c.dropComputer(${JSON.stringify(m.computer_id)})`);
     await m.done; // it ends for good
     expect(Date.now() - started).toBeLessThan(15_000);
     expect(m.logs.join("\n")).toMatch(/revoked/);
@@ -371,6 +398,37 @@ describe("a computer on its project's host", () => {
       "the computer stops answering",
     );
     // Nor can it connect again while the collaborator is there.
+    const again = client({ bearer: computerToken(m.computer_id).token });
+    await expect(again.waitUntilSignedIn({ timeout: 3000 })).rejects.toThrow();
+    m.stop();
+    await m.done;
+  });
+
+  it("the site's switch turned off (heard by the master): computers are cut off and refused", async () => {
+    const m = startComputer();
+    await until(() => m.connects() > 0, "the computer connects");
+    const p = project();
+    expect((await exec(p, m.computer_id, { command: "true" })).ok).toBe(true);
+    inMasterProcess(`c.applyComputerAccess({ enabled: false, revoked: [] })`);
+    await until(
+      async () =>
+        (await exec(p, m.computer_id, { command: "true" }, 2000).catch(
+          () => "refused",
+        )) === "refused",
+      "the computer stops answering",
+    );
+    const again = client({ bearer: computerToken(m.computer_id).token });
+    await expect(again.waitUntilSignedIn({ timeout: 3000 })).rejects.toThrow();
+    m.stop();
+    await m.done;
+  });
+
+  it("a revocation the status sync reports is enforced like a dropComputer call", async () => {
+    const m = startComputer();
+    await until(() => m.connects() > 0, "the computer connects");
+    inMasterProcess(
+      `c.applyComputerAccess({ enabled: true, revoked: [${JSON.stringify(m.computer_id)}] })`,
+    );
     const again = client({ bearer: computerToken(m.computer_id).token });
     await expect(again.waitUntilSignedIn({ timeout: 3000 })).rejects.toThrow();
     m.stop();

@@ -249,10 +249,9 @@ describeDb("computers at the home bay", () => {
       host_id: HOST_ID,
       address: "https://host-1.example.com",
     });
-    expect(mockSync).toHaveBeenCalledWith({
-      project_id: project,
-      expected_host_id: HOST_ID,
-    });
+    // Never pushes the collaborators to the host: an older copy could
+    // overwrite a newer one there (the host keeps its own current).
+    expect(mockSync).not.toHaveBeenCalled();
     expect(
       verifyProjectHostAuthToken({
         token: answer.token,
@@ -334,6 +333,33 @@ describeDb("computers at the home bay", () => {
     expect((await listComputers(account))[0].revoked_at).not.toBeNull();
     // Its name is free again.
     await pair("m1");
+  });
+
+  it("tells each host the switch and its projects' recent revocations", async () => {
+    const { revokeComputer, computerAccessForHost } =
+      await import("./computers");
+    const { computer_id } = await pair();
+    expect(await computerAccessForHost(HOST_ID)).toEqual({
+      enabled: true,
+      revoked: [],
+    });
+    await revokeComputer({ account_id: account, computer_id });
+    expect(await computerAccessForHost(HOST_ID)).toEqual({
+      enabled: true,
+      revoked: [computer_id],
+    });
+    // Another host hears nothing about it.
+    expect(
+      (await computerAccessForHost("00000000-1000-4000-8000-000000000098"))
+        .revoked,
+    ).toEqual([]);
+    // Long enough ago that no token issued before is valid: forgotten.
+    await db().query(
+      "UPDATE paired_computers SET revoked_at=now() - interval '1 hour'",
+    );
+    expect((await computerAccessForHost(HOST_ID)).revoked).toEqual([]);
+    settings.computers_enabled = false;
+    expect((await computerAccessForHost(HOST_ID)).enabled).toBe(false);
   });
 
   it("deleting the account revokes its computers", async () => {

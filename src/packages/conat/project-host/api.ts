@@ -1250,6 +1250,14 @@ export interface HostStatusApi {
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
+  /**
+   * Computers on this host (every 15 s): whether the site's computers switch
+   * is on, and the computers of its projects revoked recently enough that a
+   * token issued before could still be valid. See project-host/computers.ts.
+   */
+  syncComputerAccess: (opts: {
+    host_id: string;
+  }) => Promise<{ enabled: boolean; revoked: string[] }>;
 }
 
 type HostMaintenanceApi = Pick<
