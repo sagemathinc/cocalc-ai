@@ -12177,11 +12177,15 @@ async function handleAcpControlRequest(
     request.action === "resend_with_model" ||
     request.action === "resend_with_payment"
   ) {
+    // The same trimmed identity the job lookup below uses.
     const key = [
       request.project_id,
       request.path,
+      request.thread_id,
       request.user_message_id,
-    ].join("\0");
+    ]
+      .map((value) => `${value ?? ""}`.trim())
+      .join("\0");
     return await serializeMessageControl(key, () =>
       handleAcpControlRequestNow(request),
     );

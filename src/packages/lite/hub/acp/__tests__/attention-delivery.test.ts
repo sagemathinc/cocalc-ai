@@ -603,18 +603,27 @@ describe("a context clear after admission", () => {
 
   it("keeps a cancel that races a send-now", async () => {
     const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
-    // The steer finds no live turn, so the send-now puts the job back.
-    mockSteer.mockResolvedValue({ state: "missing" });
+    // The steer finds no live turn, so the send-now puts the job back; it is
+    // slow, so the cancel arrives while the send-now holds the job.
+    mockSteer.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { state: "missing" };
+    });
     const sendNowResult = acpTestInternals.handleAcpControlRequest({
       ...sendNow(job.user_message_id),
       context_generation: undefined,
       context_cleared_at: undefined,
     });
+    // Cancel only once the send-now holds the job and is steering it.
+    while (mockSteer.mock.calls.length === 0)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    // Padded identities name the same job, so they share its control queue.
     const cancelResult = acpTestInternals.handleAcpControlRequest({
       action: "cancel",
       account_id: accountId,
       ...threadKey,
-      user_message_id: job.user_message_id,
+      path: `${threadKey.path} `,
+      user_message_id: ` ${job.user_message_id}`,
     } as any);
     await Promise.all([sendNowResult, cancelResult]);
     expect(await cancelResult).toMatchObject({ ok: true, state: "canceled" });
