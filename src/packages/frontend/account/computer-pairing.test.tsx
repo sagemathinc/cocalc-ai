@@ -123,3 +123,18 @@ test("approving says the rule", () => {
     'Anything running in the project "Solo" (agents included) will be able to run any command there as sage, with all of that user\'s access, until you revoke it.',
   );
 });
+
+test("two forms at once: each label names its own field", () => {
+  render(
+    <>
+      <ConnectComputer />
+      <ConnectComputer />
+    </>,
+  );
+  const names = screen.getAllByLabelText("Computer name");
+  expect(names).toHaveLength(2);
+  expect(names[0]).not.toBe(names[1]);
+  const projects = screen.getAllByLabelText("Project it serves");
+  expect(projects).toHaveLength(2);
+  expect(projects[0]).not.toBe(projects[1]);
+});

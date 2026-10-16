@@ -8,7 +8,7 @@
 // Used by the settings panel and the composer's Computers dialog. Design:
 // src/.agents/computers-direct-host-2026-10-16.md.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Alert, Button, Input, Select, Space, Typography } from "antd";
 import type { ComputerRequestSummary } from "@cocalc/util/computers/api";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -237,6 +237,10 @@ export function ConnectComputer({
   onDone?: () => void;
 }) {
   const projects = useComputerProjects();
+  // Per instance: the settings panel and the composer's dialog can both
+  // show this form, and each label must name its own field.
+  const nameId = useId();
+  const projectFieldId = useId();
   const [name, setName] = useState("");
   const [projectId, setProjectId] = useState<string | undefined>(
     projects.some((p) => p.project_id === defaultProjectId)
@@ -274,18 +278,18 @@ export function ConnectComputer({
         can run commands on it as you. So it can only serve a project whose one
         collaborator is you.
       </span>
-      <label htmlFor="computer-pairing-name">Computer name</label>
+      <label htmlFor={nameId}>Computer name</label>
       <Input
-        id="computer-pairing-name"
+        id={nameId}
         addonBefore="@"
         placeholder="name, e.g. laptop"
         value={name}
         status={name && !NAME.test(name) ? "error" : undefined}
         onChange={(e) => setName(e.target.value.trim().toLowerCase())}
       />
-      <label htmlFor="computer-pairing-project">Project it serves</label>
+      <label htmlFor={projectFieldId}>Project it serves</label>
       <Select
-        id="computer-pairing-project"
+        id={projectFieldId}
         style={{ width: "100%" }}
         placeholder="The project it serves"
         value={projectId}
