@@ -11,6 +11,10 @@ export const EXTERNAL_CREDENTIAL_OPERATION_LEASE_KIND =
 export const EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY = "lease_expires_at";
 export const GITHUB_DEVICE_LOGIN_KIND = "github-device-login";
 export const CLOUDFLARE_OAUTH_LOGIN_KIND = "cloudflare-oauth-login";
+// Same values as @cocalc/util/ai/external-credential-profiles.
+export const CLAUDE_SUBSCRIPTION_PROVIDER = "anthropic";
+export const CLAUDE_SUBSCRIPTION_KIND = "claude-subscription-home-v1";
+export const CLAUDE_SUBSCRIPTION_EXPIRY_METADATA_KEY = "expires_at";
 
 type PolicySelector = {
   provider: string;
@@ -24,6 +28,9 @@ export type ExternalCredentialProviderPolicy = {
   scope: string;
   defaultMetadataKey?: string;
   leaseExpirationMetadataKey?: string;
+  // A credential past this metadata timestamp no longer counts against a
+  // create limit; it stays listed so its owner can see and remove it.
+  limitExpiryMetadataKey?: string;
 };
 
 // Store behavior is selected by trusted server policy, never by metadata from
@@ -57,6 +64,14 @@ const POLICIES: readonly ExternalCredentialProviderPolicy[] = [
     leaseExpirationMetadataKey: EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
   },
   {
+    // Claude long-lived inference tokens expire after a year; an expired one
+    // must not block connecting a new subscription.
+    provider: CLAUDE_SUBSCRIPTION_PROVIDER,
+    kind: CLAUDE_SUBSCRIPTION_KIND,
+    scope: "account",
+    limitExpiryMetadataKey: CLAUDE_SUBSCRIPTION_EXPIRY_METADATA_KEY,
+  },
+  {
     kind: EXTERNAL_CREDENTIAL_OPERATION_LEASE_KIND,
     scope: "account",
     leaseExpirationMetadataKey: EXTERNAL_CREDENTIAL_LEASE_EXPIRY_METADATA_KEY,
@@ -81,6 +96,12 @@ export function defaultMetadataKeyForCredentialSelector(
   selector: PolicySelector,
 ): string | undefined {
   return externalCredentialProviderPolicy(selector)?.defaultMetadataKey;
+}
+
+export function limitExpiryMetadataKeyForCredentialSelector(
+  selector: PolicySelector,
+): string | undefined {
+  return externalCredentialProviderPolicy(selector)?.limitExpiryMetadataKey;
 }
 
 export function leaseExpirationMetadataKeyForCredentialSelector(

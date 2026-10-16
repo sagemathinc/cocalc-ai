@@ -8,6 +8,7 @@ import {
 import {
   defaultMetadataKeyForCredentialSelector,
   leaseExpirationMetadataKeyForCredentialSelector,
+  limitExpiryMetadataKeyForCredentialSelector,
 } from "./provider-policy";
 
 export {
@@ -493,13 +494,23 @@ WHERE id=$1 AND revoked IS NULL
     }
     if (maxActive != null) {
       const limit = Math.max(1, Math.floor(maxActive));
+      // An expired credential (by its policy's metadata timestamp) stays
+      // listed but no longer takes a slot. Unparseable values still count.
+      const expiryKey = limitExpiryMetadataKeyForCredentialSelector(normalized);
       const { rows } = await client.query<{ count: string }>(
         `
 SELECT COUNT(*)::text AS count
 FROM external_credentials
 WHERE ${ownershipClause(1)} AND revoked IS NULL
+  AND CASE
+        WHEN $7::text IS NULL OR NOT (metadata ? $7::text) THEN TRUE
+        WHEN metadata->>$7::text ~
+             '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
+          THEN (metadata->>$7::text)::timestamptz > NOW()
+        ELSE TRUE
+      END
         `,
-        [...selectorValues(normalized)],
+        [...selectorValues(normalized), expiryKey ?? null],
       );
       if (Number(rows[0]?.count ?? 0) >= limit) {
         throw new Error(`at most ${limit} active credentials are allowed`);

@@ -26,6 +26,10 @@ import {
 import { packClaudeSubscriptionToken } from "./claude-subscription-token";
 
 const logger = getLogger("project-host:acp:claude-subscription-registry");
+// Connected Claude subscriptions per account. A token cannot reveal its Claude
+// account, so each Connect adds one; Reconnect replaces one in place.
+export const CLAUDE_SUBSCRIPTION_MAX_ACTIVE = 15;
+
 // Compare-and-swap conflicts are retried against the newly stored bundle.
 const SYNC_ATTEMPTS = 3;
 
@@ -129,7 +133,7 @@ export async function publishClaudeSubscriptionToken(options: {
         },
         credential_id: credentialId,
         create: !credentialId,
-        max_active: credentialId ? undefined : 3,
+        max_active: credentialId ? undefined : CLAUDE_SUBSCRIPTION_MAX_ACTIVE,
       },
     ],
     timeout: 15_000,
@@ -177,7 +181,7 @@ async function upsertClaudeSubscriptionPayload(options: {
         credential_id: credentialId,
         expected_payload_sha256: expectedPayloadSha256,
         create: !credentialId,
-        max_active: credentialId ? undefined : 3,
+        max_active: credentialId ? undefined : CLAUDE_SUBSCRIPTION_MAX_ACTIVE,
         deduplicate_metadata: credentialId
           ? undefined
           : {
