@@ -2,10 +2,6 @@ import type { AgentAppearance } from "@cocalc/util/agent-appearance";
 import { isValidUUID } from "@cocalc/util/misc";
 import { validateAgentMemoryRequest, type AgentMemoryRequest } from "./memory";
 import { validateAgentSensorRequest, type AgentSensorRequest } from "./sensors";
-import {
-  validateAgentComputerRequest,
-  type AgentComputerRequest,
-} from "./computers";
 
 export const AGENT_IDENTITY_TOKEN_PREFIX = "cocalc_agent_identity_";
 export const AGENT_MESSAGE_MAX_BYTES = 32 * 1024;
@@ -38,8 +34,7 @@ export interface AgentCredential {
 export type AgentInspectionRequest =
   | { action: "whoami" }
   | AgentMemoryRequest
-  | AgentSensorRequest
-  | AgentComputerRequest;
+  | AgentSensorRequest;
 
 export interface AgentSelf {
   identity: AgentIdentity;
@@ -57,10 +52,6 @@ export function validateAgentInspection(request: AgentInspectionRequest): void {
   }
   if (request?.action === "sensor") {
     validateAgentSensorRequest(request);
-    return;
-  }
-  if (request?.action === "computer") {
-    validateAgentComputerRequest(request);
     return;
   }
   if (!request || request.action !== "whoami")

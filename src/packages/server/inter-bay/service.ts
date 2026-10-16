@@ -4,7 +4,6 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { listSigningKeyDirectoryLocal } from "@cocalc/server/computers/signing-keys";
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
 import { createInterBaySessionAuthHandler } from "@cocalc/conat/inter-bay/session-auth";
@@ -772,7 +771,6 @@ async function startBayRegistryService(): Promise<void> {
   const impl: InterBayBayRegistryApi = {
     register: async (opts) => await registerBayPresenceLocal(opts),
     list: async (opts) => await listBayRegistryLocal(opts),
-    computerSigningKeys: async () => await listSigningKeyDirectoryLocal(),
   };
   services.push(
     ...createInterBayBayRegistryHandlers({

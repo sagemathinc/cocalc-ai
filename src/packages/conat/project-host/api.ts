@@ -856,6 +856,11 @@ export interface HostControlApi {
     users?: any;
     runtime_lifecycle_revision?: number;
   }) => Promise<void>;
+  /**
+   * A paired computer was revoked: refuse it from now on (its socket closes
+   * at the next recheck, within 15 s). See project-host/computers.ts.
+   */
+  dropComputer: (opts: { computer_id: string }) => Promise<void>;
   updateProjectRunQuota: (opts: {
     project_id: string;
     run_quota?: any;

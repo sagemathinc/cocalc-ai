@@ -445,46 +445,16 @@ export const TABLE_OWNERSHIP = {
       "Agent runs derive authority from their project-owned identity and account execution principal. They must use agent routing helpers.",
   }),
 
-  ...entries(
-    [
-      "account_computers",
-      "account_computer_requests",
-      "account_computer_operations",
-      "account_computer_jobs",
-      "account_computer_ticket_log",
-      "account_computer_challenges",
-      "account_computer_sessions",
-      "account_computer_relays",
-      "account_computer_session_targets",
-    ],
-    {
-      ownership: "account-home",
-      authority: "account_id",
-      portability: "unsupported",
-      secondary_reference_fields: {
-        project_id:
-          "Agent source project (source_project_id) is a locator checked through its owning bay's attestation, not account-home state.",
-      },
-      notes:
-        "Computers an account connects for its agents (src/.agents/computers-plan-2026-10-11.md): policy ceiling, epochs, pairing requests, operation audit, job mirror, and the signed-state delivery and its delivery of the revocation gate. Authoritative only at the account home; account rehome is blocked while any rows exist until an explicit migration exists.",
-    },
-  ),
-  ...entries(["cluster_computer_signing_keys"], {
-    ownership: "seed-global",
-    authority: "seed",
-    portability: "stable",
+  ...entries(["paired_computers", "computer_pairing_requests"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
     secondary_reference_fields: {
-      bay_id: "Bay holding the private key; the key directory is cluster-wide.",
+      project_id:
+        "The one project the computer serves; its owning bay and host are resolved when the computer asks for a host token.",
     },
     notes:
-      "Public directory of the Ed25519 keys bays use to sign computer certificates, project attestations and tickets. Daemons on connected computers verify against it.",
-  }),
-  ...entries(["bay_computer_signing_keys"], {
-    ownership: "stable-bay",
-    authority: "local",
-    portability: "stable",
-    notes:
-      "This bay's own computer-signing private keys, encrypted by secret storage. Never replicated; account moves do not move them.",
+      "Computers an account connects to one of its projects (src/.agents/computers-direct-host-2026-10-16.md): pairing requests and the paired computers with their token hashes. Authoritative only at the account home; account rehome is blocked while any rows exist until an explicit migration exists.",
   }),
   ...entries(
     [

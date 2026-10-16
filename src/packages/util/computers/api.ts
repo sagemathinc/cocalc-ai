@@ -3,80 +3,37 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Shapes shared by the hub, the inter-bay service, the CLI and the frontend.
+// Shapes shared by the hub, the inter-bay service, the CLI, the connector
+// and the frontend. Design: src/.agents/computers-direct-host-2026-10-16.md.
 
-import type { OperationRequest } from "./operations";
-import type { ComputerPolicy, RequestedPolicy } from "./policy";
-import type {
-  ComputerCertificate,
-  ComputerTicket,
-  SignedEnvelope,
-  SigningKeyEndorsement,
-} from "./protocol";
+/** How often a connector asks the hub for a fresh host token. */
+export const HOST_TOKEN_REFRESH_MS = 5 * 60 * 1000;
+/** A computer that asked for a host token this recently counts as online. */
+export const ONLINE_WITHIN_MS = 2 * HOST_TOKEN_REFRESH_MS + 60 * 1000;
 
 export interface ComputerSummary {
   computer_id: string;
   name: string;
+  /** The one project whose processes may run commands there. */
+  project_id: string;
   hostname: string;
   os: string;
   arch: string;
   machine_user: string;
-  mode: "direct" | "isolated";
-  agent_network_id: string;
-  effective_policy: ComputerPolicy;
-  policy_epoch: number;
-  epoch: number;
-  deadline: number | null;
-  max_deadline: number | null;
-  notes: string;
-  notes_revision: number;
-  notes_locked: boolean;
+  created_at: number;
+  /** When it last asked for a host token. */
   connected_at: number | null;
-  /** When it was last heard from (its connector's latest heartbeat). */
-  last_seen: number | null;
-  /** Its connector is online now: a live session seen in the last 45 s. */
-  connected: boolean;
+  /** Asked for a host token recently (see ONLINE_WITHIN_MS). */
+  online: boolean;
   revoked_at: number | null;
-  /** Its certificate's end: after it the computer must be paired again. */
-  certificate_not_after: number | null;
-  origin: string;
 }
 
-/** What the machine shows the owner before pairing. Not secret. */
-export interface PairingView {
-  site: string;
-  cluster_id: string;
-  request_id: string;
-  account_id: string;
-  /** Who will control the computer, so the owner can tell it's their account. */
-  account_label: string;
-  name: string;
-  requested_policy: RequestedPolicy;
-  why: string;
-  server_nonce: string;
-  state: string;
-  expires_at: number;
-}
-
-/**
- * What the machine sees while it waits for the owner. Only the claimant, who
- * knows the transcript hash, gets an answer.
- */
-export interface PairingStatus {
-  request_id: string;
-  /** pending/paired/approved/declined/expired/invalidated, or revoked. */
-  state: string;
-  pairing_phrase: string;
-  expires_at: number;
-  /** Once approved. */
-  computer_id?: string;
-  name?: string;
-  certificate?: SignedEnvelope<ComputerCertificate>;
-  /** Once approved: the cluster's signing keys the daemon will trust. */
-  directory?: DirectorySigningKey[];
-  /** Once approved: the approved policy (the certificate's ceiling). */
-  policy?: ComputerPolicy;
-  agent_network_id?: string;
+/** The machine as it describes itself when it claims a request. */
+export interface MachineInfo {
+  hostname: string;
+  os: string;
+  arch: string;
+  user: string;
 }
 
 /** A new request, and the line the owner runs on the computer. */
@@ -89,25 +46,12 @@ export interface CreatedComputerRequest {
 export interface ComputerRequestSummary {
   request_id: string;
   name: string;
+  project_id: string;
+  /** pending, claimed, approved, declined, expired, invalidated. */
   state: string;
-  why: string;
-  requested_policy: RequestedPolicy;
-  resolved_policy: ComputerPolicy | null;
+  /** Once claimed: the words the machine shows. */
   pairing_phrase: string | null;
-  transcript_hash: string | null;
-  machine: { hostname: string; os: string; arch: string; user: string } | null;
-  requested_by_agent_id: string | null;
-  /**
-   * The agent network the computer would serve, as it is now. Approval must
-   * send back this generation: it changes with every membership change.
-   */
-  agent_network: {
-    agent_network_id: string;
-    title: string;
-    state: string;
-    generation: string;
-    members: { agent_id: string; project_id: string }[];
-  } | null;
+  machine: MachineInfo | null;
   computer_id: string | null;
   expires_at: number;
   created_at: number;
@@ -115,24 +59,38 @@ export interface ComputerRequestSummary {
   pairing_url?: string;
 }
 
-export type TicketResult =
-  | { ticket: SignedEnvelope<ComputerTicket>; operation: OperationRequest }
-  /** The operation already finished; its recorded outcome, no new ticket. */
-  | { finished: { state: string; exit_code: number | null } };
-
-/** A bay's public signing key, as it publishes it to the seed's directory. */
-export interface PublishedSigningKey {
-  kid: string;
-  public_key: string;
-  not_after: number;
-  /** By the bay's previous key; null for its first. */
-  endorsement: SignedEnvelope<SigningKeyEndorsement> | null;
+/** What the machine gets when it claims a request. Only it sees the secret. */
+export interface PairingClaim {
+  request_id: string;
+  name: string;
+  /** Whose computer it becomes, so the person at the machine can check. */
+  account_label: string;
+  pairing_phrase: string;
+  expires_at: number;
+  /** The computer's token once the owner approves. Shown to no one else. */
+  secret: string;
 }
 
-/** A key in the cluster's directory: which bay holds it, until when. */
-export interface DirectorySigningKey {
-  kid: string;
-  bay_id: string;
-  public_key: string;
-  not_after: number;
+/** What the machine sees while it waits for the owner. */
+export interface PairingStatus {
+  request_id: string;
+  /** claimed, approved, declined, expired or invalidated. */
+  state: string;
+  expires_at: number;
+  /** Once approved. */
+  computer_id?: string;
+  name?: string;
+  project_id?: string;
+}
+
+/** Where and how a computer connects now. */
+export interface HostConnection {
+  computer_id: string;
+  project_id: string;
+  host_id: string;
+  /** The host's conat address. */
+  address: string;
+  /** Host token for the computer principal. */
+  token: string;
+  expires_at: number;
 }

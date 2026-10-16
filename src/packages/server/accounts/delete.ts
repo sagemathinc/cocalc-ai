@@ -17,8 +17,10 @@ import {
   queueOAuthClientPurges,
 } from "@cocalc/server/auth/oauth/purge";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
-import { endComputersForAccountDeletion } from "@cocalc/server/computers/computers";
-import { kickComputerStateDelivery } from "@cocalc/server/computers/delivery";
+import {
+  dropOnHosts,
+  revokeComputersForAccount,
+} from "@cocalc/server/computers/computers";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
   if (!isValidUUID(account_id)) {
@@ -87,13 +89,14 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
     throw Error(`no account with account_id=${account_id}`);
   }
   const email_address_before_delete = rows[0].email_address ?? "";
+  let revoked: Awaited<ReturnType<typeof revokeComputersForAccount>> = [];
   await withAccountRehomeWriteFence({
     account_id,
     action: "delete account",
     fn: async (db) => {
-      // Before deleted=true, in the same transaction: every connected
-      // computer of the account ends, and its daemon stops all its jobs.
-      await endComputersForAccountDeletion(db, account_id);
+      // Before deleted=true, in the same transaction: every computer of the
+      // account is revoked (its host drops it; its connector stops).
+      revoked = await revokeComputersForAccount(db, account_id);
       await db.query(
         "UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL WHERE account_id=$2::UUID",
         [email_address_before_delete, account_id],
@@ -103,7 +106,7 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
       await queueOAuthClientPurges({ db, account_id, client_ids });
     },
   });
-  void kickComputerStateDelivery();
+  await dropOnHosts(revoked);
 }
 
 export async function cancelStripeEverything(

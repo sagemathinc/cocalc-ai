@@ -21,8 +21,10 @@ Project-host auth token protocol (overview):
   - Project-host does not possess signing capability.
   - Browser presents token during socket.io websocket auth.
 - Claims enforced:
-  - act = account|hub
-  - sub = account_id (browser actor) or hub principal id (hub actor)
+  - act = account|hub|computer
+  - sub = account_id (browser actor), hub principal id (hub actor) or
+    computer_id (computer actor: a paired computer connecting to the host
+    of the one project it serves; see conat/computers/subjects.ts)
   - aud = project-host:<host_id> (where token is valid)
   - iat/exp (short TTL)
   - jti (unique id), v (protocol version)
@@ -39,13 +41,17 @@ const TOKEN_VERSION = "phat-v1";
 const RESTRICTED_BROWSER_SESSION_TOKEN_VERSION = "phat-v2";
 const API_KEY_TOKEN_VERSION = "phat-v3";
 const API_KEY_HTTP_TOKEN_VERSION = "phat-http-v1";
+const COMPUTER_TOKEN_VERSION = "phat-computer-v1";
+/** A computer's host token: its socket is closed when it expires. */
+export const COMPUTER_TOKEN_TTL_SECONDS = 10 * 60;
+export const COMPUTER_TOKEN_MAX_TTL_SECONDS = 15 * 60;
 const API_KEY_TOKEN_TTL_SECONDS = 25;
 const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
 const MAX_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const MIN_TTL_SECONDS = 60;
 const CLOCK_TOLERANCE_SECONDS = 30;
-export type ProjectHostAuthActor = "account" | "hub";
+export type ProjectHostAuthActor = "account" | "hub" | "computer";
 const DEFAULT_HUB_SUBJECT = "hub";
 
 export interface ProjectHostAuthClaims {
@@ -66,6 +72,8 @@ export interface ProjectHostAuthClaims {
   browser_session_exp_s?: number;
   api_key?: ProjectHostApiKeyBinding;
   http_proxy_port?: number;
+  /** Computer tokens only: whose computer, and the one project it serves. */
+  computer?: { account_id: string; project_id: string };
 }
 
 export interface ProjectHostApiKeyBinding {
@@ -317,6 +325,56 @@ function signClaims(
   return `${encHeader}.${encClaims}.${base64UrlEncode(sig)}`;
 }
 
+export function issueProjectHostComputerToken({
+  host_id,
+  computer_id,
+  account_id,
+  project_id,
+  private_key,
+  ttl_seconds = COMPUTER_TOKEN_TTL_SECONDS,
+  issuer = "cocalc-hub",
+  now_ms = Date.now(),
+}: {
+  host_id: string;
+  computer_id: string;
+  account_id: string;
+  project_id: string;
+  private_key: string;
+  ttl_seconds?: number;
+  issuer?: string;
+  now_ms?: number;
+}): { token: string; expires_at: number; claims: ProjectHostAuthClaims } {
+  ensureValidHostId(host_id);
+  if (
+    !isValidUUID(computer_id) ||
+    !isValidUUID(account_id) ||
+    !isValidUUID(project_id)
+  ) {
+    throw new Error("invalid computer token identity");
+  }
+  const iat = Math.floor(now_ms / 1000);
+  const ttl = Math.floor(ttl_seconds);
+  if (!(ttl >= MIN_TTL_SECONDS && ttl <= COMPUTER_TOKEN_MAX_TTL_SECONDS)) {
+    throw new Error("invalid computer token lifetime");
+  }
+  const claims: ProjectHostAuthClaims = {
+    iss: issuer,
+    sub: computer_id,
+    aud: `project-host:${host_id}`,
+    iat,
+    exp: iat + ttl,
+    jti: randomUUID(),
+    v: COMPUTER_TOKEN_VERSION,
+    act: "computer",
+    computer: { account_id, project_id },
+  };
+  return {
+    token: signClaims(claims, private_key),
+    expires_at: claims.exp * 1000,
+    claims,
+  };
+}
+
 export interface IssueProjectHostTokenOptions {
   host_id: string;
   private_key: string;
@@ -543,7 +601,8 @@ function verifyHostToken(
       ? claims?.v !== API_KEY_HTTP_TOKEN_VERSION
       : claims?.v !== TOKEN_VERSION &&
         claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION &&
-        claims?.v !== API_KEY_TOKEN_VERSION
+        claims?.v !== API_KEY_TOKEN_VERSION &&
+        claims?.v !== COMPUTER_TOKEN_VERSION
   ) {
     throw new Error("invalid token version");
   }
@@ -573,6 +632,36 @@ function verifyHostToken(
   const expectedAud = `${http ? "project-host-http" : "project-host"}:${host_id}`;
   if (claims.aud !== expectedAud) {
     throw new Error("invalid token audience");
+  }
+
+  // A computer token is its own kind: exactly its fields, a short life that
+  // ends exactly at exp, and no other actor may carry a computer binding.
+  if (claims.v === COMPUTER_TOKEN_VERSION || claims.act === "computer") {
+    const keys = Object.keys(claims).sort().join(",");
+    if (
+      claims.v !== COMPUTER_TOKEN_VERSION ||
+      claims.act !== "computer" ||
+      keys !== "act,aud,computer,exp,iat,iss,jti,sub,v" ||
+      !isValidUUID(claims.sub) ||
+      claims.computer == null ||
+      typeof claims.computer !== "object" ||
+      Object.keys(claims.computer).sort().join(",") !==
+        "account_id,project_id" ||
+      !isValidUUID(claims.computer.account_id) ||
+      !isValidUUID(claims.computer.project_id)
+    ) {
+      throw new Error("invalid computer token");
+    }
+    if (
+      claims.exp <= nowSec ||
+      claims.exp > claims.iat + COMPUTER_TOKEN_MAX_TTL_SECONDS
+    ) {
+      throw new Error("token expired");
+    }
+    return claims;
+  }
+  if (claims.computer != null) {
+    throw new Error("invalid computer token");
   }
 
   const actor = claims?.act ?? "account";

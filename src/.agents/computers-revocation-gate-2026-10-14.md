@@ -1,5 +1,7 @@
 # Computers: revocation that stops running work (stage-1 release gate)
 
+> **Superseded (2026-10-16)** by `computers-direct-host-2026-10-16.md`: computers now connect directly to their project's host, with at-most-once exec and no tickets, signed state or lease. Kept for history.
+
 Implementation note, Oct 14 2026. **Approved for implementation by
 lite1-review at revision 6** (the certificate option in §7 is William's).
 Revision 6 answers lite1-review's
