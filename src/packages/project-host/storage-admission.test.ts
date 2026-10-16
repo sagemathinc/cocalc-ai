@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createStorageAdmissionController } from "./storage-admission";
+import { _test, createStorageAdmissionController } from "./storage-admission";
 
 describe("storage admission controller", () => {
   let now = 1_000_000;
@@ -100,6 +100,7 @@ describe("storage admission controller", () => {
         project_pool_io_full_avg10: 0,
         bees_io_full_avg10: 0,
         maintenance_io_full_avg10: 69,
+        maintenance_io_capped: true,
         starting_projects: 0,
         stopping_projects: 0,
         btrfs_mutation_locks: 0,
@@ -127,6 +128,7 @@ describe("storage admission controller", () => {
         host_io_full_avg10: 30,
         project_pool_io_full_avg10: 3,
         maintenance_io_full_avg10: 12,
+        maintenance_io_capped: true,
         starting_projects: 0,
         stopping_projects: 0,
         btrfs_mutation_locks: 0,
@@ -150,6 +152,7 @@ describe("storage admission controller", () => {
         host_io_full_avg10: 25,
         project_pool_io_full_avg10: 15,
         maintenance_io_full_avg10: 25,
+        maintenance_io_capped: true,
         starting_projects: 0,
         stopping_projects: 0,
         btrfs_mutation_locks: 0,
@@ -162,6 +165,45 @@ describe("storage admission controller", () => {
       uncontained_io_full_avg10: 0,
       effective_io_full_avg10: 15,
     });
+  });
+
+  it("counts maintenance stalls as pressure when no io.max cap is set", () => {
+    // I/O policy disabled or observe: bootstrap clears cocalc-maintenance's
+    // io.max, so a backup stalling there is waiting on a saturated disk.
+    const controller = createStorageAdmissionController({
+      mode: "enforce",
+      now: () => now,
+      readInputs: () => ({
+        sampled_at_ms: now,
+        host_io_full_avg10: 46.5,
+        project_pool_io_full_avg10: 0,
+        bees_io_full_avg10: 0,
+        maintenance_io_full_avg10: 69,
+        maintenance_io_capped: false,
+        starting_projects: 0,
+        stopping_projects: 0,
+        btrfs_mutation_locks: 0,
+        btrfs_mutation_waiters: 0,
+      }),
+    });
+
+    expect(controller.sample()).toMatchObject({
+      pressure_state: "emergency",
+      maintenance_io_full_avg10: 69,
+      maintenance_io_capped: false,
+      uncontained_io_full_avg10: 46.5,
+      effective_io_full_avg10: 46.5,
+    });
+  });
+
+  it("recognizes a finite io.max cap", () => {
+    const capped = _test.ioMaxCapped;
+    expect(
+      capped("8:16 rbps=11744051 wbps=5242880 riops=240 wiops=120\n"),
+    ).toBe(true);
+    expect(capped("8:16 rbps=max wbps=max riops=240 wiops=max\n")).toBe(true);
+    expect(capped("8:16 rbps=max wbps=max riops=max wiops=max\n")).toBe(false);
+    expect(capped("")).toBe(false);
   });
 
   it("preserves host pressure above BEES and project-pool waits", () => {

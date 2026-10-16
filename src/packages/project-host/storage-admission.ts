@@ -31,6 +31,7 @@ const PROJECT_POOL_IO_PRESSURE =
   "/sys/fs/cgroup/cocalc-project-pool/io.pressure";
 const BEES_IO_PRESSURE = "/sys/fs/cgroup/cocalc-bees/io.pressure";
 const MAINTENANCE_IO_PRESSURE = "/sys/fs/cgroup/cocalc-maintenance/io.pressure";
+const MAINTENANCE_IO_MAX = "/sys/fs/cgroup/cocalc-maintenance/io.max";
 const RUNTIME_STORAGE = "/usr/local/sbin/cocalc-runtime-storage";
 const DEFAULT_SAMPLE_MS = 5_000;
 const DEFAULT_CONTENDED_FULL_AVG10 = 5;
@@ -46,6 +47,9 @@ type StorageAdmissionInputs = {
   project_pool_io_full_avg10?: number;
   bees_io_full_avg10?: number;
   maintenance_io_full_avg10?: number;
+  // Whether cocalc-maintenance has a finite io.max. Only then is its stall
+  // the throttle's own doing rather than real disk contention.
+  maintenance_io_capped?: boolean;
   starting_projects: number;
   stopping_projects: number;
   btrfs_mutation_locks: number;
@@ -114,6 +118,26 @@ function readIoFullAvg10(path: string): number | undefined {
   }
 }
 
+// io.max lines are "<major:minor> rbps=<n|max> wbps=... riops=... wiops=...";
+// a cleared limit is all "max" (or no line at all).
+function ioMaxCapped(text: string): boolean {
+  for (const line of text.split("\n")) {
+    for (const field of line.trim().split(/\s+/).slice(1)) {
+      const value = field.split("=")[1];
+      if (value && value !== "max") return true;
+    }
+  }
+  return false;
+}
+
+function readIoMaxCapped(path: string): boolean {
+  try {
+    return ioMaxCapped(readFileSync(path, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 function defaultReadInputs(): StorageAdmissionInputs {
   const projectCounts = countProjectsByStates(["starting", "stopping"]);
   const locks = getBtrfsMutationLockStatus();
@@ -124,6 +148,7 @@ function defaultReadInputs(): StorageAdmissionInputs {
     project_pool_io_full_avg10: readIoFullAvg10(PROJECT_POOL_IO_PRESSURE),
     bees_io_full_avg10: readIoFullAvg10(BEES_IO_PRESSURE),
     maintenance_io_full_avg10: readIoFullAvg10(MAINTENANCE_IO_PRESSURE),
+    maintenance_io_capped: readIoMaxCapped(MAINTENANCE_IO_MAX),
     starting_projects: projectCounts.starting ?? 0,
     stopping_projects: projectCounts.stopping ?? 0,
     btrfs_mutation_locks: locks.length,
@@ -144,6 +169,17 @@ function maxDefined(...values: Array<number | undefined>): number | undefined {
   return defined.length > 0 ? Math.max(...defined) : undefined;
 }
 
+// Without a finite cap (I/O policy disabled or observe), a maintenance stall
+// is real contention, e.g. an unthrottled backup saturating the disk, and must
+// count as host pressure.
+function throttledMaintenanceIoFullAvg10(
+  inputs: StorageAdmissionInputs,
+): number | undefined {
+  return inputs.maintenance_io_capped
+    ? inputs.maintenance_io_full_avg10
+    : undefined;
+}
+
 function uncontainedIoFullAvg10(
   inputs: StorageAdmissionInputs,
 ): number | undefined {
@@ -160,7 +196,7 @@ function uncontainedIoFullAvg10(
       (maxDefined(
         inputs.project_pool_io_full_avg10,
         inputs.bees_io_full_avg10,
-        inputs.maintenance_io_full_avg10,
+        throttledMaintenanceIoFullAvg10(inputs),
       ) ?? 0),
   );
 }
@@ -172,7 +208,7 @@ function effectiveIoFullAvg10(
   // on an idle disk; that wait is the containment working, not contention.
   const background = maxDefined(
     inputs.bees_io_full_avg10,
-    inputs.maintenance_io_full_avg10,
+    throttledMaintenanceIoFullAvg10(inputs),
   );
   if (background == null) {
     return maxDefined(
@@ -361,6 +397,9 @@ export function createStorageAdmissionController(
         ? {
             maintenance_io_full_avg10: lastInputs.maintenance_io_full_avg10,
           }
+        : {}),
+      ...(lastInputs.maintenance_io_capped != null
+        ? { maintenance_io_capped: lastInputs.maintenance_io_capped }
         : {}),
       ...(uncontained != null
         ? { uncontained_io_full_avg10: uncontained }
@@ -629,5 +668,6 @@ export function resetStorageAdmissionControllerForTest(): void {
 
 export const _test = {
   configuredMode,
+  ioMaxCapped,
   maxDefined,
 };

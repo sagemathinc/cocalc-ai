@@ -972,6 +972,8 @@ export interface HostStorageAdmissionMetrics {
   project_pool_io_full_avg10?: number;
   bees_io_full_avg10?: number;
   maintenance_io_full_avg10?: number;
+  /** Whether that stall is under a finite io.max cap, so it is discounted. */
+  maintenance_io_capped?: boolean;
   uncontained_io_full_avg10?: number;
   effective_io_full_avg10?: number;
   lifecycle_active: number;
