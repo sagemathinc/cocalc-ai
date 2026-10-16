@@ -666,6 +666,105 @@ describe("project-host HTTP session cookie", () => {
     });
   });
 
+  describe("origin of cookie-authenticated requests", () => {
+    const savedSiteUrl = process.env.COCALC_SITE_URL;
+    const savedMode = process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+    beforeEach(() => {
+      process.env.COCALC_SITE_URL = "https://cocalc.example";
+      delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+    });
+    afterEach(() => {
+      if (savedSiteUrl == null) delete process.env.COCALC_SITE_URL;
+      else process.env.COCALC_SITE_URL = savedSiteUrl;
+      if (savedMode == null)
+        delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+      else process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY = savedMode;
+    });
+
+    const request = (headers: Record<string, string>, cookie?: string) =>
+      ({
+        headers: {
+          cookie:
+            cookie ??
+            `cocalc_project_host_session=${encodeURIComponent(
+              createProjectHostBrowserSessionToken({
+                account_id,
+                now_ms: Date.now(),
+              }),
+            )}`,
+          host: "host-1.cocalc.example",
+          "x-forwarded-proto": "https",
+          ...headers,
+        },
+        socket: {},
+        url: `/${project_id}/files/notes.txt`,
+      }) as any;
+
+    it.each([
+      ["a foreign origin", { origin: "https://evil.example" }],
+      ["an opaque origin", { origin: "null" }],
+      [
+        "a cross-site subresource without an origin",
+        { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors" },
+      ],
+    ])("refuses the browser session cookie from %s", async (_, headers) => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      await expect(
+        auth.authorizeHttpRequest(
+          request(headers),
+          createResponse(),
+          project_id,
+        ),
+      ).rejects.toThrow("cross-site request refused");
+      await expect(
+        auth.authorizeUpgradeRequest(request(headers), project_id),
+      ).rejects.toThrow("cross-site request refused");
+    });
+
+    it("refuses the HTTP session cookie from a foreign origin", async () => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      const cookie = `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`;
+      await expect(
+        auth.authorizeHttpRequest(
+          request({ origin: "https://evil.example" }, cookie),
+          createResponse(),
+          project_id,
+        ),
+      ).rejects.toThrow("cross-site request refused");
+    });
+
+    it.each([
+      ["the site origin", { origin: "https://cocalc.example" }],
+      ["its own origin", { origin: "https://host-1.cocalc.example" }],
+      [
+        "a navigation",
+        { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" },
+      ],
+      ["a request without fetch metadata", {}],
+    ])("accepts the browser session cookie from %s", async (_, headers) => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      await expect(
+        auth.authorizeHttpRequest(
+          request(headers),
+          createResponse(),
+          project_id,
+        ),
+      ).resolves.toBeUndefined();
+    });
+
+    it("only logs in report mode", async () => {
+      process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY = "report";
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      await expect(
+        auth.authorizeHttpRequest(
+          request({ origin: "https://evil.example" }),
+          createResponse(),
+          project_id,
+        ),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   it("never falls through to public HTTP authorization for a private hostname", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",

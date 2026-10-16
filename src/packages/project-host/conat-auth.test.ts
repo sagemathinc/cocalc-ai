@@ -427,6 +427,38 @@ describe("project-host Conat auth", () => {
     });
   });
 
+  it("refuses a browser-session websocket opened by another site", async () => {
+    const savedSiteUrl = process.env.COCALC_SITE_URL;
+    process.env.COCALC_SITE_URL = "https://cocalc.example";
+    try {
+      const { getUser } = createProjectHostConatAuth({ host_id });
+      const cookie = `cocalc_project_host_session=${encodeURIComponent(
+        createProjectHostBrowserSessionToken({
+          account_id,
+          now_ms: Date.now(),
+        }),
+      )}`;
+      const connect = (origin: string) =>
+        getUser(
+          {
+            handshake: {
+              headers: { cookie, origin, host: "host-1.cocalc.example" },
+            },
+          } as any,
+          undefined as any,
+        );
+      await expect(connect("https://evil.example")).rejects.toThrow(
+        "cross-site connection refused",
+      );
+      await expect(connect("https://cocalc.example")).resolves.toMatchObject({
+        account_id,
+      });
+    } finally {
+      if (savedSiteUrl == null) delete process.env.COCALC_SITE_URL;
+      else process.env.COCALC_SITE_URL = savedSiteUrl;
+    }
+  });
+
   it("accepts a valid duplicate browser-session cookie after a stale duplicate", async () => {
     const { getUser } = createProjectHostConatAuth({ host_id });
     const browserSession = createProjectHostBrowserSessionToken({

@@ -217,6 +217,7 @@ import { startExamWatchdog } from "./exam/controller";
 import { getExamUsageAccountId } from "./exam/usage";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { startGcpPreemptionWatcher } from "./gcp-preemption";
+import { corsOrigin, setHubBrowserOrigins } from "./browser-origin-policy";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -666,18 +667,19 @@ export async function main(
     req: IncomingMessage,
     res: ServerResponse,
   ) => {
-    const origin = `${req.headers.origin ?? ""}`.trim();
+    res.setHeader("Vary", "Origin");
+    const origin = corsOrigin(req);
     if (!origin) return;
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Expose-Headers", DOWNLOAD_ERROR_HEADER);
-    res.setHeader("Vary", "Origin");
   };
   const setProjectUploadCorsHeaders = (
     req: IncomingMessage,
     res: ServerResponse,
   ) => {
-    const origin = `${req.headers.origin ?? ""}`.trim();
+    res.setHeader("Vary", "Origin");
+    const origin = corsOrigin(req);
     if (!origin) return;
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -688,17 +690,15 @@ export async function main(
       requestedHeaders || "Content-Type, Cache-Control, X-Requested-With",
     );
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Vary", "Origin");
   };
   const setBrowserSessionCorsHeaders = (
     req: IncomingMessage,
     res: express.Response,
   ) => {
-    const origin = `${req.headers.origin ?? ""}`.trim();
-    if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Vary", "Origin");
-    }
+    res.setHeader("Vary", "Origin");
+    const origin = corsOrigin(req);
+    if (!origin) return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader(
       "Access-Control-Allow-Headers",
@@ -1417,8 +1417,11 @@ export async function main(
     },
   });
   try {
-    const { url } = await hubApi.system.getPublicSiteUrl({ host_id: hostId });
+    const { url, browser_origins } = await hubApi.system.getPublicSiteUrl({
+      host_id: hostId,
+    });
     process.env.COCALC_SITE_URL = url;
+    setHubBrowserOrigins(browser_origins ?? []);
   } catch (err) {
     logger.warn("unable to resolve public CoCalc site URL", { err: `${err}` });
   }

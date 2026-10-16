@@ -43,6 +43,7 @@ import {
   PRIVATE_APP_HOST_HEADER,
 } from "./private-app-hostname";
 import { stripLegacyPublicAppRequestMetadata } from "@cocalc/backend/auth/app-proxy";
+import { checkAmbientCookieRequest } from "./browser-origin-policy";
 import {
   authorizeScopedHttpProxy,
   expireScopedHttpTransport,
@@ -766,6 +767,14 @@ export function createProjectHostHttpProxyAuth({
     }
   };
 
+  // Cookies are sent by the browser no matter which site made the request, so
+  // a request authenticated only by a cookie must come from an allowed origin.
+  const assertAmbientCookieOrigin = (req: IncomingMessage, context: string) => {
+    if (!checkAmbientCookieRequest(req, context)) {
+      throw new HttpAuthError(403, "cross-site request refused");
+    }
+  };
+
   const authorizeHttpRequest = async (
     req: IncomingMessage,
     res: ServerResponse,
@@ -791,6 +800,7 @@ export function createProjectHostHttpProxyAuth({
     }
     const accountFromBrowserSession = browserSessionAccountId(req);
     if (accountFromBrowserSession) {
+      assertAmbientCookieOrigin(req, "http browser session");
       try {
         assertNotRevoked({
           account_id: accountFromBrowserSession.account_id,
@@ -825,6 +835,7 @@ export function createProjectHostHttpProxyAuth({
     }
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
+      assertAmbientCookieOrigin(req, "http session");
       try {
         assertNotRevoked({
           account_id: accountFromSession.account_id,
@@ -859,6 +870,9 @@ export function createProjectHostHttpProxyAuth({
         );
       }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
+    }
+    if (source === "cookie") {
+      assertAmbientCookieOrigin(req, "auth cookie");
     }
     const claims = verifyBearerClaims(token);
     const account_id = verifyClaimsAndGetAccountId(claims);
@@ -901,6 +915,7 @@ export function createProjectHostHttpProxyAuth({
     }
     const accountFromBrowserSession = browserSessionAccountId(req);
     if (accountFromBrowserSession) {
+      assertAmbientCookieOrigin(req, "websocket browser session");
       assertNotRevoked({
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
@@ -922,6 +937,7 @@ export function createProjectHostHttpProxyAuth({
     }
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
+      assertAmbientCookieOrigin(req, "websocket session");
       assertNotRevoked({
         account_id: accountFromSession.account_id,
         issued_at_s: accountFromSession.iat_s,
@@ -950,6 +966,9 @@ export function createProjectHostHttpProxyAuth({
         );
       }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
+    }
+    if (source === "cookie") {
+      assertAmbientCookieOrigin(req, "auth cookie");
     }
     const claims = verifyBearerClaims(token);
     const account_id = verifyClaimsAndGetAccountId(claims);
