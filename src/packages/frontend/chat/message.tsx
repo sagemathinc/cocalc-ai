@@ -3143,11 +3143,15 @@ export default function Message({
   };
   const handleSendQueuedImmediately = () => {
     if (!actions || messageRuntimeKind === "acp") return;
-    void sendQueuedAcpTurnImmediately({ actions, message });
+    sendQueuedAcpTurnImmediately({ actions, message }).catch((err) =>
+      antdMessage.error(`${err?.message ?? err}`),
+    );
   };
   const handleResendNotSent = () => {
     if (!actions) return;
-    void resendCanceledAcpTurn({ actions, message });
+    resendCanceledAcpTurn({ actions, message }).catch((err) =>
+      antdMessage.error(`${err?.message ?? err}`),
+    );
   };
 
   const acpStateToRender = useMemo(() => {

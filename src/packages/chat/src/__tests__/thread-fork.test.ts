@@ -97,6 +97,43 @@ describe("planThreadFork", () => {
     ).toThrow(/no saved context/);
   });
 
+  it("never copies context from before the latest clear", () => {
+    // The clear's line was archived (only the config keeps it), and an
+    // old-context turn's session merged in after it.
+    const cleared = {
+      context_generation: "cleared",
+      context_cleared_at: "2026-10-03T00:00:00.000Z",
+      agent_session_generation: "",
+    };
+    expect(() =>
+      planThreadFork({
+        source: {
+          threadId: "t",
+          config: {
+            agent_runtime: CLAUDE,
+            agent_session_id: SESSION,
+            ...cleared,
+          },
+          messages: messages(),
+        },
+        isAI: true,
+      }),
+    ).toThrow(/no saved context/);
+    const codex = planThreadFork({
+      source: {
+        threadId: "t",
+        config: {
+          agent_kind: "acp",
+          acp_config: { model: "gpt-x", sessionId: SESSION },
+          ...cleared,
+        },
+        messages: messages(),
+      },
+      isAI: true,
+    });
+    expect((codex as any).sessionId).not.toBe(SESSION);
+  });
+
   it("copies a plain human thread without forking anything", () => {
     expect(
       planThreadFork({

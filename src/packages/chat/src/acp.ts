@@ -69,19 +69,93 @@ export function isContextClearedMarker(
 }
 
 // The messages since the latest "Context cleared" line (all of them if none),
-// and that line's message id: a fresh session key for a Codex thread.
+// and that line's message id. Also drops messages at or before `clearedAtMs`,
+// for when the line itself has been archived.
 export function messagesSinceContextCleared<T extends ChatRowLike>(
   messages: readonly T[],
+  clearedAtMs = -Infinity,
 ): { messages: readonly T[]; clearedMessageId?: string } {
+  const after = (rows: readonly T[]) =>
+    clearedAtMs === -Infinity
+      ? rows
+      : rows.filter(
+          (row) =>
+            !(new Date(rowField(row, "date") as any).valueOf() <= clearedAtMs),
+        );
   for (let i = messages.length - 1; i >= 0; i--) {
     if (!isContextClearedMarker(messages[i])) continue;
     const id = rowField(messages[i], "message_id");
     return {
-      messages: messages.slice(i + 1),
+      messages: after(messages.slice(i + 1)),
       clearedMessageId: typeof id === "string" && id ? id : undefined,
     };
   }
-  return { messages };
+  return { messages: after(messages) };
+}
+
+// Where a thread's current context began. Its generation is the id of the
+// latest "Context cleared" line ("" if never cleared), and a fresh Codex
+// session key. Clearing also records it in the thread config, because old
+// chat rows, the line included, get archived.
+export interface ThreadContext {
+  generation: string;
+  clearedAtMs: number;
+}
+
+export function threadContext(
+  thread: object | null | undefined,
+  messages: Iterable<ChatRowLike>,
+): ThreadContext {
+  const context: ThreadContext = { generation: "", clearedAtMs: -Infinity };
+  const consider = (id: unknown, date: unknown) => {
+    const ms = new Date(date as any).valueOf();
+    if (typeof id !== "string" || !id || !(ms >= context.clearedAtMs)) return;
+    context.generation = id;
+    context.clearedAtMs = ms;
+  };
+  const config = thread as ChatRowLike | null | undefined;
+  consider(
+    rowField(config, "context_generation"),
+    rowField(config, "context_cleared_at"),
+  );
+  for (const row of messages) {
+    if (isContextClearedMarker(row))
+      consider(rowField(row, "message_id"), rowField(row, "date"));
+  }
+  return context;
+}
+
+// A replay control (send now, resend) that follows a clear the project has
+// not synced yet is refused with this; retrying a moment later works.
+export const CONTEXT_NOT_SYNCED_ERROR =
+  "This conversation's latest Clear context has not reached its project yet; try again in a moment.";
+
+// The request fields that record which context a session was chosen in.
+export function contextStamp(context: ThreadContext): {
+  context_generation: string;
+  context_cleared_at?: string;
+} {
+  return {
+    context_generation: context.generation,
+    context_cleared_at: Number.isFinite(context.clearedAtMs)
+      ? new Date(context.clearedAtMs).toISOString()
+      : undefined,
+  };
+}
+
+// A session saved in the thread config is tagged with the generation of the
+// turn that saved it. A turn from before a clear can still save one (its
+// change may merge after the clear), so only a current tag counts. Sessions
+// saved before tags existed have none, and count.
+export function storedSessionInContext(
+  thread: object | null | undefined,
+  context: ThreadContext,
+): boolean {
+  const tag = rowField(
+    thread as ChatRowLike | null | undefined,
+    "agent_session_generation",
+  );
+  return typeof tag !== "string" || tag === context.generation;
 }
 
 export function normalizeCodexMention(model?: string): string | undefined {

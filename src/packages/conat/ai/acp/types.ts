@@ -71,6 +71,12 @@ export interface AcpChatContext {
   parent_message_id?: string;
   // Stamped by the harness on durable questions, never inferred from later turns.
   harness_session_id?: string;
+  // The thread's context generation (latest "Context cleared" line id, "" for
+  // none) the session in this request was chosen under, and when that clear
+  // happened, which orders generations. Set by the sender; the hub replaces
+  // them with the generation the turn actually runs in.
+  context_generation?: string;
+  context_cleared_at?: string;
   // Marks that this user message was sent via "Send Immediately" while an ACP
   // turn was active, so the backend can preserve continue semantics.
   send_mode?: "immediate";
@@ -192,6 +198,10 @@ export type AcpControlRequest =
         payment_source: CodexPaymentSourcePreference;
         credential_id?: string;
       };
+      // The caller's view of the thread's context (send now and resends): the
+      // hub waits until it has synced that clear before replaying anything.
+      context_generation?: string;
+      context_cleared_at?: string;
     };
 
 export type AcpControlResponse = {

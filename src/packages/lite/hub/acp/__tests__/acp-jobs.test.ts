@@ -18,6 +18,7 @@ import {
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
+  cancelQueuedAcpJobForControl,
   cancelQueuedRecoveryJobsForThread,
   clearAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
@@ -529,6 +530,35 @@ describe("acp job queue ordering", () => {
     expect(getAcpJobByOpId(third.running.op_id)?.recovery_code).toBe(
       ACP_FENCE_INTENT_STOPPED,
     );
+  });
+
+  it("leaves a restart's hold alone when a send-now finds the job already held", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-held-send-now",
+        assistantMessageId: "assistant-held-send-now",
+        assistantDate: "2026-10-15T00:00:00.000Z",
+      }) as any,
+    );
+    const key = {
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+      account_id: queued.account_id,
+      thread_id: queued.thread_id,
+    };
+    // The restart fence lands between the send-now's checks and its claim.
+    fenceAcpJobsForProject({
+      project_id: queued.project_id,
+      reason: "project restarted",
+      resume: true,
+    });
+    expect(cancelQueuedAcpJobForControl(key)).toMatchObject({
+      canceled: false,
+      job: { state: "canceled" },
+    });
+    // Still held for resume: the send-now did not end the user's turn.
+    expect(acpJobHasLiveFenceResume(getAcpJobByOpId(queued.op_id))).toBe(true);
   });
 
   it("lets a cancel end a held message and refuses to resend it while held", () => {

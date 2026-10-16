@@ -23,7 +23,12 @@ import {
   type AcpHarnessRuntime,
 } from "@cocalc/util/ai/runtime";
 
-import { messagesSinceContextCleared, resolveHarnessSessionId } from "./acp";
+import {
+  messagesSinceContextCleared,
+  resolveHarnessSessionId,
+  storedSessionInContext,
+  threadContext,
+} from "./acp";
 import { CHAT_SCHEMA_V2 } from "./core";
 
 type Row = Record<string, any>;
@@ -102,8 +107,15 @@ export function planThreadFork({
     config.agent_runtime == null
       ? undefined
       : parseAcpHarnessRuntime(config.agent_runtime);
+  // Like a send: nothing from before the latest clear, including a session
+  // that an old-context turn saved after it.
+  const context = threadContext(config, source.messages);
+  const stored = storedSessionInContext(config, context);
   const inferredSessionId = (() => {
-    const current = messagesSinceContextCleared(source.messages).messages;
+    const current = messagesSinceContextCleared(
+      source.messages,
+      context.clearedAtMs,
+    ).messages;
     for (let i = current.length - 1; i >= 0; i -= 1) {
       if (isAutomationMessage(current[i])) continue;
       const sessionId = current[i]?.acp_thread_id;
@@ -115,12 +127,16 @@ export function planThreadFork({
   })();
   const sourceConfig: Row | undefined = runtime
     ? undefined
-    : (config.acp_config ?? undefined);
+    : config.acp_config == null
+      ? undefined
+      : stored
+        ? config.acp_config
+        : { ...config.acp_config, sessionId: undefined };
   const shouldForkAcp =
     isAI || config.agent_kind === "acp" || sourceConfig != null;
   if (runtime) {
     const sessionId = resolveHarnessSessionId(
-      config.agent_session_id,
+      stored ? config.agent_session_id : undefined,
       inferredSessionId,
     );
     if (!sessionId) throw Error("This agent has no saved context to copy yet");
