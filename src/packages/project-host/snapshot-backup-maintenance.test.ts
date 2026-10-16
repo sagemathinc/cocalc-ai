@@ -1918,33 +1918,64 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
-    it("does not let a head that left the host stall the others", async () => {
-      const { lifecycle, stop } = await startRecoveryDaemon({ starting: 1 });
-      let movedAt = 0;
-      try {
-        // Everything waits, d at the head; then d moves to another host.
-        await jest.advanceTimersByTimeAsync(60_000);
-        rows = rows.filter((row) => row.project_id !== "d");
-        lifecycle.starting = 0;
-        movedAt = Date.now();
-        await jest.advanceTimersByTimeAsync(120_000);
-      } finally {
-        stop();
-      }
-      expect(snapshotOrder()).toEqual([
-        "snapshot:c",
-        "snapshot:b",
-        "snapshot:a",
-      ]);
-      // The wake that finds d gone hands the slot on: c starts within about
-      // one head retry (20 s plus the event batch), not after the 2-minute
-      // stale-head fallback, and the rest follow at the recovery pace.
-      const times = timesOf("snapshot");
-      expect(times[0] - movedAt).toBeLessThan(45_000);
-      for (let i = 1; i < times.length; i++) {
-        expect(times[i] - times[i - 1]).toBeLessThan(30_000);
-      }
-    });
+    it.each([
+      [
+        "moves to another host",
+        (rows: any[]) => rows.filter((row) => row.project_id !== "d"),
+      ],
+      [
+        "has its snapshots disabled",
+        (rows: any[]) =>
+          rows.map((row) =>
+            row.project_id === "d"
+              ? { ...row, snapshots: { disabled: true } }
+              : row,
+          ),
+      ],
+      [
+        "is no longer due",
+        (rows: any[]) =>
+          rows.map((row) =>
+            row.project_id === "d"
+              ? {
+                  ...row,
+                  // Satisfied elsewhere and recently observed.
+                  last_snapshot: new Date().toISOString(),
+                  last_snapshot_observed_at: new Date().toISOString(),
+                }
+              : row,
+          ),
+      ],
+    ])(
+      "does not let a head that %s stall the others",
+      async (_name, change) => {
+        const { lifecycle, stop } = await startRecoveryDaemon({ starting: 1 });
+        let movedAt = 0;
+        try {
+          // Everything waits, d at the head; then d leaves the backlog.
+          await jest.advanceTimersByTimeAsync(60_000);
+          rows = change(rows);
+          lifecycle.starting = 0;
+          movedAt = Date.now();
+          await jest.advanceTimersByTimeAsync(120_000);
+        } finally {
+          stop();
+        }
+        expect(snapshotOrder()).toEqual([
+          "snapshot:c",
+          "snapshot:b",
+          "snapshot:a",
+        ]);
+        // The wake that finds d gone hands the slot on: c starts within about
+        // one head retry (20 s plus the event batch), not after the 2-minute
+        // stale-head fallback, and the rest follow at the recovery pace.
+        const times = timesOf("snapshot");
+        expect(times[0] - movedAt).toBeLessThan(45_000);
+        for (let i = 1; i < times.length; i++) {
+          expect(times[i] - times[i - 1]).toBeLessThan(30_000);
+        }
+      },
+    );
 
     it("takes the longest-overdue project first", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =

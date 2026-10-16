@@ -1098,20 +1098,39 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       projectIds,
     });
   }
-  if (!usedOwnershipLease) {
-    // A project no longer listed for this host must not hold the recovery
-    // head. Its wake may have brought us here, so wake the next head: no row
-    // of this listing can dispatch it.
+  // Remove projects from the recovery wait list. If that removes the head,
+  // wake the next one: whatever woke the old head (often this very sweep)
+  // may have no row that can dispatch its successor.
+  const dropRecoveryWaiting = (drop: Iterable<string>) => {
     const headBefore = recoveryWaitingHead();
-    const listed = new Set(rows.map((row) => row.project_id));
-    for (const projectId of projectIds ?? [...recoveryWaiting.keys()]) {
-      if (!listed.has(projectId)) recoveryWaiting.delete(projectId);
-    }
+    for (const projectId of drop) recoveryWaiting.delete(projectId);
     const head = recoveryWaitingHead();
-    if (head && head !== headBefore && !listed.has(head)) {
+    if (head && head !== headBefore) {
       const wakeAt = recoverySnapshotWakeAt(Date.now(), { blocked: false });
       if (wakeAt != null) onFutureDue?.(head, wakeAt);
     }
+  };
+  // Snapshot no longer wanted now: disabled, satisfied or postponed.
+  const snapshotNotDue = (row: HostProjectMaintenanceSchedule, at: number) => {
+    const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+    const dueAt = snapshotDueAt(row, schedule);
+    return (
+      schedule.disabled ||
+      ((dueAt == null || dueAt > at) && !reconciliationDue(row, "snapshot", at))
+    );
+  };
+  if (!usedOwnershipLease) {
+    // Only a project still listed for this host with a snapshot due may hold
+    // the recovery head. The lane filter skips the others, so prune here.
+    const listed = new Map(rows.map((row) => [row.project_id, row]));
+    const at = Date.now();
+    const drop: string[] = [];
+    for (const projectId of projectIds ?? [...recoveryWaiting.keys()]) {
+      if (!recoveryWaiting.has(projectId)) continue;
+      const row = listed.get(projectId);
+      if (row == null || snapshotNotDue(row, at)) drop.push(projectId);
+    }
+    dropRecoveryWaiting(drop);
   }
   if (!rows.length) {
     if (!shadow) starvationQueue.update([], projectIds);
@@ -1461,17 +1480,14 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const row = await refreshQueuedRow(candidate, opts);
         if (!row) {
           // Gone from this host: it must not hold the recovery head.
-          recoveryWaiting.delete(candidate.project_id);
+          dropRecoveryWaiting([candidate.project_id]);
           return;
         }
         const project_id = row.project_id;
         const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
         const dueAt = snapshotDueAt(row, schedule);
-        const notDue =
-          schedule.disabled ||
-          ((dueAt == null || dueAt > Date.now()) &&
-            !reconciliationDue(row, "snapshot", Date.now()));
-        if (notDue) recoveryWaiting.delete(project_id);
+        const notDue = snapshotNotDue(row, Date.now());
+        if (notDue) dropRecoveryWaiting([project_id]);
         if (
           !project_id ||
           notDue ||
