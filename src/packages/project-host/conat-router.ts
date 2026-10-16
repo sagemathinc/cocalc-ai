@@ -622,7 +622,15 @@ export function attachProjectHostConatRouterProxy({
     ingressServer.prependListener("upgrade", async (req, socket, head) => {
       // Before the await: see guardUpgradeSocket.
       guardUpgradeSocket(socket);
-      await rewriteIngressRequest?.(req);
+      try {
+        await rewriteIngressRequest?.(req);
+      } catch (err) {
+        // An async listener's rejection is unhandled and would exit the
+        // process. Other upgrade listeners may own this socket.
+        logger.debug("ingress upgrade rewrite failed", { err: `${err}` });
+        return;
+      }
+      if (socket.destroyed) return;
       if (
         shouldRouteProjectHostIngressToApp(req) ||
         !rewriteProjectHostConatProxyUrl(req.url)

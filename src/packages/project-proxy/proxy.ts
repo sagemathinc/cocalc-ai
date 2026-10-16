@@ -375,7 +375,11 @@ export function createProxyHandlers({
     guardUpgradeSocket(socket);
     try {
       await rewriteRequest?.(req);
+      // A client gone during an await must not open an upstream that
+      // nothing will close (proxy.ws only cleans up on a later close).
+      if (socket.destroyed) return;
       const { target, handled } = await resolveTarget(req);
+      if (socket.destroyed) return;
       if (!handled || !target) {
         throw new Error("not matched");
       }
@@ -558,14 +562,22 @@ export function attachProjectProxy({
 
   const handleUpgrade = async (req, socket, head) => {
     guardUpgradeSocket(socket);
-    await rewriteRequest?.(req);
+    try {
+      await rewriteRequest?.(req);
+    } catch (err) {
+      // Other upgrade listeners may own this socket: leave it to them.
+      logger.debug("upgrade rewrite failed", { err: `${err}` });
+      return;
+    }
     // Only proxy project-scoped websocket upgrades.
-    if (!parseProjectId(req.url)) return;
+    if (socket.destroyed || !parseProjectId(req.url)) return;
     try {
       const { target, handled } = await resolveTarget(req);
       if (!handled || !target) {
         return;
       }
+      // Before onUpgradeAuthorized: its listeners would miss an earlier close.
+      if (socket.destroyed) return;
       onUpgradeAuthorized?.(req, socket);
       if (socket.destroyed) return;
       assertLive(req);
