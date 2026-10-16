@@ -36,6 +36,8 @@ export interface HostCreateProjectRequest extends CreateProjectOptions {
   project_id?: string;
   start?: boolean;
   users?: any;
+  /** See updateProjectUsers. */
+  users_revision?: number;
   authorized_keys?: string;
   run_quota?: any;
   runtime_lifecycle_revision?: number;

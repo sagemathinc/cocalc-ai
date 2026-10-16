@@ -1189,6 +1189,7 @@ async function registerProjectOnHost({
     project_id,
     title: meta.title,
     users: meta.users,
+    users_revision: meta.users_revision,
     image: meta.image,
     ensure_volume: false,
     // Register or refresh the project metadata on the chosen host first, then

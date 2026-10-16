@@ -127,6 +127,12 @@ export interface ProjectRow {
    * legacy) copy, accepted only while no versioned copy is stored.
    */
   users_revision?: number;
+  /**
+   * An unversioned copy arrived after the stored versioned one and was
+   * ignored: it may be newer (from a process that doesn't send revisions
+   * yet), so computers are refused until the next versioned copy.
+   */
+  users_unverified?: boolean;
   http_port?: number | null;
   ssh_port?: number | null;
   project_bundle_version?: string | null;
@@ -385,6 +391,14 @@ export function upsertProject(row: ProjectRow) {
   const users_revision = acceptIncomingUsers
     ? (incomingUsersRevision ?? existingUsersRevision)
     : existingUsersRevision;
+  const users_unverified =
+    row.users !== undefined
+      ? !acceptIncomingUsers && incomingUsersRevision == null
+        ? true
+        : acceptIncomingUsers && incomingUsersRevision != null
+          ? false
+          : (existing as any).users_unverified === true
+      : (existing as any).users_unverified === true;
   const hasHttpPort = Object.prototype.hasOwnProperty.call(row, "http_port");
   const hasSshPort = Object.prototype.hasOwnProperty.call(row, "ssh_port");
   const http_port = hasHttpPort
@@ -567,6 +581,7 @@ export function upsertProject(row: ProjectRow) {
     last_edited: updated_at,
     users,
     users_revision,
+    users_unverified,
     state_reported: state_reported ?? existingProjectsRow.state_reported,
     http_port,
     ssh_port,
@@ -743,6 +758,9 @@ export function getProject(project_id: string): ProjectRow | undefined {
   }
   if (mirror?.users_revision != null) {
     row.users_revision = Number(mirror.users_revision);
+  }
+  if (mirror?.users_unverified === true) {
+    row.users_unverified = true;
   }
   if (row?.run_quota) {
     row.run_quota = parseRunQuota(row.run_quota);

@@ -57,15 +57,22 @@ export function applyComputerAccess(
 
 /**
  * Is P here, not deleted, with the account as its one collaborator (owner)?
- * Only a versioned copy from the owning bay counts: an unversioned one could
- * be older than a collaborator change (sqlite/projects.ts).
+ * Only a versioned copy from the owning bay counts, and only while no
+ * unversioned copy (possibly newer) has been ignored since (sqlite/projects.ts).
  */
 export function projectServesComputer(
   project_id: string,
   account_id: string,
 ): boolean {
   const row: any = getProject(project_id);
-  if (row == null || row.deleted || row.users_revision == null) return false;
+  if (
+    row == null ||
+    row.deleted ||
+    row.users_revision == null ||
+    row.users_unverified === true
+  ) {
+    return false;
+  }
   const users = row.users;
   if (users == null || typeof users !== "object") return false;
   const entries = Object.entries(users);

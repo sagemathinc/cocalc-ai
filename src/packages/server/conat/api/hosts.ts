@@ -2420,6 +2420,7 @@ export async function getProjectStartMetadata({
   run_quota?: any;
   run_quota_revision?: number;
   runtime_lifecycle_revision?: number;
+  users_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;

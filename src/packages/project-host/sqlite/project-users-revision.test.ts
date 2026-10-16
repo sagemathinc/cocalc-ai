@@ -81,6 +81,26 @@ describe("the host's collaborator copy is versioned", () => {
     expect(getProject(project_id)?.users_revision).toBe(7);
   });
 
+  it("an ignored unversioned copy (maybe newer) stops computers until the next versioned one", () => {
+    upsertProject({ project_id, users: ownerOnly, users_revision: 4 });
+    expect(projectServesComputer(project_id, OWNER)).toBe(true);
+    // A process that doesn't send revisions yet reports a collaborator added.
+    upsertProject({ project_id, users: withCollaborator });
+    // The versioned list stays for everything else...
+    expect(getProject(project_id)?.users).toEqual(ownerOnly);
+    // ...but a computer is refused: that list may be newer.
+    expect(projectServesComputer(project_id, OWNER)).toBe(false);
+    // Unrelated updates don't clear it.
+    upsertProject({ project_id, state: "running" });
+    expect(projectServesComputer(project_id, OWNER)).toBe(false);
+    // An older versioned copy doesn't either.
+    upsertProject({ project_id, users: ownerOnly, users_revision: 3 });
+    expect(projectServesComputer(project_id, OWNER)).toBe(false);
+    // The next versioned copy settles it.
+    upsertProject({ project_id, users: ownerOnly, users_revision: 5 });
+    expect(projectServesComputer(project_id, OWNER)).toBe(true);
+  });
+
   it("unversioned copies (local, older bays) still work until a versioned one comes, but serve no computer", () => {
     upsertProject({ project_id, users: ownerOnly });
     expect(getProject(project_id)?.users).toEqual(ownerOnly);
