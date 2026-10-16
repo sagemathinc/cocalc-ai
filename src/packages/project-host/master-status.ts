@@ -527,7 +527,19 @@ async function reportProjectProvisionedToMaster(
   }
 }
 
-async function reportPendingStates() {
+/**
+ * One status pass at a time: a slow pass must never finish after a newer
+ * one (an old "computers on" would otherwise undo a newer "off").
+ */
+let statusPass: Promise<void> | undefined;
+function reportPendingStates(): Promise<void> {
+  statusPass ??= reportPendingStatesOnce().finally(() => {
+    statusPass = undefined;
+  });
+  return statusPass;
+}
+
+async function reportPendingStatesOnce() {
   if (!statusClient || !hostInfo) return;
   const pending = listUnreportedProjects();
   for (const row of pending) {

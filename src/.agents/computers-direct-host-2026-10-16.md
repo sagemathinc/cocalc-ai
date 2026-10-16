@@ -94,14 +94,22 @@ sources:
 Until the hub has reported the switch on, computers are refused (fail
 closed).
 
+Open before enabling: the host's copy of each project's collaborators is
+not versioned. Browser, API-key and agent token issuance push whole copies,
+and an older copy can overwrite a newer one that just added a collaborator,
+until the next resync. A follow-up PR versions that copy (review of #1108).
+
 The host's copy of each project's collaborators is kept current by the
 normal collaborator updates. The hub never pushes it when issuing a
 computer token: an older copy sent then could overwrite a newer one that
 just added a collaborator (review of #1108). Versioning that copy, which
 the browser token path also needs, is a separate change.
 
-**Turning the site's switch off.** Each host learns it at its next status
-sync (within 15 s) and drops every computer.
+**Turning the site's switch off.** Computers are refused within about
+45 s. Three delays of up to 15 s each add up: the hub's settings cache,
+the host's next status sync (which records the switch), and each router's
+next recheck of its computer sockets. Status passes never overlap, so an
+older "on" can't undo a newer "off".
 
 **Revoking.**
 - The hub marks the computer revoked.

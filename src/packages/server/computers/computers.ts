@@ -39,6 +39,12 @@ import {
 
 const logger = getLogger("server:computers");
 
+/** Revoked computers per query in computerAccessForHost. */
+let ACCESS_PAGE = 1000;
+export function setAccessPageForTesting(n: number): void {
+  ACCESS_PAGE = n;
+}
+
 export type { ComputerSummary };
 
 /** The site says the computer is revoked: its connector ends for good. */
@@ -209,18 +215,26 @@ export async function dropOnHosts(
 export async function computerAccessForHost(
   host_id: string,
 ): Promise<{ enabled: boolean; revoked: string[] }> {
-  const { rows } = await getPool().query(
-    `SELECT c.computer_id FROM paired_computers c
-       JOIN projects p ON p.project_id = c.project_id
-      WHERE p.host_id = $1
-        AND c.revoked_at > now() - make_interval(secs => $2)
-      LIMIT 1000`,
-    [host_id, COMPUTER_TOKEN_MAX_TTL_SECONDS + 60],
-  );
-  return {
-    enabled: await computersEnabled(),
-    revoked: rows.map((r) => r.computer_id),
-  };
+  // Every one, a page at a time: a lost drop must be made up whatever their
+  // number (there are only as many as were revoked within a token's life).
+  const revoked: string[] = [];
+  let after = "00000000-0000-0000-0000-000000000000";
+  for (;;) {
+    const { rows } = await getPool().query(
+      `SELECT c.computer_id FROM paired_computers c
+         JOIN projects p ON p.project_id = c.project_id
+        WHERE p.host_id = $1
+          AND c.revoked_at > now() - make_interval(secs => $2)
+          AND c.computer_id > $3
+        ORDER BY c.computer_id
+        LIMIT $4`,
+      [host_id, COMPUTER_TOKEN_MAX_TTL_SECONDS + 60, after, ACCESS_PAGE],
+    );
+    for (const row of rows) revoked.push(row.computer_id);
+    if (rows.length < ACCESS_PAGE) break;
+    after = rows[rows.length - 1].computer_id;
+  }
+  return { enabled: await computersEnabled(), revoked };
 }
 
 /**

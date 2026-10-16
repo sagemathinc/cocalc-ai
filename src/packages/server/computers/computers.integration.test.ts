@@ -348,6 +348,23 @@ describeDb("computers at the home bay", () => {
       enabled: true,
       revoked: [computer_id],
     });
+    // Past one page: every one, not the same first page each time.
+    const { setAccessPageForTesting } = await import("./computers");
+    const more = [
+      (await pair("m2")).computer_id,
+      (await pair("m3")).computer_id,
+    ];
+    for (const id of more) {
+      await revokeComputer({ account_id: account, computer_id: id });
+    }
+    setAccessPageForTesting(2);
+    try {
+      expect((await computerAccessForHost(HOST_ID)).revoked.sort()).toEqual(
+        [computer_id, ...more].sort(),
+      );
+    } finally {
+      setAccessPageForTesting(1000);
+    }
     // Another host hears nothing about it.
     expect(
       (await computerAccessForHost("00000000-1000-4000-8000-000000000098"))
