@@ -11,6 +11,7 @@ import {
 } from "./public-feature-pages";
 import {
   getPublicTeamMember,
+  isUnpublishedTeamProfile,
   PUBLIC_TEAM_MEMBERS,
 } from "./public-about-content";
 import { SITE_NAME } from "./theme";
@@ -465,6 +466,26 @@ function authRoute(parts: string[]): PublicMetadataRoute {
   return { route: { kind: "auth-other" }, section: "auth" };
 }
 
+// Where a public URL that moved for good now lives, or undefined. A team
+// profile that is no longer published leads to the team page. The hub
+// answers these URLs with a permanent redirect, and the client router
+// replaces the address the same way, so a link never reaches a missing
+// profile.
+export function getPublicPermanentRedirectPath(
+  pathname: string,
+  options?: PublicRouteMetadataOptions,
+): string | undefined {
+  const parts = routeParts(pathname, options);
+  if (
+    parts[0] === "about" &&
+    parts[1] === "team" &&
+    isUnpublishedTeamProfile(parts[2])
+  ) {
+    return publicPath("about/team", options);
+  }
+  return undefined;
+}
+
 export function getPublicMetadataRouteFromPath(
   pathname: string,
   _search?: string,
@@ -796,7 +817,7 @@ function aboutRouteMetadata(
       return {
         canonicalPath: publicPath("about/team", options),
         description:
-          "Meet the SageMath, Inc. team building CoCalc for collaborative technical work.",
+          "Meet the people at SageMath, Inc. who build CoCalc, the agent platform where your agents work alongside your team.",
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
         title: pageTitle(`${siteName} Team`, siteName),
       };
@@ -820,7 +841,7 @@ function aboutRouteMetadata(
       return {
         canonicalPath: publicPath("about", options),
         description:
-          "Learn about SageMath, Inc., the mission, history, people, and operating principles behind CoCalc.",
+          "SageMath, Inc. builds CoCalc, the agent platform where your agents work alongside your team. Read how we build it and meet the people behind it.",
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
         title: pageTitle(`About ${siteName}`, siteName),
       };

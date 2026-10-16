@@ -53,6 +53,30 @@ test("verified permanent paths retain direct permanent redirects", async () => {
   assert.equal(response.headers.get("x-cocalc-migration-policy"), "permanent");
 });
 
+test("unpublished team profiles go straight to the team page", async () => {
+  for (const slug of ["andrey-novoseltsev", "harald-schilly"]) {
+    const response = await request(`/about/team/${slug}/?source=old-site`);
+    assert.equal(response.status, 308);
+    assert.equal(
+      response.headers.get("location"),
+      "https://cocalc.ai/about/team?source=old-site",
+    );
+    assert.equal(
+      response.headers.get("x-cocalc-migration-policy"),
+      "permanent",
+    );
+  }
+});
+
+test("published team profiles keep their own path", async () => {
+  const response = await request("/about/team/william-stein");
+  assert.equal(response.status, 308);
+  assert.equal(
+    response.headers.get("location"),
+    "https://cocalc.ai/about/team/william-stein",
+  );
+});
+
 test("Cambridge paths retain their dedicated mapping", async () => {
   const response = await request("/cambridge/example/notebook");
   assert.equal(response.status, 301);

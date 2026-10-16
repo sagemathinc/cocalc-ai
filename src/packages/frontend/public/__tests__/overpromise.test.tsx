@@ -33,6 +33,7 @@ const PRODUCT_PATHS = [
 ];
 const MARKETING_PATHS = [
   "",
+  "about",
   "features",
   ...FEATURE_PATHS,
   "support",
@@ -51,6 +52,7 @@ const originalFetch = global.fetch;
 
 beforeAll(async () => {
   await Promise.all([
+    import("../about/app"),
     import("../features/app"),
     import("../pricing/app"),
     import("../products/app"),
