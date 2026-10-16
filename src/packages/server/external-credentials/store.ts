@@ -8,6 +8,7 @@ import {
 import {
   defaultMetadataKeyForCredentialSelector,
   leaseExpirationMetadataKeyForCredentialSelector,
+  limitExpiryMetadataKeyForCredentialSelector,
 } from "./provider-policy";
 
 export {
@@ -114,6 +115,35 @@ function validatePayload(payload: string): void {
   if (Buffer.byteLength(payload, "utf8") > MAX_PAYLOAD_BYTES) {
     throw Error("credential payload too large");
   }
+}
+
+// Shape of Date.toISOString().
+const ISO_UTC_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
+/**
+ * A strict ISO UTC timestamp, or undefined. Date.parse normalizes impossible
+ * dates (Feb 31 becomes Mar 3, 24:00 the next day), so the parsed instant
+ * must give back exactly the written calendar fields.
+ */
+export function parseStrictIsoUtc(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = ISO_UTC_TIMESTAMP.exec(value);
+  if (!match) return undefined;
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return undefined;
+  const date = new Date(at);
+  const fields = [
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    date.getUTCSeconds(),
+  ];
+  return fields.every((field, i) => field === Number(match[i + 1]))
+    ? at
+    : undefined;
 }
 
 function selectorValues(selector: ExternalCredentialSelector) {
@@ -493,15 +523,24 @@ WHERE id=$1 AND revoked IS NULL
     }
     if (maxActive != null) {
       const limit = Math.max(1, Math.floor(maxActive));
-      const { rows } = await client.query<{ count: string }>(
+      // An expired credential (by its policy's metadata timestamp) stays
+      // listed but no longer takes a slot. Anything that does not parse as a
+      // past time still counts; parsing here never aborts the transaction.
+      const expiryKey = limitExpiryMetadataKeyForCredentialSelector(normalized);
+      const { rows } = await client.query<{ expiry: unknown }>(
         `
-SELECT COUNT(*)::text AS count
+SELECT CASE WHEN $7::text IS NULL THEN NULL ELSE metadata->>$7::text END AS expiry
 FROM external_credentials
 WHERE ${ownershipClause(1)} AND revoked IS NULL
         `,
-        [...selectorValues(normalized)],
+        [...selectorValues(normalized), expiryKey ?? null],
       );
-      if (Number(rows[0]?.count ?? 0) >= limit) {
+      const now = Date.now();
+      const active = rows.filter(({ expiry }) => {
+        const at = parseStrictIsoUtc(expiry);
+        return at === undefined || at > now;
+      }).length;
+      if (active >= limit) {
         throw new Error(`at most ${limit} active credentials are allowed`);
       }
     }

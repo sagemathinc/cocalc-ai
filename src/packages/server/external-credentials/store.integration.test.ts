@@ -15,6 +15,7 @@ import {
   getExternalCredential,
   hasExternalCredential,
   listExternalCredentials,
+  parseStrictIsoUtc,
   revokeExternalCredential,
   touchExternalCredential,
   updateExternalCredentialById,
@@ -214,4 +215,99 @@ describeDb("conditional external credential update", () => {
       }),
     ).resolves.toBe(true);
   });
+});
+
+describeDb("create limit", () => {
+  const accountId = randomUUID();
+  const selector = {
+    provider: "anthropic",
+    kind: "claude-subscription-home-v1",
+    scope: "account" as const,
+    owner_account_id: accountId,
+  };
+  const create = (metadata: Record<string, any> = {}) =>
+    createExternalCredential({
+      selector,
+      payload: randomUUID(),
+      metadata,
+      maxActive: 2,
+    });
+
+  beforeAll(async () => {
+    await syncSchema({ external_credentials: SCHEMA.external_credentials });
+  });
+
+  beforeEach(async () => {
+    await getPool().query("DELETE FROM external_credentials");
+  });
+
+  test("refuses past the limit", async () => {
+    await create();
+    await create({
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    await expect(create()).rejects.toThrow(
+      "at most 2 active credentials are allowed",
+    );
+  });
+
+  test("an expired Claude token stays listed but frees its slot", async () => {
+    const expired = await create({
+      expires_at: new Date(Date.now() - 1000).toISOString(),
+    });
+    await create();
+    await expect(create()).resolves.toMatchObject({ created: true });
+    expect(
+      (
+        await listExternalCredentials({
+          owner_account_id: accountId,
+          provider: selector.provider,
+          kind: selector.kind,
+          scope: selector.scope,
+        })
+      ).map(({ id }) => id),
+    ).toContain(expired.id);
+  });
+
+  test("an unparseable expiry still counts", async () => {
+    // Shaped like a timestamp but impossible: must not abort the transaction.
+    await create({ expires_at: "2026-99-99T00:00:00Z" });
+    await expect(create({ expires_at: "soon" })).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(create()).rejects.toThrow("at most 2");
+  });
+
+  test("an impossible past date still counts (no calendar normalization)", async () => {
+    // Review on #1113: Date.parse turns 2020-02-31 into 2020-03-02, a past
+    // instant, which would have freed the slot.
+    await create({ expires_at: "2020-02-31T00:00:00Z" });
+    await create({ expires_at: "2021-02-29T00:00:00Z" });
+    await expect(create()).rejects.toThrow("at most 2");
+  });
+
+  test("a non-string expiry still counts", async () => {
+    await create({ expires_at: 12345 });
+    await create();
+    await expect(create()).rejects.toThrow("at most 2");
+  });
+});
+
+test("strict ISO UTC parsing rejects calendar-normalized values", () => {
+  expect(parseStrictIsoUtc("2026-10-16T17:30:00.000Z")).toBe(
+    Date.UTC(2026, 9, 16, 17, 30),
+  );
+  expect(parseStrictIsoUtc("2024-02-29T00:00:00Z")).toBe(Date.UTC(2024, 1, 29));
+  for (const value of [
+    "2026-02-31T00:00:00Z",
+    "2025-02-29T00:00:00Z",
+    "2026-10-16T24:00:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-99-99T00:00:00Z",
+    "2026-10-16T17:30:00+02:00",
+    "soon",
+    12345,
+    undefined,
+  ])
+    expect(parseStrictIsoUtc(value)).toBeUndefined();
 });

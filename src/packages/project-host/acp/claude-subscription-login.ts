@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import getLogger from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { harnessOwner } from "./harness-reaper";
 import {
@@ -32,6 +33,19 @@ const TERMINAL_STATUS_RETENTION_MS = 15 * 60_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 // setup-token requests a one-year token.
 const TOKEN_LIFETIME_MS = 365 * 24 * 3600 * 1000;
+
+const logger = getLogger("project-host:acp:claude-subscription-login");
+
+/** What to tell the person when saving a new subscription failed. */
+export function claudeSubscriptionSaveError(error: unknown): string {
+  const message = `${(error as { message?: unknown })?.message ?? error}`;
+  const match = /at most (\d+) active credentials are allowed/.exec(
+    message.slice(0, 1000),
+  );
+  return match
+    ? `You already have ${match[1]} Claude subscriptions connected, the most allowed. Remove one you no longer use, or use Reconnect on an existing one.`
+    : "Claude subscription could not be saved";
+}
 
 export type ClaudeSubscriptionLoginStatus = {
   id: string;
@@ -403,8 +417,11 @@ export class ClaudeSubscriptionLoginService {
       session.credentialId = credentialId;
       session.state = "completed";
       this.retire(session);
-    } catch {
-      this.fail(session, "Claude subscription could not be saved");
+    } catch (error) {
+      logger.warn("Claude subscription could not be saved", {
+        err: `${error}`.slice(0, 500),
+      });
+      this.fail(session, claudeSubscriptionSaveError(error));
     } finally {
       session.output = "";
       session.code = "";
