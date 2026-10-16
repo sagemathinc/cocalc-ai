@@ -248,8 +248,11 @@ import {
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
-import { isMissingRusticRepositoryError } from "./backup-index-errors";
-import { listRestoreBackups } from "./restore-backup-inventory";
+import {
+  isMissingRusticRepositoryError,
+  looksLikeMissingBackupBucketError,
+} from "./backup-index-errors";
+import { listBackupIds, listRestoreBackups } from "./restore-backup-inventory";
 import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
@@ -1768,15 +1771,6 @@ let backupConfigInvalidationSub: any = null;
 const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
 const BACKUP_CONFIG_FETCH_TIMEOUT_MS = 2 * 60 * 1000;
 
-function looksLikeMissingBackupBucketError(err: unknown): boolean {
-  const s = `${err ?? ""}`.toLowerCase();
-  return (
-    s.includes("nosuchbucket") ||
-    s.includes("specified bucket does not exist") ||
-    s.includes("path `config` does not exist")
-  );
-}
-
 export async function invalidateBackupConfig(
   project_id?: string,
 ): Promise<void> {
@@ -1896,7 +1890,7 @@ async function reportBackupSuccess(
 async function getLatestKnownBackupId(
   project_id: string,
 ): Promise<string | undefined> {
-  const backups = await getBackups({ project_id, indexed_only: true });
+  const backups = await listProjectBackupIds(project_id);
   return backups.at(-1)?.id;
 }
 
@@ -4149,12 +4143,7 @@ async function createBackup({
         op: "createBackup",
         run: async () => {
           const existingBackups =
-            limit == null
-              ? []
-              : await getBackups({
-                  project_id,
-                  indexed_only: true,
-                });
+            limit == null ? [] : await listProjectBackupIds(project_id);
           const retention = planBackupRetention({
             backups: existingBackups,
             limit,
@@ -5065,6 +5054,16 @@ export async function getBackups({
     }
     throw err;
   }
+}
+
+export async function listProjectBackupIds(
+  project_id: string,
+): Promise<{ id: string; time: Date }[]> {
+  return await listBackupIds({
+    profilePath: await resolveRusticRepo(project_id),
+    projectId: project_id,
+    browse: async () => await getBackups({ project_id }),
+  });
 }
 
 async function getBackupFiles({

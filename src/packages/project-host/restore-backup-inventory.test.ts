@@ -5,9 +5,12 @@ jest.mock("@cocalc/backend/sandbox/rustic", () => ({
 
 import rustic from "@cocalc/backend/sandbox/rustic";
 import {
+  listBackupIds,
   listRestoreBackups,
+  MISSING_BACKUP_BUCKET_MESSAGE,
   parseRestoreBackupInventory,
 } from "./restore-backup-inventory";
+import { looksLikeMissingBackupBucketError } from "./backup-index-errors";
 
 const run = rustic as jest.Mock;
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -30,9 +33,58 @@ it("uses bounded native project-filtered inventory without a browser", async () 
   expect(run).toHaveBeenCalledWith(["snapshots", "--json"], {
     repo: opts.profilePath,
     host: snapshot.hostname,
-    timeout: 60_000,
+    timeout: expect.any(Number),
     maxSize: 100_000_000,
   });
+  const { timeout } = run.mock.calls[0][1];
+  expect(timeout).toBeGreaterThan(55_000);
+  expect(timeout).toBeLessThanOrEqual(60_000);
+});
+
+const vanished = "c".repeat(64);
+const disappearedStderr = [
+  `Reading file \`snapshots/${vanished}\` failed in the backend.`,
+  `path=snapshots/${vanished}: read failed NotFound (persistent) => S3Error { code: "NoSuchKey" }`,
+].join("\n");
+
+it("retries when a listed snapshot disappears (shared-repository retention)", async () => {
+  run
+    .mockResolvedValueOnce({ code: 1, stdout: "", stderr: disappearedStderr })
+    .mockResolvedValueOnce({ code: 0, stdout: inventory(), stderr: "" });
+  await expect(listRestoreBackups(opts)).resolves.toHaveLength(1);
+  expect(run).toHaveBeenCalledTimes(2);
+  // The retry spends what is left of the same deadline.
+  expect(run.mock.calls[1][1].timeout).toBeLessThanOrEqual(
+    run.mock.calls[0][1].timeout,
+  );
+});
+
+it("does not retry unrelated or repeated failures forever", async () => {
+  run.mockResolvedValue({ code: 1, stdout: "", stderr: "connection reset" });
+  await expect(listRestoreBackups(opts)).rejects.toThrow(
+    /^restore backup inventory command failed$/,
+  );
+  expect(run).toHaveBeenCalledTimes(1);
+
+  run.mockReset();
+  run.mockResolvedValue({ code: 1, stdout: "", stderr: disappearedStderr });
+  await expect(listRestoreBackups(opts)).rejects.toThrow(
+    /^restore backup inventory command failed$/,
+  );
+  expect(run).toHaveBeenCalledTimes(3);
+});
+
+it("reports a missing bucket so callers refresh the profile, without raw stderr", async () => {
+  run.mockResolvedValue({
+    code: 1,
+    stdout: "",
+    stderr: 'S3Error { code: "NoSuchBucket", message: "secret-bucket-name" }',
+  });
+  const err = await listRestoreBackups(opts).catch((e) => e);
+  expect(err.message).toBe(MISSING_BACKUP_BUCKET_MESSAGE);
+  expect(err.message).not.toContain("secret-bucket-name");
+  expect(looksLikeMissingBackupBucketError(err)).toBe(true);
+  expect(run).toHaveBeenCalledTimes(1);
 });
 
 it("filters other projects and backup-index snapshots and omits raw metadata", () => {
@@ -107,4 +159,54 @@ it("redacts execution failures and rejects directory repository auto-initializat
     listRestoreBackups({ ...opts, profilePath: "/synthetic/directory" }),
   ).rejects.toThrow("requires a repository profile");
   expect(run).not.toHaveBeenCalled();
+});
+
+describe("listBackupIds", () => {
+  const older = {
+    ...snapshot,
+    id: "b".repeat(64),
+    time: "2025-12-01T00:00:00Z",
+  };
+
+  it("lists a profile repository with the bounded inventory, never the browser, oldest first", async () => {
+    run.mockResolvedValue({
+      code: 0,
+      stdout: inventory([snapshot, older]),
+      stderr: "",
+    });
+    const browse = jest.fn();
+    await expect(listBackupIds({ ...opts, browse })).resolves.toEqual([
+      { id: older.id, time: new Date(older.time) },
+      { id: snapshot.id, time: new Date(snapshot.time) },
+    ]);
+    expect(browse).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(
+      ["snapshots", "--json"],
+      expect.objectContaining({ host: snapshot.hostname }),
+    );
+    const { timeout } = run.mock.calls[0][1];
+    expect(timeout).toBeGreaterThan(55_000);
+    expect(timeout).toBeLessThanOrEqual(60_000);
+  });
+
+  it("propagates inventory failures instead of reporting no backups", async () => {
+    run.mockResolvedValue({ code: 1, stdout: "", stderr: "timeout" });
+    await expect(listBackupIds({ ...opts, browse: jest.fn() })).rejects.toThrow(
+      /restore backup inventory/,
+    );
+  });
+
+  it("browses a directory repository, which has no profile", async () => {
+    const browse = jest.fn().mockResolvedValue([
+      { id: "x", time: new Date(2), summary: { a: 1 } },
+      { id: "y", time: new Date(1), summary: {} },
+    ]);
+    await expect(
+      listBackupIds({ ...opts, profilePath: "/synthetic/directory", browse }),
+    ).resolves.toEqual([
+      { id: "y", time: new Date(1) },
+      { id: "x", time: new Date(2) },
+    ]);
+    expect(run).not.toHaveBeenCalled();
+  });
 });
