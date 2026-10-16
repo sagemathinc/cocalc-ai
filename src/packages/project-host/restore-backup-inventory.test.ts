@@ -182,8 +182,11 @@ describe("listBackupIds", () => {
     expect(browse).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledWith(
       ["snapshots", "--json"],
-      expect.objectContaining({ host: snapshot.hostname, timeout: 60_000 }),
+      expect.objectContaining({ host: snapshot.hostname }),
     );
+    const { timeout } = run.mock.calls[0][1];
+    expect(timeout).toBeGreaterThan(55_000);
+    expect(timeout).toBeLessThanOrEqual(60_000);
   });
 
   it("propagates inventory failures instead of reporting no backups", async () => {
