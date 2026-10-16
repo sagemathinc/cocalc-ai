@@ -104,7 +104,10 @@ import {
   buildChatMessage,
   buildThreadStateRecord,
   computeChatIntegrityReport,
-  contextGeneration,
+  isContextClearedMarker,
+  storedSessionInContext,
+  threadContext,
+  type ThreadContext,
   deriveAcpLogRefs,
   threadStateRecordKey,
   threadConfigRecordKey,
@@ -1400,23 +1403,70 @@ function syncdbRowsMatching(
   ) as Record<string, unknown>[];
 }
 
-function threadContextGeneration(syncdb: SyncDB, threadId: string): string {
-  return contextGeneration(
+function hubThreadContext(syncdb: SyncDB, threadId: string): ThreadContext {
+  return threadContext(
+    preferredThreadConfigRow(syncdb, threadId),
     syncdbRowsMatching(syncdb, { event: "chat", thread_id: threadId }),
   );
 }
 
-// The generation a request's session was chosen under: stamped by current
-// senders; for older ones, the latest "Context cleared" line before its
-// message. Undefined when unknown.
-function requestContextGeneration(
+// How the session a request carries relates to the thread's context:
+// - current: chosen in it;
+// - stale: chosen before a later clear, so that session is gone;
+// - ahead: the sender saw a clear this hub has not synced yet, so the
+//   request's session is already the fresh one.
+// `generation` is the one a turn for this request runs in.
+type ContextStanding = {
+  standing: "current" | "stale" | "ahead";
+  generation: string;
+};
+
+function requestContextStanding(
   request: AcpRequest,
-  rows: Iterable<Record<string, unknown>>,
-): string | undefined {
+  context: ThreadContext,
+  rows: readonly Record<string, unknown>[],
+): ContextStanding {
   const stamped = request.chat?.context_generation;
-  if (typeof stamped === "string") return stamped;
   const at = Date.parse(`${request.chat?.user_message_date ?? ""}`);
-  return Number.isFinite(at) ? contextGeneration(rows, at) : undefined;
+  if (typeof stamped === "string") {
+    if (stamped === context.generation)
+      return { standing: "current", generation: stamped };
+    const known =
+      stamped === "" ||
+      rows.some(
+        (row) =>
+          isContextClearedMarker(row) &&
+          syncdbField<string>(row, "message_id") === stamped,
+      );
+    if (!known && Number.isFinite(at) && at >= context.clearedAtMs)
+      return { standing: "ahead", generation: stamped };
+    return { standing: "stale", generation: context.generation };
+  }
+  // Older senders do not stamp: date the message against the clear.
+  return {
+    standing:
+      Number.isFinite(at) && at < context.clearedAtMs ? "stale" : "current",
+    generation: context.generation,
+  };
+}
+
+function queuedContextStanding(syncdb: SyncDB, request: AcpRequest) {
+  const values = syncdb.get();
+  const rows: any[] = Array.isArray(values) ? values : (values?.toJS?.() ?? []);
+  const threadId = request.chat?.thread_id;
+  const thread = rows.find(
+    (row) => row?.event === THREAD_CONFIG_EVENT && row.thread_id === threadId,
+  );
+  const threadRows = rows.filter(
+    (row) => row?.event === "chat" && row.thread_id === threadId,
+  );
+  const context = threadContext(thread, threadRows);
+  return {
+    rows,
+    thread,
+    context,
+    ...requestContextStanding(request, context, threadRows),
+  };
 }
 
 function threadConfigRowRank(
@@ -2345,18 +2395,25 @@ export class ChatStreamWriter {
     return threadId || undefined;
   }
 
-  // True once someone cleared the thread's context after this turn started.
+  // The context generation this turn runs in (undefined until ready).
+  turnContextGeneration(): string | undefined {
+    return this.contextGeneration;
+  }
+
+  // True unless this hub sees the thread in the same context generation as
+  // this turn: after a clear, and also before this hub has synced the clear
+  // a turn's sender saw.
   contextClearedSinceStart(): boolean {
     const threadId = this.resolvedThreadId();
     if (!threadId || !this.syncdb || this.contextGeneration == null)
       return false;
     try {
       return (
-        threadContextGeneration(this.syncdb, threadId) !==
+        hubThreadContext(this.syncdb, threadId).generation !==
         this.contextGeneration
       );
     } catch {
-      return false;
+      return true;
     }
   }
 
@@ -3061,7 +3118,7 @@ export class ChatStreamWriter {
     this.contextGeneration =
       typeof stamped === "string"
         ? stamped
-        : threadContextGeneration(db, `${this.metadata.thread_id}`);
+        : hubThreadContext(db, `${this.metadata.thread_id}`).generation;
     let current = this.findChatRow();
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
@@ -4857,7 +4914,10 @@ export class ChatStreamWriter {
     if (this.runtimeKind === "acp") {
       if (this.recordField(currentRow, "agent_session_id") !== sessionId)
         await this.patchThreadConfig(
-          { agent_session_id: sessionId },
+          {
+            agent_session_id: sessionId,
+            agent_session_generation: this.contextGeneration,
+          },
           false,
           sameContext,
         );
@@ -4875,6 +4935,9 @@ export class ChatStreamWriter {
           ...(currentConfigObj as Record<string, unknown>),
           sessionId,
         },
+        // A clear can merge with this save on another branch; the tag keeps
+        // the old session from counting in the new context.
+        agent_session_generation: this.contextGeneration,
       },
       false,
       sameContext,
@@ -8776,12 +8839,9 @@ async function recordAcpGuidanceDelivered(
 }
 
 function queuedConversationSession(syncdb: SyncDB, request: AcpRequest) {
-  const values = syncdb.get();
-  const rows = Array.isArray(values) ? values : (values?.toJS?.() ?? []);
-  const thread = rows.find(
-    (row) =>
-      row?.event === THREAD_CONFIG_EVENT &&
-      row.thread_id === request.chat?.thread_id,
+  const { rows, thread, context, standing, generation } = queuedContextStanding(
+    syncdb,
+    request,
   );
   if (!thread || thread.archived)
     throw new Error("target thread unavailable at execution");
@@ -8796,23 +8856,36 @@ function queuedConversationSession(syncdb: SyncDB, request: AcpRequest) {
   }).request;
   // prepareChatSend intentionally hides the reset marker from session inference.
   // Execution must keep it to retire a warm worker, not resume its cached client.
-  if (current.runtime && thread.agent_session_id === "")
+  // A session saved by a turn from before the latest clear is a reset too.
+  if (
+    current.runtime &&
+    current.session_id == null &&
+    (thread.agent_session_id === "" || !storedSessionInContext(thread, context))
+  )
     current.session_id = "";
-  const threadRows = rows.filter(
-    (row) => row?.event === "chat" && row.thread_id === thread.thread_id,
+  // A stale request's own session is gone: run in the current one rather
+  // than fail as replaced.
+  const session = queuedAgentSession(
+    standing === "current" ? request : { ...request, session_id: undefined },
+    current,
   );
-  const generation = contextGeneration(threadRows);
-  const chosenIn = requestContextGeneration(request, threadRows);
-  // The context was cleared after this request chose its session: that
-  // session is gone, so run in the current one rather than fail as replaced.
-  const stale = chosenIn != null && chosenIn !== generation;
+  if (standing === "ahead") {
+    // This hub has not synced the clear the sender saw, so its view of the
+    // thread's session is the old one; the request's is the fresh one.
+    session.session_id = request.runtime
+      ? (request.session_id ?? "")
+      : request.session_id;
+    if (session.config)
+      session.config = {
+        ...session.config,
+        sessionId: request.config?.sessionId,
+      };
+  }
   return {
-    ...queuedAgentSession(
-      stale ? { ...request, session_id: undefined } : request,
-      current,
-    ),
+    ...session,
     context_generation: generation,
-    stale,
+    stale: standing === "stale",
+    ahead: standing === "ahead",
   };
 }
 
@@ -8863,76 +8936,97 @@ async function prepareQueuedUserMessageForExecution({
       } else if (request) {
         // A browser-built Codex request keeps its session unless the context
         // was cleared after it was built; then it runs in the current one.
-        try {
-          const queued = queuedConversationSession(syncdb, request);
-          contextGeneration = queued.context_generation;
-          if (queued.stale) {
-            staleSession = true;
+        // Not knowing is an error: running the old session would resume the
+        // context the user cleared.
+        const fence = queuedContextStanding(syncdb, request);
+        contextGeneration = fence.generation;
+        if (fence.standing === "stale") {
+          staleSession = true;
+          try {
+            const queued = queuedConversationSession(syncdb, request);
             currentAgentConfig = queued.config;
             currentAgentSessionId = queued.session_id;
+          } catch (err) {
+            // No usable thread settings: start a fresh session.
+            logger.debug("starting a fresh session after a clear", err);
+            currentAgentConfig = { ...request.config, sessionId: undefined };
+            currentAgentSessionId = fence.generation || thread_id;
           }
-        } catch (err) {
-          logger.debug("could not check the queued turn's context", err);
         }
       }
-      if (current != null) {
-        latestContent = getLatestQueuedUserMessageContent(
-          syncdbField(current, "history"),
-        );
-        const rowDate =
-          normalizeIsoDateString(syncdbField<string>(current, "date")) ??
-          undefined;
-        const rowSender = syncdbField<string>(current, "sender_id");
-        if (rowDate && rowSender) {
-          const latestParentMessageId = latestThreadMessageIdInSyncDB({
-            syncdb,
-            threadId: thread_id,
-            excludeMessageId: user_message_id,
-          });
-          const currentParentMessageId = syncdbField<string>(
-            current,
-            "parent_message_id",
+      // Refreshing the queued message's content and parent is best effort for
+      // an ordinary Codex turn; the context check above is not.
+      try {
+        if (current != null) {
+          latestContent = getLatestQueuedUserMessageContent(
+            syncdbField(current, "history"),
           );
-          const currentAcpState = syncdbField<string | null>(
-            current,
-            "acp_state",
-          );
-          const effectiveParentMessageId =
-            currentParentMessageId || latestParentMessageId;
-          const shouldUpdateParent =
-            effectiveParentMessageId &&
-            effectiveParentMessageId !== currentParentMessageId;
-          const shouldClearQueuedState = currentAcpState === "queued";
-          if (shouldUpdateParent || shouldClearQueuedState) {
-            const update: Record<string, unknown> = {
-              event: "chat",
-              date: rowDate,
-              sender_id: rowSender,
-              message_id: user_message_id,
-              thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
-            };
-            if (shouldUpdateParent) {
-              update.parent_message_id = effectiveParentMessageId;
-            }
-            if (shouldClearQueuedState) {
-              update.acp_state = null;
-            }
-            syncdb.set(update);
-            syncdb.commit();
-            await syncdb.save();
-            logSyncdbPatchflowDelta({
+          const rowDate =
+            normalizeIsoDateString(syncdbField<string>(current, "date")) ??
+            undefined;
+          const rowSender = syncdbField<string>(current, "sender_id");
+          if (rowDate && rowSender) {
+            const latestParentMessageId = latestThreadMessageIdInSyncDB({
               syncdb,
-              before: versionCountBefore,
-              phase: "queued-user-prepare",
-              extra: {
-                project_id,
-                path,
-                thread_id,
-                user_message_id,
-              },
+              threadId: thread_id,
+              excludeMessageId: user_message_id,
             });
+            const currentParentMessageId = syncdbField<string>(
+              current,
+              "parent_message_id",
+            );
+            const currentAcpState = syncdbField<string | null>(
+              current,
+              "acp_state",
+            );
+            const effectiveParentMessageId =
+              currentParentMessageId || latestParentMessageId;
+            const shouldUpdateParent =
+              effectiveParentMessageId &&
+              effectiveParentMessageId !== currentParentMessageId;
+            const shouldClearQueuedState = currentAcpState === "queued";
+            if (shouldUpdateParent || shouldClearQueuedState) {
+              const update: Record<string, unknown> = {
+                event: "chat",
+                date: rowDate,
+                sender_id: rowSender,
+                message_id: user_message_id,
+                thread_id:
+                  syncdbField<string>(current, "thread_id") ?? thread_id,
+              };
+              if (shouldUpdateParent) {
+                update.parent_message_id = effectiveParentMessageId;
+              }
+              if (shouldClearQueuedState) {
+                update.acp_state = null;
+              }
+              syncdb.set(update);
+              syncdb.commit();
+              await syncdb.save();
+              logSyncdbPatchflowDelta({
+                syncdb,
+                before: versionCountBefore,
+                phase: "queued-user-prepare",
+                extra: {
+                  project_id,
+                  path,
+                  thread_id,
+                  user_message_id,
+                },
+              });
+            }
           }
         }
+      } catch (err) {
+        if (
+          !request ||
+          request.runtime ||
+          request.chat?.agent_rpc_execution ||
+          request.chat?.sensor_wake ||
+          request.chat?.agent_rpc_report
+        )
+          throw err;
+        logger.warn("failed refreshing queued acp user message", err);
       }
     },
   });
@@ -10004,22 +10098,21 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       user_message_id,
       err,
     });
+    // Without the context check, the turn could resume a cleared context.
     if (
-      request.chat?.agent_rpc_execution ||
-      request.chat?.sensor_wake ||
-      request.chat?.agent_rpc_report ||
-      request.runtime
-    ) {
-      if (request.runtime)
-        await writeQueuedJobFailureToChat({ request, error: `${err}` });
-      setAcpJobState({
-        op_id: job.op_id,
-        state: "canceled",
-        error: `${err}`,
-        worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
-      });
-      return;
-    }
+      request.runtime ||
+      (!request.chat?.agent_rpc_execution &&
+        !request.chat?.sensor_wake &&
+        !request.chat?.agent_rpc_report)
+    )
+      await writeQueuedJobFailureToChat({ request, error: `${err}` });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "canceled",
+      error: `${err}`,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+    });
+    return;
   }
 
   const refreshedRequest = applyQueuedUserMessageEditToRequest({
@@ -10445,6 +10538,27 @@ type AcpSteerAttemptResult = {
   threadId?: string;
 };
 
+// Guidance joins only a turn of its own context. A turn that started before
+// a clear finishes in the old context, and guidance written after the clear
+// (stamped with its generation, even if this hub has not synced it yet)
+// belongs to the next, fresh turn.
+function guidanceFitsTurn(
+  writer:
+    | Pick<
+        ChatStreamWriter,
+        "contextClearedSinceStart" | "turnContextGeneration"
+      >
+    | undefined,
+  request: AcpRequest,
+): boolean {
+  if (!writer) return true;
+  const stamped = request.chat?.context_generation;
+  return (
+    !writer.contextClearedSinceStart() &&
+    (typeof stamped !== "string" || stamped === writer.turnContextGeneration())
+  );
+}
+
 async function trySteerCandidateIds({
   projectId,
   threadId,
@@ -10466,9 +10580,9 @@ async function trySteerCandidateIds({
   const writer = findChatWriter({ threadId, chat });
   writer?.assertSteerPrincipal(request.account_id);
   assertRunningJobSteerPrincipal(request);
-  // A turn that started before the context was cleared finishes in the old
-  // context; guidance sent now belongs to the next, fresh turn.
-  if (writer?.contextClearedSinceStart()) return { state: "not_steerable" };
+  // Rechecked before each delivery: the awaits below can span a clear.
+  const sameContext = () => guidanceFitsTurn(writer, request);
+  if (!sameContext()) return { state: "not_steerable" };
   for (const id of candidateIds ?? []) {
     const trimmed = `${id ?? ""}`.trim();
     if (trimmed) {
@@ -10538,6 +10652,7 @@ async function trySteerCandidateIds({
             const { prompt, image_attachments } = await harnessRequest;
             deliveredRequest = { ...steerRequest, prompt, image_attachments };
           }
+          if (!sameContext()) return { state: "not_steerable" };
           const result = await agent.steer(id, deliveredRequest);
           if (result.state === "steered") {
             return {
@@ -11915,8 +12030,9 @@ async function attemptAcpSteerRequest(
       path: request.chat.path,
       fn: async (syncdb) => queuedConversationSession(syncdb, request),
     });
-    // Written before a later context clear: run it as the next turn instead.
-    if (session.stale || !session.session_id) return { state: "not_steerable" };
+    // Not of the running turn's context: run it as the next turn instead.
+    if (session.stale || session.ahead || !session.session_id)
+      return { state: "not_steerable" };
     request = { ...request, session_id: session.session_id };
   }
 
@@ -13115,6 +13231,7 @@ export const acpTestInternals = {
   persistAcpGuidanceDeliveryProjection,
   persistQueuedUserMessageProjection,
   prepareQueuedUserMessageForExecution,
+  guidanceFitsTurn,
   terminalTurnNeedsPeriodicRepair,
   waitForChatWriterDisposal,
 };

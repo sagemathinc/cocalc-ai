@@ -8,6 +8,8 @@ import {
   normalizeCodexMention,
   messagesSinceContextCleared,
   resolveHarnessSessionId,
+  storedSessionInContext,
+  threadContext,
   type ChatThreadConfigRecord,
 } from "./index";
 import type { ImmerDB } from "./server";
@@ -72,7 +74,13 @@ export function prepareChatSend({
   const latest = messages.at(-1);
   const config = runtime ? {} : (thread.acp_config ?? {});
   // Match the browser's recovery of a session whose config has not synced yet.
-  const sinceCleared = messagesSinceContextCleared(messages);
+  const context = threadContext(thread, messages);
+  const sinceCleared = messagesSinceContextCleared(
+    messages,
+    context.clearedAtMs,
+  );
+  // A session saved by a turn from before the latest clear does not count.
+  const stored = storedSessionInContext(thread, context);
   // Legacy replies of retired thread automations had their own sessions.
   const inferredSession = [...sinceCleared.messages]
     .reverse()
@@ -81,13 +89,17 @@ export function prepareChatSend({
         !row.acp_automation_id && normalizeCodexSessionId(row.acp_thread_id),
     )?.acp_thread_id;
   const sessionId = runtime
-    ? resolveHarnessSessionId(thread.agent_session_id, inferredSession)
-    : (normalizeCodexSessionId(config.sessionId) ?? inferredSession);
+    ? resolveHarnessSessionId(
+        stored ? thread.agent_session_id : undefined,
+        inferredSession,
+      )
+    : ((stored ? normalizeCodexSessionId(config.sessionId) : undefined) ??
+      inferredSession);
   const acpConfig = runtime
     ? undefined
     : buildCodexAcpConfig({
         path,
-        config: sessionId ? { ...config, sessionId } : config,
+        config: { ...config, sessionId },
         model: normalizeCodexMention(thread.agent_model),
         maxConcurrentSubagents: normalizeCodexMaxConcurrentSubagents(
           otherSettings[OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS],
@@ -134,7 +146,7 @@ export function prepareChatSend({
       }),
     }),
     thread_title: thread.name,
-    context_generation: sinceCleared.clearedMessageId ?? "",
+    context_generation: context.generation,
   };
   const request: AcpRequest & { chat: AcpChatContext } = {
     project_id: projectId,
@@ -144,7 +156,7 @@ export function prepareChatSend({
     runtime,
     session_id: runtime
       ? sessionId
-      : (sessionId ?? sinceCleared.clearedMessageId ?? thread.thread_id),
+      : (sessionId ?? (context.generation || thread.thread_id)),
     chat,
   };
   return { message, request };

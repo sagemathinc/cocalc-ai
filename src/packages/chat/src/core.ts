@@ -282,6 +282,12 @@ export interface ChatThreadConfigRecord {
   agent_runtime?: AcpHarnessRuntime;
   // Empty string is an explicit reset, not permission to infer from old messages.
   agent_session_id?: string;
+  // The context generation the saved session (agent_session_id, or
+  // acp_config.sessionId) belongs to; see storedSessionInContext.
+  agent_session_generation?: string;
+  // The latest "Context cleared" line (id and date); see threadContext.
+  context_generation?: string;
+  context_cleared_at?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -424,9 +430,16 @@ export interface ChatThreadStateRecord {
   thread_id: string;
   state: ChatThreadRuntimeState;
   active_message_id?: string;
+  // Set by hubs that fence turns by context generation, so a context can be
+  // cleared while a turn runs; see CONTEXT_FENCE_VERSION.
+  context_fence?: number;
   updated_at: string;
   schema_version: number;
 }
+
+// Hubs at or above this version keep a turn that started before a "Context
+// cleared" line from saving its session back or taking new guidance.
+export const CONTEXT_FENCE_VERSION = 1;
 
 export interface BuildThreadStateRecordOptions {
   thread_id: string;
@@ -451,6 +464,7 @@ export function buildThreadStateRecord(
     thread_id: key.thread_id,
     state: options.state,
     active_message_id: options.active_message_id,
+    context_fence: CONTEXT_FENCE_VERSION,
     updated_at: updatedAt,
     schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
   };

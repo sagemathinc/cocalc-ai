@@ -4154,6 +4154,8 @@ export function MyAgentsWorkspacePage({
           workbenchEnabled: true,
         });
       await waitForChatReady(chatActions);
+      const blocked = chatActions.agentContextClearBlocked(agent.thread_id);
+      if (blocked) throw new Error(blocked);
       if (!chatActions.clearAgentContext(agent.thread_id))
         throw new Error("Unable to clear this agent's context");
       await chatActions.syncdb?.save();

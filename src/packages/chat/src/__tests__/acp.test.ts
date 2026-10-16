@@ -4,7 +4,9 @@ import {
   appendStreamMessage,
   appendStreamMessages,
   buildCodexAcpConfig,
-  contextGeneration,
+  messagesSinceContextCleared,
+  storedSessionInContext,
+  threadContext,
   getAgentMessageTexts,
   getBestResponseText,
   getInterruptedResponseMarkdown,
@@ -1278,29 +1280,70 @@ describe("tokenBeforeFinalDot", () => {
   });
 });
 
-describe("contextGeneration", () => {
+describe("thread context", () => {
   const marker = (message_id: string, date: string) => ({
     event: "chat",
     message_id,
     date,
     acp_context_cleared: true,
   });
+  const message = (message_id: string, date: string) => ({
+    event: "chat",
+    message_id,
+    date,
+  });
   const rows = [
-    { event: "chat", message_id: "m1", date: "2026-10-01T00:00:00.000Z" },
+    message("m1", "2026-10-01T00:00:00.000Z"),
     marker("clear-2", "2026-10-03T00:00:00.000Z"),
     marker("clear-1", "2026-10-02T00:00:00.000Z"),
   ];
 
   it("is the latest Context cleared line, in date order", () => {
-    expect(contextGeneration([])).toBe("");
-    expect(contextGeneration(rows.slice(0, 1))).toBe("");
-    expect(contextGeneration(rows)).toBe("clear-2");
+    expect(threadContext(undefined, [])).toEqual({
+      generation: "",
+      clearedAtMs: -Infinity,
+    });
+    expect(threadContext(undefined, rows)).toEqual({
+      generation: "clear-2",
+      clearedAtMs: Date.parse("2026-10-03T00:00:00.000Z"),
+    });
   });
 
-  it("can be read as of a time", () => {
-    const at = (iso: string) => contextGeneration(rows, Date.parse(iso));
-    expect(at("2026-10-01T12:00:00.000Z")).toBe("");
-    expect(at("2026-10-02T12:00:00.000Z")).toBe("clear-1");
-    expect(at("2026-10-03T00:00:00.000Z")).toBe("clear-2");
+  it("survives the line being archived, through the thread config", () => {
+    const config = {
+      context_generation: "clear-3",
+      context_cleared_at: "2026-10-04T00:00:00.000Z",
+    };
+    expect(threadContext(config, rows.slice(0, 1)).generation).toBe("clear-3");
+    // A newer line than the config wins (e.g. its config write was lost).
+    expect(
+      threadContext(config, [marker("clear-4", "2026-10-05T00:00:00.000Z")])
+        .generation,
+    ).toBe("clear-4");
+  });
+
+  it("cuts inference at the clear even without the line", () => {
+    const since = messagesSinceContextCleared(
+      [
+        message("root", "2026-10-01T00:00:00.000Z"),
+        message("after", "2026-10-05T00:00:00.000Z"),
+      ],
+      Date.parse("2026-10-04T00:00:00.000Z"),
+    );
+    expect(since.messages.map((row) => row.message_id)).toEqual(["after"]);
+  });
+
+  it("counts a stored session only in its own context", () => {
+    const context = { generation: "clear-2", clearedAtMs: 0 };
+    expect(storedSessionInContext({ agent_session_id: "s" }, context)).toBe(
+      true,
+    );
+    expect(
+      storedSessionInContext({ agent_session_generation: "clear-2" }, context),
+    ).toBe(true);
+    // Saved by a turn that started before the clear.
+    expect(
+      storedSessionInContext({ agent_session_generation: "" }, context),
+    ).toBe(false);
   });
 });

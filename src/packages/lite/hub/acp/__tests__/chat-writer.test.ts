@@ -3711,6 +3711,8 @@ describe("ChatStreamWriter", () => {
           (x) => x.event === "chat" && x.date === rootIso && x.acp_config,
         ),
       ).toBeUndefined();
+      // Tagged with the context it belongs to (never cleared here).
+      expect(threadCfgUpdate?.agent_session_generation).toBe("");
       if (runtimeKind === "acp") {
         expect(threadCfgUpdate?.agent_session_id).toBe("session-123");
         expect(threadCfgUpdate?.acp_config).toEqual({ model: "gpt-5.3-codex" });

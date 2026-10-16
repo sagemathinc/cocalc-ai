@@ -13,6 +13,8 @@ import {
   buildCodexAcpConfig,
   normalizeCodexMention,
   messagesSinceContextCleared,
+  storedSessionInContext,
+  threadContext,
   resolveHarnessSessionId,
   type CodexThreadConfig,
 } from "@cocalc/chat";
@@ -443,9 +445,14 @@ export async function processAcpLLM({
   // most recent ACP assistant message in this thread so follow-up turns still
   // resume the same Codex session.
   // Nothing before a "Context cleared" line counts.
+  const threadMessages = actions.getMessagesInThread?.(thread_id) ?? [];
+  const context = threadContext(threadMetadata, threadMessages);
   const sinceCleared = messagesSinceContextCleared(
-    actions.getMessagesInThread?.(thread_id) ?? [],
+    threadMessages,
+    context.clearedAtMs,
   );
+  // A session saved by a turn from before the latest clear does not count.
+  const stored = storedSessionInContext(threadMetadata, context);
   const inferredSessionId = (() => {
     const threadMessages = sinceCleared.messages;
     for (let i = threadMessages.length - 1; i >= 0; i--) {
@@ -459,10 +466,11 @@ export async function processAcpLLM({
   })();
   const effectiveSessionId = runtime
     ? resolveHarnessSessionId(
-        threadMetadata?.agent_session_id,
+        stored ? threadMetadata?.agent_session_id : undefined,
         inferredSessionId,
       )
-    : (normalizeCodexSessionId(config.sessionId) ?? inferredSessionId);
+    : ((stored ? normalizeCodexSessionId(config.sessionId) : undefined) ??
+      inferredSessionId);
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
@@ -512,7 +520,7 @@ export async function processAcpLLM({
 
   const sessionKey = runtime
     ? effectiveSessionId
-    : (effectiveSessionId ?? sinceCleared.clearedMessageId ?? thread_id);
+    : (effectiveSessionId ?? (context.generation || thread_id));
   const ensureChatStatePersisted = async (): Promise<void> => {
     if (typeof syncdb?.save !== "function") return;
     await syncdb.save();
@@ -550,7 +558,7 @@ export async function processAcpLLM({
     threadId: thread_id,
   })?.name;
   chatMetadata.workbench = actions.workbenchEnabled !== false;
-  chatMetadata.context_generation = sinceCleared.clearedMessageId ?? "";
+  chatMetadata.context_generation = context.generation;
   let acknowledged = false;
   // Persist the pre-acknowledgement state before waiting for the chat file or
   // backend. This keeps the truthful "submitting" status visible when a newly
@@ -570,10 +578,7 @@ export async function processAcpLLM({
         ? undefined
         : buildCodexAcpConfig({
             path,
-            config:
-              effectiveSessionId != null
-                ? { ...config, sessionId: effectiveSessionId }
-                : config,
+            config: { ...config, sessionId: effectiveSessionId },
             model: normalizedModel,
             maxConcurrentSubagents,
           }),
