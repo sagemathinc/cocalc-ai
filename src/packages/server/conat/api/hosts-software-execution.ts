@@ -1181,7 +1181,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
   let row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   const requestedProjectHostRollout = components.includes("project-host");
-  const client = await hostControlClient(id, 60_000);
+  const client = await withTimeout({
+    promise: hostControlClient(id, 60_000),
+    timeoutMs: hostControlClientTimeoutMs,
+  });
   const desiredProjectHostVersion =
     normalizeObservedVersion(desired_version) ??
     (await resolveDesiredProjectHostVersion({
@@ -1340,7 +1343,14 @@ export async function rolloutHostManagedComponentsInternalHelper({
       : 0;
     const since = Math.max(baselineSeen, rolloutStartedAt);
     await waitForHostHeartbeatAfter({ host_id: id, since });
-    refreshedRow = await loadHostForStartStop(id, account_id);
+    try {
+      refreshedRow = await withTimeout({
+        promise: loadHostForStartStop(id, account_id),
+        timeoutMs: hostControlClientTimeoutMs,
+      });
+    } catch {
+      // Keep the row from before the restart; observations below decide.
+    }
   }
   const desiredVersion = desiredProjectHostVersion;
   let observedProjectHostVersion: string | undefined;
@@ -1348,7 +1358,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
   let fallbackProjectHostVersion: string | undefined;
   let projectHostRollbackVersion: string | undefined;
   let pendingProjectHostRollout = false;
-  const refreshProjectHostObservation = async () => {
+  // deadline: the caller's loop deadline (ms since epoch), if any.
+  const refreshProjectHostObservation = async (deadline?: number) => {
+    const capped = (ms: number) =>
+      deadline == null ? ms : Math.max(1, Math.min(ms, deadline - Date.now()));
     let statusClient:
       | Awaited<ReturnType<typeof hostControlClient>>
       | undefined = undefined;
@@ -1358,12 +1371,12 @@ export async function rolloutHostManagedComponentsInternalHelper({
     try {
       statusClient = await withTimeout({
         promise: hostControlClient(id, 30_000),
-        timeoutMs: hostControlClientTimeoutMs,
+        timeoutMs: capped(hostControlClientTimeoutMs),
       });
       if (typeof statusClient.getManagedComponentStatus === "function") {
         const statuses = await withTimeout({
           promise: statusClient.getManagedComponentStatus(),
-          timeoutMs: managedComponentRolloutRpcTimeoutMs,
+          timeoutMs: capped(managedComponentRolloutRpcTimeoutMs),
         });
         runningVersion = observedRunningProjectHostVersion(statuses);
         observedProjectHostPids = observedRunningProjectHostPids(statuses);
@@ -1371,7 +1384,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
       if (typeof statusClient.getHostAgentStatus === "function") {
         hostAgentStatus = await withTimeout({
           promise: statusClient.getHostAgentStatus(),
-          timeoutMs: managedComponentRolloutRpcTimeoutMs,
+          timeoutMs: capped(managedComponentRolloutRpcTimeoutMs),
         });
       }
     } catch {
@@ -1432,6 +1445,9 @@ export async function rolloutHostManagedComponentsInternalHelper({
   await refreshProjectHostObservation();
   if (requestedProjectHostRollout && desiredVersion) {
     const settleStartedAt = Date.now();
+    // As in verification below: every step is bounded by the settle window.
+    const settleDeadline = settleStartedAt + projectHostRolloutSettleTimeoutMs;
+    const settleRemainingMs = () => Math.max(1, settleDeadline - Date.now());
     let replacementObserved = projectHostProcessWasReplaced({
       baselinePids: baselineProjectHostPids,
       observedPids: observedProjectHostPids,
@@ -1453,9 +1469,19 @@ export async function rolloutHostManagedComponentsInternalHelper({
       ) {
         break;
       }
-      await delay(projectHostRolloutPollMs);
-      refreshedRow = await loadHostForStartStop(id, account_id);
-      await refreshProjectHostObservation();
+      await delay(Math.min(projectHostRolloutPollMs, settleRemainingMs()));
+      try {
+        refreshedRow = await withTimeout({
+          promise: loadHostForStartStop(id, account_id),
+          timeoutMs: Math.min(hostControlClientTimeoutMs, settleRemainingMs()),
+        });
+      } catch {
+        // Keep the last row; the observation below still reads the host.
+      }
+      if (Date.now() >= settleDeadline) {
+        break;
+      }
+      await refreshProjectHostObservation(settleDeadline);
       replacementObserved = projectHostProcessWasReplaced({
         baselinePids: baselineProjectHostPids,
         observedPids: observedProjectHostPids,

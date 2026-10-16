@@ -2188,6 +2188,70 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       expect(hostControlClient.mock.calls.length).toBeGreaterThan(1);
     });
 
+    const settled = async (p: Promise<unknown>) =>
+      await Promise.race([
+        p.then(
+          () => "resolved",
+          () => "rejected",
+        ),
+        new Promise((resolve) => setTimeout(() => resolve("hung"), 3_000)),
+      ]);
+
+    it("ends when the first host-control client never returns", async () => {
+      const outcome = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: never as any,
+          projectHostRolloutSettleTimeoutMs: 50,
+          hostControlClientTimeoutMs: 100,
+        }),
+      );
+      expect(outcome).toBe("rejected");
+    });
+
+    it("ends when a project-host settle reload never returns", async () => {
+      // project-host is installed and restarted in place (as in "verifies
+      // project-host convergence ..."), but the host keeps reporting the old
+      // process, so the settle loop polls; its row reloads then hang.
+      const row = {
+        id: "host-1",
+        status: "running",
+        version: "ph-v2",
+        last_seen: "2026-04-25T05:00:05.000Z",
+        metadata: { owner: "account-1", software: { project_host: "ph-v2" } },
+      };
+      let loads = 0;
+      const loadHostForStartStop = jest.fn(async () => {
+        loads += 1;
+        // The row reads before the settle loop work; every later one hangs.
+        return loads <= 2 ? row : await never();
+      });
+      const outcome = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          components: ["project-host"] as any,
+          loadHostForStartStop: loadHostForStartStop as any,
+          hostControlClient: async () => ({
+            getRuntimeLog: async ({ source }) => ({
+              source: source ?? "project-host",
+              lines: 25,
+              text: "",
+            }),
+            rolloutManagedComponents: async () => new Promise(() => undefined),
+            getManagedComponentStatus: async () => [
+              projectHostStatus({ desiredVersion: "ph-v2", pid: 100 }),
+            ],
+          }),
+          managedComponentRolloutRpcTimeoutMs: 20,
+          projectHostRolloutSettleTimeoutMs: 100,
+          projectHostRolloutMinObservationMs: 10_000,
+          hostControlClientTimeoutMs: 1_000,
+        }),
+      );
+      expect(outcome).not.toBe("hung");
+      expect(loadHostForStartStop.mock.calls.length).toBeGreaterThan(2);
+    });
+
     it("does not let hanging diagnostics hold the rollout error", async () => {
       const startedAt = Date.now();
       await expect(
