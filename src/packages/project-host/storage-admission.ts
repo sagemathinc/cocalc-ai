@@ -79,6 +79,8 @@ export type StorageAdmissionRequest = {
   operation_kind: StorageOperationKind;
   project_id?: string;
   allow_starvation_override?: boolean;
+  /** A scheduled snapshot may take the recovery pace slot (default true). */
+  allow_recovery_pace?: boolean;
 };
 
 export type StorageAdmissionTicket = {
@@ -662,6 +664,7 @@ export function createStorageAdmissionController(
     operation_kind,
     project_id,
     allow_starvation_override,
+    allow_recovery_pace = true,
   }: StorageAdmissionRequest): StorageAdmissionTicket => {
     const current = sample();
     const spec = getStorageOperationSpec(operation_kind);
@@ -678,9 +681,12 @@ export function createStorageAdmissionController(
       operation_kind === "scheduled_snapshot" &&
       reason === "io_pressure_recovery" &&
       recoverySnapshotIntervalMs > 0;
+    // The caller decides which snapshot gets the recovery slot (the one that
+    // has waited longest); others wait, as overrides too.
     const recoverySnapshotDue =
-      lastRecoverySnapshotAt == null ||
-      decidedAtMs - lastRecoverySnapshotAt >= recoverySnapshotIntervalMs;
+      allow_recovery_pace &&
+      (lastRecoverySnapshotAt == null ||
+        decidedAtMs - lastRecoverySnapshotAt >= recoverySnapshotIntervalMs);
     const starvationOverride =
       mode === "enforce" &&
       background &&

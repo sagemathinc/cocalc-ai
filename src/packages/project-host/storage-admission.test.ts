@@ -515,6 +515,32 @@ describe("storage admission controller", () => {
     ).toBe(true);
   });
 
+  it("gives the recovery slot only to the snapshot the caller allows", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    controller.sample();
+    for (const allow_starvation_override of [false, true]) {
+      expect(
+        controller.admit({
+          operation_kind: "scheduled_snapshot",
+          allow_starvation_override,
+          allow_recovery_pace: false,
+        }),
+      ).toMatchObject({
+        admitted: false,
+        recovery_paced: false,
+        starvation_override: false,
+      });
+    }
+    // Withheld attempts leave the slot open for the head.
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
   it("does not pace a snapshot alongside scheduled work that is still running", () => {
     const controller = create();
     // A backup admitted while normal keeps running into recovery.

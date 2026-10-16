@@ -1761,73 +1761,94 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
+    // A daemon on a host held in recovery at 3.5% with four snapshots due
+    // less than an hour (no starvation overrides), oldest d, then c, b, a.
+    const startRecoveryDaemon = async ({
+      runtimeMs = 0,
+      starting = 0,
+      projects = ["a", "b", "c", "d"],
+    }: { runtimeMs?: number; starting?: number; projects?: string[] } = {}) => {
+      runScheduledSnapshotMaintenanceMock.mockImplementation(
+        async ({ project_id }) => {
+          attempts.push(`snapshot:${project_id}`);
+          attemptTimes.push(Date.now());
+          await new Promise((resolve) => setTimeout(resolve, runtimeMs));
+          throw new Error("snapshot failed");
+        },
+      );
+      const { createStorageAdmissionController } = jest.requireActual(
+        "./storage-admission",
+      );
+      const lifecycle = { starting };
+      full = 10;
+      const controller = createStorageAdmissionController({
+        mode: "enforce",
+        readInputs: () => ({
+          sampled_at_ms: Date.now(),
+          host_io_full_avg10: full,
+          starting_projects: lifecycle.starting,
+          stopping_projects: 0,
+          btrfs_mutation_locks: 0,
+          btrfs_mutation_waiters: 0,
+        }),
+      });
+      full = 3.5;
+      controller.sample();
+      getStorageAdmissionStatusMock.mockImplementation(() =>
+        controller.getStatus(),
+      );
+      admitStorageOperationMock.mockImplementation((request) =>
+        controller.admit(request),
+      );
+      rows = projects.map((project_id, i) => ({
+        project_id,
+        last_changed: new Date(
+          Date.parse("2026-09-27T11:30:00Z") - i * 60_000,
+        ).toISOString(),
+        backup_due_since: null,
+        snapshots: {},
+        backups: {},
+      }));
+      // The bay keeps each reported retry time, so deferral backoff applies.
+      reportProjectMaintenanceMock.mockImplementation(async (report) => {
+        if (report.kind !== "snapshot") return;
+        rows = rows.map((row) =>
+          row.project_id === report.project_id
+            ? { ...row, snapshot_retry_at: report.retry_at ?? null }
+            : row,
+        );
+      });
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = `${24 * 60 * 60_000}`;
+      // More than one lane slot, so a woken project does not simply queue
+      // behind the running snapshot.
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM = "2";
+      const { startProjectSnapshotBackupMaintenance } =
+        await import("./snapshot-backup-maintenance");
+      const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+      const snapshotAdmissions = () =>
+        admitStorageOperationMock.mock.calls.filter(
+          ([request]) => request.operation_kind === "scheduled_snapshot",
+        ).length;
+      return {
+        controller,
+        lifecycle,
+        stop,
+        startedAt: Date.now(),
+        snapshotAdmissions,
+      };
+    };
+    const snapshotOrder = () =>
+      attempts.filter((a) => a.startsWith("snapshot:"));
+
     it.each([0, 25_000])(
       "keeps snapshots flowing at the recovery pace on a host stuck in recovery (snapshots taking %i ms)",
       async (runtimeMs) => {
         // 2026-10-16: prod hosts at 1-5% stall sat in recovery for hours with
         // only one override every five minutes.
-        runScheduledSnapshotMaintenanceMock.mockImplementation(
-          async ({ project_id }) => {
-            attempts.push(`snapshot:${project_id}`);
-            attemptTimes.push(Date.now());
-            await new Promise((resolve) => setTimeout(resolve, runtimeMs));
-            throw new Error("snapshot failed");
-          },
-        );
-        const { createStorageAdmissionController } = jest.requireActual(
-          "./storage-admission",
-        );
-        full = 10;
-        const controller = createStorageAdmissionController({
-          mode: "enforce",
-          readInputs: () => ({
-            sampled_at_ms: Date.now(),
-            host_io_full_avg10: full,
-            starting_projects: 0,
-            stopping_projects: 0,
-            btrfs_mutation_locks: 0,
-            btrfs_mutation_waiters: 0,
-          }),
+        const { controller, stop, startedAt } = await startRecoveryDaemon({
+          runtimeMs,
         });
-        full = 3.5;
-        controller.sample();
-        getStorageAdmissionStatusMock.mockImplementation(() =>
-          controller.getStatus(),
-        );
-        admitStorageOperationMock.mockImplementation((request) =>
-          controller.admit(request),
-        );
-        // Not overdue long enough for overrides: only the recovery pace runs.
-        // The oldest change is d's, then c's, b's and a's.
-        rows = ["a", "b", "c", "d"].map((project_id, i) => ({
-          project_id,
-          last_changed: new Date(
-            Date.parse("2026-09-27T11:30:00Z") - i * 60_000,
-          ).toISOString(),
-          backup_due_since: null,
-          snapshots: {},
-          backups: {},
-        }));
-        // The bay keeps each reported retry time, so deferral backoff applies.
-        reportProjectMaintenanceMock.mockImplementation(async (report) => {
-          if (report.kind !== "snapshot") return;
-          rows = rows.map((row) =>
-            row.project_id === report.project_id
-              ? { ...row, snapshot_retry_at: report.retry_at ?? null }
-              : row,
-          );
-        });
-        process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
-        process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = `${24 * 60 * 60_000}`;
-        // More than one lane slot, so a woken project does not simply queue
-        // behind the running snapshot.
-        process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM = "2";
-        const { startProjectSnapshotBackupMaintenance } =
-          await import("./snapshot-backup-maintenance");
-        const stop = startProjectSnapshotBackupMaintenance({
-          hostId: "host-1",
-        });
-        const startedAt = Date.now();
         try {
           // Timer-driven wakes alone, no further full sweep: the deferral
           // backoff (48-72 s) and the event-batch retry (60 s) used to set the
@@ -1848,8 +1869,9 @@ describe("snapshot-backup-maintenance", () => {
             Math.max(runtimeMs, 20_000) + 10_000,
           );
         }
-        // The longest waiting first.
-        expect(attempts.filter((a) => a.startsWith("snapshot:"))).toEqual([
+        // Strictly the longest waiting first: the others' own retries never
+        // take the slot from the head.
+        expect(snapshotOrder()).toEqual([
           "snapshot:d",
           "snapshot:c",
           "snapshot:b",
@@ -1865,6 +1887,52 @@ describe("snapshot-backup-maintenance", () => {
         );
       },
     );
+
+    it("does not churn through the backlog while a lifecycle gate holds an open slot", async () => {
+      // Ten projects, p9 waiting longest.
+      const projects = Array.from({ length: 10 }, (_, i) => `p${i}`);
+      const { lifecycle, stop, snapshotAdmissions } = await startRecoveryDaemon(
+        { projects },
+      );
+      try {
+        // p9 takes the first slot and the rest wait; then projects start.
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(snapshotOrder()).toEqual(["snapshot:p9"]);
+        lifecycle.starting = 1;
+        const before = snapshotAdmissions();
+        await jest.advanceTimersByTimeAsync(120_000);
+        expect(snapshotOrder()).toEqual(["snapshot:p9"]);
+        // About one head retry per pace plus the others' own backoff
+        // (about 20); a one-second handoff loop makes about 120.
+        expect(snapshotAdmissions() - before).toBeLessThan(40);
+        lifecycle.starting = 0;
+        await jest.advanceTimersByTimeAsync(400_000);
+      } finally {
+        stop();
+      }
+      // The waiting order survived the gate.
+      expect(snapshotOrder()).toEqual(
+        [...projects].reverse().map((p) => `snapshot:${p}`),
+      );
+    });
+
+    it("does not let a head that left the host stall the others", async () => {
+      const { lifecycle, stop } = await startRecoveryDaemon({ starting: 1 });
+      try {
+        // Everything waits, d at the head; then d moves to another host.
+        await jest.advanceTimersByTimeAsync(60_000);
+        rows = rows.filter((row) => row.project_id !== "d");
+        lifecycle.starting = 0;
+        await jest.advanceTimersByTimeAsync(240_000);
+      } finally {
+        stop();
+      }
+      expect(snapshotOrder()).toEqual([
+        "snapshot:c",
+        "snapshot:b",
+        "snapshot:a",
+      ]);
+    });
 
     it("takes the longest-overdue project first", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
