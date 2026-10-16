@@ -696,9 +696,12 @@ describe("acp job queue ordering", () => {
       project_id: jobs[0].project_id,
       reason: "project stopped",
     });
-    db.prepare("UPDATE acp_jobs SET updated_at = ? WHERE op_id = ?").run(
-      1,
-      jobs[0].op_id,
+    // Pin every row's age: the fence stamps them all with Date.now(), and a
+    // touch in that same millisecond would tie and sort by op_id instead.
+    jobs.forEach((job, n) =>
+      db
+        .prepare("UPDATE acp_jobs SET updated_at = ? WHERE op_id = ?")
+        .run(n + 1, job.op_id),
     );
     expect(
       listAcpJobsWithFenceIntent({ ...FENCE_LIST, limit: 1 })[0].op_id,
@@ -711,7 +714,7 @@ describe("acp job queue ordering", () => {
     });
     expect(
       listAcpJobsWithFenceIntent({ ...FENCE_LIST, limit: 1 })[0].op_id,
-    ).not.toBe(jobs[0].op_id);
+    ).toBe(jobs[1].op_id);
   });
 
   it("adopts only the rows this fence ended without an intent", () => {
