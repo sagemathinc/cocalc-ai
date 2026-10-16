@@ -1638,11 +1638,21 @@ describe("snapshot-backup-maintenance", () => {
   });
 
   describe("paced starvation progress", () => {
-    const interval = 5 * 60_000;
+    // Overrides are paced per kind: a snapshot every minute, a backup every
+    // five minutes, one override in flight at a time.
+    const snapshotInterval = 60_000;
+    const backupInterval = 5 * 60_000;
     let attempts: string[];
     let attemptTimes: number[];
     let rows: any[];
     let full: number;
+    const timesOf = (kind: string) =>
+      attemptTimes.filter((_, i) => attempts[i].startsWith(`${kind}:`));
+    const expectSpacing = (kind: string, interval: number) => {
+      const times = timesOf(kind);
+      for (let i = 1; i < times.length; i++)
+        expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(interval);
+    };
     beforeEach(() => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date("2026-09-27T12:00:00Z"));
@@ -1666,8 +1676,13 @@ describe("snapshot-backup-maintenance", () => {
         "./storage-admission",
       );
       full = 10;
+      // Hold the host in recovery (the old exit rule) without the recovery
+      // pace, so these tests exercise the starvation overrides alone.
       const controller = createStorageAdmissionController({
         mode: "enforce",
+        recoveryFullAvg10: 1,
+        recoveryRequiresQuietLifecycle: true,
+        recoverySnapshotIntervalMs: 0,
         readInputs: () => ({
           sampled_at_ms: Date.now(),
           host_io_full_avg10: full,
@@ -1702,27 +1717,27 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
-    it("makes fair bounded progress for both kinds under sustained moderate pressure", async () => {
+    it("makes fair bounded progress for both kinds, each at its own pace", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
         await import("./snapshot-backup-maintenance");
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 20; i++) {
         await sweep({ hostId: "host-1" });
-        expect(attempts).toHaveLength(i + 1);
-        await jest.advanceTimersByTimeAsync(interval - 1);
-        await sweep({ hostId: "host-1" });
-        expect(attempts).toHaveLength(i + 1);
-        await jest.advanceTimersByTimeAsync(1);
+        await jest.advanceTimersByTimeAsync(30_000);
       }
-      expect(attempts).toEqual([
+      // Ten minutes: snapshots every minute, backups every five, rotating.
+      const snapshots = attempts.filter((a) => a.startsWith("snapshot:"));
+      const backups = attempts.filter((a) => a.startsWith("backup:"));
+      expect(snapshots.slice(0, 4)).toEqual([
         "snapshot:a",
-        "backup:a",
         "snapshot:b",
-        "backup:b",
         "snapshot:a",
-        "backup:a",
         "snapshot:b",
-        "backup:b",
       ]);
+      expect(snapshots.length).toBeGreaterThanOrEqual(8);
+      expect(backups.slice(0, 2)).toEqual(["backup:a", "backup:b"]);
+      expect(backups.length).toBeLessThanOrEqual(3);
+      expectSpacing("snapshot", snapshotInterval);
+      expectSpacing("backup", backupInterval);
       expect(getStorageAdmissionStatusMock().pressure_state).toBe("recovery");
       for (const operation_class of [
         "scheduled_snapshot",
@@ -1746,6 +1761,76 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
+    it("keeps snapshots flowing at the recovery pace on a host stuck in recovery", async () => {
+      // 2026-10-16: prod hosts at 1-5% stall sat in recovery for hours with
+      // only one override every five minutes.
+      const { createStorageAdmissionController } = jest.requireActual(
+        "./storage-admission",
+      );
+      full = 10;
+      const controller = createStorageAdmissionController({
+        mode: "enforce",
+        readInputs: () => ({
+          sampled_at_ms: Date.now(),
+          host_io_full_avg10: full,
+          starting_projects: 0,
+          stopping_projects: 0,
+          btrfs_mutation_locks: 0,
+          btrfs_mutation_waiters: 0,
+        }),
+      });
+      full = 3.5;
+      controller.sample();
+      getStorageAdmissionStatusMock.mockImplementation(() =>
+        controller.getStatus(),
+      );
+      admitStorageOperationMock.mockImplementation((request) =>
+        controller.admit(request),
+      );
+      // Not overdue long enough for overrides: only the recovery pace runs.
+      rows = rows.map((row) => ({
+        ...row,
+        last_changed: "2026-09-27T11:30:00Z",
+        backup_due_since: null,
+      }));
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      for (let i = 0; i < 6; i++) {
+        await sweep({ hostId: "host-1" });
+        await jest.advanceTimersByTimeAsync(10_000);
+      }
+      expect(controller.getStatus().pressure_state).toBe("recovery");
+      expect(timesOf("snapshot").length).toBeGreaterThanOrEqual(2);
+      expectSpacing("snapshot", 20_000);
+      expect(
+        controller.getStatus().recovery_paced_total,
+      ).toBeGreaterThanOrEqual(2);
+      // It passes the mutation-boundary recheck like an override.
+      expect(mutationContextMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation_class: "scheduled_snapshot",
+          starvation_override: true,
+        }),
+      );
+    });
+
+    it("takes the longest-overdue project first", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      // b has waited far longer than a.
+      rows[1].last_changed = "2026-09-20T10:00:00Z";
+      rows[1].backup_due_since = "2026-09-20T10:00:00Z";
+      await sweep({ hostId: "host-1" });
+      await jest.advanceTimersByTimeAsync(backupInterval);
+      await sweep({ hostId: "host-1" });
+      expect(attempts.filter((a) => a.startsWith("snapshot:"))[0]).toBe(
+        "snapshot:b",
+      );
+      expect(attempts.filter((a) => a.startsWith("backup:"))[0]).toBe(
+        "backup:b",
+      );
+    });
+
     it("fails closed on fresh emergency samples without consuming the fair slot", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
         await import("./snapshot-backup-maintenance");
@@ -1753,13 +1838,15 @@ describe("snapshot-backup-maintenance", () => {
       full = 10;
       for (let i = 0; i < 3; i++) {
         await sweep({ hostId: "host-1" });
-        await jest.advanceTimersByTimeAsync(interval);
+        await jest.advanceTimersByTimeAsync(backupInterval);
       }
       expect(attempts).toEqual([]);
       full = 2.3;
       await sweep({ hostId: "host-1" });
       await sweep({ hostId: "host-1" });
-      expect(attempts).toEqual(["snapshot:a"]);
+      // Nothing was charged by the refusals: both kinds start with project a.
+      expect(attempts).toContain("snapshot:a");
+      expect(attempts.every((a) => a.endsWith(":a"))).toBe(true);
     });
 
     it("makes paced progress through timer-driven retries between full sweeps", async () => {
@@ -1770,22 +1857,14 @@ describe("snapshot-backup-maintenance", () => {
       const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
       try {
         await jest.advanceTimersByTimeAsync(0);
-        expect(attempts).toEqual(["snapshot:a"]);
+        expect(attempts[0]).toBe("snapshot:a");
         // Existing jittered retries and event batches can add latency, but
-        // cannot shorten cooldown or require another full inventory sweep.
-        await jest.advanceTimersByTimeAsync(4 * interval - 1);
-        expect(attempts.slice(0, 4)).toEqual([
-          "snapshot:a",
-          "backup:a",
-          "snapshot:b",
-          "backup:b",
-        ]);
-        expect(attempts).toHaveLength(4);
-        for (let i = 1; i < attemptTimes.length; i++) {
-          expect(attemptTimes[i] - attemptTimes[i - 1]).toBeGreaterThanOrEqual(
-            interval,
-          );
-        }
+        // cannot shorten a kind's pace or require another full sweep.
+        await jest.advanceTimersByTimeAsync(4 * backupInterval - 1);
+        expect(timesOf("snapshot").length).toBeGreaterThanOrEqual(4);
+        expect(timesOf("backup").length).toBeGreaterThanOrEqual(2);
+        expectSpacing("snapshot", snapshotInterval);
+        expectSpacing("backup", backupInterval);
         expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
           expect.objectContaining({ project_ids: expect.any(Array) }),
         );
@@ -1828,10 +1907,13 @@ describe("snapshot-backup-maintenance", () => {
         pressure = 0;
         listProjectMaintenanceSchedulesMock.mockResolvedValue(rows);
         await sweep({ hostId: "host-1" });
-        expect(attempts).toEqual([]);
-        await jest.advanceTimersByTimeAsync(interval);
+        await jest.advanceTimersByTimeAsync(snapshotInterval);
         await sweep({ hostId: "host-1" });
-        expect(attempts).toEqual(["backup:a"]);
+        // The charged snapshot attempt went to the back: b's snapshot runs
+        // before a's again.
+        expect(attempts.filter((a) => a.startsWith("snapshot:"))[0]).toBe(
+          "snapshot:b",
+        );
       } finally {
         read.mockRestore();
       }
@@ -1871,13 +1953,13 @@ describe("snapshot-backup-maintenance", () => {
       });
       for (let i = 0; i < 6; i++) {
         await sweep({ hostId: "host-1" });
-        await jest.advanceTimersByTimeAsync(interval);
+        await jest.advanceTimersByTimeAsync(backupInterval);
       }
-      expect(attempts).toEqual([
-        "snapshot:a",
+      expect([...attempts].sort()).toEqual([
         "backup:a",
-        "snapshot:b",
         "backup:b",
+        "snapshot:a",
+        "snapshot:b",
       ]);
       for (const kind of ["snapshot", "backup"]) {
         expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
@@ -1886,26 +1968,30 @@ describe("snapshot-backup-maintenance", () => {
       }
     });
 
-    it("does not let repeated event batches steal the globally fair slot", async () => {
+    it("does not let repeated event batches steal the fair slot", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
         await import("./snapshot-backup-maintenance");
       await sweep({ hostId: "host-1" });
-      await jest.advanceTimersByTimeAsync(interval);
+      await jest.advanceTimersByTimeAsync(backupInterval);
       await sweep({ hostId: "host-1", projectIds: ["a"] });
-      await jest.advanceTimersByTimeAsync(interval);
+      await jest.advanceTimersByTimeAsync(backupInterval);
       const onFutureDue = jest.fn();
       for (let i = 0; i < 3; i++) {
         await sweep({ hostId: "host-1", projectIds: ["a"], onFutureDue });
       }
-      expect(attempts).toEqual(["snapshot:a", "backup:a"]);
+      // a was tried once per kind; b is next in both queues.
+      expect(attempts.filter((a) => a === "snapshot:a")).toHaveLength(1);
+      expect(attempts.filter((a) => a === "backup:a").length).toBeLessThan(2);
       expect(onFutureDue).toHaveBeenCalledWith("b", expect.any(Number));
       await sweep({ hostId: "host-1", projectIds: ["b"] });
-      expect(attempts).toEqual(["snapshot:a", "backup:a", "snapshot:b"]);
+      expect(attempts).toContain("snapshot:b");
     });
 
-    it("keeps one escape in flight and waits five minutes after it finishes", async () => {
+    it("keeps one escape in flight, then paces each kind from when it finished", async () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
         await import("./snapshot-backup-maintenance");
+      // Only snapshots are due, so the slow one is the in-flight override.
+      rows = rows.map((row) => ({ ...row, backup_due_since: null }));
       let finish!: () => void;
       let started!: () => void;
       const running = new Promise<void>((resolve) => {
@@ -1914,6 +2000,8 @@ describe("snapshot-backup-maintenance", () => {
       runScheduledSnapshotMaintenanceMock.mockImplementation(
         async ({ project_id }) => {
           attempts.push(`snapshot:${project_id}`);
+          attemptTimes.push(Date.now());
+          if (attempts.length > 1) return; // only the first one is slow
           started();
           await new Promise<void>((resolve) => {
             finish = resolve;
@@ -1925,14 +2013,18 @@ describe("snapshot-backup-maintenance", () => {
       await jest.advanceTimersByTimeAsync(20 * 60_000);
       const second = sweep({ hostId: "host-1", projectIds: ["b"] });
       await jest.advanceTimersByTimeAsync(0);
+      // Nothing else while it runs, of either kind.
       expect(attempts).toEqual(["snapshot:a"]);
       finish();
       await Promise.all([first, second]);
       await sweep({ hostId: "host-1" });
-      expect(attempts).toEqual(["snapshot:a"]);
-      await jest.advanceTimersByTimeAsync(interval);
+      // The snapshot pace counts from the end of the slow snapshot.
+      expect(attempts.filter((a) => a.startsWith("snapshot:"))).toEqual([
+        "snapshot:a",
+      ]);
+      await jest.advanceTimersByTimeAsync(snapshotInterval);
       await sweep({ hostId: "host-1" });
-      expect(attempts).toEqual(["snapshot:a", "backup:a"]);
+      expect(attempts).toContain("snapshot:b");
     });
 
     it("requires an hour of actual overdue debt and honors disabled schedules and retries", async () => {
@@ -1947,15 +2039,16 @@ describe("snapshot-backup-maintenance", () => {
         },
       ];
       await sweep({ hostId: "host-1" });
-      expect(attempts).toEqual([]);
+      expect(attempts.filter((a) => a.startsWith("snapshot:"))).toEqual([]);
       await jest.advanceTimersByTimeAsync(1);
       await sweep({ hostId: "host-1" });
-      expect(attempts).toEqual(["snapshot:a"]);
+      expect(attempts).toContain("snapshot:a");
+      const before = attempts.length;
       rows[0].snapshots = { disabled: true };
       rows[0].backup_retry_at = "2026-09-27T14:00:00Z";
       await jest.advanceTimersByTimeAsync(60 * 60_000);
       await sweep({ hostId: "host-1" });
-      expect(attempts).toEqual(["snapshot:a"]);
+      expect(attempts).toHaveLength(before);
     });
   });
 

@@ -41,8 +41,15 @@ const RUNTIME_STORAGE = "/usr/local/sbin/cocalc-runtime-storage";
 const DEFAULT_SAMPLE_MS = 5_000;
 const DEFAULT_CONTENDED_FULL_AVG10 = 5;
 const DEFAULT_EMERGENCY_FULL_AVG10 = 10;
-const DEFAULT_RECOVERY_FULL_AVG10 = 1;
+// Recovery ends after RECOVERY_MS below this, by default half the contended
+// threshold. It was 1% with no project starting or stopping, which busy hosts
+// (1-2% background stall, constant lifecycle) never met: they sat in
+// recovery for hours, deferring scheduled snapshots and backups.
+const DEFAULT_RECOVERY_FRACTION_OF_CONTENDED = 0.5;
 const DEFAULT_RECOVERY_MS = 60_000;
+// In recovery, scheduled snapshots (short btrfs metadata operations) are
+// admitted at this pace instead of waiting for the next starvation override.
+const DEFAULT_RECOVERY_SNAPSHOT_INTERVAL_MS = 20_000;
 const DEFAULT_CONTENDED_SAMPLES = 2;
 const DEFAULT_BACKGROUND_QUIET_MS = 2_000;
 
@@ -79,6 +86,8 @@ export type StorageAdmissionTicket = {
   would_defer: boolean;
   reason?: string;
   starvation_override: boolean;
+  // A scheduled snapshot admitted at the recovery pace.
+  recovery_paced: boolean;
   operation_id: string;
   release: () => void;
 };
@@ -91,6 +100,11 @@ type StorageAdmissionControllerOptions = {
   emergencyFullAvg10?: number;
   recoveryFullAvg10?: number;
   recoveryMs?: number;
+  // Also require no project starting or stopping to leave recovery (the old
+  // behavior). Background work waits for lifecycle separately anyway.
+  recoveryRequiresQuietLifecycle?: boolean;
+  // 0 disables paced snapshots in recovery.
+  recoverySnapshotIntervalMs?: number;
   contendedSamples?: number;
   backgroundQuietMs?: number;
   onPressureStateChange?: (state: HostStoragePressureState) => void;
@@ -364,7 +378,17 @@ export function createStorageAdmissionController(
     options.recoveryFullAvg10 ??
     finiteNonNegative(
       process.env.COCALC_PROJECT_HOST_STORAGE_IO_RECOVERY_FULL_AVG10,
-      DEFAULT_RECOVERY_FULL_AVG10,
+      contendedFullAvg10 * DEFAULT_RECOVERY_FRACTION_OF_CONTENDED,
+    );
+  const recoveryRequiresQuietLifecycle =
+    options.recoveryRequiresQuietLifecycle ??
+    process.env
+      .COCALC_PROJECT_HOST_STORAGE_RECOVERY_REQUIRES_QUIET_LIFECYCLE === "1";
+  const recoverySnapshotIntervalMs =
+    options.recoverySnapshotIntervalMs ??
+    finiteNonNegative(
+      process.env.COCALC_PROJECT_HOST_STORAGE_RECOVERY_SNAPSHOT_INTERVAL_MS,
+      DEFAULT_RECOVERY_SNAPSHOT_INTERVAL_MS,
     );
   const recoveryMs =
     options.recoveryMs ??
@@ -405,6 +429,22 @@ export function createStorageAdmissionController(
   let observedDeferralTotal = 0;
   const activeByPriority = emptyActiveCounts();
   let starvationOverrideActive = false;
+  let recoveryPacedActive = false;
+  let lastRecoveryPacedAt: number | undefined;
+  let recoveryPacedTotal = 0;
+  let starvationOverrideTotal = 0;
+  const deferredByReason: Record<string, number> = {};
+  // Time spent in each pressure state, so how long a host sits in recovery
+  // shows in its metrics.
+  const stateMsTotal: Record<HostStoragePressureState, number> = {
+    normal: 0,
+    contended: 0,
+    recovery: 0,
+    emergency: 0,
+  };
+  const recoveryHealthy = (full: number, lifecycleActive: number) =>
+    full < recoveryFullAvg10 &&
+    (!recoveryRequiresQuietLifecycle || lifecycleActive === 0);
 
   const transition = (
     next: HostStoragePressureState,
@@ -420,6 +460,7 @@ export function createStorageAdmissionController(
       lifecycle_active:
         lastInputs.starting_projects + lastInputs.stopping_projects,
     });
+    stateMsTotal[pressureState] += Math.max(0, at - stateSince);
     pressureState = next;
     stateSince = at;
     transitionCount += 1;
@@ -454,8 +495,9 @@ export function createStorageAdmissionController(
     }
     if (pressureState === "contended" || pressureState === "emergency") {
       if (full < contendedFullAvg10) {
-        recoveryHealthySince =
-          full < recoveryFullAvg10 && lifecycleActive === 0 ? at : undefined;
+        recoveryHealthySince = recoveryHealthy(full, lifecycleActive)
+          ? at
+          : undefined;
         transition("recovery", "io_pressure_below_enter_threshold", at);
       }
       return;
@@ -465,7 +507,7 @@ export function createStorageAdmissionController(
       transition("contended", "io_pressure_recurred", at);
       return;
     }
-    if (full < recoveryFullAvg10 && lifecycleActive === 0) {
+    if (recoveryHealthy(full, lifecycleActive)) {
       recoveryHealthySince ??= at;
       if (at - recoveryHealthySince >= recoveryMs) {
         recoveryHealthySince = undefined;
@@ -522,6 +564,15 @@ export function createStorageAdmissionController(
       deferred_total: deferredTotal,
       observed_deferral_total: observedDeferralTotal,
       transition_count: transitionCount,
+      state_ms_total: {
+        ...stateMsTotal,
+        [pressureState]:
+          stateMsTotal[pressureState] +
+          Math.max(0, lastInputs.sampled_at_ms - stateSince),
+      },
+      recovery_paced_total: recoveryPacedTotal,
+      starvation_override_total: starvationOverrideTotal,
+      deferred_by_reason: { ...deferredByReason },
       ...(lastTransitionReason
         ? { last_transition_reason: lastTransitionReason }
         : {}),
@@ -618,13 +669,36 @@ export function createStorageAdmissionController(
       !starvationOverrideActive &&
       activeByPriority.scheduled === 0 &&
       starvationOverrideAllowed(current, allow_starvation_override);
-    const admitted = mode !== "enforce" || !wouldDefer || starvationOverride;
+    // Scheduled snapshots keep flowing in recovery, one at a time at a
+    // steady pace; never in contended or emergency, nor past lifecycle gates.
+    const decidedAtMs = now();
+    const recoveryPaced =
+      mode === "enforce" &&
+      operation_kind === "scheduled_snapshot" &&
+      reason === "io_pressure_recovery" &&
+      !starvationOverride &&
+      recoverySnapshotIntervalMs > 0 &&
+      !recoveryPacedActive &&
+      (lastRecoveryPacedAt == null ||
+        decidedAtMs - lastRecoveryPacedAt >= recoverySnapshotIntervalMs);
+    const admitted =
+      mode !== "enforce" || !wouldDefer || starvationOverride || recoveryPaced;
     if (admitted) {
-      if (starvationOverride) starvationOverrideActive = true;
+      if (starvationOverride) {
+        starvationOverrideActive = true;
+        starvationOverrideTotal += 1;
+      }
+      if (recoveryPaced) {
+        recoveryPacedActive = true;
+        lastRecoveryPacedAt = decidedAtMs;
+        recoveryPacedTotal += 1;
+      }
       admittedTotal += 1;
       activeByPriority[spec.priority] += 1;
     } else {
       deferredTotal += 1;
+      if (reason)
+        deferredByReason[reason] = (deferredByReason[reason] ?? 0) + 1;
     }
     if (mode === "observe" && wouldDefer) {
       observedDeferralTotal += 1;
@@ -647,11 +721,13 @@ export function createStorageAdmissionController(
       would_defer: wouldDefer,
       ...(reason ? { reason } : {}),
       starvation_override: starvationOverride,
+      recovery_paced: recoveryPaced,
       operation_id: operationId,
       release: () => {
         if (released || !admitted) return;
         released = true;
         if (starvationOverride) starvationOverrideActive = false;
+        if (recoveryPaced) recoveryPacedActive = false;
         activeByPriority[spec.priority] = Math.max(
           0,
           activeByPriority[spec.priority] - 1,

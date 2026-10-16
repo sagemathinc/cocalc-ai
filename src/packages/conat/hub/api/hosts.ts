@@ -993,6 +993,13 @@ export interface HostStorageAdmissionMetrics {
   deferred_total: number;
   observed_deferral_total: number;
   transition_count: number;
+  /** Milliseconds spent in each pressure state since the host process started. */
+  state_ms_total?: Record<HostStoragePressureState, number>;
+  /** Scheduled snapshots admitted at the recovery pace. */
+  recovery_paced_total?: number;
+  starvation_override_total?: number;
+  /** Deferred background operations, by reason. */
+  deferred_by_reason?: Record<string, number>;
   last_transition_reason?: string;
   last_decision?: HostStorageAdmissionDecision;
   sample_error?: string;

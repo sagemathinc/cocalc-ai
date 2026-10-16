@@ -69,7 +69,10 @@ const CHANGE_EVENT_BATCH_LIMIT = 50;
 const CHANGE_EVENT_DELAY_MS = 15_000;
 const CHANGE_EVENT_RETRY_MS = 60_000;
 const DEFAULT_STARVATION_AGE_MS = 60 * 60 * 1000;
+// Pace of starvation overrides, per kind: a backup is a long read, a
+// snapshot a short btrfs metadata operation.
 const DEFAULT_STARVATION_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_SNAPSHOT_STARVATION_INTERVAL_MS = 60 * 1000;
 // Scheduled backups normally finish well within 30 minutes. Under the
 // maintenance cgroup's read cap (12 MiB/s on a typical host), 30 minutes reads
 // at most about 22 GB of changed data, and a killed run leaves no snapshot, so
@@ -524,7 +527,19 @@ async function runScheduledStorageOperation({
       },
     );
   }
-  if (ticket.would_defer && !ticket.starvation_override) {
+  if (ticket.recovery_paced) {
+    logger.info("admitting scheduled snapshot at the recovery pace", {
+      hostId,
+      project_id,
+      operation_kind,
+      reason: ticket.reason,
+    });
+  }
+  if (
+    ticket.would_defer &&
+    !ticket.starvation_override &&
+    !ticket.recovery_paced
+  ) {
     logger.info("scheduled project storage operation would be deferred", {
       hostId,
       project_id,
@@ -544,7 +559,11 @@ async function runScheduledStorageOperation({
           operation_class: operation_kind,
           cgroup_path: "/sys/fs/cgroup/cocalc-maintenance",
           checkpointable: true,
-          starvation_override: ticket.starvation_override,
+          // A paced recovery snapshot passes the mutation-boundary recheck
+          // like an override: only lifecycle, unavailable samples and
+          // emergency stop it there.
+          starvation_override:
+            ticket.starvation_override || ticket.recovery_paced,
         },
         async () => {
           const memory = maintenanceMemoryDecision({
@@ -901,6 +920,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_INTERVAL_MS,
     DEFAULT_STARVATION_INTERVAL_MS,
   );
+  const snapshotStarvationIntervalMs = parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_STARVATION_INTERVAL_MS,
+    DEFAULT_SNAPSHOT_STARVATION_INTERVAL_MS,
+  );
   // Memory pressure reduces both lanes to one operation.
   const parallelism = Math.min(
     memoryDecision.parallelism,
@@ -1153,6 +1176,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       starved.push({
         projectId: row.project_id,
         kind,
+        dueAt: due,
         retryAt:
           parseTimestampMs(
             kind === "snapshot" ? row.snapshot_retry_at : row.backup_retry_at,
@@ -1316,7 +1340,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             project_id,
             operation_kind: "scheduled_snapshot",
             allowStarvationOverride: starvationOverrideEligible,
-            starvationIntervalMs,
+            starvationIntervalMs: snapshotStarvationIntervalMs,
             validate: () => validateAssignment(row, "snapshot"),
             run: async () => {
               const updated = await runScheduledSnapshotMaintenance({
@@ -1678,7 +1702,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       nextStarved.projectId,
       Math.max(
         Date.now() + CHANGE_EVENT_RETRY_MS,
-        starvationQueue.nextAllowedAt(),
+        starvationQueue.nextAllowedAt(nextStarved.kind),
       ),
     );
   }
