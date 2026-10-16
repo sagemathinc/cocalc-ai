@@ -465,6 +465,25 @@ describe("storage admission controller", () => {
     });
   });
 
+  it("does not pace a snapshot alongside scheduled work that is still running", () => {
+    const controller = create();
+    // A backup admitted while normal keeps running into recovery.
+    const backup = controller.admit({ operation_kind: "scheduled_backup" });
+    expect(backup.admitted).toBe(true);
+    full = 10;
+    controller.sample();
+    full = 3;
+    now += 5_000;
+    expect(controller.sample().pressure_state).toBe("recovery");
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: false, recovery_paced: false });
+    backup.release();
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }).recovery_paced,
+    ).toBe(true);
+  });
+
   it.each([
     ["contended", 6, 0],
     ["emergency", 12, 0],

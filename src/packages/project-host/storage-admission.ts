@@ -679,6 +679,9 @@ export function createStorageAdmissionController(
       !starvationOverride &&
       recoverySnapshotIntervalMs > 0 &&
       !recoveryPacedActive &&
+      // Never alongside other scheduled storage work, e.g. a backup admitted
+      // before the host entered recovery (as for starvation overrides).
+      activeByPriority.scheduled === 0 &&
       (lastRecoveryPacedAt == null ||
         decidedAtMs - lastRecoveryPacedAt >= recoverySnapshotIntervalMs);
     const admitted =
