@@ -453,20 +453,18 @@ describe("a context clear after admission", () => {
     expect(prepared.contextGeneration).toBe("cleared-1");
   });
 
-  it("dates an unstamped request against the clear", async () => {
-    const before = turnRequest({ model: "gpt-6-astra", sessionId });
-    before.session_id = sessionId;
-    before.chat!.user_message_date = "2026-09-05T07:59:00.000Z";
+  it("refreshes an unstamped request's session once the thread was cleared", async () => {
+    // Its date does not say when its session was chosen: an older client can
+    // send an old session in a message written after the clear.
+    const unstamped = turnRequest({ model: "gpt-6-astra", sessionId });
+    unstamped.session_id = sessionId;
+    unstamped.chat!.user_message_date = "2026-09-05T08:01:00.000Z";
+    expect((await prepare(unstamped)).staleSession).toBeUndefined();
     rows.push(cleared);
-    expect((await prepare(before)).staleSession).toBe(true);
-    const after = turnRequest({ model: "gpt-6-astra", sessionId: "new" });
-    after.session_id = "new";
-    after.chat!.message_id = "assistant-after";
-    after.chat!.parent_message_id = "user-after";
-    after.chat!.user_message_date = "2026-09-05T08:01:00.000Z";
-    const prepared = await prepare(after);
-    expect(prepared.staleSession).toBeUndefined();
-    expect(prepared.contextGeneration).toBe("cleared-1");
+    delete rows[0].acp_config.sessionId;
+    const prepared = await prepare(unstamped);
+    expect(prepared.staleSession).toBe(true);
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
   });
 
   // The thread config keeps the clear after rotation archives its line.
@@ -504,16 +502,32 @@ describe("a context clear after admission", () => {
     expect((await prepare(source)).currentAgentSessionId).toBe(sessionId);
   });
 
-  it("trusts a sender that saw a clear this hub has not synced", async () => {
+  it("trusts a sender that saw a later clear than this hub", async () => {
     const source = claudeTurnRequest();
     source.chat!.context_generation = "cleared-2";
-    source.chat!.user_message_date = "2026-09-05T09:00:00.000Z";
+    source.chat!.context_cleared_at = "2026-09-05T09:00:00.000Z";
     rows[0].agent_runtime = source.runtime;
-    // The hub still sees the old session, saved before any clear.
+    // The hub still sees the old session, saved before the clear it knows.
     rows[0].agent_session_id = sessionId;
+    rows.push(cleared);
     const prepared = await prepare(source);
     expect(prepared.currentAgentSessionId).toBe("");
     expect(prepared.contextGeneration).toBe("cleared-2");
+  });
+
+  it("does not mistake a lagging sender for one ahead", async () => {
+    // The sender's generation is older than the hub's, and its line was
+    // archived; only the clear times order them, not the message date.
+    const source = turnRequest({ model: "gpt-6-astra", sessionId });
+    source.session_id = sessionId;
+    source.chat!.context_generation = "cleared-0";
+    source.chat!.context_cleared_at = "2026-09-05T07:00:00.000Z";
+    source.chat!.user_message_date = "2026-09-05T09:00:00.000Z";
+    delete rows[0].acp_config.sessionId;
+    Object.assign(rows[0], clearedConfig);
+    const prepared = await prepare(source);
+    expect(prepared.staleSession).toBe(true);
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
   });
 
   it("fails rather than run Codex without knowing the context", async () => {
@@ -1045,6 +1059,24 @@ it("uses the generic agent identity if the thread has no model", async () => {
   expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).chat?.sender_id).toBe(
     "openai-codex-agent",
   );
+});
+
+it("stamps an answer and keeps it out of a cleared Codex context", async () => {
+  // Cleared after the question; the old turn's session merged in later.
+  Object.assign(rows[0], {
+    context_generation: "cleared-1",
+    context_cleared_at: "2026-09-05T08:00:00.000Z",
+    agent_session_generation: "",
+  });
+  mockSteer.mockResolvedValue({ state: "missing" });
+  await acpTestInternals.deliverAsyncAttentionAnswer(record);
+  const queued = decodeAcpJobRequest(listQueuedAcpJobs()[0]);
+  expect(queued.session_id).toBe("cleared-1");
+  expect(queued.config?.sessionId).toBeUndefined();
+  expect(queued.chat).toMatchObject({
+    context_generation: "cleared-1",
+    context_cleared_at: "2026-09-05T08:00:00.000Z",
+  });
 });
 
 describe("Claude network worker delivery", () => {

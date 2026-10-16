@@ -350,6 +350,47 @@ export interface BuildThreadConfigRecordOptions {
   schema_version?: number;
 }
 
+// Migrated chats can hold a legacy and a canonical config row for a thread.
+// Prefer the canonical row, then the most recently updated.
+export function threadConfigRowRank(
+  row: Record<string, unknown>,
+  threadId: string,
+): number {
+  const field = (key: string) =>
+    typeof (row as any)?.get === "function"
+      ? (row as any).get(key)
+      : (row as any)?.[key];
+  const canonical = threadConfigRecordKey(threadId);
+  const isCanonical =
+    field("sender_id") === canonical.sender_id &&
+    field("date") === canonical.date;
+  const updatedAt = Date.parse(`${field("updated_at") ?? ""}`);
+  const rowDate = Date.parse(`${field("date") ?? ""}`);
+  return (
+    (isCanonical ? 1_000_000_000_000_000 : 0) +
+    (Number.isFinite(updatedAt) ? updatedAt : 0) +
+    (Number.isFinite(rowDate) ? rowDate : 0)
+  );
+}
+
+export function preferredThreadConfigRecord<T extends Record<string, any>>(
+  rows: readonly T[],
+  threadId: string,
+): T | undefined {
+  let best: T | undefined;
+  let bestRank = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    if (row?.event !== "chat-thread-config" || row.thread_id !== threadId)
+      continue;
+    const rank = threadConfigRowRank(row, threadId);
+    if (best == null || rank > bestRank) {
+      best = row;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
 export function buildThreadConfigRecord(
   options: BuildThreadConfigRecordOptions,
 ): ChatThreadConfigRecord {

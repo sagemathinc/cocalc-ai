@@ -5,6 +5,7 @@ import {
   buildAcpChatContext,
   buildChatMessage,
   buildCodexAcpConfig,
+  contextStamp,
   normalizeCodexMention,
   messagesSinceContextCleared,
   resolveHarnessSessionId,
@@ -146,7 +147,7 @@ export function prepareChatSend({
       }),
     }),
     thread_title: thread.name,
-    context_generation: context.generation,
+    ...contextStamp(context),
   };
   const request: AcpRequest & { chat: AcpChatContext } = {
     project_id: projectId,

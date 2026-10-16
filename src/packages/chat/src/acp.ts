@@ -125,6 +125,19 @@ export function threadContext(
   return context;
 }
 
+// The request fields that record which context a session was chosen in.
+export function contextStamp(context: ThreadContext): {
+  context_generation: string;
+  context_cleared_at?: string;
+} {
+  return {
+    context_generation: context.generation,
+    context_cleared_at: Number.isFinite(context.clearedAtMs)
+      ? new Date(context.clearedAtMs).toISOString()
+      : undefined,
+  };
+}
+
 // A session saved in the thread config is tagged with the generation of the
 // turn that saved it. A turn from before a clear can still save one (its
 // change may merge after the clear), so only a current tag counts. Sessions

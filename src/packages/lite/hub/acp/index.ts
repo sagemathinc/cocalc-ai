@@ -104,7 +104,9 @@ import {
   buildChatMessage,
   buildThreadStateRecord,
   computeChatIntegrityReport,
-  isContextClearedMarker,
+  contextStamp,
+  preferredThreadConfigRecord,
+  threadConfigRowRank,
   storedSessionInContext,
   threadContext,
   type ThreadContext,
@@ -1412,10 +1414,13 @@ function hubThreadContext(syncdb: SyncDB, threadId: string): ThreadContext {
 
 // How the session a request carries relates to the thread's context:
 // - current: chosen in it;
-// - stale: chosen before a later clear, so that session is gone;
-// - ahead: the sender saw a clear this hub has not synced yet, so the
+// - stale: chosen before a later clear, so that session is gone. So is any
+//   unstamped request (older clients, server-built requests): when it chose
+//   its session is unknown, however recent the message;
+// - ahead: the sender saw a later clear than this hub has synced, so the
 //   request's session is already the fresh one.
-// `generation` is the one a turn for this request runs in.
+// Generations are ordered by their clear time. `generation` is the one a turn
+// for this request runs in.
 type ContextStanding = {
   standing: "current" | "stale" | "ahead";
   generation: string;
@@ -1424,39 +1429,25 @@ type ContextStanding = {
 function requestContextStanding(
   request: AcpRequest,
   context: ThreadContext,
-  rows: readonly Record<string, unknown>[],
 ): ContextStanding {
   const stamped = request.chat?.context_generation;
-  const at = Date.parse(`${request.chat?.user_message_date ?? ""}`);
-  if (typeof stamped === "string") {
-    if (stamped === context.generation)
-      return { standing: "current", generation: stamped };
-    const known =
-      stamped === "" ||
-      rows.some(
-        (row) =>
-          isContextClearedMarker(row) &&
-          syncdbField<string>(row, "message_id") === stamped,
-      );
-    if (!known && Number.isFinite(at) && at >= context.clearedAtMs)
+  if (typeof stamped === "string" && stamped === context.generation)
+    return { standing: "current", generation: stamped };
+  if (typeof stamped === "string" && stamped) {
+    const clearedAt = Date.parse(`${request.chat?.context_cleared_at ?? ""}`);
+    if (clearedAt > context.clearedAtMs)
       return { standing: "ahead", generation: stamped };
-    return { standing: "stale", generation: context.generation };
   }
-  // Older senders do not stamp: date the message against the clear.
-  return {
-    standing:
-      Number.isFinite(at) && at < context.clearedAtMs ? "stale" : "current",
-    generation: context.generation,
-  };
+  // Never cleared (as far as this hub knows): no session can predate a clear.
+  if (!context.generation) return { standing: "current", generation: "" };
+  return { standing: "stale", generation: context.generation };
 }
 
 function queuedContextStanding(syncdb: SyncDB, request: AcpRequest) {
   const values = syncdb.get();
   const rows: any[] = Array.isArray(values) ? values : (values?.toJS?.() ?? []);
-  const threadId = request.chat?.thread_id;
-  const thread = rows.find(
-    (row) => row?.event === THREAD_CONFIG_EVENT && row.thread_id === threadId,
-  );
+  const threadId = `${request.chat?.thread_id ?? ""}`;
+  const thread = preferredThreadConfigRecord(rows, threadId);
   const threadRows = rows.filter(
     (row) => row?.event === "chat" && row.thread_id === threadId,
   );
@@ -1465,27 +1456,8 @@ function queuedContextStanding(syncdb: SyncDB, request: AcpRequest) {
     rows,
     thread,
     context,
-    ...requestContextStanding(request, context, threadRows),
+    ...requestContextStanding(request, context),
   };
-}
-
-function threadConfigRowRank(
-  row: Record<string, unknown>,
-  threadId: string,
-): number {
-  const canonical = threadConfigRecordKey(threadId);
-  const isCanonical =
-    syncdbField<string>(row, "sender_id") === canonical.sender_id &&
-    syncdbField<string>(row, "date") === canonical.date;
-  const updatedAt = Date.parse(
-    `${syncdbField<string>(row, "updated_at") ?? ""}`,
-  );
-  const rowDate = Date.parse(`${syncdbField<string>(row, "date") ?? ""}`);
-  return (
-    (isCanonical ? 1_000_000_000_000_000 : 0) +
-    (Number.isFinite(updatedAt) ? updatedAt : 0) +
-    (Number.isFinite(rowDate) ? rowDate : 0)
-  );
 }
 
 function preferredThreadConfigRow(
@@ -11299,12 +11271,16 @@ async function deliverAsyncAttentionAnswer(
   const senderId = record.account_id;
   let assistantSenderId = DEFAULT_AGENT_CHAT_SENDER_ID;
   let alreadyDelivered = false;
+  let context: ThreadContext = { generation: "", clearedAtMs: -Infinity };
+  let storedSession = true;
   await withChatSyncDB({
     client: conatClient,
     project_id: record.project_id,
     path: record.path,
     fn: async (syncdb) => {
       const threadConfig = preferredThreadConfigRow(syncdb, record.thread_id);
+      context = hubThreadContext(syncdb, record.thread_id);
+      storedSession = storedSessionInContext(threadConfig, context);
       const runtime: any = syncdbField(threadConfig, "agent_runtime");
       if (runtime != null || record.chat.sender_id === "acp-harness") {
         const sourceJob =
@@ -11351,6 +11327,9 @@ async function deliverAsyncAttentionAnswer(
       if (typeof config?.toJS === "function") {
         config = config.toJS();
       }
+      // A session an old-context turn saved after the latest clear is not this
+      // context's: the generation keys a fresh one.
+      if (!storedSession) config = { ...config, sessionId: undefined };
       assistantSenderId = harnessExecution
         ? "acp-harness"
         : resolveAgentChatSenderId(
@@ -11442,7 +11421,9 @@ async function deliverAsyncAttentionAnswer(
     project_id: record.project_id,
     account_id: record.account_id,
     prompt: content,
-    session_id: normalizeCodexSessionId(config?.sessionId) ?? record.thread_id,
+    session_id:
+      normalizeCodexSessionId(config?.sessionId) ??
+      (context.generation || record.thread_id),
     config: harnessExecution ? undefined : config,
     ...harnessExecution,
     chat: {
@@ -11450,6 +11431,7 @@ async function deliverAsyncAttentionAnswer(
       path: record.path,
       sender_id: assistantSenderId,
       send_mode: "immediate",
+      ...contextStamp(context),
       user_message_date: userDate.toISOString(),
       user_message_content: content,
       message_date: assistantDate.toISOString(),
@@ -12202,9 +12184,13 @@ async function handleAcpControlRequest(
       fn: async (syncdb) => {
         const row = preferredThreadConfigRow(syncdb, thread_id);
         const value: any = syncdbField(row, "agent_runtime");
+        // Never copy a session from before the latest clear.
+        const context = hubThreadContext(syncdb, thread_id);
         return harnessForkSource({
           runtime: value?.toJS?.() ?? value,
-          sessionId: syncdbField(row, "agent_session_id"),
+          sessionId: storedSessionInContext(row, context)
+            ? syncdbField(row, "agent_session_id")
+            : undefined,
           expectedRuntime: request.expected_runtime,
           expectedSessionId: request.expected_session_id,
         });

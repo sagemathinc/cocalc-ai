@@ -12,6 +12,7 @@ import {
   buildAcpChatContext,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  contextStamp,
   messagesSinceContextCleared,
   storedSessionInContext,
   threadContext,
@@ -558,7 +559,7 @@ export async function processAcpLLM({
     threadId: thread_id,
   })?.name;
   chatMetadata.workbench = actions.workbenchEnabled !== false;
-  chatMetadata.context_generation = context.generation;
+  Object.assign(chatMetadata, contextStamp(context));
   let acknowledged = false;
   // Persist the pre-acknowledgement state before waiting for the chat file or
   // backend. This keeps the truthful "submitting" status visible when a newly
