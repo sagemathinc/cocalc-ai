@@ -1098,6 +1098,21 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       projectIds,
     });
   }
+  if (!usedOwnershipLease) {
+    // A project no longer listed for this host must not hold the recovery
+    // head. Its wake may have brought us here, so wake the next head: no row
+    // of this listing can dispatch it.
+    const headBefore = recoveryWaitingHead();
+    const listed = new Set(rows.map((row) => row.project_id));
+    for (const projectId of projectIds ?? [...recoveryWaiting.keys()]) {
+      if (!listed.has(projectId)) recoveryWaiting.delete(projectId);
+    }
+    const head = recoveryWaitingHead();
+    if (head && head !== headBefore && !listed.has(head)) {
+      const wakeAt = recoverySnapshotWakeAt(Date.now(), { blocked: false });
+      if (wakeAt != null) onFutureDue?.(head, wakeAt);
+    }
+  }
   if (!rows.length) {
     if (!shadow) starvationQueue.update([], projectIds);
     return true;
@@ -1176,14 +1191,6 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     }
   };
   for (const row of rows) rememberRowFutureDue(row);
-  if (!usedOwnershipLease) {
-    // A project no longer listed for this host must not hold the recovery
-    // head.
-    const listed = new Set(rows.map((row) => row.project_id));
-    for (const projectId of projectIds ?? [...recoveryWaiting.keys()]) {
-      if (!listed.has(projectId)) recoveryWaiting.delete(projectId);
-    }
-  }
   // Track how a snapshot attempt ended and return its retry time. The oldest
   // waiting snapshot retries at the next recovery slot; when that is another
   // project, wake it.

@@ -1906,7 +1906,9 @@ describe("snapshot-backup-maintenance", () => {
         // (about 20); a one-second handoff loop makes about 120.
         expect(snapshotAdmissions() - before).toBeLessThan(40);
         lifecycle.starting = 0;
-        await jest.advanceTimersByTimeAsync(400_000);
+        // Nine 20 s slots; stay below the first failed snapshot's own retry
+        // (10 min base, at least 480 s with jitter), so p9 cannot run again.
+        await jest.advanceTimersByTimeAsync(280_000);
       } finally {
         stop();
       }
@@ -1918,12 +1920,14 @@ describe("snapshot-backup-maintenance", () => {
 
     it("does not let a head that left the host stall the others", async () => {
       const { lifecycle, stop } = await startRecoveryDaemon({ starting: 1 });
+      let movedAt = 0;
       try {
         // Everything waits, d at the head; then d moves to another host.
         await jest.advanceTimersByTimeAsync(60_000);
         rows = rows.filter((row) => row.project_id !== "d");
         lifecycle.starting = 0;
-        await jest.advanceTimersByTimeAsync(240_000);
+        movedAt = Date.now();
+        await jest.advanceTimersByTimeAsync(120_000);
       } finally {
         stop();
       }
@@ -1932,6 +1936,14 @@ describe("snapshot-backup-maintenance", () => {
         "snapshot:b",
         "snapshot:a",
       ]);
+      // The wake that finds d gone hands the slot on: c starts within about
+      // one head retry (20 s plus the event batch), not after the 2-minute
+      // stale-head fallback, and the rest follow at the recovery pace.
+      const times = timesOf("snapshot");
+      expect(times[0] - movedAt).toBeLessThan(45_000);
+      for (let i = 1; i < times.length; i++) {
+        expect(times[i] - times[i - 1]).toBeLessThan(30_000);
+      }
     });
 
     it("takes the longest-overdue project first", async () => {
