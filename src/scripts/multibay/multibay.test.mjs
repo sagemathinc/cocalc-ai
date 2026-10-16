@@ -745,6 +745,59 @@ describe("project moves across bays", () => {
   }
 });
 
+describe("hiding projects across bays", () => {
+  // alice, homed on the seed, hides her own project (on the seed) and bob's
+  // (on the attached bay, where she is a collaborator) in one call. The call
+  // runs once per bay with that bay's projects; the attached bay records the
+  // part forwarded to it. Each bay keeps the flag in its own project row.
+  const hiddenOn = async (bay, project_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT users -> $2::text ->> 'hide' AS hide FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project_id)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0]?.hide ?? null;`,
+    );
+  const forwardedHides = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.setProjectsHidden' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+  const setHidden = async (hide) =>
+    await alice.client.call("projects.setProjectsHidden", {
+      project_ids: [bob.project, alice.project],
+      hide,
+    });
+
+  it("hides a project on each bay, each on its own bay", async () => {
+    assert.ok(alice.project && bob.project, "needs both projects");
+    const before = await forwardedHides();
+    assert.deepEqual(await setHidden(true), [
+      { project_id: bob.project, success: true },
+      { project_id: alice.project, success: true },
+    ]);
+    assert.equal(await forwardedHides(), before + 1);
+    assert.equal(await hiddenOn(ATTACHED, bob.project), "true");
+    assert.equal(await hiddenOn(SEED, alice.project), "true");
+  });
+
+  it("unhides them the same way", async () => {
+    assert.deepEqual(await setHidden(false), [
+      { project_id: bob.project, success: true },
+      { project_id: alice.project, success: true },
+    ]);
+    assert.equal(await hiddenOn(ATTACHED, bob.project), "false");
+    assert.equal(await hiddenOn(SEED, alice.project), "false");
+  });
+});
+
 describe("bulk project stop across bays", () => {
   // carol, homed on the seed, stops a project on each bay in one call. Each
   // project's stop is its own call, forwarded to the project's bay when it is

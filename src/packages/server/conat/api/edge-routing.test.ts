@@ -4,6 +4,7 @@
  */
 
 const resolveProjectBay = jest.fn();
+const resolveProjectBays = jest.fn();
 const forward = jest.fn();
 const createInterBayHubApiClient = jest.fn(() => ({ call: forward }));
 const isAccountBannedCached = jest.fn(() => false);
@@ -20,6 +21,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay,
+  resolveProjectBays,
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),
@@ -283,5 +285,359 @@ describe("routing an email invite", () => {
     await executeHubApiCall(call([{ invite_id: INVITE, token: "tok" }]));
     expect(local).toHaveBeenCalledTimes(2);
     expect(forward).not.toHaveBeenCalled();
+  });
+});
+
+describe("a call on several projects", () => {
+  const P = [
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333",
+  ];
+  const hide = (project_ids: unknown) => ({
+    name: "projects.setProjectsHidden",
+    args: [{ project_ids, hide: true }],
+    account_id: ACCOUNT,
+    auth_session_hash: "session",
+  });
+  // The method: one result per project it was given.
+  const answer = (call) =>
+    [].concat(call.args[0].project_ids).map((project_id) => ({
+      project_id,
+      success: true,
+    }));
+
+  beforeEach(() => {
+    local.mockImplementation(async (call) => answer(call));
+    forward.mockImplementation(async (call) => ({
+      ok: true,
+      result: answer(call),
+    }));
+  });
+
+  it("runs here, unchanged, when this bay owns every project", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map(P.map((id) => [id, { bay_id: "bay-0", epoch: 0 }])),
+    );
+    await executeHubApiCall(hide(P));
+    expect(local).toHaveBeenCalledWith(hide(P));
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("runs once per bay with that bay's projects, and merges in input order", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-0", epoch: 0 }],
+        [P[2], { bay_id: "bay-1", epoch: 0 }],
+      ]),
+    );
+    const results = await executeHubApiCall(hide([P[0], P[1], P[2], P[0]]));
+    expect(results.map((r) => r.project_id)).toEqual(P);
+    expect(local).toHaveBeenCalledTimes(1);
+    expect(local.mock.calls[0][0].args[0]).toEqual({
+      project_ids: [P[1]],
+      hide: true,
+    });
+    expect(forward).toHaveBeenCalledTimes(1);
+    expect(forward.mock.calls[0][0]).toMatchObject({
+      name: "projects.setProjectsHidden",
+      account_id: ACCOUNT,
+      auth_session_hash: "session",
+      source_bay_id: "bay-0",
+      args: [{ project_ids: [P[0], P[2]], hide: true }],
+    });
+  });
+
+  it("keeps unknown projects and malformed ids here, where the method reports them", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], null],
+      ]),
+    );
+    await executeHubApiCall(hide([P[0], P[1], "nope"]));
+    expect(resolveProjectBays).toHaveBeenCalledWith(
+      [P[0], P[1]],
+      expect.anything(),
+    );
+    expect(local.mock.calls[0][0].args[0].project_ids).toEqual([P[1], "nope"]);
+    expect(forward.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
+  });
+
+  it("gives each project of a bay that does not answer an error, and the rest their results", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    forward.mockRejectedValue(
+      Object.assign(new Error("timeout"), { code: 408 }),
+    );
+    const results = await executeHubApiCall(hide([P[0], P[1]]));
+    expect(results[0]).toEqual({
+      project_id: P[0],
+      success: false,
+      error: expect.stringContaining("outcome unknown"),
+    });
+    expect(results[1]).toEqual({ project_id: P[1], success: true });
+  });
+
+  it("passes a malformed call through, for the method to reject", async () => {
+    await executeHubApiCall(hide("not a list"));
+    expect(resolveProjectBays).not.toHaveBeenCalled();
+    expect(local).toHaveBeenCalledWith(hide("not a list"));
+  });
+
+  it("on the owning bay, leaves refusing foreign projects to the method", async () => {
+    const result = await handleForwardedHubApiCall({
+      ...hide([P[0]]),
+      source_bay_id: "bay-1",
+      call_id: "9a9a9a9a-9a9a-4a9a-8a9a-9a9a9a9a9a9a",
+    });
+    expect(result).toEqual({
+      ok: true,
+      result: [{ project_id: P[0], success: true }],
+    });
+    expect(resolveProjectBays).not.toHaveBeenCalled();
+  });
+
+  it("refuses more than MAX_PROJECTS_PER_CALL projects before looking any up", async () => {
+    const { MAX_PROJECTS_PER_CALL } =
+      await import("@cocalc/conat/hub/api/routes");
+    const many = Array.from(
+      { length: MAX_PROJECTS_PER_CALL + 1 },
+      (_, i) => `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+    );
+    await expect(executeHubApiCall(hide(many))).rejects.toThrow(
+      `at most ${MAX_PROJECTS_PER_CALL}`,
+    );
+    expect(resolveProjectBays).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+  });
+
+  it("handles a full-size list, nearly all on one bay", async () => {
+    const { MAX_PROJECTS_PER_CALL } =
+      await import("@cocalc/conat/hub/api/routes");
+    const many = Array.from(
+      { length: MAX_PROJECTS_PER_CALL },
+      (_, i) => `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+    );
+    resolveProjectBays.mockResolvedValue(
+      new Map(
+        many.map((id, i) => [id, { bay_id: i === 0 ? "bay-1" : "bay-0" }]),
+      ),
+    );
+    const t0 = Date.now();
+    const results = await executeHubApiCall(hide(many));
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(results.map((r) => r.project_id)).toEqual(many);
+    expect(local.mock.calls[0][0].args[0].project_ids).toHaveLength(
+      MAX_PROJECTS_PER_CALL - 1,
+    );
+  });
+
+  it("trusts only exactly one result per project from each bay", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-1", epoch: 0 }],
+        [P[2], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    forward.mockResolvedValue({
+      ok: true,
+      result: [
+        // P[0] missing; P[1] twice; a project bay-1 was not asked about.
+        { project_id: P[1], success: true },
+        { project_id: P[1], success: true },
+        { project_id: "44444444-4444-4444-8444-444444444444", success: true },
+      ],
+    });
+    expect(await executeHubApiCall(hide(P))).toEqual([
+      {
+        project_id: P[0],
+        success: false,
+        error: "bay-1 returned 0 results for this project",
+      },
+      {
+        project_id: P[1],
+        success: false,
+        error: "bay-1 returned 2 results for this project",
+      },
+      { project_id: P[2], success: true },
+    ]);
+  });
+
+  it("treats a valid upper-case id as the project it names", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], null],
+      ]),
+    );
+    const results = await executeHubApiCall(hide([P[0].toUpperCase(), P[1]]));
+    expect(resolveProjectBays).toHaveBeenCalledWith(
+      [P[0], P[1]],
+      expect.anything(),
+    );
+    expect(forward.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
+    expect(results.map((r) => r.project_id)).toEqual([P[0], P[1]]);
+  });
+
+  it("checks the results of an all-local call as well", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map(P.map((id) => [id, { bay_id: "bay-0", epoch: 0 }])),
+    );
+    local.mockResolvedValue([
+      { project_id: P[1], success: true },
+      { project_id: P[1], success: true },
+      { project_id: P[2], success: true },
+      { project_id: "44444444-4444-4444-8444-444444444444", success: true },
+    ]);
+    expect(await executeHubApiCall(hide(P))).toEqual([
+      {
+        project_id: P[0],
+        success: false,
+        error: "bay-0 returned 0 results for this project",
+      },
+      {
+        project_id: P[1],
+        success: false,
+        error: "bay-0 returned 2 results for this project",
+      },
+      { project_id: P[2], success: true },
+    ]);
+    expect(local).toHaveBeenCalledWith(hide(P));
+  });
+
+  it("raises the error of an all-local call, as before", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([[P[0], { bay_id: "bay-0", epoch: 0 }]]),
+    );
+    local.mockRejectedValue(new Error("hide must be a boolean"));
+    await expect(executeHubApiCall(hide([P[0]]))).rejects.toThrow(
+      "hide must be a boolean",
+    );
+  });
+
+  it("runs on at most three bays at a time", async () => {
+    const ids = Array.from(
+      { length: 7 },
+      (_, i) => `00000000-0000-4000-8000-00000000000${i}`,
+    );
+    resolveProjectBays.mockResolvedValue(
+      new Map(ids.map((id, i) => [id, { bay_id: `bay-${i}`, epoch: 0 }])),
+    );
+    let running = 0;
+    let most = 0;
+    const slow = async (result) => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      running -= 1;
+      return result;
+    };
+    local.mockImplementation(async (call) => await slow(answer(call)));
+    forward.mockImplementation(
+      async (call) => await slow({ ok: true, result: answer(call) }),
+    );
+    const results = await executeHubApiCall(hide(ids));
+    expect(results.map((r) => r.project_id)).toEqual(ids);
+    expect(forward).toHaveBeenCalledTimes(6);
+    expect(most).toBe(3);
+  });
+
+  it("answers within the caller's time: parts that cannot finish in it never start", async () => {
+    const ids = Array.from(
+      { length: 7 },
+      (_, i) => `00000000-0000-4000-8000-00000000000${i}`,
+    );
+    resolveProjectBays.mockResolvedValue(
+      new Map(ids.map((id, i) => [id, { bay_id: `bay-${i + 1}`, epoch: 0 }])),
+    );
+    // A clock where each unanswered attempt takes its full 12 s; concurrent
+    // attempts overlap in time.
+    let now = 1_000_000;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    forward.mockImplementation(async () => {
+      const started = now;
+      await Promise.resolve();
+      now = Math.max(now, started + 12_000);
+      throw Object.assign(new Error("timeout"), { code: 408 });
+    });
+    try {
+      const results = await executeHubApiCall(hide(ids));
+      expect(results.map((r) => r.project_id)).toEqual(ids);
+      // Three bays at once, two attempts each; the first wave used the time.
+      expect(forward).toHaveBeenCalledTimes(6);
+      expect(now - 1_000_000).toBeLessThanOrEqual(28_000);
+      for (const r of results.slice(0, 3)) {
+        expect(r.error).toContain("outcome unknown");
+      }
+      for (const r of results.slice(3)) {
+        expect(r.error).toContain("not attempted");
+        expect(r.error).toContain("safe to retry");
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("runs this bay's own part first", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[1], { bay_id: "bay-2", epoch: 0 }],
+        [P[2], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    const order: string[] = [];
+    local.mockImplementation(async (call) => {
+      order.push("bay-0");
+      return answer(call);
+    });
+    forward.mockImplementation(async (call) => {
+      order.push(call.args[0].project_ids[0]);
+      return { ok: true, result: answer(call) };
+    });
+    await executeHubApiCall(hide(P));
+    expect(order[0]).toBe("bay-0");
+  });
+
+  it("looks up owning bays within the call's budget, and does not run a project whose bay was not found in time", async () => {
+    const t0 = Date.now();
+    // P[1]'s bay is not resolved in time: left out of the lookup's result.
+    resolveProjectBays.mockResolvedValue(
+      new Map([
+        [P[0], { bay_id: "bay-1", epoch: 0 }],
+        [P[2], { bay_id: "bay-0", epoch: 0 }],
+      ]),
+    );
+    const results = await executeHubApiCall(hide(P));
+    const { deadline } = resolveProjectBays.mock.calls[0][1];
+    // Room is left for a full forwarded part (24 s) within the 28 s budget.
+    expect(deadline).toBeGreaterThanOrEqual(t0 + 4_000);
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 4_000);
+    expect(results.map((r) => r.project_id)).toEqual(P);
+    expect(results[1]).toEqual({
+      project_id: P[1],
+      success: false,
+      error: expect.stringContaining("could not be found in time"),
+    });
+    expect(results[0]).toEqual({ project_id: P[0], success: true });
+    expect(results[2]).toEqual({ project_id: P[2], success: true });
+    expect(local.mock.calls[0][0].args[0].project_ids).toEqual([P[2]]);
+    expect(forward.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
+  });
+
+  it("does not run an all-local call unchanged when a project's bay is unresolved", async () => {
+    resolveProjectBays.mockResolvedValue(
+      new Map([[P[0], { bay_id: "bay-0", epoch: 0 }]]),
+    );
+    const results = await executeHubApiCall(hide([P[0], P[1]]));
+    expect(local.mock.calls[0][0].args[0].project_ids).toEqual([P[0]]);
+    expect(results[1].error).toContain("not attempted");
   });
 });

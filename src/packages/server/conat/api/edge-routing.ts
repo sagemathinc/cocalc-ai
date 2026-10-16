@@ -19,6 +19,7 @@ import {
 import {
   getHubApiRoute,
   hubApiRouteKey,
+  splitProjectIds,
   type HubApiRoute,
 } from "@cocalc/conat/hub/api/routes";
 import {
@@ -27,13 +28,18 @@ import {
 } from "@cocalc/conat/inter-bay/hub-api";
 import { isAccountBannedCached } from "@cocalc/server/accounts/security-state";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveProjectBay,
+  resolveProjectBays,
+} from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   forwardedCallHash,
   OUTCOME_UNKNOWN,
   runForwardedCallOnce,
 } from "@cocalc/server/inter-bay/forwarded-calls";
+import { mapParallelLimit } from "@cocalc/util/async-utils";
+import { isValidUUID } from "@cocalc/util/misc";
 import { randomUUID } from "node:crypto";
 
 const logger = getLogger("server:conat:api:edge-routing");
@@ -74,6 +80,10 @@ async function ownerBay(
   const key = hubApiRouteKey(route, args);
   if (key == null) return;
   switch (route.owner) {
+    case "projects":
+      // Split by bay before this (executeSplitByProject); on the owning bay
+      // the method itself refuses projects it does not own.
+      return;
     case "project":
       return typeof key === "string"
         ? (await resolveProjectBay(key))?.bay_id
@@ -119,10 +129,149 @@ type ForwardedResult =
 export async function executeHubApiCall(call: HubApiCall): Promise<any> {
   const route = getHubApiRoute(call.name);
   if (route == null) return await requireExecutor()(call);
+  if (route.owner === "projects") {
+    return await executeSplitByProject(route, call);
+  }
   const owner = await ownerBay(route, call.args);
   const here = getConfiguredBayId();
   if (owner == null || owner === here) return await requireExecutor()(call);
   return await forwardHubApiCall(owner, call);
+}
+
+// How many bays a call on several projects runs on at once.
+const SPLIT_BAYS_AT_ONCE = 3;
+// A call on several projects answers within the caller's 30 s: a bay's part
+// starts only if its forwarded call can finish (or be reported as of unknown
+// outcome) by then. Later parts never start, and say so.
+const SPLIT_CALL_BUDGET_MS = 28_000;
+const PART_WORST_CASE_MS = FORWARD_ATTEMPTS * FORWARD_ATTEMPT_TIMEOUT_MS;
+
+/**
+ * A call on several projects: run it once per owning bay with that bay's
+ * projects (here, or forwarded exactly once), a few bays at a time, and
+ * return exactly one result per project, in input order. A bay that fails
+ * or does not answer gives each of its projects the method's error result.
+ * Projects with no known bay, and malformed ids, run here, where the method
+ * reports them. When every project is here the call runs as it is, and an
+ * error it raises is raised as before. One budget covers the whole call:
+ * owning bays are looked up within it, and a project whose bay is not found
+ * in time, or whose bay's part could not finish in it, is not run; its
+ * result says so.
+ */
+async function executeSplitByProject(
+  route: Extract<HubApiRoute, { owner: "projects" }>,
+  call: HubApiCall,
+): Promise<any> {
+  const ids = splitProjectIds(route, call.args);
+  const here = getConfiguredBayId();
+  if (ids == null || ids.length === 0) return await requireExecutor()(call);
+  // One budget for the whole call, lookups included. Finding owning bays
+  // gets only the time that leaves room for a full forwarded part after it.
+  const deadline = Date.now() + SPLIT_CALL_BUDGET_MS;
+  const valid = ids.filter((id) => isValidUUID(id));
+  const owners = await resolveProjectBays(valid, {
+    deadline: deadline - PART_WORST_CASE_MS,
+  });
+  const merged = new Map<string, any>();
+  const byBay = new Map<string, string[]>();
+  for (const id of ids) {
+    if (isValidUUID(id) && !owners.has(id)) {
+      // Its bay could not be found in time: it is not run anywhere.
+      merged.set(
+        id,
+        route.errorResult(
+          id,
+          "not attempted: its bay could not be found in time; nothing was changed for this project, so it is safe to retry",
+        ),
+      );
+      continue;
+    }
+    const bay_id = owners.get(id)?.bay_id ?? here;
+    let bucket = byBay.get(bay_id);
+    if (bucket == null) {
+      bucket = [];
+      byBay.set(bay_id, bucket);
+    }
+    bucket.push(id);
+  }
+  // All here: run the call as it is. Otherwise one part per bay.
+  const allHere = merged.size === 0 && byBay.size === 1 && byBay.has(here);
+  const [opts, ...rest] = call.args;
+  const parts: [string, string[], HubApiCall][] = allHere
+    ? [[here, ids, call]]
+    : [...byBay]
+        // This bay's own part first, so it always runs.
+        .sort(([a], [b]) => Number(b === here) - Number(a === here))
+        .map(([bay_id, project_ids]) => [
+          bay_id,
+          project_ids,
+          { ...call, args: [{ ...opts, project_ids }, ...rest] },
+        ]);
+  await mapParallelLimit(
+    parts,
+    async ([bay_id, project_ids, part]) => {
+      if (!allHere && Date.now() + PART_WORST_CASE_MS > deadline) {
+        for (const project_id of project_ids) {
+          merged.set(
+            project_id,
+            route.errorResult(
+              project_id,
+              `not attempted: no time left in this call for ${bay_id}; nothing was changed for this project, so it is safe to retry`,
+            ),
+          );
+        }
+        return;
+      }
+      let results: unknown;
+      try {
+        results =
+          bay_id === here
+            ? await requireExecutor()(part)
+            : await forwardHubApiCall(bay_id, part);
+      } catch (err) {
+        if (allHere) throw err;
+        const code = (err as { code?: unknown })?.code;
+        for (const project_id of project_ids) {
+          merged.set(
+            project_id,
+            route.errorResult(
+              project_id,
+              err instanceof Error ? err.message : `${err}`,
+              typeof code === "string" || typeof code === "number"
+                ? code
+                : undefined,
+            ),
+          );
+        }
+        return;
+      }
+      // Exactly one result per project this bay was given; anything else
+      // (missing, duplicate, or for another project) is not trusted.
+      const asked = new Set(project_ids);
+      const found = new Map<string, unknown[]>();
+      for (const result of Array.isArray(results) ? results : []) {
+        const id = `${(result as any)?.project_id ?? ""}`;
+        if (!asked.has(id)) continue;
+        const list = found.get(id);
+        if (list == null) found.set(id, [result]);
+        else list.push(result);
+      }
+      for (const project_id of project_ids) {
+        const matches = found.get(project_id) ?? [];
+        merged.set(
+          project_id,
+          matches.length === 1
+            ? matches[0]
+            : route.errorResult(
+                project_id,
+                `${bay_id} returned ${matches.length} results for this project`,
+              ),
+        );
+      }
+    },
+    SPLIT_BAYS_AT_ONCE,
+  );
+  return ids.map((id) => merged.get(id));
 }
 
 /**

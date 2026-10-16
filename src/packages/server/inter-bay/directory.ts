@@ -51,8 +51,15 @@ export async function resolveProjectBayDirect(
   return { bay_id, epoch: LOCAL_EPOCH };
 }
 
+/**
+ * The owning bay of each project (null if no bay knows it). With a deadline,
+ * directory lookups for projects not found here get only the time left and
+ * none start after it; a project not resolved in time is left out of the
+ * result, so the caller can tell "unresolved" from "unknown".
+ */
 export async function resolveProjectBays(
   project_ids: string[],
+  { deadline }: { deadline?: number } = {},
 ): Promise<Map<string, BayOwnership | null>> {
   const uniqueProjectIds = Array.from(new Set(project_ids));
   if (uniqueProjectIds.length === 0) {
@@ -81,17 +88,53 @@ export async function resolveProjectBays(
   const missing = uniqueProjectIds.filter(
     (project_id) => !result.has(project_id),
   );
-  const directory = createInterBayDirectoryClient({
-    client: getInterBayFabricClient(),
-  });
-  const fallback = await mapParallelLimit(
+  // As resolveProjectBay: only ask the directory about projects not found
+  // here, so a bay with no fabric credential can still resolve its own.
+  if (missing.length === 0) {
+    return result;
+  }
+  if (deadline == null) {
+    const directory = createInterBayDirectoryClient({
+      client: getInterBayFabricClient(),
+    });
+    const fallback = await mapParallelLimit(
+      missing,
+      async (project_id) => await directory.resolveProjectBay({ project_id }),
+      DIRECTORY_BATCH_FALLBACK_CONCURRENCY,
+    );
+    for (let i = 0; i < missing.length; i += 1) {
+      result.set(missing[i], fallback[i] ?? null);
+    }
+    return result;
+  }
+  // Nothing more once the deadline has passed, not even a fabric client;
+  // without one, these projects are unresolved too.
+  if (deadline <= Date.now()) {
+    return result;
+  }
+  let client: ReturnType<typeof getInterBayFabricClient>;
+  try {
+    client = getInterBayFabricClient();
+  } catch {
+    return result;
+  }
+  await mapParallelLimit(
     missing,
-    async (project_id) => await directory.resolveProjectBay({ project_id }),
+    async (project_id) => {
+      const timeout = deadline - Date.now();
+      if (timeout <= 0) return;
+      try {
+        const ownership = await createInterBayDirectoryClient({
+          client,
+          timeout,
+        }).resolveProjectBay({ project_id });
+        result.set(project_id, ownership ?? null);
+      } catch {
+        // Unresolved in time: left out.
+      }
+    },
     DIRECTORY_BATCH_FALLBACK_CONCURRENCY,
   );
-  for (let i = 0; i < missing.length; i += 1) {
-    result.set(missing[i], fallback[i] ?? null);
-  }
   return result;
 }
 

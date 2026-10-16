@@ -227,7 +227,6 @@ import type {
   ProjectEnv,
   ProjectEntitlementOverride,
   ProjectLogRow,
-  ProjectHiddenResult,
   ProjectRegion,
   ProjectRootfsConfig,
   ProjectRootfsPublishConfig,
@@ -2563,12 +2562,6 @@ export interface ProjectLeaveOrDeleteProjectsRequest {
   project_ids: string[];
 }
 
-export interface ProjectSetHiddenRequest {
-  account_id: string;
-  project_ids: string[];
-  hide: boolean;
-}
-
 export type ProjectLeaveOrDeleteProjectsResult = {
   project_id: string;
   action:
@@ -3011,7 +3004,6 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "set-project-user-role"
   | "leave-or-delete-projects"
-  | "set-projects-hidden"
   | "set-project-metadata"
   | "set-manage-users-owner-only"
   | "set-deletion-protection"
@@ -5037,9 +5029,6 @@ export interface InterBayProjectCollabInviteApi {
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
-  setProjectsHidden: (
-    opts: ProjectSetHiddenRequest,
-  ) => Promise<ProjectHiddenResult[]>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -12367,15 +12356,6 @@ export function createInterBayProjectCollabInviteClient({
       method: "leave-or-delete-projects",
     }),
   });
-  const setProjectsHiddenClient = createServiceClient<
-    Pick<InterBayProjectCollabInviteApi, "setProjectsHidden">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: projectCollabInviteSubject({
-      dest_bay,
-      method: "set-projects-hidden",
-    }),
-  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -12401,8 +12381,6 @@ export function createInterBayProjectCollabInviteClient({
       ),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
-    setProjectsHidden: async (opts) =>
-      await setProjectsHiddenClient.setProjectsHidden(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -12556,19 +12534,6 @@ export function createInterBayProjectCollabInviteHandlers({
       impl: {
         leaveOrDeleteProjects: async (opts) =>
           await impl.leaveOrDeleteProjects(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayProjectCollabInviteApi, "setProjectsHidden">
-    >({
-      ...options,
-      service: "inter-bay-project-collab-invite",
-      subject: projectCollabInviteSubject({
-        dest_bay: bay_id,
-        method: "set-projects-hidden",
-      }),
-      impl: {
-        setProjectsHidden: async (opts) => await impl.setProjectsHidden(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({
