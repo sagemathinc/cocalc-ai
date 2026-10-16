@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Copies to students read files as saved on disk, so every assign/handout
-// entry point must save the course project's open files first, and copy
+// Copies to students read files as saved on disk, so every entry point that
+// copies course files out to students (assign, handouts, return, peer) must save the course project's open files first, and copy
 // nothing if that fails.
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -43,6 +43,7 @@ describe("CourseActions.save_course_project_files", () => {
     await expect(actions.save_course_project_files()).resolves.toBe(true);
     expect(getProjectActions).toHaveBeenCalledWith(COURSE_PROJECT_ID);
     expect(save_all_files).toHaveBeenCalledTimes(1);
+    expect(save_all_files).toHaveBeenCalledWith({ strict: true });
     expect(errors).toEqual([]);
   });
 
@@ -83,8 +84,18 @@ describe("assign and handout copies save open files first", () => {
     assignments.update_listing = jest.fn(async () => {
       events.push("update_listing");
     });
-    assignments.copy_assignment_to_student = jest.fn(async () => {
-      events.push("copy");
+    for (const name of [
+      "copy_assignment_to_student",
+      "return_assignment_to_student",
+      "peer_copy_to_student",
+      "assignment_action_all_students",
+    ]) {
+      assignments[name] = jest.fn(async () => {
+        events.push("copy");
+      });
+    }
+    assignments.update_peer_assignment = jest.fn(() => {
+      events.push("update_peer");
     });
     const handouts: any = new HandoutsActions(courseActions);
     handouts.handout_start_copy = jest.fn(() => {
@@ -116,6 +127,28 @@ describe("assign and handout copies save open files first", () => {
       "update_listing",
     ],
     [
+      "returning graded work to one student",
+      ({ assignments }) => assignments.copy_assignment("graded", "a1", "s1"),
+      "copy",
+    ],
+    [
+      "returning graded work to all students",
+      ({ assignments }) =>
+        assignments.return_assignment_to_all_students("a1", false),
+      "activity",
+    ],
+    [
+      "peer-assigning to one student",
+      ({ assignments }) =>
+        assignments.copy_assignment("peer-assigned", "a1", "s1"),
+      "copy",
+    ],
+    [
+      "peer-assigning to all students",
+      ({ assignments }) => assignments.peer_copy_to_all_students("a1", false),
+      "update_peer",
+    ],
+    [
       "copying a handout to one student",
       ({ handouts }) => handouts.copy_handout_to_student("h1", "s1", false),
       "start_copy",
@@ -143,4 +176,17 @@ describe("assign and handout copies save open files first", () => {
       expect(x.events).toEqual(["save"]);
     },
   );
+});
+
+describe("collecting from students does not save", () => {
+  it.each(["collected", "peer-collected"])("%s", async (type) => {
+    const save_course_project_files = jest.fn(async () => true);
+    const assignments: any = new AssignmentsActions({
+      save_course_project_files,
+    } as any);
+    assignments.copy_assignment_from_student = jest.fn(async () => undefined);
+    assignments.peer_collect_from_student = jest.fn(async () => undefined);
+    await assignments.copy_assignment(type, "a1", "s1");
+    expect(save_course_project_files).not.toHaveBeenCalled();
+  });
 });

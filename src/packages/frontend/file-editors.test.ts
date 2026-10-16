@@ -42,7 +42,12 @@ describe("file-editors save", () => {
 
     await save(path, redux, project_id);
 
-    expect(saveHandler).toHaveBeenCalledWith(path, redux, project_id);
+    expect(saveHandler).toHaveBeenCalledWith(
+      path,
+      redux,
+      project_id,
+      undefined,
+    );
   });
 
   it("waits for an asynchronous editor save", async () => {
@@ -67,5 +72,19 @@ describe("file-editors save", () => {
     finishSave();
     await saving;
     expect(finished).toBe(true);
+  });
+
+  it("passes strict to the editor and propagates its save failure", async () => {
+    redux.getProjectStore.mockReturnValue({
+      has_file_been_viewed: () => true,
+    });
+    saveHandler.mockRejectedValue(new Error("disk full"));
+
+    await expect(
+      save(path, redux, project_id, { strict: true }),
+    ).rejects.toThrow("disk full");
+    expect(saveHandler).toHaveBeenCalledWith(path, redux, project_id, {
+      strict: true,
+    });
   });
 });

@@ -327,7 +327,9 @@ export class CourseActions extends Actions<CourseState> {
   save_course_project_files = async (): Promise<boolean> => {
     try {
       const project_id = this.get_store().get("course_project_id");
-      await this.redux.getProjectActions(project_id).save_all_files();
+      await this.redux
+        .getProjectActions(project_id)
+        .save_all_files({ strict: true });
       return true;
     } catch (err) {
       this.set_error(

@@ -70,7 +70,12 @@ interface FileEditorSpec {
   remove?:
     | ((path: string, redux: any, project_id: string | undefined) => string) // returned string = redux name  or undefined if not using redux
     | ((path: string, redux: any, project_id: string | undefined) => void);
-  save?: (path: string, redux: any, project_id: string) => void | Promise<void>;
+  save?: (
+    path: string,
+    redux: any,
+    project_id: string,
+    opts?: { strict?: boolean },
+  ) => void | Promise<void>;
 }
 
 const { file_editors, altExt } = getFileEditorRegistryState();
@@ -335,11 +340,13 @@ export async function remove(
 
 // The save function may be called to request to save contents to disk.
 // It does not take a callback.  It's a non-op if no save function is registered
-// or the file isn't open.
+// or the file isn't open. With strict, editors that support it throw if
+// saving to disk fails.
 export async function save(
   path: string,
   redux,
   project_id: string,
+  opts?: { strict?: boolean },
 ): Promise<void> {
   if (path == null) {
     console.warn("WARNING: save(undefined path)"); // TODO: remove when all typescript
@@ -353,6 +360,6 @@ export async function save(
   }
   const save = get_ed(project_id, path).save;
   if (save != null) {
-    await save(path, redux, project_id);
+    await save(path, redux, project_id, opts);
   }
 }

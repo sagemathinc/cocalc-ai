@@ -1019,6 +1019,7 @@ ${details}
     assignment_id: string,
     new_only: boolean,
   ): Promise<void> => {
+    if (!(await this.course_actions.save_course_project_files())) return;
     const id = this.course_actions.set_activity({
       desc:
         "Returning assignments to all students " + new_only
@@ -1344,9 +1345,11 @@ ${details}
         await this.copy_assignment_from_student(assignment_id, student_id);
         return;
       case "graded":
+        if (!(await this.course_actions.save_course_project_files())) return;
         await this.return_assignment_to_student(assignment_id, student_id);
         return;
       case "peer-assigned":
+        if (!(await this.course_actions.save_course_project_files())) return;
         await this.peer_copy_to_student(assignment_id, student_id);
         return;
       case "peer-collected":
@@ -1990,6 +1993,7 @@ ${details}
     assignment_id: string,
     new_only: boolean,
   ): Promise<void> {
+    if (!(await this.course_actions.save_course_project_files())) return;
     let desc = "Copying assignments for peer grading to all students ";
     if (new_only) {
       desc += " who have not already received their copy";

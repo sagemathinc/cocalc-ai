@@ -494,7 +494,10 @@ export class JupyterEditorActions
     this.jupyter_actions.confirm_close_and_halt();
   }
 
-  async save(explicit: boolean = true): Promise<void> {
+  async save(
+    explicit: boolean = true,
+    opts?: { strict?: boolean },
+  ): Promise<void> {
     const jupyterActions = this.jupyter_actions;
     if (this._state == "closed" || jupyterActions == null) return;
     explicit = explicit; // not used yet -- might be used for "strip trailing whitespace"
@@ -525,6 +528,7 @@ export class JupyterEditorActions
         return;
       }
       this.set_error(`error saving file to disk -- ${err}`);
+      if (opts?.strict) throw err;
     } finally {
       if (this._state != "closed") {
         this.setState({ is_saving: false });
