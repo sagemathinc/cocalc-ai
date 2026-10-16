@@ -229,7 +229,8 @@ const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const SECRET = /^[A-Za-z0-9_-]{43}$/;
 const PHRASE = /^[a-z]+(?:-[a-z]+){3}$/;
 /** Control and bidi characters: never printed from the server as is. */
-const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/gu;
+const UNSAFE_TEXT =
+  /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
 
 /** Server text for the terminal: no control or bidi characters, bounded. */
 function clean(value: unknown, max: number): string {
