@@ -3,14 +3,18 @@ const writeFileMock = jest.fn();
 const mkdirMock = jest.fn();
 const accessMock = jest.fn();
 const chmodMock = jest.fn();
+const linkMock = jest.fn();
+const unlinkMock = jest.fn();
 const keyPathDefault = "/tmp/secrets/site-master-key";
 const keyPathCustom = "/tmp/custom/settings-key";
 
 jest.mock("node:fs/promises", () => ({
   access: (...args: any[]) => accessMock(...args),
   chmod: (...args: any[]) => chmodMock(...args),
+  link: (...args: any[]) => linkMock(...args),
   mkdir: (...args: any[]) => mkdirMock(...args),
   readFile: (...args: any[]) => readFileMock(...args),
+  unlink: (...args: any[]) => unlinkMock(...args),
   writeFile: (...args: any[]) => writeFileMock(...args),
 }));
 
@@ -29,6 +33,8 @@ describe("secret-settings key handling", () => {
       throw Object.assign(new Error(`missing ${path}`), { code: "ENOENT" });
     });
     writeFileMock.mockReset();
+    linkMock.mockReset();
+    unlinkMock.mockReset();
     jest.resetModules();
     delete process.env.COCALC_SITE_MASTER_KEY_PATH;
     delete process.env.COCALC_SECRET_SETTINGS_KEY_PATH;
@@ -42,11 +48,17 @@ describe("secret-settings key handling", () => {
     const key = await getSecretSettingsKey();
     expect(key).toBeInstanceOf(Buffer);
     expect(key.length).toBe(32);
-    expect(writeFileMock).toHaveBeenCalledWith(
-      keyPathDefault,
-      expect.any(String),
-      { mode: 0o600 },
+    // Written to a private temporary file, then linked into place.
+    const [tmp] = writeFileMock.mock.calls[0];
+    expect(tmp.startsWith(`${keyPathDefault}.`) && tmp.endsWith(".tmp")).toBe(
+      true,
     );
+    expect(writeFileMock).toHaveBeenCalledWith(tmp, expect.any(String), {
+      mode: 0o600,
+      flag: "wx",
+    });
+    expect(linkMock).toHaveBeenCalledWith(tmp, keyPathDefault);
+    expect(unlinkMock).toHaveBeenCalledWith(tmp);
   });
 
   it("rejects invalid key length", async () => {
@@ -64,11 +76,17 @@ describe("secret-settings key handling", () => {
     readFileMock.mockRejectedValueOnce(missing);
     accessMock.mockRejectedValueOnce(missing);
     await getSecretSettingsKey();
-    expect(writeFileMock).toHaveBeenCalledWith(
-      keyPathCustom,
-      expect.any(String),
-      { mode: 0o600 },
+    // Written to a private temporary file, then linked into place.
+    const [tmp] = writeFileMock.mock.calls[0];
+    expect(tmp.startsWith(`${keyPathCustom}.`) && tmp.endsWith(".tmp")).toBe(
+      true,
     );
+    expect(writeFileMock).toHaveBeenCalledWith(tmp, expect.any(String), {
+      mode: 0o600,
+      flag: "wx",
+    });
+    expect(linkMock).toHaveBeenCalledWith(tmp, keyPathCustom);
+    expect(unlinkMock).toHaveBeenCalledWith(tmp);
   });
 
   it("decrypts values under a retired key and asks for them to be migrated", async () => {
