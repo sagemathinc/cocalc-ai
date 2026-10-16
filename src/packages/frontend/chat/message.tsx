@@ -169,6 +169,7 @@ import {
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
   agentMessageFence,
+  agentMessageWaitingDelivery,
   sensorWakePresentation,
   stripAgentRpcPrompt,
 } from "./agent-message-presentation";
@@ -490,12 +491,12 @@ function rpcSourceAttribution(
         : undefined,
     attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
     // Say why it has not started instead of looking delivered and ignored.
-    ...(waiting &&
-    !report &&
-    (rpc.effective_delivery === "queued" ||
-      rpc.effective_delivery === "queued-fallback")
-      ? { delivery: rpc.effective_delivery as "queued" | "queued-fallback" }
-      : {}),
+    ...(() => {
+      const delivery = report
+        ? undefined
+        : agentMessageWaitingDelivery(rpc, waiting);
+      return delivery ? { delivery } : {};
+    })(),
   };
   if (source.kind === "external") {
     return {

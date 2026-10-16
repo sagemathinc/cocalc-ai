@@ -366,7 +366,7 @@ export function AgentMessageElement({
         >
           {message.delivery === "queued"
             ? "Queued: this Agent Network delivers messages when the recipient's current turn ends, not during it."
-            : "Queued: live delivery was unavailable, so this waits until the recipient's current turn ends."}
+            : "Queued: the recipient's current turn could not take this as live guidance, so it waits until that turn ends."}
         </div>
       )}
       {expanded && (
