@@ -12114,7 +12114,7 @@ async function attemptAcpSteerRequest(
   return result;
 }
 
-const CALLER_CONTEXT_SYNC_TIMEOUT_MS = 15_000;
+let callerContextSyncTimeoutMs = 15_000;
 
 // A control that replays a stored request (send now, resend) can reach this
 // hub before a clear its caller already saw. The stored request would then
@@ -12126,7 +12126,7 @@ async function awaitCallerContext({
   path,
   thread_id,
   request,
-  timeoutMs = CALLER_CONTEXT_SYNC_TIMEOUT_MS,
+  timeoutMs = callerContextSyncTimeoutMs,
 }: {
   client: ConatClient;
   project_id: string;
@@ -12327,11 +12327,11 @@ async function handleAcpControlRequest(
     return { ok: false, state: "held" };
   }
   if (
-    request.action === "send_immediately" ||
     request.action === "resend" ||
     request.action === "resend_with_model" ||
     request.action === "resend_with_payment"
   ) {
+    // The source job is already terminal, so nothing can claim it meanwhile.
     await awaitCallerContext({ client, project_id, path, thread_id, request });
   }
   if (request.action === "send_immediately") {
@@ -12379,6 +12379,20 @@ async function handleAcpControlRequest(
       }
       return { ok: true, state: "queued" };
     };
+
+    // Canceled above, so no worker can claim it while this waits.
+    try {
+      await awaitCallerContext({
+        client,
+        project_id,
+        path,
+        thread_id,
+        request,
+      });
+    } catch (err) {
+      await restoreQueuedImmediate();
+      throw err;
+    }
 
     try {
       const queuedRequest = decodeAcpJobRequest(row);
@@ -13233,6 +13247,9 @@ export const acpTestInternals = {
   persistAttentionResponseProjection,
   handleAcpControlRequest,
   awaitCallerContext,
+  setCallerContextSyncTimeoutMs: (ms: number) => {
+    callerContextSyncTimeoutMs = ms;
+  },
   executeAcpRequest,
   handleInterruptRequest,
   processPendingAcpInterruptsOnce,

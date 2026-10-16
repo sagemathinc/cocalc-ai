@@ -170,7 +170,7 @@ thread**. Everyone following that shared agent then sees its new conversation.
 
 This does not delete messages, undo file changes, or reset the software
 environment. **Clear context** works at any time: a running turn finishes with
-the old context, and queued and new messages start fresh. Before **Start new
+the old context, and turns that start after the clear begin fresh. Before **Start new
 thread**, finish or cancel running and queued work, and disable scheduled work.
 
 ## Copy an agent from the CLI

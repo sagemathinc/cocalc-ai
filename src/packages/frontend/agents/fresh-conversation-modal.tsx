@@ -97,8 +97,8 @@ export function FreshConversationModal({
       </Radio.Group>
       {mode === "clear" ? (
         <p>
-          A turn already running finishes with the old context. Queued and new
-          messages start fresh.
+          A turn already running finishes with the old context. Turns that start
+          after the clear begin fresh.
         </p>
       ) : (
         <p>

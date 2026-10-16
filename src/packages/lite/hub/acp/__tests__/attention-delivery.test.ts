@@ -547,6 +547,21 @@ describe("a context clear after admission", () => {
     await expect(prepare(source)).rejects.toThrow("chat unavailable");
   });
 
+  const threadKey = {
+    project_id: projectId,
+    path: record.path,
+    thread_id: record.thread_id,
+  };
+  const sendNow = (user_message_id: string) =>
+    ({
+      action: "send_immediately",
+      account_id: accountId,
+      ...threadKey,
+      user_message_id,
+      context_generation: "cleared-1",
+      context_cleared_at: cleared.date,
+    }) as any;
+
   it("holds a send-now until the hub has synced the caller's clear", async () => {
     // Queued before the clear, so stamped with the old (empty) generation.
     const queued = turnRequest({ model: "gpt-6-astra", sessionId });
@@ -555,20 +570,29 @@ describe("a context clear after admission", () => {
     const job = enqueueAcpJob(queued);
     mockSteer.mockResolvedValue({ state: "steered" });
     // The caller already saw the clear; it reaches this hub a bit later.
-    setTimeout(() => Object.assign(rows[0], clearedConfig), 50);
-    const result = await acpTestInternals.handleAcpControlRequest({
-      action: "send_immediately",
-      account_id: accountId,
-      project_id: projectId,
-      path: record.path,
-      thread_id: record.thread_id,
-      user_message_id: job.user_message_id,
-      context_generation: "cleared-1",
-      context_cleared_at: cleared.date,
-    } as any);
+    const control = acpTestInternals.handleAcpControlRequest(
+      sendNow(job.user_message_id),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Held while waiting: no worker can claim and run it in the old context.
+    expect(claimNextQueuedAcpJobForThread(threadKey)).toBeUndefined();
+    Object.assign(rows[0], clearedConfig);
     // Never steered into the old context: it waits to run fresh.
+    expect(await control).toEqual({ ok: true, state: "queued" });
     expect(mockSteer).not.toHaveBeenCalled();
-    expect(result).toEqual({ ok: true, state: "queued" });
+  });
+
+  it("puts a send-now back in the queue if the clear never arrives", async () => {
+    const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
+    acpTestInternals.setCallerContextSyncTimeoutMs(150);
+    try {
+      await expect(
+        acpTestInternals.handleAcpControlRequest(sendNow(job.user_message_id)),
+      ).rejects.toThrow(/has not reached its project yet/);
+    } finally {
+      acpTestInternals.setCallerContextSyncTimeoutMs(15_000);
+    }
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("queued");
   });
 
   it("gives up if the caller's clear never reaches the hub", async () => {
