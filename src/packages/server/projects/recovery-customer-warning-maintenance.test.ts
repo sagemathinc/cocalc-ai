@@ -38,6 +38,7 @@ jest.mock("@cocalc/server/membership/runtime-resolution", () => ({
 jest.mock("./maintenance-status", () => ({
   ensureProjectMaintenanceStatusTable: () => ensureTable(),
   getProjectRecoveryStatusLocal: (...args: unknown[]) => currentStatus(...args),
+  pinnedRecoveryDueAt: (due: string | null) => due,
   projectRecoveryDueAt: (changed: Date | null) =>
     changed?.toISOString() ?? null,
   snapshotScheduleRevision: () => "current",

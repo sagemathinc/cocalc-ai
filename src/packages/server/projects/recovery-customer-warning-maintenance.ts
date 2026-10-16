@@ -28,6 +28,7 @@ import { runProjectSnapshotQuotaNoticeCheck } from "./snapshot-quota-notice";
 import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryStatusLocal,
+  pinnedRecoveryDueAt,
   projectRecoveryDueAt,
   snapshotScheduleRevision,
 } from "./maintenance-status";
@@ -48,8 +49,12 @@ type Candidate = {
   snapshots: SnapshotSchedule | null;
   backups: SnapshotSchedule | null;
   snapshot_at: Date | null;
+  snapshot_outcome: string | null;
+  snapshot_status_due_at: Date | null;
   reconciled_change_at: Date | null;
   reconciled_schedule_revision: string | null;
+  backup_outcome: string | null;
+  backup_status_due_at: Date | null;
 };
 type CurrentProject = {
   usage_account_id: string | null;
@@ -171,20 +176,28 @@ function warningDueTimes(row: Candidate, checkedAt: Date) {
   const snapshotDue =
     row.snapshots?.disabled === true || snapshotReconciled
       ? null
-      : projectRecoveryDueAt(
-          row.last_changed,
+      : pinnedRecoveryDueAt(
+          projectRecoveryDueAt(
+            row.last_changed,
+            row.snapshot_at,
+            { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
+            true,
+          ),
           row.snapshot_at,
-          { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
-          true,
+          { outcome: row.snapshot_outcome, due_at: row.snapshot_status_due_at },
         );
   const backupDue =
     row.backups?.disabled === true
       ? null
-      : projectRecoveryDueAt(
-          row.last_changed,
+      : pinnedRecoveryDueAt(
+          projectRecoveryDueAt(
+            row.last_changed,
+            row.last_backup,
+            { ...DEFAULT_BACKUP_COUNTS, ...row.backups },
+            false,
+          ),
           row.last_backup,
-          { ...DEFAULT_BACKUP_COUNTS, ...row.backups },
-          false,
+          { outcome: row.backup_outcome, due_at: row.backup_status_due_at },
         );
   return [
     ["snapshot", snapshotDue, PAYING_SNAPSHOT_OBJECTIVE_MS],
@@ -281,10 +294,14 @@ export async function runProjectRecoveryCustomerWarningCheck({
               COALESCE((to_jsonb(p)->>'last_changed')::TIMESTAMP, p.last_edited)
                 AS last_changed,
               p.snapshots, p.backups, s.latest_snapshot_at AS snapshot_at,
-              s.reconciled_change_at, s.reconciled_schedule_revision
+              s.outcome AS snapshot_outcome, s.due_at AS snapshot_status_due_at,
+              s.reconciled_change_at, s.reconciled_schedule_revision,
+              b.outcome AS backup_outcome, b.due_at AS backup_status_due_at
          FROM projects p
          LEFT JOIN project_maintenance_status s ON s.project_id=p.project_id
            AND s.kind='snapshot' AND s.host_id=p.host_id
+         LEFT JOIN project_maintenance_status b ON b.project_id=p.project_id
+           AND b.kind='backup' AND b.host_id=p.host_id
         WHERE p.provisioned IS TRUE AND p.deleted IS NOT TRUE
           AND p.host_id IS NOT NULL
           AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $1)=$1
