@@ -28,7 +28,7 @@ function editor(save_to_disk: () => Promise<void>) {
   };
   const save = (opts?: { strict?: boolean }) =>
     (BaseEditorActions.prototype as any).save.call(target, false, opts);
-  return { save, errors };
+  return { save, errors, target };
 }
 
 describe("BaseEditorActions.save strict mode", () => {
@@ -49,6 +49,15 @@ describe("BaseEditorActions.save strict mode", () => {
     });
     await expect(save({ strict: true })).rejects.toThrow("disk full");
     expect(errors.join()).toContain("disk full");
+  });
+
+  it("still throws when strict if the editor closes before the save fails", async () => {
+    const x = editor(async () => {
+      x.target._state = "closed";
+      throw Error("disk full");
+    });
+    await expect(x.save({ strict: true })).rejects.toThrow("disk full");
+    expect(x.errors).toEqual([]);
   });
 
   it("resolves when a strict save succeeds", async () => {

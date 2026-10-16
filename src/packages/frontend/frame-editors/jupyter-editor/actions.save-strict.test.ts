@@ -26,8 +26,9 @@ function notebook(save: () => Promise<void>) {
     setState: () => undefined,
     set_error: (err: string) => errors.push(err),
   };
-  const run = (opts?: { strict?: boolean }) =>
+  const run: any = (opts?: { strict?: boolean }) =>
     JupyterEditorActions.prototype.save.call(target, true, opts);
+  run.target = target;
   return { run, errors };
 }
 
@@ -49,5 +50,16 @@ describe("JupyterEditorActions.save strict mode", () => {
     });
     await expect(run({ strict: true })).rejects.toThrow("write failed");
     expect(errors.join()).toContain("write failed");
+  });
+
+  it("still throws when strict if the editor closes before the save fails", async () => {
+    let target: any;
+    const { run, errors } = notebook(async () => {
+      target._state = "closed";
+      throw Error("write failed");
+    });
+    target = (run as any).target;
+    await expect(run({ strict: true })).rejects.toThrow("write failed");
+    expect(errors).toEqual([]);
   });
 });

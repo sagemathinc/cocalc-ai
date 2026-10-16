@@ -525,6 +525,8 @@ export class JupyterEditorActions
     } catch (err) {
       console.warn("save_to_disk", this.path, "ERROR", err);
       if (this._state == "closed") {
+        // The file on disk is still stale, so strict callers must know.
+        if (opts?.strict) throw err;
         return;
       }
       this.set_error(`error saving file to disk -- ${err}`);
