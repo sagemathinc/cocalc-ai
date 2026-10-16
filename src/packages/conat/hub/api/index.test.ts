@@ -229,6 +229,7 @@ describe("hub API argument transforms", () => {
       "agent.authorizeSensorExecution",
       "agent.beginCliConnectorTurn",
       "agent.beginCocalcConnectorTurn",
+      "agent.describeNetworkSelf",
       "agent.endCocalcConnectorTurn",
       "agent.endIdentityRun",
       "agent.getMentionIdentity",
@@ -268,6 +269,7 @@ describe("hub API argument transforms", () => {
     "agent.beginCliConnectorTurn",
     "agent.resolvePaymentSelection",
     "agent.reportRuntime",
+    "agent.describeNetworkSelf",
     "apiKeys.getViewerReadPolicy",
   ])(
     "binds %s to the trusted host while preserving the execution account target",
