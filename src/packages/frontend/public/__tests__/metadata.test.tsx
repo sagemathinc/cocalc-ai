@@ -7,7 +7,15 @@ import {
   getPublicRouteMetadata,
   PublicRouteHeadMetadata,
 } from "../metadata";
-import { getPublicMetadataRouteFromPath } from "@cocalc/util/public-site-metadata";
+import {
+  getPublicTeamMember,
+  PUBLIC_TEAM_MEMBERS,
+  UNPUBLISHED_TEAM_PROFILE_SLUGS,
+} from "@cocalc/util/public-about-content";
+import {
+  getPublicMetadataRouteFromPath,
+  getPublicPermanentRedirectPath,
+} from "@cocalc/util/public-site-metadata";
 // Registers the docs registry with the metadata API; the browser loads this
 // lazily on docs routes, tests need it wired up front.
 import "@cocalc/util/public-site-metadata-docs";
@@ -332,6 +340,55 @@ describe("public route metadata", () => {
     expect(unknown.notFound).toBe(true);
     expect(unknown.title).toBe("CoCalc Team | CoCalc");
   });
+
+  // Search results and link previews show this description.
+  it("describes the team page in one sentence", () => {
+    const team = getPublicRouteMetadata(
+      getPublicMetadataRouteFromPath("/about/team"),
+      { site_name: "CoCalc" },
+    );
+    expect(team.description).toBe(
+      "Meet the people at SageMath, Inc. who build CoCalc, the agent platform where your agents work alongside your team.",
+    );
+    expect(team.description.length).toBeLessThanOrEqual(160);
+  });
+
+  it("lists only published team profiles in the sitemap", () => {
+    expect(
+      PUBLIC_SITEMAP_PATHS.filter((path) => path.startsWith("/about/team/")),
+    ).toEqual(PUBLIC_TEAM_MEMBERS.map(({ slug }) => `/about/team/${slug}`));
+    for (const slug of UNPUBLISHED_TEAM_PROFILE_SLUGS) {
+      expect(PUBLIC_SITEMAP_PATHS).not.toContain(`/about/team/${slug}`);
+      expect(getPublicTeamMember(slug)).toBeUndefined();
+    }
+  });
+
+  it.each(["/", "/prefix"])(
+    "redirects unpublished team profiles to the team page under %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const slug of UNPUBLISHED_TEAM_PROFILE_SLUGS) {
+        for (const path of [
+          `${prefix}/about/team/${slug}`,
+          `${prefix}/about/team/${slug}/`,
+        ]) {
+          expect(getPublicPermanentRedirectPath(path, { basePath })).toBe(
+            `${prefix}/about/team`,
+          );
+        }
+      }
+      for (const path of [
+        `${prefix}/about/team`,
+        `${prefix}/about/team/william-stein`,
+        `${prefix}/about/team/not-a-person`,
+        `${prefix}/features/ai`,
+      ]) {
+        expect(getPublicPermanentRedirectPath(path, { basePath })).toBe(
+          undefined,
+        );
+      }
+    },
+  );
 
   it("noindexes thin auth and account-specific support actions", () => {
     for (const path of [

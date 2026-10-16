@@ -3,6 +3,7 @@ import {
   confirmedBackupTimeForIds,
   newestBackupTimeForIds,
   parseCreatedBackupSnapshot,
+  trackUploadedBackups,
 } from "./backup-created";
 
 describe("parseCreatedBackupSnapshot", () => {
@@ -86,5 +87,65 @@ describe("newestBackupTimeForIds", () => {
         ],
       }),
     ).toEqual(new Date("2026-05-22T12:00:00.000Z"));
+  });
+});
+
+describe("trackUploadedBackups", () => {
+  it("remembers uploads that the outer wrapper then abandons", async () => {
+    const tracker = trackUploadedBackups(async (upload) => {
+      await upload();
+      throw new Error("volume changed");
+    });
+    await expect(
+      tracker.wrapUpload(async () => ({
+        id: "backup-1",
+        time: "2026-10-15T20:37:37.000Z",
+        summary: { data_added_packed: 3_000 },
+      })),
+    ).rejects.toThrow("volume changed");
+    expect(tracker.uploaded()).toEqual([
+      expect.objectContaining({
+        id: "backup-1",
+        summary: { data_added_packed: 3_000 },
+      }),
+    ]);
+  });
+
+  it("accounts an upload whose confirmation failed exactly once", async () => {
+    const tracker = trackUploadedBackups();
+    // The upload commits; a later step (e.g. confirming the snapshot exists)
+    // fails with an ordinary error before afterCreate records it.
+    await tracker.wrapUpload(async () => ({
+      id: "backup-1",
+      summary: { data_added_packed: 3_000 },
+    }));
+    const confirm = async () => {
+      throw new Error("new backup is not confirmed in the repository");
+    };
+    await expect(confirm()).rejects.toThrow("not confirmed");
+    expect(tracker.unaccounted(new Set()).map(({ id }) => id)).toEqual([
+      "backup-1",
+    ]);
+    // A retry of the same run must not count it again.
+    expect(tracker.unaccounted(new Set())).toEqual([]);
+  });
+
+  it("skips uploads that afterCreate already recorded", async () => {
+    const tracker = trackUploadedBackups();
+    await tracker.wrapUpload(async () => ({ id: "recorded" }));
+    await tracker.wrapUpload(async () => ({ id: "abandoned" }));
+    expect(
+      tracker.unaccounted(new Set(["recorded"])).map(({ id }) => id),
+    ).toEqual(["abandoned"]);
+  });
+
+  it("records nothing when the upload itself fails", async () => {
+    const tracker = trackUploadedBackups();
+    await expect(
+      tracker.wrapUpload(async () => {
+        throw new Error("upload failed");
+      }),
+    ).rejects.toThrow("upload failed");
+    expect(tracker.uploaded()).toEqual([]);
   });
 });

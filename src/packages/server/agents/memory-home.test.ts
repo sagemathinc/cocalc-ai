@@ -50,10 +50,12 @@ test("a request for an account homed here runs here", async () => {
       request: { action: "memory", op: "list" },
     }),
   ).resolves.toEqual({ ok: "agent" });
-  expect(mockMemory.agent).toHaveBeenCalledWith(ACCOUNT, PROJECT, {
-    action: "memory",
-    op: "list",
-  });
+  expect(mockMemory.agent).toHaveBeenCalledWith(
+    ACCOUNT,
+    PROJECT,
+    { action: "memory", op: "list" },
+    undefined,
+  );
   // No memory is a null index, not undefined, over the wire.
   await expect(
     withMemoryHome(ACCOUNT, { kind: "turn-index", project_id: PROJECT }),

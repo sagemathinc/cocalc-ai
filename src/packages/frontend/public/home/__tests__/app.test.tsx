@@ -12,9 +12,8 @@ import {
   PUBLIC_HOME_HIGHLIGHTS,
   PUBLIC_HOME_INTRO,
   PUBLIC_HOME_SECONDARY_CTA,
-  PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, COMPANY_NAME } from "@cocalc/util/theme";
 import {
   combineLeak,
   DARK_FEATURE_CARD_STYLE,
@@ -553,12 +552,21 @@ describe("PublicHomeApp", () => {
         .map((item) => item.textContent),
     ).toEqual([...PUBLIC_HOME_HIGHLIGHTS]);
     expect(PUBLIC_HOME_HIGHLIGHTS).toHaveLength(3);
-    expect(
-      hero.querySelector(".cocalc-public-home-trust-line")?.textContent,
-    ).toBe(PUBLIC_HOME_TRUST_LINE);
+    // The retired trust line stays off the first screen, as in the crawler
+    // fallback.
+    expect(hero.textContent).not.toMatch(/Developed by|since 2013/i);
     expect(
       within(hero).getByRole("link", { name: PUBLIC_HOME_SECONDARY_CTA.label }),
     ).toHaveAttribute("href", `/${PUBLIC_HOME_SECONDARY_CTA.href}`);
+  });
+
+  it("still names the company in the footer copyright", () => {
+    render(<PublicHomeApp config={cocalcAi} />);
+
+    expect(screen.getByRole("contentinfo").textContent).toContain(
+      `© ${new Date().getFullYear()} ${COMPANY_NAME}`,
+    );
+    expect(COMPANY_NAME).toBe("SageMath, Inc.");
   });
 
   // The same sites and expected chips as the crawler fallback test in

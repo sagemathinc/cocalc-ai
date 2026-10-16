@@ -16,6 +16,16 @@ let loggedRollingSnapshotsDisabled = false;
 export const TEMP_RUSTIC_SNAPSHOT_PREFIX = "temp-rustic-snapshot";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 
+// Thrown from create when the caller can no longer vouch for the volume (for
+// example it was deleted or frozen for archival while a backup uploaded).
+// Retention is skipped: deleting old recovery points needs the same authority.
+export class RollingSnapshotRetentionSkipped extends Error {
+  constructor(public readonly reason: string) {
+    super(`rolling snapshot retention skipped: ${reason}`);
+    this.name = "RollingSnapshotRetentionSkipped";
+  }
+}
+
 export interface RollingSnapshotUpdateResult {
   changed: boolean | null;
   createdName: string | null;
@@ -135,6 +145,7 @@ export async function updateRollingSnapshots({
       snapshotNames.push(name);
       createdName = name;
     } catch (err) {
+      if (err instanceof RollingSnapshotRetentionSkipped) throw err;
       createError = err;
     }
   }

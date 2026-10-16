@@ -55,9 +55,9 @@ describeDb("Agent Network account rehome fence", () => {
     }
     const account = randomUUID();
     await db.query(
-      `INSERT INTO account_computer_requests
-         (request_id, account_id, name, requested_policy, state, server_nonce, expires_at, agent_network_id)
-       VALUES ('R-REHOME0001', $1, 'mac', '{}', 'declined', 'n', now(), $2)`,
+      `INSERT INTO computer_pairing_requests
+         (request_id, account_id, project_id, name, state, expires_at)
+       VALUES ('R-REHOME0001', $1, $2, 'mac', 'declined', now())`,
       [account, randomUUID()],
     );
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(

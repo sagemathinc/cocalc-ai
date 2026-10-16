@@ -22,6 +22,68 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
+describe("pinnedRecoveryDueAt", () => {
+  const changedDue = "2026-10-15T00:33:28.218Z";
+  const pinned = new Date("2026-10-09T00:56:25.702Z");
+  const lastBackup = new Date("2026-10-08T00:56:25.702Z");
+
+  it.each(["deferred", "failed"])(
+    "keeps the host's earlier due time after a %s attempt",
+    async (outcome) => {
+      const { pinnedRecoveryDueAt } = await import("./maintenance-status");
+      expect(
+        pinnedRecoveryDueAt(changedDue, lastBackup, {
+          outcome,
+          due_at: pinned,
+        }),
+      ).toBe(pinned.toISOString());
+    },
+  );
+
+  it.each(["succeeded", "skipped", null])(
+    "ignores the reported due time after outcome %s",
+    async (outcome) => {
+      const { pinnedRecoveryDueAt } = await import("./maintenance-status");
+      expect(
+        pinnedRecoveryDueAt(changedDue, lastBackup, {
+          outcome,
+          due_at: pinned,
+        }),
+      ).toBe(changedDue);
+    },
+  );
+
+  it("ignores a reported due time that a later success satisfied", async () => {
+    const { pinnedRecoveryDueAt } = await import("./maintenance-status");
+    expect(
+      pinnedRecoveryDueAt(changedDue, new Date("2026-10-10T00:00:00.000Z"), {
+        outcome: "failed",
+        due_at: pinned,
+      }),
+    ).toBe(changedDue);
+  });
+
+  it("never makes work due that has no unprotected change", async () => {
+    const { pinnedRecoveryDueAt } = await import("./maintenance-status");
+    expect(
+      pinnedRecoveryDueAt(null, lastBackup, {
+        outcome: "failed",
+        due_at: pinned,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the computed due time when it is earlier", async () => {
+    const { pinnedRecoveryDueAt } = await import("./maintenance-status");
+    expect(
+      pinnedRecoveryDueAt("2026-10-08T12:00:00.000Z", lastBackup, {
+        outcome: "deferred",
+        due_at: pinned,
+      }),
+    ).toBe("2026-10-08T12:00:00.000Z");
+  });
+});
+
 describe("project recovery status after unchanged-content reconciliation", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -123,6 +185,54 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       scheduleChanged: true,
     });
     expect(status.snapshot_due_at).toBe("2026-04-10T00:00:00.000Z");
+  });
+
+  it("reports a failing backup as due from the host's pinned time", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p LEFT JOIN project_hosts")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              last_backup: new Date("2026-10-08T00:56:25.702Z"),
+              last_changed: new Date("2026-10-15T00:33:28.218Z"),
+              host_last_seen: new Date("2026-10-15T00:35:00.000Z"),
+              host_maintenance_gate: null,
+              snapshots: { disabled: true },
+              backups: { frequent: 0, daily: 1, weekly: 3, monthly: 4 },
+              owner_account_id: null,
+              usage_account_id: null,
+              course: null,
+              users: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_maintenance_status WHERE")) {
+        return {
+          rows: [
+            {
+              kind: "backup",
+              host_id: "host-1",
+              observed_at: new Date("2026-10-14T22:30:36.461Z"),
+              outcome: "failed",
+              reason: "killed command",
+              due_at: new Date("2026-10-09T00:56:25.702Z"),
+              latest_snapshot_at: null,
+              latest_backup_id: null,
+              reconciled_change_at: null,
+              reconciled_schedule_revision: null,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const { getProjectRecoveryStatusLocal } =
+      await import("./maintenance-status");
+    const status = await getProjectRecoveryStatusLocal("project-1");
+    expect(status.backup_due_at).toBe("2026-10-09T00:56:25.702Z");
   });
 
   it("attaches only a fresh host-wide memory block", async () => {
@@ -633,6 +743,54 @@ describe("project recovery status after unchanged-content reconciliation", () =>
         storage_service_class: "paying",
         kind: "backup",
         repeated_failures: 1,
+      }),
+    ]);
+  });
+
+  it("keeps a failing backup overdue from its pinned due time while the project is edited", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    const now = Date.now();
+    const pinnedDue = new Date(now - 6 * 24 * 60 * 60_000);
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              owner_account_id: "owner-account",
+              // Edited a minute ago: the change time alone would look current.
+              last_changed: new Date(now - 60_000),
+              last_backup: new Date(pinnedDue.getTime() - 24 * 60 * 60_000),
+              host_last_seen: new Date(now),
+              snapshots: { disabled: true },
+              backups: { daily: 1 },
+              backup_observed_at: new Date(now),
+              backup_class: "paying",
+              backup_outcome: "deferred",
+              backup_failures: 26,
+              backup_status_due_at: pinnedDue,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.paying_backup_overdue).toBe(1);
+    expect(health.oldest_backup_delay_seconds).toBeGreaterThan(
+      6 * 24 * 60 * 60 - 60,
+    );
+    expect(health.oldest_debt).toEqual([
+      expect.objectContaining({
+        project_id: "project-1",
+        kind: "backup",
+        due_at: pinnedDue.toISOString(),
       }),
     ]);
   });

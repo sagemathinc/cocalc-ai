@@ -211,6 +211,66 @@ describe("snapshot-backup-maintenance", () => {
     process.env = env;
   });
 
+  it("gives a repeatedly failing backup more time, up to two hours", async () => {
+    const { scheduledBackupTimeoutMs } =
+      await import("./snapshot-backup-maintenance");
+    const limits = [0, 1, 2, 3, 26].map((failures) =>
+      scheduledBackupTimeoutMs({ failures, starvationOverride: false }),
+    );
+    expect(limits).toEqual([
+      30 * 60_000,
+      60 * 60_000,
+      2 * 60 * 60_000,
+      2 * 60 * 60_000,
+      2 * 60 * 60_000,
+    ]);
+    expect(
+      scheduledBackupTimeoutMs({ failures: 26, starvationOverride: true }),
+    ).toBe(30 * 60_000);
+  });
+
+  it.each([
+    [false, 2 * 60 * 60_000],
+    [true, 30 * 60_000],
+  ])(
+    "runs a failing backup admitted with starvation override %s with limit %d",
+    async (starvationOverride, timeoutMs) => {
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        {
+          project_id: "proj-2",
+          last_edited: "2026-04-12T21:00:00.000Z",
+          last_backup: "2026-04-10T21:00:00.000Z",
+          backup_due_since: "2026-04-12T21:00:00.000Z",
+          backup_status_outcome: "failed",
+          backup_status_due_at: "2026-04-11T21:00:00.000Z",
+          backup_retry_at: "2026-04-11T22:00:00.000Z",
+          backup_failures: 4,
+          snapshots: { disabled: true },
+          backups: { daily: 1 },
+          max_backups_per_project: 5,
+        },
+      ]);
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) => ({
+          admitted: true,
+          would_defer: starvationOverride,
+          starvation_override: starvationOverride,
+          operation_id: `${operation_kind}:${project_id}`,
+          release: releaseStorageOperationMock,
+        }),
+      );
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "proj-2",
+          timeout_ms: timeoutMs,
+        }),
+      );
+    },
+  );
+
   it("runs host-owned maintenance with merged defaults and skips disabled schedules", async () => {
     process.env.COCALC_PROJECT_HOST_MAINTENANCE_ACTIVE_DAYS = "2";
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_PARALLELISM = "2";
@@ -250,6 +310,7 @@ describe("snapshot-backup-maintenance", () => {
       limit: 5,
       knownLastBackupAt: undefined,
       stage_durations_ms: {},
+      timeout_ms: 30 * 60 * 1000,
     });
     expect(admitStorageOperationMock).toHaveBeenCalledWith({
       operation_kind: "scheduled_snapshot",
@@ -832,6 +893,7 @@ describe("snapshot-backup-maintenance", () => {
       limit: 5,
       knownLastBackupAt: undefined,
       stage_durations_ms: {},
+      timeout_ms: 30 * 60 * 1000,
     });
   });
 

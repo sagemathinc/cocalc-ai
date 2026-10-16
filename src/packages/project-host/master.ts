@@ -40,6 +40,7 @@ import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { updateAuthorizedKeys, updateProjectUsers } from "./hub/projects";
+import { dropComputer } from "./computers";
 import {
   deleteVolume,
   getBackupExecutionStatus,
@@ -1684,6 +1685,9 @@ export async function startMasterRegistration({
         users,
         runtime_lifecycle_revision,
       });
+    },
+    async dropComputer({ computer_id }) {
+      dropComputer(computer_id);
     },
     async updateProjectRunQuota({ project_id, run_quota, run_quota_revision }) {
       await awaitReadyForControl("updateProjectRunQuota", waitUntilReady);

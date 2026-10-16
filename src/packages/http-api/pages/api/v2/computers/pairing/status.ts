@@ -3,9 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The claimant polls for the owner's decision; once approved, its certificate.
-// Unauthenticated and grants nothing: the owner approves in CoCalc with fresh
-// auth. See server/computers/pairing-http.ts.
+// The claiming machine polls for the owner's decision, with the secret its
+// claim returned. Unauthenticated otherwise: see server/computers/pairing-http.ts.
 
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import isPost from "@cocalc/http-api/lib/api/is-post";
@@ -18,8 +17,6 @@ export default async function handle(req, res) {
   if (!isPost(req, res)) {
     return;
   }
-  const { request_id, transcript_hash } = getParams(req);
-  res.json(
-    await pairingStatus({ request_id, transcript_hash }, requestAddress(req)),
-  );
+  const { request_id, secret } = getParams(req);
+  res.json(await pairingStatus({ request_id, secret }, requestAddress(req)));
 }

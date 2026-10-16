@@ -136,6 +136,7 @@ import {
   type BulkProjectControlResult,
 } from "@cocalc/conat/hub/api/projects";
 import type { HubApiCall } from "./edge-routing";
+import { normalizeProjectIds } from "@cocalc/conat/hub/api/routes";
 import type {
   ProjectRehomeOperationSummary,
   ProjectRehomeResponse,
@@ -5978,18 +5979,9 @@ export async function setProjectHidden({
   }
 }
 
+// As the split-by-project route normalizes them, so results match its ids.
 function dedupeProjectIds(project_ids: string[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const project_id of project_ids) {
-    const normalized = `${project_id ?? ""}`.trim();
-    if (!normalized || seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    deduped.push(normalized);
-  }
-  return deduped;
+  return normalizeProjectIds(project_ids);
 }
 
 export async function setLocalProjectsHidden({
@@ -6157,53 +6149,6 @@ export async function setLocalProjectsHidden({
   );
 }
 
-async function groupProjectIdsForHiddenUpdate({
-  project_ids,
-}: {
-  project_ids: string[];
-}): Promise<{
-  localProjectIds: string[];
-  remoteProjectIdsByBay: Map<string, string[]>;
-}> {
-  const localProjectIds: string[] = [];
-  const remoteProjectIdsByBay = new Map<string, string[]>();
-  const default_bay_id = getConfiguredBayId();
-  const locallyResolved = new Map<string, string>();
-  if (project_ids.length > 0) {
-    const { rows } = await getPool().query<{
-      project_id: string;
-      bay_id: string | null;
-    }>(
-      `
-        SELECT project_id::text AS project_id, COALESCE(owning_bay_id, $2) AS bay_id
-        FROM projects
-        WHERE project_id = ANY($1::uuid[])
-      `,
-      [project_ids, default_bay_id],
-    );
-    for (const row of rows) {
-      locallyResolved.set(row.project_id, `${row.bay_id ?? ""}`.trim());
-    }
-  }
-
-  for (const project_id of project_ids) {
-    const localBayId = locallyResolved.get(project_id);
-    const bay_id =
-      localBayId == null
-        ? (await resolveProjectBay(project_id))?.bay_id
-        : localBayId;
-    if (!bay_id || bay_id === default_bay_id) {
-      localProjectIds.push(project_id);
-      continue;
-    }
-    remoteProjectIdsByBay.set(bay_id, [
-      ...(remoteProjectIdsByBay.get(bay_id) ?? []),
-      project_id,
-    ]);
-  }
-  return { localProjectIds, remoteProjectIdsByBay };
-}
-
 export async function setProjectsHidden({
   account_id,
   project_ids,
@@ -6239,38 +6184,29 @@ export async function setProjectsHidden({
     validProjectIds.push(project_id);
   }
 
-  const { localProjectIds, remoteProjectIdsByBay } =
-    await groupProjectIdsForHiddenUpdate({ project_ids: validProjectIds });
-
+  // Routed by project (see @cocalc/conat/hub/api/routes): each bay sets
+  // the projects it owns; a project owned elsewhere means a stale route.
+  const here = getConfiguredBayId();
+  const owners = await resolveProjectBays(validProjectIds);
+  const localProjectIds: string[] = [];
+  for (const project_id of validProjectIds) {
+    const bay_id = owners.get(project_id)?.bay_id;
+    if (bay_id && bay_id !== here) {
+      results.set(project_id, {
+        project_id,
+        success: false,
+        error: `stale route: project ${project_id} is owned by ${bay_id}, not ${here}; retry`,
+      });
+    } else {
+      localProjectIds.push(project_id);
+    }
+  }
   for (const result of await setLocalProjectsHidden({
     account_id,
     project_ids: localProjectIds,
     hide,
   })) {
     results.set(result.project_id, result);
-  }
-
-  for (const [bay_id, remoteProjectIds] of remoteProjectIdsByBay.entries()) {
-    try {
-      const remoteResults = await getInterBayBridge()
-        .projectCollabInvite(bay_id)
-        .setProjectsHidden({
-          account_id,
-          project_ids: remoteProjectIds,
-          hide,
-        });
-      for (const result of remoteResults) {
-        results.set(result.project_id, result);
-      }
-    } catch (err) {
-      for (const project_id of remoteProjectIds) {
-        results.set(project_id, {
-          project_id,
-          success: false,
-          error: `${err}`,
-        });
-      }
-    }
   }
 
   return dedupedProjectIds.map(

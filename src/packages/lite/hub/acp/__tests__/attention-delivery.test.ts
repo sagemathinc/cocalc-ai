@@ -409,6 +409,244 @@ it("preserves the explicit reset marker instead of inferring old history", async
   expect((await prepare()).currentAgentSessionId).toBe("replacement-session");
 });
 
+describe("a context clear after admission", () => {
+  const cleared = {
+    event: "chat",
+    thread_id: record.thread_id,
+    message_id: "cleared-1",
+    date: "2026-09-05T08:00:00.000Z",
+    sender_id: accountId,
+    acp_context_cleared: true,
+  };
+  const prepare = (request: AcpRequest) =>
+    acpTestInternals.prepareQueuedUserMessageForExecution({
+      client: {} as Client,
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      user_message_id: enqueueAcpJob(request).user_message_id,
+      request,
+    });
+
+  it("runs a queued Claude message fresh instead of failing", async () => {
+    const source = { ...claudeTurnRequest(), session_id: sessionId };
+    source.chat!.context_generation = "";
+    rows[0].agent_runtime = source.runtime;
+    rows[0].agent_session_id = "";
+    rows.push(cleared);
+    const prepared = await prepare(source);
+    expect(prepared.currentAgentSessionId).toBe("");
+    expect(prepared.contextGeneration).toBe("cleared-1");
+  });
+
+  it("moves a queued Codex message to the fresh context", async () => {
+    const source = turnRequest({ model: "gpt-6-astra", sessionId });
+    source.session_id = sessionId;
+    source.chat!.context_generation = "";
+    delete rows[0].acp_config.sessionId;
+    rows.push(cleared);
+    const prepared = await prepare(source);
+    expect(prepared.staleSession).toBe(true);
+    // A cleared Codex thread is keyed by its "Context cleared" line.
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
+    expect(prepared.currentAgentConfig?.sessionId).toBeUndefined();
+    expect(prepared.contextGeneration).toBe("cleared-1");
+  });
+
+  it("refreshes an unstamped request's session once the thread was cleared", async () => {
+    // Its date does not say when its session was chosen: an older client can
+    // send an old session in a message written after the clear.
+    const unstamped = turnRequest({ model: "gpt-6-astra", sessionId });
+    unstamped.session_id = sessionId;
+    unstamped.chat!.user_message_date = "2026-09-05T08:01:00.000Z";
+    expect((await prepare(unstamped)).staleSession).toBeUndefined();
+    rows.push(cleared);
+    delete rows[0].acp_config.sessionId;
+    const prepared = await prepare(unstamped);
+    expect(prepared.staleSession).toBe(true);
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
+  });
+
+  // The thread config keeps the clear after rotation archives its line.
+  const clearedConfig = {
+    context_generation: "cleared-1",
+    context_cleared_at: cleared.date,
+  };
+
+  it("still knows the clear after its line was archived", async () => {
+    const source = turnRequest({ model: "gpt-6-astra", sessionId });
+    source.session_id = sessionId;
+    source.chat!.context_generation = "";
+    delete rows[0].acp_config.sessionId;
+    Object.assign(rows[0], clearedConfig);
+    // The kept root row still names the old session.
+    rows[1].acp_thread_id = sessionId;
+    const prepared = await prepare(source);
+    expect(prepared.staleSession).toBe(true);
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
+  });
+
+  it("ignores an old turn's session that merged in after the clear", async () => {
+    const source = claudeTurnRequest();
+    source.chat!.context_generation = "cleared-1";
+    rows[0].agent_runtime = source.runtime;
+    // The old turn saved its session on another branch; both changes merged.
+    Object.assign(rows[0], clearedConfig, {
+      agent_session_id: sessionId,
+      agent_session_generation: "",
+    });
+    rows.push(cleared);
+    const prepared = await prepare(source);
+    expect(prepared.currentAgentSessionId).toBe("");
+    rows[0].agent_session_generation = "cleared-1";
+    expect((await prepare(source)).currentAgentSessionId).toBe(sessionId);
+  });
+
+  it("trusts a sender that saw a later clear than this hub", async () => {
+    const source = claudeTurnRequest();
+    source.chat!.context_generation = "cleared-2";
+    source.chat!.context_cleared_at = "2026-09-05T09:00:00.000Z";
+    rows[0].agent_runtime = source.runtime;
+    // The hub still sees the old session, saved before the clear it knows.
+    rows[0].agent_session_id = sessionId;
+    rows.push(cleared);
+    const prepared = await prepare(source);
+    expect(prepared.currentAgentSessionId).toBe("");
+    expect(prepared.contextGeneration).toBe("cleared-2");
+  });
+
+  it("does not mistake a lagging sender for one ahead", async () => {
+    // The sender's generation is older than the hub's, and its line was
+    // archived; only the clear times order them, not the message date.
+    const source = turnRequest({ model: "gpt-6-astra", sessionId });
+    source.session_id = sessionId;
+    source.chat!.context_generation = "cleared-0";
+    source.chat!.context_cleared_at = "2026-09-05T07:00:00.000Z";
+    source.chat!.user_message_date = "2026-09-05T09:00:00.000Z";
+    delete rows[0].acp_config.sessionId;
+    Object.assign(rows[0], clearedConfig);
+    const prepared = await prepare(source);
+    expect(prepared.staleSession).toBe(true);
+    expect(prepared.currentAgentSessionId).toBe("cleared-1");
+  });
+
+  it("fails rather than run Codex without knowing the context", async () => {
+    const source = turnRequest({ model: "gpt-6-astra", sessionId });
+    source.session_id = sessionId;
+    const syncdb = await jest
+      .mocked(acquireChatSyncDB)
+      .getMockImplementation()!({} as any);
+    // Only the whole-chat read behind the context check fails.
+    jest.mocked(acquireChatSyncDB).mockResolvedValueOnce({
+      ...syncdb,
+      get: (where: any) => {
+        if (where == null) throw Error("chat unavailable");
+        return syncdb.get(where);
+      },
+    } as any);
+    await expect(prepare(source)).rejects.toThrow("chat unavailable");
+  });
+
+  const threadKey = {
+    project_id: projectId,
+    path: record.path,
+    thread_id: record.thread_id,
+  };
+  const sendNow = (user_message_id: string) =>
+    ({
+      action: "send_immediately",
+      account_id: accountId,
+      ...threadKey,
+      user_message_id,
+      context_generation: "cleared-1",
+      context_cleared_at: cleared.date,
+    }) as any;
+
+  it("refuses a send-now until the hub has synced the caller's clear", async () => {
+    // Queued before the clear, so stamped with the old (empty) generation.
+    const queued = turnRequest({ model: "gpt-6-astra", sessionId });
+    queued.session_id = sessionId;
+    queued.chat!.context_generation = "";
+    const job = enqueueAcpJob(queued);
+    mockSteer.mockResolvedValue({ state: "steered" });
+    // The caller already saw the clear; this hub has not synced it yet.
+    await expect(
+      acpTestInternals.handleAcpControlRequest(sendNow(job.user_message_id)),
+    ).rejects.toThrow(/has not reached its project yet/);
+    // Nothing was held, so a cancel from another tab now simply sticks.
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("queued");
+    expect(mockSteer).not.toHaveBeenCalled();
+    // Once the clear arrives, the old request is stale: never steered into
+    // the old context, it waits to run fresh.
+    Object.assign(rows[0], clearedConfig);
+    expect(
+      await acpTestInternals.handleAcpControlRequest(
+        sendNow(job.user_message_id),
+      ),
+    ).toEqual({ ok: true, state: "queued" });
+    expect(mockSteer).not.toHaveBeenCalled();
+  });
+
+  it("lets only one of two concurrent send-nows act on a job", async () => {
+    const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
+    mockSteer.mockResolvedValue({ state: "steered" });
+    const control = () =>
+      acpTestInternals.handleAcpControlRequest({
+        ...sendNow(job.user_message_id),
+        context_generation: undefined,
+        context_cleared_at: undefined,
+      });
+    const results = await Promise.all([control(), control()]);
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+  });
+
+  it("keeps a cancel that races a send-now", async () => {
+    const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
+    // The steer finds no live turn, so the send-now puts the job back; it is
+    // slow, so the cancel arrives while the send-now holds the job.
+    mockSteer.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { state: "missing" };
+    });
+    const sendNowResult = acpTestInternals.handleAcpControlRequest({
+      ...sendNow(job.user_message_id),
+      context_generation: undefined,
+      context_cleared_at: undefined,
+    });
+    // Cancel only once the send-now holds the job and is steering it.
+    while (mockSteer.mock.calls.length === 0)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    // Padded identities name the same job, so they share its control queue.
+    const cancelResult = acpTestInternals.handleAcpControlRequest({
+      action: "cancel",
+      account_id: accountId,
+      ...threadKey,
+      path: `${threadKey.path} `,
+      user_message_id: ` ${job.user_message_id}`,
+    } as any);
+    await Promise.all([sendNowResult, cancelResult]);
+    expect(await cancelResult).toMatchObject({ ok: true, state: "canceled" });
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("canceled");
+  });
+
+  it("does not steer guidance into a turn of another context", () => {
+    const writer = (generation: string, cleared = false) => ({
+      contextClearedSinceStart: () => cleared,
+      turnContextGeneration: () => generation,
+    });
+    const guidance = turnRequest(undefined);
+    guidance.chat!.context_generation = "cleared-1";
+    const { guidanceFitsTurn } = acpTestInternals;
+    expect(guidanceFitsTurn(undefined, guidance)).toBe(true);
+    expect(guidanceFitsTurn(writer("cleared-1"), guidance)).toBe(true);
+    // Written after a clear this hub has not synced yet.
+    expect(guidanceFitsTurn(writer(""), guidance)).toBe(false);
+    // The turn started before a clear this hub has seen.
+    expect(guidanceFitsTurn(writer("cleared-1", true), guidance)).toBe(false);
+  });
+});
+
 it.each(["", "replacement-session"])(
   "rejects late first-turn Claude answers after context changed to %j",
   async (currentSession) => {
@@ -904,6 +1142,24 @@ it("uses the generic agent identity if the thread has no model", async () => {
   expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).chat?.sender_id).toBe(
     "openai-codex-agent",
   );
+});
+
+it("stamps an answer and keeps it out of a cleared Codex context", async () => {
+  // Cleared after the question; the old turn's session merged in later.
+  Object.assign(rows[0], {
+    context_generation: "cleared-1",
+    context_cleared_at: "2026-09-05T08:00:00.000Z",
+    agent_session_generation: "",
+  });
+  mockSteer.mockResolvedValue({ state: "missing" });
+  await acpTestInternals.deliverAsyncAttentionAnswer(record);
+  const queued = decodeAcpJobRequest(listQueuedAcpJobs()[0]);
+  expect(queued.session_id).toBe("cleared-1");
+  expect(queued.config?.sessionId).toBeUndefined();
+  expect(queued.chat).toMatchObject({
+    context_generation: "cleared-1",
+    context_cleared_at: "2026-09-05T08:00:00.000Z",
+  });
 });
 
 describe("Claude network worker delivery", () => {

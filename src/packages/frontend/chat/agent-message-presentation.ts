@@ -31,7 +31,35 @@ type AgentMessageEvidence = {
   source_label?: string;
   source_agent_id?: string;
   source_project_id?: string;
+  /**
+   * Shown only while the message waits: its network queues messages until the
+   * recipient's current turn ends. Rendering state, never saved with an edit.
+   */
+  delivery?: "queued" | "queued-fallback";
 };
+
+/**
+ * Why an incoming agent message is still waiting in the recipient's queue.
+ * A queue state means the recipient's current turn must end first: in a
+ * queued network by design, in a live network because it could not be taken
+ * as guidance. The row's effective_delivery is stamped from the configured
+ * mode ("live-guidance" for every live message), so it cannot tell a
+ * fallback apart; only the queue state can.
+ */
+export function agentMessageWaitingDelivery(
+  rpc:
+    | { configured_delivery?: unknown; effective_delivery?: unknown }
+    | undefined,
+  waiting: boolean,
+): "queued" | "queued-fallback" | undefined {
+  if (!waiting || !rpc) return undefined;
+  const live =
+    rpc.configured_delivery === "live" ||
+    (rpc.configured_delivery === undefined &&
+      (rpc.effective_delivery === "live-guidance" ||
+        rpc.effective_delivery === "queued-fallback"));
+  return live ? "queued-fallback" : "queued";
+}
 
 export function agentMessageDirectionFromMarkdown(
   value: string,
@@ -63,6 +91,7 @@ export function agentMessageFence(
     evidence?.source_project_id
       ? `project=${evidence.source_project_id}`
       : undefined,
+    evidence?.delivery ? `delivery=${evidence.delivery}` : undefined,
   ].filter(Boolean);
   const info = `agent-message${correlation}${metadata.length ? ` ${metadata.join(" ")}` : ""}`;
   return `${fence}${info}\n${value}\n${fence}`;

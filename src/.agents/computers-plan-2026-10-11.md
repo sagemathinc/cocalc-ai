@@ -1,5 +1,7 @@
 # Computers: let your agents use another computer
 
+> **Superseded (2026-10-16)** by `computers-direct-host-2026-10-16.md`: computers now connect directly to their project's host, with at-most-once exec and no tickets, signed state or lease. Kept for history.
+
 Status: plan, nothing built yet (2026-10-11). It comes from a long discussion with
 William on Oct 11, a review by @cocalc-lite4 (who built the CLI connectors and
 sensors), a security review by @lite1-review, and a survey of similar products

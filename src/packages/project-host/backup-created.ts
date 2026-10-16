@@ -33,6 +33,42 @@ export function parseCreatedBackupSnapshot(
   };
 }
 
+// Remembers what each upload produced. A run that fails after an upload
+// committed (the volume changed meanwhile, confirmation failed, ...) still has
+// to account for it, because the managed egress was spent.
+export function trackUploadedBackups(
+  wrapUpload?: <T>(upload: () => Promise<T>) => Promise<T>,
+): {
+  wrapUpload: <T>(upload: () => Promise<T>) => Promise<T>;
+  uploaded: () => BackupSnapshotRef[];
+  // Uploads not in accountedIds and not returned by an earlier call, so that
+  // retries of the same run never account for one upload twice.
+  unaccounted: (accountedIds: ReadonlySet<string>) => BackupSnapshotRef[];
+} {
+  const uploaded: BackupSnapshotRef[] = [];
+  const returned = new Set<string>();
+  const outer = wrapUpload ?? (<T>(upload: () => Promise<T>) => upload());
+  return {
+    wrapUpload: <T>(upload: () => Promise<T>) =>
+      outer(async () => {
+        const result = await upload();
+        const backup = parseCreatedBackupSnapshot(result);
+        if (backup) uploaded.push(backup);
+        return result;
+      }),
+    uploaded: () => [...uploaded],
+    unaccounted: (accountedIds) => {
+      const result: BackupSnapshotRef[] = [];
+      for (const backup of uploaded) {
+        if (accountedIds.has(backup.id) || returned.has(backup.id)) continue;
+        returned.add(backup.id);
+        result.push(backup);
+      }
+      return result;
+    },
+  };
+}
+
 export function newestBackupTimeForIds({
   backups,
   backupIds,

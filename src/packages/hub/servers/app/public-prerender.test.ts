@@ -8,6 +8,18 @@ import {
   UNSUPPORTED_CAPABILITY_TERMS,
 } from "@cocalc/util/public-copy-guards";
 import {
+  getPublicAboutIntro,
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_HISTORY,
+  PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+  PUBLIC_ABOUT_REASON,
+  PUBLIC_ABOUT_TRUST,
+  PUBLIC_TEAM_BILLING_CONTACT,
+  PUBLIC_TEAM_MEMBERS,
+  UNPUBLISHED_TEAM_PROFILE_SLUGS,
+} from "@cocalc/util/public-about-content";
+import {
   getPublicFeaturePage,
   PUBLIC_FEATURE_PAGES,
 } from "@cocalc/util/public-feature-pages";
@@ -25,13 +37,17 @@ import {
   PUBLIC_HOME_HIGHLIGHTS,
   PUBLIC_HOME_INTRO,
   PUBLIC_HOME_SECONDARY_CTA,
-  PUBLIC_HOME_TRUST_LINE,
 } from "@cocalc/util/public-home-content";
 import {
   getPublicFeaturesTasks,
   PUBLIC_FEATURES_EYEBROW,
   PUBLIC_FEATURES_HEADLINE,
 } from "@cocalc/util/public-features-index";
+
+// Shared About text as readers see it, links included.
+function aboutText(parts: readonly { text: string }[]): string {
+  return parts.map(({ text }) => text).join("");
+}
 
 describe("public feature initial HTML", () => {
   it.each(["/prefix", "/docs"])(
@@ -128,13 +144,14 @@ describe("home first screen initial HTML", () => {
         ([, tag, text]) => `${tag}: ${text}`,
       );
 
+      // The first screen has no trust line, as on the React page.
       expect(texts).toEqual([
         `p: ${PUBLIC_HOME_EYEBROW}`,
         `h1: ${PUBLIC_HOME_HEADLINE}`,
         `p: ${PUBLIC_HOME_INTRO}`,
         ...PUBLIC_HOME_HIGHLIGHTS.map((highlight) => `li: ${highlight}`),
-        `p: ${PUBLIC_HOME_TRUST_LINE}`,
       ]);
+      expect(html).not.toMatch(/Developed by|since 2013/i);
       expect(header).toContain(
         `<a href="${prefix}/auth/sign-up">Start on CoCalc.ai</a> <a href="${prefix}/${PUBLIC_HOME_SECONDARY_CTA.href}">${PUBLIC_HOME_SECONDARY_CTA.label}</a>`,
       );
@@ -401,11 +418,9 @@ describe("core landing page initial HTML", () => {
         basePath,
       );
       expect(about).toContain('data-cocalc-public-prerender="about"');
-      expect(about).toContain(
-        "Building the future of collaborative computation.",
-      );
-      expect(about).toContain("Make serious computational work easy");
       expect(about).toContain(`href="${prefix}/about/team/william-stein"`);
+      expect(about).toContain(`href="${prefix}/about/events"`);
+      expect(about).not.toMatch(/since 2013/i);
 
       const support = renderPublicRoutePrerender(
         { section: "support", route: { view: "index" } },
@@ -417,6 +432,109 @@ describe("core landing page initial HTML", () => {
     },
   );
 
+  // The React page renders the same constants (frontend/public/__tests__/
+  // app.test.tsx), so crawlers read the company statement word for word.
+  it("renders the About statement and principles from the shared content", () => {
+    const about = renderPublicRoutePrerender(
+      { section: "about", route: { view: "about" } },
+      "/",
+    );
+    const header = about.slice(
+      about.indexOf("<header>"),
+      about.indexOf("</header>"),
+    );
+    expect(
+      [...header.matchAll(/<(p|h1)>([^<]+)<\/\1>/g)].map(
+        ([, tag, text]) => `${tag}: ${text}`,
+      ),
+    ).toEqual([
+      "p: SageMath, Inc. · The company behind CoCalc",
+      `h1: ${PUBLIC_ABOUT_HEADLINE}`,
+      // Away from cocalc.ai, the lead names Codex only.
+      `p: ${aboutText(getPublicAboutIntro(false))}`,
+    ]);
+    expect(header).not.toMatch(/Claude/);
+    expect(about.match(/<h1>/g)).toHaveLength(1);
+    expect(about).toContain(
+      `<p>How we build</p>\n  <h2>${PUBLIC_ABOUT_PRINCIPLES_HEADLINE}</h2>\n  <p>${PUBLIC_ABOUT_REASON}</p>`,
+    );
+    expect(about).toContain(
+      PUBLIC_ABOUT_PRINCIPLES.map(
+        ({ body, title }) => `<li><h3>${title}</h3><p>${body}</p></li>`,
+      ).join(""),
+    );
+    expect(about).not.toMatch(
+      /Claude Code|experimental preview|Incorporated|Our mission/i,
+    );
+  });
+
+  // The React page renders the same words (frontend/public/__tests__/
+  // app.test.tsx), in the same order, so crawlers also read the trust section
+  // and the history.
+  it.each(["/", "/prefix"])(
+    "renders About's trust section and history from the shared content, on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const trustHref = `${prefix}/policies/trust`;
+      const about = renderPublicRoutePrerender(
+        { section: "about", route: { view: "about" } },
+        basePath,
+      );
+      const { eyebrow, headline, intro, link, note } = PUBLIC_ABOUT_TRUST;
+      expect(about).toContain(
+        `<p>${eyebrow}</p>\n  <h2>${headline}</h2>\n  <p>${intro}</p>`,
+      );
+      expect(about).toContain(
+        `<ul><li><a href="${trustHref}"><strong>SOC 2</strong> Independent security audit</a></li><li><a href="${trustHref}"><strong>GDPR</strong> Verified privacy program</a></li><li><strong>Flexible deployment</strong> Hosted and customer-operated</li></ul>`,
+      );
+      expect(about).toContain(
+        `<p><strong>${note.title}</strong> ${note.body}</p>\n  <p><a href="${trustHref}">${link.label}</a></p>`,
+      );
+      const history = PUBLIC_ABOUT_HISTORY;
+      expect(about).toContain(
+        `<p>${history.eyebrow}</p>\n  <h2>${history.headline}</h2>\n  <ul>${history.timeline
+          .map(({ body, year }) => `<li><strong>${year}</strong> ${body}</li>`)
+          .join("")}</ul>`,
+      );
+      // The two strings this page rewrote, word for word.
+      expect(about).toContain(
+        "<h2>A mature company behind your team and its agents.</h2>",
+      );
+      expect(about).toContain(
+        "<li><strong>Today</strong> CoCalc is rebuilt with agents at its core: they work in the same persistent, shared projects as the people who direct them.</li>",
+      );
+      const sections = [
+        PUBLIC_ABOUT_PRINCIPLES_HEADLINE,
+        headline,
+        "Who we serve",
+        history.headline,
+        "Meet the team",
+      ].map((text) => about.indexOf(`<h2>${text}</h2>`));
+      expect(sections.every((index) => index >= 0)).toBe(true);
+      expect([...sections].sort((a, b) => a - b)).toEqual(sections);
+    },
+  );
+
+  // As on the React page, cocalc.ai's lead names Claude and links it to the
+  // Claude guide, which states its preview status.
+  it.each(["/", "/prefix"])(
+    "links the About lead's Claude mention to its guide on cocalc.ai, on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const about = renderPublicRoutePrerender(
+        { section: "about", route: { view: "about" } },
+        basePath,
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
+      );
+      const [before, claude, after] = getPublicAboutIntro(true);
+      expect(claude).toEqual({ path: "docs/ai/claude-code", text: "Claude" });
+      expect(about).toContain(
+        `<h1>${PUBLIC_ABOUT_HEADLINE}</h1>\n  <p>${before.text}<a href="${prefix}/docs/ai/claude-code">Claude</a>${after.text}</p>`,
+      );
+      expect(about).not.toMatch(/Claude Code|experimental preview/i);
+    },
+  );
+
   it("uses shared team and community records for detail discovery", () => {
     const team = renderPublicRoutePrerender(
       { section: "about", route: { view: "about-team" } },
@@ -425,19 +543,40 @@ describe("core landing page initial HTML", () => {
     expect(team).toContain('data-cocalc-public-prerender="about-team"');
     expect(team).toContain("William Stein, Founder and CEO");
     expect(team).toContain("Blaec Bejarano, CSO");
+    // One entry per published profile, and, as on the React page, the
+    // billing contact goes to cocalc.ai's support page: another site's own
+    // support page belongs to that site's operator.
+    expect(
+      [...team.matchAll(/href="\/about\/team\/([^"]+)"/g)].map(
+        ([, slug]) => slug,
+      ),
+    ).toEqual(PUBLIC_TEAM_MEMBERS.map(({ slug }) => slug));
+    expect(team).toContain(
+      `<p>${PUBLIC_TEAM_BILLING_CONTACT.text} <a href="https://cocalc.ai/support">${PUBLIC_TEAM_BILLING_CONTACT.label}</a>.</p>`,
+    );
+    // On cocalc.ai itself, that is the site's own support page.
+    expect(
+      renderPublicRoutePrerender(
+        { section: "about", route: { view: "about-team" } },
+        "/prefix",
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
+      ),
+    ).toContain(
+      `<p>${PUBLIC_TEAM_BILLING_CONTACT.text} <a href="/prefix/support">${PUBLIC_TEAM_BILLING_CONTACT.label}</a>.</p>`,
+    );
 
     const profile = renderPublicRoutePrerender(
       {
         section: "about",
-        route: { view: "about-team-member", teamSlug: "harald-schilly" },
+        route: { view: "about-team-member", teamSlug: "blaec-bejarano" },
       },
       "/",
     );
     expect(profile).toContain(
       'data-cocalc-public-prerender="about-team-member"',
     );
-    expect(profile).toContain("<h1>Harald Schilly</h1>");
-    expect(profile).toContain("long-time SageMath contributor");
+    expect(profile).toContain("<h1>Blaec Bejarano</h1>");
+    expect(profile).toContain("leads sales and partnerships");
 
     const community = renderPublicRoutePrerender(
       { section: "support", route: { view: "community" } },
@@ -461,6 +600,11 @@ describe("core landing page initial HTML", () => {
         section: "about",
         route: { view: "about-team-member", teamSlug: "not-a-person" },
       },
+      // The hub redirects these to the team page before rendering.
+      ...UNPUBLISHED_TEAM_PROFILE_SLUGS.map((teamSlug) => ({
+        section: "about",
+        route: { view: "about-team-member", teamSlug },
+      })),
       { section: "news" },
       { section: "rootfs", route: { view: "index" } },
     ]) {

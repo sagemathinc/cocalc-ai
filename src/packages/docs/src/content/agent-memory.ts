@@ -31,6 +31,11 @@ notes to the project's namespace, or ` +
   ` for notes that apply
 everywhere.
 
+Each agent also keeps its own working notes (` +
+  "`agent/<name>`" +
+  `), which expire after 30 days unused and are deleted when you remove it
+from Agents.
+
 ## What agents see
 
 Each turn starts with an **Agent memory** block listing the most relevant notes

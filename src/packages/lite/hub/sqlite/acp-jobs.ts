@@ -1579,18 +1579,13 @@ export function cancelQueuedAcpJob({
       thread_id,
       ...ACP_FENCE_LIVE_RESUME_INTENTS,
     );
-    db.prepare(
-      `UPDATE ${TABLE}
-        SET state = 'canceled',
-            updated_at = ?,
-            finished_at = ?
-        WHERE project_id = ?
-          AND path = ?
-          AND user_message_id = ?
-          AND account_id = ?
-          AND thread_id = ?
-          AND state = 'queued'`,
-    ).run(now, now, project_id, path, user_message_id, account_id, thread_id);
+    takeQueuedAcpJob(db, now, {
+      project_id,
+      path,
+      user_message_id,
+      account_id,
+      thread_id,
+    });
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -1605,6 +1600,60 @@ export function cancelQueuedAcpJob({
   });
   mirrorAcpJobSession(job);
   return job;
+}
+
+function takeQueuedAcpJob(
+  db: ReturnType<typeof getAcpDatabase>,
+  now: number,
+  {
+    project_id,
+    path,
+    user_message_id,
+    account_id,
+    thread_id,
+  }: {
+    project_id: string;
+    path: string;
+    user_message_id: string;
+  } & AcpJobOwner,
+): boolean {
+  return (
+    Number(
+      db
+        .prepare(
+          `UPDATE ${TABLE}
+        SET state = 'canceled',
+            updated_at = ?,
+            finished_at = ?
+        WHERE project_id = ?
+          AND path = ?
+          AND user_message_id = ?
+          AND account_id = ?
+          AND thread_id = ?
+          AND state = 'queued'`,
+        )
+        .run(now, now, project_id, path, user_message_id, account_id, thread_id)
+        .changes,
+    ) > 0
+  );
+}
+
+// Take a queued job out of the queue for a control that acts on the message
+// (send now). Unlike an explicit cancel it changes nothing else (a job a
+// restart is holding keeps its resume intent), and it reports whether this
+// call took the job: the control owns the message only if it did.
+export function cancelQueuedAcpJobForControl(
+  owner: {
+    project_id: string;
+    path: string;
+    user_message_id: string;
+  } & AcpJobOwner,
+): { job: AcpJobRow | undefined; canceled: boolean } {
+  ensureInit();
+  const canceled = takeQueuedAcpJob(getAcpDatabase(), Date.now(), owner);
+  const job = getOwnedAcpJob(owner);
+  mirrorAcpJobSession(job);
+  return { job, canceled };
 }
 
 function cancelQueuedRecoveryJobsForThreadInDatabase({

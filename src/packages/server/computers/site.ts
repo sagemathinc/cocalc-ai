@@ -3,12 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The site identity computers are paired with: the origin of the site URL
-// (scheme, host, port), normalized exactly as the protocol requires.
+// The site's origin (scheme, host, port), for the pairing line when this
+// bay has no public origin of its own.
 
 import siteURL from "@cocalc/database/settings/site-url";
-import { site } from "@cocalc/util/computers/protocol";
 
 export async function computersSite(): Promise<string> {
-  return site(new URL(await siteURL()).origin);
+  return new URL(await siteURL()).origin;
 }

@@ -280,7 +280,7 @@ function NamedAgentConnectors({
     directory?.controls.paused ||
     assigned.every((network) => network.state !== "active");
   const openNetworks = () => setNetworksOpen(true);
-  const usable = agentComputers(computers, directory, agent.endpoint).filter(
+  const usable = agentComputers(computers, agent.endpoint.project_id).filter(
     (item) => item.canUse,
   );
   const computersStatus = computersSummary(
@@ -509,14 +509,12 @@ function NamedAgentConnectors({
       )}
       {computersOpen && (
         <AgentComputersModal
-          agent={agent.endpoint}
+          projectId={agent.endpoint.project_id}
           agentLabel={`@${agent.name}`}
           open
           computers={computers}
-          directory={directory}
           onChanged={() => {
             void refreshComputers();
-            refreshAgentNetworks();
           }}
           onClose={() => {
             setComputersOpen(false);

@@ -1,5 +1,7 @@
 # Computers: lifecycle in the UI (Oct 12, 2026)
 
+> **Superseded (2026-10-16)** by `computers-direct-host-2026-10-16.md`: computers now connect directly to their project's host, with at-most-once exec and no tickets, signed state or lease. Kept for history.
+
 William's five points from trying `@m1` on lite1b, and the design that answers them. Companion to `computers-plan-2026-10-11.md`.
 
 ## The states a computer can be in

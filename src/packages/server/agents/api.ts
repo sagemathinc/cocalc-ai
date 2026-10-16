@@ -541,6 +541,32 @@ export const endIdentityRun: AgentApi["endIdentityRun"] = async (opts) => {
   );
 };
 
+// Host-scoped read for the turn context: the account's home verifies that the
+// run belongs to this account, as for the agent's own `destinations`.
+export const describeNetworkSelf: AgentApi["describeNetworkSelf"] = async (
+  opts,
+) => {
+  requireUuid(opts.agent_id, "agent_id");
+  requireUuid(opts.run_id, "run_id");
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.source_project_id,
+  });
+  const agent = await agentStore().get(opts.agent_id);
+  if (agent.project_id !== opts.source_project_id)
+    throw new Error("agent is not in this project");
+  const { withPersonalHome } = await import("./personal");
+  const directory = (await withPersonalHome(opts.account_id!, {
+    action: "discoverNetworks",
+    options: {
+      source: { agent_id: agent.agent_id, project_id: agent.project_id },
+      run_id: opts.run_id,
+    },
+  })) as import("@cocalc/conat/agents/personal").AgentNetworkDiscovery;
+  return directory.self;
+};
+
 // Host-attested: the project host admitting a turn reports the agent's
 // runtime, which fills in identities registered before runtimes were recorded.
 export const reportRuntime: AgentApi["reportRuntime"] = async (opts) => {

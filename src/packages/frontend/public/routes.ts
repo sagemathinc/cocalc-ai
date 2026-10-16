@@ -4,6 +4,7 @@
  */
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { getPublicPermanentRedirectPath } from "@cocalc/util/public-site-metadata";
 import { HOST_ABSOLUTE_ROUTE_PREFIXES } from "@cocalc/util/routing/app";
 import type { PublicAboutRoute } from "./about/routes";
 import { getAboutRouteFromPath } from "./about/routes";
@@ -216,4 +217,11 @@ export function preservePublicTargetFragment(
 export function publicPath(view: string): string {
   const base = appBasePath === "/" ? "" : appBasePath;
   return `${base}/${view}`;
+}
+
+// Where a public URL that moved for good now lives, or undefined. The hub
+// answers a direct request with a permanent redirect; the client follows the
+// same rule for in-app links and for a page opened through the static shell.
+export function getPublicRedirectPath(pathname: string): string | undefined {
+  return getPublicPermanentRedirectPath(pathname, { basePath: appBasePath });
 }

@@ -8,6 +8,7 @@ import {
   CHAT_SCHEMA_V2,
   deriveAcpLogRefs,
   planThreadFork,
+  preferredThreadConfigRecord,
   threadConfigRecordKey,
   publishArtifact,
   readArtifact,
@@ -78,12 +79,9 @@ function getThreadConfigRecord(
 ): ChatThreadConfigRecord | undefined {
   const cleanThreadId = `${threadId ?? ""}`.trim();
   if (!cleanThreadId) return undefined;
-  const row = rows.find(
-    (value) =>
-      value?.event === "chat-thread-config" &&
-      `${value?.thread_id ?? ""}`.trim() === cleanThreadId,
-  );
-  return row ? (row as ChatThreadConfigRecord) : undefined;
+  return preferredThreadConfigRecord(rows, cleanThreadId) as
+    | ChatThreadConfigRecord
+    | undefined;
 }
 
 function listThreadConfigRecords(rows: any[]): ChatThreadConfigRecord[] {
