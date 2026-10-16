@@ -71,7 +71,7 @@ test("only projects whose one collaborator is you can have a computer", async ()
 
 test("a request names the computer and its project; the line is the home bay's", async () => {
   render(<ConnectComputer defaultProjectId={SOLO} />);
-  await userEvent.type(screen.getByPlaceholderText("name, e.g. laptop"), "m1");
+  await userEvent.type(screen.getByLabelText("Computer name"), "m1");
   await userEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(mockApi.createComputerRequest).toHaveBeenCalledWith({
     name: "m1",

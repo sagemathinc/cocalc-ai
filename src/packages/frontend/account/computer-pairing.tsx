@@ -274,14 +274,18 @@ export function ConnectComputer({
         can run commands on it as you. So it can only serve a project whose one
         collaborator is you.
       </span>
+      <label htmlFor="computer-pairing-name">Computer name</label>
       <Input
+        id="computer-pairing-name"
         addonBefore="@"
         placeholder="name, e.g. laptop"
         value={name}
         status={name && !NAME.test(name) ? "error" : undefined}
         onChange={(e) => setName(e.target.value.trim().toLowerCase())}
       />
+      <label htmlFor="computer-pairing-project">Project it serves</label>
       <Select
+        id="computer-pairing-project"
         style={{ width: "100%" }}
         placeholder="The project it serves"
         value={projectId}
