@@ -785,9 +785,10 @@ export function createProjectHostHttpProxyAuth({
     project_id: string,
     context: string,
   ) => {
-    const hasHeaderBearer = /^Bearer\s+\S/i.test(
-      `${req.headers.authorization ?? ""}`,
-    );
+    // Any Authorization header is an explicit credential choice: cookies are
+    // never used alongside it, even if it is malformed.
+    const hasAuthorizationHeader =
+      `${req.headers.authorization ?? ""}`.trim() !== "";
     const cookies = parseCookies(req.headers.cookie as string | undefined);
     const hasAmbientCookie = [
       PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME,
@@ -796,17 +797,18 @@ export function createProjectHostHttpProxyAuth({
     ].some((name) => cookies[name] != null);
     let allowed: boolean | undefined;
     const cookiesAllowed = (): boolean => {
-      if (hasHeaderBearer || !hasAmbientCookie) return false;
+      if (hasAuthorizationHeader || !hasAmbientCookie) return false;
       allowed ??= checkAmbientCookieRequest(
         req,
         classifyProjectRoute(req, project_id),
         context,
+        project_id,
       );
       return allowed;
     };
     return {
       cookiesAllowed,
-      cookiesRefused: () => !hasHeaderBearer && allowed === false,
+      cookiesRefused: () => !hasAuthorizationHeader && allowed === false,
     };
   };
 

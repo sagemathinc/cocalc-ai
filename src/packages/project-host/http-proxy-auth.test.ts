@@ -160,6 +160,7 @@ describe("project-host HTTP session cookie", () => {
       headers: {
         [PROJECT_HOST_API_KEY_HTTP_HEADER]: "invalid",
         cookie: `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`,
+        "sec-fetch-site": "none",
       },
     } as any;
     mockVerifyHttpToken.mockImplementation(() => {
@@ -299,6 +300,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/`,
@@ -322,6 +324,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       socket: {},
@@ -353,6 +356,7 @@ describe("project-host HTTP session cookie", () => {
       const req = {
         headers: {
           cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "sec-fetch-site": "none",
           "x-forwarded-proto": "https",
         },
         socket: {},
@@ -388,6 +392,7 @@ describe("project-host HTTP session cookie", () => {
       const req = {
         headers: {
           cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "sec-fetch-site": "none",
           "x-forwarded-proto": "https",
         },
         socket: {},
@@ -553,6 +558,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "GET",
@@ -584,6 +590,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         host: "dev-1234.example.com",
         "x-forwarded-proto": "https",
       },
@@ -622,6 +629,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "GET",
@@ -654,6 +662,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/`,
@@ -713,6 +722,7 @@ describe("project-host HTTP session cookie", () => {
         "a cross-site subresource without an origin",
         { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors" },
       ],
+      ["a request without fetch metadata", {}],
       [
         "a foreign iframe",
         {
@@ -762,7 +772,6 @@ describe("project-host HTTP session cookie", () => {
         },
       ],
       ["a typed URL", { "sec-fetch-site": "none" }],
-      ["a request without fetch metadata", {}],
     ])(
       "accepts file access by browser session cookie from %s",
       async (_, headers) => {
@@ -894,6 +903,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
@@ -934,6 +944,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
@@ -958,6 +969,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
@@ -996,6 +1008,7 @@ describe("project-host HTTP session cookie", () => {
       const req = {
         headers: {
           cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "sec-fetch-site": "none",
         },
         socket: {},
         url: `/${project_id}/apps/python-hello/socket`,
@@ -1029,6 +1042,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/?${PROJECT_HOST_HTTP_AUTH_QUERY_PARAM}=secret&x=1`,
@@ -1061,6 +1075,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "HEAD",
@@ -1103,6 +1118,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "GET",
@@ -1139,6 +1155,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       method: "GET",
       socket: {},

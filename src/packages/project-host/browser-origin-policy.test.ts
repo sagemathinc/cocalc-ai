@@ -7,6 +7,7 @@ import {
   resetHubBrowserOriginsForTests,
   setHubBrowserOrigins,
 } from "./browser-origin-policy";
+import { createPrivateAppHostnameRequestRewriter } from "./private-app-hostname";
 
 const project_id = "00000000-1000-4000-8000-000000000000";
 
@@ -153,8 +154,9 @@ describe("project-host browser origin policy", () => {
       );
     });
 
-    it("allows requests without fetch metadata and user-typed URLs", () => {
-      expect(ambientCookieRejection(req(), "file")).toBeUndefined();
+    it("refuses requests without fetch metadata, allows user-typed URLs", () => {
+      expect(ambientCookieRejection(req(), "file")).toBe("no fetch metadata");
+      expect(ambientCookieRejection(req(), "app")).toBe("no fetch metadata");
       expect(
         ambientCookieRejection(req({ "sec-fetch-site": "none" }), "file"),
       ).toBeUndefined();
@@ -196,6 +198,58 @@ describe("project-host browser origin policy", () => {
           "file",
         ),
       ).toBe("not from an approved page");
+    });
+
+    it("classifies nested file markers as app routes, as dispatch does", () => {
+      expect(
+        classifyProjectRoute(
+          { ...req(), url: `/${project_id}/apps/x/${project_id}/files/a.txt` },
+          project_id,
+        ),
+      ).toBe("app");
+    });
+
+    it("binds a private app's own origin to its project", async () => {
+      const rewrite = createPrivateAppHostnameRequestRewriter({
+        trace: async () => ({
+          matched: true,
+          project_id,
+          app_id: "x",
+          base_path: "/apps/x",
+        }),
+      });
+      const other = "00000000-1000-4000-8000-0000000000aa";
+      const privateReq = async (
+        headers: Record<string, string>,
+        target: string,
+      ) => {
+        const r: any = {
+          method: "GET",
+          url: `/${target}/apps/x/`,
+          headers: { host: "dev-1.app.example", ...headers },
+        };
+        await rewrite(r);
+        return r;
+      };
+      const origin = { origin: "https://dev-1.app.example" };
+      const sameOrigin = { "sec-fetch-site": "same-origin" };
+      expect(
+        ambientCookieRejection(await privateReq(origin, other), "app", other),
+      ).toBe("origin not allowed");
+      expect(
+        ambientCookieRejection(
+          await privateReq(sameOrigin, other),
+          "app",
+          other,
+        ),
+      ).toBe("not from an approved page");
+      expect(
+        ambientCookieRejection(
+          await privateReq(origin, project_id),
+          "app",
+          project_id,
+        ),
+      ).toBeUndefined();
     });
 
     it("allows same-origin subresources on app routes", () => {

@@ -11,13 +11,16 @@ public origins sent by the hub (system.getPublicSiteUrl, refreshed
 periodically), COCALC_SITE_URL, and COCALC_PROJECT_HOST_ALLOWED_ORIGINS.
 Pages served by the project host itself run project-controlled code, so its
 own origin is approved only for proxied app routes (an app talking to
-itself), never for files, uploads, the session bootstrap or Conat.
+itself), never for files, uploads, the session bootstrap or Conat. On a
+private app hostname it is further bound to that app's project. On the shared
+host hostname it is not bound to a project: path-based apps (e.g. JupyterLab
+at /<project_id>/port/...) need it, and only separate content origins can
+remove that residual risk.
 
 With an Origin header, it must be approved (see above). Without one:
 - non-GET/HEAD requests are refused (browsers send Origin on them);
-- requests without fetch metadata are allowed: every browser that sends
-  cookies to other sites also sends Sec-Fetch-Site, so these come from
-  non-browser clients or old browsers that block third-party cookies;
+- requests without fetch metadata (Sec-Fetch-Site) are refused: the page
+  can't be identified, and non-browser clients use explicit tokens;
 - Sec-Fetch-Site: none (typed URL, bookmark) is allowed;
 - a Referer from an approved origin is allowed (the app's <img>, iframes,
   links; the app sends strict-origin-when-cross-origin);
@@ -32,6 +35,7 @@ before (including CORS); "off" disables checks and logging.
 
 import type { IncomingMessage } from "node:http";
 import getLogger from "@cocalc/backend/logger";
+import { getPrivateAppHostnameProject } from "./private-app-hostname";
 
 const logger = getLogger("project-host:browser-origin-policy");
 
@@ -119,10 +123,29 @@ function isOwnOrigin(origin: string, req: Req): boolean {
   const host = header(req, "host").toLowerCase();
   if (!host) return false;
   const url = new URL(origin);
-  if (url.host !== host) return false;
+  let own: string;
+  try {
+    // Canonicalize so "host:443" matches "https://host".
+    own = new URL(`${url.protocol}//${host}`).host;
+  } catch {
+    return false;
+  }
+  if (url.host !== own) return false;
   return url.protocol === "https:" || isLocalHostname(url.hostname);
 }
 
+// The own-origin allowance for app routes; on a private app hostname only for
+// that app's own project.
+function ownAppOriginAllowed(
+  req: Req,
+  project_id: string | undefined,
+): boolean {
+  const privateProject = getPrivateAppHostnameProject(req as IncomingMessage);
+  return privateProject == null || privateProject === project_id;
+}
+
+// The one route classifier: main.ts dispatch uses it too, so a path can't be
+// judged an app route here and then served as a file.
 export function classifyProjectRoute(
   req: Req & { url?: string },
   project_id: string,
@@ -154,6 +177,7 @@ function isExplicitDownload(req: Req & { url?: string }): boolean {
 export function ambientCookieRejection(
   req: Req & { url?: string },
   route: AmbientRoute,
+  project_id?: string,
 ): string | undefined {
   const approved = approvedBrowserOrigins();
   const originHeader = header(req, "origin");
@@ -161,20 +185,33 @@ export function ambientCookieRejection(
     const origin = parseOrigin(originHeader);
     if (!origin) return "invalid or opaque origin";
     if (approved.has(origin)) return;
-    if (route === "app" && isOwnOrigin(origin, req)) return;
+    if (
+      route === "app" &&
+      isOwnOrigin(origin, req) &&
+      ownAppOriginAllowed(req, project_id)
+    ) {
+      return;
+    }
     return "origin not allowed";
   }
   const method = (req.method ?? "GET").toUpperCase();
   if (route === "conat") return; // browsers always send Origin on websockets
   if (method !== "GET" && method !== "HEAD") return "no origin";
   const site = header(req, "sec-fetch-site").toLowerCase();
-  if (!site || site === "none") return;
+  if (!site) return "no fetch metadata";
+  if (site === "none") return;
   const referer = header(req, "referer");
   if (referer) {
     const origin = originOfUrl(referer);
     if (origin && approved.has(origin)) return;
   }
-  if (route === "app" && site === "same-origin") return;
+  if (
+    route === "app" &&
+    site === "same-origin" &&
+    ownAppOriginAllowed(req, project_id)
+  ) {
+    return;
+  }
   if (
     route === "file" &&
     header(req, "sec-fetch-mode").toLowerCase() === "navigate" &&
@@ -211,10 +248,11 @@ export function checkAmbientCookieRequest(
   req: Req & { url?: string },
   route: AmbientRoute,
   context: string = route,
+  project_id?: string,
 ): boolean {
   const mode = originPolicyMode();
   if (mode === "off") return true;
-  const reason = ambientCookieRejection(req, route);
+  const reason = ambientCookieRejection(req, route, project_id);
   if (!reason) return true;
   logRejection(req, context, reason);
   return mode === "report";

@@ -219,6 +219,7 @@ import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { startGcpPreemptionWatcher } from "./gcp-preemption";
 import {
   checkAmbientCookieRequest,
+  classifyProjectRoute,
   corsOrigin,
   setHubBrowserOrigins,
 } from "./browser-origin-policy";
@@ -530,12 +531,7 @@ export async function main(
     if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
       return false;
     }
-    try {
-      const parsed = new URL(req.url ?? "/", "http://project-host.local");
-      return parsed.pathname.includes(`/${project_id}/files/`);
-    } catch {
-      return false;
-    }
+    return classifyProjectRoute(req, project_id) === "file";
   };
   const getReadOnlyProjectFileDownloadContext = ({
     req,
@@ -552,7 +548,7 @@ export async function main(
     if (!account_id) return;
     try {
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
-      if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
+      if (classifyProjectRoute(req, project_id) !== "file") return;
       if (parsed.searchParams.get("viewer") !== "1") return;
       const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
       if (share_id) {
@@ -589,7 +585,7 @@ export async function main(
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
       return (
         parsed.searchParams.has("download") &&
-        parsed.pathname.includes(`/${project_id}/files/`)
+        classifyProjectRoute(req, project_id) === "file"
       );
     } catch {
       return false;
@@ -603,7 +599,7 @@ export async function main(
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
       return (
         parsed.pathname.startsWith(`/${project_id}/`) &&
-        !parsed.pathname.includes(`/${project_id}/files/`)
+        classifyProjectRoute(req, project_id) !== "file"
       );
     } catch {
       return false;
@@ -1107,9 +1103,8 @@ export async function main(
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
       }
       const authContext = getProjectHostHttpAuthContext(req);
-      const isProjectFileRoute = `${req.url ?? ""}`.includes(
-        `/${project_id}/files/`,
-      );
+      const isProjectFileRoute =
+        classifyProjectRoute(req, project_id) === "file";
       if (res && isProjectUploadRoute) {
         if (authContext?.actor !== "account") {
           res.statusCode = 403;

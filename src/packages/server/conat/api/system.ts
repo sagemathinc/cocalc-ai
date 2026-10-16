@@ -8247,20 +8247,25 @@ export async function getPublicSiteUrl({
   return { url, browser_origins: await getBrowserOriginsForProjectHosts(url) };
 }
 
+// The complete list, or undefined if any lookup failed: project hosts replace
+// their list only with a complete one and otherwise keep the last good list.
 async function getBrowserOriginsForProjectHosts(
   url: string,
-): Promise<string[]> {
+): Promise<string[] | undefined> {
   const origins = new Set<string>([new URL(url).origin]);
   try {
     const site = await getSitePublicOrigin();
     if (site) origins.add(site);
-    for (const origin of Object.values(await getClusterBayPublicOrigins())) {
+    for (const origin of Object.values(
+      await getClusterBayPublicOrigins({ strict: true }),
+    )) {
       origins.add(origin);
     }
   } catch (err) {
     logger.warn("unable to list bay public origins for project hosts", {
       err: `${err}`,
     });
+    return undefined;
   }
   return [...origins];
 }
