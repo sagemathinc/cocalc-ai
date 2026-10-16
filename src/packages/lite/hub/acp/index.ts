@@ -12114,44 +12114,37 @@ async function attemptAcpSteerRequest(
   return result;
 }
 
-let callerContextSyncTimeoutMs = 15_000;
-
 // A control that replays a stored request (send now, resend) can reach this
 // hub before a clear its caller already saw. The stored request would then
-// look current and could join or resume the old context, so first wait until
-// this hub has synced that clear; the usual fence then applies.
-async function awaitCallerContext({
+// look current and could join or resume the old context, so refuse it until
+// this hub has synced that clear (normally well under a second); the usual
+// fence then applies. Nothing is held meanwhile, so nothing needs undoing.
+async function assertCallerContextSynced({
   client,
   project_id,
   path,
   thread_id,
   request,
-  timeoutMs = callerContextSyncTimeoutMs,
 }: {
   client: ConatClient;
   project_id: string;
   path: string;
   thread_id: string;
   request: { context_cleared_at?: string };
-  timeoutMs?: number;
 }): Promise<void> {
   const clearedAt = Date.parse(`${request.context_cleared_at ?? ""}`);
   if (!Number.isFinite(clearedAt)) return;
-  await withChatSyncDB({
+  const synced = await withChatSyncDB({
     client,
     project_id,
     path,
-    fn: async (syncdb) => {
-      const deadline = Date.now() + timeoutMs;
-      while (hubThreadContext(syncdb, thread_id).clearedAtMs < clearedAt) {
-        if (Date.now() >= deadline)
-          throw Error(
-            "This conversation's latest Clear context has not reached its project yet; try again in a moment.",
-          );
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    },
+    fn: async (syncdb) =>
+      hubThreadContext(syncdb, thread_id).clearedAtMs >= clearedAt,
   });
+  if (!synced)
+    throw Error(
+      "This conversation's latest Clear context has not reached its project yet; try again in a moment.",
+    );
 }
 
 async function handleAcpControlRequest(
@@ -12327,12 +12320,18 @@ async function handleAcpControlRequest(
     return { ok: false, state: "held" };
   }
   if (
+    request.action === "send_immediately" ||
     request.action === "resend" ||
     request.action === "resend_with_model" ||
     request.action === "resend_with_payment"
   ) {
-    // The source job is already terminal, so nothing can claim it meanwhile.
-    await awaitCallerContext({ client, project_id, path, thread_id, request });
+    await assertCallerContextSynced({
+      client,
+      project_id,
+      path,
+      thread_id,
+      request,
+    });
   }
   if (request.action === "send_immediately") {
     const row = cancelQueuedAcpJob({
@@ -12379,20 +12378,6 @@ async function handleAcpControlRequest(
       }
       return { ok: true, state: "queued" };
     };
-
-    // Canceled above, so no worker can claim it while this waits.
-    try {
-      await awaitCallerContext({
-        client,
-        project_id,
-        path,
-        thread_id,
-        request,
-      });
-    } catch (err) {
-      await restoreQueuedImmediate();
-      throw err;
-    }
 
     try {
       const queuedRequest = decodeAcpJobRequest(row);
@@ -13246,10 +13231,6 @@ export const acpTestInternals = {
   handleAcpAttentionRequest,
   persistAttentionResponseProjection,
   handleAcpControlRequest,
-  awaitCallerContext,
-  setCallerContextSyncTimeoutMs: (ms: number) => {
-    callerContextSyncTimeoutMs = ms;
-  },
   executeAcpRequest,
   handleInterruptRequest,
   processPendingAcpInterruptsOnce,

@@ -562,61 +562,29 @@ describe("a context clear after admission", () => {
       context_cleared_at: cleared.date,
     }) as any;
 
-  it("holds a send-now until the hub has synced the caller's clear", async () => {
+  it("refuses a send-now until the hub has synced the caller's clear", async () => {
     // Queued before the clear, so stamped with the old (empty) generation.
     const queued = turnRequest({ model: "gpt-6-astra", sessionId });
     queued.session_id = sessionId;
     queued.chat!.context_generation = "";
     const job = enqueueAcpJob(queued);
     mockSteer.mockResolvedValue({ state: "steered" });
-    // The caller already saw the clear; it reaches this hub a bit later.
-    const control = acpTestInternals.handleAcpControlRequest(
-      sendNow(job.user_message_id),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    // Held while waiting: no worker can claim and run it in the old context.
-    expect(claimNextQueuedAcpJobForThread(threadKey)).toBeUndefined();
-    Object.assign(rows[0], clearedConfig);
-    // Never steered into the old context: it waits to run fresh.
-    expect(await control).toEqual({ ok: true, state: "queued" });
-    expect(mockSteer).not.toHaveBeenCalled();
-  });
-
-  it("puts a send-now back in the queue if the clear never arrives", async () => {
-    const job = enqueueAcpJob(turnRequest({ model: "gpt-6-astra" }));
-    acpTestInternals.setCallerContextSyncTimeoutMs(150);
-    try {
-      await expect(
-        acpTestInternals.handleAcpControlRequest(sendNow(job.user_message_id)),
-      ).rejects.toThrow(/has not reached its project yet/);
-    } finally {
-      acpTestInternals.setCallerContextSyncTimeoutMs(15_000);
-    }
-    expect(getAcpJobByOpId(job.op_id)?.state).toBe("queued");
-  });
-
-  it("gives up if the caller's clear never reaches the hub", async () => {
+    // The caller already saw the clear; this hub has not synced it yet.
     await expect(
-      acpTestInternals.awaitCallerContext({
-        client: {} as Client,
-        project_id: projectId,
-        path: record.path,
-        thread_id: record.thread_id,
-        request: { context_cleared_at: cleared.date },
-        timeoutMs: 150,
-      }),
+      acpTestInternals.handleAcpControlRequest(sendNow(job.user_message_id)),
     ).rejects.toThrow(/has not reached its project yet/);
+    // Nothing was held, so a cancel from another tab now simply sticks.
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("queued");
+    expect(mockSteer).not.toHaveBeenCalled();
+    // Once the clear arrives, the old request is stale: never steered into
+    // the old context, it waits to run fresh.
     Object.assign(rows[0], clearedConfig);
-    await expect(
-      acpTestInternals.awaitCallerContext({
-        client: {} as Client,
-        project_id: projectId,
-        path: record.path,
-        thread_id: record.thread_id,
-        request: { context_cleared_at: cleared.date },
-        timeoutMs: 150,
-      }),
-    ).resolves.toBeUndefined();
+    expect(
+      await acpTestInternals.handleAcpControlRequest(
+        sendNow(job.user_message_id),
+      ),
+    ).toEqual({ ok: true, state: "queued" });
+    expect(mockSteer).not.toHaveBeenCalled();
   });
 
   it("does not steer guidance into a turn of another context", () => {
