@@ -107,6 +107,31 @@ describe("master-key-lifecycle", () => {
     expect(readdirSync(secretsDir)).toEqual([]);
   });
 
+  it("reports both errors when writing fails and cleanup fails too", async () => {
+    const secretsDir = join(dir, "secrets");
+    const fsp = require("node:fs/promises");
+    const realWriteFile = fsp.writeFile;
+    const write = jest
+      .spyOn(fsp, "writeFile")
+      .mockImplementationOnce(async (path: string, data: string, opts: any) => {
+        await realWriteFile(path, data.slice(0, 5), opts);
+        throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+      });
+    const remove = jest
+      .spyOn(fsp, "unlink")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("not permitted"), { code: "EPERM" }),
+      );
+    try {
+      await expect(getOrCreateSiteMasterKey({ secretsDir })).rejects.toThrow(
+        /no space left; could not remove temporary site master key copy .*\.tmp/,
+      );
+    } finally {
+      write.mockRestore();
+      remove.mockRestore();
+    }
+  });
+
   it("reports a temporary key copy it could not remove", async () => {
     const secretsDir = join(dir, "secrets");
     const fsp = require("node:fs/promises");

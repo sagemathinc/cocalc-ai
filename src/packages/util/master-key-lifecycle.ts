@@ -392,8 +392,18 @@ async function createSiteMasterKeyFile(
     try {
       if (err?.code !== "EEXIST" || !(await pathExists(path))) throw err;
       result = await readMasterKeyFile(path);
-    } catch (failure) {
-      await removeTempKeyFile(tmp).catch(() => {});
+    } catch (failure: any) {
+      try {
+        await removeTempKeyFile(tmp);
+      } catch (cleanup: any) {
+        // Both matter: why creation failed, and which key copy is left.
+        throw Object.assign(
+          new Error(
+            `${failure?.message ?? failure}; ${cleanup?.message ?? cleanup}`,
+          ),
+          { cause: failure },
+        );
+      }
       throw failure;
     }
   }
