@@ -974,6 +974,8 @@ export interface HostStorageAdmissionMetrics {
   maintenance_io_full_avg10?: number;
   /** Whether that stall is under a finite io.max cap, so it is discounted. */
   maintenance_io_capped?: boolean;
+  /** Whether the disks maintenance used were mostly idle; both are needed. */
+  maintenance_disks_idle?: boolean;
   uncontained_io_full_avg10?: number;
   effective_io_full_avg10?: number;
   lifecycle_active: number;

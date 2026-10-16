@@ -101,6 +101,7 @@ describe("storage admission controller", () => {
         bees_io_full_avg10: 0,
         maintenance_io_full_avg10: 69,
         maintenance_io_capped: true,
+        maintenance_disks_idle: true,
         starting_projects: 0,
         stopping_projects: 0,
         btrfs_mutation_locks: 0,
@@ -129,6 +130,7 @@ describe("storage admission controller", () => {
         project_pool_io_full_avg10: 3,
         maintenance_io_full_avg10: 12,
         maintenance_io_capped: true,
+        maintenance_disks_idle: true,
         starting_projects: 0,
         stopping_projects: 0,
         btrfs_mutation_locks: 0,
@@ -153,6 +155,7 @@ describe("storage admission controller", () => {
         project_pool_io_full_avg10: 15,
         maintenance_io_full_avg10: 25,
         maintenance_io_capped: true,
+        maintenance_disks_idle: true,
         starting_projects: 0,
         stopping_projects: 0,
         btrfs_mutation_locks: 0,
@@ -194,6 +197,104 @@ describe("storage admission controller", () => {
       uncontained_io_full_avg10: 46.5,
       effective_io_full_avg10: 46.5,
     });
+  });
+
+  it("counts a capped maintenance stall while a disk it uses is busy", () => {
+    // Review on #1100: the cap covers only the project disks, while rustic
+    // also writes its cache on the uncapped root disk, and cgroup PSI covers
+    // every device. A cap alone does not prove the stall is the throttle.
+    const controller = createStorageAdmissionController({
+      mode: "enforce",
+      now: () => now,
+      readInputs: () => ({
+        sampled_at_ms: now,
+        host_io_full_avg10: 46.5,
+        project_pool_io_full_avg10: 0,
+        bees_io_full_avg10: 0,
+        maintenance_io_full_avg10: 69,
+        maintenance_io_capped: true,
+        maintenance_disks_idle: false,
+        starting_projects: 0,
+        stopping_projects: 0,
+        btrfs_mutation_locks: 0,
+        btrfs_mutation_waiters: 0,
+      }),
+    });
+
+    expect(controller.sample()).toMatchObject({
+      pressure_state: "emergency",
+      maintenance_disks_idle: false,
+      uncontained_io_full_avg10: 46.5,
+      effective_io_full_avg10: 46.5,
+    });
+  });
+
+  it("attributes a maintenance stall to its throttle only when every disk it used was idle", () => {
+    const {
+      parseDiskstatsBusyMs,
+      parseIoStatIos,
+      maintenanceStallOnIdleDisks,
+    } = _test;
+    const activity = (at_ms: number, diskstats: string, iostat: string) => ({
+      at_ms,
+      busy_ms: parseDiskstatsBusyMs(diskstats),
+      maintenance_ios: parseIoStatIos(iostat),
+    });
+    const disk = (sda: number, sdb: number) =>
+      `   8       0 sda 1 0 0 0 1 0 0 0 0 ${sda} ${sda} 0 0 0 0 0 0\n` +
+      `   8      16 sdb 1 0 0 0 1 0 0 0 0 ${sdb} ${sdb} 0 0 0 0 0 0\n`;
+    const stat = (sda: number, sdb: number) =>
+      `8:0 rbytes=1 wbytes=1 rios=${sda} wios=0 dbytes=0 dios=0\n` +
+      `8:16 rbytes=1 wbytes=1 rios=${sdb} wios=0 dbytes=0 dios=0\n`;
+    expect(parseDiskstatsBusyMs(disk(5, 7)).get("8:16")).toBe(7);
+    expect(parseIoStatIos(stat(2, 9)).get("8:16")).toBe(9);
+    const start = activity(0, disk(0, 0), stat(0, 0));
+    // Alpha host1: the backup reads the capped project disk at 8% busy.
+    expect(
+      maintenanceStallOnIdleDisks(
+        start,
+        activity(5_000, disk(0, 400), stat(0, 1200)),
+        0.5,
+      ),
+    ).toBe(true);
+    // Also writing its cache on a saturated root disk: real contention.
+    expect(
+      maintenanceStallOnIdleDisks(
+        start,
+        activity(5_000, disk(4_900, 400), stat(300, 1200)),
+        0.5,
+      ),
+    ).toBe(false);
+    // A busy disk maintenance did not use does not matter.
+    expect(
+      maintenanceStallOnIdleDisks(
+        start,
+        activity(5_000, disk(4_900, 400), stat(0, 1200)),
+        0.5,
+      ),
+    ).toBe(true);
+    // No I/O completed, no previous sample, or an unknown device: not proven.
+    expect(
+      maintenanceStallOnIdleDisks(
+        start,
+        activity(5_000, disk(0, 0), stat(0, 0)),
+        0.5,
+      ),
+    ).toBe(false);
+    expect(
+      maintenanceStallOnIdleDisks(
+        undefined,
+        activity(5_000, disk(0, 0), stat(0, 1)),
+        0.5,
+      ),
+    ).toBe(false);
+    expect(
+      maintenanceStallOnIdleDisks(
+        start,
+        activity(5_000, disk(0, 0), stat(0, 0) + "8:32 rios=5 wios=0\n"),
+        0.5,
+      ),
+    ).toBe(false);
   });
 
   it("recognizes a finite io.max cap", () => {
