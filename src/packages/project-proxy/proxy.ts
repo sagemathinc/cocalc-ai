@@ -565,8 +565,10 @@ export function attachProjectProxy({
     try {
       await rewriteRequest?.(req);
     } catch (err) {
-      // Other upgrade listeners may own this socket: leave it to them.
+      // Nothing can route a request whose rewrite failed (e.g. a malformed
+      // URL); an upgraded socket has no HTTP timeout, so close it.
       logger.debug("upgrade rewrite failed", { err: `${err}` });
+      socket.destroy();
       return;
     }
     // Only proxy project-scoped websocket upgrades.

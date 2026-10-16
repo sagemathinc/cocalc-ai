@@ -367,7 +367,8 @@ describe("project proxy upstream boundary metering", () => {
     await expect(
       handleUpgrade(req, socket, Buffer.alloc(0)),
     ).resolves.toBeUndefined();
-    socket.destroy();
+    // Not left open: an upgraded socket has no HTTP timeout.
+    expect(socket.destroyed).toBe(true);
   });
 
   it("attaches websocket upgrades to every ingress listener", async () => {

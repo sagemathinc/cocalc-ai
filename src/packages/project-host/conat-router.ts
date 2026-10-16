@@ -626,8 +626,10 @@ export function attachProjectHostConatRouterProxy({
         await rewriteIngressRequest?.(req);
       } catch (err) {
         // An async listener's rejection is unhandled and would exit the
-        // process. Other upgrade listeners may own this socket.
+        // process. Nothing can route a request whose rewrite failed, and an
+        // upgraded socket has no HTTP timeout, so close it.
         logger.debug("ingress upgrade rewrite failed", { err: `${err}` });
+        socket.destroy();
         return;
       }
       if (socket.destroyed) return;
