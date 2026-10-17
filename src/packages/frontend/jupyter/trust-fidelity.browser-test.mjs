@@ -282,10 +282,16 @@ async function measure(page, trust) {
     );
     // In frames under the section (any depth).
     const frameInfo = await section.evaluate((el) =>
-      [...el.querySelectorAll("iframe")].map((f) => ({
-        sandbox: f.getAttribute("sandbox"),
-        name: f.getAttribute("title") ?? "",
-      })),
+      [...el.querySelectorAll("iframe")].map((f) => {
+        const r = f.getBoundingClientRect();
+        return {
+          sandbox: f.getAttribute("sandbox"),
+          name: f.getAttribute("title") ?? "",
+          // A frame that renders but has no visible area is not "working".
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        };
+      }),
     );
     let inFrame = "";
     for (const frame of page.frames()) {
@@ -317,6 +323,9 @@ async function measure(page, trust) {
         .catch(() => "");
       if (r) inFrame = r;
     }
+    // Frames off screen may not have painted yet.
+    await section.scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(400);
     await section
       .screenshot({
         path: `${outDir}/${trust ? "trusted" : "untrusted"}-${name}.png`,
