@@ -434,7 +434,11 @@ async function measureCase(browser, name, trust) {
         again.where !== found.where ||
         again.frame !== found.frame
       ) {
-        errors.push(`unstable: passed in ${found.where}, then failed`);
+        errors.push(
+          again.works
+            ? `unstable: passed in ${found.where}, then moved to another ${again.where === "page" ? "location (page)" : "frame"}`
+            : `unstable: passed in ${found.where}, then failed`,
+        );
         found = again;
       }
     }
@@ -475,6 +479,7 @@ function fmt(r) {
   if (r.where === "error") s = "error";
   else if (r.works) s = `${r.where}:${r.works}`;
   else s = r.unknownFrames ? "unknown" : "-";
+  if (r.works && r.unknownFrames) s += ` ?${r.unknownFrames}unknown`;
   if (r.unexpectedErrors.length) s += ` !${r.unexpectedErrors.length}err`;
   return s;
 }
