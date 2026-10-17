@@ -99,8 +99,16 @@ describeDb("shared agent RPC admission state", () => {
     };
     await createAgentRpcAdmissionState(first);
     await createAgentRpcAdmissionState(second);
-    await expect(createAgentRpcAdmissionState(rejected)).rejects.toThrow(
-      "recipient project messaging capacity full",
-    );
+    for (let i = 0; i < 2; i++)
+      await createAgentRpcAdmissionState({
+        ...state("preparation"),
+        project_id: first.project_id,
+      });
+    await expect(createAgentRpcAdmissionState(rejected)).rejects.toMatchObject({
+      message: "recipient project messaging capacity full",
+      scope: "recipient",
+      active: 4,
+      limit: 4,
+    });
   });
 });

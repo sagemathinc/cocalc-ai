@@ -80,6 +80,7 @@ function networkMemberLabel(member: AgentNetworkMember): string {
     ? `@${member.name}`
     : member.thread_title?.trim() || `Agent ${member.member_id.slice(0, 8)}`;
 }
+import { AgentRpcCapacityError, admitWithin } from "./admission-capacity";
 import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
@@ -346,6 +347,10 @@ async function observeActivity(
   });
 }
 
+// Full admission waits briefly for a permit; the rest of the 30s envelope
+// deadline is left for the delivery itself.
+const ADMISSION_WAIT_MS = 3_000;
+
 async function submitAgentRpcOperation(
   opts: Parameters<AgentRpcControlApi["submit"]>[0],
   phase: "send" | "prepare" | "cancel" = "send",
@@ -377,8 +382,7 @@ async function submitAgentRpcOperation(
   let permitId: string | undefined;
   let proof: AgentNetworkAuthorization | undefined;
   let observedOutcome:
-    | import("@cocalc/conat/agents/rpc").AgentRpcOutcome
-    | undefined;
+    import("@cocalc/conat/agents/rpc").AgentRpcOutcome | undefined;
   try {
     const checked = opts.authorization
       ? validateSnapshotAuthorization(
@@ -463,15 +467,21 @@ async function submitAgentRpcOperation(
       );
     }
     permitId = envelope.permit_id;
-    await createAgentRpcAdmissionState({
-      token_id: envelope.permit_id,
-      kind: "permit",
-      binding_hash: hashAgentRpcAdmissionBinding(agentRpcEnvelopeKey(envelope)),
-      host_id: host.host_id,
-      project_id: envelope.target.project_id,
-      account_id: envelope.account_id,
-      expires_at: new Date(envelope.deadline),
-    });
+    await admitWithin(
+      ADMISSION_WAIT_MS,
+      {
+        token_id: envelope.permit_id,
+        kind: "permit",
+        binding_hash: hashAgentRpcAdmissionBinding(
+          agentRpcEnvelopeKey(envelope),
+        ),
+        host_id: host.host_id,
+        project_id: envelope.target.project_id,
+        account_id: envelope.account_id,
+        expires_at: new Date(envelope.deadline),
+      },
+      createAgentRpcAdmissionState,
+    );
     if (phase === "prepare") {
       const ready = await host.api.prepareAgentRpcAttachments(envelope);
       validateAgentRpcPreparation(ready, opts.request);
@@ -523,12 +533,21 @@ async function submitAgentRpcOperation(
         code:
           error instanceof PersonalAgentAuthorizationError
             ? "network_unavailable"
-            : undefined,
+            : !submissionStarted &&
+                error instanceof AgentRpcCapacityError &&
+                error.scope === "recipient"
+              ? "project_overloaded"
+              : undefined,
         reason: submissionStarted
           ? "Recipient acknowledgment unavailable"
           : error instanceof PersonalAgentAuthorizationError
             ? error.denial
-            : "Network, execution account, target, or host unavailable",
+            : error instanceof AgentRpcCapacityError
+              ? error.reason
+              : "Network, execution account, target, or host unavailable",
+        ...(!submissionStarted && error instanceof AgentRpcCapacityError
+          ? { chat_effect: "none" as const }
+          : {}),
       },
     );
     return observedOutcome;

@@ -5,8 +5,13 @@
 
 import { createHash } from "node:crypto";
 import { agentStore } from "./store";
+import {
+  AgentRpcCapacityError,
+  type AgentRpcAdmissionScope,
+} from "./admission-capacity";
 
-export type AgentRpcAdmissionKind = "permit" | "preparation";
+import type { AgentRpcAdmissionKind } from "./admission-capacity";
+export type { AgentRpcAdmissionKind } from "./admission-capacity";
 
 export interface AgentRpcAdmissionState {
   token_id: string;
@@ -23,12 +28,12 @@ const MAX_ACTIVE_BY_KIND: Record<AgentRpcAdmissionKind, number> = {
   preparation: 1000,
 };
 const MAX_ACTIVE_BY_ACCOUNT: Record<AgentRpcAdmissionKind, number> = {
-  permit: 8,
-  preparation: 4,
+  permit: 64,
+  preparation: 8,
 };
 const MAX_ACTIVE_BY_PROJECT: Record<AgentRpcAdmissionKind, number> = {
-  permit: 4,
-  preparation: 2,
+  permit: 32,
+  preparation: 4,
 };
 
 export const hashAgentRpcAdmissionBinding = (value: string): string =>
@@ -62,16 +67,22 @@ export async function createAgentRpcAdmissionState(
         [state.kind, state.account_id, state.project_id],
       )
     ).rows[0];
-    if (Number(counts?.total ?? 0) >= MAX_ACTIVE_BY_KIND[state.kind])
-      throw new Error(
-        state.kind === "permit"
-          ? "too many in-flight submissions"
-          : "attachment preparation capacity full",
-      );
-    if (Number(counts?.account_total ?? 0) >= MAX_ACTIVE_BY_ACCOUNT[state.kind])
-      throw new Error("agent RPC principal capacity full");
-    if (Number(counts?.project_total ?? 0) >= MAX_ACTIVE_BY_PROJECT[state.kind])
-      throw new Error("recipient project messaging capacity full");
+    const full = (
+      scope: AgentRpcAdmissionScope,
+      active: string | undefined,
+      limit: number,
+    ) => {
+      if (Number(active ?? 0) >= limit)
+        throw new AgentRpcCapacityError(
+          scope,
+          state.kind,
+          Number(active ?? 0),
+          limit,
+        );
+    };
+    full("bay", counts?.total, MAX_ACTIVE_BY_KIND[state.kind]);
+    full("sender", counts?.account_total, MAX_ACTIVE_BY_ACCOUNT[state.kind]);
+    full("recipient", counts?.project_total, MAX_ACTIVE_BY_PROJECT[state.kind]);
     await db.query(
       `INSERT INTO agent_rpc_admission_state
        (token_id,kind,binding_hash,host_id,project_id,account_id,expires_at)
