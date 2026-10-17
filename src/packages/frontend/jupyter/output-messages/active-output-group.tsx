@@ -38,11 +38,11 @@ export const ACTIVE_OUTPUT_MESSAGE = "cocalc-active-outputs";
 export interface ActiveOutput {
   // position of the output in the cell
   index: number;
-  // "text": plain text output (stdout, stderr, an error) between other
-  // outputs of the frame, carried along so the cell's order is kept.
+  // "text": stdout/stderr between other outputs of the frame, carried along
+  // as plain text so the cell's order is kept (errors are never carried).
   kind: "html" | "javascript" | "text";
   value: string;
-  // class for text outputs, e.g. "output_stderr"
+  // class for text outputs: "output_stdout" or "output_stderr"
   className?: string;
 }
 
