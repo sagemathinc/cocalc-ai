@@ -4,9 +4,14 @@ import {
   classifyProjectRoute,
   corsOrigin,
   parseOrigin,
+  persistHubBrowserOrigins,
+  persistedBrowserOrigins,
   resetHubBrowserOriginsForTests,
   setHubBrowserOrigins,
 } from "./browser-origin-policy";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createPrivateAppHostnameRequestRewriter } from "./private-app-hostname";
 
 const project_id = "00000000-1000-4000-8000-000000000000";
@@ -78,6 +83,116 @@ describe("project-host browser origin policy", () => {
         project_id,
       ),
     ).toBe("app");
+  });
+
+  // 2026-10-17: a conat router respawned by the host agent (after a crash)
+  // inherits neither the app's hub origins nor its runtime COCALC_SITE_URL,
+  // and refused every browser ("cross-site connection refused").
+  describe("origins persisted by the app for the host's other processes", () => {
+    let dir: string;
+    const savedData = process.env.COCALC_DATA;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), "origins-"));
+      process.env.COCALC_DATA = dir;
+    });
+    afterEach(() => {
+      if (savedData == null) delete process.env.COCALC_DATA;
+      else process.env.COCALC_DATA = savedData;
+      fs.rmSync(dir, { recursive: true, force: true });
+      jest.restoreAllMocks();
+    });
+    // What a freshly spawned router process has: no hub origins in memory
+    // and no COCALC_SITE_URL, only the shared data directory.
+    const asRespawnedRouter = () => {
+      resetHubBrowserOriginsForTests();
+      delete process.env.COCALC_SITE_URL;
+    };
+
+    it("lets a respawned router accept the site and hub origins", () => {
+      asRespawnedRouter();
+      for (const origin of [
+        "https://cocalc.example",
+        "https://bay-1-cocalc.example",
+      ]) {
+        expect(ambientCookieRejection(req({ origin }), "conat")).toBe(
+          "origin not allowed",
+        );
+      }
+      // The app (with the hub's answer) persists them...
+      persistHubBrowserOrigins({
+        site_url: "https://cocalc.example/base",
+        browser_origins: ["https://bay-1-cocalc.example", "bogus"],
+      });
+      expect(
+        fs.statSync(path.join(dir, "browser-origins.json")).mode & 0o777,
+      ).toBe(0o600);
+      asRespawnedRouter();
+      for (const origin of [
+        "https://cocalc.example",
+        "https://bay-1-cocalc.example",
+      ]) {
+        expect(
+          ambientCookieRejection(req({ origin }), "conat"),
+        ).toBeUndefined();
+      }
+      expect(
+        ambientCookieRejection(
+          req({ origin: "https://evil.example" }),
+          "conat",
+        ),
+      ).toBe("origin not allowed");
+      expect(persistedBrowserOrigins().site_url).toBe(
+        "https://cocalc.example/base",
+      );
+    });
+
+    it("keeps the last known-good file when a refresh is empty or the file breaks", () => {
+      persistHubBrowserOrigins({
+        site_url: "https://cocalc.example",
+        browser_origins: [],
+      });
+      persistHubBrowserOrigins({ site_url: "", browser_origins: [] });
+      asRespawnedRouter();
+      expect(
+        ambientCookieRejection(
+          req({ origin: "https://cocalc.example" }),
+          "conat",
+        ),
+      ).toBeUndefined();
+      // A corrupt file (e.g. a partial write by another tool) keeps the value
+      // already loaded.
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 60_000);
+      fs.writeFileSync(path.join(dir, "browser-origins.json"), "{oops");
+      expect(
+        ambientCookieRejection(
+          req({ origin: "https://cocalc.example" }),
+          "conat",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("picks up a newer refresh by the app", () => {
+      persistHubBrowserOrigins({ site_url: "https://cocalc.example" });
+      asRespawnedRouter();
+      expect(persistedBrowserOrigins().origins).toEqual([
+        "https://cocalc.example",
+      ]);
+      persistHubBrowserOrigins({
+        site_url: "https://cocalc.example",
+        browser_origins: ["https://bay-2-cocalc.example"],
+      });
+      const file = path.join(dir, "browser-origins.json");
+      const later = new Date(Date.now() + 10_000);
+      fs.utimesSync(file, later, later);
+      jest.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+      expect(
+        ambientCookieRejection(
+          req({ origin: "https://bay-2-cocalc.example" }),
+          "conat",
+        ),
+      ).toBeUndefined();
+    });
   });
 
   describe("with an Origin header", () => {

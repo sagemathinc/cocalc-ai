@@ -221,6 +221,7 @@ import {
   checkAmbientCookieRequest,
   classifyProjectRoute,
   corsOrigin,
+  persistHubBrowserOrigins,
   setHubBrowserOrigins,
 } from "./browser-origin-policy";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
@@ -1430,6 +1431,9 @@ export async function main(
       });
       process.env.COCALC_SITE_URL = url;
       setHubBrowserOrigins(browser_origins ?? []);
+      // For the host's other processes, e.g. a conat router the host agent
+      // respawns without this process's environment.
+      persistHubBrowserOrigins({ site_url: url, browser_origins });
     } catch (err) {
       logger.warn("unable to resolve public CoCalc site URL", {
         err: `${err}`,
