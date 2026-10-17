@@ -14,7 +14,10 @@ describe("getMermaid", () => {
     const config = initialize.mock.calls[0][0];
     expect(config.securityLevel).toBe("strict");
     expect(config.secure).toEqual(
-      expect.arrayContaining(["secure", "securityLevel"]),
+      expect.arrayContaining(["secure", "securityLevel", "htmlLabels"]),
     );
+    // Native SVG labels: the output policy drops foreignObject.
+    expect(config.htmlLabels).toBe(false);
+    expect(config.flowchart.htmlLabels).toBe(false);
   });
 });

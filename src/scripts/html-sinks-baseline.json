@@ -57,12 +57,6 @@
   "src/packages/frontend/editors/slate/elements/code-block/index.tsx": {
     "dangerouslySetInnerHTML": 2
   },
-  "src/packages/frontend/editors/slate/elements/code-block/mermaid-public-viewer.tsx": {
-    "innerHTML assignment": 2
-  },
-  "src/packages/frontend/editors/slate/elements/code-block/mermaid.tsx": {
-    "innerHTML assignment": 2
-  },
   "src/packages/frontend/editors/slate/elements/code-block/public-viewer.tsx": {
     "dangerouslySetInnerHTML": 2
   },
