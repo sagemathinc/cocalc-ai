@@ -56,10 +56,11 @@ function text(value: unknown): string {
 
 // The outputs that render in the frame, given the MIME type selected for each
 // message (the Data renderer's choice); null if no JavaScript output is
-// selected in this cell.  Plain text outputs (streams, errors) that come
-// between the first and last frame output go into the frame too, as text, so
-// the cell's order is kept; any other output kind there renders after the
-// frame (a known reordering).
+// selected in this cell.  stdout/stderr between the first and last frame
+// output go into the frame too, as plain text (ANSI colors dropped, stderr
+// shaded as in the notebook), so the cell's order is kept.  Any other output
+// kind there, including errors (which normally end a cell), renders after the
+// frame with the notebook's own renderers: a known reordering.
 export function activeGroup(
   messages: Map<string, any>[],
   selectedType: (message: Map<string, any>) => string | undefined,
@@ -88,38 +89,30 @@ export function activeGroup(
         kind: type === "application/javascript" ? "javascript" : "html",
         value: text(m.getIn(["data", type])),
       });
-    } else if (i > first && i < last && isPlainText(m)) {
+    } else if (i > first && i < last && isStream(m)) {
       outputs.push({
         index: i,
         kind: "text",
         value: plainText(m),
         className:
-          m.get("traceback") != null
-            ? "output_error"
-            : `output_${m.get("name")}`,
+          m.get("name") === "stderr" ? "output_stderr" : "output_stdout",
       });
     }
   });
   return outputs;
 }
 
-function isPlainText(m: Map<string, any>): boolean {
-  return (
-    m.get("name") === "stdout" ||
-    m.get("name") === "stderr" ||
-    m.get("traceback") != null
-  );
+function isStream(m: Map<string, any>): boolean {
+  return m.get("name") === "stdout" || m.get("name") === "stderr";
 }
 
 function defaultPlainText(m: Map<string, any>): string {
-  if (m.get("traceback") != null) {
-    return text(m.get("traceback")?.join?.("\n") ?? m.get("traceback"));
-  }
   return text(m.get("text"));
 }
 
 // Runs in the frame.  Accepts updates only from the parent window.  Each
-// position keeps its element while its exact kind and value are unchanged;
+// position keeps its element while its exact kind, value and (for text)
+// class are unchanged;
 // otherwise it is replaced (and new JavaScript runs once).
 const BOOTSTRAP = `(function () {
   var root = document.getElementById("cocalc-outputs");
@@ -146,20 +139,21 @@ const BOOTSTRAP = `(function () {
       if (o.kind !== "html" && o.kind !== "javascript" && o.kind !== "text") return;
       wanted.add(o.index);
       var cur = rendered.get(o.index);
-      if (!cur || cur.kind !== o.kind || cur.value !== o.value) {
+      var className = o.className === "output_stderr" ? "output_stderr" : "output_stdout";
+      if (!cur || cur.kind !== o.kind || cur.value !== o.value || (o.kind === "text" && cur.className !== className)) {
         if (cur) cur.div.remove();
         var div = document.createElement(o.kind === "text" ? "pre" : "div");
         if (o.kind === "javascript") {
           div.className = "output_javascript";
           toRun.push([div, o.value]);
         } else if (o.kind === "text") {
-          div.className = typeof o.className === "string" ? o.className : "output_text";
+          div.className = className;
           div.textContent = o.value;
         } else {
           div.className = "output_html";
           div.innerHTML = o.value;
         }
-        cur = { kind: o.kind, value: o.value, div: div };
+        cur = { kind: o.kind, value: o.value, className: className, div: div };
         rendered.set(o.index, cur);
       }
       var next = prev ? prev.nextSibling : root.firstChild;
@@ -183,11 +177,24 @@ function scriptBody(code: string): string {
   return code.replace(/<\/(script)/gi, "<\\/$1").replace(/<!--/g, "<\\!--");
 }
 
-export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:sans-serif}</style><script>${scriptBody(
+export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:sans-serif}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:#fdd}</style><script>${scriptBody(
   `${jquerySource}`,
 )}</script></head><body><div id="cocalc-outputs"></div><script>${scriptBody(
   BOOTSTRAP,
 )}</script></body></html>`;
+
+function sameOutputs(a: ActiveOutput[], b: ActiveOutput[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (x, i) =>
+        x.index === b[i].index &&
+        x.kind === b[i].kind &&
+        x.className === b[i].className &&
+        x.value === b[i].value,
+    )
+  );
+}
 
 export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -201,7 +208,14 @@ export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
     );
   };
   // The frame compares exact values, so posting an unchanged list is a no-op.
+  // Post only when the list actually changed (not, e.g., for a trailing
+  // stdout outside the frame), to avoid cloning large outputs needlessly.
+  const postedRef = useRef<ActiveOutput[] | null>(null);
   useEffect(() => {
+    if (postedRef.current != null && sameOutputs(postedRef.current, outputs)) {
+      return;
+    }
+    postedRef.current = outputs;
     post(frameRef.current);
   }, [outputs]);
   return (

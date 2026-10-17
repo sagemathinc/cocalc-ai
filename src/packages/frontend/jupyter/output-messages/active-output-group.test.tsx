@@ -60,10 +60,11 @@ describe("activeGroup uses the renderer's MIME choice", () => {
     ]);
   });
 
-  it("carries text between frame outputs into the frame, keeping order", () => {
+  it("carries stdout/stderr between frame outputs into the frame; errors stay out", () => {
     const messages = [
       bundle({ "text/html": "<div id=t></div>" }),
       fromJS({ name: "stdout", text: "between" }),
+      fromJS({ name: "stderr", text: "warn" }),
       fromJS({ traceback: ["Err: boom"], ename: "Err", evalue: "boom" }),
       bundle({ "application/javascript": "f()" }),
       fromJS({ name: "stdout", text: "after" }),
@@ -72,10 +73,9 @@ describe("activeGroup uses the renderer's MIME choice", () => {
     expect(group.map((o) => [o.kind, o.index, o.className])).toEqual([
       ["html", 0, undefined],
       ["text", 1, "output_stdout"],
-      ["text", 2, "output_error"],
-      ["javascript", 3, undefined],
+      ["text", 2, "output_stderr"],
+      ["javascript", 4, undefined],
     ]);
-    expect(group[2].value).toContain("Err: boom");
   });
 });
 
@@ -110,6 +110,38 @@ describe("CellOutputMessages", () => {
     expect(container.querySelector("#sib")).toBeNull();
     expect(container.textContent).toContain("plain text");
     expect((window as any).__ranInApp).toBeUndefined();
+  });
+
+  it("an error between grouped outputs keeps the cell's error tooling", async () => {
+    const AIError = ({ traceback }) => (
+      <div data-testid="ai-error">{traceback}</div>
+    );
+    const withError = fromJS({
+      0: { output_type: "display_data", data: { "text/html": "<b>h</b>" } },
+      1: {
+        output_type: "error",
+        ename: "ValueError",
+        evalue: "bad",
+        traceback: ["ValueError: bad"],
+      },
+      2: {
+        output_type: "display_data",
+        data: { "application/javascript": "f()" },
+      },
+    });
+    const { getByTestId, container } = render(
+      <CellOutputMessages
+        output={withError}
+        trust
+        id="cell1"
+        actions={{ store: { getIn: () => "x = 1" } }}
+        aiTools={{ toolComponents: { AIError } } as any}
+      />,
+    );
+    await act(async () => {});
+    expect(getByTestId("ai-error").textContent).toContain("ValueError: bad");
+    // the error itself still renders in the notebook (outside the frame)
+    expect(container.textContent).toContain("ValueError");
   });
 
   it("untrusted: JavaScript does not run at all", async () => {

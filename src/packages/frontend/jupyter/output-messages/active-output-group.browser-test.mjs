@@ -137,24 +137,45 @@ try {
     "order kept",
   );
 
-  // Exact identity: a colliding pair under a 32-bit hash, and a kind change
-  // with the same value, are both real updates.
+  // Exact identity.  These two scripts collided (19xve70.s) under the 32-bit
+  // digest used before; replacing one with the other must run the second.
   await set({});
-  await set({
-    0: js('window.__last = "5opiHUtIFGpE"; element.text("5opiHUtIFGpE")'),
-  });
+  await set({ 0: js('element.text("5opiHUtIFGpE")') });
   f = await frame();
-  await f.waitForFunction(() => window.__last === "5opiHUtIFGpE");
-  await set({
-    0: js('window.__last = "149ArEHM7oZ6"; element.text("149ArEHM7oZ6")'),
-  });
-  await f.waitForFunction(() => window.__last === "149ArEHM7oZ6");
-  const same = "<b>x</b>";
-  await set({ 0: html(same), 1: js("window.__k = 1;") });
-  await set({ 0: js("element.text('now js')"), 1: js("window.__k = 1;") });
   await f.waitForFunction(
     () =>
-      document.querySelector(".output_javascript")?.textContent === "now js",
+      document.querySelector(".output_javascript")?.textContent ===
+      "5opiHUtIFGpE",
+  );
+  await set({ 0: js('element.text("149ArEHM7oZ6")') });
+  await f.waitForFunction(
+    () =>
+      document.querySelector(".output_javascript")?.textContent ===
+      "149ArEHM7oZ6",
+  );
+  // The same value as HTML, then as JavaScript: the kind change must run it.
+  const both = 'document.title = "kind-changed"';
+  await set({ 0: html(both), 1: js("1") });
+  await f.waitForFunction(() => document.querySelector(".output_html") != null);
+  assert.notEqual(await f.evaluate(() => document.title), "kind-changed");
+  await set({ 0: js(both), 1: js("1") });
+  await f.waitForFunction(() => document.title === "kind-changed");
+  // stdout -> stderr with the same text changes its presentation.
+  await set({
+    0: html("<b>a</b>"),
+    1: { name: "stdout", text: "same" },
+    2: js("1"),
+  });
+  await f.waitForFunction(
+    () => document.querySelector("pre.output_stdout")?.textContent === "same",
+  );
+  await set({
+    0: html("<b>a</b>"),
+    1: { name: "stderr", text: "same" },
+    2: js("1"),
+  });
+  await f.waitForFunction(
+    () => document.querySelector("pre.output_stderr")?.textContent === "same",
   );
 
   // Text between frame outputs stays in order inside the frame.
@@ -162,7 +183,7 @@ try {
   await set({
     0: html("<div>first</div>"),
     1: { name: "stdout", text: "printed between" },
-    2: { output_type: "error", ename: "E", evalue: "v", traceback: ["E: v"] },
+    2: { name: "stderr", text: "warned between" },
     3: js("element.text('script')"),
     4: { name: "stdout", text: "printed after" },
   });
@@ -177,7 +198,7 @@ try {
         .map((d) => d.className)
         .join(","),
     ),
-    "output_html,output_stdout,output_error,output_javascript",
+    "output_html,output_stdout,output_stderr,output_javascript",
   );
   assert.match(await page.locator("#cell").innerText(), /printed after/);
 
@@ -210,7 +231,7 @@ try {
       try { r.popup = window.open("about:blank") ? "opened" : "blocked"; } catch (e) { r.popup = "blocked"; }
       r.origin = self.origin;
       // A forged update from inside the frame must be ignored.
-      window.postMessage({ type: "cocalc-active-outputs", outputs: [{ key: "x", kind: "html", value: "<b id=forged>forged</b>" }] }, "*");
+      window.postMessage({ type: "cocalc-active-outputs", outputs: [{ index: 0, kind: "html", value: "<b id=forged>forged</b>" }] }, "*");
       element.text(JSON.stringify(r));
     `),
   });

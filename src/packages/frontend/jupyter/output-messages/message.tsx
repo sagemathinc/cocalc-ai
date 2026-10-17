@@ -139,12 +139,7 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
                   : selectMimeType(data.keySeq().toJS(), kernelspec, trust);
               },
               // ANSI escapes stripped, as plain text in the frame.
-              (m) =>
-                Anser.ansiToText(
-                  m.get("traceback") != null
-                    ? m.get("traceback").join("\n")
-                    : `${m.get("text") ?? ""}`,
-                ),
+              (m) => Anser.ansiToText(`${m.get("text") ?? ""}`),
             )
           : null,
       [obj, kernelspec, trust],
@@ -153,6 +148,13 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     const firstInGroup = Math.min(...inGroup);
     for (const n of numericallyOrderedKeys(obj)) {
       const mesg = obj[n];
+      // Error bookkeeping applies to every message, wherever it renders.
+      if (mesg?.get("traceback")) {
+        const t = mesg.get("traceback").join("\n");
+        // if user clicks "Stop" there is a traceback, but it's not an error to fix with AI.
+        hasError = !t.includes("KeyboardInterrupt");
+        traceback += t + "\n";
+      }
       if (mesg != null && group != null && inGroup.has(n)) {
         if (n === firstInGroup) {
           hasIframes = true;
@@ -161,12 +163,6 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
         continue;
       }
       if (mesg != null) {
-        if (mesg.get("traceback")) {
-          const t = mesg.get("traceback").join("\n");
-          // if user clicks "Stop" there is a traceback, but it's not an error to fix with AI.
-          hasError = !t.includes("KeyboardInterrupt");
-          traceback += t + "\n";
-        }
         if (scrolled && !hasIframes && mesg.getIn(["data", "iframe"])) {
           hasIframes = true;
         }
