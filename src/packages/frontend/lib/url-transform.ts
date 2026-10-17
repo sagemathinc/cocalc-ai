@@ -21,7 +21,8 @@ export type UrlTransformResult = string | undefined | typeof URL_REJECTED;
 
 export type UrlTransform = (url: string, tag?: string) => UrlTransformResult;
 
-// Returns the URL to use, or null if urlTransform rejected it.
+// Returns the URL to use, or null if urlTransform rejected it.  A transform
+// that throws rejects the URL.
 export function applyUrlTransform(
   urlTransform: UrlTransform | undefined,
   url: string,
@@ -30,9 +31,33 @@ export function applyUrlTransform(
   if (urlTransform == null) {
     return url;
   }
-  const result = urlTransform(url, tag);
+  let result: UrlTransformResult;
+  try {
+    result = urlTransform(url, tag);
+  } catch {
+    return null;
+  }
   if (result === URL_REJECTED) {
     return null;
   }
   return result ?? url;
+}
+
+// Apply urlTransform to each candidate URL of a srcset, keeping descriptors
+// and dropping rejected candidates.  Returns null if none remain.
+export function applyUrlTransformToSrcset(
+  urlTransform: UrlTransform | undefined,
+  srcset: string,
+  tag?: string,
+): string | null {
+  const candidates: string[] = [];
+  for (const part of srcset.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const [url, ...descriptors] = trimmed.split(/\s+/);
+    const transformed = applyUrlTransform(urlTransform, url, tag);
+    if (transformed == null) continue;
+    candidates.push([transformed, ...descriptors].join(" "));
+  }
+  return candidates.length > 0 ? candidates.join(", ") : null;
 }

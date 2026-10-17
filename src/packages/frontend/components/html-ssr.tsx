@@ -24,7 +24,10 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
-import { applyUrlTransform } from "@cocalc/frontend/lib/url-transform";
+import {
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+} from "@cocalc/frontend/lib/url-transform";
 import {
   enforceHtmlSafetyFloor,
   isAllowedHtmlTag,
@@ -35,7 +38,7 @@ import {
   shouldDropHtmlTagContents,
 } from "./sanitize-html";
 
-const URL_ATTRIBS = ["src", "href", "data"];
+const URL_ATTRIBS = ["src", "srcset", "href", "data"];
 const MATH_SKIP_TAGS = new Set<string>(MathJaxConfig.tex2jax.skipTags);
 
 export default function HTML({
@@ -174,7 +177,10 @@ export default function HTML({
           const value = attribs[attrib];
           if (value == null) continue;
           // (Called without a tag here, as it always has been.)
-          const x = applyUrlTransform(urlTransform, value);
+          const x =
+            attrib === "srcset"
+              ? applyUrlTransformToSrcset(urlTransform, value)
+              : applyUrlTransform(urlTransform, value);
           if (x === value) continue;
           transformed ??= { ...attribs };
           if (x == null) {

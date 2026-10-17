@@ -9,7 +9,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import HTML from "@cocalc/frontend/components/html-ssr";
 import { sanitizeHtmlAttributes } from "@cocalc/frontend/components/sanitize-html";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
-import { URL_REJECTED, applyUrlTransform } from "./url-transform";
+import {
+  URL_REJECTED,
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+} from "./url-transform";
 
 describe("applyUrlTransform", () => {
   it("keeps, replaces or rejects", () => {
@@ -63,5 +67,73 @@ describe("rejection drops the attribute", () => {
     );
     expect(html).not.toContain("e.example");
     expect(html).toContain('alt="a"');
+  });
+});
+
+describe("srcset", () => {
+  const IMG = `<div><img src="https://e.example/a.png" srcset="https://e.example/b.png 1x, https://e.example/c.png 2x" alt="probe"></div>`;
+
+  it("transforms each candidate and keeps descriptors", () => {
+    expect(
+      applyUrlTransformToSrcset((u) => `/files/${u}`, "a.png 1x, b.png 640w"),
+    ).toBe("/files/a.png 1x, /files/b.png 640w");
+    expect(
+      applyUrlTransformToSrcset(
+        (u) => (u.startsWith("bad") ? URL_REJECTED : undefined),
+        "bad.png 1x, ok.png 2x",
+      ),
+    ).toBe("ok.png 2x");
+    expect(applyUrlTransformToSrcset(() => URL_REJECTED, "a 1x, b 2x")).toBe(
+      null,
+    );
+  });
+
+  it("is dropped with src when images are rejected (central policy)", () => {
+    expect(
+      sanitizeHtmlAttributes(
+        "img",
+        {
+          src: "https://e.example/a.png",
+          srcset: "https://e.example/b.png 1x",
+          alt: "probe",
+        },
+        () => URL_REJECTED,
+      ),
+    ).toEqual({ alt: "probe" });
+  });
+
+  it("is dropped in sanitized html-ssr", () => {
+    const html = renderToStaticMarkup(
+      <FileContext.Provider
+        value={{
+          urlTransform: (_url, tag) =>
+            tag === "img" ? URL_REJECTED : undefined,
+        }}
+      >
+        <HTML value={IMG} />
+      </FileContext.Provider>,
+    );
+    expect(html).not.toContain("e.example");
+    expect(html).toContain('alt="probe"');
+  });
+
+  it("is dropped in noSanitize html-ssr", () => {
+    const html = renderToStaticMarkup(
+      <FileContext.Provider
+        value={{ noSanitize: true, urlTransform: () => URL_REJECTED }}
+      >
+        <HTML value={IMG} />
+      </FileContext.Provider>,
+    );
+    expect(html).not.toContain("e.example");
+    expect(html).toContain('alt="probe"');
+  });
+
+  it("treats a throwing transform as rejection", () => {
+    expect(
+      applyUrlTransform(() => {
+        throw Error("boom");
+      }, "x"),
+    ).toBeNull();
   });
 });

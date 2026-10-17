@@ -5,6 +5,7 @@
 
 import {
   applyUrlTransform,
+  applyUrlTransformToSrcset,
   type UrlTransform,
 } from "@cocalc/frontend/lib/url-transform";
 
@@ -276,9 +277,12 @@ export function sanitizeHtmlAttributes(
     if (rawValue == null) {
       continue;
     }
-    const transformed = URL_ATTRIBUTES.has(attr)
-      ? applyUrlTransform(urlTransform, rawValue, tag)
-      : rawValue;
+    const transformed =
+      attr === "srcset"
+        ? applyUrlTransformToSrcset(urlTransform, rawValue, tag)
+        : URL_ATTRIBUTES.has(attr)
+          ? applyUrlTransform(urlTransform, rawValue, tag)
+          : rawValue;
     if (transformed == null) {
       // rejected by urlTransform
       continue;
