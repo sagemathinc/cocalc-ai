@@ -5,7 +5,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { sanitizeCss, sanitizeMermaidSvg } from "./sanitize-mermaid-svg";
+import { sanitizeMermaidSvg } from "./sanitize-mermaid-svg";
+import {
+  isExternalCssValue,
+  sanitizeInlineStyle,
+  sanitizeStyleSheet,
+} from "./sanitize-svg-css";
 
 // Real mermaid 11.16.1 output (strict, htmlLabels: false, as configured in
 // get-mermaid.ts), rendered in Chromium.  The evil_* and directive diagrams
@@ -141,20 +146,48 @@ describe("sanitizeMermaidSvg on hostile SVG", () => {
     const container = document.createElement("div");
     container.replaceChildren(clean);
     expect(container.querySelector("img")).toBeNull();
-    expect(container.querySelector("style")?.textContent).toContain("<img");
+    expect(container.querySelector("meta")).toBeNull();
   });
 });
 
-describe("sanitizeCss", () => {
-  it("keeps fragment urls and ordinary CSS", () => {
-    expect(sanitizeCss(".a{fill:url(#x);stroke:#333}")).toBe(
-      ".a{fill:url(#x);stroke:#333}",
-    );
+describe("CSS policy", () => {
+  // Stylesheets are parsed with the browser's CSS parser, which jsdom lacks;
+  // here the policy must fail closed.  The real CSS behavior is checked in
+  // Chromium by sanitize-mermaid-svg.browser-test.mjs.
+  it("drops stylesheets it cannot parse (jsdom)", () => {
+    expect(
+      sanitizeStyleSheet("#d1{color:red} body{display:none}", "d1", document),
+    ).toBe("");
   });
-  it("removes imports, external urls, escapes and expression()", () => {
-    const out = sanitizeCss(
-      `@import "x.css"; .a{b:url('https://e/x')} .c{d:\\75rl(https://e/y)} .e{f:expression(alert(1))}`,
+
+  it("drops all CSS without a usable scope id", () => {
+    expect(sanitizeStyleSheet("#x{color:red}", null, document)).toBe("");
+    expect(sanitizeStyleSheet("#x{color:red}", "a b", document)).toBe("");
+  });
+
+  it("applies the declaration policy to style attributes", () => {
+    const out = sanitizeInlineStyle(
+      `max-width: 100px; background-image: image-set("https://e.example/i.png" 1x); cursor: url(https://e.example/c), auto; position: fixed`,
+      document,
     );
-    expect(out).not.toMatch(/@import|https:\/\/e|expression\(/);
+    expect(out).toContain("max-width: 100px");
+    expect(out).not.toMatch(/e\.example|fixed/);
+  });
+
+  it("recognizes resource functions in any spelling", () => {
+    for (const v of [
+      `url(https://e)`,
+      `image-set("https://e" 1x)`,
+      `-webkit-image-set("https://e" 1x)`,
+      `cross-fade(url(a), url(b))`,
+      `element(#x)`,
+      `src("https://e")`,
+      `URL(x)`,
+    ]) {
+      expect(isExternalCssValue(v)).toBe(true);
+    }
+    expect(isExternalCssValue(`url(#g)`)).toBe(false);
+    expect(isExternalCssValue(`url("#g")`)).toBe(false);
+    expect(isExternalCssValue(`rgb(1, 2, 3)`)).toBe(false);
   });
 });

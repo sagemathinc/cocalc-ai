@@ -15,11 +15,12 @@ allowlist before it reaches the page:
   foreignObject (an HTML integration point) and every HTML element, is
   dropped with its contents;
 - no event handler attributes;
-- links: <a> may point only to safe URLs (http, https, mailto, relative);
-  <use> only to fragments in the same SVG; <image> only to inline raster
-  data: URLs;
-- url(...) in attributes, inline styles and <style> sheets may only refer to
-  fragments (#id), and @import is removed, so nothing external is loaded.
+- links: <a> may point only to http, https, mailto or relative URLs; <use>
+  only to fragments in the same SVG; <image> only to inline raster data:
+  URLs;
+- CSS (<style>, style attributes, presentation attributes) is parsed by the
+  browser and rebuilt so it loads nothing and can only style this SVG (see
+  sanitize-svg-css.ts).
 
 The result is a DOM node, not a string: the caller inserts it directly.  It is
 never serialized and parsed again, since serializing SVG <style> text and
@@ -29,7 +30,11 @@ Mermaid is initialized with htmlLabels: false (see get-mermaid.ts), so labels
 are native SVG text and dropping foreignObject loses nothing.
 */
 
-import { isSafeHtmlUrl } from "@cocalc/frontend/components/sanitize-html";
+import {
+  isExternalCssValue,
+  sanitizeInlineStyle,
+  sanitizeStyleSheet,
+} from "./sanitize-svg-css";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -97,7 +102,8 @@ export function sanitizeMermaidSvg(
   if (root == null || !isSvgElement(root, "svg")) {
     return null;
   }
-  sanitizeElement(root);
+  // Mermaid's CSS is written for the root's id; rules are scoped to it.
+  sanitizeElement(root, { scope: root.getAttribute("id"), doc });
   return doc.importNode(root, true) as unknown as SVGSVGElement;
 }
 
@@ -108,9 +114,14 @@ function isSvgElement(elt: Element, name?: string): boolean {
   );
 }
 
-function sanitizeElement(elt: Element): void {
+interface Context {
+  scope: string | null;
+  doc: Document;
+}
+
+function sanitizeElement(elt: Element, context: Context): void {
   for (const attr of Array.from(elt.attributes)) {
-    const value = sanitizeAttribute(elt, attr.name, attr.value);
+    const value = sanitizeAttribute(elt, attr.name, attr.value, context);
     if (value == null) {
       elt.removeAttributeNode(attr);
     } else if (value !== attr.value) {
@@ -118,6 +129,15 @@ function sanitizeElement(elt: Element): void {
     }
   }
   const tag = elt.localName.toLowerCase();
+  if (tag === "style") {
+    // Rebuilt from the parsed sheet; any child elements are dropped too.
+    elt.textContent = sanitizeStyleSheet(
+      elt.textContent ?? "",
+      context.scope,
+      context.doc,
+    );
+    return;
+  }
   for (const child of Array.from(elt.childNodes)) {
     if (child.nodeType === 1) {
       const childElt = child as Element;
@@ -127,13 +147,9 @@ function sanitizeElement(elt: Element): void {
       ) {
         childElt.remove();
       } else {
-        sanitizeElement(childElt);
+        sanitizeElement(childElt, context);
       }
-    } else if (child.nodeType === 3) {
-      if (tag === "style") {
-        child.nodeValue = sanitizeCss(child.nodeValue ?? "");
-      }
-    } else {
+    } else if (child.nodeType !== 3) {
       // comments, processing instructions, CDATA
       child.remove();
     }
@@ -144,6 +160,7 @@ function sanitizeAttribute(
   elt: Element,
   rawName: string,
   value: string,
+  context: Context,
 ): string | null {
   const name = rawName.toLowerCase();
   if (!ATTRIBUTE_NAME.test(rawName) || name.startsWith("on")) {
@@ -156,18 +173,16 @@ function sanitizeAttribute(
     return null;
   }
   if (name === "style") {
-    return sanitizeCss(value);
+    return sanitizeInlineStyle(value, context.doc);
   }
-  if (/url\s*\(/i.test(value)) {
-    return onlyFragmentUrls(value) ? value : null;
-  }
-  return value;
+  // Presentation attributes (fill, cursor, filter, ...) are CSS values too.
+  return isExternalCssValue(value) ? null : value;
 }
 
 function sanitizeHref(tag: string, value: string): string | null {
   const trimmed = value.trim();
   if (tag === "a") {
-    return isSafeHtmlUrl(trimmed) ? value : null;
+    return isSafeLink(trimmed) ? value : null;
   }
   if (tag === "image") {
     return RASTER_DATA_URL.test(trimmed) ? value : null;
@@ -176,37 +191,13 @@ function sanitizeHref(tag: string, value: string): string | null {
   return trimmed.startsWith("#") ? value : null;
 }
 
-function onlyFragmentUrls(value: string): boolean {
-  const urls = value.match(/url\s*\(([^)]*)\)?/gi) ?? [];
-  return urls.every((url) =>
-    /^url\s*\(\s*(['"]?)#[^'"()\s]*\1\s*\)$/i.test(url),
-  );
-}
-
-// Remove @import, any url(...) that is not a same-document fragment, and the
-// legacy script-in-CSS form expression(...).
-export function sanitizeCss(css: string): string {
-  return decodeCssEscapes(css)
-    .replace(/@import[^;]*;?/gi, "")
-    .replace(/expression\s*\(/gi, "(")
-    .replace(/url\s*\(([^)]*)\)?/gi, (match) =>
-      onlyFragmentUrls(match) ? match : "none",
-    );
-}
-
-// CSS escapes could spell url( or @import in a way the patterns above miss,
-// so decode them first.  Mermaid's own CSS has none.  A decoded backslash
-// or quote is dropped rather than reintroduced as syntax.
-function decodeCssEscapes(css: string): string {
-  return css.replace(/\\(?:([0-9a-f]{1,6})\s?|([\s\S]))/gi, (_, hex, char) => {
-    const decoded =
-      hex != null
-        ? String.fromCodePoint(safeCodePoint(parseInt(hex, 16)))
-        : char;
-    return /[\\'"]/.test(decoded) ? "" : decoded;
-  });
-}
-
-function safeCodePoint(n: number): number {
-  return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? n : 0xfffd;
+// http, https, mailto, or a relative URL (no scheme).
+function isSafeLink(url: string): boolean {
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
+  if (scheme == null) {
+    // Relative.  A leading control character or backslash could make a
+    // browser see a scheme we didn't, so reject those.
+    return !/^[\u0000-\u0020\\]/.test(url);
+  }
+  return scheme === "http" || scheme === "https" || scheme === "mailto";
 }
