@@ -79,7 +79,7 @@ const consoleCounts = {};
 const consoleLines = [];
 page.on("console", (msg) => {
   const text = msg.text();
-  if (consoleLines.length < 20000) {
+  if (consoleLines.length < 100000) {
     consoleLines.push(`${Date.now()} ${msg.type()} ${text.slice(0, 2000)}`);
   }
   for (const key of [
@@ -276,6 +276,33 @@ try {
   await page.waitForTimeout(2000);
   // Marks this page load; a full reload of the app loses it.
   await page.evaluate((nonce) => (window.__rcxPageLoad = nonce), nonce);
+  if (process.env.MERGE_DEBUG) {
+    // Log every CodeMirror three-way merge, with how many local lines the
+    // merged result dropped: tells a merge that shrank the buffer apart from
+    // keystrokes that never reached CodeMirror.
+    await page.evaluate(() => {
+      window.__simpleInputMergeDebug = (tag, x) => {
+        // Some callers pass no merged text; only compare when there is one.
+        const merged =
+          typeof x.merged === "string" ? new Set(x.merged.split("\n")) : null;
+        const dropped = merged
+          ? (x.local ?? "").split("\n").filter((l) => l && !merged.has(l))
+          : [];
+        console.log(
+          "MERGE",
+          tag,
+          JSON.stringify({
+            base: x.base?.length,
+            local: x.local?.length,
+            remote: x.remote?.length,
+            merged: x.merged?.length,
+            dropped: dropped.length,
+            dropped_sample: dropped.slice(0, 3),
+          }),
+        );
+      };
+    });
+  }
   await tagVisibleEditor("text");
   for (const kind of KINDS) {
     await openInApp(FILES[kind]);
@@ -331,6 +358,17 @@ try {
   const faultStart = Date.now();
   await injectFault();
   const faultEnd = Date.now();
+  // Dense typing right after the fault too: going back online or
+  // reconnecting forces recovery passes in the first seconds.
+  let denseAfterFault = Promise.resolve();
+  if (TYPE_INTERVAL_MS < 1000 && !CHAT_ACTIVE) {
+    denseAfterFault = (async () => {
+      for (let i = 0; Date.now() - faultEnd < 20000; i++) {
+        await typeInText(`recovering #${i} ${nonce}`).catch(() => {});
+        await page.waitForTimeout(TYPE_INTERVAL_MS);
+      }
+    })();
+  }
   if (CHAT_ACTIVE && chatAnswer) {
     // The chat stayed on screen through the fault: the answer should show up
     // as soon as the turn finishes.
@@ -366,6 +404,7 @@ try {
     }
     await page.waitForTimeout(1000);
   }
+  await denseAfterFault;
   report.recovery_seconds =
     recoveredAt == null ? null : Math.round((recoveredAt - faultEnd) / 1000);
   report.fault_seconds = Math.round((faultEnd - faultStart) / 1000);
