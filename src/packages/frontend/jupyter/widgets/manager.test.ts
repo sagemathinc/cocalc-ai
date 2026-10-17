@@ -210,10 +210,32 @@ describe("WidgetManager.close", () => {
       document.createElement("div"),
     );
     expect(manager.outputRoots.size).toBe(1);
-    const [root] = manager.outputRoots;
+    const [root] = manager.outputRoots.keys();
     const unmount = jest.spyOn(root, "unmount");
     manager.close();
     expect(unmount).toHaveBeenCalled();
     expect(manager.outputRoots.size).toBe(0);
+  });
+
+  it("unmounts output roots whose container has left the page", async () => {
+    const manager = new WidgetManager({
+      ipywidgets_state: makeState(),
+      actions: {
+        sendCommMessageToKernel: jest.fn(),
+        store: { get: () => true },
+      } as any,
+    });
+    const first = document.createElement("div");
+    document.body.appendChild(first);
+    await provider.renderOutput({ output_type: "stream", text: "a" }, first);
+    const [oldRoot] = manager.outputRoots.keys();
+    const unmount = jest.spyOn(oldRoot, "unmount");
+    // The Output widget replaces its content: the old container goes away.
+    first.remove();
+    const second = document.createElement("div");
+    document.body.appendChild(second);
+    await provider.renderOutput({ output_type: "stream", text: "b" }, second);
+    expect(unmount).toHaveBeenCalled();
+    expect(manager.outputRoots.size).toBe(1);
   });
 });

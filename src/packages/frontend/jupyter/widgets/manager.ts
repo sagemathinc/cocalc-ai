@@ -47,8 +47,21 @@ export class WidgetManager {
   private watching: Set<string> = new Set();
   public k3dObjectIds = new Set<number>();
   private closed = false;
-  // React roots of nested Output widget content, unmounted on close().
-  public outputRoots = new Set<ReactDOM.Root>();
+  // React roots of nested Output widget content and their containers,
+  // unmounted on close() or once their container has left the page.
+  public outputRoots = new Map<ReactDOM.Root, Element>();
+
+  addOutputRoot = (root: ReactDOM.Root, container: Element): void => {
+    for (const [old, div] of this.outputRoots) {
+      if (!div.isConnected) {
+        try {
+          old.unmount();
+        } catch {}
+        this.outputRoots.delete(old);
+      }
+    }
+    this.outputRoots.set(root, container);
+  };
 
   constructor({
     ipywidgets_state,
@@ -124,7 +137,7 @@ export class WidgetManager {
     for (const id of Object.keys(manager?._models ?? {})) {
       closeModel(manager._models[id]);
     }
-    for (const root of this.outputRoots) {
+    for (const root of this.outputRoots.keys()) {
       try {
         root.unmount();
       } catch {}
@@ -856,7 +869,7 @@ class Environment implements WidgetEnvironment {
       ),
     );
     const root = ReactDOM.createRoot(myDiv);
-    this.manager.outputRoots.add(root);
+    this.manager.addOutputRoot(root, myDiv);
     root.render(component);
   }
 }
