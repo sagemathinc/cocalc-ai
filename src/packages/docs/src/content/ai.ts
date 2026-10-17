@@ -72,12 +72,17 @@ document, application, or visualization. Include the relevant files and the
 checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
-on?** There is no name, project, runtime, model, or payment source to choose;
-this first agent uses Codex. If CoCalc asks you to verify your email, do that
-first. When you start typing, CoCalc prepares a project, a chat, and a named
-agent. This can start project compute and uses a named-agent slot even before
-you send. Choose the up-arrow **Start agent** button, or press **Shift+Enter**,
-to send your request.
+on?** There is no name or project to choose. Below the box, the runtime menu
+starts at **Codex**; choose **Claude** there for the Claude Code experimental
+preview, where the site enables it. For Codex, the model, thinking level, and
+payment source buttons work as in the new-agent form described below. If CoCalc
+asks you to verify your email, do that first. When you start typing, CoCalc
+prepares a project and starts it, which can start project compute; the chat and
+the named agent are created when you send, with the runtime chosen then. Choose
+the up-arrow **Start agent** button, or press **Shift+Enter**, to send your
+request. If the chosen runtime has no way to pay yet, the button's tooltip reads
+**Sign in with ChatGPT to start** or **Connect Claude to start**, and sending
+opens that sign-in instead; your request stays in the box.
 
 In the new-agent form, type your request, then check the settings below the
 box. They start from the agent you had selected, if any.
@@ -141,7 +146,7 @@ funding source before sending.
 
 ## Choose payment methods across your agents
 
-On the **Agents** page, select your agents and choose **Set payment method**.
+On the **Agents** page, select your agents and choose **Set payment method…**.
 You can leave a provider unchanged, select a connected credential, or have the
 selected agents follow your account default. **Make this my default** changes
 that provider's default as well; other agents following the default use it too.
