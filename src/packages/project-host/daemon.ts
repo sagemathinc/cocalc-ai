@@ -2466,23 +2466,27 @@ export function restartManagedLocalConatRouter(
     env,
     options?.desiredVersion,
   );
-  stopManagedConatRouter({
-    dataDir,
-    routerPidPath,
-    routerPort,
-  });
-  startManagedConatRouter({
-    dataDir,
-    env,
-    routerPidPath,
-    routerLogPath,
-    routerHost,
-    routerPort,
-    routerIngressHost,
-    routerIngressPort,
-    projectHostHost,
-    projectHostPort,
-    runtimeRoot,
+  // Under the control lock: the host agent respawns a managed process as soon
+  // as it exits, and must not start a second router between our stop and start.
+  withDaemonControlLock(index, () => {
+    stopManagedConatRouter({
+      dataDir,
+      routerPidPath,
+      routerPort,
+    });
+    startManagedConatRouter({
+      dataDir,
+      env,
+      routerPidPath,
+      routerLogPath,
+      routerHost,
+      routerPort,
+      routerIngressHost,
+      routerIngressPort,
+      projectHostHost,
+      projectHostPort,
+      runtimeRoot,
+    });
   });
 }
 
@@ -2508,20 +2512,23 @@ export function restartManagedLocalConatPersist(
     env,
     options?.desiredVersion,
   );
-  stopManagedConatPersist({
-    dataDir,
-    persistPidPath,
-    persistHealthPort,
-  });
-  startManagedConatPersist({
-    dataDir,
-    env,
-    persistPidPath,
-    persistLogPath,
-    persistHealthHost,
-    persistHealthPort,
-    runtimeRoot,
-    runtimeVersion: options?.desiredVersion,
+  // see restartManagedLocalConatRouter
+  withDaemonControlLock(index, () => {
+    stopManagedConatPersist({
+      dataDir,
+      persistPidPath,
+      persistHealthPort,
+    });
+    startManagedConatPersist({
+      dataDir,
+      env,
+      persistPidPath,
+      persistLogPath,
+      persistHealthHost,
+      persistHealthPort,
+      runtimeRoot,
+      runtimeVersion: options?.desiredVersion,
+    });
   });
 }
 
@@ -2704,6 +2711,37 @@ export function startDaemon(index = 0): void {
     },
   });
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
+}
+
+// The running managed processes the host agent keeps alive (project-host and,
+// when managed here, the conat router and persist server), from their pid
+// files.  Cheap: the host agent checks them between its full passes so it can
+// respawn one as soon as it exits instead of on the next poll.
+export function runningManagedDaemonPids(index = 0): number[] {
+  const {
+    pidPath,
+    managedRouter,
+    routerPidPath,
+    managedPersist,
+    persistPidPath,
+  } = resolveEnv(index);
+  const paths = [pidPath];
+  if (managedRouter) paths.push(routerPidPath);
+  if (managedPersist) paths.push(persistPidPath);
+  const pids: number[] = [];
+  for (const path of paths) {
+    try {
+      const pid = Number(fs.readFileSync(path, "utf8"));
+      if (Number.isInteger(pid) && pid > 0 && isRunning(pid)) pids.push(pid);
+    } catch {
+      // not started yet
+    }
+  }
+  return pids;
+}
+
+export function isDaemonPidRunning(pid: number): boolean {
+  return isRunning(pid);
 }
 
 export function ensureDaemon(index = 0, options?: EnsureOptions): void {
