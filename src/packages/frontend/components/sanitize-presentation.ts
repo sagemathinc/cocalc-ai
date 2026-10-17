@@ -95,7 +95,10 @@ export function sanitizePresentationAttribute(
   return PRESENTATION_ATTRIBUTE_VALUES[attr]?.test(v) ? v : undefined;
 }
 
-// Properties that only change how content looks in place.
+// Properties that change how content looks.  None moves content out of the
+// flow (no position, transform, negative offsets); some can paint beyond the
+// element's own box (large fonts, borders, decorations), which the notebook's
+// scrolling containers clip.
 const STYLE_PROPERTIES = new Set([
   "color",
   "background",

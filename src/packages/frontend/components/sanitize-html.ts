@@ -255,8 +255,20 @@ export function isSafeHtmlUrl(value: string): boolean {
   }
 }
 
-function sanitizeSrcset(value: string): string | undefined {
-  const candidates = parseSrcset(value).filter(({ url }) => isSafeHtmlUrl(url));
+// An image URL: a safe URL, or a data: image (e.g., a Jupyter attachment, or
+// an image pasted into Markdown).  In an <img> an image never runs script.
+export function isSafeImageUrl(value: string): boolean {
+  return (
+    isSafeHtmlUrl(value) ||
+    /^data:image\/[a-z0-9.+-]+(;[a-z0-9.+=-]+)*,/i.test(value.trim())
+  );
+}
+
+function sanitizeSrcset(
+  value: string,
+  isSafe: (url: string) => boolean,
+): string | undefined {
+  const candidates = parseSrcset(value).filter(({ url }) => isSafe(url));
   return candidates.length > 0 ? serializeSrcset(candidates) : undefined;
 }
 
@@ -310,13 +322,21 @@ export function sanitizeHtmlAttributes(
       continue;
     }
     if (attr === "srcset") {
-      const clean = sanitizeSrcset(transformed);
+      const clean = sanitizeSrcset(
+        transformed,
+        tag === "img" ? isSafeImageUrl : isSafeHtmlUrl,
+      );
       if (clean != null) {
         sanitized[attr] = clean;
       }
       continue;
     }
-    if (URL_ATTRIBUTES.has(attr) && !isSafeHtmlUrl(transformed)) {
+    if (
+      URL_ATTRIBUTES.has(attr) &&
+      !(tag === "img" && attr === "src"
+        ? isSafeImageUrl(transformed)
+        : isSafeHtmlUrl(transformed))
+    ) {
       continue;
     }
     if (

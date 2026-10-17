@@ -226,6 +226,11 @@ export default function HTML({
       }
     } catch (err) {
       console.log("WARNING -- issue parsing HTML", err);
+      if (!noSanitize) {
+        // Fail closed: returning undefined would render the node with its
+        // unsanitized attributes.
+        return React.createElement(React.Fragment);
+      }
     }
   };
 

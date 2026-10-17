@@ -13,6 +13,7 @@ we also use sanitized html.
 import register from "./register";
 import AutosizedIframe from "../autosized-iframe";
 import HTML from "@cocalc/frontend/components/html-ssr";
+import { LegacyHtmlOutputContext } from "../../notebook-file-context";
 import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 
 export const IframeHtml = ({ value }) => {
@@ -44,7 +45,9 @@ export const Html = ({ value }) => {
   }
   return (
     <div style={{ margin: "5px 0" }}>
-      <HTML value={content} />
+      <LegacyHtmlOutputContext>
+        <HTML value={content} />
+      </LegacyHtmlOutputContext>
     </div>
   );
 };

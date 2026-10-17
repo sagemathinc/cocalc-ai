@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { isAllowedHtmlTag, sanitizeHtmlAttributes } from "./sanitize-html";
+import {
+  isAllowedHtmlTag,
+  isSafeImageUrl,
+  sanitizeHtmlAttributes,
+} from "./sanitize-html";
 import { sanitizeInlineStyle } from "./sanitize-presentation";
 
 describe("sanitizeInlineStyle", () => {
@@ -73,6 +77,27 @@ describe("sanitizeInlineStyle", () => {
     expect(sanitizeInlineStyle(style)).toBeUndefined();
   });
 
+  // Cases only one rule rejects (no function, so the function allowlist
+  // can't catch them).
+  it.each([
+    ["an escape", "font-family: \\41rial"],
+    ["an escaped color name", "color: r\\65 d"],
+    ["a comment", "color: red /* x */"],
+    ["a comment opener", "font-family: a/*b"],
+    ["a too-long value", `font-family: ${"a".repeat(301)}`],
+  ])("drops a value with %s", (_, style) => {
+    expect(sanitizeInlineStyle(style)).toBeUndefined();
+  });
+
+  it("drops a too-long style as a whole", () => {
+    const style = "color: red; " + "font-weight: bold; ".repeat(300);
+    expect(style.length).toBeGreaterThan(5000);
+    expect(sanitizeInlineStyle(style)).toBeUndefined();
+    expect(sanitizeInlineStyle("color: red; font-weight: bold")).toBe(
+      "color: red; font-weight: bold",
+    );
+  });
+
   it("keeps the safe declarations of a mixed style", () => {
     expect(
       sanitizeInlineStyle(
@@ -88,6 +113,34 @@ describe("sanitizeInlineStyle", () => {
     expect(sanitizeInlineStyle("font-family: 'a;b'; color: blue")).toBe(
       "color: blue",
     );
+  });
+});
+
+describe("data: images", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("are kept in img src and srcset (Jupyter attachments)", () => {
+    expect(sanitizeHtmlAttributes("img", { src: PNG })).toEqual({ src: PNG });
+    expect(
+      sanitizeHtmlAttributes("img", { srcset: `${PNG} 2x` }).srcset,
+    ).toContain(PNG);
+    expect(isSafeImageUrl(" data:image/svg+xml;charset=utf-8,<svg/>")).toBe(
+      true,
+    );
+  });
+
+  it("are not kept anywhere else, and only images are", () => {
+    expect(sanitizeHtmlAttributes("a", { href: PNG })).toEqual({});
+    expect(sanitizeHtmlAttributes("iframe", { src: PNG })).toEqual({});
+    for (const src of [
+      "data:text/html,<script>alert(1)</script>",
+      "data:,x",
+      "data:image,x",
+      "javascript:alert(1)",
+    ]) {
+      expect(isSafeImageUrl(src)).toBe(false);
+      expect(sanitizeHtmlAttributes("img", { src })).toEqual({});
+    }
   });
 });
 

@@ -182,10 +182,18 @@ describe("srcset parsing", () => {
   });
 
   it("the central policy no longer splits data: URLs into candidates", () => {
-    // data: is not a safe image URL scheme here; the whole candidate goes.
+    // A data: image is a safe image URL in an <img>; it stays one candidate
+    // (the https:// inside is its payload, not a second URL).
     expect(
       sanitizeHtmlAttributes("img", {
         srcset: "data:image/png,https://e.example/x 1x",
+        alt: "a",
+      }),
+    ).toEqual({ srcset: "data:image/png,https://e.example/x 1x", alt: "a" });
+    // Other data: URLs still go, whole.
+    expect(
+      sanitizeHtmlAttributes("img", {
+        srcset: "data:text/html,https://e.example/x 1x",
         alt: "a",
       }),
     ).toEqual({ alt: "a" });

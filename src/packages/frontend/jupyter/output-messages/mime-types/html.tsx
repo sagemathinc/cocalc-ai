@@ -1,5 +1,6 @@
 import register from "./register";
 import HTML from "@cocalc/frontend/components/html-ssr";
+import { LegacyHtmlOutputContext } from "../../notebook-file-context";
 
 export default function Html({
   value,
@@ -9,7 +10,11 @@ export default function Html({
   index?: number;
   trust?: boolean;
 }) {
-  return <HTML value={value} />;
+  return (
+    <LegacyHtmlOutputContext>
+      <HTML value={value} />
+    </LegacyHtmlOutputContext>
+  );
 }
 
 // HTML should definitely have higher priority than
