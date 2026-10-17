@@ -101,16 +101,61 @@ describe("hub conat cookie origin policy", () => {
     }
   });
 
-  it("abandons a timed-out lookup so the next one can recover", async () => {
+  it("runs one lookup at a time, even when callers time out", async () => {
     const hang = jest.fn(() => new Promise<Set<string>>(() => {}));
-    await expect(
-      approvedOrigins({ load: hang, timeoutMs: 10 }),
-    ).rejects.toThrow("timed out");
-    const ok = jest.fn(async () => new Set(["https://cocalc.example"]));
-    await expect(approvedOrigins({ load: ok, timeoutMs: 10 })).resolves.toEqual(
-      new Set(["https://cocalc.example"]),
-    );
-    expect(ok).toHaveBeenCalledTimes(1);
+    for (let k = 0; k < 3; k++) {
+      await expect(
+        approvedOrigins({ load: hang, timeoutMs: 5 }),
+      ).rejects.toThrow();
+    }
+    expect(hang).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers after the cooldown once a failed lookup has finished", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["nextTick", "setImmediate", "setTimeout"],
+    });
+    try {
+      jest.setSystemTime(new Date("2026-10-17T00:00:00Z"));
+      const fail = jest.fn(async () => {
+        throw new Error("db down");
+      });
+      await expect(approvedOrigins({ load: fail })).rejects.toThrow("db down");
+      // Inside the cooldown: fail fast, no new lookup.
+      const ok = jest.fn(async () => new Set(["https://cocalc.example"]));
+      await expect(approvedOrigins({ load: ok })).rejects.toThrow(
+        "recently failed",
+      );
+      expect(ok).not.toHaveBeenCalled();
+      // After the cooldown a new lookup runs.
+      jest.setSystemTime(new Date("2026-10-17T00:00:11Z"));
+      await expect(approvedOrigins({ load: ok })).resolves.toEqual(
+        new Set(["https://cocalc.example"]),
+      );
+      expect(ok).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("abandons a lookup that is still hanging after a minute", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["nextTick", "setImmediate", "setTimeout"],
+    });
+    try {
+      jest.setSystemTime(new Date("2026-10-17T00:00:00Z"));
+      const hang = jest.fn(() => new Promise<Set<string>>(() => {}));
+      await expect(
+        approvedOrigins({ load: hang, timeoutMs: 5 }),
+      ).rejects.toThrow();
+      jest.setSystemTime(new Date("2026-10-17T00:01:30Z"));
+      const ok = jest.fn(async () => new Set(["https://cocalc.example"]));
+      await expect(approvedOrigins({ load: ok })).resolves.toEqual(
+        new Set(["https://cocalc.example"]),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("serves a stale list without waiting and refreshes it in the background", async () => {

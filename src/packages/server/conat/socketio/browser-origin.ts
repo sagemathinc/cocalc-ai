@@ -87,7 +87,6 @@ const CACHE_MS = 60_000;
 const MAX_STALE_MS = 10 * 60_000;
 const LOOKUP_TIMEOUT_MS = 2_000;
 let cached: { origins: Set<string>; at: number } | undefined;
-let pending: Promise<Set<string>> | undefined;
 
 async function loadConfiguredOrigins(): Promise<Set<string>> {
   const origins = new Set<string>();
@@ -127,35 +126,62 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// Start (or join) a refresh. A refresh that does not finish within the
-// timeout is abandoned, so the next call starts a fresh one instead of
-// waiting on a lookup that may never finish.
-function refresh(
+// At most one lookup runs at a time: callers that time out stop waiting,
+// but the lookup itself keeps running and later callers reuse it. A lookup
+// still running after LOAD_MAX_AGE_MS is abandoned, and after a failure no
+// new lookup starts for RETRY_COOLDOWN_MS. So a hanging configuration read
+// costs at most one lookup per minute, not one per connection.
+const LOAD_MAX_AGE_MS = 60_000;
+const RETRY_COOLDOWN_MS = 10_000;
+let inflight: { promise: Promise<Set<string>>; started: number } | undefined;
+let lastFailureAt = 0;
+
+function startLoad(load: () => Promise<Set<string>>): Promise<Set<string>> {
+  const now = Date.now();
+  if (inflight != null && now - inflight.started < LOAD_MAX_AGE_MS) {
+    return inflight.promise;
+  }
+  if (now - lastFailureAt < RETRY_COOLDOWN_MS) {
+    return Promise.reject(new Error("approved origin lookup recently failed"));
+  }
+  const promise = load().then((origins) => {
+    cached = { origins, at: Date.now() };
+    return origins;
+  });
+  const entry = { promise, started: now };
+  inflight = entry;
+  promise.then(
+    () => {
+      if (inflight === entry) inflight = undefined;
+    },
+    (err) => {
+      if (inflight === entry) inflight = undefined;
+      lastFailureAt = Date.now();
+      // Logged once per failed lookup, not once per waiting caller.
+      logger.warn("approved origin lookup failed", { err: `${err}` });
+    },
+  );
+  return promise;
+}
+
+// Wait for the shared lookup, but at most timeoutMs. A timeout starts the
+// retry cooldown so later callers fail fast instead of each waiting.
+async function waitForLoad(
   load: () => Promise<Set<string>>,
   timeoutMs: number,
 ): Promise<Set<string>> {
-  if (pending == null) {
-    const attempt = withTimeout(load(), timeoutMs).then((origins) => {
-      cached = { origins, at: Date.now() };
-      return origins;
-    });
-    pending = attempt;
-    attempt.then(
-      () => {
-        if (pending === attempt) pending = undefined;
-      },
-      () => {
-        if (pending === attempt) pending = undefined;
-      },
-    );
+  try {
+    return await withTimeout(startLoad(load), timeoutMs);
+  } catch (err) {
+    lastFailureAt = Math.max(lastFailureAt, Date.now());
+    throw err;
   }
-  return pending;
 }
 
 // The approved origins, from a cache refreshed every minute. While a list
 // less than 10 minutes old exists, connections never wait: the stale list
 // is used and refreshed in the background. Without a usable list, wait for
-// a bounded refresh and throw if it fails.
+// a bounded lookup and throw if it fails.
 export async function approvedOrigins({
   load = loadConfiguredOrigins,
   timeoutMs = LOOKUP_TIMEOUT_MS,
@@ -168,24 +194,23 @@ export async function approvedOrigins({
     const age = now - cached.at;
     if (age < CACHE_MS) return cached.origins;
     if (age < MAX_STALE_MS) {
-      refresh(load, timeoutMs).catch((err) =>
-        logger.warn("approved origin refresh failed; using the last list", {
-          err: `${err}`,
-        }),
-      );
+      // Failures are logged inside startLoad.
+      startLoad(load).catch(() => {});
       return cached.origins;
     }
   }
-  return await refresh(load, timeoutMs);
+  return await waitForLoad(load, timeoutMs);
 }
 
 export function resetApprovedOriginsForTests(): void {
   cached = undefined;
-  pending = undefined;
+  inflight = undefined;
+  lastFailureAt = 0;
 }
 
 export function resetPendingForTests(): void {
-  pending = undefined;
+  inflight = undefined;
+  lastFailureAt = 0;
 }
 
 // Why the connection must be refused, or undefined if it is acceptable.
