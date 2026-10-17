@@ -7,6 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PLUS_FEATURE_LINES } from "@cocalc/util/public-feature-pages";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,6 +15,7 @@ import {
   featureSignUpPath,
   featureAsset,
   LinkButton,
+  PlusSentence,
 } from "./page-components";
 import { FeatureInfo, FeatureInfoHeading, ZoomableImage } from "./feature-info";
 import { ContextList, FeatureFinalBand } from "./feature-visuals";
@@ -49,8 +51,8 @@ export default function SageFeaturePage({
               >
                 Choose a hosted Sage image to run Sage code in notebooks and
                 terminals without installing Sage on your computer. SageTeX also
-                needs a compatible TeX installation in the project. Native
-                CoCalc Plus uses the software installed on your computer.
+                needs a compatible TeX installation in the project.
+                <PlusSentence>{PUBLIC_PLUS_FEATURE_LINES.sage}</PlusSentence>
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>

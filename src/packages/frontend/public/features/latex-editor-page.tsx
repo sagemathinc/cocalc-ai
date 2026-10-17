@@ -13,6 +13,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import {
   featureAppPath as appPath,
   featureSignUpPath,
@@ -231,8 +232,8 @@ export default function LatexEditorFeaturePage({
                     command-line tools, document history, and agent help without
                     leaving the project.
                   </Paragraph>
-                  <LinkButton href={appPath("products")}>
-                    Compare operating models
+                  <LinkButton href={appPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+                    {PUBLIC_PRODUCTS_PAGE_LINK.label}
                   </LinkButton>
                 </Flex>
               </Col>
@@ -541,7 +542,10 @@ export default function LatexEditorFeaturePage({
               label: "Jupyter notebooks",
             },
             { href: appPath("features/terminal"), label: "Terminal workflows" },
-            { href: appPath("products"), label: "Compare operating models" },
+            {
+              href: appPath(PUBLIC_PRODUCTS_PAGE_LINK.href),
+              label: PUBLIC_PRODUCTS_PAGE_LINK.label,
+            },
             ...(helpEmail
               ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
               : []),

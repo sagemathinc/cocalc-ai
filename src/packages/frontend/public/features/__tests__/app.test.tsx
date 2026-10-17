@@ -3,8 +3,13 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicFeaturePage,
+  PUBLIC_FEATURE_PAGES,
+  PUBLIC_PLUS_FEATURE_LINES,
+} from "@cocalc/util/public-feature-pages";
 import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import PublicFeaturesApp from "../app";
 import { getFeatureIndexPages } from "../catalog";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
@@ -176,9 +181,13 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: "Plan research compute" }),
     ).toHaveAttribute("href", "/features/research-compute");
+    // The operating section's button and the related link at the end of the
+    // page, both with the products page's name.
     expect(
-      screen.getByRole("link", { name: "Compare ways to run CoCalc" }),
-    ).toHaveAttribute("href", "/products");
+      screen
+        .getAllByRole("link", { name: "Where to run CoCalc" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/products", "/products"]);
     expect(screen.getByText(/Review Codex activity and diffs/)).not.toBeNull();
     expect(
       screen.queryByText(/files touched during agent-assisted work/),
@@ -946,9 +955,17 @@ describe("PublicFeaturesApp", () => {
       screen.getByText(/If your design requires automatic fleets/),
     ).not.toBeNull();
     expect(screen.getByText("Where to go next")).not.toBeNull();
+    // Only the ways to run CoCalc that the public pages show: Launchpad and
+    // Rocket are hidden.
     expect(
-      screen.getByText("Hosted, local, single-VM, and private deployment."),
+      screen.getByText("Hosted, local, and single-VM deployment."),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Teams need hosted, local, and single-VM deployment choices.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText(/private deployment/)).toBeNull();
     const supportHref =
       screen
         .getByRole("link", { name: "Talk with CoCalc" })
@@ -1355,4 +1372,86 @@ describe("research compute product visibility", () => {
       ).toBeNull();
     },
   );
+});
+
+// Launchpad and Rocket are hidden until their releases are current, so no
+// feature page names them, as in the crawler fallback (see
+// hub/servers/app/public-prerender.test.ts). CoCalc Plus is shown; a test
+// below hides it again to check that its name goes too.
+describe("feature pages while Launchpad and Rocket are hidden", () => {
+  const COCALC_AI_SITE = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    site_name: "CoCalc",
+  };
+  const SLUGS = PUBLIC_FEATURE_PAGES.filter(({ slug }) =>
+    getPublicFeaturePage(slug, COCALC_AI_SITE),
+  ).map(({ slug }) => slug);
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(SLUGS)("names neither of them on the %s page", (slug) => {
+    render(
+      <PublicFeaturesApp
+        config={COCALC_AI_SITE}
+        initialRoute={{ slug, view: "detail" }}
+      />,
+    );
+    expect(document.body.textContent).not.toMatch(/\b(Launchpad|Rocket)\b/);
+  });
+
+  it.each(SLUGS)(
+    "names no hidden product on the %s page once Plus is hidden again",
+    (slug) => {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+      render(
+        <PublicFeaturesApp
+          config={COCALC_AI_SITE}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+      expect(document.body.textContent).not.toMatch(
+        /\b(Plus|Launchpad|Rocket)\b/,
+      );
+    },
+  );
+
+  // The pages that compare CoCalc Plus with a hosted project, and what each
+  // says about Plus.
+  const PLUS_SENTENCES = [
+    ["jupyter-notebook", [PUBLIC_PLUS_FEATURE_LINES.jupyter]],
+    [
+      "python",
+      [
+        PUBLIC_PLUS_FEATURE_LINES.python,
+        PUBLIC_PLUS_FEATURE_LINES.pythonStorage,
+      ],
+    ],
+    ["sage", [PUBLIC_PLUS_FEATURE_LINES.sage]],
+    ["octave", [PUBLIC_PLUS_FEATURE_LINES.octave]],
+  ] as const;
+
+  it.each([
+    ["while Plus is shown", COCALC_AI_SITE],
+    [
+      "on a CoCalc Plus install",
+      { cocalc_product: "plus", site_name: "CoCalc" },
+    ],
+  ])("says how CoCalc Plus differs %s", (_state, config) => {
+    for (const [slug, sentences] of PLUS_SENTENCES) {
+      const { unmount } = render(
+        <PublicFeaturesApp
+          config={config}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+      const text = document.body.textContent?.replace(/\s+/g, " ") ?? "";
+      for (const sentence of sentences) {
+        expect(text).toContain(sentence);
+      }
+      // The Plus installer has builds for Linux and Apple silicon Macs only.
+      expect(text).not.toMatch(/Windows Plus|Native (CoCalc )?Plus/);
+      unmount();
+    }
+  });
 });

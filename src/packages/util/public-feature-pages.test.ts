@@ -1,11 +1,15 @@
 import {
   PUBLIC_FEATURE_NAV_ITEMS,
   PUBLIC_FEATURE_PAGES,
+  PUBLIC_PLUS_FEATURE_LINES,
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   publicFeatureHref,
 } from "./public-feature-pages";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "./public-product-availability";
 import { getDocsEntry } from "@cocalc/docs";
+
+afterEach(() => jest.restoreAllMocks());
 
 function expectNonEmptyString(value: string, label: string) {
   if (value.trim().length === 0) {
@@ -196,8 +200,11 @@ describe("research compute product availability", () => {
       for (const page of PUBLIC_FEATURE_PAGES.filter(
         (page) => !hidden.includes(page.slug),
       )) {
+        // The same page; on a site that does not describe CoCalc Plus, it
+        // leaves out its sentences about Plus (see "CoCalc Plus on feature
+        // pages" below).
         for (const slug of [page.slug, ...(page.aliases ?? [])]) {
-          expect(getPublicFeaturePage(slug, config)).toBe(page);
+          expect(getPublicFeaturePage(slug, config)?.slug).toBe(page.slug);
         }
       }
     },
@@ -246,5 +253,97 @@ describe("research compute product availability", () => {
         ),
       }).toEqual(catalog);
     }
+  });
+});
+
+describe("CoCalc Plus on feature pages", () => {
+  // The sentence each page's record holds about CoCalc Plus.
+  const PLUS_TEXT = {
+    "jupyter-notebook": PUBLIC_PLUS_FEATURE_LINES.jupyter,
+    "latex-editor": "or install the tools for local CoCalc Plus",
+    octave: PUBLIC_PLUS_FEATURE_LINES.octave,
+    python: PUBLIC_PLUS_FEATURE_LINES.python,
+    sage: PUBLIC_PLUS_FEATURE_LINES.sage,
+  } as const;
+
+  function pageText(slug: string, config?: { cocalc_product?: string }) {
+    return JSON.stringify(getPublicFeaturePage(slug, config) ?? null);
+  }
+
+  const SITES = [
+    ["cocalc.ai", { cocalc_product: "launchpad", dns: "cocalc.ai" }],
+    ["a Launchpad site", { cocalc_product: "launchpad" }],
+    ["a Rocket site", { cocalc_product: "rocket" }],
+    ["no site configuration", undefined],
+  ] as const;
+
+  it.each(SITES)(
+    "names CoCalc Plus only in its own sentences, and no hidden product, on %s",
+    (_site, config) => {
+      for (const { slug } of PUBLIC_FEATURE_PAGES) {
+        const text = pageText(slug, config);
+        expect(text).not.toMatch(/\b(Launchpad|Rocket)\b/);
+        expect(
+          Object.values(PLUS_TEXT).reduce(
+            (rest, line) => rest.split(line).join(""),
+            text,
+          ),
+        ).not.toMatch(/\bPlus\b/);
+      }
+      for (const [slug, text] of Object.entries(PLUS_TEXT)) {
+        expect(pageText(slug, config)).toContain(text);
+      }
+    },
+  );
+
+  it.each(SITES)(
+    "names no hidden product on any feature page on %s once Plus is hidden",
+    (_site, config) => {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+      for (const { slug } of PUBLIC_FEATURE_PAGES) {
+        expect(pageText(slug, config)).not.toMatch(
+          /\b(Plus|Launchpad|Rocket)\b/,
+        );
+      }
+      expect(
+        getPublicFeaturePage("latex-editor", config)?.sections?.[0]
+          .bullets?.[0],
+      ).toBe("Use a hosted image with the required TeX tools");
+    },
+  );
+
+  it.each([
+    ["while Plus is shown", { cocalc_product: "launchpad", dns: "cocalc.ai" }],
+    ["on a CoCalc Plus install", { cocalc_product: "plus" }],
+  ])("describes CoCalc Plus %s", (_state, config) => {
+    for (const [slug, text] of Object.entries(PLUS_TEXT)) {
+      expect(pageText(slug, config)).toContain(text);
+    }
+    expect(
+      getPublicFeaturePage("python", config)?.sections?.[0].paragraphs?.[0],
+    ).toBe(
+      "Hosted CoCalc projects run the software supplied by their selected Linux image. Choose a Python image for scientific work. Local CoCalc Plus uses your computer's operating system and installed software.",
+    );
+    expect(
+      getPublicFeaturePage("sage", config)?.sections?.[0].paragraphs?.[0],
+    ).toBe(
+      "Choose a hosted Sage image with its Sage Jupyter kernel, command-line REPL and .sage support. CoCalc Plus uses the software installed on your computer. Check the image, Sage version and additional packages before reproducing a calculation.",
+    );
+  });
+
+  it("keeps the rest of each sentence when it leaves out CoCalc Plus", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    const config = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+    expect(
+      getPublicFeaturePage("sage", config)?.sections?.[0].paragraphs?.[0],
+    ).toBe(
+      "Choose a hosted Sage image with its Sage Jupyter kernel, command-line REPL and .sage support. Check the image, Sage version and additional packages before reproducing a calculation.",
+    );
+    expect(
+      getPublicFeaturePage("jupyter-notebook", config)?.sections?.[0]
+        .paragraphs?.[1],
+    ).toBe(
+      "Choose an image, custom kernel, or registered remote kernel with the required language and packages. Collaborators share the selected notebook kernel session.",
+    );
   });
 });

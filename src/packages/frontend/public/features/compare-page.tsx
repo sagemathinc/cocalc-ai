@@ -16,6 +16,11 @@ import {
 } from "@cocalc/frontend/public/theme";
 import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicCompareDeploymentNeed,
+  getPublicCompareDeploymentSummary,
+  PUBLIC_PRODUCTS_PAGE_LINK,
+} from "@cocalc/util/public-products-content";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import {
   LinkButton,
@@ -61,22 +66,29 @@ const DECISION_ROWS = [
       "The execution environment does not need course management or live help.",
     question: "Is teaching part of the workflow?",
   },
-  {
-    cocalc:
-      "Teams need hosted, local, single-VM, and private deployment choices.",
+] as const;
+
+// The rows and routes that name the ways to run CoCalc, which name only the
+// ones the public pages show, so they are read at render time.
+function operatingRow() {
+  return {
+    cocalc: getPublicCompareDeploymentNeed(),
     other:
       "Your product already owns the runtime lifecycle and infrastructure.",
     question: "Who operates it?",
-  },
-] as const;
+  };
+}
+
+function operatingRoute() {
+  return {
+    body: getPublicCompareDeploymentSummary(),
+    href: PUBLIC_PRODUCTS_PAGE_LINK.href,
+    label: PUBLIC_PRODUCTS_PAGE_LINK.label,
+    title: "Choosing how CoCalc runs",
+  };
+}
 
 const NEXT_ROUTES = [
-  {
-    body: "Hosted, local, single-VM, and private deployment.",
-    href: "products",
-    label: "Compare operating models",
-    title: "Choosing how CoCalc runs",
-  },
   {
     body: "Codex and AI assistance inside shared project context.",
     href: "features/ai",
@@ -351,8 +363,10 @@ export default function CompareFeaturePage({
     ({ href }) =>
       config?.cocalc_product !== "plus" || !href.startsWith("/docs/"),
   );
+  const decisionRows = [...DECISION_ROWS, operatingRow()];
   const nextRoutes = hasBuiltinTrustPage
     ? [
+        operatingRoute(),
         ...NEXT_ROUTES,
         {
           body: "Security and privacy context for evaluating CoCalc.",
@@ -361,7 +375,7 @@ export default function CompareFeaturePage({
           title: "Trust and compliance",
         },
       ]
-    : NEXT_ROUTES;
+    : [operatingRoute(), ...NEXT_ROUTES];
 
   return (
     <Flex vertical gap={30}>
@@ -395,8 +409,11 @@ export default function CompareFeaturePage({
               execution runtime.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
-              <Button type="primary" href={featureAppPath("products")}>
-                Compare operating models
+              <Button
+                type="primary"
+                href={featureAppPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}
+              >
+                {PUBLIC_PRODUCTS_PAGE_LINK.label}
               </Button>
               <Button href={supportHref}>Talk with CoCalc</Button>
             </Flex>
@@ -504,7 +521,7 @@ export default function CompareFeaturePage({
             </tr>
           </thead>
           <tbody>
-            {DECISION_ROWS.map((row) => (
+            {decisionRows.map((row) => (
               <DecisionRow key={row.question} {...row} />
             ))}
           </tbody>

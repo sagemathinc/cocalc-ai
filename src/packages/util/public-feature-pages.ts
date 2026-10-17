@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { describesPublicPlus } from "./public-product-availability";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "./public-products-content";
 import { isCanonicalPublicSiteHost } from "./public-site-policy";
 import { trimTrailingSlashes } from "./linear-text";
 
@@ -64,6 +66,30 @@ export function publicFeatureHref(
   }
   return `${trimTrailingSlashes(basePath)}${catalogHref}`;
 }
+
+// What the feature pages say about CoCalc Plus, each a sentence of its own.
+// Both renderers show these only where describesPublicPlus allows:
+// getPublicFeaturePage leaves them out of the records elsewhere, and the React
+// pages render them through PlusSentence. CoCalc Plus runs directly on the
+// user's Linux computer or Apple silicon Mac, with its operating system and
+// installed software; its installer has no Windows build.
+export const PUBLIC_PLUS_FEATURE_LINES = {
+  jupyter:
+    "CoCalc Plus uses your computer's operating system and installed tools.",
+  octave:
+    "CoCalc Plus uses your computer's operating system and installed tools.",
+  python:
+    "Local CoCalc Plus uses your computer's operating system and installed software.",
+  // On the React page only.
+  pythonStorage:
+    "Local Plus uses local storage and your computer's backup arrangements.",
+  sage: "CoCalc Plus uses the software installed on your computer.",
+} as const;
+
+// The LaTeX page's bullet about TeX tools, with and without its CoCalc Plus
+// clause.
+const LATEX_TOOLS_BULLET = "Use a hosted image with the required TeX tools";
+const LATEX_TOOLS_BULLET_WITH_PLUS = `${LATEX_TOOLS_BULLET}, or install the tools for local CoCalc Plus`;
 
 // Only cocalc.ai can say this; see getPublicFeaturePage.
 const RESEARCH_COMPUTE_COST_LINE =
@@ -147,7 +173,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
         title: "Run Jupyter notebooks online",
         paragraphs: [
           "Use hosted Jupyter notebooks without installing the hosted runtime on your computer. Computations can continue after you close a tab while their kernel runtime remains running.",
-          "Choose an image, custom kernel, or registered remote kernel with the required language and packages. Native CoCalc Plus uses installed local tools; collaborators share the selected notebook kernel session.",
+          `Choose an image, custom kernel, or registered remote kernel with the required language and packages. ${PUBLIC_PLUS_FEATURE_LINES.jupyter} Collaborators share the selected notebook kernel session.`,
         ],
         bullets: [
           "Real-time collaborative editing with visible cursors and shared kernel sessions",
@@ -178,7 +204,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
           "Collaborators edit the same document in real time, discussions attach to specific lines, and TimeTravel provides document edit history. Rich text widgets preview supported constructs; check the compiled PDF for final layout.",
         ],
         bullets: [
-          "Use a hosted image with the required TeX tools, or install the tools for local CoCalc Plus",
+          LATEX_TOOLS_BULLET_WITH_PLUS,
           "Knitr, SageTeX, and PythonTeX builds require the corresponding language runtimes and packages",
           "Multi-file projects with a table of contents across subfiles",
           "Bibliographies, figures, and data live in the same project",
@@ -524,7 +550,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "A full Python environment online",
         paragraphs: [
-          "Hosted CoCalc projects run the software supplied by their selected Linux image. Choose a Python image for scientific work; local CoCalc Plus uses your computer's operating system and installed software.",
+          `Hosted CoCalc projects run the software supplied by their selected Linux image. Choose a Python image for scientific work. ${PUBLIC_PLUS_FEATURE_LINES.python}`,
           "Install dependencies in the intended environment using the tools and permissions available. Record versions and install locations, and check HOME and RootFS retention before relying on a restore or move.",
         ],
         bullets: [
@@ -611,7 +637,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Use SageMath online",
         paragraphs: [
-          "Choose a hosted Sage image with its Sage Jupyter kernel, command-line REPL and .sage support. Native CoCalc Plus uses the software installed on your computer. Check the image, Sage version and additional packages before reproducing a calculation.",
+          `Choose a hosted Sage image with its Sage Jupyter kernel, command-line REPL and .sage support. ${PUBLIC_PLUS_FEATURE_LINES.sage} Check the image, Sage version and additional packages before reproducing a calculation.`,
           "Sage images select the SageMath kernel by default. With Sage and compatible TeX tools installed, the LaTeX build pipeline can run the SageTeX stage. Inspect the build logs and PDF after changes.",
         ],
         bullets: [
@@ -639,7 +665,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Run GNU Octave online",
         paragraphs: [
-          "GNU Octave provides largely MATLAB-compatible numerical computing. A hosted Octave image supplies the tools, while system installation permissions and snapshot coverage depend on the image and deployment. Native CoCalc Plus uses installed local software.",
+          `GNU Octave provides largely MATLAB-compatible numerical computing. A hosted Octave image supplies the tools, while system installation permissions and snapshot coverage depend on the image and deployment. ${PUBLIC_PLUS_FEATURE_LINES.octave}`,
           "Octave is the default Jupyter kernel on the Octave image, and .m files open with Octave syntax highlighting. Terminal work can continue after a browser disconnect while its project runtime remains running.",
         ],
         bullets: [
@@ -705,6 +731,8 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
           // Per site: see getPublicCompareSections in public-compare-content.
           "Collaborators need live work and history in the same project",
           "The work must persist across sessions, collaborators, reviews, and handoffs",
+          // Names only the products the public pages show: see
+          // getPublicCompareSections.
           "You need a hosted service, a local or single-VM installation, or a customer-operated private deployment path",
         ],
       },
@@ -719,7 +747,10 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
             href: "/docs/hosts/choose-compute",
             label: "Evaluate research compute",
           },
-          { href: "/products", label: "Compare operating models" },
+          {
+            href: `/${PUBLIC_PRODUCTS_PAGE_LINK.href}`,
+            label: PUBLIC_PRODUCTS_PAGE_LINK.label,
+          },
         ],
       },
     ],
@@ -767,7 +798,48 @@ const RESEARCH_COMPUTE_PAGE_ELSEWHERE: PublicFeaturePage = {
   })),
 };
 
+// The text without its sentences about CoCalc Plus.
+function withoutPlusLines(text: string): string {
+  return Object.values(PUBLIC_PLUS_FEATURE_LINES).reduce(
+    (result, line) => result.replace(` ${line}`, ""),
+    text === LATEX_TOOLS_BULLET_WITH_PLUS ? LATEX_TOOLS_BULLET : text,
+  );
+}
+
+function mentionsPlus(page: PublicFeaturePage): boolean {
+  return (page.sections ?? []).some(({ bullets = [], paragraphs = [] }) =>
+    [...bullets, ...paragraphs].some((text) => withoutPlusLines(text) !== text),
+  );
+}
+
+// Each page that describes CoCalc Plus, and the same page without those
+// sentences.
+const PAGES_WITHOUT_PLUS = new Map<PublicFeaturePage, PublicFeaturePage>(
+  PUBLIC_FEATURE_PAGES.filter(mentionsPlus).map((page) => [
+    page,
+    {
+      ...page,
+      sections: page.sections?.map((section) => ({
+        ...section,
+        bullets: section.bullets?.map(withoutPlusLines),
+        paragraphs: section.paragraphs?.map(withoutPlusLines),
+      })),
+    },
+  ]),
+);
+
 export function getPublicFeaturePage(
+  slug?: string,
+  config?: { cocalc_product?: string; dns?: string },
+): PublicFeaturePage | undefined {
+  const page = getSitePublicFeaturePage(slug, config);
+  // Sentences about CoCalc Plus show only where describesPublicPlus allows.
+  return page != null && !describesPublicPlus(config)
+    ? (PAGES_WITHOUT_PLUS.get(page) ?? page)
+    : page;
+}
+
+function getSitePublicFeaturePage(
   slug?: string,
   config?: { cocalc_product?: string; dns?: string },
 ): PublicFeaturePage | undefined {

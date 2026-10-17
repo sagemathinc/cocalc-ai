@@ -22,6 +22,7 @@ import {
 import {
   getPublicFeaturePage,
   PUBLIC_FEATURE_PAGES,
+  PUBLIC_PLUS_FEATURE_LINES,
 } from "@cocalc/util/public-feature-pages";
 import type { PublicPricingTier } from "@cocalc/util/public-pricing";
 import {
@@ -29,8 +30,103 @@ import {
   getPublicMetadataRouteFromPath,
   getPublicRouteMetadata,
 } from "@cocalc/util/public-site-metadata";
+import {
+  getShownPublicProducts,
+  PUBLIC_PRODUCT_AVAILABILITY,
+  publicProductView,
+} from "@cocalc/util/public-product-availability";
+import {
+  getPublicProductPageCopy,
+  getPublicWhereToRunActions,
+  getPublicWhereToRunHeadline,
+  getPublicWhereToRunIntro,
+  getPublicWhereToRunPaths,
+  PUBLIC_LAUNCHPAD_INSTALL_COMMAND,
+  PUBLIC_PLUS_INSTALL_COMMAND,
+  PUBLIC_PLUS_INSTALL_SCRIPT_URL,
+  PUBLIC_PLUS_UNINSTALL_COMMAND,
+  PUBLIC_STAR_INSTALL_COMMAND,
+  PUBLIC_STAR_REMOVE_COMMANDS,
+  PUBLIC_WHERE_TO_RUN_COMPARISON,
+  PUBLIC_WHERE_TO_RUN_COMPARISON_LINKS,
+  PUBLIC_WHERE_TO_RUN_CONTACT,
+  PUBLIC_WHERE_TO_RUN_PATHS_TITLE,
+  PUBLIC_WHERE_TO_RUN_WORKFLOW,
+  publicProductTextParts,
+  PUBLIC_PRODUCT_SHARED_NOTE,
+  type PublicProductBlock,
+  type PublicProductPageCopy,
+} from "@cocalc/util/public-products-content";
 import { renderPublicRoutePrerender } from "./public-prerender";
 import type { PublicRoutePrerenderData } from "./public-prerender";
+
+afterEach(() => jest.restoreAllMocks());
+
+// As the crawler fallback escapes text.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// What a reader sees of a product page card's block.
+function blockText(block: PublicProductBlock): string {
+  if (typeof block === "string" || "text" in block) {
+    return publicProductTextParts(block)
+      .map((part) =>
+        "code" in part
+          ? part.code
+          : "link" in part
+            ? part.link.label
+            : part.text,
+      )
+      .join("");
+  }
+  return "note" in block ? block.note : block.code;
+}
+
+// Every string of a product page's shared words, as a reader sees them, with
+// the note that every product page shows.
+function productCopyText(copy: PublicProductPageCopy): string[] {
+  return [
+    copy.lead.title,
+    ...copy.lead.paragraphs,
+    ...copy.lead.actions.map(({ label }) => label),
+    PUBLIC_PRODUCT_SHARED_NOTE.title,
+    PUBLIC_PRODUCT_SHARED_NOTE.body,
+    ...copy.points.flatMap(({ body, title }) => [title, body]),
+    ...copy.sections.flatMap(({ blocks, links = [], title }) => [
+      title,
+      ...blocks.map(blockText),
+      ...links.map(({ label }) => label),
+    ]),
+    ...(copy.notes.length > 0 ? [copy.notesTitle, ...copy.notes] : []),
+    ...copy.links.map(({ label }) => label),
+  ];
+}
+
+// The text of the HTML with its tags removed, so a paragraph's code and links
+// read as part of it.
+function inlineText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+// The HTML of the section that has this id, or this heading.
+function sectionHtml(html: string, match: string): string {
+  return (
+    html
+      .split("<section")
+      .find((section) => section.includes(match))
+      ?.split("</section>")[0] ?? ""
+  );
+}
 import {
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
@@ -326,13 +422,13 @@ describe("core landing page initial HTML", () => {
         basePath,
       );
       expect(products).toContain('data-cocalc-public-prerender="products"');
-      expect(products).toContain("Ways to Run CoCalc");
+      expect(products).toContain("<h1>Where to run CoCalc</h1>");
       expect(products).toContain("CoCalc.ai");
-      expect(products).toContain("CoCalc Rocket");
-      expect(products).toContain("persistent Linux project");
-      expect(products).toContain(
-        "agent features vary by product and deployment",
-      );
+      // Only the products the public pages show.
+      expect(products).toContain(`href="${prefix}/products/cocalc-plus"`);
+      expect(products).toContain(`href="${prefix}/products/cocalc-star"`);
+      expect(products).not.toMatch(/products\/cocalc-(launchpad|rocket)/);
+      expect(products).not.toMatch(/\b(Launchpad|Rocket)\b/);
       expect(products).not.toContain("persistent computer");
 
       const pricing = renderPublicRoutePrerender(
@@ -348,7 +444,9 @@ describe("core landing page initial HTML", () => {
       expect(pricing).toContain(
         `href="${prefix}/auth/sign-up">Create account for hosted CoCalc`,
       );
-      expect(pricing).toContain("Compare customer-operated options");
+      expect(pricing).toContain(
+        `<a href="${prefix}/products">Where to run CoCalc</a>`,
+      );
       expect(pricing).toContain(
         "The purchaser must sign in before buying or managing seats.",
       );
@@ -385,17 +483,279 @@ describe("core landing page initial HTML", () => {
     },
   );
 
-  it("uses route metadata for product detail pages", () => {
+  it.each(["/", "/prefix"])(
+    "renders the Where to run CoCalc page from the words its React page renders, on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const html = renderPublicRoutePrerender(
+        { section: "products", route: { view: "products" } },
+        basePath,
+      );
+      for (const text of [
+        getPublicWhereToRunHeadline(),
+        getPublicWhereToRunIntro(),
+        PUBLIC_WHERE_TO_RUN_PATHS_TITLE,
+        ...getPublicWhereToRunPaths().flatMap(({ detail, title }) => [
+          title,
+          detail,
+        ]),
+        PUBLIC_WHERE_TO_RUN_COMPARISON.title,
+        PUBLIC_WHERE_TO_RUN_COMPARISON.caption,
+        ...PUBLIC_WHERE_TO_RUN_COMPARISON_LINKS.map(({ label }) => label),
+        PUBLIC_WHERE_TO_RUN_CONTACT.title,
+        PUBLIC_WHERE_TO_RUN_CONTACT.body,
+        ...PUBLIC_WHERE_TO_RUN_CONTACT.links.map(({ label }) => label),
+        ...getPublicWhereToRunActions().map(({ label }) => label),
+      ]) {
+        expect(html).toContain(escapeHtml(text));
+      }
+      for (const {
+        cocalcAi,
+        label,
+        star,
+      } of PUBLIC_WHERE_TO_RUN_COMPARISON.rows) {
+        expect(html).toContain(
+          `<tr><th scope="row">${escapeHtml(label)}</th><td>${escapeHtml(
+            cocalcAi,
+          )}</td><td>${escapeHtml(star)}</td></tr>`,
+        );
+      }
+      expect(html).toContain(
+        `href="${prefix}/products/cocalc-star#install-cocalc-star">Install CoCalc Star</a>`,
+      );
+      // The fallback's table has no narrow-screen layout to describe.
+      expect(html).toContain(
+        `<caption>${PUBLIC_WHERE_TO_RUN_COMPARISON.caption}</caption>`,
+      );
+      expect(html).not.toContain("narrow screens");
+      expect(html).toContain(
+        'href="https://cocalc.ai/pricing">Start on CoCalc.ai</a>',
+      );
+      expect(html).toContain(
+        `href="${prefix}/features/ai">See how agents work</a>`,
+      );
+      expect(html).toContain(
+        `href="${prefix}/docs/ai/connect-credentials">Connect AI access</a>`,
+      );
+    },
+  );
+
+  it.each([
+    ["a Launchpad site", { cocalc_product: "launchpad" }, true],
+    ["no site configuration", undefined, false],
+  ])(
+    "renders the Where to run CoCalc workflow section on %s",
+    (_site, config, compute) => {
+      const html = renderPublicRoutePrerender(
+        { section: "products", route: { view: "products" } },
+        "/",
+        config,
+      );
+      expect(html).toContain(
+        `<h2>${PUBLIC_WHERE_TO_RUN_WORKFLOW.title}</h2>\n  <p>${PUBLIC_WHERE_TO_RUN_WORKFLOW.body}</p>`,
+      );
+      for (const {
+        body,
+        href,
+        label,
+        title,
+      } of PUBLIC_WHERE_TO_RUN_WORKFLOW.cards) {
+        expect(
+          html.includes(
+            `<li><h3>${title}</h3><p>${body}</p><p><a href="/${href}">${label}</a></p></li>`,
+          ),
+        ).toBe(href !== "features/research-compute" || compute);
+      }
+    },
+  );
+
+  it("names only CoCalc.ai on Where to run CoCalc once Star is hidden", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "star", false);
+    const route = { section: "products" as const, route: { view: "products" } };
+    const html = renderPublicRoutePrerender(route, "/");
+    expect(html).toContain("<h2>Run your agents on CoCalc.ai.</h2>");
+    expect(html).not.toContain("<table>");
+    expect(html).not.toMatch(/\bStar\b/);
+    expect(getPublicRouteMetadata(route).description).not.toMatch(/\bStar\b/);
+  });
+
+  it("renders a hidden product's page as the products page it redirects to", () => {
+    for (const view of [
+      "products-cocalc-launchpad",
+      "products-cocalc-rocket",
+    ]) {
+      const html = renderPublicRoutePrerender(
+        { section: "products", route: { view } },
+        "/",
+      );
+      expect(html).toBe(
+        renderPublicRoutePrerender(
+          { section: "products", route: { view: "products" } },
+          "/",
+        ),
+      );
+      expect(html).not.toMatch(/products\/cocalc-(launchpad|rocket)/);
+    }
+  });
+
+  it.each(["/", "/prefix"])(
+    "renders the Star page from the words its React page renders, on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const html = renderPublicRoutePrerender(
+        { section: "products", route: { view: "products-cocalc-star" } },
+        basePath,
+      );
+      expect(html).toContain(
+        "<p>Where to run CoCalc</p>\n  <h1>CoCalc Star</h1>",
+      );
+      for (const text of productCopyText(getPublicProductPageCopy("star"))) {
+        expect(inlineText(html)).toContain(text);
+      }
+      expect(html).toContain(
+        `href="${prefix}/docs/self-hosting/cocalc-star">Read Star setup guide</a>`,
+      );
+      expect(sectionHtml(html, "<h2>Agents on Star</h2>")).toContain(
+        `<a href="${prefix}/docs/ai/connect-credentials">Connect AI access</a>`,
+      );
+      expect(html).not.toMatch(/\b(Plus|Launchpad|Rocket)\b/);
+    },
+  );
+
+  it("puts the Star commands under the headings they belong to", () => {
     const html = renderPublicRoutePrerender(
-      {
-        section: "products",
-        route: { view: "products-cocalc-launchpad" },
-      },
+      { section: "products", route: { view: "products-cocalc-star" } },
+      "/",
+    );
+    const install = sectionHtml(html, 'id="install-cocalc-star"');
+    expect(install).toContain("<h2>Install CoCalc Star</h2>");
+    expect(install).toContain(
+      `<pre><code>${escapeHtml(PUBLIC_STAR_INSTALL_COMMAND)}</code></pre>`,
+    );
+    expect(install).toContain(
+      '<a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a>',
+    );
+    expect(install).toContain("<code>http://localhost:8170</code>");
+    const remove = sectionHtml(html, "<h2>Remove it completely</h2>");
+    expect(remove).toContain(
+      `<pre><code>${escapeHtml(PUBLIC_STAR_REMOVE_COMMANDS)}</code></pre>`,
+    );
+    expect(remove).toContain("On Linux hosts with AppArmor");
+    expect(remove).not.toContain("Star is one machine");
+    expect(sectionHtml(html, "<h2>Boundary: one machine</h2>")).toContain(
+      "Star is one machine",
+    );
+  });
+
+  it.each([
+    ["plus", "cocalc-plus", PUBLIC_PLUS_INSTALL_COMMAND],
+    ["launchpad", "cocalc-launchpad", PUBLIC_LAUNCHPAD_INSTALL_COMMAND],
+  ] as const)(
+    "puts the %s install command under its install heading once its switch is on",
+    (id, slug, command) => {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+      const html = renderPublicRoutePrerender(
+        { section: "products", route: { view: `products-${slug}` } },
+        "/",
+      );
+      expect(sectionHtml(html, `id="install-${slug}"`)).toContain(
+        `<pre><code>${escapeHtml(command)}</code></pre>`,
+      );
+    },
+  );
+
+  // The React page renders the same words (frontend/public/__tests__/
+  // app.test.tsx).
+  it("renders the Plus page's install, update and uninstall steps under their headings", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "products", route: { view: "products-cocalc-plus" } },
+      "/",
+    );
+    expect(html).toContain("<h1>CoCalc Plus</h1>");
+    for (const text of productCopyText(getPublicProductPageCopy("plus"))) {
+      expect(inlineText(html)).toContain(text);
+    }
+    const install = sectionHtml(html, 'id="install-cocalc-plus"');
+    expect(install).toContain("<h2>Install CoCalc Plus locally</h2>");
+    expect(install).toContain(
+      `<pre><code>${escapeHtml(PUBLIC_PLUS_INSTALL_COMMAND)}</code></pre>`,
+    );
+    expect(install).toContain(
+      `<a href="${PUBLIC_PLUS_INSTALL_SCRIPT_URL}">Open install script</a>`,
+    );
+    expect(sectionHtml(html, "<h2>Updates</h2>")).toContain(
+      "<pre><code>cocalc-plus update</code></pre>",
+    );
+    const uninstall = sectionHtml(html, "<h2>Uninstall</h2>");
+    expect(uninstall).toContain(
+      `<pre><code>${escapeHtml(PUBLIC_PLUS_UNINSTALL_COMMAND)}</code></pre>`,
+    );
+    expect(uninstall).toContain("<code>~/.local/share/cocalc-plus/data</code>");
+    expect(html).not.toMatch(
+      /software\.cocalc\.ai\/software\/cocalc(-plus)?\//,
+    );
+    expect(html).not.toMatch(/Codex is built in|shared web browser/);
+  });
+
+  // The React page shows the lead and not the route's description, so the
+  // header prints the description only when the lead does not say it.
+  it.each([
+    ["as the switches are committed", [] as const],
+    ["with Launchpad and Rocket shown", ["launchpad", "rocket"] as const],
+  ])("prints each product page's description once, %s", (_state, shown) => {
+    for (const id of shown) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    const products = getShownPublicProducts();
+    expect(products.map(({ id }) => id)).toEqual(
+      expect.arrayContaining(["plus", "star", ...shown]),
+    );
+    for (const product of products) {
+      const route = {
+        section: "products" as const,
+        route: { view: publicProductView(product) },
+      };
+      const html = renderPublicRoutePrerender(route, "/");
+      const { description } = getPublicRouteMetadata(route);
+      expect(html.split(escapeHtml(description))).toHaveLength(2);
+    }
+    const plus = renderPublicRoutePrerender(
+      { section: "products", route: { view: "products-cocalc-plus" } },
+      "/",
+    );
+    expect(
+      plus.split(
+        "CoCalc Plus runs CoCalc on your own computer, for your own projects.",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("renders a returning product's page and its links once its switch is on", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "launchpad", true);
+    const html = renderPublicRoutePrerender(
+      { section: "products", route: { view: "products-cocalc-launchpad" } },
       "/",
     );
     expect(html).toContain("<h1>CoCalc Launchpad</h1>");
-    expect(html).toContain("customer-operated private deployment path");
-    expect(html).not.toContain("CoCalc Rocket");
+    for (const text of productCopyText(getPublicProductPageCopy("launchpad"))) {
+      expect(inlineText(html)).toContain(text);
+    }
+    expect(html).toContain('id="install-cocalc-launchpad"');
+    // Rocket is still hidden.
+    expect(html).not.toContain("Rocket");
+
+    const star = renderPublicRoutePrerender(
+      { section: "products", route: { view: "products-cocalc-star" } },
+      "/",
+    );
+    expect(star).toContain(
+      '<a href="/products/cocalc-launchpad">View CoCalc Launchpad</a>',
+    );
+    const products = renderPublicRoutePrerender(
+      { section: "products", route: { view: "products" } },
+      "/",
+    );
+    expect(products).toContain('href="/products/cocalc-launchpad"');
   });
 
   it.each(["/", "/prefix"])(
@@ -412,6 +772,11 @@ describe("core landing page initial HTML", () => {
       expect(guides).toContain(`href="${prefix}/docs/ai/codex-chat"`);
       expect(guides).toContain("Research and writing");
       expect(guides).toContain("Durable collaborative projects");
+      // CoCalc Plus is shown, so its guide is too, as on the React page.
+      expect(guides).toContain("CoCalc Plus");
+      expect(guides).toContain(
+        "Self-hosting, local evaluation, durable collaborative projects, and architecture.",
+      );
 
       const about = renderPublicRoutePrerender(
         { section: "about", route: { view: "about" } },
@@ -689,7 +1054,7 @@ describe("core landing page initial HTML", () => {
   // The React Home page no longer has the tool catalogue, the audience cards
   // or the product list (frontend/public/home tests), so neither does its
   // crawler fallback, on any product. The React "Next step" section still
-  // links "Review product paths" and "Review support and sales", so this
+  // links "Where to run CoCalc" and "Review support and sales", so this
   // test does not pin those labels as absent.
   it.each([
     [
@@ -1044,4 +1409,95 @@ describe("crawler fallback copy guards", () => {
       }
     },
   );
+});
+
+// Launchpad and Rocket are hidden until their releases are current, so no
+// crawler page names them, on any site, as the switches are committed. CoCalc
+// Plus is shown; a test below hides it again to check that its name goes too.
+describe("crawler fallback while Launchpad and Rocket are hidden", () => {
+  const COCALC_AI = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+  const SITES = [
+    ["cocalc.ai", { ...COCALC_AI, policy_pages: "sagemathinc" as const }],
+    ["a Launchpad site", { cocalc_product: "launchpad" }],
+    ["a Rocket site", { cocalc_product: "rocket" }],
+    ["no site configuration", undefined],
+  ] as const;
+
+  function routePaths(config?: { cocalc_product?: string }): string[] {
+    return [
+      ...new Set([
+        ...buildPublicSitemapPaths(config),
+        ...PUBLIC_FEATURE_PAGES.map(({ slug }) => `/features/${slug}`),
+      ]),
+    ];
+  }
+
+  // Where any route's crawler text, HTML, title or description names one of
+  // `names`.
+  function namedOnRoutes(
+    names: RegExp,
+    config?: (typeof SITES)[number][1],
+  ): string[] {
+    const hits: string[] = [];
+    for (const path of routePaths(config)) {
+      const route = getPublicMetadataRouteFromPath(path);
+      const variants: PublicRoutePrerenderData[] =
+        route.section === "pricing"
+          ? [{}, { pricingTiers: PRICING_TIERS }]
+          : [{}];
+      for (const data of variants) {
+        const html = renderPublicRoutePrerender(route, "/", config, data);
+        const { description, title } = getPublicRouteMetadata(route, config);
+        for (const text of [crawlerText(html), html, title, description]) {
+          const match = names.exec(text);
+          if (match) {
+            hits.push(
+              `${path}: ${text.slice(Math.max(0, match.index - 60), match.index + 40)}`,
+            );
+          }
+        }
+      }
+    }
+    return hits;
+  }
+
+  it.each(SITES)(
+    "names neither of them on any route on %s",
+    (_site, config) => {
+      expect(namedOnRoutes(/\b(Launchpad|Rocket)\b/, config)).toEqual([]);
+    },
+  );
+
+  it.each(SITES)(
+    "names no hidden product on any route on %s once Plus is hidden again",
+    (_site, config) => {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+      expect(namedOnRoutes(/\b(Plus|Launchpad|Rocket)\b/, config)).toEqual([]);
+    },
+  );
+
+  // The sentence about CoCalc Plus that each feature page's fallback shows
+  // where the site describes Plus.
+  const PLUS_TEXT = {
+    "jupyter-notebook": PUBLIC_PLUS_FEATURE_LINES.jupyter,
+    "latex-editor":
+      "Use a hosted image with the required TeX tools, or install the tools for local CoCalc Plus",
+    octave: PUBLIC_PLUS_FEATURE_LINES.octave,
+    python: PUBLIC_PLUS_FEATURE_LINES.python,
+    sage: PUBLIC_PLUS_FEATURE_LINES.sage,
+  } as const;
+
+  it.each([
+    ["while Plus is shown, on cocalc.ai", COCALC_AI],
+    ["on a CoCalc Plus install", { cocalc_product: "plus" }],
+  ])("describes CoCalc Plus on the feature pages %s", (_site, config) => {
+    for (const [slug, text] of Object.entries(PLUS_TEXT)) {
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug } },
+        "/",
+        config,
+      );
+      expect(crawlerText(html)).toContain(text);
+    }
+  });
 });

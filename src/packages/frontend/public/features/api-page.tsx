@@ -11,6 +11,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import {
   BulletList,
   CodeBlock,
@@ -134,8 +135,8 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 pipeline that runs on its own.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button href={appPath("products")}>
-                  Compare operating models
+                <Button href={appPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+                  {PUBLIC_PRODUCTS_PAGE_LINK.label}
                 </Button>
               </Flex>
             </Flex>
