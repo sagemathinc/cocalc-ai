@@ -5,60 +5,76 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { render } from "@testing-library/react";
+// The frame document's behavior (incremental updates, run-once, ordering,
+// isolation) needs a real browser: see active-output-group.browser-test.mjs.
+// jsdom never runs srcdoc documents.
+
+import { act, render } from "@testing-library/react";
 import { fromJS } from "immutable";
-import { activeGroup, groupDocument } from "./active-output-group";
+import { SHELL_DOCUMENT, activeGroup } from "./active-output-group";
 import { CellOutputMessages } from "./message";
+import { selectMimeType } from "./mime-types/data";
 import "./mime-types/init-frontend";
 
-const js = (code: string) =>
-  fromJS({
-    output_type: "display_data",
-    data: { "application/javascript": code },
-  });
-const html = (value: string) =>
-  fromJS({ output_type: "display_data", data: { "text/html": value } });
-const stdout = (text: string) => fromJS({ name: "stdout", text });
+const bundle = (data: object) => fromJS({ output_type: "display_data", data });
+const select = (m) =>
+  selectMimeType(m.get("data").keySeq().toJS(), undefined, true);
 
-describe("activeGroup", () => {
-  it("is null without JavaScript output", () => {
-    expect(activeGroup([html("<b>x</b>"), stdout("hi")] as any)).toBeNull();
-  });
-
-  it("groups JavaScript and HTML outputs, in order", () => {
+describe("activeGroup uses the renderer's MIME choice", () => {
+  it("is null without a selected JavaScript output", () => {
     expect(
-      activeGroup([
-        stdout("a"),
-        html("<div id=t></div>"),
-        js("1"),
-        stdout("b"),
-      ] as any),
-    ).toEqual([1, 2]);
+      activeGroup([bundle({ "text/html": "<b>x</b>" })] as any, select),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["HTML+JS", { "text/html": "<b>h</b>", "application/javascript": "x()" }],
+    ["PDF+JS", { "application/pdf": "abc", "application/javascript": "x()" }],
+    ["iframe+JS", { iframe: "0".repeat(40), "application/javascript": "x()" }],
+  ])("%s: the higher-priority representation wins, no JS runs", (_, data) => {
+    expect(activeGroup([bundle(data)] as any, select)).toBeNull();
+  });
+
+  it("JS selected over a lower-priority fallback", () => {
+    const group = activeGroup(
+      [
+        bundle({ "application/javascript": "x()", "text/plain": "<fallback>" }),
+      ] as any,
+      select,
+    );
+    expect(group?.map((o) => o.kind)).toEqual(["javascript"]);
+  });
+
+  it("groups selected JS and HTML in order, keyed by position and content", () => {
+    const messages = [
+      fromJS({ name: "stdout", text: "a" }),
+      bundle({ "text/html": "<div id=t></div>" }),
+      bundle({ "application/javascript": "f()" }),
+    ];
+    const group = activeGroup(messages as any, (m) =>
+      m.get("data") ? select(m) : undefined,
+    )!;
+    expect(group.map((o) => [o.kind, o.key.split(":")[0]])).toEqual([
+      ["html", "1"],
+      ["javascript", "2"],
+    ]);
+    const changed = activeGroup(
+      [
+        messages[0],
+        messages[1],
+        bundle({ "application/javascript": "g()" }),
+      ] as any,
+      (m) => (m.get("data") ? select(m) : undefined),
+    )!;
+    expect(changed[0].key).toBe(group[0].key);
+    expect(changed[1].key).not.toBe(group[1].key);
   });
 });
 
-describe("groupDocument", () => {
-  it("runs each JavaScript output with its own element", () => {
-    const doc = groupDocument(
-      [html("<div id=t></div>"), js("element.text(1)")] as any,
-      [0, 1],
-    );
-    expect(doc).toContain('<div class="output_html"><div id=t></div></div>');
-    expect(doc).toContain('id="cocalc-js-output-1"');
-    expect(doc).toContain("element.text(1)");
-    expect(doc).toContain('document.getElementById("cocalc-js-output-1")');
-  });
-
-  it("can't break out of its script element", () => {
-    const doc = groupDocument(
-      [js('x = "</script><img src=x onerror=alert(1)>"; <!-- y')] as any,
-      [0],
-    );
-    const body = doc.slice(doc.indexOf("<body>"));
-    // Exactly one script element in the body, and the payload stays inside it.
-    expect(body.match(/<script>/g)?.length).toBe(1);
-    expect(body.match(/<\/script>/gi)?.length).toBe(1);
-    expect(body).toContain("<\\/script><img");
+describe("shell document", () => {
+  it("is constant and carries no output content", () => {
+    expect(SHELL_DOCUMENT).toContain('<div id="cocalc-outputs"></div>');
+    expect(SHELL_DOCUMENT).not.toContain("f()");
   });
 });
 
@@ -70,41 +86,30 @@ describe("CellOutputMessages", () => {
     },
     1: {
       output_type: "display_data",
-      data: {
-        "application/javascript":
-          "window.parent.__ranInApp = 1; window.__ranInApp = 1;",
-      },
+      data: { "application/javascript": "window.parent.__ranInApp = 1;" },
     },
     2: { name: "stdout", text: "plain text" },
   });
 
-  beforeEach(() => {
-    delete (window as any).__ranInApp;
-  });
-
-  it("trusted: JavaScript runs only in an opaque sandboxed frame", async () => {
+  it("trusted: one opaque-scripts frame with a constant shell; no output content in the page", async () => {
     const { container } = render(<CellOutputMessages output={output} trust />);
-    await new Promise((r) => setTimeout(r, 400));
+    await act(async () => {});
     const frames = container.querySelectorAll("iframe");
     expect(frames.length).toBe(1);
-    const sandbox = frames[0].getAttribute("sandbox") ?? "";
-    expect(frames[0].hasAttribute("sandbox")).toBe(true);
-    expect(sandbox).toContain("allow-scripts");
-    expect(sandbox).not.toContain("allow-same-origin");
-    expect(frames[0].getAttribute("srcdoc")).toContain("__ranInApp");
-    // Nothing ran in this page, and the HTML went into the frame, not the page.
-    expect((window as any).__ranInApp).toBeUndefined();
+    expect(frames[0].getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frames[0].getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(frames[0].getAttribute("srcdoc")).not.toContain("__ranInApp");
     expect(container.querySelector("#sib")).toBeNull();
     expect(container.textContent).toContain("plain text");
+    expect((window as any).__ranInApp).toBeUndefined();
   });
 
   it("untrusted: JavaScript does not run at all", async () => {
     const { container } = render(
       <CellOutputMessages output={output} trust={false} />,
     );
-    await new Promise((r) => setTimeout(r, 400));
+    await act(async () => {});
     expect(container.querySelector("iframe")).toBeNull();
     expect(container.textContent).toContain("not running untrusted Javascript");
-    expect((window as any).__ranInApp).toBeUndefined();
   });
 });

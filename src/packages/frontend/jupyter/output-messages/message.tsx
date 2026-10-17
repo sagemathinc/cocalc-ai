@@ -12,7 +12,9 @@ import type { Map } from "immutable";
 import React from "react";
 import type { JupyterActions } from "@cocalc/jupyter/redux/actions";
 import { AITools } from "@cocalc/jupyter/types";
+import useJupyterContext from "@cocalc/frontend/jupyter/jupyter-context";
 import { ActiveOutputGroup, activeGroup } from "./active-output-group";
+import { selectMimeType } from "./mime-types/data";
 import { InputDone } from "./input-done";
 import { Data } from "./mime-types/data";
 import { MoreOutput } from "./more-output";
@@ -124,19 +126,29 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     // JavaScript output never runs in this page: in a trusted notebook, a
     // cell's JavaScript and HTML outputs render together in one opaque
     // sandboxed frame.  (Untrusted notebooks don't run it at all.)
-    const group = trust ? activeGroup(obj) : null;
+    const { kernelspec } = useJupyterContext();
+    const group = React.useMemo(
+      () =>
+        trust
+          ? activeGroup(obj, (m) => {
+              const data = m.get("data");
+              return data == null || typeof data.keySeq !== "function"
+                ? undefined
+                : selectMimeType(data.keySeq().toJS(), kernelspec, trust);
+            })
+          : null,
+      [obj, kernelspec, trust],
+    );
+    const inGroup = new Set(
+      (group ?? []).map((o) => parseInt(o.key.split(":")[0])),
+    );
+    const firstInGroup = Math.min(...inGroup);
     for (const n of numericallyOrderedKeys(obj)) {
       const mesg = obj[n];
-      if (mesg != null && group?.includes(n)) {
-        if (n === group[0]) {
+      if (mesg != null && group != null && inGroup.has(n)) {
+        if (n === firstInGroup) {
           hasIframes = true;
-          v.push(
-            <ActiveOutputGroup
-              key="active-group"
-              messages={obj}
-              group={group}
-            />,
-          );
+          v.push(<ActiveOutputGroup key="active-group" outputs={group} />);
         }
         continue;
       }

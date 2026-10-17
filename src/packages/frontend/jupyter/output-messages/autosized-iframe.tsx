@@ -54,6 +54,9 @@ interface Props {
   style?: CSSProperties;
   title?: string;
   onError?: (event: SyntheticEvent<HTMLIFrameElement>) => void;
+  // Called with the iframe after each load of its document (e.g., to post
+  // content to it).
+  onLoad?: (iframe: HTMLIFrameElement) => void;
 }
 
 export default function AutosizedIframe({
@@ -63,6 +66,7 @@ export default function AutosizedIframe({
   style,
   title,
   onError,
+  onLoad,
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState<number>(DEFAULT_HEIGHT);
@@ -139,6 +143,7 @@ export default function AutosizedIframe({
   return (
     <iframe
       ref={iframeRef}
+      onLoad={(event) => onLoad?.(event.currentTarget)}
       src={src}
       srcDoc={sizedSrcDoc}
       sandbox={sandbox}
