@@ -90,7 +90,8 @@ async function openInApp(name) {
 // cell list container instead.
 const ROOT_SELECTOR = {
   text: ".CodeMirror",
-  markdown: ".CodeMirror",
+  // Markdown opens in the rich-text (Slate) editor by default.
+  markdown: "[data-slate-editor]",
   notebook: "[data-jupyter-windowed-list]",
   terminal: ".xterm",
 };
@@ -134,25 +135,36 @@ async function survivingTags() {
   }, nonce);
 }
 
-async function typeInText(line) {
-  await page.evaluate((line) => {
-    const cm = [...document.querySelectorAll(".CodeMirror")].find(
-      (e) =>
-        e.dataset.rcx?.endsWith(":text") && (e.offsetWidth || e.offsetHeight),
+// The text editor: the tagged CodeMirror while it survives; after a remount,
+// whichever CodeMirror is now showing the text file, so that lost edits are
+// still measured (the remount itself is recorded separately).
+const FIND_TEXT_CM = `
+  (() => {
+    const visible = (e) => e.offsetWidth || e.offsetHeight;
+    const all = [...document.querySelectorAll(".CodeMirror")];
+    return (
+      all.find((e) => e.dataset.rcx?.endsWith(":text") && visible(e)) ??
+      (location.pathname.endsWith("/notes.txt") ? all.find(visible) : undefined)
     )?.CodeMirror;
-    if (!cm) throw new Error("text editor not found or not visible");
-    const doc = cm.getDoc();
-    doc.replaceRange(`${line}\n`, { line: doc.lastLine() + 1, ch: 0 });
-  }, line);
+  })()`;
+
+async function typeInText(line) {
+  await page.evaluate(
+    ({ line, find }) => {
+      const cm = eval(find);
+      if (!cm) throw new Error("text editor not found or not visible");
+      const doc = cm.getDoc();
+      doc.replaceRange(`${line}\n`, { line: doc.lastLine() + 1, ch: 0 });
+    },
+    { line, find: FIND_TEXT_CM },
+  );
 }
 
 async function textEditorValue() {
-  return await page.evaluate(() => {
-    const cm = [...document.querySelectorAll(".CodeMirror")].find((e) =>
-      e.dataset.rcx?.endsWith(":text"),
-    )?.CodeMirror;
-    return cm?.getValue() ?? null;
-  });
+  return await page.evaluate(
+    (find) => eval(find)?.getValue() ?? null,
+    FIND_TEXT_CM,
+  );
 }
 
 // Watch for any recovery banner / alert that appears during the run.
