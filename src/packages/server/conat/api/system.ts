@@ -1,3 +1,7 @@
+import { boardDecideLocal } from "@cocalc/server/ai/board-decide-service";
+import { boardDecideForBoard } from "@cocalc/server/ai/board-decide-bound";
+import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
+import { assertCollab } from "./util";
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
@@ -7146,6 +7150,31 @@ export async function synthesizeChatSpeech(
         account_id: opts.account_id,
       })
     : await synthesizeChatSpeechLocal(opts);
+}
+
+/** A Sagebrush board's decide call, bound to the posted board: read here
+ * as a collaborator of its project, classified on the account's home bay,
+ * where its AI allowance lives. */
+export async function boardDecide(opts: {
+  account_id?: string;
+  project_id: string;
+  path: string;
+  message: unknown;
+}) {
+  const fs = async (project_id: string) =>
+    fsClient({ client: await conat(), subject: fsSubject({ project_id }) });
+  return await boardDecideForBoard(opts, {
+    assertCollab,
+    stat: async (project_id, path) => await (await fs(project_id)).stat(path),
+    readFile: async (project_id, path) =>
+      String(await (await fs(project_id)).readFile(path, "utf8")),
+    decide: async (decideOpts) => {
+      const client = await getChatSpeechHomeClient(decideOpts.account_id);
+      return client
+        ? await client.boardDecide(decideOpts)
+        : await boardDecideLocal(decideOpts);
+    },
+  });
 }
 
 export async function cancelChatSpeech(

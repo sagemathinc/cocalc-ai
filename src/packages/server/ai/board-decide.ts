@@ -23,7 +23,7 @@ export const DECIDE_LIMITS = {
   promptCharacters: 4_000,
   options: 32,
   optionNameCharacters: 80,
-  optionAboutCharacters: 1_000,
+  optionAboutCharacters: 2_000,
   callsPerAccountPerMinute: 20,
 } as const;
 

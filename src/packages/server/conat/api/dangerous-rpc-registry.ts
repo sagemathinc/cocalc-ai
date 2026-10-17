@@ -23,6 +23,11 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "system.boardDecide": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "classifies an answer to a question read from a board file the caller can already read, spending only the caller's own AI allowance, bounded by size and rate limits; grants nothing",
+  },
   "computers.approveComputerRequest": {
     decision: "fresh-auth-required",
     reason:
