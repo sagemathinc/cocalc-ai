@@ -20,6 +20,11 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { LiveLogReplay } from "./live-log-replay";
 import type { LiveLogRanges } from "./live-log-replay";
 import { canCacheActivityLog } from "./log-cache-budget";
+import {
+  logFetchDelay,
+  noteLogFetchFailure,
+  noteLogFetchSuccess,
+} from "./log-fetch-backoff";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
 // lite/hub/acp.ts. We delay the initial AKV fetch to let the first persisted
@@ -536,16 +541,26 @@ export function useCodexLog({
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const backoffKey = `${projectId}\0${logStore}\0${logKey}`;
+    const retryLater = () => {
+      if (cancelled) return;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(fetchLog, logFetchDelay(backoffKey));
+    };
     async function fetchLog() {
-      if (!enabled || !hasLogRef || !projectId || akvLoaded) {
+      if (cancelled || !enabled || !hasLogRef || !projectId || akvLoaded) {
         return;
       }
-      if (!cancelled) {
-        setLoadState("loading");
-        setLoadError(undefined);
+      if (logFetchDelay(backoffKey) > 0) {
+        retryLater();
+        return;
       }
+      setLoadState("loading");
+      setLoadError(undefined);
       try {
         const data = await fetchPersistedLog();
+        noteLogFetchSuccess(backoffKey);
         if (!cancelled) {
           // If the log has not yet been persisted, leave fetchedLog as null so
           // we will retry (immediately below and on the delayed retry).
@@ -562,20 +577,23 @@ export function useCodexLog({
         }
         // console.log(data);
       } catch (err) {
+        noteLogFetchFailure(backoffKey, err);
         if (!cancelled) {
           setLoadState("error");
           setLoadError(`${(err as any)?.message ?? err ?? "Unknown error"}`);
         }
-        console.warn("failed to fetch acp log", err);
+        retryLater();
       }
     }
     void fetchLog();
-    if (!generating || liveLogStream) return;
-    // Also delay and call again to let the throttled writer persist the first batch.
-    timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
+    if (generating && !liveLogStream) {
+      // Also delay and call again to let the throttled writer persist the first batch.
+      timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
+    }
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [
     hasLogRef,
@@ -633,7 +651,9 @@ export function useCodexLog({
                 }
               })
               .catch((err) => {
-                console.warn("codex log reconnect fetch failed", err);
+                console.warn(
+                  `codex log reconnect fetch failed: ${(err as any)?.message ?? err}`,
+                );
               });
           }
           if (!mountedRef.current || !hasLiveSource) {
