@@ -58,6 +58,23 @@ export abstract class ConatSocketBase extends EventEmitter {
     this.disconnect();
   };
 
+  // Routing can change between connections (e.g., the project host moved to
+  // a new address and got a new client), so this is redone on each connect.
+  private bindRoutedTransport = (transport: Client | undefined) => {
+    if (transport === this.client) {
+      transport = undefined;
+    }
+    if (transport === this.routedTransport) {
+      return;
+    }
+    this.routedTransport?.removeListener?.(
+      "disconnected",
+      this.onClientDisconnected,
+    );
+    this.routedTransport = transport;
+    transport?.on("disconnected", this.onClientDisconnected);
+  };
+
   // the following is all for compat with primus's api and has no meaning here.
   address = { ip: "" };
   conn: { id: string };
@@ -101,11 +118,6 @@ export abstract class ConatSocketBase extends EventEmitter {
         });
     }
     this.client.on("disconnected", this.onClientDisconnected);
-    const transport = this.client.transportClientFor?.(subject);
-    if (transport != null && transport !== this.client) {
-      this.routedTransport = transport;
-      transport.on("disconnected", this.onClientDisconnected);
-    }
     this.connect();
     this.setMaxListeners(100);
   }
@@ -246,11 +258,7 @@ export abstract class ConatSocketBase extends EventEmitter {
     this.recoveryRegistration?.close();
     this.recoveryRegistration = undefined;
     this.client?.removeListener?.("disconnected", this.onClientDisconnected);
-    this.routedTransport?.removeListener?.(
-      "disconnected",
-      this.onClientDisconnected,
-    );
-    this.routedTransport = undefined;
+    this.bindRoutedTransport(undefined);
     this.setState("closed");
     this.removeAllListeners();
 
@@ -284,6 +292,7 @@ export abstract class ConatSocketBase extends EventEmitter {
       return;
     }
     const client = this.client;
+    this.bindRoutedTransport(client.transportClientFor?.(this.subject));
     this.setState("connecting");
     this.lifecycleReporter?.("transport_wait_start", {
       transport_connected: !!client.conn?.connected,

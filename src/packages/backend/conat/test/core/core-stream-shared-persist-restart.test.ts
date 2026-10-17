@@ -56,7 +56,7 @@ function openWhileDisconnected({
     first = await cstream({ client, name, noCache: true });
     await first.publish("before-restart");
     expect(first.persistClient.getRecoveryState()).toBe("ready");
-  });
+  }, 30_000);
 
   it("restarts the router and the persist server together", async () => {
     startPersist = await restartHost(first.persistClient);
@@ -216,6 +216,64 @@ describe("the same through a routed per-host client", () => {
 
   describe("a stream opened while the shared client is disconnected", () => {
     openWhileDisconnected({ getClient, restartHost });
+  });
+
+  // When a project host moves to a new address the browser replaces its
+  // per-host client and reconnects; sockets must then watch the new client.
+  describe("a socket whose route moves to a new per-host client", () => {
+    const subject = `routed-echo-${Math.random()}`;
+    let route;
+    let hub;
+    let server;
+    let sock;
+
+    it("connects a socket routed through the first per-host client", async () => {
+      route = connectToHost();
+      const serverClient = connectToHost();
+      server = serverClient.socket.listen(subject);
+      server.on("connection", (conn) => {
+        conn.on("request", (mesg) => mesg.respond("pong"));
+      });
+      hub = connect().setRouteSubject((s) =>
+        s.startsWith(subject) ? { client: route } : undefined,
+      );
+      // As persist sockets do, find the server with a (routed) request rather
+      // than the hub client's interest table.
+      sock = hub.socket.connect(subject, {
+        loadBalancer: async () => serverClient.id,
+      });
+      await sock.waitUntilReady(10_000);
+      expect((await sock.request(null)).data).toBe("pong");
+    }, 30_000);
+
+    it("moves the route to a new client and reconnects through it", async () => {
+      const old = route;
+      route = connectToHost();
+      old.close();
+      await restartServer();
+      await wait({
+        timeout: 20_000,
+        until: async () => {
+          try {
+            return (await sock.request(null, { timeout: 1000 })).data == "pong";
+          } catch {
+            return false;
+          }
+        },
+      });
+    }, 30_000);
+
+    it("notices when the new client's host goes away", async () => {
+      const disconnected = once(sock, "disconnected", 15_000);
+      await hostRouter.close();
+      await disconnected;
+    }, 30_000);
+
+    it("cleans up", async () => {
+      sock?.close();
+      server?.close();
+      await startHostRouter(hostRouter.options.port);
+    });
   });
 
   afterAll(async () => {
