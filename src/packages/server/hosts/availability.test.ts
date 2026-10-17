@@ -266,9 +266,98 @@ describe("classifyHostAvailabilitySnapshot", () => {
       },
     ]);
     expect(body).toContain("los-angeles-1");
-    expect(body).toContain("terminations=4");
     expect(body).toContain("reason=queue_stalled_worker");
     expect(body).toContain("Codex/ACP work may be queued");
+  });
+
+  // Alerts are deduplicated on subject and body. A body that changes with
+  // every check (a counter, a measurement, a timestamp) re-sends the alert on
+  // every check: one host's ACP worker alert went out 26 times in 15 minutes.
+  describe("condition alert bodies change only when the condition does", () => {
+    const acpRow = (health: Record<string, unknown>, id = "acp-host") => ({
+      id,
+      status: "running",
+      metadata: {
+        name: "los-angeles-1",
+        acp_worker_health: {
+          status: "degraded",
+          latest_termination_reason: "unresponsive_worker",
+          ...health,
+        },
+      },
+    });
+
+    it("ACP worker alerts ignore counters and timestamps", () => {
+      const first = _test.formatAcpWorkerDegradedHostAlertBody([
+        acpRow({
+          unexpected_terminations: 1,
+          latest_termination_at: "2026-10-17T08:41:00.000Z",
+          oldest_queued_age_ms: 1_000,
+        }),
+      ]);
+      const later = _test.formatAcpWorkerDegradedHostAlertBody([
+        acpRow({
+          unexpected_terminations: 26,
+          latest_termination_at: "2026-10-17T08:55:00.000Z",
+          oldest_queued_age_ms: 900_000,
+        }),
+      ]);
+      expect(later).toBe(first);
+      expect(
+        _test.formatAcpWorkerDegradedHostAlertBody([
+          acpRow({}),
+          acpRow({}, "another-host"),
+        ]),
+      ).not.toBe(first);
+    });
+
+    it("container runtime alerts ignore failure counts and probe times", () => {
+      const row = (runtime: Record<string, unknown>) => ({
+        id: "runtime-host",
+        status: "running",
+        metadata: {
+          name: "montreal-1",
+          runtime_health: {
+            status: "degraded",
+            error: "podman info failed",
+            ...runtime,
+          },
+        },
+      });
+      const first = _test.formatRuntimeDegradedHostAlertBody([
+        row({ consecutive_failures: 3, checked_at: "2026-10-17T08:00:00Z" }),
+      ]);
+      expect(
+        _test.formatRuntimeDegradedHostAlertBody([
+          row({ consecutive_failures: 40, checked_at: "2026-10-17T09:00:00Z" }),
+        ]),
+      ).toBe(first);
+      expect(first).toContain("error=podman info failed");
+    });
+
+    it("root filesystem alerts ignore the measured values within a level", () => {
+      const now = 2_000_000;
+      const row = (available_gib: number) =>
+        _test.rootFilesystemAlertRow(
+          {
+            id: "root-host",
+            status: "running",
+            metadata: { name: "los-angeles-1" },
+            metric_collected_at: new Date(now - 30_000),
+            root_disk_used_bytes: 20 * 1024 ** 3,
+            root_disk_available_bytes: available_gib * 1024 ** 3,
+          },
+          now,
+        )!;
+      const warning = _test.formatRootFilesystemAlertBody([row(4.9)]);
+      expect(_test.formatRootFilesystemAlertBody([row(4.2)])).toBe(warning);
+      expect(warning).toContain(
+        "level=warning condition=used >= 80%, available <= 5.00 GiB",
+      );
+      expect(warning).not.toContain("4.90 GiB");
+      // Getting worse (warning to critical) is a new condition.
+      expect(_test.formatRootFilesystemAlertBody([row(1)])).not.toBe(warning);
+    });
   });
 
   it("defers stale-heartbeat escalation while remediation can still work", () => {

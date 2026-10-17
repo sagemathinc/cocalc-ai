@@ -84,6 +84,13 @@ const RUNNING_STALE_REPAIR_SUPPRESS_MS = Math.max(
 const PRESSURE_ALERT_LIMIT = 25;
 const CONAT_PERSIST_ALERT_LIMIT = 25;
 const ROOT_FILESYSTEM_ALERT_LIMIT = 25;
+// A condition alert repeats only when its condition changes. Its body lists
+// stable facts (which hosts, at what level), never counters, measurements or
+// timestamps, so the message dedupe on subject and body suppresses an
+// unchanged condition until the reminder interval passes, while a new host or
+// a worse level alerts at once.
+const HOST_CONDITION_ALERT_REMINDER_MINUTES = 6 * 60;
+const ROOT_FILESYSTEM_ALERT_REMINDER_MINUTES = 24 * 60;
 const GIB = 1024 ** 3;
 const ROOT_FILESYSTEM_WARNING_PERCENT = envPercent(
   "COCALC_HOST_ROOT_FILESYSTEM_WARNING_PERCENT",
@@ -245,6 +252,9 @@ type RootFilesystemAlertRow = ProjectHostAvailabilitySnapshot & {
   root_disk_used_percent?: number | string | null;
   root_filesystem_level: "warning" | "critical";
   root_filesystem_reason: string;
+  // The thresholds crossed, without the measured values: stable while the
+  // condition lasts.
+  root_filesystem_condition: string;
 };
 
 function envNumberAtLeast(
@@ -1092,7 +1102,7 @@ export async function runRunningStaleHostAlertCheck(): Promise<number> {
     await adminAlert({
       subject: "Running project hosts remain unresponsive after remediation",
       body: formatRunningStaleHostAlertBody(escalatedRows),
-      dedupMinutes: 30,
+      dedupMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
     });
   }
   if (repairCount) {
@@ -1381,10 +1391,12 @@ function rootFilesystemAlertRow(
 
   const criticalReasons: string[] = [];
   const warningReasons: string[] = [];
+  const conditions: string[] = [];
   if (usedPercent != null && usedPercent >= ROOT_FILESYSTEM_CRITICAL_PERCENT) {
     criticalReasons.push(
       `${usedPercent.toFixed(1)}% used >= ${ROOT_FILESYSTEM_CRITICAL_PERCENT}%`,
     );
+    conditions.push(`used >= ${ROOT_FILESYSTEM_CRITICAL_PERCENT}%`);
   } else if (
     usedPercent != null &&
     usedPercent >= ROOT_FILESYSTEM_WARNING_PERCENT
@@ -1392,6 +1404,7 @@ function rootFilesystemAlertRow(
     warningReasons.push(
       `${usedPercent.toFixed(1)}% used >= ${ROOT_FILESYSTEM_WARNING_PERCENT}%`,
     );
+    conditions.push(`used >= ${ROOT_FILESYSTEM_WARNING_PERCENT}%`);
   }
   if (
     available != null &&
@@ -1400,12 +1413,18 @@ function rootFilesystemAlertRow(
     criticalReasons.push(
       `${formatBytes(available)} available <= ${formatBytes(ROOT_FILESYSTEM_CRITICAL_AVAILABLE_BYTES)}`,
     );
+    conditions.push(
+      `available <= ${formatBytes(ROOT_FILESYSTEM_CRITICAL_AVAILABLE_BYTES)}`,
+    );
   } else if (
     available != null &&
     available <= ROOT_FILESYSTEM_WARNING_AVAILABLE_BYTES
   ) {
     warningReasons.push(
       `${formatBytes(available)} available <= ${formatBytes(ROOT_FILESYSTEM_WARNING_AVAILABLE_BYTES)}`,
+    );
+    conditions.push(
+      `available <= ${formatBytes(ROOT_FILESYSTEM_WARNING_AVAILABLE_BYTES)}`,
     );
   }
   const root_filesystem_level = criticalReasons.length
@@ -1423,6 +1442,7 @@ function rootFilesystemAlertRow(
     ...(usedPercent != null ? { root_disk_used_percent: usedPercent } : {}),
     root_filesystem_level,
     root_filesystem_reason: reasons.join(", "),
+    root_filesystem_condition: conditions.join(", "),
   };
 }
 
@@ -1443,7 +1463,7 @@ function formatRootFilesystemAlertBody(rows: RootFilesystemAlertRow[]): string {
         [
           `- ${pressureAlertHostName(row)}`,
           `level=${row.root_filesystem_level}`,
-          `reason=${row.root_filesystem_reason}`,
+          `condition=${row.root_filesystem_condition}`,
           row.public_url ? `url=${row.public_url}` : undefined,
         ]
           .filter(Boolean)
@@ -1511,8 +1531,7 @@ export async function runRootFilesystemAlertCheck(): Promise<number> {
   await adminAlert({
     subject: "Project-host root filesystems are low on space",
     body: formatRootFilesystemAlertBody(rows),
-    dedupMinutes: 30,
-    dedupBySubject: true,
+    dedupMinutes: ROOT_FILESYSTEM_ALERT_REMINDER_MINUTES,
   });
   return rows.length;
 }
@@ -1676,8 +1695,6 @@ function formatRuntimeDegradedHostAlertBody(
       return [
         `- ${runtimeDegradedHostName(row)}`,
         `host_id=${row.id}`,
-        `failures=${runtime.consecutive_failures ?? "unknown"}`,
-        runtime.checked_at ? `checked_at=${runtime.checked_at}` : undefined,
         runtime.error ? `error=${runtime.error}` : undefined,
         row.public_url ? `url=${row.public_url}` : undefined,
       ]
@@ -1723,7 +1740,7 @@ export async function runRuntimeDegradedHostAlertCheck(): Promise<number> {
   await adminAlert({
     subject: "Project hosts have degraded container runtimes",
     body: formatRuntimeDegradedHostAlertBody(rows),
-    dedupMinutes: 15,
+    dedupMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
   });
   return rows.length;
 }
@@ -1743,15 +1760,8 @@ function formatAcpWorkerDegradedHostAlertBody(
       return [
         `- ${runtimeDegradedHostName(row)}`,
         `host_id=${row.id}`,
-        `terminations=${health.unexpected_terminations ?? "unknown"}`,
         health.latest_termination_reason
           ? `reason=${health.latest_termination_reason}`
-          : undefined,
-        health.latest_termination_at
-          ? `latest=${health.latest_termination_at}`
-          : undefined,
-        health.oldest_queued_age_ms != null
-          ? `oldest_queue_age_ms=${health.oldest_queued_age_ms}`
           : undefined,
         row.public_url ? `url=${row.public_url}` : undefined,
       ]
@@ -1791,7 +1801,7 @@ export async function runAcpWorkerDegradedHostAlertCheck(): Promise<number> {
   await adminAlert({
     subject: "Project hosts have unstable ACP workers",
     body: formatAcpWorkerDegradedHostAlertBody(rows),
-    dedupMinutes: 15,
+    dedupMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
   });
   return rows.length;
 }
