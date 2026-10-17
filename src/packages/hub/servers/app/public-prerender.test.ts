@@ -21,6 +21,16 @@ import {
 } from "@cocalc/util/public-about-content";
 import {
   getPublicFeaturePage,
+  PUBLIC_API_HTTP_INTEGRATIONS,
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_IN_PROJECTS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
+  PUBLIC_CLI_ON_YOUR_COMPUTER,
+  PUBLIC_CLI_START_AUTOMATING,
+  PUBLIC_CLI_TERMS,
   PUBLIC_FEATURE_PAGES,
   PUBLIC_PLUS_FEATURE_LINES,
 } from "@cocalc/util/public-feature-pages";
@@ -207,6 +217,116 @@ describe("public feature initial HTML", () => {
       );
       expect(html).not.toContain("Start using CoCalc");
       expect(html).not.toContain("terminal.png");
+    },
+  );
+});
+
+describe("CLI and API initial HTML", () => {
+  it.each(["/", "/prefix"])(
+    "renders the sentences the React page renders, on %s",
+    (basePath) => {
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug: "api" } },
+        basePath,
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
+      );
+
+      expect(html).toContain("<h1>CLI and API</h1>");
+      for (const text of [
+        "The CLI your agents use, and your scripts can too.",
+        `${PUBLIC_CLI_IN_PROJECTS} ${PUBLIC_CLI_ON_YOUR_COMPUTER}`,
+        PUBLIC_API_HTTP_INTEGRATIONS,
+        PUBLIC_CLI_START_AUTOMATING,
+        PUBLIC_CLI_TERMS,
+      ]) {
+        expect(html).toContain(`<p>${text}</p>`);
+      }
+      // The summary starts with the sentence that is also the page's
+      // description; the header prints it once, as the React page does.
+      expect(html.split(PUBLIC_CLI_IN_PROJECTS)).toHaveLength(2);
+      expect(html).toContain(
+        '<a href="https://cocalc.ai/policies/terms">CoCalc.ai Terms of Service</a>',
+      );
+      expect(html).toContain(
+        '<a href="https://cocalc.ai/policies/terms#api-terms">API Terms</a>',
+      );
+      // The install section follows the two CLI sentences, with CoCalc.ai's
+      // command.
+      const install = sectionHtml(html, `<h2>${PUBLIC_CLI_INSTALL_TITLE}</h2>`);
+      expect(html.indexOf(PUBLIC_CLI_ON_YOUR_COMPUTER)).toBeLessThan(
+        html.indexOf(PUBLIC_CLI_INSTALL_TITLE),
+      );
+      expect(install).toContain(`<p>${PUBLIC_CLI_INSTALL_STEP}</p>`);
+      expect(install).toContain(
+        "<pre><code>curl -fsSL https://cocalc.ai/cli/install.sh | sh</code></pre>",
+      );
+      expect(install).toContain(`<p>${PUBLIC_CLI_INSTALL_WINDOWS}</p>`);
+      for (const { code, text } of PUBLIC_CLI_COMPUTER_COMMANDS) {
+        expect(install).toContain(
+          `<p><code>${escapeHtml(code)}</code> ${escapeHtml(text)}</p>`,
+        );
+      }
+      // Agents run `cocalc agent` and `cocalc sensor` inside projects, and
+      // the page names no computer command.
+      expect(html).not.toMatch(/cocalc (agent|sensor)\b|cocalc computer/);
+    },
+  );
+
+  it.each([
+    [
+      "a server with a domain",
+      "/",
+      { cocalc_product: "launchpad", dns: "star.example.com" },
+    ],
+    [
+      "a site under a base path",
+      "/prefix",
+      { cocalc_product: "launchpad", dns: "cocalc.example.edu" },
+    ],
+    [
+      "this computer",
+      "/",
+      { cocalc_product: "launchpad", dns: "localhost:8170" },
+    ],
+    [
+      "a CoCalc Plus install",
+      "/",
+      { cocalc_product: "plus", dns: "localhost:5000" },
+    ],
+  ])("prints CoCalc.ai's install command on %s", (_site, basePath, config) => {
+    const html = renderPublicRoutePrerender(
+      { section: "features", route: { view: "detail", slug: "api" } },
+      basePath,
+      config,
+    );
+    // As the React page shows it, whatever the site's host and base path.
+    expect(sectionHtml(html, `<h2>${PUBLIC_CLI_INSTALL_TITLE}</h2>`)).toContain(
+      `<pre><code>${escapeHtml(PUBLIC_CLI_INSTALL_COMMAND)}</code></pre>`,
+    );
+    expect(html.match(/curl -fsSL \S+\/cli\/install\.sh/g)).toEqual([
+      "curl -fsSL https://cocalc.ai/cli/install.sh",
+    ]);
+  });
+});
+
+describe("feature page headers in the initial HTML", () => {
+  it.each(PUBLIC_FEATURE_PAGES.map(({ slug }) => slug))(
+    "prints no lead line twice on the %s page",
+    (slug) => {
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug } },
+        "/",
+        { cocalc_product: "launchpad", dns: "cocalc.ai" },
+      );
+      const header = /<header>([\s\S]*?)<\/header>/.exec(html)?.[1] ?? "";
+      const lines = [...header.matchAll(/<p>([^<]*)<\/p>/g)].map(
+        ([, text]) => text,
+      );
+      for (const [index, line] of lines.entries()) {
+        expect(
+          lines.filter((other, j) => j !== index && other.includes(line)),
+        ).toEqual([]);
+      }
     },
   );
 });

@@ -11,6 +11,11 @@ import {
 import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
   PUBLIC_FEATURE_NAV_ITEMS,
   publicFeatureHref,
   type PublicFeaturePage,
@@ -587,6 +592,19 @@ function renderFeatureNavigation(
   return `<nav aria-label="Related CoCalc features"><h2>Explore CoCalc features</h2><ul>${links}</ul></nav>`;
 }
 
+// The CLI and API page's install section, as its React page renders it, with
+// CoCalc.ai's install command on every site.
+function renderCliInstall(): string {
+  return `<section><h2>${htmlEscape(PUBLIC_CLI_INSTALL_TITLE)}</h2><p>${htmlEscape(
+    PUBLIC_CLI_INSTALL_STEP,
+  )}</p><pre><code>${htmlEscape(
+    PUBLIC_CLI_INSTALL_COMMAND,
+  )}</code></pre><p>${htmlEscape(PUBLIC_CLI_INSTALL_WINDOWS)}</p>${PUBLIC_CLI_COMPUTER_COMMANDS.map(
+    ({ code, text }) =>
+      `<p><code>${htmlEscape(code)}</code> ${htmlEscape(text)}</p>`,
+  ).join("")}</section>`;
+}
+
 function renderFeatureDetail(
   page: PublicFeaturePage,
   basePath: string,
@@ -594,9 +612,10 @@ function renderFeatureDetail(
 ): string {
   // The Compare page's fit lists depend on the site. The AI page's hero shows
   // its headline for this site and its intro, and its sections are the page's
-  // agent cards, as on the React page.
+  // agent cards, as on the React page. The CLI and API page's install section
+  // follows its lead.
   const isAiPage = page.slug === "ai";
-  const sections = (
+  const sections = `${page.slug === "api" ? renderCliInstall() : ""}${(
     (page.slug === "compare"
       ? getPublicCompareSections(config)
       : isAiPage
@@ -604,14 +623,23 @@ function renderFeatureDetail(
         : page.sections) ?? []
   )
     .map((section) => renderSection(section, basePath, config))
-    .join("");
+    .join("")}`;
   const title = page.metadataTitle ?? page.title;
   const highlights = (page.highlights ?? [])
     .map((item) => `<li>${htmlEscape(item)}</li>`)
     .join("");
-  const lead = isAiPage
+  const leadLines = isAiPage
     ? [getPublicAiHeadline(config), PUBLIC_AI_INTRO]
     : [page.tagline, page.metadataSummary ?? page.summary, page.summary];
+  // A line that another lead line repeats or contains, such as a summary's
+  // first sentence, is printed once.
+  const lead = leadLines.filter(
+    (line, index) =>
+      !leadLines.some(
+        (other, otherIndex) =>
+          other.includes(line) && (other !== line || otherIndex < index),
+      ),
+  );
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc feature</p>

@@ -3,9 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { cocalcCliInstallCommand } from "./consts/ui";
 import { describesPublicPlus } from "./public-product-availability";
 import { PUBLIC_PRODUCTS_PAGE_LINK } from "./public-products-content";
-import { isCanonicalPublicSiteHost } from "./public-site-policy";
+import {
+  CANONICAL_PUBLIC_SITE_ORIGIN,
+  isCanonicalPublicSiteHost,
+} from "./public-site-policy";
 import { trimTrailingSlashes } from "./linear-text";
 
 export interface PublicFeatureCard {
@@ -66,6 +70,55 @@ export function publicFeatureHref(
   }
   return `${trimTrailingSlashes(basePath)}${catalogHref}`;
 }
+
+// The CLI and API page (/features/api). Its React page renders these
+// sentences too.
+export const PUBLIC_CLI_IN_PROJECTS =
+  "Inside every CoCalc.ai project, agents use the CoCalc CLI to work with notebooks, terminals, the shared browser and other agents.";
+
+export const PUBLIC_CLI_ON_YOUR_COMPUTER =
+  "On your own computer, install the CLI to move files, run notebooks and start a Codex turn in a project.";
+
+export const PUBLIC_CLI_TERMS =
+  "Your use of CoCalc.ai through the CLI is covered by the CoCalc.ai Terms of Service, including their API Terms.";
+
+export const PUBLIC_API_HTTP_INTEGRATIONS =
+  "Use the HTTP API for targeted integrations with external services. Run computations against an authorized project and save the results as project files your team can reopen and review. Check the reference exposed by your deployment for available routes and permissions.";
+
+export const PUBLIC_CLI_START_AUTOMATING =
+  "Agents use the CLI in their projects. Use it, or the HTTP API, from your own scripts. If your integration depends on provisioning, scheduling, or deployment support, talk with us.";
+
+// The page's section on installing the CLI on your own computer, after its
+// two CLI sentences: the platforms the installer has builds for, the install
+// command, Windows, and two commands to run from your computer, each with
+// what it does. Both renderers show it.
+export const PUBLIC_CLI_INSTALL_TITLE = "Install the CLI on your own computer";
+
+export const PUBLIC_CLI_INSTALL_STEP =
+  "On Linux (x64 or ARM64, with glibc) or macOS (Apple silicon or Intel), run this in a terminal:";
+
+// The command installs the CLI from CoCalc.ai, on every site: the page
+// describes the CLI that CoCalc.ai serves, and a site that serves no CLI
+// releases answers its own /cli/install.sh with an older standalone installer.
+export const PUBLIC_CLI_INSTALL_COMMAND = cocalcCliInstallCommand(
+  CANONICAL_PUBLIC_SITE_ORIGIN,
+);
+
+export const PUBLIC_CLI_INSTALL_WINDOWS = "On Windows, install it inside WSL2.";
+
+export const PUBLIC_CLI_COMPUTER_COMMANDS: readonly {
+  code: string;
+  text: string;
+}[] = [
+  {
+    code: "cocalc project browser connect",
+    text: "opens a Chrome browser on your computer that agents in a project can drive. Anything in the project then fully controls that browser, including opening files on your computer and addresses on your local network, so connect only projects you trust.",
+  },
+  {
+    code: "cocalc project build <path>",
+    text: "builds a saved LaTeX, Knitr, R Markdown or Quarto document in a project.",
+  },
+];
 
 // What the feature pages say about CoCalc Plus, each a sentence of its own.
 // Both renderers show these only where describesPublicPlus allows:
@@ -679,22 +732,40 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
   },
   {
     slug: "api",
-    title: "HTTP API",
-    navLabel: "API",
-    tagline: "Drive CoCalc projects from your own scripts and pipelines.",
-    summary:
-      "Use documented HTTP endpoints for targeted integrations, and the CoCalc CLI for richer project, notebook, terminal, and host workflows.",
-    metadataSummary:
-      "Use the CoCalc HTTP API for automation, integration, and provisioning workflows without depending on the web UI.",
+    title: "CLI and API",
+    navLabel: "CLI and API",
+    tagline: "The CLI your agents use, and your scripts can too.",
+    // Both renderers follow it with the install section above.
+    summary: `${PUBLIC_CLI_IN_PROJECTS} ${PUBLIC_CLI_ON_YOUR_COMPUTER}`,
+    metadataSummary: PUBLIC_CLI_IN_PROJECTS,
     image: "/public/features/api-screenshot.png",
     index: true,
     sections: [
       {
         title: "Use cases",
+        paragraphs: [PUBLIC_API_HTTP_INTEGRATIONS],
         bullets: [
           "Call documented endpoints available on your deployment",
           "Use scoped credentials and the permissions required by each operation",
           "Save result artifacts independently of returned command output",
+        ],
+      },
+      {
+        title: "Start automating",
+        paragraphs: [PUBLIC_CLI_START_AUTOMATING],
+      },
+      {
+        title: "Terms",
+        paragraphs: [PUBLIC_CLI_TERMS],
+        links: [
+          {
+            href: `${CANONICAL_PUBLIC_SITE_ORIGIN}/policies/terms`,
+            label: "CoCalc.ai Terms of Service",
+          },
+          {
+            href: `${CANONICAL_PUBLIC_SITE_ORIGIN}/policies/terms#api-terms`,
+            label: "API Terms",
+          },
         ],
       },
     ],

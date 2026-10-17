@@ -11,7 +11,20 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import {
+  getPublicFeaturePage,
+  PUBLIC_API_HTTP_INTEGRATIONS,
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_IN_PROJECTS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
+  PUBLIC_CLI_ON_YOUR_COMPUTER,
+  PUBLIC_CLI_START_AUTOMATING,
+} from "@cocalc/util/public-feature-pages";
 import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
+import { CANONICAL_PUBLIC_SITE_ORIGIN } from "@cocalc/util/public-site-policy";
 import {
   BulletList,
   CodeBlock,
@@ -21,6 +34,8 @@ import {
 } from "./page-components";
 
 const { Paragraph, Title } = Typography;
+
+const PAGE = getPublicFeaturePage("api")!;
 
 // A real, documented call (POST /api/v2/exec): basic auth with an API key as the
 // username, run a command in a project, get stdout/stderr/exit_code back.
@@ -46,28 +61,35 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={2} style={{ margin: 0 }}>
-                Drive your projects, notebooks, and terminals from your own code
+                {PAGE.tagline}
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Use the HTTP API for targeted integrations with external
-                services. For project, notebook, terminal, and host automation,
-                start with the{" "}
-                <a href="https://cocalc.ai/docs/cli/use-cocalc-cli">
-                  CoCalc CLI
-                </a>{" "}
-                and use the typed commands for your workflow.
+                {PUBLIC_CLI_IN_PROJECTS} {PUBLIC_CLI_ON_YOUR_COMPUTER}
               </Paragraph>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Run computations against an authorized project and save the
-                results as project files your team can reopen and review. Check
-                the reference exposed by your deployment for available routes
-                and permissions.
+                {PUBLIC_API_HTTP_INTEGRATIONS}
+              </Paragraph>
+              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+                Your use of CoCalc.ai through the CLI is covered by the{" "}
+                <a href={`${CANONICAL_PUBLIC_SITE_ORIGIN}/policies/terms`}>
+                  CoCalc.ai Terms of Service
+                </a>
+                , including their{" "}
+                <a
+                  href={`${CANONICAL_PUBLIC_SITE_ORIGIN}/policies/terms#api-terms`}
+                >
+                  API Terms
+                </a>
+                .
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button
                   type="primary"
-                  href="https://cocalc.ai/docs/api/http-api"
+                  href="https://cocalc.ai/docs/cli/use-cocalc-cli"
                 >
+                  CLI documentation
+                </Button>
+                <Button href="https://cocalc.ai/docs/api/http-api">
                   API documentation
                 </Button>
                 <Button href={supportHref}>Ask about API integration</Button>
@@ -84,6 +106,27 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
             />
           </Col>
         </Row>
+      </PublicSection>
+
+      {/* As the crawler fallback renders it, with CoCalc.ai's installer on
+          every site. */}
+      <PublicSection ariaLabel={PUBLIC_CLI_INSTALL_TITLE}>
+        <Title level={3} style={{ margin: 0 }}>
+          {PUBLIC_CLI_INSTALL_TITLE}
+        </Title>
+        <Paragraph style={{ margin: 0 }}>{PUBLIC_CLI_INSTALL_STEP}</Paragraph>
+        <CodeBlock
+          ariaLabel="Install command"
+          code={PUBLIC_CLI_INSTALL_COMMAND}
+        />
+        <Paragraph style={{ margin: 0 }}>
+          {PUBLIC_CLI_INSTALL_WINDOWS}
+        </Paragraph>
+        {PUBLIC_CLI_COMPUTER_COMMANDS.map(({ code, text }) => (
+          <Paragraph key={code} style={{ margin: 0 }}>
+            <code>{code}</code> {text}
+          </Paragraph>
+        ))}
       </PublicSection>
 
       <Row gutter={[16, 16]}>
@@ -154,9 +197,7 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 Start automating
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Begin with the CLI and HTTP API docs to choose the matching
-                interface. If your integration depends on provisioning,
-                scheduling, or deployment support, talk with us.
+                {PUBLIC_CLI_START_AUTOMATING}
               </Paragraph>
             </div>
           </Col>

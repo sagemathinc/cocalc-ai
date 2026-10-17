@@ -5,6 +5,16 @@ import userEvent from "@testing-library/user-event";
 
 import {
   getPublicFeaturePage,
+  PUBLIC_API_HTTP_INTEGRATIONS,
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_IN_PROJECTS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
+  PUBLIC_CLI_ON_YOUR_COMPUTER,
+  PUBLIC_CLI_START_AUTOMATING,
+  PUBLIC_CLI_TERMS,
   PUBLIC_FEATURE_PAGES,
   PUBLIC_PLUS_FEATURE_LINES,
 } from "@cocalc/util/public-feature-pages";
@@ -799,8 +809,8 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Start with a board or deck")).not.toBeNull();
   });
 
-  it("renders the richer api feature page", () => {
-    render(
+  it("renders the CLI and API page", () => {
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "api", view: "detail" }}
@@ -808,13 +818,137 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
+      screen.getByRole("heading", { level: 1, name: "CLI and API" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: "The CLI your agents use, and your scripts can too.",
+      }),
+    ).not.toBeNull();
+    expect(
       screen.getByText(
-        "Drive your projects, notebooks, and terminals from your own code",
+        `${PUBLIC_CLI_IN_PROJECTS} ${PUBLIC_CLI_ON_YOUR_COMPUTER}`,
+      ),
+    ).not.toBeNull();
+    // The crawler fallback renders these paragraphs from the page's record.
+    for (const paragraph of [
+      PUBLIC_API_HTTP_INTEGRATIONS,
+      PUBLIC_CLI_START_AUTOMATING,
+    ]) {
+      expect(screen.getByText(paragraph)).not.toBeNull();
+      expect(
+        getPublicFeaturePage("api")?.sections?.flatMap(
+          ({ paragraphs = [] }) => paragraphs,
+        ),
+      ).toContain(paragraph);
+    }
+    // The terms sentence, with links to the terms and their API section.
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.classList.contains("ant-typography") === true &&
+          element.textContent === PUBLIC_CLI_TERMS,
       ),
     ).not.toBeNull();
     expect(
+      screen.getByRole("link", { name: "CoCalc.ai Terms of Service" }),
+    ).toHaveAttribute("href", "https://cocalc.ai/policies/terms");
+    expect(screen.getByRole("link", { name: "API Terms" })).toHaveAttribute(
+      "href",
+      "https://cocalc.ai/policies/terms#api-terms",
+    );
+    expect(
+      screen.getByRole("link", { name: "CLI documentation" }),
+    ).toHaveAttribute("href", "https://cocalc.ai/docs/cli/use-cocalc-cli");
+    expect(
       screen.getByText("A documented route, not fragile UI scripts"),
     ).not.toBeNull();
+    // The install section, after the two CLI sentences, with CoCalc.ai's
+    // command, as in the crawler fallback.
+    const install = screen.getByRole("region", {
+      name: PUBLIC_CLI_INSTALL_TITLE,
+    });
+    expect(
+      within(install).getByRole("heading", {
+        level: 3,
+        name: PUBLIC_CLI_INSTALL_TITLE,
+      }),
+    ).not.toBeNull();
+    expect(within(install).getByText(PUBLIC_CLI_INSTALL_STEP)).not.toBeNull();
+    expect(
+      within(install).getByLabelText("Install command").textContent,
+    ).toContain("curl -fsSL https://cocalc.ai/cli/install.sh | sh");
+    expect(
+      within(install).getByText(PUBLIC_CLI_INSTALL_WINDOWS),
+    ).not.toBeNull();
+    const installText = install.textContent?.replace(/\s+/g, " ") ?? "";
+    for (const { code, text } of PUBLIC_CLI_COMPUTER_COMMANDS) {
+      expect(installText).toContain(`${code} ${text}`);
+    }
+    // Agents run `cocalc agent` and `cocalc sensor` inside projects, and the
+    // page names no computer command.
+    expect(container.textContent ?? "").not.toMatch(
+      /cocalc (agent|sensor)\b|cocalc computer/,
+    );
+  });
+
+  it.each([
+    ["cocalc.ai", { cocalc_product: "launchpad", dns: "cocalc.ai" }],
+    [
+      "a server with a domain",
+      { cocalc_product: "launchpad", dns: "star.example.com" },
+    ],
+    ["this computer", { cocalc_product: "launchpad", dns: "localhost:8170" }],
+    [
+      "a CoCalc Plus install",
+      { cocalc_product: "plus", dns: "localhost:5000" },
+    ],
+  ])(
+    "shows CoCalc.ai's install command on the CLI and API page, on %s",
+    (_site, config) => {
+      render(
+        <PublicFeaturesApp
+          config={{ ...config, site_name: "CoCalc" }}
+          initialRoute={{ slug: "api", view: "detail" }}
+        />,
+      );
+      const command = within(
+        screen.getByRole("region", { name: PUBLIC_CLI_INSTALL_TITLE }),
+      ).getByLabelText("Install command").textContent;
+      expect(command).toContain(PUBLIC_CLI_INSTALL_COMMAND);
+      expect(command).toContain(
+        "curl -fsSL https://cocalc.ai/cli/install.sh | sh",
+      );
+    },
+  );
+
+  it("moves from the terms links to the documentation with the keyboard", async () => {
+    const user = userEvent.setup();
+    render(
+      <PublicFeaturesApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={{ slug: "api", view: "detail" }}
+      />,
+    );
+    const terms = screen.getByRole("link", {
+      name: "CoCalc.ai Terms of Service",
+    });
+    const cliDocs = screen.getByRole("link", { name: "CLI documentation" });
+    const follow = jest.fn((event: Event) => event.preventDefault());
+    cliDocs.addEventListener("click", follow);
+
+    terms.focus();
+    await user.tab();
+    expect(screen.getByRole("link", { name: "API Terms" })).toHaveFocus();
+    await user.tab();
+    expect(cliDocs).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(follow).toHaveBeenCalledTimes(1);
+    await user.tab();
+    expect(
+      screen.getByRole("link", { name: "API documentation" }),
+    ).toHaveFocus();
   });
 
   it.each([
