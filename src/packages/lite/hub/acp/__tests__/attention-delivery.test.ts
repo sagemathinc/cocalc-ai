@@ -1894,13 +1894,38 @@ describe("agent RPC live guidance funding", () => {
           user_message_id: request.chat.parent_message_id!,
         };
         const sql = jest.requireActual("../../sqlite/acp-board-submissions");
-        expect(sql.startForwardedBoardHandoff(key)).toBe(true);
+        expect(sql.startForwardedBoardHandoff(key)).toMatchObject({
+          state: "start",
+        });
         const runtime = mockLiveRuntime(request.config);
         const send = runtime.running.get(sessionId)!.client.request;
         await acpTestInternals.processPendingAcpSteersOnce();
         expect(send).not.toHaveBeenCalled();
         expect(board()).toMatchObject([{ outcome: "uncertain" }]);
         expect(storedSteer(request).state).toBe("error");
+      });
+
+      // astra2's regression (CORR-8BEA-1): a worker claiming the forwarded
+      // steer before the forwarding caller returns still delivers it, once.
+      it("a worker polling before the forwarding reply still delivers it", async () => {
+        const request = forward("assistant-fast-worker");
+        let send: any;
+        configureAcpDetachedWorkerRunning((async () => {
+          const runtime = mockLiveRuntime(request.config);
+          send = runtime.running.get(sessionId)!.client.request;
+          await acpTestInternals.processPendingAcpSteersOnce();
+        }) as any);
+        await expect(
+          acpTestInternals.handleAcpSteerRequest(request),
+        ).resolves.toMatchObject({ ok: true, state: "steered" });
+        await acpTestInternals.processPendingAcpSteersOnce();
+        await acpTestInternals.handleAcpSteerRequest({
+          ...request,
+          chat: { ...request.chat, message_id: "assistant-retry" },
+        });
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(storedSteer(request).state).toBe("handled");
+        expect(board()).toMatchObject([{ outcome: "steered" }]);
       });
 
       it("a worker that delivers it resolves it steered", async () => {

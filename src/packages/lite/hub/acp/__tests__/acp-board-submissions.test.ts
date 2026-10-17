@@ -377,16 +377,49 @@ describe("forwarded submissions (CORR-D1EE-1)", () => {
 
   test("a hand-off is started once across workers; a second start finds it uncertain", () => {
     const k = forwarded("h");
-    expect(startForwardedBoardHandoff(k, 2_000)).toBe(true);
-    expect(startForwardedBoardHandoff(k, 3_000)).toBe(false);
+    expect(startForwardedBoardHandoff(k, 2_000)).toMatchObject({
+      state: "start",
+    });
+    expect(startForwardedBoardHandoff(k, 3_000)).toEqual({
+      state: "uncertain",
+    });
     expect(admit("h", { thread_id: "t-h" })).toMatchObject({
       state: BOARD_SUBMISSION_UNCERTAIN,
     });
-    // a hand-off that answered without injecting is cleared for the next worker
+    // a hand-off that answered without injecting is cleared, by its owner
     const k2 = forwarded("h2");
-    expect(startForwardedBoardHandoff(k2, 2_000)).toBe(true);
-    clearForwardedBoardHandoff(k2);
-    expect(startForwardedBoardHandoff(k2, 3_000)).toBe(true);
+    const first = startForwardedBoardHandoff(k2, 2_000) as { token: string };
+    expect(clearForwardedBoardHandoff(k2, first.token)).toBe(true);
+    expect(startForwardedBoardHandoff(k2, 3_000)).toMatchObject({
+      state: "start",
+    });
+  });
+
+  test("a stale worker can neither clear nor resolve the current hand-off (CORR-8BE-2)", () => {
+    const k = forwarded("s");
+    const current = startForwardedBoardHandoff(k, 2_000) as { token: string };
+    expect(clearForwardedBoardHandoff(k, "stale-token")).toBe(false);
+    expect(resolveForwardedBoardSubmission(k, "steered", "stale-token")).toBe(
+      false,
+    );
+    // without a token, only a forwarded one no worker started may resolve
+    expect(resolveForwardedBoardSubmission(k, null)).toBe(false);
+    // the mark survives: another worker still finds it
+    expect(startForwardedBoardHandoff(k, 3_000)).toEqual({
+      state: "uncertain",
+    });
+    expect(resolveForwardedBoardSubmission(k, "steered", current.token)).toBe(
+      false,
+    );
+  });
+
+  test("the owner resolves its hand-off", () => {
+    const k = forwarded("o");
+    const t = startForwardedBoardHandoff(k, 2_000) as { token: string };
+    expect(resolveForwardedBoardSubmission(k, "steered", t.token)).toBe(true);
+    expect(admit("o", { thread_id: "t-o" })).toMatchObject({
+      state: "steered",
+    });
   });
 });
 

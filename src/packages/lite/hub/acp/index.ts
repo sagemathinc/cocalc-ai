@@ -278,6 +278,7 @@ import {
   BOARD_SUBMISSION_FORWARDED,
   BOARD_SUBMISSION_UNCERTAIN,
   clearForwardedBoardHandoff,
+  markBoardSubmissionForwarded,
   resolveForwardedBoardSubmission,
   startForwardedBoardHandoff,
   claimBoardSubmissionRetry,
@@ -10974,20 +10975,36 @@ async function processPendingAcpSteersOnce(): Promise<void> {
       const ownsClaim = () =>
         !claimHeartbeatFailed &&
         ownsAcpSteerClaim({ id: row.id, claim_token: claimToken });
-      // A forwarded board submission: this worker resolves its board record,
-      // and hands it over at most once across workers (CORR-D1EE-1).
+      // A forwarded board submission: this worker resolves its board record
+      // only if it started the hand-off itself (its token fences every
+      // write), and hands it over at most once across workers
+      // (CORR-D1EE-1, CORR-8BE-2).
       const boardKey = boardSubmissionKey(request);
+      let handoffToken: string | undefined;
       try {
         if (!ownsClaim()) {
           throw new Error("durable ACP steer claim was lost");
         }
-        if (boardKey && !startForwardedBoardHandoff(boardKey)) {
-          // A previous worker started its hand-off and never finished:
-          // uncertain (now recorded so), never sent again.
-          await recordBoardSubmissionUncertain(boardKey);
-          throw new Error(
-            "an earlier worker may have delivered these board answers",
-          );
+        if (boardKey) {
+          const handoff = startForwardedBoardHandoff(boardKey);
+          if (handoff.state === "delivered") {
+            // Already delivered: nothing to send.
+            markAcpSteerHandled({ id: row.id, claim_token: claimToken });
+            continue;
+          }
+          if (handoff.state === "uncertain") {
+            // A previous worker started its hand-off and never finished:
+            // uncertain (recorded so on its message), never sent again.
+            await recordBoardSubmissionUncertain(boardKey);
+            throw new Error(
+              "an earlier worker may have delivered these board answers",
+            );
+          }
+          if (handoff.state === "not-forwarded") {
+            // Not a forwarded submission: this worker must not decide it.
+            throw new Error("this board submission was not forwarded here");
+          }
+          handoffToken = handoff.token;
         }
         const result = await attemptAcpSteerRequest(
           request,
@@ -10995,12 +11012,17 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           ownsClaim,
         );
         if (result.state === "steered") {
-          if (boardKey) resolveForwardedBoardSubmission(boardKey, "steered");
+          if (boardKey && handoffToken) {
+            resolveForwardedBoardSubmission(boardKey, "steered", handoffToken);
+          }
           markAcpSteerHandled({ id: row.id, claim_token: claimToken });
           continue;
         }
-        // It answered without injecting.
-        if (boardKey) clearForwardedBoardHandoff(boardKey);
+        // It answered without injecting: clear this worker's mark.
+        if (boardKey && handoffToken) {
+          clearForwardedBoardHandoff(boardKey, handoffToken);
+          handoffToken = undefined;
+        }
         if (!ownsClaim()) {
           throw new Error("durable ACP steer claim was lost");
         }
@@ -11011,21 +11033,29 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           continue;
         }
         await fallbackAcpSteerToQueuedTurn(decodeAcpSteerFallbackRequest(row));
-        if (boardKey) resolveForwardedBoardSubmission(boardKey, "queued");
+        if (boardKey) {
+          // Queued after a definite non-delivery (the mark was cleared above).
+          resolveForwardedBoardSubmission(boardKey, "queued");
+        }
         markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
-        if (boardKey) {
+        if (boardKey && handoffToken) {
           if (err instanceof BoardSteerUnknownError) {
             // Its native steer failed without an answer: uncertain for good.
-            resolveForwardedBoardSubmission(
-              boardKey,
-              BOARD_SUBMISSION_UNCERTAIN,
-            );
-            await recordBoardSubmissionUncertain(boardKey);
+            if (
+              resolveForwardedBoardSubmission(
+                boardKey,
+                BOARD_SUBMISSION_UNCERTAIN,
+                handoffToken,
+              )
+            ) {
+              await recordBoardSubmissionUncertain(boardKey);
+            }
           } else {
-            // Failed before or without any hand-off: the errored steer row
-            // still makes a retry conservative (boardSubmissionTrace).
-            clearForwardedBoardHandoff(boardKey);
+            // Failed without its steer having answered or failed: clear
+            // only this worker's own mark; the errored steer row keeps a
+            // retry conservative (boardSubmissionTrace).
+            clearForwardedBoardHandoff(boardKey, handoffToken);
           }
         }
         markAcpSteerError({
@@ -12461,10 +12491,29 @@ async function attemptAcpSteerRequest(
       candidateIds,
     })
   ) {
-    const queued = enqueueSteerRequestForExecution({
-      request,
-      candidateIds,
-    });
+    // A board submission is recorded forwarded before its durable steer
+    // can be claimed: the worker must find it so (CORR-8BEA-1).
+    if (
+      boardAttempt &&
+      !markBoardSubmissionForwarded(boardAttempt.key, boardAttempt.token)
+    ) {
+      throw new Error(
+        "Another attempt is delivering these board answers; this one stopped.",
+      );
+    }
+    let queued: ReturnType<typeof enqueueSteerRequestForExecution>;
+    try {
+      queued = enqueueSteerRequestForExecution({
+        request,
+        candidateIds,
+      });
+    } catch (err) {
+      // Not forwarded after all: nothing can deliver it, a retry may.
+      if (boardAttempt) {
+        resolveForwardedBoardSubmission(boardAttempt.key, null);
+      }
+      throw err;
+    }
     try {
       await ensureDetachedWorkerRunning({ force: true });
     } catch (err) {

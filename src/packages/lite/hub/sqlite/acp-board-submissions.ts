@@ -66,6 +66,7 @@ function ensureInit(): void {
       injected_at INTEGER,
       outcome TEXT,
       uncertain_recorded INTEGER,
+      handoff_token TEXT,
       PRIMARY KEY (project_id, path, user_message_id)
     )
   `);
@@ -465,35 +466,52 @@ export function listUnmarkedUncertainBoardSubmissions(
 export function resolveForwardedBoardSubmission(
   key: BoardSubmissionKey,
   outcome: "steered" | "queued" | typeof BOARD_SUBMISSION_UNCERTAIN | null,
+  /** The resolving worker's hand-off token; without one, only a forwarded
+   * submission no worker has started may be resolved. */
+  token?: string,
 ): boolean {
   checkKey(key);
   ensureInit();
+  const fence = token == null ? "handoff_token IS NULL" : "handoff_token = ?";
+  const fenceArgs = token == null ? [] : [token];
   const result =
     outcome == null
       ? getAcpDatabase()
           .prepare(
             `UPDATE ${TABLE}
-                SET outcome = NULL, attempt_at = 0, injected_at = NULL
-              WHERE ${KEY_WHERE} AND outcome = ?`,
+                SET outcome = NULL, attempt_at = 0, injected_at = NULL,
+                    handoff_token = NULL
+              WHERE ${KEY_WHERE} AND outcome = ? AND ${fence}`,
           )
-          .run(...keyArgs(key), BOARD_SUBMISSION_FORWARDED)
+          .run(...keyArgs(key), BOARD_SUBMISSION_FORWARDED, ...fenceArgs)
       : getAcpDatabase()
           .prepare(
             `UPDATE ${TABLE} SET outcome = ?, uncertain_recorded = NULL
-              WHERE ${KEY_WHERE} AND outcome = ?`,
+              WHERE ${KEY_WHERE} AND outcome = ? AND ${fence}`,
           )
-          .run(outcome, ...keyArgs(key), BOARD_SUBMISSION_FORWARDED);
+          .run(
+            outcome,
+            ...keyArgs(key),
+            BOARD_SUBMISSION_FORWARDED,
+            ...fenceArgs,
+          );
   return changed(result);
 }
 
-/** A worker is about to hand a forwarded submission to its live turn: true
- * to proceed. False if a previous worker already started that hand-off
- * (it crashed or lost its claim mid-steer): then it is resolved uncertain
- * and must not be sent again (CORR-D1EE-1). */
+/** A worker is about to hand a forwarded submission to its live turn:
+ * "start" to proceed; "uncertain" if a previous worker already started that
+ * hand-off (it crashed or lost its claim mid-steer): resolved uncertain, not
+ * to be sent again (CORR-D1EE-1); or "delivered" / "not-forwarded" if the
+ * record says it was already delivered, or isn't forwarded at all: nothing
+ * to send either way. */
 export function startForwardedBoardHandoff(
   key: BoardSubmissionKey,
   at = Date.now(),
-): boolean {
+):
+  | { state: "start"; token: string }
+  | { state: "uncertain" }
+  | { state: "delivered" }
+  | { state: "not-forwarded" } {
   checkKey(key);
   ensureInit();
   const db = getAcpDatabase();
@@ -503,32 +521,67 @@ export function startForwardedBoardHandoff(
       .get(...keyArgs(key)) as
       | { outcome: string | null; injected_at: number | null }
       | undefined;
-    if (!row || row.outcome !== BOARD_SUBMISSION_FORWARDED) return false;
+    if (row?.outcome === "steered" || row?.outcome === "queued") {
+      return { state: "delivered" as const };
+    }
+    if (row?.outcome === BOARD_SUBMISSION_UNCERTAIN) {
+      return { state: "uncertain" as const };
+    }
+    if (!row || row.outcome !== BOARD_SUBMISSION_FORWARDED) {
+      return { state: "not-forwarded" as const };
+    }
     if (row.injected_at != null) {
       db.prepare(
         `UPDATE ${TABLE} SET outcome = ?, uncertain_recorded = NULL
           WHERE ${KEY_WHERE}`,
       ).run(BOARD_SUBMISSION_UNCERTAIN, ...keyArgs(key));
-      return false;
+      return { state: "uncertain" as const };
     }
-    db.prepare(`UPDATE ${TABLE} SET injected_at = ? WHERE ${KEY_WHERE}`).run(
-      at,
-      ...keyArgs(key),
-    );
-    return true;
+    // This worker owns the hand-off: only its token may clear or resolve
+    // it (CORR-8BE-2).
+    const token = randomUUID();
+    db.prepare(
+      `UPDATE ${TABLE} SET injected_at = ?, handoff_token = ? WHERE ${KEY_WHERE}`,
+    ).run(at, token, ...keyArgs(key));
+    return { state: "start" as const, token };
   });
 }
 
 /** A worker's hand-off of a forwarded submission answered without
  * injecting it (another worker owns the turn): clear the mark for the
  * next worker. */
-export function clearForwardedBoardHandoff(key: BoardSubmissionKey): void {
+export function clearForwardedBoardHandoff(
+  key: BoardSubmissionKey,
+  token: string,
+): boolean {
   checkKey(key);
   ensureInit();
-  getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE} SET injected_at = NULL
-        WHERE ${KEY_WHERE} AND outcome = ?`,
-    )
-    .run(...keyArgs(key), BOARD_SUBMISSION_FORWARDED);
+  return changed(
+    getAcpDatabase()
+      .prepare(
+        `UPDATE ${TABLE} SET injected_at = NULL, handoff_token = NULL
+          WHERE ${KEY_WHERE} AND outcome = ? AND handoff_token = ?`,
+      )
+      .run(...keyArgs(key), BOARD_SUBMISSION_FORWARDED, token),
+  );
+}
+
+/** The current attempt is forwarding its steer to the worker that owns the
+ * live turn: record it forwarded BEFORE the durable steer can be claimed,
+ * so that worker finds it so (CORR-8BEA-1). False if the attempt is no
+ * longer current: then it must not forward. */
+export function markBoardSubmissionForwarded(
+  key: BoardSubmissionKey,
+  token: string,
+): boolean {
+  checkKey(key);
+  ensureInit();
+  return changed(
+    getAcpDatabase()
+      .prepare(
+        `UPDATE ${TABLE} SET outcome = ?, injected_at = NULL
+          WHERE ${KEY_WHERE} AND attempt_token = ? AND outcome IS NULL`,
+      )
+      .run(BOARD_SUBMISSION_FORWARDED, ...keyArgs(key), token),
+  );
 }
