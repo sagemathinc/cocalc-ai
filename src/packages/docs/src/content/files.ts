@@ -156,10 +156,11 @@ shows its log in a tab of its own:
   the document's PythonTeX code, then LaTeX runs again.
 
 Documents that use SageTeX or PythonTeX build in their own folder. Each stage
-needs its software in the project's image: R with knitr, Sage, or pythontex.
-In the output panel, **Force Build** runs every stage again instead of reusing
-earlier results, and **Delete Aux Files** (**Clean** in the menu beside the
-Build button) removes auxiliary files from earlier builds; the PDF stays.
+needs its software installed where the project runs: R with knitr, Sage, or
+pythontex. In the output panel, **Force Build** runs every stage again instead
+of reusing earlier results, and **Delete Aux Files** (**Clean** in the menu
+beside the Build button) removes auxiliary files from earlier builds; the PDF
+stays.
 
 ## Edit a formula with Agent
 
