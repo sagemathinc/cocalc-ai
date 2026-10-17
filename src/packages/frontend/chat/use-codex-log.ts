@@ -49,6 +49,9 @@ type RecentLogCacheEntry = {
   // Exact consumed DStream transport ranges, not AcpStreamMessage.seq.
   liveStreamRanges?: LiveLogRanges;
   liveStreamName?: string;
+  // the persist instance those ranges came from: an ephemeral stream that
+  // has since been recreated numbers its messages anew
+  liveStreamInstance?: string | null;
 };
 
 const recentActivityLogCache = new LRUCache<string, RecentLogCacheEntry>({
@@ -751,6 +754,7 @@ export function useCodexLog({
       | undefined;
     let liveStreamDisconnected: (() => void) | undefined;
     let liveStreamRecovered: (() => void) | undefined;
+    let liveStreamInstanceReset: (() => void) | undefined;
     let catchUpTimer: ReturnType<typeof setInterval> | undefined;
     let stopped = false;
     const scheduleBufferedFlush = (immediate: boolean = false) => {
@@ -786,11 +790,29 @@ export function useCodexLog({
             name: liveLogStream,
             ephemeral: true,
             maxListeners: 50,
-            ...(startSeq != null ? { start_seq: startSeq } : {}),
+            ...(startSeq != null
+              ? {
+                  start_seq: startSeq,
+                  ...(cached?.liveStreamInstance !== undefined
+                    ? { start_instance: cached.liveStreamInstance }
+                    : {}),
+                }
+              : {}),
           });
           liveStream = lease.stream;
           liveStreamRef.current = liveStream;
           releaseLiveStream = lease.release;
+          // The consumed ranges are transport seqs of one persist instance; a
+          // recreated ephemeral stream numbers from 1 again.  Rendered events
+          // are kept and merged.
+          const instance = liveStream.getPersistInstance?.();
+          if (
+            cached?.liveStreamInstance !== undefined &&
+            instance !== undefined &&
+            instance !== cached.liveStreamInstance
+          ) {
+            liveReplayRef.current = new LiveLogReplay();
+          }
           lastLiveReceiptAtRef.current = Date.now();
           if (stopped) {
             await releaseLiveStream({ immediate: true });
@@ -821,6 +843,11 @@ export function useCodexLog({
           liveStream.on("recovering", liveStreamDisconnected);
           liveStream.on("paused", liveStreamDisconnected);
           liveStream.on("recovered", liveStreamRecovered);
+          liveStreamInstanceReset = () => {
+            if (stopped) return;
+            liveReplayRef.current = new LiveLogReplay();
+          };
+          liveStream.on("instance-reset", liveStreamInstanceReset);
           liveStream.setMaxListeners(
             Math.max(liveStream.getMaxListeners(), 50),
           );
@@ -986,6 +1013,9 @@ export function useCodexLog({
         if (liveStream && liveStreamRecovered) {
           liveStream.off("recovered", liveStreamRecovered);
         }
+        if (liveStream && liveStreamInstanceReset) {
+          liveStream.off("instance-reset", liveStreamInstanceReset);
+        }
       } catch {
         // ignore
       }
@@ -1036,6 +1066,9 @@ export function useCodexLog({
       liveStreamRanges: liveStreamIsProjection ? appliedLiveRanges : undefined,
       liveStreamName: liveStreamIsProjection
         ? (liveLogStream ?? undefined)
+        : undefined,
+      liveStreamInstance: liveStreamIsProjection
+        ? liveStreamRef.current?.getPersistInstance?.()
         : undefined,
     });
   }, [

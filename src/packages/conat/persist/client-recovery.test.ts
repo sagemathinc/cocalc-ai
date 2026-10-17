@@ -179,3 +179,43 @@ describe("persist recovery of a stream that cannot be replayed", () => {
     persist.close();
   });
 });
+
+describe("persist server instance changes", () => {
+  beforeAll(() => {
+    process.env.COCALC_TEST_MODE = "true";
+    disablePermissionCheck();
+  });
+
+  function changesAfter(sequence: unknown[]) {
+    const { persist } = createClient();
+    const changed: unknown[] = [];
+    persist.on("instance-changed", (instance) => changed.push(instance));
+    const lastSeqs: unknown[] = [];
+    for (const instance of sequence) {
+      persist.lastSeq = 7;
+      persist.noteInstance(instance);
+      lastSeqs.push(persist.lastSeq);
+    }
+    persist.close();
+    return { changed, lastSeqs };
+  }
+
+  it("does nothing on the first read or while the instance stays the same", () => {
+    expect(changesAfter(["a", "a"])).toEqual({ changed: [], lastSeqs: [7, 7] });
+    // a disk stream, or an old server: never an instance
+    expect(changesAfter([undefined, undefined]).changed).toEqual([]);
+  });
+
+  it("starts over when the instance changes", () => {
+    expect(changesAfter(["a", "b"])).toEqual({
+      changed: ["b"],
+      lastSeqs: [7, 0],
+    });
+  });
+
+  it("starts over when a server without instances is replaced by one with them, or back", () => {
+    // a rolling upgrade restarts the server, which loses the ephemeral stream
+    expect(changesAfter([undefined, "a"]).changed).toEqual(["a"]);
+    expect(changesAfter(["a", undefined]).changed).toEqual([null]);
+  });
+});
