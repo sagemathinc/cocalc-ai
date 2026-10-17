@@ -166,6 +166,9 @@
   "src/packages/frontend/project/page/content.tsx": {
     "noSanitize": 1
   },
+  "src/packages/frontend/public-viewer/renderers/ipynb.tsx": {
+    "noSanitize": 1
+  },
   "src/packages/frontend/public-viewer/viewer-file-context.tsx": {
     "noSanitize": 1
   },
