@@ -11,6 +11,13 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "system.getNames": "account:read",
   "projects.createProject": "project:create",
   "projects.listProjectSummaries": "project:list",
+  // Read the inbox and mark, save or archive notifications; never create
+  // them or change notification preferences.
+  "notifications.list": "notifications:manage",
+  "notifications.counts": "notifications:manage",
+  "notifications.markRead": "notifications:manage",
+  "notifications.save": "notifications:manage",
+  "notifications.archive": "notifications:manage",
 };
 
 const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);
