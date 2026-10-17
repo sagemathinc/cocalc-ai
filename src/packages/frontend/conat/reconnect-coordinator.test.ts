@@ -167,6 +167,53 @@ describe("ReconnectCoordinator", () => {
     }
   });
 
+  it("limits a forced reconnect pass to the given projects", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      isConnected: () => true,
+    });
+    const reconnects = {
+      restarted: jest.fn(),
+      other: jest.fn(),
+      none: jest.fn(),
+    };
+    const resources = [
+      coordinator.registerResource({
+        project_id: "restarted",
+        isConnected: () => true,
+        reconnect: async () => reconnects.restarted(),
+      }),
+      coordinator.registerResource({
+        project_id: "other",
+        isConnected: () => true,
+        reconnect: async () => reconnects.other(),
+      }),
+      coordinator.registerResource({
+        isConnected: () => true,
+        reconnect: async () => reconnects.none(),
+      }),
+    ];
+
+    try {
+      coordinator.requestResourceReconnects({
+        force: true,
+        includeBackground: true,
+        projectIds: new Set(["restarted"]),
+        reason: "project_host_session_changed",
+      });
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(reconnects.restarted).toHaveBeenCalledTimes(1);
+      expect(reconnects.other).not.toHaveBeenCalled();
+      expect(reconnects.none).not.toHaveBeenCalled();
+    } finally {
+      for (const resource of resources) resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
   it("probes foreground resources when the tab becomes foreground", async () => {
     const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
     const reconnect = jest.fn(async () => {});

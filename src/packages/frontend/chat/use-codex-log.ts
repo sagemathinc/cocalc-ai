@@ -616,6 +616,7 @@ export function useCodexLog({
     reconnectResourceRef.current?.close();
     reconnectResourceRef.current =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: projectId,
         canReconnect: () => canReconnectLive,
         isConnected: () => !hasLiveSource || liveConnectedRef.current,
         probeOnForeground: () => hasLiveSource,
@@ -691,6 +692,7 @@ export function useCodexLog({
     hasLiveSource,
     liveStreamIsProjection,
     mergeLogs,
+    projectId,
     setLiveConnectionState,
     setLiveLog,
     waitForLiveReconnect,
@@ -1187,6 +1189,7 @@ export function useCodexLiveActivityStatus({
     reconnectResourceRef.current?.close();
     reconnectResourceRef.current =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: projectId,
         canReconnect: () => canReconnectLive,
         isConnected: () => liveConnectedRef.current,
         probeOnForeground: () => canReconnectLive,
@@ -1243,7 +1246,12 @@ export function useCodexLiveActivityStatus({
       reconnectResourceRef.current?.close();
       reconnectResourceRef.current = null;
     };
-  }, [canReconnectLive, setLiveConnectionState, waitForLiveReconnect]);
+  }, [
+    canReconnectLive,
+    projectId,
+    setLiveConnectionState,
+    waitForLiveReconnect,
+  ]);
 
   useEffect(() => {
     if (!canReconnectLive) {

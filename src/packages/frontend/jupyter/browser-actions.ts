@@ -1836,6 +1836,7 @@ export class JupyterActions extends JupyterActions0 {
     }
     this.reconnectResource =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: this.project_id,
         canReconnect: () => !this.isClosed() && this.syncdb != null,
         isConnected: () => this.isSyncdbLiveConnected(),
         priority: () => "foreground",

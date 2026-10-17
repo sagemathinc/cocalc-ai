@@ -1862,6 +1862,7 @@ export class ConatClient extends EventEmitter {
     this.reconnectCoordinator.requestResourceReconnects({
       includeBackground: true,
       force: true,
+      projectIds: affectedProjectIds,
       reason: "project_host_session_changed",
       resetBackoff: true,
     });
