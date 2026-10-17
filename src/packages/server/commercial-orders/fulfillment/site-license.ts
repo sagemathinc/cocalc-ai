@@ -243,14 +243,17 @@ function isLinkOnlyCompletedOrder(
   order: CommercialOrder,
   existingSiteLicenseId: unknown,
 ): boolean {
+  const named = normalizedSiteLicenseId(existingSiteLicenseId);
   return (
     order.workflow_state === "complete" &&
-    !order.site_license_id &&
+    // Either no license is stored yet, or the operator names exactly the one
+    // already stored (e.g., recorded by a legacy import without fulfillment).
+    (!order.site_license_id || order.site_license_id === named) &&
     order.fulfillment_state === "not_provisioned" &&
     order.terms_snapshot?.site_license == null &&
     // Paid only: waived or complimentary orders keep the normal rules.
     order.collection_state === "paid" &&
-    !!normalizedSiteLicenseId(existingSiteLicenseId)
+    !!named
   );
 }
 
