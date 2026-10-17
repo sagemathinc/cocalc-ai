@@ -2,25 +2,33 @@
 Which web pages may open a hub Conat websocket authenticated by a cookie.
 
 Browsers attach cookies to websockets opened by any page, and CORS does not
-apply to websockets. So when a connection is authenticated only by a cookie a
-browser holds (remember_me, or the API-key and project-secret cookies), the
-Origin of the page that opened it must be an approved CoCalc origin: the site
-or a bay public origin (isAllowedBrowserOrigin).
+apply to websockets, but browsers always send (and pages cannot forge) the
+Origin of a websocket handshake. So when a connection is authenticated only
+by a cookie (remember_me, or the API-key and project-secret cookies) and it
+carries an Origin, that Origin must be approved.
 
-- remember_me: Origin is required (only browsers use it).
-- API-key and project-secret cookies: non-browser clients send no Origin and
-  are unaffected; when an Origin is present it must be approved.
-- Explicit credentials (bearer, computer login, project secret in the auth
-  payload) and internal cookies (bay credential, system accounts, hub
-  password) are not checked here.
+Approved origins come only from configuration, never from the request: the
+configured site origin, the bay public origins, and
+COCALC_CONAT_ALLOWED_ORIGINS (comma separated, e.g. a dev server). The list
+is cached, the lookup is bounded in time, and a failed lookup keeps the last
+complete list.
 
-COCALC_CONAT_ORIGIN_POLICY: "report" (default for the first rollout) logs
-connections that enforcement would refuse; "enforce" refuses them; "off"
-disables the check.
+Connections without an Origin are not browsers (the CLI, the mobile app,
+service clients) and are not affected. Explicit credentials (bearer,
+computer login, project secret in the auth payload) and internal cookies
+(bay credential, system accounts, hub password) are not checked here.
+
+COCALC_CONAT_ORIGIN_POLICY: "report" (default for the first rollout) logs and
+counts connections that enforcement would refuse; "enforce" refuses them;
+"off" disables the check.
 */
 
+import { Counter } from "prom-client";
 import { getLogger } from "@cocalc/backend/logger";
-import { isAllowedBrowserOrigin } from "@cocalc/server/bay-public-origin";
+import {
+  getClusterBayPublicOrigins,
+  getSitePublicOrigin,
+} from "@cocalc/server/bay-public-origin";
 
 const logger = getLogger("conat-auth:browser-origin");
 
@@ -29,6 +37,12 @@ export type CookieCredential =
   | "api-key-cookie"
   | "project-secret-cookie";
 export type OriginPolicyMode = "enforce" | "report" | "off";
+
+const rejections = new Counter({
+  name: "cocalc_conat_cookie_origin_rejections_total",
+  help: "Cookie-authenticated hub Conat connections from an unapproved page",
+  labelNames: ["credential", "reason", "mode"],
+});
 
 export function originPolicyMode(): OriginPolicyMode {
   const value = `${process.env.COCALC_CONAT_ORIGIN_POLICY ?? ""}`
@@ -51,51 +65,114 @@ export function parseOrigin(value: unknown): string | undefined {
   }
 }
 
+function originOfUrl(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return;
+    return url.origin.toLowerCase();
+  } catch {
+    return;
+  }
+}
+
 function header(headers: any, name: string): string {
   const value = headers?.[name];
   return `${Array.isArray(value) ? value[0] : (value ?? "")}`.trim();
 }
 
+const CACHE_MS = 60_000;
+const LOOKUP_TIMEOUT_MS = 2_000;
+let cached: { origins: Set<string>; at: number } | undefined;
+let pending: Promise<Set<string>> | undefined;
+
+async function loadConfiguredOrigins(): Promise<Set<string>> {
+  const origins = new Set<string>();
+  const site = originOfUrl(await getSitePublicOrigin());
+  if (site) origins.add(site);
+  for (const origin of Object.values(
+    await getClusterBayPublicOrigins({ strict: true }),
+  )) {
+    const parsed = originOfUrl(origin);
+    if (parsed) origins.add(parsed);
+  }
+  for (const value of `${process.env.COCALC_CONAT_ALLOWED_ORIGINS ?? ""}`.split(
+    ",",
+  )) {
+    const parsed = originOfUrl(value);
+    if (parsed) origins.add(parsed);
+  }
+  return origins;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("approved origin lookup timed out")),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+// The approved origins: cached, bounded in time, and the last complete list
+// on failure. Throws only if no list has ever been loaded.
+export async function approvedOrigins({
+  load = loadConfiguredOrigins,
+  timeoutMs = LOOKUP_TIMEOUT_MS,
+}: {
+  load?: () => Promise<Set<string>>;
+  timeoutMs?: number;
+} = {}): Promise<Set<string>> {
+  const now = Date.now();
+  if (cached != null && now - cached.at < CACHE_MS) return cached.origins;
+  // One lookup at a time; concurrent connections share it.
+  pending ??= load().finally(() => {
+    pending = undefined;
+  });
+  try {
+    const origins = await withTimeout(pending, timeoutMs);
+    cached = { origins, at: Date.now() };
+    return origins;
+  } catch (err) {
+    if (cached != null) {
+      logger.warn("approved origin lookup failed; using the last list", {
+        err: `${err}`,
+      });
+      return cached.origins;
+    }
+    throw err;
+  }
+}
+
+export function resetApprovedOriginsForTests(): void {
+  cached = undefined;
+  pending = undefined;
+}
+
 // Why the connection must be refused, or undefined if it is acceptable.
 export async function cookieOriginRejection(
   headers: Record<string, unknown>,
-  credential: CookieCredential,
-  isAllowed: typeof isAllowedBrowserOrigin = isAllowedBrowserOrigin,
+  approved: () => Promise<Set<string>> = () => approvedOrigins(),
 ): Promise<string | undefined> {
   const originHeader = header(headers, "origin");
-  if (!originHeader) {
-    return credential === "remember-me" ? "no origin" : undefined;
-  }
+  // Browsers always send Origin on websockets: no Origin means a non-browser
+  // client, which a malicious page cannot be.
+  if (!originHeader) return;
   const origin = parseOrigin(originHeader);
   if (!origin) return "invalid or opaque origin";
-  if (await cachedIsAllowed(origin, headers, isAllowed)) return;
+  if ((await approved()).has(origin)) return;
   return "origin not allowed";
-}
-
-// The approved-origin lookup reads site and bay configuration; cache answers
-// briefly since it runs for every connection and revalidation.
-const ALLOWED_CACHE_MS = 60_000;
-const allowedCache = new Map<string, { allowed: boolean; at: number }>();
-
-async function cachedIsAllowed(
-  origin: string,
-  headers: Record<string, unknown>,
-  isAllowed: typeof isAllowedBrowserOrigin,
-): Promise<boolean> {
-  // The answer can depend on the request host (local and request-origin
-  // deployments), so key on both.
-  const key = `${origin}|${header(headers, "x-forwarded-host") || header(headers, "host")}`;
-  const now = Date.now();
-  const hit = allowedCache.get(key);
-  if (hit != null && now - hit.at < ALLOWED_CACHE_MS) return hit.allowed;
-  const allowed = await isAllowed(origin, { headers } as any);
-  if (allowedCache.size > 1000) allowedCache.clear();
-  allowedCache.set(key, { allowed, at: now });
-  return allowed;
-}
-
-export function clearAllowedOriginCacheForTests(): void {
-  allowedCache.clear();
 }
 
 const lastLogged = new Map<string, number>();
@@ -104,20 +181,21 @@ const lastLogged = new Map<string, number>();
 export async function assertCookieOrigin(
   headers: Record<string, unknown>,
   credential: CookieCredential,
+  approved?: () => Promise<Set<string>>,
 ): Promise<void> {
   const mode = originPolicyMode();
   if (mode === "off") return;
   let reason: string | undefined;
   try {
-    reason = await cookieOriginRejection(headers, credential);
+    reason = await cookieOriginRejection(headers, approved);
   } catch (err) {
-    // The approved-origin lookup failed: refuse when enforcing, but never
-    // turn a lookup outage into a report-mode rejection.
+    // No approved list could be loaded: refuse when enforcing (but only
+    // connections that carry a browser Origin), only log otherwise.
+    reason = "approved origins unavailable";
     logger.warn("browser origin check failed", { err: `${err}` });
-    if (mode === "enforce") throw Error("unable to verify connection origin");
-    return;
   }
   if (!reason) return;
+  rejections.inc({ credential, reason, mode });
   const origin = header(headers, "origin") || "(none)";
   const key = `${credential}|${reason}|${origin}`;
   const now = Date.now();
@@ -135,6 +213,10 @@ export async function assertCookieOrigin(
     );
   }
   if (mode === "enforce") {
-    throw Error("cross-site connection refused");
+    throw Error(
+      reason === "approved origins unavailable"
+        ? "unable to verify connection origin"
+        : "cross-site connection refused",
+    );
   }
 }

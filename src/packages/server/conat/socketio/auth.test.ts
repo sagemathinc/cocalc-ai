@@ -131,9 +131,8 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
 
 jest.mock("@cocalc/server/bay-public-origin", () => ({
   ...jest.requireActual("@cocalc/server/bay-public-origin"),
-  isAllowedBrowserOrigin: jest.fn(
-    async (origin: string) => origin === "https://cocalc.example",
-  ),
+  getSitePublicOrigin: jest.fn(async () => "https://cocalc.example"),
+  getClusterBayPublicOrigins: jest.fn(async () => ({})),
 }));
 
 jest.mock("@cocalc/server/projects/control/secret-token", () => ({
@@ -146,7 +145,12 @@ import {
   resolveProjectAccessAllowRemote,
 } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
-import { API_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
+import {
+  API_COOKIE_NAME,
+  HUB_PASSWORD_COOKIE_NAME,
+  PROJECT_ID_COOKIE_NAME,
+  PROJECT_SECRET_COOKIE_NAME,
+} from "@cocalc/backend/auth/cookie-names";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import {
   getRememberMeCookieValuesFromHeader,
@@ -1781,6 +1785,52 @@ describe("cookie origin policy on hub sockets", () => {
         }),
       ),
     ).resolves.toMatchObject({ account_id });
+  });
+
+  it("keeps remember_me clients without an Origin (CLI, mobile) working", async () => {
+    await expect(
+      getUser(socket({ cookie: "remember_me=token" })),
+    ).resolves.toMatchObject({ account_id });
+  });
+
+  it("does not let the request Host approve a foreign origin", async () => {
+    await expect(
+      getUser({
+        handshake: {
+          auth: {},
+          headers: {
+            cookie: "remember_me=token",
+            origin: "https://evil.example",
+            host: "evil.example",
+            "x-forwarded-host": "evil.example",
+          },
+        },
+      }),
+    ).rejects.toThrow("cross-site connection refused");
+  });
+
+  it("refuses a project-secret cookie from another site before any lookup", async () => {
+    (getProjectSecretToken as jest.Mock).mockReset();
+    await expect(
+      getUser(
+        socket({
+          cookie: `${PROJECT_ID_COOKIE_NAME}=00000000-0000-4000-8000-000000000099; ${PROJECT_SECRET_COOKIE_NAME}=s`,
+          origin: "https://evil.example",
+        }),
+      ),
+    ).rejects.toThrow("cross-site connection refused");
+    expect(getProjectSecretToken).not.toHaveBeenCalled();
+  });
+
+  it("does not check internal cookies (hub password) or explicit bearer credentials", async () => {
+    await expect(
+      getUser(
+        socket({
+          cookie: `${HUB_PASSWORD_COOKIE_NAME}=hub-secret`,
+          origin: "https://evil.example",
+        }),
+      ),
+    ).resolves.toMatchObject({ hub_id: "hub" });
   });
 
   it("refuses an API-key cookie from another site, keeps non-browser clients working", async () => {
