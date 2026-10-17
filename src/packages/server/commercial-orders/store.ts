@@ -3554,7 +3554,12 @@ export async function setCommercialProviderOperationStatus(opts: {
        attempt_count=attempt_count+CASE WHEN $2::varchar='remote_started' THEN 1 ELSE 0 END,
        remote_started_at=CASE WHEN $2::varchar='remote_started' THEN NOW() ELSE remote_started_at END,
        completed_at=CASE WHEN $2::varchar IN ('succeeded','failed') THEN NOW() ELSE completed_at END,
-       updated_at=NOW() WHERE id=$1 RETURNING *`,
+       updated_at=NOW()
+     WHERE id=$1
+       -- An operation an admin resolved is final: a retry admitted before the
+       -- resolution must not reopen it.
+       AND NOT (status='failed' AND result ? 'admin_resolution')
+     RETURNING *`,
     [
       opts.id,
       opts.status,
@@ -3562,7 +3567,18 @@ export async function setCommercialProviderOperationStatus(opts: {
       opts.error == null ? null : `${opts.error}`.slice(0, 5_000),
     ],
   );
-  if (!rows[0]) throw Error("commercial provider operation not found");
+  if (!rows[0]) {
+    const { rows: existing } = await getPool().query(
+      "SELECT id FROM commercial_provider_operations WHERE id=$1",
+      [opts.id],
+    );
+    if (existing[0]) {
+      throw Error(
+        "commercial provider operation was resolved by an admin and is final",
+      );
+    }
+    throw Error("commercial provider operation not found");
+  }
   const operation = normalizeProviderOperation(rows[0]);
   if (
     operation.status === "succeeded" &&
@@ -3901,6 +3917,8 @@ export async function retryCommercialStripeEvent(
   });
 }
 
+const RESOLVABLE_PROVIDER_OPERATIONS = new Set(["provision-site-license"]);
+
 // An operator resolves an indeterminate provider operation as failed once they
 // have established that it wrote nothing (e.g., it was rejected by validation).
 // This releases the fence it holds on later operations of the same kind.
@@ -3939,6 +3957,14 @@ export async function resolveCommercialProviderOperation(
     );
     if (!rows[0]) throw Error("provider operation not found on this order");
     const operation = normalizeProviderOperation(rows[0]);
+    // Fail closed: each kind needs its own proof that nothing was written.
+    // Stripe invoice/quote operations and end-site-license can commit
+    // external or partial state, so they are not resolvable here.
+    if (!RESOLVABLE_PROVIDER_OPERATIONS.has(operation.operation)) {
+      throw Error(
+        `provider operations of kind ${operation.operation} cannot be resolved by an admin`,
+      );
+    }
     if (operation.status !== "indeterminate") {
       throw Error(
         `only an indeterminate provider operation can be resolved (this one is ${operation.status})`,
@@ -3947,12 +3973,13 @@ export async function resolveCommercialProviderOperation(
     if (operation.operation === "provision-site-license") {
       // The one durable trace a provisioning attempt leaves. (Without the
       // site_licenses table, which is created lazily, no license can exist.)
+      // Schema-qualified so a session's temporary table cannot shadow it.
       const { rows: table } = await client.query(
-        "SELECT to_regclass('site_licenses') IS NOT NULL AS present",
+        "SELECT to_regclass('public.site_licenses') IS NOT NULL AS present",
       );
       const licenses = table[0]?.present
         ? await client.query(
-            "SELECT id FROM site_licenses WHERE metadata->>'commercial_order_id'=$1 LIMIT 1",
+            "SELECT id FROM public.site_licenses WHERE metadata->>'commercial_order_id'=$1 LIMIT 1",
             [before.id],
           )
         : { rows: [] as { id: string }[] };
@@ -3962,15 +3989,27 @@ export async function resolveCommercialProviderOperation(
         );
       }
     }
+    const resolution = {
+      actor_account_id: opts.account_id,
+      evidence,
+      resolved_at: new Date().toISOString(),
+      previous_status: operation.status,
+      previous_error: operation.last_error ?? null,
+    };
     const updated = await client.query(
       `UPDATE commercial_provider_operations SET status='failed',
-         completed_at=NOW(),updated_at=NOW(),last_error=$2
-       WHERE id=$1 RETURNING *`,
+         completed_at=NOW(),updated_at=NOW(),last_error=$2,
+         result=result || jsonb_build_object('admin_resolution', $3::jsonb)
+       WHERE id=$1 AND status='indeterminate' RETURNING *`,
       [
         operation.id,
         `resolved as failed by an admin: ${evidence}`.slice(0, 5_000),
+        resolution,
       ],
     );
+    if (!updated.rows[0]) {
+      throw Error("provider operation changed while it was being resolved");
+    }
     await client.query(
       "UPDATE commercial_orders SET updated_at=NOW(),version=version+1 WHERE id=$1",
       [before.id],
@@ -3991,6 +4030,7 @@ export async function resolveCommercialProviderOperation(
         previous_status: operation.status,
         resolution: "failed",
         evidence,
+        operation_before: operation as any,
         operation_after: normalizeProviderOperation(updated.rows[0]) as any,
       },
       identity_payload: opts as any,
