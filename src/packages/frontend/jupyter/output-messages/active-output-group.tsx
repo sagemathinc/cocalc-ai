@@ -187,7 +187,7 @@ function scriptBody(code: string): string {
   return code.replace(/<\/(script)/gi, "<\\/$1").replace(/<!--/g, "<\\!--");
 }
 
-export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;font-family:sans-serif;color:var(--shell-text,CanvasText);background:var(--shell-surface,transparent)}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:var(--shell-danger-bg,#fff0f0)}</style><script>${scriptBody(
+export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;font-family:var(--shell-fontFamily,sans-serif);font-size:var(--shell-fontSize,14px);color:var(--shell-text,CanvasText);background:var(--shell-surface,transparent)}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:var(--shell-dangerBg,#fff0f0)}</style><script>${scriptBody(
   `${jquerySource}`,
 )}</script></head><body><div id="cocalc-outputs"></div><script>${scriptBody(
   BOOTSTRAP,

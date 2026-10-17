@@ -78,6 +78,18 @@ export default function AutosizedIframe({
   }, [resizeId, srcDoc]);
 
   useEffect(() => {
+    // At most one resize per interval; a request inside the interval is
+    // applied at its end (only the latest one), never dropped, so the frame
+    // ends at the content's final height.
+    let pending: number | undefined = undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const apply = () => {
+      timer = undefined;
+      if (pending == null) return;
+      lastResizeRef.current = Date.now();
+      setHeight(normalizeHeight(pending));
+      pending = undefined;
+    };
     const onMessage = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data;
@@ -88,13 +100,20 @@ export default function AutosizedIframe({
       ) {
         return;
       }
-      const now = Date.now();
-      if (now - lastResizeRef.current < MIN_RESIZE_INTERVAL_MS) return;
-      lastResizeRef.current = now;
-      setHeight(normalizeHeight(data.height));
+      pending = data.height;
+      if (timer != null) return;
+      const wait = lastResizeRef.current + MIN_RESIZE_INTERVAL_MS - Date.now();
+      if (wait <= 0) {
+        apply();
+      } else {
+        timer = setTimeout(apply, wait);
+      }
     };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      if (timer != null) clearTimeout(timer);
+    };
   }, [resizeId]);
 
   useEffect(() => {
