@@ -42,9 +42,10 @@ cocalc --help
 ~~~
 
 The standalone download includes its runtime; you do not need to build the
-repository. The Unix installer defaults to the \`latest\` channel and Windows to
-\`stable\`. Available commands can therefore differ between installed releases.
-Use your installed command's help to check an option before relying on it.
+repository. The Unix installer installs the CLI release your site currently
+serves, and the Windows installer defaults to the \`stable\` channel. Available
+commands can therefore differ between installed releases. Use your installed
+command's help to check an option before relying on it.
 
 ## Step 2: Read a page before signing in
 

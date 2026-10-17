@@ -1710,6 +1710,14 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     reason:
       'When the editor reads a "% !TeX cocalc = ..." line, it saves its command as the document\'s build command, which stays after the line is removed and the document is rescanned. The LaTeX guide (docs/src/content/files.ts, "Choose how the document builds") says so. If the code only moved, point this fact at its new location; otherwise update that bullet, then this fact.',
   },
+  {
+    id: "cli.install.site-release",
+    file: "hub/servers/app/cli-distribution.ts",
+    kind: "present",
+    text: "const site = await r.site(); const { text, manifest } = await r.manifest(site.manifest);",
+    reason:
+      'A site\'s /cli/install.sh is generated for the release that site currently serves, the one its /cli/site.json names; the installer has no release channel to choose. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says the Unix installer installs that release. If the code only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
+  },
 ];
 
 export const UI_VOCABULARY_ALIAS_EXCEPTIONS: readonly UiVocabularyAliasException[] =
