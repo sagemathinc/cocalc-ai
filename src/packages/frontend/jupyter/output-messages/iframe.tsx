@@ -22,7 +22,6 @@ import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 const MAX_ATTEMPTS = 10;
 const MAX_WAIT = 5000;
 const BACKOFF = 1.3;
-const UNTRUSTED_IFRAME_SANDBOX = "allow-forms allow-scripts allow-presentation";
 
 interface Props {
   sha1: string;
@@ -68,7 +67,7 @@ export default function IFrame(props: Props) {
     return (
       <AutosizedIframe
         src={src}
-        sandbox={props.trust ? undefined : UNTRUSTED_IFRAME_SANDBOX}
+        profile={props.trust ? "trusted-same-origin" : "opaque-legacy"}
         title="Jupyter HTML output"
       />
     );
@@ -86,10 +85,16 @@ export default function IFrame(props: Props) {
       />
     );
   }
-  return <NonCachedIFrame src={src} />;
+  return <NonCachedIFrame src={src} trust={!!props.trust} />;
 }
 
-function NonCachedIFrame({ src }) {
+function NonCachedIFrame({
+  src,
+  trust,
+}: {
+  src: string | undefined;
+  trust: boolean;
+}) {
   const { val: attempts, inc: incAttempts } = useCounter();
   const [failed, setFailed] = useState<boolean>(false);
   const delayRef = useRef<number>(500);
@@ -128,6 +133,8 @@ function NonCachedIFrame({ src }) {
     <AutosizedIframe
       src={src}
       srcDoc={srcDoc}
+      // This path used to have no sandbox at all, even when not trusted.
+      profile={trust ? "trusted-same-origin" : "opaque-legacy"}
       onError={load_error}
       title="Jupyter HTML output"
     />
