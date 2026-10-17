@@ -134,6 +134,9 @@ minimumReleaseAgeExclude:
   - "@cocalc/openat2@0.2.0"
   - "@cocalc/openat2-linux-arm64-gnu@0.2.0"
   - "@cocalc/openat2-linux-x64-gnu@0.2.0"
+  # Sagemath-owned (Sagebrush) package, exact version; integrity
+  # sha512-bi8TyBCT... verified against the tarball before use.
+  - "@sagemathinc/sagebrush-board@0.2.0"
   - "@cocalc/gcloud-pricing-calculator"
   - "@cocalc/xterm"
   - patchflow

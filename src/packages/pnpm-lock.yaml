@@ -2187,6 +2187,9 @@ importers:
       '@node-saml/passport-saml':
         specifier: ^5.1.0
         version: 5.1.0
+      '@sagemathinc/sagebrush-board':
+        specifier: 0.2.0
+        version: 0.2.0
       '@sendgrid/client':
         specifier: ^8.1.4
         version: 8.1.6
@@ -5540,6 +5543,15 @@ packages:
       '@module-federation/runtime-tools':
         optional: true
       '@swc/helpers':
+        optional: true
+
+  '@sagemathinc/sagebrush-board@0.2.0':
+    resolution: {integrity: sha512-bi8TyBCTDhspxdOf5SyUVFNurzeXxBl6W/N8amhdNyRcdl/vESKG/5azGZ3cdWJvMUmLZb7wCOPFnNZKmOhRRw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      sagebrush: ^0.5.0
+    peerDependenciesMeta:
+      sagebrush:
         optional: true
 
   '@scure/base@2.0.0':
@@ -15768,6 +15780,8 @@ snapshots:
       '@rspack/binding': 2.0.4
     optionalDependencies:
       '@swc/helpers': 0.5.15
+
+  '@sagemathinc/sagebrush-board@0.2.0': {}
 
   '@scure/base@2.0.0': {}
 

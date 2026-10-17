@@ -76,6 +76,7 @@
     "@google-cloud/compute": "^6.9.1",
     "@isaacs/ttlcache": "^1.4.1",
     "@node-saml/passport-saml": "^5.1.0",
+    "@sagemathinc/sagebrush-board": "0.2.0",
     "@sendgrid/client": "^8.1.4",
     "@sendgrid/mail": "^8.1.4",
     "@simplewebauthn/server": "^13.3.2",

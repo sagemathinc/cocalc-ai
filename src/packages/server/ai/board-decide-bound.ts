@@ -195,7 +195,7 @@ export async function boardDecideForBoard(
     if ((await boardTextDigest(text)) !== sha256) {
       throw codedError("The board changed: reload it.", 409);
     }
-    const deciding = decideRequest(
+    const deciding = await decideRequest(
       { text, name: boardPostedName(path), revision },
       message,
     );
