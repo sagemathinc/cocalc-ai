@@ -415,6 +415,70 @@ describe("project-host browser origin policy", () => {
       ).toBe("no origin");
     });
 
+    it("binds top-level navigations to the serving host like the other own-origin rules", async () => {
+      const other = "00000000-1000-4000-8000-0000000000aa";
+      const navHeaders = {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+      };
+      const onPrivateHost = async (
+        trace: any,
+        target: string,
+        kind: string,
+      ) => {
+        const rewrite = createPrivateAppHostnameRequestRewriter({ trace });
+        const r: any = {
+          method: "GET",
+          url: `/${target}/${kind}/x`,
+          headers: { host: "dev-1.app.example", ...navHeaders },
+        };
+        await rewrite(r);
+        return ambientCookieRejection(
+          r,
+          classifyProjectRoute(r, target),
+          target,
+        );
+      };
+      const matched = async () => ({
+        matched: true,
+        project_id,
+        app_id: "x",
+        base_path: "/apps/x",
+      });
+      for (const kind of ["files", "port/6002"]) {
+        // Another project's content under this project's private origin.
+        expect(await onPrivateHost(matched, other, kind)).toBe(
+          "not from an approved page",
+        );
+        // Failed or unmatched lookups fail closed.
+        expect(
+          await onPrivateHost(
+            async () => {
+              throw new Error("hub down");
+            },
+            other,
+            kind,
+          ),
+        ).toBe("not from an approved page");
+        expect(
+          await onPrivateHost(async () => ({ matched: false }), other, kind),
+        ).toBe("not from an approved page");
+      }
+      // A host that is neither the shared host nor a resolved private host.
+      expect(
+        ambientCookieRejection(
+          {
+            method: "GET",
+            url: `/${project_id}/files/a.txt`,
+            headers: { host: "other-host.example", ...navHeaders },
+          },
+          "file",
+          project_id,
+        ),
+      ).toBe("not from an approved page");
+    });
+
     it("allows websockets without an origin (non-browser clients)", () => {
       expect(ambientCookieRejection(req(), "conat")).toBeUndefined();
     });

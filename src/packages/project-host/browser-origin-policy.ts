@@ -235,7 +235,11 @@ export function ambientCookieRejection(
   if (
     (route === "app" || route === "file") &&
     header(req, "sec-fetch-mode").toLowerCase() === "navigate" &&
-    header(req, "sec-fetch-dest").toLowerCase() === "document"
+    header(req, "sec-fetch-dest").toLowerCase() === "document" &&
+    // Same serving-host rule as the own-origin cases: the shared host
+    // (PROJECT_HOST_PUBLIC_URL) unbound, a private app hostname only for its
+    // own project, anything else (including a failed lookup) refused.
+    ownAppOriginAllowed(req, project_id)
   ) {
     return;
   }
