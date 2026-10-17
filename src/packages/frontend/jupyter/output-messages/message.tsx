@@ -12,6 +12,7 @@ import type { Map } from "immutable";
 import React from "react";
 import type { JupyterActions } from "@cocalc/jupyter/redux/actions";
 import { AITools } from "@cocalc/jupyter/types";
+import { ActiveOutputGroup, activeGroup } from "./active-output-group";
 import { InputDone } from "./input-done";
 import { Data } from "./mime-types/data";
 import { MoreOutput } from "./more-output";
@@ -120,8 +121,25 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     let hasIframes: boolean = false;
     let hasError: boolean = false;
     let traceback: string = "";
+    // JavaScript output never runs in this page: in a trusted notebook, a
+    // cell's JavaScript and HTML outputs render together in one opaque
+    // sandboxed frame.  (Untrusted notebooks don't run it at all.)
+    const group = trust ? activeGroup(obj) : null;
     for (const n of numericallyOrderedKeys(obj)) {
       const mesg = obj[n];
+      if (mesg != null && group?.includes(n)) {
+        if (n === group[0]) {
+          hasIframes = true;
+          v.push(
+            <ActiveOutputGroup
+              key="active-group"
+              messages={obj}
+              group={group}
+            />,
+          );
+        }
+        continue;
+      }
       if (mesg != null) {
         if (mesg.get("traceback")) {
           const t = mesg.get("traceback").join("\n");
