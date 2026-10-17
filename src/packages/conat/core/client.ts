@@ -903,6 +903,10 @@ export class Client extends EventEmitter {
     return this;
   }
 
+  // The client whose connection actually carries traffic for subject; this
+  // client itself unless routeSubject sends it elsewhere.
+  transportClientFor = (subject: string): Client => this.resolveClient(subject);
+
   private resolveClient = (subject: string): Client => {
     const routed = this.routeSubjectFn?.(subject);
     if (!routed) {

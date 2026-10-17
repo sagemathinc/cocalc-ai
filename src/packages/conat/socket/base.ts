@@ -50,6 +50,10 @@ export abstract class ConatSocketBase extends EventEmitter {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private recoveryRegistration?: RegisteredRecoverableResource;
   protected readonly lifecycleReporter?: ConatSocketOptions["lifecycleReporter"];
+  // The client whose connection carries this socket's traffic when its subject
+  // is routed elsewhere, e.g., a browser's per-host client for a project
+  // subject.  Its connection can drop while this.client stays connected.
+  private routedTransport?: Client;
   private readonly onClientDisconnected = () => {
     this.disconnect();
   };
@@ -97,6 +101,11 @@ export abstract class ConatSocketBase extends EventEmitter {
         });
     }
     this.client.on("disconnected", this.onClientDisconnected);
+    const transport = this.client.transportClientFor?.(subject);
+    if (transport != null && transport !== this.client) {
+      this.routedTransport = transport;
+      transport.on("disconnected", this.onClientDisconnected);
+    }
     this.connect();
     this.setMaxListeners(100);
   }
@@ -237,6 +246,11 @@ export abstract class ConatSocketBase extends EventEmitter {
     this.recoveryRegistration?.close();
     this.recoveryRegistration = undefined;
     this.client?.removeListener?.("disconnected", this.onClientDisconnected);
+    this.routedTransport?.removeListener?.(
+      "disconnected",
+      this.onClientDisconnected,
+    );
+    this.routedTransport = undefined;
     this.setState("closed");
     this.removeAllListeners();
 
