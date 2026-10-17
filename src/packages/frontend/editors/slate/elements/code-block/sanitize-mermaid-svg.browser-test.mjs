@@ -170,7 +170,7 @@ try {
   await page.addScriptTag({ content: script });
   const vars = await page.evaluate(async (origin) => {
     const page = document.createElement("style");
-    page.textContent = `:root { --asset: url(${origin}/probe-var) }
+    page.textContent = `:root { --asset: url(${origin}/probe-var); --asset-escaped: url(${origin}/escaped-var); --pos-escaped: fixed }
       @keyframes victim { from { opacity: .7 } to { opacity: .7 } }`;
     document.head.append(page);
     const svg = `<svg id="d3" xmlns="http://www.w3.org/2000/svg">
@@ -178,20 +178,40 @@ try {
         #d3 { --pos: fixed; position: var(--pos); --name: victim }
         #d3 rect { animation: 100s var(--name); fill: var(--asset) }
         #d3 circle { --x: 1; stroke: red }
+        #d3 line { position: v\\61r(--pos-escaped); fill: v\\61r(--asset-escaped); stroke: green }
       </style>
       <rect width="10" height="10"/>
       <circle r="5" style="--pos: fixed; position: var(--pos); fill: var(--asset); stroke: blue"/>
+      <line x2="5" y2="5"/>
+      <ellipse rx="2" ry="2" style="position: v\\61r(--pos-escaped); fill: v\\61r(--asset-escaped); stroke: green"/>
     </svg>`;
     const clean = policy.sanitizeMermaidSvg(svg);
-    document.getElementById("root").replaceChildren(clean);
+    // Escaped var() on the root, via the stylesheet and inline.
+    const escapedSheet = policy.sanitizeMermaidSvg(
+      `<svg id="d4" xmlns="http://www.w3.org/2000/svg"><style>#d4 { position: v\\61r(--pos-escaped); background: v\\61r(--asset-escaped) } #d4 rect { fill: v\\61r(--asset-escaped) }</style><rect width="9" height="9"/></svg>`,
+    );
+    const escapedInline = policy.sanitizeMermaidSvg(
+      `<svg id="d5" style="position: v\\61r(--pos-escaped); background: v\\61r(--asset-escaped)" xmlns="http://www.w3.org/2000/svg"><rect width="9" height="9" style="fill: v\\61r(--asset-escaped)"/></svg>`,
+    );
+    document
+      .getElementById("root")
+      .replaceChildren(clean, escapedSheet, escapedInline);
     await new Promise((r) => setTimeout(r, 200));
     const rect = clean.querySelector("rect");
     const circle = clean.querySelector("circle");
+    const line = clean.querySelector("line");
+    const ellipse = clean.querySelector("ellipse");
     return {
       rootPosition: getComputedStyle(clean).position,
       circlePosition: getComputedStyle(circle).position,
       rectAnimation: getComputedStyle(rect).animationName,
       circleStroke: getComputedStyle(circle).stroke,
+      linePosition: getComputedStyle(line).position,
+      lineStroke: getComputedStyle(line).stroke,
+      ellipsePosition: getComputedStyle(ellipse).position,
+      ellipseStyle: ellipse.getAttribute("style"),
+      escapedSheetPosition: getComputedStyle(escapedSheet).position,
+      escapedInlinePosition: getComputedStyle(escapedInline).position,
       css: clean.querySelector("style").textContent,
       inline: circle.getAttribute("style"),
     };
@@ -201,6 +221,12 @@ try {
   assert.notEqual(vars.circlePosition, "fixed");
   assert.equal(vars.rectAnimation, "none");
   assert.equal(vars.circleStroke, "rgb(0, 0, 255)");
+  assert.notEqual(vars.escapedSheetPosition, "fixed");
+  assert.notEqual(vars.escapedInlinePosition, "fixed");
+  assert.notEqual(vars.linePosition, "fixed");
+  assert.equal(vars.lineStroke, "rgb(0, 128, 0)");
+  assert.notEqual(vars.ellipsePosition, "fixed");
+  assert.doesNotMatch(vars.ellipseStyle ?? "", /\\/);
   assert.doesNotMatch(vars.css + vars.inline, /var\(|--/);
   assert.deepEqual(hits, []);
 

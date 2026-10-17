@@ -23,6 +23,9 @@ and rebuilt from the parsed rules:
 - Custom properties (--*) and any declaration using var(), env() or attr()
   are dropped: substitution happens after this check, so it could bring
   back anything the check removes.
+- Any declaration whose value contains a backslash is dropped: the CSSOM
+  keeps escapes in function names (v\61r() is var()), so they could spell
+  any of the above past these checks.  Mermaid's CSS has none.
 - Any declaration whose value uses a function that can load a resource
   (url() other than a same-document #fragment, image-set(), image(),
   cross-fade(), element(), src(), ...) is dropped, as are fixed and sticky
@@ -66,6 +69,7 @@ function sanitizeDeclarations(
     const value = style.getPropertyValue(property);
     if (
       property.startsWith("--") ||
+      value.includes("\\") ||
       // A longhand of a shorthand that uses var() reads back as "".
       value === "" ||
       SUBSTITUTION_FUNCTION.test(value) ||
@@ -74,7 +78,10 @@ function sanitizeDeclarations(
       style.removeProperty(property);
     }
   }
-  if (SUBSTITUTION_FUNCTION.test(style.cssText)) {
+  if (
+    SUBSTITUTION_FUNCTION.test(style.cssText) ||
+    style.cssText.includes("\\")
+  ) {
     // Fail closed if a substitution survived in some serialization.
     style.cssText = "";
   }
