@@ -1,3 +1,8 @@
+const warn = jest.fn();
+jest.mock("@cocalc/conat/logger", () => ({
+  getLogger: () => ({ warn, debug: jest.fn(), info: jest.fn() }),
+}));
+
 import {
   logFetchDelay,
   noteLogFetchFailure,
@@ -6,15 +11,9 @@ import {
 } from "./log-fetch-backoff";
 
 describe("activity log fetch backoff", () => {
-  let warn: jest.SpyInstance;
-
   beforeEach(() => {
     resetLogFetchBackoffForTests();
-    warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    warn.mockRestore();
+    warn.mockClear();
   });
 
   it("fetches a key with no failures at once", () => {

@@ -9,6 +9,10 @@ fetch waits out the key's backoff, and only the first failure and every tenth
 after it are logged.
 */
 
+import { getLogger } from "@cocalc/conat/logger";
+
+const logger = getLogger("frontend:chat:log-fetch-backoff");
+
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 60_000;
 const LOG_EVERY = 10;
@@ -46,7 +50,7 @@ export function noteLogFetchFailure(
   }
   if (count == 1 || count % LOG_EVERY == 0) {
     // A string, not the Error: the console prints a full stack for an Error.
-    console.warn(
+    logger.warn(
       `failed to fetch acp log (${count} ${count == 1 ? "failure" : "failures"}, next try in ${Math.round(delay / 1000)}s): ${(err as any)?.message ?? err}`,
     );
   }

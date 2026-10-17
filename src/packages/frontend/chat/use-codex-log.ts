@@ -546,9 +546,12 @@ export function useCodexLog({
     const retryLater = () => {
       if (cancelled) return;
       if (retryTimer) clearTimeout(retryTimer);
-      retryTimer = setTimeout(fetchLog, logFetchDelay(backoffKey));
+      retryTimer = setTimeout(
+        () => fetchLog({ retry: true }),
+        logFetchDelay(backoffKey),
+      );
     };
-    async function fetchLog() {
+    async function fetchLog({ retry = false }: { retry?: boolean } = {}) {
       if (cancelled || !enabled || !hasLogRef || !projectId || akvLoaded) {
         return;
       }
@@ -556,12 +559,17 @@ export function useCodexLog({
         retryLater();
         return;
       }
-      setLoadState("loading");
-      setLoadError(undefined);
+      // An automatic retry keeps the current error, so the row neither flickers
+      // nor reports the same failure again (see the toast in message.tsx).
+      if (!retry) {
+        setLoadState("loading");
+        setLoadError(undefined);
+      }
       try {
         const data = await fetchPersistedLog();
         noteLogFetchSuccess(backoffKey);
         if (!cancelled) {
+          setLoadError(undefined);
           // If the log has not yet been persisted, leave fetchedLog as null so
           // we will retry (immediately below and on the delayed retry).
           if (data == null) {
@@ -588,7 +596,7 @@ export function useCodexLog({
     void fetchLog();
     if (generating && !liveLogStream) {
       // Also delay and call again to let the throttled writer persist the first batch.
-      timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
+      timer = setTimeout(() => fetchLog(), LOG_PERSIST_THROTTLE_MS + 500);
     }
     return () => {
       cancelled = true;
