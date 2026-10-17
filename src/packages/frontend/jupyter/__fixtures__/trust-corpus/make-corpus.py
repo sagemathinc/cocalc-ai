@@ -16,6 +16,7 @@ The output (several MB: plotly's notebook mode embeds plotly.js) defaults to
 Each cell starts with a "case: <name>" marker; the browser test keys on it.
 """
 
+import importlib.metadata
 import sys
 from pathlib import Path
 
@@ -121,6 +122,56 @@ MARKDOWN = {
 }
 
 
+# The MIME types each case must produce; generation fails otherwise, so a
+# broken fixture can't be mistaken for a renderer regression.
+EXPECTED = {
+    "matplotlib-png": {"image/png"},
+    "matplotlib-svg": {"image/svg+xml"},
+    "pandas-table": {"text/html"},
+    "pandas-styler": {"text/html"},
+    "html-inline-style": {"text/html"},
+    "html-script": {"text/html"},
+    "display-javascript": {"application/javascript"},
+    "javascript-sibling": {"text/html", "application/javascript"},
+    "pdf": {"application/pdf"},
+    "plotly-cdn": {"text/html"},
+    "plotly-init-notebook-mode": {"text/html"},
+    "bokeh": {"application/javascript", "text/html"},
+    "altair": {"text/html"},
+    "folium": {"text/html"},
+    "ipywidgets-slider": {"application/vnd.jupyter.widget-view+json"},
+    "ipywidgets-html": {"application/vnd.jupyter.widget-view+json"},
+    "ipympl": {"application/vnd.jupyter.widget-view+json"},
+    "ipyleaflet": {"application/vnd.jupyter.widget-view+json"},
+    "bqplot": {"application/vnd.jupyter.widget-view+json"},
+}
+
+PACKAGES = [
+    "ipykernel", "matplotlib", "pandas", "plotly", "bokeh", "altair", "folium",
+    "ipywidgets", "ipympl", "ipyleaflet", "bqplot",
+]
+
+
+def validate(nb) -> None:
+    problems = []
+    for cell in nb.cells:
+        if cell.cell_type != "code":
+            continue
+        name = cell.source.split("\n")[0].removeprefix("# case: ")
+        errors = [o for o in cell.outputs if o.output_type == "error"]
+        if errors:
+            problems.append(f"{name}: {errors[0].ename}: {errors[0].evalue[:120]}")
+            continue
+        types = set()
+        for o in cell.outputs:
+            types.update(o.get("data", {}).keys())
+        missing = EXPECTED.get(name, set()) - types
+        if missing:
+            problems.append(f"{name}: missing {sorted(missing)} (got {sorted(types)})")
+    if problems:
+        raise SystemExit("corpus is invalid:\n  " + "\n  ".join(problems))
+
+
 def main() -> None:
     kernel = sys.argv[1] if len(sys.argv) > 1 else "python3"
     nb = nbformat.v4.new_notebook()
@@ -129,7 +180,16 @@ def main() -> None:
     for name, source in CASES.items():
         nb.cells.append(nbformat.v4.new_code_cell(f"# case: {name}\n{source.strip()}"))
     nb.metadata["kernelspec"] = {"name": kernel, "display_name": kernel, "language": "python"}
+    # allow_errors so every failure is reported together by validate().
     NotebookClient(nb, kernel_name=kernel, timeout=180, allow_errors=True).execute()
+    validate(nb)
+    versions = {}
+    for package in PACKAGES:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    nb.metadata["trust_corpus"] = {"python": sys.version.split()[0], "packages": versions}
     out = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/trust-corpus.ipynb")
     nbformat.write(nb, out)
     print(f"wrote {out} ({out.stat().st_size} bytes)")
