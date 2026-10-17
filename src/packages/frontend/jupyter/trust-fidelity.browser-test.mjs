@@ -238,7 +238,8 @@ const WORKS = {
   "markdown-katex-href": `q(".katex a[href]") ? "link" : ""`,
   "markdown-mermaid": `qa("svg text, svg foreignObject").some(e => e.textContent.includes("mermaid start")) ? "diagram" : ""`,
   "javascript-sibling": `q("#js-sibling-target")?.textContent === "changed by sibling js" ? "ran" : ""`,
-  pdf: `qa("embed, iframe, object").some(e => (e.getAttribute("type") ?? "").includes("pdf") || /^(blob:|data:application\\/pdf)/.test(e.getAttribute("src") ?? e.getAttribute("data") ?? "")) ? "pdf" : ""`,
+  // Chromium's PDF viewer frame: toolbar shown and no load-error dialog.
+  pdf: `q("viewer-toolbar") && !q("viewer-error-dialog") && !qa("dialog").some(d => d.open) ? "pdf" : ""`,
   "matplotlib-png": `qa("img").some(i => /^(blob:|data:image\\/png)/.test(i.src) && i.naturalWidth > 100) ? "img" : ""`,
   "matplotlib-svg": `qa("img").some(i => /^(blob:|data:image\\/svg)/.test(i.src) && i.naturalWidth > 100) ? "svg" : ""`,
   "pandas-table": `qa("table td").some(td => td.textContent === "x") ? "table" : ""`,
@@ -248,10 +249,21 @@ const WORKS = {
   "display-javascript": `qa("*").some(e => e.children.length === 0 && e.textContent === "javascript output ran") ? "ran" : ""`,
   "plotly-cdn": `q(".main-svg") ? "plot" : ""`,
   "plotly-init-notebook-mode": `q(".main-svg") ? "plot" : ""`,
-  bokeh: `qa("canvas").some(c => c.width > 50 && c.height > 50) ? "plot" : ""`,
+  // A canvas with painted (non-transparent) pixels, not just a canvas.
+  bokeh: `qa("canvas").some(c => { if (c.width < 50 || c.height < 50) return false; try { const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return true; } catch (e) {} return false; }) ? "plot" : ""`,
   altair: `q(".vega-embed svg, .vega-embed canvas, canvas.marks, svg.marks") ? "chart" : ""`,
-  folium: `q(".leaflet-container .leaflet-tile-pane, .leaflet-container") ? "map" : ""`,
+  // Map tiles actually loaded, not just the container.
+  folium: `q(".leaflet-container img.leaflet-tile-loaded") ? "map" : ""`,
 };
+
+// Errors that are part of a case's known (already broken) behavior; any other
+// error shows in the case's status.
+const EXPECTED_ERRORS = {
+  "plotly-init-notebook-mode": [/Plotly is not defined/],
+};
+
+// After a check first passes, it must still pass this much later.
+const SETTLE_MS = Number(process.env.CASE_SETTLE_MS ?? 2000);
 
 // Widgets need a live kernel (comm messages); unmeasured here.
 const NEEDS_KERNEL = [
@@ -291,7 +303,8 @@ function runCheck(root, check) {
   );
 }
 
-// The sandbox at each frame boundary from the page down to frame.
+// The sandbox, title and size at each frame boundary from the page down to
+// frame; "unknown" where the boundary can't be inspected.
 async function frameChain(frame) {
   const chain = [];
   for (let f = frame; f && f.parentFrame(); f = f.parentFrame()) {
@@ -312,6 +325,37 @@ async function frameChain(frame) {
   return chain;
 }
 
+// Where the check passes now: "page", a frame (returned), or nothing.
+async function locate(page, check, errors) {
+  const inPage = await page
+    .locator("section[data-case]")
+    .evaluate(
+      (el, [fn, c]) => new Function(`return (${fn})`)()(el, c),
+      [runCheck.toString(), check],
+    )
+    .catch((e) => {
+      errors.push(`check: ${e.message.slice(0, 160)}`);
+      return "";
+    });
+  if (inPage) return { works: inPage, where: "page", frame: null, unknown: 0 };
+  let unknown = 0;
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    let r;
+    try {
+      r = await frame.evaluate(
+        ([fn, c]) => new Function(`return (${fn})`)()(document, c),
+        [runCheck.toString(), check],
+      );
+    } catch {
+      unknown += 1;
+      continue;
+    }
+    if (r) return { works: r, where: "frame", frame, unknown };
+  }
+  return { works: "", where: "", frame: null, unknown };
+}
+
 async function measureCase(browser, name, trust) {
   if (process.env.VERBOSE) console.error(`case ${name} trust=${trust}`);
   const page = await browser.newPage({
@@ -329,57 +373,43 @@ async function measureCase(browser, name, trust) {
       `request: ${r.url().slice(0, 120)} ${r.failure()?.errorText ?? ""}`,
     ),
   );
-  const result = { works: "", where: "", frames: [], errors, unknownFrames: 0 };
+  // One stable schema: every frame's boundary chain, and which one matched.
+  const result = {
+    works: "",
+    where: "",
+    matched: null,
+    frames: [],
+    unknownFrames: 0,
+    errors,
+  };
   try {
     await page.goto(`${origin}/?trust=${trust ? 1 : 0}&case=${name}`);
     await page.waitForSelector("section[data-case]", { timeout: DEADLINE_MS });
     const check = WORKS[name];
     const started = Date.now();
+    let found = null;
     while (Date.now() - started < DEADLINE_MS) {
-      result.unknownFrames = 0;
-      const inPage = await page
-        .locator("section[data-case]")
-        .evaluate(
-          (el, [fn, c]) => new Function(`return (${fn})`)()(el, c),
-          [runCheck.toString(), check],
-        )
-        .catch((e) => {
-          errors.push(`check: ${e.message.slice(0, 160)}`);
-          return "";
-        });
-      if (inPage) {
-        result.works = inPage;
-        result.where = "page";
-        break;
-      }
-      for (const frame of page.frames()) {
-        if (frame === page.mainFrame()) continue;
-        let r;
-        try {
-          r = await frame.evaluate(
-            ([fn, c]) => new Function(`return (${fn})`)()(document, c),
-            [runCheck.toString(), check],
-          );
-        } catch {
-          result.unknownFrames += 1;
-          continue;
-        }
-        if (r) {
-          result.works = r;
-          result.where = "frame";
-          result.frames = await frameChain(frame);
-          break;
-        }
-      }
-      if (result.works) break;
+      found = await locate(page, check, errors);
+      if (found.works) break;
       await page.waitForTimeout(250);
     }
-    if (!result.frames.length) {
-      // Inventory every frame boundary under the case even when nothing works.
-      for (const frame of page.frames()) {
-        if (frame !== page.mainFrame())
-          result.frames.push(await frameChain(frame));
+    if (found?.works) {
+      // It must still hold after settling (late load failures, blank redraws).
+      await page.waitForTimeout(SETTLE_MS);
+      const again = await locate(page, check, errors);
+      if (!again.works || again.where !== found.where) {
+        errors.push(`unstable: passed in ${found.where}, then failed`);
+        found = again;
       }
+    }
+    result.works = found?.works ?? "";
+    result.where = found?.where ?? "";
+    result.unknownFrames = found?.unknown ?? 0;
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const chain = await frameChain(frame);
+      if (frame === found?.frame) result.matched = result.frames.length;
+      result.frames.push(chain);
     }
     const section = page.locator("section[data-case]");
     await section.scrollIntoViewIfNeeded().catch(() => {});
@@ -395,13 +425,31 @@ async function measureCase(browser, name, trust) {
   } finally {
     await page.close();
   }
+  result.unexpectedErrors = errors.filter(
+    (e) => !(EXPECTED_ERRORS[name] ?? []).some((re) => re.test(e)),
+  );
   return result;
 }
 
 function fmt(r) {
-  if (r.where === "error") return "error";
-  if (r.works) return `${r.where}:${r.works}`;
-  return r.unknownFrames ? "unknown" : "-";
+  let s;
+  if (r.where === "error") s = "error";
+  else if (r.works) s = `${r.where}:${r.works}`;
+  else s = r.unknownFrames ? "unknown" : "-";
+  if (r.unexpectedErrors.length) s += ` !${r.unexpectedErrors.length}err`;
+  return s;
+}
+
+// Everything that must match across --repeat runs.
+function fingerprint(r) {
+  return JSON.stringify({
+    where: r.where,
+    works: r.works,
+    matched: r.matched,
+    unknownFrames: r.unknownFrames,
+    frames: r.frames,
+    errors: [...r.errors].sort(),
+  });
 }
 
 let browser;
@@ -445,7 +493,9 @@ try {
     if (process.env.ONLY_CASE && process.env.ONLY_CASE !== name) continue;
     const t = runs.map((r) => fmt(r.trusted[name]));
     const u = runs.map((r) => fmt(r.untrusted[name]));
-    const flaky = new Set(t).size > 1 || new Set(u).size > 1;
+    const flaky =
+      new Set(runs.map((r) => fingerprint(r.trusted[name]))).size > 1 ||
+      new Set(runs.map((r) => fingerprint(r.untrusted[name]))).size > 1;
     console.log(
       name.padEnd(28),
       t[0].padEnd(24),
