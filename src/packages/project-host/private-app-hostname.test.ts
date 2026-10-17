@@ -11,6 +11,7 @@ import {
   PRIVATE_APP_HOST_HEADER,
   rewritePrivateAppHostnameResponseLocation,
   rewritePrivateAppHostnameUrl,
+  getPrivateAppHostnameProject,
 } from "./private-app-hostname";
 
 const route = {
@@ -177,9 +178,27 @@ describe("private app hostname routing", () => {
 
     await rewrite(req);
 
-    expect(trace).not.toHaveBeenCalled();
+    // The hostname is looked up (and cached) so the origin policy knows
+    // whether the page is a private app, but the route is not rewritten.
+    expect(trace).toHaveBeenCalledTimes(1);
     expect(req.url).toBe(`/${route.project_id}/apps/dev-site/`);
     expect(req.headers[PRIVATE_APP_HOST_HEADER]).toBeUndefined();
+    expect(getPrivateAppHostnameProject(req)).toBeUndefined();
+  });
+
+  it("records the private app's project on explicit project paths without rewriting them", async () => {
+    const rewrite = createPrivateAppHostnameRequestRewriter({
+      trace: async () => ({ matched: true, ...route }),
+    });
+    const other = "00000000-1000-4000-8000-0000000000aa";
+    const req = {
+      headers: { host: "dev-1234.example.com" },
+      url: `/${other}/apps/x/`,
+    } as any;
+    await rewrite(req);
+    expect(req.url).toBe(`/${other}/apps/x/`);
+    expect(req.headers[PRIVATE_APP_HOST_HEADER]).toBeUndefined();
+    expect(getPrivateAppHostnameProject(req)).toBe(route.project_id);
   });
 
   it("maps internal redirect locations back to the private hostname root", async () => {
