@@ -9,6 +9,7 @@ import {
   attestReleasedLroDedupeSuccesses,
   claimLroOps,
   createLro,
+  dismissLro,
   ensureLroSchema,
   expireDueLros,
   getLro,
@@ -286,10 +287,30 @@ describe("LRO database maintenance integration", () => {
     await expect(
       claimLroOps({ kind, owner_type: "hub", owner_id: uuid() }),
     ).resolves.toEqual([expect.objectContaining({ op_id: op.op_id })]);
-    // A dismissed or canceled operation is never requeued.
+    // A dismissal validated against "failed" loses to the requeue: the
+    // status is checked in the same UPDATE, so the queued operation stays
+    // claimable instead of becoming invisible.
+    await expect(
+      dismissLro({ op_id: op.op_id, if_status: ["failed", "succeeded"] }),
+    ).resolves.toBeUndefined();
+    expect((await getLro(op.op_id))?.dismissed_at ?? null).toBeNull();
+    // A canceled operation is never requeued.
     await updateLro({ op_id: op.op_id, status: "canceled" });
     await expect(
       requeueFailedLro({ op_id: op.op_id, kind, input_patch: {} }),
+    ).resolves.toBeUndefined();
+    // Nor is a dismissed one.
+    const dismissed = await createLro({
+      kind,
+      scope_type: "hub",
+      scope_id: uuid(),
+    });
+    await updateLro({ op_id: dismissed.op_id, status: "failed" });
+    await expect(
+      dismissLro({ op_id: dismissed.op_id, if_status: ["failed"] }),
+    ).resolves.toMatchObject({ op_id: dismissed.op_id });
+    await expect(
+      requeueFailedLro({ op_id: dismissed.op_id, kind, input_patch: {} }),
     ).resolves.toBeUndefined();
   });
 });

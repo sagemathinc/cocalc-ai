@@ -458,17 +458,24 @@ export async function mergeLroResult({
   return rows[0] as LroSummary | undefined;
 }
 
+// With if_status, dismiss only while the operation still has one of those
+// statuses, checked in the same UPDATE: a caller that validated "failed" must
+// not dismiss an operation that was requeued meanwhile, which would leave a
+// queued operation that no worker ever claims.
 export async function dismissLro({
   op_id,
   dismissed_by,
+  if_status,
 }: {
   op_id: string;
   dismissed_by?: string | null;
+  if_status?: LroStatus[];
 }): Promise<LroSummary | undefined> {
   return await updateLro({
     op_id,
     dismissed_at: new Date(),
     dismissed_by: dismissed_by ?? null,
+    if_status,
   });
 }
 

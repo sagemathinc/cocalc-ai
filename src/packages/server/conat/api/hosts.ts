@@ -8913,34 +8913,36 @@ export async function rolloutHostRuntimeFleet({
       }),
   ];
   const scope_id = randomUUID();
-  const op = await createLro({
-    kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
-    scope_type: "hub",
-    scope_id,
-    created_by: requested_by,
-    routing: "hub",
-    input: {
-      host_ids: orderedHostIds,
-      artifact,
-      version: desiredVersion,
-      components: normalizedComponents,
-      base_url: `${base_url ?? ""}`.trim() || undefined,
-      canary_host_id: canaryHostId,
-      max_concurrent: normalizedMaxConcurrent,
-      canary_stabilize_seconds: normalizedCanaryStabilizeSeconds,
-      stabilize_seconds: normalizedStabilizeSeconds,
-      promote_global: promote_global === true,
-      reason: `${reason ?? ""}`.trim() || "paced_runtime_fleet_rollout",
-      latency_gate: latencyGate,
-    },
-    dedupe_key: `${HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND}:${JSON.stringify({
-      artifact,
-      version: desiredVersion,
-      components: normalizedComponents,
-      host_ids: [...orderedHostIds].sort(),
-    })}`,
-    status: "queued",
-  });
+  const op = await withFleetRolloutLock(() =>
+    createLro({
+      kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
+      scope_type: "hub",
+      scope_id,
+      created_by: requested_by,
+      routing: "hub",
+      input: {
+        host_ids: orderedHostIds,
+        artifact,
+        version: desiredVersion,
+        components: normalizedComponents,
+        base_url: `${base_url ?? ""}`.trim() || undefined,
+        canary_host_id: canaryHostId,
+        max_concurrent: normalizedMaxConcurrent,
+        canary_stabilize_seconds: normalizedCanaryStabilizeSeconds,
+        stabilize_seconds: normalizedStabilizeSeconds,
+        promote_global: promote_global === true,
+        reason: `${reason ?? ""}`.trim() || "paced_runtime_fleet_rollout",
+        latency_gate: latencyGate,
+      },
+      dedupe_key: `${HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND}:${JSON.stringify({
+        artifact,
+        version: desiredVersion,
+        components: normalizedComponents,
+        host_ids: [...orderedHostIds].sort(),
+      })}`,
+      status: "queued",
+    }),
+  );
   await publishLroSummary({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -8968,6 +8970,65 @@ export async function rolloutHostRuntimeFleet({
     kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
     host_ids: orderedHostIds,
   };
+}
+
+// Creating and resuming fleet campaigns take one bay-wide lock, so a resume
+// sees every campaign created before it.
+async function withFleetRolloutLock<T>(fn: () => Promise<T>): Promise<T> {
+  const client = await pool().connect();
+  try {
+    await client.query("SELECT pg_advisory_lock(hashtext($1))", [
+      HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
+    ]);
+    try {
+      return await fn();
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+        HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
+      ]);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// A paused campaign is stale once the fleet has moved on: resuming it would
+// deploy its old version to the hosts it had not reached and could promote
+// that version globally over a newer one.
+export async function fleetRolloutSupersededReason(op: {
+  op_id: string;
+  created_at?: Date | string;
+  input?: any;
+}): Promise<string | undefined> {
+  await ensureProjectHostRuntimeDeploymentsSchema();
+  const { rows: newer } = await pool().query(
+    `SELECT op_id, status, created_at
+       FROM long_running_operations
+      WHERE kind = $1
+        AND op_id <> $2
+        AND created_at > (SELECT created_at FROM long_running_operations WHERE op_id = $2)
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND, op.op_id],
+  );
+  if (newer.length) {
+    return `a newer fleet rollout ${newer[0].op_id} (${newer[0].status}) was created after it; start a new campaign instead`;
+  }
+  const version = `${op.input?.version ?? ""}`.trim();
+  const { rows: moved } = await pool().query(
+    `SELECT desired_version, updated_at
+       FROM project_host_runtime_deployments
+      WHERE scope_type = 'global'
+        AND target_type = 'artifact'
+        AND target = 'project-host'
+        AND desired_version <> $1
+        AND updated_at > (SELECT created_at FROM long_running_operations WHERE op_id = $2)`,
+    [version, op.op_id],
+  );
+  if (moved.length) {
+    return `the global project-host default changed to ${moved[0].desired_version} after it was created; start a new campaign instead`;
+  }
+  return undefined;
 }
 
 function normalizeFleetRolloutLatencyGate(
@@ -9010,22 +9071,28 @@ export async function resumeHostRuntimeFleetRollout({
       ? previousGate
       : normalizeFleetRolloutLatencyGate(latency_gate);
   const resumes = Array.isArray(op.input?.resumes) ? op.input.resumes : [];
-  const requeued = await requeueFailedLro({
-    op_id: opId,
-    kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
-    input_patch: {
-      latency_gate: latencyGate,
-      resumes: [
-        ...resumes,
-        {
-          at: new Date().toISOString(),
-          by: requested_by,
-          reason: resumeReason,
-          paused_error: op.error ?? null,
-          latency_gate: latencyGate,
-        },
-      ],
-    },
+  const requeued = await withFleetRolloutLock(async () => {
+    const superseded = await fleetRolloutSupersededReason(op);
+    if (superseded) {
+      throw new Error(`cannot resume fleet rollout ${opId}: ${superseded}`);
+    }
+    return await requeueFailedLro({
+      op_id: opId,
+      kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
+      input_patch: {
+        latency_gate: latencyGate,
+        resumes: [
+          ...resumes,
+          {
+            at: new Date().toISOString(),
+            by: requested_by,
+            reason: resumeReason,
+            paused_error: op.error ?? null,
+            latency_gate: latencyGate,
+          },
+        ],
+      },
+    });
   });
   if (!requeued) {
     throw new Error(
