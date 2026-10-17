@@ -388,16 +388,3 @@ export function listUnmarkedUncertainBoardSubmissions(
     )
     .all(account_id, limit) as unknown as BoardSubmissionKey[];
 }
-
-/** An uncertain submission whose message is proven gone: nothing can send
- * it again, so its record goes. */
-export function forgetUncertainBoardSubmission(key: BoardSubmissionKey): void {
-  checkKey(key);
-  ensureInit();
-  getAcpDatabase()
-    .prepare(
-      `DELETE FROM ${TABLE} WHERE ${KEY_WHERE} AND outcome = ?
-          AND uncertain_recorded IS NULL`,
-    )
-    .run(...keyArgs(key), BOARD_SUBMISSION_UNCERTAIN);
-}

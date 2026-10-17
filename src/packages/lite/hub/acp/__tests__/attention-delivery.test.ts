@@ -1611,20 +1611,24 @@ describe("agent RPC live guidance funding", () => {
         expect(send).toHaveBeenCalledTimes(1);
       });
 
-      it("one whose message is gone is reclaimed by reconciliation", async () => {
+      it("one whose message is gone is resolved by reconciliation", async () => {
         mockLiveRuntime(liveConfig);
         uncertainFor("never-existed");
         expect(unmarked()).toEqual(["never-existed"]);
         await resend("assistant-1"); // any board submission reconciles
         await settle();
+        // no longer counted toward the cap; expires with the others, and
+        // until then still refuses a re-created message
         expect(unmarked()).toEqual([]);
         expect(
           getAcpDatabase()
             .prepare(
-              "SELECT * FROM acp_board_submissions WHERE user_message_id = 'never-existed'",
+              "SELECT outcome, uncertain_recorded FROM acp_board_submissions WHERE user_message_id = 'never-existed'",
             )
             .all(),
-        ).toEqual([]);
+        ).toEqual([
+          { outcome: "uncertain", uncertain_recorded: expect.any(Number) },
+        ]);
       });
 
       it("past the account's cap, new submissions are refused before any send", async () => {

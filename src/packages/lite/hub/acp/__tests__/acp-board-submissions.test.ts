@@ -13,7 +13,6 @@ import {
   admitBoardSubmission,
   claimBoardSubmissionRetry,
   failBoardSubmissionAttempt,
-  forgetUncertainBoardSubmission,
   listUnmarkedUncertainBoardSubmissions,
   markBoardSubmissionAdmitted,
   markBoardSubmissionUncertainRecorded,
@@ -230,7 +229,7 @@ describe("unmarked uncertain records (LIMIT-A65-1)", () => {
     });
   });
 
-  test("reconciliation reads a few, oldest first; a forgotten one goes", () => {
+  test("reconciliation reads a few, oldest first", () => {
     uncertain("b", "tb", 2_000);
     uncertain("a", "ta", 1_000);
     uncertain("c", "tc", 3_000);
@@ -239,12 +238,6 @@ describe("unmarked uncertain records (LIMIT-A65-1)", () => {
         (k) => k.user_message_id,
       ),
     ).toEqual(["a", "b"]);
-    forgetUncertainBoardSubmission(key("a", { thread_id: "ta" }));
-    expect(ids()).not.toContain("a");
-    // only an unmarked uncertain one can be forgotten
-    markBoardSubmissionAdmitted(key("ok"), "steered", token("ok"));
-    forgetUncertainBoardSubmission(key("ok"));
-    expect(ids()).toContain("ok");
   });
 
   test("the cap's count uses its partial index", () => {

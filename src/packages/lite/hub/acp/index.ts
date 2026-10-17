@@ -280,7 +280,6 @@ import {
   failBoardSubmissionAttempt,
   markBoardSubmissionAdmitted,
   markBoardSubmissionUncertainRecorded,
-  forgetUncertainBoardSubmission,
   listUnmarkedUncertainBoardSubmissions,
   setBoardSubmissionInjecting,
   type BoardSubmissionKey,
@@ -11162,8 +11161,10 @@ async function recordBoardSubmissionUncertain(
 }
 
 // Retry the markers of an account's unmarked uncertain submissions, a few
-// at a time; forget those whose message is gone (nothing can send them
-// again). One pass per account at a time (LIMIT-A65-1).
+// at a time. One whose message is gone is resolved as if marked: it no
+// longer counts toward the account's cap, and its record still refuses a
+// re-created message until it expires with the others. One pass per
+// account at a time (LIMIT-A65-1).
 const boardReconciling = new Map<string, Promise<void>>();
 async function reconcileUncertainBoardSubmissions(
   account_id: string,
@@ -11173,7 +11174,7 @@ async function reconcileUncertainBoardSubmissions(
   const pass = (async () => {
     for (const key of listUnmarkedUncertainBoardSubmissions(account_id, 5)) {
       if ((await recordBoardSubmissionUncertain(key)) === "gone") {
-        forgetUncertainBoardSubmission(key);
+        markBoardSubmissionUncertainRecorded(key);
       }
     }
   })();
