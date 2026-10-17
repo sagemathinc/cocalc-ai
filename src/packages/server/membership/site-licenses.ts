@@ -3633,6 +3633,18 @@ export async function archiveSiteLicensePool({
   });
 }
 
+// Changes that read the license owner and write rows owned by it (adding a
+// pool, transferring ownership) serialize on the license row, so a pool can
+// never be created for a previous owner.
+async function lockSiteLicenseRow(
+  site_license_id: string,
+  client: PoolClient,
+): Promise<void> {
+  await client.query("SELECT id FROM site_licenses WHERE id=$1 FOR UPDATE", [
+    site_license_id,
+  ]);
+}
+
 export async function addSiteLicensePool({
   actor_account_id,
   site_license_id,
@@ -3645,6 +3657,7 @@ export async function addSiteLicensePool({
   const actorAccountId = normalizeAccountId(actor_account_id);
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
   return await withLocalSiteLicenseTransaction(async (client) => {
+    await lockSiteLicenseRow(siteLicenseId, client);
     const siteLicense = await getSiteLicense(siteLicenseId, client);
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const [normalizedPool] = normalizePools([pool]);
@@ -3777,6 +3790,7 @@ export async function updateSiteLicense({
     await assertTargetAccountExists(nextOwnerAccountId);
   }
   return await withLocalSiteLicenseTransaction(async (client) => {
+    await lockSiteLicenseRow(siteLicenseId, client);
     const current = await getSiteLicense(siteLicenseId, client);
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const previousOwnerAccountId = current.owner_account_id ?? null;
