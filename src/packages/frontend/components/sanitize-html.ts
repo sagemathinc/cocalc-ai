@@ -84,6 +84,9 @@ const DROP_CONTENT_TAGS = new Set([
   "textarea",
   "option",
   "xmp",
+  // A template's children are inert in the DOM but become live if a later
+  // pass unwraps or clones them, so never keep any of it.
+  "template",
 ]);
 
 const IFRAME_HOSTNAMES = new Set([
@@ -204,8 +207,17 @@ export function enforceHtmlSafetyFloor(
   return floored;
 }
 
-export function isAllowedHtmlTag(name: string): boolean {
-  return ALLOWED_TAGS.has(name.toLowerCase());
+export function isAllowedHtmlTag(
+  name: string,
+  attribs?: Record<string, string>,
+): boolean {
+  const tag = name.toLowerCase();
+  if (tag === "input") {
+    // Only Markdown task-list checkboxes, rendered disabled (see
+    // sanitizeHtmlAttributes); every other input type is dropped.
+    return attribs?.type?.toLowerCase() === "checkbox";
+  }
+  return ALLOWED_TAGS.has(tag);
 }
 
 export function shouldDropHtmlTagContents(name: string): boolean {
@@ -258,6 +270,19 @@ export function sanitizeHtmlAttributes(
   urlTransform?: (url: string, tag?: string) => string | undefined,
 ): Record<string, string> {
   const tag = name.toLowerCase();
+  if (tag === "input") {
+    if (attribs?.type?.toLowerCase() !== "checkbox") {
+      return {};
+    }
+    const checkbox: Record<string, string> = {
+      type: "checkbox",
+      disabled: "",
+    };
+    if (attribs.checked != null) {
+      checkbox.checked = "";
+    }
+    return checkbox;
+  }
   const allowed = ALLOWED_ATTRIBUTES[tag];
   if (allowed == null || attribs == null) {
     return {};

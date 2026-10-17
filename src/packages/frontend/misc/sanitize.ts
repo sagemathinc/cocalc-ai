@@ -30,11 +30,7 @@ http://api.jquery.com/jQuery.parseHTML/ (expanded behavior in version 3+)
 */
 
 import { sanitize_html_attributes } from "@cocalc/util/misc";
-import {
-  enforceHtmlSafetyFloor,
-  isAllowedHtmlTag,
-  shouldDropHtmlTagContents,
-} from "@cocalc/frontend/components/sanitize-html";
+import { enforceHtmlSafetyFloor } from "@cocalc/frontend/components/sanitize-html";
 declare var jQuery: any;
 
 // This renderer only ever filtered attribute *values* for javascript:/vbscript:
@@ -79,42 +75,4 @@ export function sanitize_html(
 
 export function sanitize_html_safe(html: string, post_hook?: Function): string {
   return sanitize_html(html, false, false, post_hook);
-}
-
-// The strictest legacy path, for HTML that other people author (e.g. course
-// descriptions written in Markdown): only the central sanitizer's allowlisted
-// tags survive; script/style-like tags are dropped with their contents, other
-// tags are unwrapped (their text kept); then unsafe attributes and URLs are
-// removed as in sanitize_html_safe.
-export function sanitize_html_allowlist(html: string): string {
-  return sanitize_html(html, false, false, (sani) => {
-    // markdown_to_html emits math as <script type="math/tex">: show it as
-    // its TeX source instead of dropping it.
-    sani.find('script[type^="math/tex"]').each(function (this: any) {
-      const display = `${jQuery(this).attr("type")}`.includes("mode=display");
-      const tex = jQuery(this).text();
-      jQuery(this).replaceWith(
-        document.createTextNode(display ? `$$${tex}$$` : `$${tex}$`),
-      );
-    });
-    // Innermost first, so unwrapping a node never skips its descendants.
-    const nodes = sani.find("*").get().reverse();
-    for (const node of nodes) {
-      const name = `${node.tagName ?? ""}`.toLowerCase();
-      if (isAllowedHtmlTag(name)) continue;
-      // Markdown task-list items render as disabled checkboxes.
-      if (
-        name === "input" &&
-        `${jQuery(node).attr("type")}`.toLowerCase() === "checkbox"
-      ) {
-        jQuery(node).attr("disabled", "true");
-        continue;
-      }
-      if (shouldDropHtmlTagContents(name)) {
-        jQuery(node).remove();
-      } else {
-        jQuery(node).replaceWith(jQuery(node).contents());
-      }
-    }
-  });
 }
