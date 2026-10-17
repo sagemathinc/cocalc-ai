@@ -23,6 +23,7 @@ import { labels } from "@cocalc/frontend/i18n";
 // Sibling Libraries
 import { COLORS } from "@cocalc/util/theme";
 import { markdown_to_html } from "../index";
+import { sanitize_html_allowlist } from "@cocalc/frontend/misc/sanitize";
 import type { MarkdownWidgetActions } from "./actions";
 import * as info from "./info";
 import { init } from "./init";
@@ -153,7 +154,9 @@ export function MarkdownInput({
 
   function to_html() {
     if (default_value) {
-      const html = markdown_to_html(default_value);
+      // Course descriptions and similar are written by other people (e.g. a
+      // co-instructor): render only allowlisted, sanitized HTML.
+      const html = sanitize_html_allowlist(markdown_to_html(default_value));
       return { __html: html };
     } else {
       return { __html: "" };
