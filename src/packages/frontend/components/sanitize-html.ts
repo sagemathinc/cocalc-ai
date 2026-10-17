@@ -6,6 +6,8 @@
 import {
   applyUrlTransform,
   applyUrlTransformToSrcset,
+  parseSrcset,
+  serializeSrcset,
   type UrlTransform,
 } from "@cocalc/frontend/lib/url-transform";
 
@@ -241,12 +243,8 @@ export function isSafeHtmlUrl(value: string): boolean {
 }
 
 function sanitizeSrcset(value: string): string | undefined {
-  const candidates = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => isSafeHtmlUrl(part.split(/\s+/)[0] ?? ""));
-  return candidates.length > 0 ? candidates.join(", ") : undefined;
+  const candidates = parseSrcset(value).filter(({ url }) => isSafeHtmlUrl(url));
+  return candidates.length > 0 ? serializeSrcset(candidates) : undefined;
 }
 
 function isAllowedIframeSrc(value: string): boolean {

@@ -13,6 +13,7 @@ import {
   URL_REJECTED,
   applyUrlTransform,
   applyUrlTransformToSrcset,
+  parseSrcset,
 } from "./url-transform";
 
 describe("applyUrlTransform", () => {
@@ -135,5 +136,77 @@ describe("srcset", () => {
         throw Error("boom");
       }, "x"),
     ).toBeNull();
+  });
+});
+
+describe("srcset parsing", () => {
+  it("keeps commas inside URLs (data: URLs)", () => {
+    expect(
+      parseSrcset("data:image/png,https://e.example/x 1x, b.png 2x"),
+    ).toEqual([
+      { url: "data:image/png,https://e.example/x", descriptors: "1x" },
+      { url: "b.png", descriptors: "2x" },
+    ]);
+    expect(parseSrcset("a,b.png 1x")).toEqual([
+      { url: "a,b.png", descriptors: "1x" },
+    ]);
+  });
+
+  it("ends a URL at trailing commas and drops odd descriptors", () => {
+    expect(parseSrcset("a.png,b.png 2x")).toEqual([
+      { url: "a.png,b.png", descriptors: "2x" },
+    ]);
+    expect(parseSrcset("a.png, b.png 640w")).toEqual([
+      { url: "a.png", descriptors: "" },
+      { url: "b.png", descriptors: "640w" },
+    ]);
+    expect(parseSrcset("a.png (x,https://e.example/y) 1x")).toEqual([]);
+  });
+
+  it("a rejected data: candidate does not become a live one", () => {
+    const reject = (url: string) =>
+      url.startsWith("data:") ? URL_REJECTED : undefined;
+    expect(
+      applyUrlTransformToSrcset(
+        reject,
+        "data:image/png,https://e.example/x 1x",
+      ),
+    ).toBeNull();
+    expect(
+      sanitizeHtmlAttributes(
+        "img",
+        { srcset: "data:image/png,https://e.example/x 1x", alt: "a" },
+        reject,
+      ),
+    ).toEqual({ alt: "a" });
+  });
+
+  it("the central policy no longer splits data: URLs into candidates", () => {
+    // data: is not a safe image URL scheme here; the whole candidate goes.
+    expect(
+      sanitizeHtmlAttributes("img", {
+        srcset: "data:image/png,https://e.example/x 1x",
+        alt: "a",
+      }),
+    ).toEqual({ alt: "a" });
+  });
+
+  it("noSanitize rejects by tag, keeping untagged transforms otherwise", () => {
+    const html = renderToStaticMarkup(
+      <FileContext.Provider
+        value={{
+          noSanitize: true,
+          urlTransform: (url, tag) =>
+            tag === "img" ? URL_REJECTED : `/files/${url}`,
+        }}
+      >
+        <HTML
+          value={`<div><img src="https://e.example/a.png" srcset="https://e.example/b.png 1x" alt="probe"><video src="v.mp4"></video></div>`}
+        />
+      </FileContext.Provider>,
+    );
+    expect(html).not.toContain("e.example");
+    expect(html).toContain('alt="probe"');
+    expect(html).toContain('src="/files/v.mp4"');
   });
 });

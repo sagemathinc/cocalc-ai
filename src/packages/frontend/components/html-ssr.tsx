@@ -176,11 +176,17 @@ export default function HTML({
         for (const attrib of URL_ATTRIBS) {
           const value = attribs[attrib];
           if (value == null) continue;
-          // (Called without a tag here, as it always has been.)
-          const x =
-            attrib === "srcset"
-              ? applyUrlTransformToSrcset(urlTransform, value)
-              : applyUrlTransform(urlTransform, value);
+          // Rejection is decided with the element's tag (so, e.g., a transform
+          // that rejects all images works here too).  A URL that is not
+          // rejected is transformed without a tag, as it always has been here.
+          let x: string | null;
+          if (attrib === "srcset") {
+            x = applyUrlTransformToSrcset(urlTransform, value, name);
+          } else if (applyUrlTransform(urlTransform, value, name) == null) {
+            x = null;
+          } else {
+            x = applyUrlTransform(urlTransform, value);
+          }
           if (x === value) continue;
           transformed ??= { ...attribs };
           if (x == null) {
