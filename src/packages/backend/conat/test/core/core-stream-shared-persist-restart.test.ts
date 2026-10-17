@@ -14,6 +14,7 @@ import {
   before,
   after,
   connect,
+  delay,
   initConatServer,
   path,
   persistServer as initialPersistServer,
@@ -43,6 +44,9 @@ function openWhileDisconnected({
   let first;
   let second;
   let secondInit: Promise<void>;
+  let initListening = false;
+  const changes: any[] = [];
+  let readyBeforeInit = false;
   let startPersist: () => Promise<{ close }>;
   let persistServer;
   const name = `shared-restart-${Math.random()}`;
@@ -59,17 +63,36 @@ function openWhileDisconnected({
   }, 30_000);
 
   it("opens a second stream on the shared, already disconnected, persist client", async () => {
-    second = new CoreStream({ client, name });
+    expect(first.persistClient.getRecoveryState()).toBe("disconnected");
+    second = new CoreStream({
+      client,
+      name,
+      initPhaseReporter: (phase) => {
+        if (phase == "listen_started") {
+          initListening = true;
+        }
+      },
+    });
+    // init reads the existing history without emitting it, and only init
+    // reports ready.
+    second.on("change", ({ mesg }) => changes.push(mesg));
+    second.on("recovery-state", (state) => {
+      if (state == "ready" && !initListening) {
+        readyBeforeInit = true;
+      }
+    });
     secondInit = second.init();
     secondInit.catch(() => {});
     expect(second.persistClient).toBe(first.persistClient);
-    expect(second.persistClient.getRecoveryState()).toBe("disconnected");
     // The stream that saw the disconnect goes away before its recovery runs,
     // e.g. an editor that remounts after the reconnect.
     first.close();
   });
 
   it("starts a new persist server and the second stream finishes opening", async () => {
+    // Longer than the recovery scheduler's first delay, so a recovery
+    // started during init would run before init finishes.
+    await delay(1300);
     persistServer = await startPersist();
     let timer;
     await Promise.race([
@@ -81,8 +104,12 @@ function openWhileDisconnected({
         );
       }),
     ]).finally(() => clearTimeout(timer));
+    expect(readyBeforeInit).toBe(false);
+    expect(changes).toEqual([]);
+    expect(second.getAll()).toEqual(["before-restart"]);
     await second.publish("after-restart", { timeout: 5000 });
     await wait({ until: () => second.getAll().includes("after-restart") });
+    expect(changes).toEqual(["after-restart"]);
   }, 30_000);
 
   it("cleans up", async () => {
