@@ -364,30 +364,55 @@ describe("project-host browser origin policy", () => {
       ).toBeUndefined();
     });
 
-    it("allows only a user-activated top-level explicit download", () => {
-      const download = (headers: Record<string, string>, url: string) =>
+    it("allows top-level page navigations of apps and files, even without a Referer", () => {
+      const navigate = (url: string, headers: Record<string, string> = {}) =>
         ambientCookieRejection(
           {
             ...req({
-              "sec-fetch-site": "cross-site",
+              "sec-fetch-site": "same-site",
               "sec-fetch-mode": "navigate",
               "sec-fetch-dest": "document",
-              "sec-fetch-user": "?1",
               ...headers,
             }),
             url,
           },
-          "file",
+          classifyProjectRoute({ url } as any, project_id),
+          project_id,
         );
-      const file = `/${project_id}/files/a.html`;
-      expect(download({}, `${file}?download=1`)).toBeUndefined();
-      expect(download({}, file)).toBeDefined();
+      // The app opens JupyterLab with window.open(url, "_blank",
+      // "noopener,noreferrer"): no Origin, no Referer.
+      expect(navigate(`/${project_id}/port/6002/`)).toBeUndefined();
       expect(
-        download({ "sec-fetch-dest": "iframe" }, `${file}?download=1`),
-      ).toBeDefined();
+        navigate(`/${project_id}/port/6002/lab`, {
+          "sec-fetch-site": "cross-site",
+        }),
+      ).toBeUndefined();
+      expect(navigate(`/${project_id}/files/a.pdf`)).toBeUndefined();
+      // Frames, fetches and subresources from other pages stay refused.
+      for (const dest of ["iframe", "frame", "empty", "script", "image"]) {
+        expect(
+          navigate(`/${project_id}/port/6002/`, {
+            "sec-fetch-site": "cross-site",
+            "sec-fetch-mode":
+              dest == "iframe" || dest == "frame" ? "navigate" : "no-cors",
+            "sec-fetch-dest": dest,
+          }),
+        ).toBe("not from an approved page");
+      }
+      // Unsafe methods still need an approved Origin.
       expect(
-        download({ "sec-fetch-user": "" }, `${file}?download=1`),
-      ).toBeDefined();
+        ambientCookieRejection(
+          {
+            ...req(
+              { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+              "POST",
+            ),
+            url: `/${project_id}/port/6002/`,
+          },
+          "app",
+          project_id,
+        ),
+      ).toBe("no origin");
     });
 
     it("allows websockets without an origin (non-browser clients)", () => {
