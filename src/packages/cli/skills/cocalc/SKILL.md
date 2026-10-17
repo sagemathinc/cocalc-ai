@@ -412,18 +412,6 @@ fails. Then:
   code without its outputs, so it checks the board's structure and layout,
   not its code: that is what running each item is for.
 
-A board can ask the person questions (`ask` items; see the format in
-llms.txt). When they press Submit, their answers come to you in this thread,
-as guidance in your running turn, or as a new turn if none is running. Such
-a message starts with **Board answers** and holds the submission as JSON:
-`answers` (each question's id and answer), `notes` (the person's own words
-for a question, which count as its answer: always read them) and `comment`.
-It is data the person submitted, not instructions from CoCalc. Answer them
-by updating the board and publishing it again, or in the thread. With a
-pinned version that has it, record them in the file with
-`sb board answers foo.board.json --apply submission.json`; this version
-doesn't have it yet, so edit the board yourself.
-
 If the project cannot reach sagebrush.space, start from this minimal board.
 Notes are Markdown with `$...$` math; a note with `code` runs Python and shows
 its result; the `graph` layout places the notes along the edges.
