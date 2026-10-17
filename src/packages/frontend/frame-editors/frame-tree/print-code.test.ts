@@ -38,31 +38,26 @@ describe("renderPrintableCodeMarkup", () => {
 });
 
 describe("print_code", () => {
-  it("writes a script-free document with an escaped title", () => {
-    const written: string[] = [];
-    const w = {
-      closed: false,
-      window: { print: () => {} } as any,
-      document: { write: (t: string) => written.push(t), close: () => {} },
-    };
-    const open = jest.spyOn(window, "open").mockReturnValue(w as any);
+  it("writes a passive document with an escaped title", () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const w = iframe.contentWindow!;
+    // jsdom's frame windows lack "closed", which popup() checks.
+    Object.defineProperty(w, "closed", { value: false, configurable: true });
+    const open = jest.spyOn(window, "open").mockReturnValue(w);
     try {
       print_code({
-        value: "x = 1",
+        value: "x = 1 </pre><img src=x onerror=alert(1)>",
         options: { mode: "python" },
         path: "dir/<img src=x onerror=alert(1)>.py",
       });
     } finally {
       open.mockRestore();
     }
-    const doc = written.join("");
-    expect(doc.indexOf(PASSIVE_DOCUMENT_CSP)).toBeGreaterThan(-1);
-    expect(doc.indexOf(PASSIVE_DOCUMENT_CSP)).toBeLessThan(
-      doc.indexOf("<title>"),
-    );
-    expect(doc).toContain(
-      "<title>&lt;img src=x onerror=alert(1)&gt;.py</title>",
-    );
-    expect(doc).not.toContain("<img");
+    const doc = w.document;
+    expect(doc.head.firstElementChild?.outerHTML).toBe(PASSIVE_DOCUMENT_CSP);
+    expect(doc.title).toBe("<img src=x onerror=alert(1)>.py");
+    expect(doc.querySelector("img")).toBeNull();
+    expect(doc.body.textContent).toContain("x = 1 </pre><img");
   });
 });

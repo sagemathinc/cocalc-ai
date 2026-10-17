@@ -15,10 +15,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { React, Redux, redux } from "@cocalc/frontend/app-framework";
 import { BASE_URL } from "@cocalc/frontend/misc";
 import { resource_links_string } from "@cocalc/frontend/misc/resource-links";
-import {
-  PASSIVE_DOCUMENT_CSP,
-  escapeHtmlText,
-} from "@cocalc/frontend/misc/print-document";
+import { writePassiveDocument } from "@cocalc/frontend/misc/print-document";
 
 let BLOCKED: boolean | undefined = undefined;
 
@@ -103,25 +100,11 @@ function write_content(w, opts: PrintOptions): void {
   } else {
     html = opts.html;
   }
-  const title: string = path_split(opts.path).tail;
-  html = html_with_deps(html, title);
-  w.document.write(html);
-  w.document.close();
-}
-
-export function html_with_deps(html: string, title: string): string {
-  const links = resource_links_string(BASE_URL);
-  return `\
-<html lang="en">
-    <head>
-        ${PASSIVE_DOCUMENT_CSP}
-        <title>${escapeHtmlText(title)}</title>
-        <meta name="google" content="notranslate"/>
-        ${links}
-    </head>
-    <body style='margin:7%'>
-        ${html}
-    </body>
-</html>\
-`;
+  // The html is rendered content from documents other people can edit.
+  writePassiveDocument(w, {
+    title: path_split(opts.path).tail,
+    head: `<meta name="google" content="notranslate"/>${resource_links_string(BASE_URL)}`,
+    bodyStyle: "margin:7%",
+    body: html,
+  });
 }

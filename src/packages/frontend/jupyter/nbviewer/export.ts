@@ -23,23 +23,46 @@ import {
   escapeHtmlText,
 } from "@cocalc/frontend/misc/print-document";
 
-export default function exportToHTML({
-  title,
-  ipynb,
-  cocalcJupyter,
-  fontSize,
-  style,
-  passive,
-}: {
+interface Options {
   title?: string;
   ipynb?: string;
   cocalcJupyter?: CoCalcJupyter;
   fontSize?: number;
   style?: CSSProperties;
+}
+
+export default function exportToHTML({
+  passive,
+  ...opts
+}: Options & {
   // Block all scripts in the resulting document, e.g., for an untrusted
-  // notebook, whose HTML outputs are included unsanitized.
+  // notebook, whose HTML outputs are included unsanitized.  (To print in a
+  // same-origin popup use exportToHTMLParts with writePassiveDocument, which
+  // also removes navigation and frames.)
   passive?: boolean;
 }): string {
+  const { title, head, body } = exportToHTMLParts(opts);
+  return `<html>
+<head>
+${passive ? PASSIVE_DOCUMENT_CSP : ""}
+<title>${escapeHtmlText(title)}</title>
+${head}
+</head>
+<body>
+${body}
+</body>
+`;
+}
+
+// The document's title, trusted <head> markup (our stylesheets), and the
+// rendered notebook body.
+export function exportToHTMLParts({
+  title,
+  ipynb,
+  cocalcJupyter,
+  fontSize,
+  style,
+}: Options): { title: string; head: string; body: string } {
   let notebook;
   if (ipynb != null) {
     if (cocalcJupyter != null) {
@@ -77,20 +100,15 @@ export default function exportToHTML({
   let body = renderToString(element);
   const { codemirror, antd, katex } = getVersions();
 
-  return `<html>
-<head>
-${passive ? PASSIVE_DOCUMENT_CSP : ""}
-<title>${escapeHtmlText(title ?? "")}</title>
-<meta charset="utf-8" />
+  return {
+    title: title ?? "",
+    head: `<meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/${codemirror}/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${katex}/dist/katex.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@${antd}/dist/antd.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-</head>
-<body>
-${body}
-</body>
-`;
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@${antd}/dist/antd.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />`,
+    body,
+  };
 }
 
 // TODO regarding antd -- see https://github.com/sagemathinc/cocalc/issues/6305

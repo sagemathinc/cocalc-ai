@@ -59,7 +59,8 @@ import { WidgetManager } from "./widgets/manager";
 import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
-import exportToHTML from "./nbviewer/export";
+import exportToHTML, { exportToHTMLParts } from "./nbviewer/export";
+import { writePassiveDocument } from "@cocalc/frontend/misc/print-document";
 import { getExportKernelSpec } from "./export-kernelspec";
 import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
@@ -2974,7 +2975,7 @@ export class JupyterActions extends JupyterActions0 {
     }
   };
 
-  toHTML = async () => {
+  private toExportInput = async () => {
     const store = this.store;
     if (store?.get("cells") == null || store?.get("cell_list") == null) {
       throw Error("not loaded");
@@ -2995,13 +2996,13 @@ export class JupyterActions extends JupyterActions0 {
       kernelspec,
     };
     const { base: title } = parse(this.path);
-    // An untrusted notebook's HTML outputs are included as is, and the print
-    // popup has the app's origin, so block all scripts in the document.
-    return exportToHTML({
-      cocalcJupyter,
-      title,
-      passive: !store.get("trust"),
-    });
+    return { cocalcJupyter, title, passive: !store.get("trust") };
+  };
+
+  toHTML = async () => {
+    // An untrusted notebook's HTML outputs are included as is, so block all
+    // scripts in the document.
+    return exportToHTML(await this.toExportInput());
   };
 
   nbconvertToHtml = async (
@@ -3017,20 +3018,26 @@ export class JupyterActions extends JupyterActions0 {
         printWindow = window.open("", "_blank");
         if (printWindow == null) throw Error("failed to open popup window");
       }
-      const html = await this.toHTML();
+      const input = await this.toExportInput();
       if (this.isClosed()) {
         printWindow?.close();
         return;
       }
       if (format === "cocalc-html") {
-        downloadHTML(html, `${parse(this.path).name}.html`);
+        downloadHTML(exportToHTML(input), `${parse(this.path).name}.html`);
         this.setState({ nbconvert: { ...result, state: "done", error: "" } });
         return;
       }
       const popup = printWindow!;
       if (popup.closed) throw Error("Print window was closed. Please retry.");
-      popup.document.open();
-      popup.document.write(html);
+      if (input.passive) {
+        // Untrusted: the popup has the app's origin, so write it through the
+        // passive-document boundary (CSP, no navigation, no frames).
+        writePassiveDocument(popup, exportToHTMLParts(input));
+      } else {
+        popup.document.open();
+        popup.document.write(exportToHTML(input));
+      }
       let printing: Promise<void> | undefined;
       const print = () => {
         return (printing ??= (async () => {

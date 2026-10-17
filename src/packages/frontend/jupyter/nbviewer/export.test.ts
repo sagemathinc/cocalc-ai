@@ -4,7 +4,7 @@
  */
 
 import { PASSIVE_DOCUMENT_CSP } from "@cocalc/frontend/misc/print-document";
-import exportToHTML from "./export";
+import exportToHTML, { exportToHTMLParts } from "./export";
 
 const cocalcJupyter = {
   cells: {},
@@ -34,5 +34,13 @@ describe("exportToHTML", () => {
       title: "<img src=x onerror=1>.ipynb",
     });
     expect(html).toContain("<title>&lt;img src=x onerror=1&gt;.ipynb</title>");
+  });
+
+  it("returns parts for writePassiveDocument", () => {
+    const parts = exportToHTMLParts({ cocalcJupyter, title: "a.ipynb" });
+    expect(parts.title).toBe("a.ipynb");
+    expect(parts.head).toContain('rel="stylesheet"');
+    expect(parts.head).not.toContain("<title");
+    expect(parts.body).toContain("Python 3");
   });
 });
