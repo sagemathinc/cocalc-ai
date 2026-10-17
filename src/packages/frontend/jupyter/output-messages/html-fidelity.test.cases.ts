@@ -18,6 +18,10 @@ export const INLINE: [string, string][] = [
   ["classes and data attributes", '<div class="a" data-x="1">x</div>'],
   ["a body with only a class", '<body class="x"><p>x</p></body>'],
   [
+    "inline math in the head (html-ssr typesets it)",
+    '<head><script type="math/tex">x^2</script></head><body><p>body</p></body>',
+  ],
+  [
     "an empty head",
     "<html><head> <!-- c --> </head><body><p>x</p></body></html>",
   ],
@@ -52,8 +56,8 @@ export const FRAMED: [string, string][] = [
     "<!doctype html><html><head><title>t</title></head><body>x</body></html>",
   ],
   [
-    "inline math in the head (html-ssr drops the head)",
-    '<head><script type="math/tex">x^2</script></head><body><p>body</p></body>',
+    "a head with inline math and a stylesheet",
+    '<head><script type="math/tex">x^2</script><style>p{}</style></head><body><p>body</p></body>',
   ],
   ["a styled body", '<body style="color:rgb(255,0,0)"><p>red</p></body>'],
   ["a root attribute", '<html dir="rtl"><p>x</p></html>'],

@@ -58,6 +58,15 @@ describe("HTML output in static export", () => {
     expect(doc).not.toContain("onclick");
   });
 
+  it("typesets inline math from the head", () => {
+    const doc = exportOutputs(
+      '<head><script type="math/tex">x^2</script></head><body><p>body</p></body>',
+    );
+    expect(iframes(doc)).toBe(0);
+    expect(doc).toContain('class="katex"');
+    expect(doc).toContain("<p>body</p>");
+  });
+
   it("frames isolated output, and the document sizes its frames", () => {
     const doc = exportOutputs(
       '<div id="p"></div><script>window.PLOTLYENV = {};</script>',

@@ -59,14 +59,13 @@ describe("HtmlOutput", () => {
     expect(container.querySelector("span, style, img, script, p")).toBeNull();
   });
 
-  it("frames head content that the inline renderer would drop", () => {
-    // html-ssr drops <head> with everything in it, inline math included
+  it("typesets inline math from the head, inline", () => {
     const html =
       '<head><script type="math/tex">x^2</script></head><body><p>body</p></body>';
     const { container } = renderTrusted(<HtmlOutput value={html} />);
-    const [frame] = frames(container);
-    expect(frame.getAttribute("srcdoc")).toContain("x^2");
-    expect(container.querySelector("p")).toBeNull();
+    expect(frames(container)).toHaveLength(0);
+    expect(container.querySelector(".katex")).not.toBeNull();
+    expect(container.querySelector("p")?.textContent).toBe("body");
   });
 
   it("renders blob-stored HTML the same way, trusted or not", () => {

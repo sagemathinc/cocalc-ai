@@ -111,6 +111,9 @@ try {
     3: html(ESCAPE),
     4: html(TOKEN("<head>")),
     5: html(TOKEN("</body>")),
+    6: html(
+      '<head><script type="math/tex">x^2</script></head><body><p>head-math-body</p></body>',
+    ),
   });
 
   // 1. Faithful HTML is inline and sanitized (class and id dropped), even in
@@ -267,6 +270,17 @@ try {
     },
   );
   assert.equal(await page.title(), "app");
+
+  // Inline math from a head is typeset, inline (not in a frame).
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll("#cell p")].some(
+      (p) => p.textContent === "head-math-body",
+    ),
+  );
+  assert.ok(
+    (await page.locator("#cell .katex").count()) >= 1,
+    "head math typeset in the page",
+  );
 
   // 7. Script content containing "<head>" or "</body>" runs intact.
   for (const i of [3, 4]) {
