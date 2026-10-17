@@ -116,7 +116,12 @@ try {
         ({ svg, mode }) => {
           const root = document.getElementById("root");
           if (mode === "raw") {
-            root.innerHTML = svg;
+            // Parse the raw SVG the way innerHTML would, without a sink.
+            const parsed = new DOMParser().parseFromString(
+              `<body>${svg}`,
+              "text/html",
+            ).body.firstElementChild;
+            root.replaceChildren(document.importNode(parsed, true));
           } else {
             root.replaceChildren(policy.sanitizeMermaidSvg(svg));
           }
