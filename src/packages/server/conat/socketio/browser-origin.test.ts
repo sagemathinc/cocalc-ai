@@ -4,6 +4,7 @@ import {
   cookieOriginRejection,
   parseOrigin,
   resetApprovedOriginsForTests,
+  resetPendingForTests,
 } from "./browser-origin";
 
 const siteMock = jest.fn(async () => "https://cocalc.example");
@@ -97,6 +98,45 @@ describe("hub conat cookie origin policy", () => {
       "project-secret-cookie",
     ] as const) {
       await expect(assertCookieOrigin({}, credential)).resolves.toBeUndefined();
+    }
+  });
+
+  it("abandons a timed-out lookup so the next one can recover", async () => {
+    const hang = jest.fn(() => new Promise<Set<string>>(() => {}));
+    await expect(
+      approvedOrigins({ load: hang, timeoutMs: 10 }),
+    ).rejects.toThrow("timed out");
+    const ok = jest.fn(async () => new Set(["https://cocalc.example"]));
+    await expect(approvedOrigins({ load: ok, timeoutMs: 10 })).resolves.toEqual(
+      new Set(["https://cocalc.example"]),
+    );
+    expect(ok).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves a stale list without waiting and refreshes it in the background", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+    try {
+      jest.setSystemTime(new Date("2026-10-17T00:00:00Z"));
+      await approvedOrigins({
+        load: async () => new Set(["https://old.example"]),
+      });
+      // 2 minutes later the list is stale but usable.
+      jest.setSystemTime(new Date("2026-10-17T00:02:00Z"));
+      const hang = jest.fn(() => new Promise<Set<string>>(() => {}));
+      await expect(
+        approvedOrigins({ load: hang, timeoutMs: 50 }),
+      ).resolves.toEqual(new Set(["https://old.example"]));
+      expect(hang).toHaveBeenCalledTimes(1);
+      // A removed origin is not approved forever: after 10 minutes the old
+      // list is no longer used.
+      jest.setSystemTime(new Date("2026-10-17T00:11:00Z"));
+      resetPendingForTests();
+      const fresh = jest.fn(async () => new Set(["https://new.example"]));
+      await expect(approvedOrigins({ load: fresh })).resolves.toEqual(
+        new Set(["https://new.example"]),
+      );
+    } finally {
+      jest.useRealTimers();
     }
   });
 

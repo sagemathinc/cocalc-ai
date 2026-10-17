@@ -83,6 +83,8 @@ function header(headers: any, name: string): string {
 }
 
 const CACHE_MS = 60_000;
+// A list older than this is not used, even when a refresh fails.
+const MAX_STALE_MS = 10 * 60_000;
 const LOOKUP_TIMEOUT_MS = 2_000;
 let cached: { origins: Set<string>; at: number } | undefined;
 let pending: Promise<Set<string>> | undefined;
@@ -125,8 +127,35 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// The approved origins: cached, bounded in time, and the last complete list
-// on failure. Throws only if no list has ever been loaded.
+// Start (or join) a refresh. A refresh that does not finish within the
+// timeout is abandoned, so the next call starts a fresh one instead of
+// waiting on a lookup that may never finish.
+function refresh(
+  load: () => Promise<Set<string>>,
+  timeoutMs: number,
+): Promise<Set<string>> {
+  if (pending == null) {
+    const attempt = withTimeout(load(), timeoutMs).then((origins) => {
+      cached = { origins, at: Date.now() };
+      return origins;
+    });
+    pending = attempt;
+    attempt.then(
+      () => {
+        if (pending === attempt) pending = undefined;
+      },
+      () => {
+        if (pending === attempt) pending = undefined;
+      },
+    );
+  }
+  return pending;
+}
+
+// The approved origins, from a cache refreshed every minute. While a list
+// less than 10 minutes old exists, connections never wait: the stale list
+// is used and refreshed in the background. Without a usable list, wait for
+// a bounded refresh and throw if it fails.
 export async function approvedOrigins({
   load = loadConfiguredOrigins,
   timeoutMs = LOOKUP_TIMEOUT_MS,
@@ -135,28 +164,27 @@ export async function approvedOrigins({
   timeoutMs?: number;
 } = {}): Promise<Set<string>> {
   const now = Date.now();
-  if (cached != null && now - cached.at < CACHE_MS) return cached.origins;
-  // One lookup at a time; concurrent connections share it.
-  pending ??= load().finally(() => {
-    pending = undefined;
-  });
-  try {
-    const origins = await withTimeout(pending, timeoutMs);
-    cached = { origins, at: Date.now() };
-    return origins;
-  } catch (err) {
-    if (cached != null) {
-      logger.warn("approved origin lookup failed; using the last list", {
-        err: `${err}`,
-      });
+  if (cached != null) {
+    const age = now - cached.at;
+    if (age < CACHE_MS) return cached.origins;
+    if (age < MAX_STALE_MS) {
+      refresh(load, timeoutMs).catch((err) =>
+        logger.warn("approved origin refresh failed; using the last list", {
+          err: `${err}`,
+        }),
+      );
       return cached.origins;
     }
-    throw err;
   }
+  return await refresh(load, timeoutMs);
 }
 
 export function resetApprovedOriginsForTests(): void {
   cached = undefined;
+  pending = undefined;
+}
+
+export function resetPendingForTests(): void {
   pending = undefined;
 }
 
