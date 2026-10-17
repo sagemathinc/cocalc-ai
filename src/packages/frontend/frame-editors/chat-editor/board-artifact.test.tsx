@@ -17,8 +17,23 @@ const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
 const actions = { fs: () => ({ stat, readFile }), open_file };
+const PROJECT = "22222222-2222-4222-8222-222222222222";
 jest.mock("@cocalc/frontend/project/context", () => ({
-  useProjectContext: () => ({ actions }),
+  useProjectContext: () => ({ actions, project_id: PROJECT }),
+}));
+let mockDecideEnabled: boolean | undefined = undefined;
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...jest.requireActual("@cocalc/frontend/app-framework"),
+  useTypedRedux: (store: string, key: string) =>
+    store === "customize" && key === "board_decide_enabled"
+      ? mockDecideEnabled
+      : undefined,
+}));
+const boardDecide = jest.fn();
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: { hub: { system: { boardDecide: (o) => boardDecide(o) } } },
+  },
 }));
 
 const FRAME = "https://sagebrush.test/frame/board/";
@@ -26,6 +41,21 @@ const PATH = "/home/user/overnight.board.json";
 const TITLE = "Sagebrush board: overnight.board.json";
 const TEXT = '{"format":"sagebrush-board","version":1}';
 const READY = { sagebrush: "ready", version: 1 };
+
+// jsdom has no crypto.subtle; a secure browser context does.
+function withSubtle() {
+  const real = Object.getOwnPropertyDescriptor(globalThis.crypto, "subtle");
+  beforeAll(() => {
+    Object.defineProperty(globalThis.crypto, "subtle", {
+      configurable: true,
+      value: require("crypto").webcrypto.subtle,
+    });
+  });
+  afterAll(() => {
+    if (real) Object.defineProperty(globalThis.crypto, "subtle", real);
+    else delete (globalThis.crypto as any).subtle;
+  });
+}
 
 // The frame is mounted once the file has been read.
 function watch(frame: HTMLIFrameElement) {
@@ -56,6 +86,7 @@ function fromFrame(frame: HTMLIFrameElement | Window | null, data: unknown) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDecideEnabled = undefined;
   stat.mockResolvedValue({ size: 100 });
   readFile.mockResolvedValue(TEXT);
 });
@@ -344,5 +375,68 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
     expect(frame.getAttribute("src")).toBe(FRAME);
     fromFrame(frame, { ...READY, nonce: "anything" });
     expect(posted.mock.calls[0][2]).toBeUndefined();
+  });
+
+  describe("deciding (board-host-protocol.md, Deciding)", () => {
+    withSubtle();
+    const DECIDE = {
+      sagebrush: "decide",
+      version: 1,
+      id: "6b1f0c1e-2d3a-4f5b-8c7d-9e0f1a2b3c4d",
+      name: "overnight.board.json",
+      revision: "pub-1",
+      page: { number: 1 },
+      item: "q",
+      note: "it is prime",
+    };
+    async function port() {
+      const { frame, posted, nonce } = await renderAnswering();
+      fromFrame(frame, { ...READY, nonce });
+      return posted.mock.calls[0][2][0];
+    }
+
+    test("goes only to the hub, with the board this card posted", async () => {
+      mockDecideEnabled = true;
+      boardDecide.mockResolvedValue({ id: DECIDE.id, option: "prime" });
+      const p = await port();
+      const forged = {
+        ...DECIDE,
+        revision: "pub-0",
+        prompt: "other",
+        options: [{ name: "x" }],
+      };
+      expect(await replyOn(p, forged)).toEqual({
+        sagebrush: "decided",
+        version: 1,
+        id: DECIDE.id,
+        option: "prime",
+      });
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(TEXT),
+      );
+      const sha256 = Array.from(new Uint8Array(digest), (b) =>
+        b.toString(16).padStart(2, "0"),
+      ).join("");
+      expect(boardDecide).toHaveBeenCalledTimes(1);
+      expect(boardDecide.mock.calls[0][0]).toMatchObject({
+        project_id: PROJECT,
+        path: PATH,
+        revision: "pub-1", // the card's, not the message's
+        sha256,
+        message: forged,
+      });
+      expect(deliver).not.toHaveBeenCalled();
+    });
+
+    test("where the site doesn't check answers, it is refused without a call", async () => {
+      const p = await port();
+      expect(await replyOn(p, DECIDE)).toMatchObject({
+        sagebrush: "refused",
+        id: DECIDE.id,
+      });
+      expect(boardDecide).not.toHaveBeenCalled();
+      expect(deliver).not.toHaveBeenCalled();
+    });
   });
 });

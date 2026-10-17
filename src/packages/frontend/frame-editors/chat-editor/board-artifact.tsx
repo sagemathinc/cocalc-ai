@@ -27,6 +27,12 @@ user's submissions arrive only on that port (board-answers-channel.ts). A
 second load closes the channel. A frame without the nonce gets the board
 with no port, and so shows no Submit.
 
+Where the site checks answers with a model (board_decide_enabled), the same
+port also takes the frame's "decide" requests, sent only to the hub with the
+board this card posted: its path, revision and the SHA-256 of its text
+(board-decide-card.ts, computed only then, so showing a board never needs
+it). They go to no agent.
+
 The frame has an opaque origin, so posts to it use "*". Showing a board sends
 its complete text and name to the configured origin, as the card says. Edits
 in the frame stay there: the file is not changed.
@@ -38,6 +44,7 @@ import { Alert, Button, Space } from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { boardPostedName } from "@cocalc/util/sagebrush-board";
 import type { FileArtifactAction } from "./file-artifact";
 import {
@@ -48,6 +55,7 @@ import {
   openAnswersChannel,
   type DeliverBoardAnswers,
 } from "./board-answers-channel";
+import { boardDecider } from "./board-decide-card";
 
 export default function BoardArtifact({
   path,
@@ -68,7 +76,11 @@ export default function BoardArtifact({
   revision?: string | null;
 }) {
   const compact = onToolbarActions !== undefined;
-  const { actions } = useProjectContext();
+  const { actions, project_id } = useProjectContext();
+  const decideEnabled =
+    useTypedRedux("customize", "board_decide_enabled") === true;
+  const decideEnabledRef = useRef(decideEnabled);
+  decideEnabledRef.current = decideEnabled;
   const frameRef = useRef<HTMLIFrameElement>(null);
   // The text read for one frame: `id` is that frame's key, `nonce` the
   // secret in its address that only the document it loads first has.
@@ -176,6 +188,15 @@ export default function BoardArtifact({
             posted,
             deliver,
             isCurrentRevision: (r) => r === revisionRef.current,
+            decide:
+              decideEnabledRef.current && project_id
+                ? boardDecider({
+                    project_id,
+                    path,
+                    revision: current.revision,
+                    text: current.text,
+                  })
+                : undefined,
           });
           frame.postMessage(
             { sagebrush: "board", version: 1, ...posted },

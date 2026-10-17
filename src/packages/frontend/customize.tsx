@@ -154,6 +154,7 @@ export interface CustomizeState {
   site_name: string;
   status_page_url: string;
   sagebrush_origin?: string;
+  board_decide_enabled?: boolean;
   splash_image: string;
   terms_of_service: string;
   terms_of_service_url: string;
