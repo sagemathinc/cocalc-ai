@@ -6,6 +6,7 @@
 import http from "node:http";
 import { once } from "node:events";
 import { connect } from "node:net";
+import { PassThrough } from "node:stream";
 import type { AddressInfo, Server } from "node:net";
 import express from "express";
 import { attachProjectProxy, createProxyHandlers } from "./proxy";
@@ -249,6 +250,125 @@ describe("project proxy upstream boundary metering", () => {
       await closeServer(server);
       await closeServer(upstream);
     }
+  });
+
+  // 2026-10-16: an upgrade socket reset while its route was being resolved
+  // raised an uncaught ECONNRESET that killed the project-host router.
+  it.each(["createProxyHandlers", "attachProjectProxy"])(
+    "survives a client reset while %s resolves an upgrade route",
+    async (mode) => {
+      let release!: () => void;
+      const routeGate = new Promise<void>((done) => {
+        release = done;
+      });
+      let routeRequested!: () => void;
+      const requested = new Promise<void>((done) => {
+        routeRequested = done;
+      });
+      // A real upstream: a late proxy.ws would open (and leak) a connection.
+      let upstreamUpgrades = 0;
+      const upstream = http.createServer();
+      upstream.on("upgrade", (_req, socket) => {
+        upstreamUpgrades += 1;
+        socket.destroy();
+      });
+      upstream.listen(0, "127.0.0.1");
+      await once(upstream, "listening");
+      const resolveTarget = async () => {
+        routeRequested();
+        await routeGate;
+        return {
+          handled: true,
+          target: {
+            host: "127.0.0.1",
+            port: (upstream.address() as AddressInfo).port,
+          },
+        };
+      };
+      const app = express();
+      const server = http.createServer(app);
+      // Upgrade listeners (egress tracking) must not attach after close.
+      const onUpgradeAuthorized = jest.fn();
+      if (mode === "createProxyHandlers") {
+        const { handleUpgrade } = createProxyHandlers({
+          resolveTarget,
+          onUpgradeAuthorized,
+        });
+        server.on("upgrade", (req, socket, head) => {
+          void handleUpgrade(req, socket as any, head);
+        });
+      } else {
+        attachProjectProxy({
+          httpServer: server,
+          app,
+          resolveTarget,
+          onUpgradeAuthorized,
+        });
+      }
+      const serverSockets: Array<import("node:stream").Duplex> = [];
+      server.prependListener("upgrade", (_req, socket) =>
+        serverSockets.push(socket),
+      );
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const client = connect({ host: "127.0.0.1", port });
+        client.on("error", () => {});
+        await once(client, "connect");
+        client.write(
+          `GET /${PROJECT_ID}/port/9999/ HTTP/1.1\r\n` +
+            "Host: 127.0.0.1\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Upgrade: websocket\r\n\r\n",
+        );
+        await requested;
+        // Not events.once: it would reject on the very "error" under test.
+        const closed = new Promise((done) =>
+          serverSockets[0].once("close", done),
+        );
+        client.resetAndDestroy();
+        await closed;
+        release();
+        await new Promise((done) => setTimeout(done, 100));
+        expect(upstreamUpgrades).toBe(0);
+        expect(onUpgradeAuthorized).not.toHaveBeenCalled();
+        // Still serving.
+        const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+        await response.text();
+        expect(response.status).toBeGreaterThan(0);
+      } finally {
+        release();
+        server.closeAllConnections();
+        await closeServer(server);
+        await closeServer(upstream);
+      }
+    },
+  );
+
+  it("contains a failing upgrade rewrite instead of rejecting the listener", async () => {
+    const app = express();
+    const server = http.createServer(app);
+    const { handleUpgrade } = attachProjectProxy({
+      httpServer: server,
+      app,
+      rewriteRequest: async () => {
+        throw new Error("rewrite failed");
+      },
+      resolveTarget: async () => ({ handled: false }),
+    });
+    const socket = new PassThrough();
+    const req = {
+      url: `/${PROJECT_ID}/port/9999/`,
+      headers: {},
+    } as http.IncomingMessage;
+    // An async "upgrade" listener's rejection is unhandled and, by Node's
+    // default policy, exits the process.
+    await expect(
+      handleUpgrade(req, socket, Buffer.alloc(0)),
+    ).resolves.toBeUndefined();
+    // Not left open: an upgraded socket has no HTTP timeout.
+    expect(socket.destroyed).toBe(true);
   });
 
   it("attaches websocket upgrades to every ingress listener", async () => {

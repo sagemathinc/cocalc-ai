@@ -6,6 +6,7 @@
 import { once } from "node:events";
 import { connect, type AddressInfo } from "node:net";
 import http from "node:http";
+import { PassThrough } from "node:stream";
 import express from "express";
 import {
   attachProjectHostHttpFallbackProxy,
@@ -524,6 +525,30 @@ describe("project-host conat router helpers", () => {
     });
     expect(servers[0].listenerCount("upgrade")).toBe(1);
     expect(servers[1].listenerCount("upgrade")).toBe(1);
+  });
+
+  it("closes an ingress upgrade whose rewrite fails instead of rejecting", async () => {
+    const app = express();
+    const server = http.createServer(app);
+    attachProjectHostConatRouterProxy({
+      app,
+      httpServer: server,
+      target: "http://127.0.0.1:9999",
+      rewriteIngressRequest: async () => {
+        throw new TypeError("Invalid URL");
+      },
+    });
+    const [listener] = server.listeners("upgrade") as Array<
+      (req: unknown, socket: PassThrough, head: Buffer) => Promise<void>
+    >;
+    const socket = new PassThrough();
+    // An async "upgrade" listener's rejection is unhandled and, by Node's
+    // default policy, exits the process; an open upgraded socket has no
+    // HTTP timeout and would leak.
+    await expect(
+      listener({ url: "/conat/", headers: {} }, socket, Buffer.alloc(0)),
+    ).resolves.toBeUndefined();
+    expect(socket.destroyed).toBe(true);
   });
 
   it("attaches fallback upgrades to every ingress listener", () => {
