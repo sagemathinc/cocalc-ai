@@ -77,6 +77,11 @@ describe("saveToDiskWithFileServerRetry", () => {
       .fn()
       .mockRejectedValueOnce(new Error("socket has been disconnected"))
       .mockRejectedValueOnce(new Error("disconnected"))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("request reply inbox was replaced or closed"), {
+          code: "CONNECTION_LOST",
+        }),
+      )
       .mockResolvedValueOnce(undefined);
     const wait = jest.fn(async () => undefined);
 
@@ -86,7 +91,7 @@ describe("saveToDiskWithFileServerRetry", () => {
       wait,
     });
 
-    expect(save).toHaveBeenCalledTimes(3);
+    expect(save).toHaveBeenCalledTimes(4);
   });
 
   it("recognizes connection drops but not other failures", () => {
@@ -105,5 +110,13 @@ describe("saveToDiskWithFileServerRetry", () => {
     expect(
       isTransientDisconnectSaveError(new Error("disk quota exceeded")),
     ).toBe(false);
+    // conat's structured code, whatever the message
+    const lost = Object.assign(
+      new Error("request reply inbox was replaced or closed"),
+      { code: "CONNECTION_LOST" },
+    );
+    expect(isTransientDisconnectSaveError(lost)).toBe(true);
+    const other = Object.assign(new Error("not found"), { code: "ENOENT" });
+    expect(isTransientDisconnectSaveError(other)).toBe(false);
   });
 });

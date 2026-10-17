@@ -98,6 +98,11 @@ export function isFileServerNotInitializedError(err: unknown): boolean {
 // uninitialized file server: the connection is usually back within seconds,
 // and showing "Error saving file to disk" for that is alarming and wrong.
 export function isTransientDisconnectSaveError(err: unknown): boolean {
+  // conat's structured code when a request's reply inbox was lost with the
+  // connection (the message is "request reply inbox was replaced or closed")
+  if ((err as { code?: unknown })?.code === "CONNECTION_LOST") {
+    return true;
+  }
   const message = (
     typeof err === "string"
       ? err
