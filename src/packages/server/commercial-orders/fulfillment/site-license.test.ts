@@ -541,6 +541,34 @@ describe("commercial site-license fulfillment", () => {
     );
   });
 
+  it("previews linking the license already stored on a complete paid order", async () => {
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({
+        workflow_state: "complete",
+        site_license_id: "sl_1",
+        terms_snapshot: {},
+      }),
+    );
+    mockGetSiteLicenseOverview.mockResolvedValue(matchingOverview());
+
+    await expect(
+      commercialFulfillmentPreview({
+        id: "co_1",
+        account_id: "admin-1",
+        existing_site_license_id: "sl_1",
+        reason: "Review linking the imported license",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        site_license_id: "sl_1",
+        ready: true,
+        blockers: [],
+        planned_changes: ["commercial-order-association"],
+      }),
+    );
+    expect(mockReserveCommercialProviderOperation).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["without naming it", undefined, "cannot be provisioned"],
     ["naming a different license", "sl_2", "cannot be provisioned"],
