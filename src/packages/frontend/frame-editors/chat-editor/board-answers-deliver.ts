@@ -12,7 +12,13 @@
 // The message id is derived from the thread and the submission id, so the
 // submission id is the delivery's idempotency key in the chat document
 // itself: sending again, after a reload or from another tab, finds the same
-// message and starts nothing new.
+// message and writes nothing new.
+//
+// "Received" means the agent took it, not only that the row was saved: the
+// row is written without dispatch, saved, then dispatched, and delivery
+// waits for the hub to admit it (as guidance or a turn). A submission sent
+// again whose message wasn't admitted is dispatched again; the hub admits a
+// user message once, by its id (astra2, CORR-D1-1).
 
 import { BoardAnswersRefusal } from "./board-answers-channel";
 import type { Submission } from "./board-answers-check";
@@ -33,8 +39,19 @@ export interface BoardAnswersChat {
     chatIdentity: { date: string; message_id: string; thread_id: string };
     preserveSelectedThread?: boolean;
     skipDraftDelete?: boolean;
+    skipModelDispatch?: boolean;
   }): string;
+  /** Dispatch a written message; resolves once the agent admitted it or
+   * definitely didn't. */
+  dispatchChatMessage(messageId: string): Promise<void>;
+  getAcpMessageState(messageId: string): string | undefined;
   syncdb?: { save(): Promise<unknown> } | null;
+}
+
+/** Whether the agent has the message: anything but still sending or not
+ * sent (a message nothing dispatched stays "sending"). */
+function admitted(state: string | undefined): boolean {
+  return state !== "sending" && state !== "not-sent";
 }
 
 // A fixed namespace for these ids (RFC 9562 version 5).
@@ -83,6 +100,25 @@ function fenceFor(text: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
+// What chat reads in a message's text as more than words: "@codex" and
+// "openai-codex-agent" pick the model and are cut from the prompt, and
+// <span class="user-mention" ...> notifies people. In the JSON these only
+// occur inside strings, where \uXXXX escapes leave the data exactly as it
+// was (JSON.parse gives the same submission) but match none of them
+// (astra2, CORR-D1-2).
+const MEANINGFUL = /[@<>]|openai-codex-agent/gi;
+
+function escapeChar(c: string): string {
+  return `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`;
+}
+
+/** JSON for `value` in which chat finds no mention or model. */
+export function inertJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(MEANINGFUL, (m) =>
+    m.length === 1 ? escapeChar(m) : escapeChar(m[0]) + m.slice(1),
+  );
+}
+
 /** The message: a fixed header in CoCalc's words, then the submission as
  * data. Nothing in it is an instruction from CoCalc. */
 export function formatBoardAnswers({
@@ -94,8 +130,10 @@ export function formatBoardAnswers({
   file?: string;
   stale: boolean;
 }): string {
-  const where = file ? ` on \`${file.replace(/`/g, "")}\`` : "";
-  const json = JSON.stringify(submission, null, 2);
+  // The file's name too can't mention anyone or pick a model.
+  const name = file?.replace(/`/g, "");
+  const where = name && !name.match(MEANINGFUL) ? ` on \`${name}\`` : "";
+  const json = inertJson(submission);
   const fence = fenceFor(json);
   const lines = [
     `**Board answers**${where}, page ${submission.page.number}.`,
@@ -157,7 +195,8 @@ async function deliverOnce(
       "Not sent: the board's conversation isn't available. Reopen it and try again.",
     );
   }
-  if (chat.getMessageById(messageId) == null) {
+  const existing = chat.getMessageById(messageId) != null;
+  if (!existing) {
     const reserved = chat.reserveChatSendIdentity({
       reply_thread_id: threadId,
     });
@@ -173,6 +212,8 @@ async function deliverOnce(
       // The user is looking at the board: don't move them, or touch their draft.
       preserveSelectedThread: true,
       skipDraftDelete: true,
+      // Dispatched below, where delivery can wait for it.
+      skipModelDispatch: true,
     });
     if (!sent) {
       throw new BoardAnswersRefusal(
@@ -180,12 +221,17 @@ async function deliverOnce(
       );
     }
   }
-  // Durable once the chat document is saved: a repeat of this submission
-  // (same id) waits for the same save before it is told "received".
   if (!chat.syncdb) {
     throw new BoardAnswersRefusal(
       "Not sent: the chat isn't open. Try again in a moment.",
     );
   }
   await chat.syncdb.save();
+  if (existing && admitted(chat.getAcpMessageState(messageId))) return;
+  await chat.dispatchChatMessage(messageId);
+  if (!admitted(chat.getAcpMessageState(messageId))) {
+    throw new BoardAnswersRefusal(
+      "Not sent: the agent didn't take your answers. Try again.",
+    );
+  }
 }

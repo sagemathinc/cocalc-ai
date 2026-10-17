@@ -3491,6 +3491,36 @@ export class ChatActions extends Actions<ChatState> {
     });
   };
 
+  // Dispatch a message already written with sendChat({ skipModelDispatch }),
+  // resolving only once the agent has admitted it or definitely not (see
+  // getAcpMessageState). The hub admits a user message once, by message_id,
+  // so dispatching one again is safe.
+  dispatchChatMessage = async (messageId: string): Promise<void> => {
+    const raw = this.getMessageById(messageId);
+    if (raw == null) return;
+    const obj = this.toImmutableRecord(raw);
+    const { message } = normalizeChatMessage(
+      (obj.toJS?.() ?? obj) as ChatMessage,
+    );
+    if (message == null) return;
+    await this.processAI({
+      message,
+      acpSendMode:
+        field<string>(message, "acp_send_mode") === "immediate"
+          ? "immediate"
+          : undefined,
+    });
+  };
+
+  /** A message's agent state: "sending" or "not-sent" until the agent has
+   * admitted it; then "queue", "sent", "running", or none. */
+  getAcpMessageState = (messageId: string): string | undefined => {
+    const local = this.store?.get("acpState")?.get?.(`message:${messageId}`);
+    if (typeof local === "string" && local) return local;
+    const state = field<string>(this.getMessageById(messageId), "acp_state");
+    return typeof state === "string" && state ? state : undefined;
+  };
+
   showTimeTravelInNewTab = () => {
     const store = this.store;
     if (store == null) return;

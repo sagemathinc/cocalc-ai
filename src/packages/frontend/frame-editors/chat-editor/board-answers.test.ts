@@ -219,9 +219,16 @@ describe("delivery", () => {
     comment: "",
   };
 
+  // A chat whose dispatch ends in `outcome` (the message's agent state):
+  // "sent" when the agent took it, "not-sent" when the hub refused it,
+  // "sending" when nothing dispatched it.
   function fakeChat() {
     const messages = new Map<string, string>();
+    const states = new Map<string, string | undefined>();
+    let outcome: string | undefined = "sent";
     const chat = {
+      setOutcome: (s: string | undefined) => (outcome = s),
+      states,
       getMessagesInThread: jest.fn(() => [{}]),
       getMessageById: jest.fn((id?: string) =>
         id ? messages.get(id) : undefined,
@@ -233,8 +240,13 @@ describe("delivery", () => {
       })),
       sendChat: jest.fn((opts: any) => {
         messages.set(opts.chatIdentity.message_id, opts.input);
+        states.set(opts.chatIdentity.message_id, "sending");
         return opts.chatIdentity.date;
       }),
+      dispatchChatMessage: jest.fn(async (id: string) => {
+        states.set(id, outcome);
+      }),
+      getAcpMessageState: jest.fn((id: string) => states.get(id)),
       syncdb: { save: jest.fn().mockResolvedValue(undefined) },
     };
     return { chat, messages };
@@ -263,6 +275,7 @@ describe("delivery", () => {
     });
     expect(chat.sendChat).toHaveBeenCalledTimes(1);
     expect(chat.syncdb.save).toHaveBeenCalledTimes(2); // each waits for the save
+    expect(chat.dispatchChatMessage).toHaveBeenCalledTimes(1); // admitted once
     const id = await boardAnswersMessageId("thread-1", ID);
     expect([...messages.keys()]).toEqual([id]);
     const opts = chat.sendChat.mock.calls[0][0];
@@ -271,8 +284,70 @@ describe("delivery", () => {
       send_mode: "immediate",
       preserveSelectedThread: true,
       skipDraftDelete: true,
+      skipModelDispatch: true,
       chatIdentity: { message_id: id, thread_id: "thread-1" },
     });
+  });
+
+  test("received only once the agent took it (CORR-D1-1)", async () => {
+    const { chat } = fakeChat();
+    let admit!: () => void;
+    chat.dispatchChatMessage.mockImplementationOnce(
+      (id: string) =>
+        new Promise<void>((r) => {
+          admit = () => {
+            chat.states.set(id, "queue");
+            r();
+          };
+        }),
+    );
+    let done = false;
+    const delivery = deliverBoardAnswers({
+      chat,
+      threadId: "thread-1",
+      submission,
+      stale: false,
+    }).then(() => (done = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(chat.syncdb.save).toHaveBeenCalledTimes(1);
+    expect(chat.dispatchChatMessage).toHaveBeenCalledTimes(1);
+    expect(done).toBe(false); // saved, but not yet admitted
+    admit();
+    await delivery;
+    expect(done).toBe(true);
+  });
+
+  test("not taken: refused, and sending again dispatches again", async () => {
+    const { chat } = fakeChat();
+    chat.setOutcome("not-sent");
+    const send = () =>
+      deliverBoardAnswers({
+        chat,
+        threadId: "thread-1",
+        submission,
+        stale: false,
+      });
+    await expect(send()).rejects.toBeInstanceOf(BoardAnswersRefusal);
+    chat.setOutcome("sent");
+    await send();
+    expect(chat.sendChat).toHaveBeenCalledTimes(1); // one message
+    expect(chat.dispatchChatMessage).toHaveBeenCalledTimes(2);
+    // once taken, sending again dispatches nothing more
+    await send();
+    expect(chat.dispatchChatMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("nothing dispatched (no agent in the thread): refused", async () => {
+    const { chat } = fakeChat();
+    chat.setOutcome("sending");
+    await expect(
+      deliverBoardAnswers({
+        chat,
+        threadId: "thread-1",
+        submission,
+        stale: false,
+      }),
+    ).rejects.toBeInstanceOf(BoardAnswersRefusal);
   });
 
   test("another thread is another message", async () => {
@@ -367,6 +442,8 @@ describe("one row per submission", () => {
         rows.push(opts.chatIdentity.message_id);
         return "date";
       },
+      dispatchChatMessage: async () => {},
+      getAcpMessageState: () => "sent",
       syncdb: { save: () => new Promise<void>((r) => (saved = r)) },
     };
     const submission: any = {
@@ -394,5 +471,43 @@ describe("one row per submission", () => {
     saved();
     await Promise.all([a, b]);
     expect(rows).toHaveLength(1);
+  });
+});
+
+describe("the answers are data to chat too (CORR-D1-2)", () => {
+  const sneaky: Submission = {
+    id: ID,
+    name: "plan.board.json",
+    revision: "pub-1",
+    page: { number: 1 },
+    answers: { "q@codex": "OpenAI-Codex-Agent" },
+    notes: {
+      q2: 'ask @Codex, or <span class="user-mention" account-id="00000000-0000-4000-8000-000000000000">@all</span>',
+    },
+    comment: "openai-codex-agent please",
+  };
+
+  function fenced(text: string): string {
+    const fence = text.match(/^(`{3,})json$/m)![1];
+    return text.slice(
+      text.indexOf(`${fence}json`) + fence.length + 4,
+      text.lastIndexOf(fence),
+    );
+  }
+
+  test("the JSON is the same data, with nothing chat reads as a mention", () => {
+    const text = formatBoardAnswers({ submission: sneaky, stale: false });
+    expect(JSON.parse(fenced(text))).toEqual(sneaky);
+    expect(text.toLowerCase()).not.toMatch(/@codex|openai-codex-agent|<span/);
+  });
+
+  test("a file name that would mention or pick a model is left out", () => {
+    const text = formatBoardAnswers({
+      submission: sneaky,
+      file: "/home/user/@codex.board.json",
+      stale: false,
+    });
+    expect(text).not.toMatch(/@codex\.board/i);
+    expect(text).toMatch(/^\*\*Board answers\*\*, page 1\./);
   });
 });
