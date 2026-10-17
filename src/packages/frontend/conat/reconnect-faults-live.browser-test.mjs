@@ -154,6 +154,10 @@ const FIND_TEXT_CM = `
     )?.CodeMirror;
   })()`;
 
+// Every line typed into the text editor that the editor accepted: each must
+// end up both in the editor and on disk.
+const typedLines = [];
+
 async function typeInText(line) {
   await page.evaluate(
     ({ line, find }) => {
@@ -164,6 +168,7 @@ async function typeInText(line) {
     },
     { line, find: FIND_TEXT_CM },
   );
+  typedLines.push(line);
 }
 
 async function textEditorValue() {
@@ -310,27 +315,42 @@ try {
   report.checks.no_remount_text =
     !!after.text && !report.removed_roots.some((r) => r.kind === "text");
   report.checks.recovered = recoveredAt != null;
+  const valueLines = new Set(value.split("\n"));
+  report.typed_lines = typedLines.length;
+  report.missing_in_editor = typedLines.filter((l) => !valueLines.has(l));
   report.checks.edits_in_editor =
     value.includes(`before fault ${nonce}`) &&
-    value.includes(`after fault ${nonce}`);
+    value.includes(`after fault ${nonce}`) &&
+    report.missing_in_editor.length === 0;
   report.typed_lines_in_editor = typed.length;
 
   if (process.env.VERIFY_CMD && recoveredAt != null) {
     await page.waitForTimeout(5000);
-    // VERIFY_CMD takes a path relative to the project's home directory.
-    try {
-      const onDisk = execSync(
-        `${process.env.VERIFY_CMD} ${DIR}/${FILES.text}`,
-        {
+    // VERIFY_CMD takes a path relative to the project's home directory. A
+    // failed read is retried: a fresh CLI connection right after a restart
+    // can fail on its own, and that is not lost data.
+    let onDisk = null;
+    for (let attempt = 1; attempt <= 3 && onDisk == null; attempt++) {
+      try {
+        onDisk = execSync(`${process.env.VERIFY_CMD} ${DIR}/${FILES.text}`, {
           encoding: "utf8",
           timeout: 60000,
-        },
-      );
-      report.checks.edits_on_disk = onDisk.includes(`after fault ${nonce}`);
-    } catch (err) {
-      report.checks.edits_on_disk = false;
-      report.notes.push(`VERIFY_CMD failed: ${`${err.message}`.slice(0, 300)}`);
+        });
+      } catch (err) {
+        report.notes.push(
+          `VERIFY_CMD attempt ${attempt} failed at ${new Date().toISOString()}: ${`${err.message}`.slice(0, 300)}`,
+        );
+        await page.waitForTimeout(10000);
+      }
     }
+    // The CLI prints the file inside JSON, with newlines escaped.
+    const diskLines = new Set(
+      (onDisk ?? "").replaceAll("\\n", "\n").split("\n"),
+    );
+    report.missing_on_disk =
+      onDisk == null ? null : typedLines.filter((l) => !diskLines.has(l));
+    report.checks.edits_on_disk =
+      onDisk != null && report.missing_on_disk.length === 0;
   }
 
   // The other editors: revisit each and see whether its root survived.
