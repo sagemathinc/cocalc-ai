@@ -129,6 +129,13 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   resolveProjectAccessAllowRemote: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/bay-public-origin", () => ({
+  ...jest.requireActual("@cocalc/server/bay-public-origin"),
+  isAllowedBrowserOrigin: jest.fn(
+    async (origin: string) => origin === "https://cocalc.example",
+  ),
+}));
+
 jest.mock("@cocalc/server/projects/control/secret-token", () => ({
   __esModule: true,
   getProjectSecretToken: jest.fn(),
@@ -1733,5 +1740,62 @@ describe("remember_me socket auth", () => {
       auth_session_hash: "valid-token-hash",
     });
     expect(getAccountIdFromRememberMe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("cookie origin policy on hub sockets", () => {
+  const savedMode = process.env.COCALC_CONAT_ORIGIN_POLICY;
+  beforeEach(() => {
+    process.env.COCALC_CONAT_ORIGIN_POLICY = "enforce";
+    (getAccountIdFromRememberMe as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    getHubManagedEgressBlockedMessageMock.mockReset();
+    getAccountWithApiKeyMock.mockReset();
+  });
+  afterAll(() => {
+    if (savedMode == null) delete process.env.COCALC_CONAT_ORIGIN_POLICY;
+    else process.env.COCALC_CONAT_ORIGIN_POLICY = savedMode;
+  });
+
+  const socket = (headers: Record<string, string>) => ({
+    handshake: { auth: {}, headers: { host: "cocalc.example", ...headers } },
+  });
+
+  it("refuses a remember_me socket opened by another site before any lookup", async () => {
+    await expect(
+      getUser(
+        socket({ cookie: "remember_me=token", origin: "https://evil.example" }),
+      ),
+    ).rejects.toThrow("cross-site connection refused");
+    expect(getAccountIdFromRememberMe).not.toHaveBeenCalled();
+  });
+
+  it("accepts a remember_me socket from the site", async () => {
+    await expect(
+      getUser(
+        socket({
+          cookie: "remember_me=token",
+          origin: "https://cocalc.example",
+        }),
+      ),
+    ).resolves.toMatchObject({ account_id });
+  });
+
+  it("refuses an API-key cookie from another site, keeps non-browser clients working", async () => {
+    await expect(
+      getUser(
+        socket({
+          cookie: `${API_COOKIE_NAME}=test-key`,
+          origin: "https://evil.example",
+        }),
+      ),
+    ).rejects.toThrow("cross-site connection refused");
+    expect(getAccountWithApiKeyMock).not.toHaveBeenCalled();
+    getAccountWithApiKeyMock.mockResolvedValue({ account_id });
+    await expect(
+      getUser(socket({ cookie: `${API_COOKIE_NAME}=test-key` })),
+    ).resolves.toMatchObject({ account_id });
   });
 });
