@@ -33,6 +33,10 @@ import { boardTextDigest } from "@cocalc/util/sagebrush-board";
 import {
   BOARD_FILE_LIMIT,
   CALLS_PER_BOARD_PER_HOUR,
+  MAX_CALLS_PER_MINUTE_TOTAL,
+  MAX_IN_FLIGHT_TOTAL,
+  MAX_RECENT_KEYS,
+  boardDecideRecentKeysForTests,
   boardDecideForBoard,
   chooseDecidedOption,
   isPlainBoardPath,
@@ -336,6 +340,104 @@ test("a failure frees the board", async () => {
   await expect(boardDecideForBoard(opts(), d)).rejects.toThrow("read failed");
   fail = false;
   await expect(boardDecideForBoard(opts(), d)).resolves.toMatchObject({
+    option: "yes",
+  });
+});
+
+test("hourly records of inactive boards are reclaimed", async () => {
+  let now = 0;
+  const { d } = deps({ now: () => now });
+  const board = (i: number) =>
+    opts({
+      path: `b${i}.board.json`,
+      message: message({ name: `b${i}.board.json` }),
+    });
+  const keys = () => boardDecideRecentKeysForTests();
+  const has = (i: number) =>
+    keys().some((k) => k.endsWith(`/b${i}.board.json`));
+  for (let i = 0; i < 5; i++) await boardDecideForBoard(board(i), d);
+  expect(keys()).toHaveLength(5);
+  // an hour later, many other boards
+  now = 60 * 60_000;
+  for (let i = 0; i < MAX_RECENT_KEYS - 5; i++) {
+    now += 100; // within the total rate a minute
+    await boardDecideForBoard(board(1000 + i), d);
+    expect(keys().length).toBeLessThanOrEqual(MAX_RECENT_KEYS);
+  }
+  expect(keys()).toHaveLength(MAX_RECENT_KEYS);
+  // the oldest of the new boards is used again, so it is the most recent
+  now += 100;
+  await boardDecideForBoard(board(1000), d);
+  // passing the limit: the least recently used go, down to 90%, the five
+  // inactive boards first
+  now += 100;
+  await boardDecideForBoard(board(50_000), d);
+  expect(keys()).toHaveLength(MAX_RECENT_KEYS * 0.9);
+  for (let i = 0; i < 5; i++) expect(has(i)).toBe(false);
+  expect(has(1001)).toBe(false);
+  expect(has(1000)).toBe(true);
+  expect(has(50_000)).toBe(true);
+  // a board kept is still limited
+  for (let i = 2; i < CALLS_PER_BOARD_PER_HOUR; i++) {
+    now += 100;
+    await boardDecideForBoard(board(1000), d);
+  }
+  now += 100;
+  await expect(boardDecideForBoard(board(1000), d)).rejects.toMatchObject({
+    code: 429,
+  });
+}, 60_000);
+
+test("a total in-flight cap, before any read", async () => {
+  const release: (() => void)[] = [];
+  let block = true;
+  const { d, reads } = deps({
+    readFile: async () => {
+      if (block) await new Promise<void>((r) => release.push(r));
+      return BOARD;
+    },
+  });
+  const board = (i: number) =>
+    opts({
+      path: `c${i}.board.json`,
+      message: message({ name: `c${i}.board.json` }),
+    });
+  const running = Array.from({ length: MAX_IN_FLIGHT_TOTAL }, (_, i) =>
+    boardDecideForBoard(board(i), d),
+  );
+  while (release.length < MAX_IN_FLIGHT_TOTAL) {
+    await new Promise((r) => setImmediate(r));
+  }
+  expect(reads).toHaveLength(MAX_IN_FLIGHT_TOTAL);
+  await expect(
+    boardDecideForBoard(board(MAX_IN_FLIGHT_TOTAL), d),
+  ).rejects.toMatchObject({ code: 503 });
+  expect(reads).toHaveLength(MAX_IN_FLIGHT_TOTAL);
+  block = false;
+  release.forEach((f) => f());
+  await Promise.all(running);
+  await expect(
+    boardDecideForBoard(board(MAX_IN_FLIGHT_TOTAL), d),
+  ).resolves.toMatchObject({ option: "yes" });
+});
+
+test("a total rate a minute, before any read", async () => {
+  let now = 0;
+  const { d, reads } = deps({ now: () => now });
+  const board = (i: number) =>
+    opts({
+      path: `r${i}.board.json`,
+      message: message({ name: `r${i}.board.json` }),
+    });
+  for (let i = 0; i < MAX_CALLS_PER_MINUTE_TOTAL; i++) {
+    await boardDecideForBoard(board(i), d);
+  }
+  await expect(boardDecideForBoard(board(-1), d)).rejects.toMatchObject({
+    code: 503,
+  });
+  expect(reads).toHaveLength(MAX_CALLS_PER_MINUTE_TOTAL);
+  now = 60_000;
+  await expect(boardDecideForBoard(board(-1), d)).resolves.toMatchObject({
     option: "yes",
   });
 });

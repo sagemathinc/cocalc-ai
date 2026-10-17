@@ -19,9 +19,12 @@
 //
 // Per (account, board), keyed by the board's resolved path: one call in
 // flight, taken before the file is read (HARD-CAD-2), and at most
-// CALLS_PER_BOARD_PER_HOUR an hour. These are per hub process; the hard
+// CALLS_PER_BOARD_PER_HOUR an hour; and in total, for every account and
+// board, MAX_IN_FLIGHT_TOTAL in flight and MAX_CALLS_PER_MINUTE_TOTAL a
+// minute, both before the file is read (the spec's "per user and board, and
+// bounds the total rate it serves"). These are per hub process; the hard
 // bounds are the per-account rate limit in board-decide.ts and the
-// account's AI allowance.
+// account's AI allowance and the site pool.
 
 import { decideRequest } from "./board-decide-request";
 import type { DecideResult } from "./board-decide";
@@ -30,6 +33,12 @@ import { boardPostedName, boardTextDigest } from "@cocalc/util/sagebrush-board";
 /** The most a board file may be to be read (as the card's preview). */
 export const BOARD_FILE_LIMIT = 16 * 1024 * 1024;
 export const CALLS_PER_BOARD_PER_HOUR = 60;
+/** The total this hub process serves, for every account and board: at most
+ * this many in flight (each holds at most one board read in memory) and
+ * this many started a minute. */
+export const MAX_IN_FLIGHT_TOTAL = 16;
+export const MAX_CALLS_PER_MINUTE_TOTAL = 600;
+const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * 60_000;
 const PATH_LIMIT = 4096;
 const REVISION_LIMIT = 200;
@@ -68,12 +77,43 @@ export function chooseDecidedOption(
 }
 
 const inFlight = new Set<string>();
+// Start times of the last MAX_CALLS_PER_MINUTE_TOTAL calls, oldest first.
+const started: number[] = [];
+// Hourly call times per key, least recently used first: every call moves
+// its key to the end, so keys with no call in the last hour come first.
+// When the map passes MAX_RECENT_KEYS, the least recently used go, down to
+// 90%: at most MAX_RECENT_KEYS keys, and one cut (at most MAX_RECENT_KEYS / 10
+// deletions) per MAX_RECENT_KEYS / 10 new keys, so amortized one deletion a
+// call. Eviction can only loosen this soft limit, never the account's hard
+// ones.
 const recent = new Map<string, number[]>();
+export const MAX_RECENT_KEYS = 10_000;
+
+function recentCalls(key: string, now: number): number[] {
+  const calls = (recent.get(key) ?? []).filter((t) => now - t < HOUR_MS);
+  recent.delete(key);
+  return calls;
+}
+
+function rememberCalls(key: string, calls: number[]): void {
+  recent.set(key, calls); // most recently used last
+  if (recent.size <= MAX_RECENT_KEYS) return;
+  for (const k of recent.keys()) {
+    if (recent.size <= MAX_RECENT_KEYS * 0.9) break;
+    recent.delete(k);
+  }
+}
+
+/** For tests. */
+export function boardDecideRecentKeysForTests(): string[] {
+  return [...recent.keys()];
+}
 
 /** For tests. */
 export function resetBoardDecideBoundStateForTests(): void {
   inFlight.clear();
   recent.clear();
+  started.length = 0;
 }
 
 export interface BoardDecideDeps {
@@ -130,6 +170,18 @@ export async function boardDecideForBoard(
   if (inFlight.has(key)) {
     throw codedError("An answer on this board is already being checked.", 429);
   }
+  if (inFlight.size >= MAX_IN_FLIGHT_TOTAL) {
+    throw codedError("Too many answers are being checked. Try again.", 503);
+  }
+  const startedAt = deps.now?.() ?? Date.now();
+  if (
+    started.length >= MAX_CALLS_PER_MINUTE_TOTAL &&
+    startedAt - started[0] < MINUTE_MS
+  ) {
+    throw codedError("Too many answers are being checked. Try again.", 503);
+  }
+  started.push(startedAt);
+  if (started.length > MAX_CALLS_PER_MINUTE_TOTAL) started.shift();
   inFlight.add(key);
   try {
     const { size } = await deps.stat(project_id, resolved);
@@ -152,15 +204,16 @@ export async function boardDecideForBoard(
     }
     const { request } = deciding;
     const now = deps.now?.() ?? Date.now();
-    const calls = (recent.get(key) ?? []).filter((t) => now - t < HOUR_MS);
+    const calls = recentCalls(key, now);
     if (calls.length >= CALLS_PER_BOARD_PER_HOUR) {
+      rememberCalls(key, calls);
       throw codedError(
         "Too many answers checked on this board. Try later.",
         429,
       );
     }
     calls.push(now);
-    recent.set(key, calls);
+    rememberCalls(key, calls);
     const result = await deps.decide({
       account_id,
       request_id: request.id,
