@@ -1388,6 +1388,102 @@ describe("sensor budgets on the account's home bay", () => {
   }
 });
 
+describe("site-license ownership transfer across bays", () => {
+  // Site licenses and their pools live on the seed. An admin homed on the
+  // attached bay transfers a seed license owned by alice (seed) to bob
+  // (attached), through the public API and the inter-bay seed client.
+  let admin;
+  let site_license_id;
+
+  async function seedOwners() {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(site_license_id)};
+       const license = await getPool().query(
+         "SELECT owner_account_id::text AS owner FROM site_licenses WHERE id=$1::uuid", [id]);
+       const pools = await getPool().query(
+         "SELECT owner_account_id::text AS owner FROM membership_packages WHERE kind='site' AND metadata->>'site_license_id'=$1::text ORDER BY created", [id]);
+       return { license: license.rows[0]?.owner ?? null, pools: pools.rows.map((r) => r.owner) };`,
+    );
+  }
+
+  it("lets an admin homed on the attached bay transfer a seed license and its pools", async () => {
+    admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "zara",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    site_license_id = await runInBay(
+      cluster,
+      SEED,
+      `const { createTestMembershipTier } = server("purchases/test-data.js");
+       const { adminProvisionSiteLicense } = server("membership/site-licenses.js");
+       const tier = "multibay-site-" + ${JSON.stringify(randomUUID().slice(0, 8))};
+       await createTestMembershipTier({ id: tier, priority: 10, price_yearly: 100 });
+       const pool = (pool_name, seat_count) => ({
+         pool_name, membership_class: tier, seat_count, requires_approval: false,
+         verification_policy: "email-domain", exclusive_group: "teaching" });
+       const overview = await adminProvisionSiteLicense({
+         actor_account_id: ${JSON.stringify(alice.account_id)},
+         owner_account_id: ${JSON.stringify(alice.account_id)},
+         name: "Multibay Transfer Campus",
+         organization_name: "Multibay University",
+         allowed_domains: ["multibay-transfer-" + ${JSON.stringify(randomUUID().slice(0, 8))} + ".edu"],
+         pools: [pool("Students", 10), pool("Instructors", 2)],
+         trusted_admin: true,
+       });
+       return overview.site_license.id;`,
+    );
+    assert.deepEqual(await seedOwners(), {
+      license: alice.account_id,
+      pools: [alice.account_id, alice.account_id],
+    });
+
+    const overview = await admin.client.call("purchases.updateSiteLicense", {
+      site_license_id,
+      owner_account_id: bob.account_id,
+    });
+    assert.equal(overview.site_license.owner_account_id, bob.account_id);
+    assert.deepEqual(await seedOwners(), {
+      license: bob.account_id,
+      pools: [bob.account_id, bob.account_id],
+    });
+    const read = await admin.client.call("purchases.getSiteLicenseOverview", {
+      site_license_id,
+    });
+    assert.equal(read.site_license.owner_account_id, bob.account_id);
+    assert.ok(
+      read.recent_audit_events.some(
+        (event) =>
+          event.action === "site-license-owner-transferred" &&
+          event.metadata?.previous_owner_account_id === alice.account_id &&
+          event.metadata?.owner_account_id === bob.account_id,
+      ),
+    );
+  });
+
+  it("refuses an ownership transfer by a non-admin on the attached bay", async () => {
+    await assert.rejects(
+      bob.client.call("purchases.updateSiteLicense", {
+        site_license_id,
+        owner_account_id: alice.account_id,
+      }),
+      /admin/,
+    );
+    assert.equal((await seedOwners()).license, bob.account_id);
+  });
+});
+
 describe("fabric faults", () => {
   it("answers a change on the owning bay while the other bay is frozen", async () => {
     // alice (homed on the seed) collaborates on bob's project. With the seed
