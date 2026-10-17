@@ -46,6 +46,7 @@ import type {
   CommercialQuotePreviewRequest,
   CommercialQuoteVoidRequest,
   CommercialStripeQuoteCreateRequest,
+  CommercialProviderOperationResolveRequest,
   CommercialStripeEventRetryRequest,
   CommercialStripeEventRetryResult,
 } from "@cocalc/conat/hub/api/commercial-orders";
@@ -3897,6 +3898,104 @@ export async function retryCommercialStripeEvent(
       status: "pending",
       commercial_order_id: before.commercial_order_id,
     };
+  });
+}
+
+// An operator resolves an indeterminate provider operation as failed once they
+// have established that it wrote nothing (e.g., it was rejected by validation).
+// This releases the fence it holds on later operations of the same kind.
+export async function resolveCommercialProviderOperation(
+  opts: CommercialProviderOperationResolveRequest,
+): Promise<CommercialOrder> {
+  assertSeedAuthority();
+  const reason = requireReason(opts.reason);
+  assertProviderMutationEnums({ source: opts.source });
+  if (!opts.account_id) throw Error("account_id is required");
+  if (opts.resolution !== "failed") {
+    throw Error("a provider operation can only be resolved as failed");
+  }
+  const evidence = `${opts.evidence ?? ""}`.trim();
+  if (evidence.length < 10) {
+    throw Error("evidence that the operation wrote nothing is required");
+  }
+  if (evidence.length > 2_000) {
+    throw Error("evidence must be at most 2000 characters");
+  }
+  const key = commercialIdempotencyKey(
+    "provider-operation-resolve",
+    opts as any,
+  );
+  return await withTransaction(async (client) => {
+    const replay = await replayOrderId(client, key, {
+      action: "provider-operation-resolved",
+      payload: opts as any,
+    });
+    if (replay) return await loadOrder(client, replay);
+    const before = await loadOrder(client, opts.id, true);
+    requireExpectedVersion(before.version, opts.expected_version);
+    const { rows } = await client.query(
+      "SELECT * FROM commercial_provider_operations WHERE id=$1 AND commercial_order_id=$2 FOR UPDATE",
+      [opts.operation_id, before.id],
+    );
+    if (!rows[0]) throw Error("provider operation not found on this order");
+    const operation = normalizeProviderOperation(rows[0]);
+    if (operation.status !== "indeterminate") {
+      throw Error(
+        `only an indeterminate provider operation can be resolved (this one is ${operation.status})`,
+      );
+    }
+    if (operation.operation === "provision-site-license") {
+      // The one durable trace a provisioning attempt leaves. (Without the
+      // site_licenses table, which is created lazily, no license can exist.)
+      const { rows: table } = await client.query(
+        "SELECT to_regclass('site_licenses') IS NOT NULL AS present",
+      );
+      const licenses = table[0]?.present
+        ? await client.query(
+            "SELECT id FROM site_licenses WHERE metadata->>'commercial_order_id'=$1 LIMIT 1",
+            [before.id],
+          )
+        : { rows: [] as { id: string }[] };
+      if (licenses.rows[0]) {
+        throw Error(
+          `site license ${licenses.rows[0].id} is associated with this order, so the provisioning may have written it`,
+        );
+      }
+    }
+    const updated = await client.query(
+      `UPDATE commercial_provider_operations SET status='failed',
+         completed_at=NOW(),updated_at=NOW(),last_error=$2
+       WHERE id=$1 RETURNING *`,
+      [
+        operation.id,
+        `resolved as failed by an admin: ${evidence}`.slice(0, 5_000),
+      ],
+    );
+    await client.query(
+      "UPDATE commercial_orders SET updated_at=NOW(),version=version+1 WHERE id=$1",
+      [before.id],
+    );
+    const after = await loadOrder(client, before.id);
+    await insertEvent(client, {
+      commercial_order_id: before.id,
+      event_type: "provider-operation-resolved",
+      actor_account_id: opts.account_id,
+      source: opts.source ?? "cli",
+      reason,
+      idempotency_key: key,
+      before: before as any,
+      after: after as any,
+      metadata: {
+        operation_id: operation.id,
+        operation: operation.operation,
+        previous_status: operation.status,
+        resolution: "failed",
+        evidence,
+        operation_after: normalizeProviderOperation(updated.rows[0]) as any,
+      },
+      identity_payload: opts as any,
+    });
+    return after;
   });
 }
 
