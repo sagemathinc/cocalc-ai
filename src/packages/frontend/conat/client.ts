@@ -2451,6 +2451,9 @@ export class ConatClient extends EventEmitter {
     // Only time spent failing while online counts toward refreshing auth.
     if (wasOffline || state.reconnectFailingSince == null) {
       state.reconnectFailingSince = Date.now();
+    } else if (lastBrowserOnlineAt > state.reconnectFailingSince) {
+      // offline and back again since the clock started
+      state.reconnectFailingSince = lastBrowserOnlineAt;
     }
     reconnectDebugLog(
       `browser is online for routed host reconnect ${host_id}`,
@@ -2557,6 +2560,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected || state.reconnectTimer != null) {
       return;
     }
+    trackBrowserOnline();
     const delayMs =
       ROUTED_HOST_RECONNECT_DELAYS_MS[
         Math.min(
@@ -3953,6 +3957,19 @@ export class ConatClient extends EventEmitter {
       ...opts,
     });
   };
+}
+
+// When the browser last came back online.  A reconnect callback samples
+// navigator.onLine only when it runs, so a short offline spell between two
+// callbacks would go unseen; this records it.
+let lastBrowserOnlineAt = 0;
+let browserOnlineTrackerInstalled = false;
+function trackBrowserOnline(): void {
+  if (browserOnlineTrackerInstalled || typeof window === "undefined") return;
+  browserOnlineTrackerInstalled = true;
+  window.addEventListener("online", () => {
+    lastBrowserOnlineAt = Date.now();
+  });
 }
 
 async function waitForOnline(): Promise<void> {
