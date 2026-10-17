@@ -398,6 +398,43 @@ export async function updateLro({
   return rows[0] as LroSummary | undefined;
 }
 
+// Put a failed operation back in the queue for its worker, keeping its
+// progress_summary (the worker's resume state) and merging input_patch into
+// its input. Returns undefined unless the operation was failed and not
+// dismissed.
+export async function requeueFailedLro({
+  op_id,
+  kind,
+  input_patch,
+  ttl_ms = 7 * 24 * 60 * 60 * 1000,
+}: {
+  op_id: string;
+  kind: string;
+  input_patch: Record<string, unknown>;
+  ttl_ms?: number;
+}): Promise<LroSummary | undefined> {
+  await ensureLroSchema();
+  const { rows } = await pool().query(
+    `UPDATE long_running_operations
+        SET status = 'queued',
+            error = NULL,
+            finished_at = NULL,
+            owner_type = NULL,
+            owner_id = NULL,
+            heartbeat_at = NULL,
+            input = COALESCE(input, '{}'::jsonb) || $3::jsonb,
+            expires_at = GREATEST(expires_at, now() + ($4::text || ' milliseconds')::interval),
+            updated_at = now()
+      WHERE op_id = $1
+        AND kind = $2
+        AND status = 'failed'
+        AND dismissed_at IS NULL
+      RETURNING *`,
+    [op_id, kind, JSON.stringify(input_patch), ttl_ms],
+  );
+  return rows[0] as LroSummary | undefined;
+}
+
 export async function mergeLroResult({
   op_id,
   result,

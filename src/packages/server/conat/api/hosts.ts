@@ -27,8 +27,10 @@ import type {
   HostMaintenanceNotice,
   HostLroKind,
   HostPublicRouteMode,
+  HostRuntimeFleetLatencyGate,
   HostRuntimeFleetRolloutRequest,
   HostRuntimeFleetRolloutResponse,
+  HostRuntimeFleetRolloutResumeRequest,
   HostProjectRow,
   HostProjectsResponse,
   HostProjectStateFilter,
@@ -150,6 +152,7 @@ import {
   createLro,
   getLro,
   listLro,
+  requeueFailedLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -8771,10 +8774,12 @@ export async function rolloutHostRuntimeFleet({
   stabilize_seconds,
   promote_global,
   reason,
+  latency_gate,
 }: HostRuntimeFleetRolloutRequest & {
   account_id?: string;
 }): Promise<HostRuntimeFleetRolloutResponse> {
   const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+  const latencyGate = normalizeFleetRolloutLatencyGate(latency_gate);
   if (artifact !== "project-host") {
     throw new Error("paced fleet rollout currently supports project-host only");
   }
@@ -8926,6 +8931,7 @@ export async function rolloutHostRuntimeFleet({
       stabilize_seconds: normalizedStabilizeSeconds,
       promote_global: promote_global === true,
       reason: `${reason ?? ""}`.trim() || "paced_runtime_fleet_rollout",
+      latency_gate: latencyGate,
     },
     dedupe_key: `${HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND}:${JSON.stringify({
       artifact,
@@ -8961,6 +8967,99 @@ export async function rolloutHostRuntimeFleet({
     stream_name: lroStreamName(op.op_id),
     kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
     host_ids: orderedHostIds,
+  };
+}
+
+function normalizeFleetRolloutLatencyGate(
+  value: unknown,
+): HostRuntimeFleetLatencyGate {
+  if (value == null || value === "") return "enforce";
+  if (value === "enforce" || value === "advisory") return value;
+  throw new Error('latency_gate must be "enforce" or "advisory"');
+}
+
+export async function resumeHostRuntimeFleetRollout({
+  account_id,
+  op_id,
+  reason,
+  latency_gate,
+}: HostRuntimeFleetRolloutResumeRequest & {
+  account_id?: string;
+}): Promise<HostRuntimeFleetRolloutResponse> {
+  const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+  const opId = `${op_id ?? ""}`.trim();
+  const resumeReason = `${reason ?? ""}`.trim();
+  if (!opId) throw new Error("op_id is required");
+  if (!resumeReason) {
+    throw new Error("a reason is required to resume a fleet rollout");
+  }
+  const op = await getLro(opId);
+  if (!op || op.kind !== HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND) {
+    throw new Error(`fleet rollout ${opId} not found`);
+  }
+  // Only a campaign the worker paused (a failed host, a health gate) can
+  // continue. A canceled campaign stays canceled.
+  if (op.status !== "failed" || op.progress_summary?.phase !== "paused") {
+    throw new Error(
+      `fleet rollout ${opId} is ${op.status}${op.progress_summary?.phase ? ` (${op.progress_summary.phase})` : ""}; only a paused campaign can be resumed`,
+    );
+  }
+  const previousGate = normalizeFleetRolloutLatencyGate(op.input?.latency_gate);
+  const latencyGate =
+    latency_gate == null
+      ? previousGate
+      : normalizeFleetRolloutLatencyGate(latency_gate);
+  const resumes = Array.isArray(op.input?.resumes) ? op.input.resumes : [];
+  const requeued = await requeueFailedLro({
+    op_id: opId,
+    kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
+    input_patch: {
+      latency_gate: latencyGate,
+      resumes: [
+        ...resumes,
+        {
+          at: new Date().toISOString(),
+          by: requested_by,
+          reason: resumeReason,
+          paused_error: op.error ?? null,
+          latency_gate: latencyGate,
+        },
+      ],
+    },
+  });
+  if (!requeued) {
+    throw new Error(
+      `fleet rollout ${opId} changed while resuming; inspect it and retry`,
+    );
+  }
+  await publishLroSummary({
+    scope_type: requeued.scope_type,
+    scope_id: requeued.scope_id,
+    summary: requeued,
+  });
+  await publishLroEvent({
+    scope_type: requeued.scope_type,
+    scope_id: requeued.scope_id,
+    op_id: requeued.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: `paced project-host rollout resumed (latency gate: ${latencyGate}): ${resumeReason}`,
+      progress: requeued.progress_summary?.progress ?? 0,
+      detail: requeued.input,
+    },
+  }).catch(() => undefined);
+  return {
+    op_id: requeued.op_id,
+    scope_type: "hub",
+    scope_id: requeued.scope_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(requeued.op_id),
+    kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
+    host_ids: Array.isArray(requeued.input?.host_ids)
+      ? requeued.input.host_ids
+      : [],
   };
 }
 

@@ -463,6 +463,12 @@ function parseHostProjectsActionFilter(
   );
 }
 
+function parseFleetLatencyGateOption(value?: string): "enforce" | "advisory" {
+  const mode = `${value ?? "enforce"}`.trim().toLowerCase();
+  if (mode === "enforce" || mode === "advisory") return mode;
+  throw new Error('--latency-gate must be "enforce" or "advisory"');
+}
+
 function parseManagedComponentKindsOption(values?: string[]) {
   const allowed = new Set(MANAGED_COMPONENT_KINDS);
   const normalized = (values ?? [])
@@ -4337,6 +4343,11 @@ automatic reconcile or artifact upgrade work.
       "--no-promote-global",
       "leave the successful hosts as explicit exceptions instead of updating the bay default",
     )
+    .option(
+      "--latency-gate <mode>",
+      "enforce: stop when browser latency gets worse; advisory: only record it",
+      "enforce",
+    )
     .option("--wait", "wait for the durable campaign to finish")
     .addHelpText(
       "after",
@@ -4345,6 +4356,13 @@ The campaign is durable and runs on the authoritative bay. It upgrades one
 canary first, requires a continuous healthy stabilization interval, and then
 continues in bounded waves. Any failed host or automatic rollback pauses the
 campaign before another wave starts.
+
+After each wave a health gate compares the site with the campaign's baseline.
+Browser latency counts only for metrics with at least 50 samples in the last
+hour. With --latency-gate advisory a latency regression is recorded but does
+not stop the campaign (for low-traffic windows); recovery, backup, telemetry
+and failed-host gates always stop it. Continue a paused campaign with
+"host deploy resume-fleet <op_id> --reason ...".
 
 The initial implementation is deliberately bay-local. A mixed-bay cohort is
 rejected instead of routing a fleet mutation through a non-authoritative bay.
@@ -4363,6 +4381,7 @@ rejected instead of routing a fleet mutation through a non-authoritative bay.
           baseUrl?: string;
           reason?: string;
           promoteGlobal?: boolean;
+          latencyGate?: string;
           wait?: boolean;
         },
         command: Command,
@@ -4371,6 +4390,7 @@ rejected instead of routing a fleet mutation through a non-authoritative bay.
           if (!opts.allOnline) {
             throw new Error("host deploy rollout-fleet requires --all-online");
           }
+          const latencyGate = parseFleetLatencyGateOption(opts.latencyGate);
           const parseInteger = ({
             value,
             name,
@@ -4490,6 +4510,7 @@ rejected instead of routing a fleet mutation through a non-authoritative bay.
             }),
             promote_global: opts.promoteGlobal !== false,
             reason: `${opts.reason ?? ""}`.trim() || undefined,
+            latency_gate: latencyGate,
           });
           if (!opts.wait) {
             return {
@@ -4531,6 +4552,76 @@ rejected instead of routing a fleet mutation through a non-authoritative bay.
               host_id: host.id,
               name: host.name,
             })),
+            result: summary.result,
+          };
+        });
+      },
+    );
+
+  deploy
+    .command("resume-fleet <op_id>")
+    .description(
+      "continue a paused host runtime fleet rollout campaign from where it stopped",
+    )
+    .requiredOption(
+      "--reason <reason>",
+      "why it is safe to continue (recorded in the campaign)",
+    )
+    .option(
+      "--latency-gate <mode>",
+      "change the latency gate from now on: enforce or advisory",
+    )
+    .option("--wait", "wait for the durable campaign to finish")
+    .addHelpText(
+      "after",
+      `
+The campaign keeps its original health baseline and its completed hosts. It
+first rechecks the gates for the hosts of the wave that paused it, then
+continues with the remaining waves and the global promotion it was created
+with. Only a paused campaign (a failed host or a health gate) can be resumed.
+`,
+    )
+    .action(
+      async (
+        op_id: string,
+        opts: { reason?: string; latencyGate?: string; wait?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "host deploy resume-fleet", async (ctx) => {
+          const latencyGate =
+            opts.latencyGate == null
+              ? undefined
+              : parseFleetLatencyGateOption(opts.latencyGate);
+          const rollout = await ctx.hub.hosts.resumeHostRuntimeFleetRollout({
+            op_id: `${op_id ?? ""}`.trim(),
+            reason: `${opts.reason ?? ""}`.trim(),
+            ...(latencyGate ? { latency_gate: latencyGate } : {}),
+          });
+          if (!opts.wait) {
+            return { status: "queued", ...rollout };
+          }
+          const summary = await waitForLro(ctx, rollout.op_id, {
+            timeoutMs: Math.max(ctx.timeoutMs, 60 * 60_000),
+            pollMs: ctx.pollMs,
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: rollout.scope_id,
+              name: "runtime fleet rollout",
+              op_id: rollout.op_id,
+            }),
+          });
+          if (summary.timedOut) {
+            throw new Error(
+              `runtime fleet rollout timed out (op=${rollout.op_id}, last_status=${summary.status})`,
+            );
+          }
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              `runtime fleet rollout ${summary.status}: ${summary.error ?? "unknown error"}`,
+            );
+          }
+          return {
+            status: summary.status,
+            op_id: rollout.op_id,
             result: summary.result,
           };
         });
