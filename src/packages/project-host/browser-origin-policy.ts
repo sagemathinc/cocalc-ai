@@ -117,6 +117,17 @@ function persistedOriginsFile(): string | undefined {
   return dir ? path.join(dir, PERSISTED_ORIGINS_FILE) : undefined;
 }
 
+function readPersistedHubOrigins(file: string): string[] {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    return (Array.isArray(data?.browser_origins) ? data.browser_origins : [])
+      .map(originOfUrl)
+      .filter((x): x is string => !!x);
+  } catch {
+    return [];
+  }
+}
+
 // Record the hub-supplied site URL and origins for the host's other
 // processes. Like setHubBrowserOrigins, an empty result keeps the last
 // known-good file.
@@ -130,10 +141,16 @@ export function persistHubBrowserOrigins({
   const file = persistedOriginsFile();
   if (!file) return;
   const site = originOfUrl(site_url) ? `${site_url}`.trim() : undefined;
-  const origins = (browser_origins ?? [])
+  let origins = (browser_origins ?? [])
     .map(originOfUrl)
     .filter((x): x is string => !!x);
   if (!site && origins.length === 0) return;
+  if (origins.length === 0) {
+    // The hub answers a failed bay lookup with the site URL but no origins.
+    // Keep the bay origins already on disk, as setHubBrowserOrigins keeps its
+    // in-memory ones.
+    origins = readPersistedHubOrigins(file);
+  }
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(

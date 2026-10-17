@@ -172,6 +172,31 @@ describe("project-host browser origin policy", () => {
       ).toBeUndefined();
     });
 
+    it("keeps the bay origins when a refresh has the site URL but no origins", () => {
+      persistHubBrowserOrigins({
+        site_url: "https://cocalc.example",
+        browser_origins: ["https://bay-1-cocalc.example"],
+      });
+      // A failed bay lookup: the hub still answers with the site URL.
+      persistHubBrowserOrigins({
+        site_url: "https://cocalc.example",
+        browser_origins: undefined,
+      });
+      persistHubBrowserOrigins({
+        site_url: "https://cocalc.example",
+        browser_origins: [],
+      });
+      asRespawnedRouter();
+      for (const origin of [
+        "https://cocalc.example",
+        "https://bay-1-cocalc.example",
+      ]) {
+        expect(
+          ambientCookieRejection(req({ origin }), "conat"),
+        ).toBeUndefined();
+      }
+    });
+
     it("picks up a newer refresh by the app", () => {
       persistHubBrowserOrigins({ site_url: "https://cocalc.example" });
       asRespawnedRouter();
