@@ -1611,24 +1611,28 @@ describe("agent RPC live guidance funding", () => {
         expect(send).toHaveBeenCalledTimes(1);
       });
 
-      it("one whose message is gone is resolved by reconciliation", async () => {
+      it("one whose message is gone stays counted until the message is back (CORR-268-1)", async () => {
         mockLiveRuntime(liveConfig);
-        uncertainFor("never-existed");
-        expect(unmarked()).toEqual(["never-existed"]);
+        uncertainFor("gone-message");
         await resend("assistant-1"); // any board submission reconciles
         await settle();
-        // no longer counted toward the cap; expires with the others, and
-        // until then still refuses a re-created message
+        // gone: kept, unmarked and counted; only it remembers the submission
+        expect(unmarked()).toEqual(["gone-message"]);
+        // the message is restored (same id): the next pass marks it
+        rows.push({
+          event: "chat",
+          thread_id: "t-gone-message",
+          message_id: "gone-message",
+          sender_id: accountId,
+          date: "2026-09-05T14:00:00.000Z",
+        });
+        await resend("assistant-2");
+        await settle();
         expect(unmarked()).toEqual([]);
         expect(
-          getAcpDatabase()
-            .prepare(
-              "SELECT outcome, uncertain_recorded FROM acp_board_submissions WHERE user_message_id = 'never-existed'",
-            )
-            .all(),
-        ).toEqual([
-          { outcome: "uncertain", uncertain_recorded: expect.any(Number) },
-        ]);
+          rows.find((r) => r.message_id === "gone-message")
+            ?.acp_board_answers_uncertain_at_ms,
+        ).toBeGreaterThan(0);
       });
 
       it("past the account's cap, new submissions are refused before any send", async () => {
@@ -2334,6 +2338,26 @@ describe("board answers: the hub's bound per account and thread", () => {
       enqueue.mockRestore();
     }
     expect(jobs().map((j) => j.user_message_id)).toEqual(["retry-me"]);
+  });
+
+  it("an unknown steer is not decided by a later candidate or the queue (astra, CORR-268-1)", async () => {
+    // The first candidate's steer reaches the transport and loses its reply;
+    // a later candidate (the context changed meanwhile) is not steerable.
+    mockSteer
+      .mockRejectedValueOnce(new Error("request timed out after 90000ms"))
+      .mockResolvedValue({ state: "not_steerable" });
+    const request = boardRequest("unknown-then-not-steerable");
+    request.session_id = "live-session";
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).rejects.toThrow("timed out");
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(jobs()).toEqual([]);
+    expect(
+      getAcpDatabase()
+        .prepare("SELECT outcome FROM acp_board_submissions")
+        .all(),
+    ).toEqual([{ outcome: "uncertain" }]);
   });
 
   it("while the first attempt may be in flight, a duplicate is told to wait", async () => {

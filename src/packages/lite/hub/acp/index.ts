@@ -10565,6 +10565,7 @@ async function trySteerCandidateIds({
   candidateIds,
   claimGuard,
   hostProjectRoot,
+  stopOnUnknown,
 }: {
   projectId: string;
   threadId?: string;
@@ -10573,6 +10574,10 @@ async function trySteerCandidateIds({
   candidateIds?: string[];
   claimGuard?: () => boolean;
   hostProjectRoot?: string;
+  /** A board submission: a steer that fails without an answer may have
+   * injected it, so nothing after it (another candidate, a "not steerable",
+   * the queue) may decide its outcome (CORR-268-1). */
+  stopOnUnknown?: boolean;
 }): Promise<AcpSteerAttemptResult> {
   const ids = new Set<string>();
   const writer = findChatWriter({ threadId, chat });
@@ -10664,6 +10669,7 @@ async function trySteerCandidateIds({
         } catch (err) {
           if ((err as { code?: string }).code === "principal_mismatch")
             throw err;
+          if (stopOnUnknown) throw err;
           if (firstError === undefined) {
             firstError = err;
           }
@@ -11161,10 +11167,10 @@ async function recordBoardSubmissionUncertain(
 }
 
 // Retry the markers of an account's unmarked uncertain submissions, a few
-// at a time. One whose message is gone is resolved as if marked: it no
-// longer counts toward the account's cap, and its record still refuses a
-// re-created message until it expires with the others. One pass per
-// account at a time (LIMIT-A65-1).
+// at a time. One whose message is gone stays as it is, counted toward the
+// account's cap: the message may be restored with the same id, and then
+// only this record says it may already have reached the agent
+// (CORR-268-1). One pass per account at a time (LIMIT-A65-1).
 const boardReconciling = new Map<string, Promise<void>>();
 async function reconcileUncertainBoardSubmissions(
   account_id: string,
@@ -11173,9 +11179,7 @@ async function reconcileUncertainBoardSubmissions(
   if (running) return await running;
   const pass = (async () => {
     for (const key of listUnmarkedUncertainBoardSubmissions(account_id, 5)) {
-      if ((await recordBoardSubmissionUncertain(key)) === "gone") {
-        markBoardSubmissionUncertainRecorded(key);
-      }
+      await recordBoardSubmissionUncertain(key);
     }
   })();
   boardReconciling.set(account_id, pass);
@@ -11245,13 +11249,17 @@ async function steerBoardSubmissionOnce(
   } else {
     // Unresolved: taken over only if its hand-off never started and its
     // attempt has ended; a started hand-off is never repeated (CORR-E69-2).
-    const claimed = admission.injecting ? null : claimBoardSubmissionRetry(key);
-    if (!claimed) {
+    const claimed = admission.injecting
+      ? ({ refused: "busy" } as const)
+      : claimBoardSubmissionRetry(key);
+    if ("refused" in claimed) {
       throw new Error(
-        "These board answers are still being delivered; try again in a moment.",
+        claimed.refused === "capped"
+          ? "CoCalc is still confirming earlier board answers from this account; try again in a few minutes."
+          : "These board answers are still being delivered; try again in a moment.",
       );
     }
-    token = claimed;
+    token = claimed.token;
   }
   try {
     const result = await send(request, { key, token });
@@ -12366,6 +12374,7 @@ async function attemptAcpSteerRequest(
     candidateIds,
     claimGuard,
     hostProjectRoot,
+    stopOnUnknown: boardAttempt != null,
   });
   if (boardAttempt && result.state !== "steered") {
     // It answered: not injected.

@@ -97,8 +97,10 @@ describe("attempts", () => {
     failBoardSubmissionAttempt(key("m"), t);
     expect(admit("m")).toMatchObject({ kind: "unknown", injecting: false });
     const t2 = claimBoardSubmissionRetry(key("m"), { now: 2_000 });
-    expect(t2).toEqual(expect.any(String));
-    expect(claimBoardSubmissionRetry(key("m"), { now: 2_001 })).toBeNull();
+    expect(t2).toEqual({ token: expect.any(String) });
+    expect(claimBoardSubmissionRetry(key("m"), { now: 2_001 })).toEqual({
+      refused: "busy",
+    });
   });
 
   test("a failure during the hand-off is uncertain for good", () => {
@@ -110,9 +112,9 @@ describe("attempts", () => {
       kind: "admitted",
       state: BOARD_SUBMISSION_UNCERTAIN,
     });
-    expect(
-      claimBoardSubmissionRetry(key("m"), { now: 10 * ATTEMPT }),
-    ).toBeNull();
+    expect(claimBoardSubmissionRetry(key("m"), { now: 10 * ATTEMPT })).toEqual({
+      refused: "busy",
+    });
   });
 
   test("a hand-off that answered without injecting is cleared", () => {
@@ -133,7 +135,7 @@ describe("attempts", () => {
     });
     expect(
       claimBoardSubmissionRetry(key("m"), { now: 1_000 + 2 * ATTEMPT }),
-    ).toBeNull();
+    ).toEqual({ refused: "busy" });
     // silent past an attempt's time: uncertain
     expect(admit("m", {}, 1_000 + ATTEMPT)).toMatchObject({
       ok: true,
@@ -146,16 +148,17 @@ describe("attempts", () => {
   test("a stale attempt can neither hand off nor clear a newer claim (CORR-E69-2)", () => {
     const old = token("m", {}, 1_000);
     // the old attempt stalls before its hand-off; a retry takes over
-    const fresh = claimBoardSubmissionRetry(key("m"), {
+    const claimed = claimBoardSubmissionRetry(key("m"), {
       now: 1_000 + ATTEMPT,
-    })!;
+    }) as { token: string };
+    const fresh = claimed.token;
     expect(fresh).toEqual(expect.any(String));
     expect(setBoardSubmissionInjecting(key("m"), old, 2_000)).toBe(false);
     // the old attempt's failure doesn't free the new one's claim
     failBoardSubmissionAttempt(key("m"), old);
     expect(
       claimBoardSubmissionRetry(key("m"), { now: 1_000 + ATTEMPT + 1 }),
-    ).toBeNull();
+    ).toEqual({ refused: "busy" });
     // nor can the old attempt record an outcome
     markBoardSubmissionAdmitted(key("m"), "steered", old);
     expect(admit("m", {}, 1_000 + ATTEMPT + 2)).toMatchObject({
@@ -180,9 +183,9 @@ test("records go after their retention, never while an attempt is live", () => {
   setBoardSubmissionInjecting(key("silent"), token("silent"), 1_000);
   // an old record whose attempt was just claimed: live, so it stays
   failBoardSubmissionAttempt(key("live"), token("live"));
-  expect(claimBoardSubmissionRetry(key("live"), { now: late - 1 })).toEqual(
-    expect.any(String),
-  );
+  expect(claimBoardSubmissionRetry(key("live"), { now: late - 1 })).toEqual({
+    token: expect.any(String),
+  });
   admit("new", {}, late);
   expect(ids()).toEqual(["live", "new", "silent"]);
 });
@@ -227,6 +230,68 @@ describe("unmarked uncertain records (LIMIT-A65-1)", () => {
       ok: true,
       kind: "new",
     });
+  });
+
+  test("submissions in flight hold the cap's reservations (LIMIT-268-1)", () => {
+    // astra2's race: 101 hand-offs on distinct threads, all failing
+    const inflight: { k: any; t: string }[] = [];
+    for (let i = 0; i < UNMARKED_LIMIT + 1; i++) {
+      const over = { thread_id: `parallel-${i}` };
+      const a = admit(`parallel-${i}`, over);
+      if (a.ok && a.kind === "new") {
+        const k = key(`parallel-${i}`, over);
+        expect(setBoardSubmissionInjecting(k, a.token, 1_000)).toBe(true);
+        inflight.push({ k, t: a.token });
+      } else {
+        expect(a).toMatchObject({ ok: false, reason: "unresolved" });
+      }
+    }
+    expect(inflight).toHaveLength(UNMARKED_LIMIT);
+    for (const { k, t } of inflight) failBoardSubmissionAttempt(k, t);
+    expect(
+      (
+        getAcpDatabase()
+          .prepare(
+            "SELECT COUNT(*) AS n FROM acp_board_submissions WHERE outcome = 'uncertain' AND uncertain_recorded IS NULL",
+          )
+          .get() as any
+      ).n,
+    ).toBeLessThanOrEqual(UNMARKED_LIMIT);
+  });
+
+  test("a definite outcome releases its reservation", () => {
+    const toks: string[] = [];
+    for (let i = 0; i < UNMARKED_LIMIT; i++)
+      toks.push(token(`d${i}`, { thread_id: `t${i}` }));
+    expect(admit("x", { thread_id: "x" })).toMatchObject({ ok: false });
+    // one delivered, one failed before its hand-off: two slots free
+    markBoardSubmissionAdmitted(
+      key("d0", { thread_id: "t0" }),
+      "steered",
+      toks[0],
+    );
+    failBoardSubmissionAttempt(key("d1", { thread_id: "t1" }), toks[1]);
+    expect(admit("x", { thread_id: "x" })).toMatchObject({
+      ok: true,
+      kind: "new",
+    });
+    expect(admit("y", { thread_id: "y" })).toMatchObject({
+      ok: true,
+      kind: "new",
+    });
+    expect(admit("z", { thread_id: "z" })).toMatchObject({ ok: false });
+  });
+
+  test("taking over an ended attempt reserves again, atomically", () => {
+    const t = token("ended", { thread_id: "e" });
+    failBoardSubmissionAttempt(key("ended", { thread_id: "e" }), t); // released
+    for (let i = 0; i < UNMARKED_LIMIT; i++)
+      token(`f${i}`, { thread_id: `u${i}` });
+    expect(
+      claimBoardSubmissionRetry(key("ended", { thread_id: "e" }), {
+        now: 5_000,
+      }),
+    ).toEqual({ refused: "capped" });
   });
 
   test("reconciliation reads a few, oldest first", () => {

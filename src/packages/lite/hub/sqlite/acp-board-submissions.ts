@@ -33,9 +33,11 @@ export const BOARD_SUBMISSION_WINDOW_MS = 60 * 60_000;
 export const BOARD_SUBMISSION_ATTEMPT_MS = 2 * 60_000;
 /** How long a submission's record (its identity and outcome) is kept. */
 export const BOARD_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60_000;
-/** Unresolved uncertain submissions (their marker not yet on their
- * message) one account may hold; past that its new board submissions are
- * refused until they are reconciled (daybreak2, LIMIT-A65-1). */
+/** Submissions one account may hold that are, or may become, uncertain
+ * without a marker on their message: unmarked uncertain ones, and ones whose
+ * attempt hasn't ended (a reservation, released by a definite outcome).
+ * Past that its new board submissions are refused until they are
+ * reconciled (daybreak2, LIMIT-A65-1; astra2, LIMIT-268-1). */
 export const BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT = 100;
 /** The outcome of a submission whose hand-off to a live turn started but
  * never answered: it is never sent again. */
@@ -73,6 +75,11 @@ function ensureInit(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_unmarked_idx ON ${TABLE}(account_id, admitted_at)
       WHERE outcome = 'uncertain' AND uncertain_recorded IS NULL`,
+  );
+  // An account's submissions with no outcome yet: the cap's reservations.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${TABLE}_pending_idx ON ${TABLE}(account_id)
+      WHERE outcome IS NULL`,
   );
   // Only hand-offs still unresolved: what the silence check reads, without
   // scanning the table (LIMIT-F386-2).
@@ -223,16 +230,10 @@ export function admitBoardSubmission(
             injecting: existing.injected_at != null,
           };
     }
-    // Fail closed while too many of this account's uncertain submissions
-    // are unmarked: they are kept until reconciled, so they must be bounded.
-    const unmarked = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM ${TABLE}
-          WHERE account_id = ? AND outcome = 'uncertain'
-            AND uncertain_recorded IS NULL`,
-      )
-      .get(account_id) as { n: number };
-    if (unmarked.n >= unmarked_limit) {
+    // Fail closed while too many of this account's submissions are, or may
+    // become, uncertain without a marker: they are kept until reconciled,
+    // so they must be bounded, counting attempts still in flight.
+    if (potentialUncertain(db, account_id) >= unmarked_limit) {
       return { ok: false, retry_after_ms: attempt_ms, reason: "unresolved" };
     }
     const recent = db
@@ -271,25 +272,76 @@ export function admitBoardSubmission(
   });
 }
 
+/** The account's submissions that are, or may become, uncertain without a
+ * marker: unmarked uncertain ones, and ones whose attempt hasn't ended. */
+function potentialUncertain(
+  db: ReturnType<typeof getAcpDatabase>,
+  account_id: string,
+): number {
+  const unmarked = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ${TABLE}
+        WHERE account_id = ? AND outcome = 'uncertain'
+          AND uncertain_recorded IS NULL`,
+    )
+    .get(account_id) as { n: number };
+  const pending = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ${TABLE}
+        WHERE account_id = ? AND outcome IS NULL
+          AND (attempt_at <> 0 OR injected_at IS NOT NULL)`,
+    )
+    .get(account_id) as { n: number };
+  return unmarked.n + pending.n;
+}
+
 /** Take over an unresolved submission whose attempt never started its
  * hand-off and has ended (or stopped BOARD_SUBMISSION_ATTEMPT_MS ago): its
- * new token, or null (one is in flight, or its hand-off started). */
+ * new token; "busy" if one is in flight or its hand-off started; "capped"
+ * if taking it over (it counts again) would pass the account's cap. Atomic
+ * with that count: no release/reacquire gap (LIMIT-268-1). */
 export function claimBoardSubmissionRetry(
   key: BoardSubmissionKey,
-  { now = Date.now(), attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS } = {},
-): string | null {
+  {
+    now = Date.now(),
+    attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS,
+    unmarked_limit = BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT,
+  } = {},
+): { token: string } | { refused: "busy" | "capped" } {
   checkKey(key);
   ensureInit();
-  const token = randomUUID();
-  const result = getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE} SET attempt_token = ?, attempt_at = ?
-        WHERE ${KEY_WHERE}
-          AND outcome IS NULL AND injected_at IS NULL
-          AND (attempt_at = 0 OR attempt_at <= ?)`,
-    )
-    .run(token, now, ...keyArgs(key), now - attempt_ms);
-  return changed(result) ? token : null;
+  const db = getAcpDatabase();
+  return inTransaction(() => {
+    const row = db
+      .prepare(
+        `SELECT attempt_at, injected_at, outcome FROM ${TABLE} WHERE ${KEY_WHERE}`,
+      )
+      .get(...keyArgs(key)) as
+      | {
+          attempt_at: number;
+          injected_at: number | null;
+          outcome: string | null;
+        }
+      | undefined;
+    if (
+      !row ||
+      row.outcome != null ||
+      row.injected_at != null ||
+      !(row.attempt_at === 0 || row.attempt_at <= now - attempt_ms)
+    ) {
+      return { refused: "busy" as const };
+    }
+    // An ended attempt holds no reservation; taking it over takes one.
+    const holds = row.attempt_at !== 0;
+    if (!holds && potentialUncertain(db, key.account_id) >= unmarked_limit) {
+      return { refused: "capped" as const };
+    }
+    const token = randomUUID();
+    db.prepare(
+      `UPDATE ${TABLE} SET attempt_token = ?, attempt_at = ? WHERE ${KEY_WHERE}`,
+    ).run(token, now, ...keyArgs(key));
+    return { token };
+  });
 }
 
 /** The current attempt is about to hand its guidance to a live turn (at), or
