@@ -31,6 +31,7 @@ are native SVG text and dropping foreignObject loses nothing.
 */
 
 import {
+  SCOPE_ATTRIBUTE,
   isExternalCssValue,
   sanitizeInlineStyle,
   sanitizeStyleSheet,
@@ -102,8 +103,11 @@ export function sanitizeMermaidSvg(
   if (root == null || !isSvgElement(root, "svg")) {
     return null;
   }
-  // Mermaid's CSS is written for the root's id; rules are scoped to it.
-  sanitizeElement(root, { scope: root.getAttribute("id"), doc });
+  // CSS is scoped to this attribute, which only the sanitizer sets (and
+  // which is removed from anything else below), not to the caller's id.
+  const scope = randomScope();
+  sanitizeElement(root, { scope, doc });
+  root.setAttribute(SCOPE_ATTRIBUTE, scope);
   return doc.importNode(root, true) as unknown as SVGSVGElement;
 }
 
@@ -115,7 +119,7 @@ function isSvgElement(elt: Element, name?: string): boolean {
 }
 
 interface Context {
-  scope: string | null;
+  scope: string;
   doc: Document;
 }
 
@@ -163,7 +167,11 @@ function sanitizeAttribute(
   context: Context,
 ): string | null {
   const name = rawName.toLowerCase();
-  if (!ATTRIBUTE_NAME.test(rawName) || name.startsWith("on")) {
+  if (
+    !ATTRIBUTE_NAME.test(rawName) ||
+    name.startsWith("on") ||
+    name === SCOPE_ATTRIBUTE
+  ) {
     return null;
   }
   if (HREF_ATTRIBUTES.has(name)) {
@@ -176,6 +184,11 @@ function sanitizeAttribute(
     return sanitizeInlineStyle(value, context.doc);
   }
   // Presentation attributes (fill, cursor, filter, ...) are CSS values too.
+  // CSS escapes could spell a resource function past the check below, and
+  // mermaid never writes them in attributes, so drop any value with one.
+  if (value.includes("\\")) {
+    return null;
+  }
   return isExternalCssValue(value) ? null : value;
 }
 
@@ -193,11 +206,28 @@ function sanitizeHref(tag: string, value: string): string | null {
 
 // http, https, mailto, or a relative URL (no scheme).
 function isSafeLink(url: string): boolean {
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
-  if (scheme == null) {
-    // Relative.  A leading control character or backslash could make a
-    // browser see a scheme we didn't, so reject those.
-    return !/^[\u0000-\u0020\\]/.test(url);
+  // Browsers drop tab/newline inside a scheme ("java\nscript:") and trim
+  // other controls, so reject every ASCII control character.
+  if (/[\u0000-\u001f\u007f\\]/.test(url)) {
+    return false;
   }
-  return scheme === "http" || scheme === "https" || scheme === "mailto";
+  let parsed: URL;
+  try {
+    parsed = new URL(url, "https://cocalc.invalid/");
+  } catch {
+    return false;
+  }
+  if (
+    parsed.origin === "https://cocalc.invalid" &&
+    !/^[a-z][a-z0-9+.-]*:/i.test(url)
+  ) {
+    return true; // relative
+  }
+  return ["http:", "https:", "mailto:"].includes(parsed.protocol);
+}
+
+function randomScope(): string {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

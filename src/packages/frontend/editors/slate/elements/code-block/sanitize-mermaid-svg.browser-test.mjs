@@ -93,16 +93,76 @@ try {
   assert.match(hostile.rectFill, /url\(.*#g/);
   assert.notEqual(hostile.rectPosition, "fixed");
   assert.equal(hostile.textFill, "rgb(4, 5, 6)");
-  assert.match(hostile.style, /@keyframes dash/);
   assert.doesNotMatch(hostile.style, /image-set|@import|@font-face/);
   // Every selector is scoped to the diagram's root.
   for (const selector of hostile.style.match(/[^{}]+(?=\{)/g)) {
     const s = selector.trim();
     if (/^@(media|keyframes)|^\d+%$|^(from|to)$/.test(s)) continue;
     for (const part of s.split(/,(?![^(]*\))/)) {
-      assert.match(part.trim(), /^:is\(#d1, #d1 \*\):is\(/, part);
+      assert.match(
+        part.trim(),
+        /^:is\(\[data-cocalc-svg-scope="[0-9a-f]+"\], \[data-cocalc-svg-scope="[0-9a-f]+"\] \*\):is\(/,
+        part,
+      );
     }
   }
+  assert.doesNotMatch(hostile.style, /@keyframes dash\b/);
+  assert.match(hostile.style, /@keyframes cocalc-svg-[0-9a-f]+-dash/);
+  assert.deepEqual(hits, []);
+
+  // 1b. Links with control characters, escaped presentation attributes,
+  // global keyframes, and a duplicate id outside the diagram.
+  await page.goto(origin);
+  await page.addScriptTag({ content: script });
+  const more = await page.evaluate(async (origin) => {
+    window.__fired = 0;
+    const style = document.createElement("style");
+    style.textContent =
+      "@keyframes victim { from { opacity: .7 } to { opacity: .7 } } #anim { animation: victim 100s infinite }";
+    document.head.append(style);
+    const anim = document.createElement("div");
+    anim.id = "anim";
+    anim.textContent = "anim";
+    const twin = document.createElement("div");
+    twin.id = "d2";
+    twin.innerText = "twin";
+    document.body.append(anim, twin);
+    const svg = `<svg id="d2" xmlns="http://www.w3.org/2000/svg">
+      <style>
+        @keyframes victim { from { opacity: .1 } to { opacity: .1 } }
+        #d2 { opacity: .5 }
+        #d2 rect { animation: victim 1s infinite }
+      </style>
+      <a href="java&#10;script:window.__fired=1"><text id="lf">lf</text></a>
+      <a href="java&#9;script:window.__fired=2"><text id="tab">tab</text></a>
+      <a href="java&#13;script:window.__fired=3"><text id="cr">cr</text></a>
+      <rect width="10" height="10" fill="u\\72l(${origin}/fill)" cursor="u\\72l(${origin}/cursor), auto" stroke="IMAGE-SET(&quot;${origin}/set&quot; 1x)"/>
+    </svg>`;
+    const clean = policy.sanitizeMermaidSvg(svg);
+    document.getElementById("root").replaceChildren(clean);
+    for (const id of ["lf", "tab", "cr"]) {
+      clean
+        .querySelector(`#${id}`)
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    return {
+      fired: window.__fired,
+      hrefs: Array.from(clean.querySelectorAll("a")).map((a) =>
+        a.getAttribute("href"),
+      ),
+      animOpacity: getComputedStyle(anim).opacity,
+      twinOpacity: getComputedStyle(twin).opacity,
+      rectAnimation: getComputedStyle(clean.querySelector("rect"))
+        .animationName,
+    };
+  }, origin);
+  await page.waitForTimeout(500);
+  assert.equal(more.fired, 0);
+  assert.deepEqual(more.hrefs, [null, null, null]);
+  assert.equal(more.animOpacity, "0.7");
+  assert.equal(more.twinOpacity, "1");
+  assert.match(more.rectAnimation, /^cocalc-svg-[0-9a-f]+-victim$/);
   assert.deepEqual(hits, []);
 
   // 2. Real mermaid output: the sanitized diagram computes the same styles as

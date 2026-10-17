@@ -14,8 +14,12 @@ and rebuilt from the parsed rules:
 - Only style rules (also inside @media/@supports) and @keyframes are kept;
   @import, @font-face and every other at-rule are dropped.
 - Every selector is rewritten to only match the diagram's own root SVG and its
-  descendants: `:is(#root, #root *):is(<selector>)`.  Nothing outside the
+  descendants: `:is([scope], [scope] *):is(<selector>)`, where [scope] is a
+  random attribute the sanitizer puts on the root.  Nothing outside the
   diagram can be selected, whatever the selector says.
+- @keyframes names are global, so each is renamed to a scope-specific name
+  and animation-name references are rewritten to match; references to any
+  other keyframes become none.
 - Any declaration whose value uses a function that can load a resource
   (url() other than a same-document #fragment, image-set(), image(),
   cross-fade(), element(), src(), ...) is dropped, as are fixed and sticky
@@ -29,7 +33,8 @@ and alternate spellings don't matter.
 const RESOURCE_FUNCTION =
   /(?:^|[^\w-])(?:-webkit-|-moz-)?(?:url|image-set|image|cross-fade|element|src|paint)\s*\(/i;
 const FRAGMENT_URL = /url\(\s*(["']?)#[\w.:-]*\1\s*\)/gi;
-const SCOPE_ID = /^[A-Za-z][\w-]*$/;
+const SCOPE_TOKEN = /^[A-Za-z0-9-]+$/;
+export const SCOPE_ATTRIBUTE = "data-cocalc-svg-scope";
 
 // True if a CSS value could load anything other than a same-document
 // fragment.
@@ -44,11 +49,25 @@ function isUnsafeDeclaration(property: string, value: string): boolean {
   return property.toLowerCase() === "position" && /fixed|sticky/i.test(value);
 }
 
-// Remove unsafe declarations from a parsed declaration block.
-function sanitizeDeclarations(style: CSSStyleDeclaration): void {
+// Remove unsafe declarations from a parsed declaration block, and point
+// animation names at this diagram's renamed keyframes (others become none).
+function sanitizeDeclarations(
+  style: CSSStyleDeclaration,
+  keyframes: Map<string, string> = new Map(),
+): void {
   for (const property of Array.from(style)) {
     if (isUnsafeDeclaration(property, style.getPropertyValue(property))) {
       style.removeProperty(property);
+    }
+  }
+  const names = style.getPropertyValue("animation-name");
+  if (names) {
+    const mapped = names
+      .split(",")
+      .map((name) => keyframes.get(name.trim()) ?? "none")
+      .join(", ");
+    if (mapped !== names) {
+      style.setProperty("animation-name", mapped);
     }
   }
 }
@@ -93,7 +112,8 @@ function scopeSelector(selector: string, scope: string): string {
   const match = PSEUDO_ELEMENT.exec(selector);
   const pseudo = match?.[1] ?? "";
   const base = selector.slice(0, selector.length - pseudo.length) || "*";
-  return `:is(#${scope}, #${scope} *):is(${base})${pseudo}`;
+  const root = `[${SCOPE_ATTRIBUTE}="${scope}"]`;
+  return `:is(${root}, ${root} *):is(${base})${pseudo}`;
 }
 
 const STYLE_RULE = 1;
@@ -102,13 +122,40 @@ const KEYFRAMES_RULE = 7;
 const KEYFRAME_RULE = 8;
 const SUPPORTS_RULE = 12;
 
-function rebuildRules(rules: CSSRuleList, scope: string): string {
+function keyframesName(name: string, scope: string): string {
+  return `cocalc-svg-${scope}-${name}`;
+}
+
+// The renamed keyframes defined anywhere in the sheet.
+function collectKeyframes(
+  rules: CSSRuleList,
+  scope: string,
+  out: Map<string, string>,
+): Map<string, string> {
+  for (const rule of Array.from(rules)) {
+    if (rule.type === KEYFRAMES_RULE) {
+      const name = (rule as CSSKeyframesRule).name;
+      if (/^[A-Za-z_][\w-]*$/.test(name)) {
+        out.set(name, keyframesName(name, scope));
+      }
+    } else if (rule.type === MEDIA_RULE || rule.type === SUPPORTS_RULE) {
+      collectKeyframes((rule as CSSMediaRule).cssRules, scope, out);
+    }
+  }
+  return out;
+}
+
+function rebuildRules(
+  rules: CSSRuleList,
+  scope: string,
+  keyframes: Map<string, string>,
+): string {
   const out: string[] = [];
   for (const rule of Array.from(rules)) {
     switch (rule.type) {
       case STYLE_RULE: {
         const r = rule as CSSStyleRule;
-        sanitizeDeclarations(r.style);
+        sanitizeDeclarations(r.style, keyframes);
         const selectors = splitSelectorList(r.selectorText).map((s) =>
           scopeSelector(s, scope),
         );
@@ -120,7 +167,7 @@ function rebuildRules(rules: CSSRuleList, scope: string): string {
       case MEDIA_RULE:
       case SUPPORTS_RULE: {
         const r = rule as CSSMediaRule | CSSSupportsRule;
-        const inner = rebuildRules(r.cssRules, scope);
+        const inner = rebuildRules(r.cssRules, scope, keyframes);
         if (inner) {
           const condition =
             rule.type === MEDIA_RULE
@@ -133,7 +180,8 @@ function rebuildRules(rules: CSSRuleList, scope: string): string {
       }
       case KEYFRAMES_RULE: {
         const r = rule as CSSKeyframesRule;
-        if (!SCOPE_ID.test(r.name)) break;
+        const renamed = keyframes.get(r.name);
+        if (renamed == null) break;
         const frames: string[] = [];
         for (const frame of Array.from(r.cssRules)) {
           if (frame.type !== KEYFRAME_RULE) continue;
@@ -141,7 +189,7 @@ function rebuildRules(rules: CSSRuleList, scope: string): string {
           sanitizeDeclarations(f.style);
           frames.push(`${f.keyText} { ${f.style.cssText} }`);
         }
-        out.push(`@keyframes ${r.name} { ${frames.join(" ")} }`);
+        out.push(`@keyframes ${renamed} { ${frames.join(" ")} }`);
         break;
       }
       default:
@@ -152,14 +200,15 @@ function rebuildRules(rules: CSSRuleList, scope: string): string {
   return out.join("\n");
 }
 
-// Rebuild a stylesheet so it can only style the SVG whose id is scope and
-// loads nothing.  Returns "" if the CSS can't be parsed here.
+// Rebuild a stylesheet so it can only style the SVG carrying
+// SCOPE_ATTRIBUTE=scope and loads nothing.  Returns "" if the CSS can't be
+// parsed here.
 export function sanitizeStyleSheet(
   css: string,
-  scope: string | null,
+  scope: string,
   doc: Document,
 ): string {
-  if (scope == null || !SCOPE_ID.test(scope)) {
+  if (!SCOPE_TOKEN.test(scope)) {
     return "";
   }
   // An inert document: its stylesheets are parsed but never applied, and
@@ -172,5 +221,6 @@ export function sanitizeStyleSheet(
   if (sheet == null) {
     return "";
   }
-  return rebuildRules(sheet.cssRules, scope);
+  const keyframes = collectKeyframes(sheet.cssRules, scope, new Map());
+  return rebuildRules(sheet.cssRules, scope, keyframes);
 }

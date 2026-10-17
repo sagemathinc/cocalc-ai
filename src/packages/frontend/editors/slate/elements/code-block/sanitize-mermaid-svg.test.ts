@@ -160,8 +160,7 @@ describe("CSS policy", () => {
     ).toBe("");
   });
 
-  it("drops all CSS without a usable scope id", () => {
-    expect(sanitizeStyleSheet("#x{color:red}", null, document)).toBe("");
+  it("drops all CSS with an unusable scope token", () => {
     expect(sanitizeStyleSheet("#x{color:red}", "a b", document)).toBe("");
   });
 
@@ -189,5 +188,40 @@ describe("CSS policy", () => {
     expect(isExternalCssValue(`url(#g)`)).toBe(false);
     expect(isExternalCssValue(`url("#g")`)).toBe(false);
     expect(isExternalCssValue(`rgb(1, 2, 3)`)).toBe(false);
+  });
+
+  it("rejects links with control characters anywhere", () => {
+    for (const href of [
+      "java\nscript:alert(1)",
+      "java\tscript:alert(1)",
+      "java\rscript:alert(1)",
+      " javascript:alert(1)",
+      "\\\\evil",
+    ]) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg"><a href="${href.replace(/\n/g, "&#10;").replace(/\t/g, "&#9;").replace(/\r/g, "&#13;")}"><text>x</text></a></svg>`;
+      const clean = sanitizeMermaidSvg(svg)!;
+      expect(clean.querySelector("a")?.getAttribute("href")).toBeNull();
+    }
+  });
+
+  it("drops presentation attributes with CSS escapes", () => {
+    const clean = sanitizeMermaidSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="u\\72l(http://e.example/f)" cursor="URL(http://e.example/c), auto" stroke="red"/></svg>`,
+    )!;
+    const rect = clean.querySelector("rect")!;
+    expect(rect.getAttribute("fill")).toBeNull();
+    expect(rect.getAttribute("cursor")).toBeNull();
+    expect(rect.getAttribute("stroke")).toBe("red");
+  });
+
+  it("scopes CSS to a sanitizer-generated attribute that content cannot set", () => {
+    const clean = sanitizeMermaidSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" id="d1" data-cocalc-svg-scope="forged"><g data-cocalc-svg-scope="forged"></g></svg>`,
+    )!;
+    const scope = clean.getAttribute("data-cocalc-svg-scope")!;
+    expect(scope).toMatch(/^[0-9a-f]{24}$/);
+    expect(
+      clean.querySelector("g")?.hasAttribute("data-cocalc-svg-scope"),
+    ).toBe(false);
   });
 });
