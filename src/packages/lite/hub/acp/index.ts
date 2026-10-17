@@ -278,6 +278,9 @@ import {
   BOARD_SUBMISSION_FORWARDED,
   BOARD_SUBMISSION_UNCERTAIN,
   clearForwardedBoardHandoff,
+  commitBoardSubmissionQueued,
+  setForwardedBoardQueuing,
+  type BoardQueueFence,
   inAcpWriteTransaction,
   markBoardSubmissionForwarded,
   resolveForwardedBoardSubmission,
@@ -11008,6 +11011,11 @@ async function processPendingAcpSteersOnce(): Promise<void> {
               "an earlier worker may have delivered these board answers",
             );
           }
+          if (handoff.state === "busy") {
+            // Another worker is queuing it as a turn: leave it to that one.
+            releaseAcpSteerClaim({ id: row.id, claim_token: claimToken });
+            continue;
+          }
           if (handoff.state === "not-forwarded") {
             // Not a forwarded submission: this worker must not decide it.
             throw new Error("this board submission was not forwarded here");
@@ -11026,25 +11034,39 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           markAcpSteerHandled({ id: row.id, claim_token: claimToken });
           continue;
         }
-        // It answered without injecting: clear this worker's mark.
-        if (boardKey && handoffToken) {
-          clearForwardedBoardHandoff(boardKey, handoffToken);
-          handoffToken = undefined;
-        }
         if (!ownsClaim()) {
           throw new Error("durable ACP steer claim was lost");
         }
         if (result.state === "pending") {
+          // It answered without injecting: clear this worker's mark.
+          if (boardKey && handoffToken) {
+            clearForwardedBoardHandoff(boardKey, handoffToken);
+            handoffToken = undefined;
+          }
           // Another worker owns the live turn. Release the claim so that owner
           // can atomically claim and deliver the same durable steer row.
           releaseAcpSteerClaim({ id: row.id, claim_token: claimToken });
           continue;
         }
-        await fallbackAcpSteerToQueuedTurn(decodeAcpSteerFallbackRequest(row));
-        if (boardKey) {
-          // Queued after a definite non-delivery (the mark was cleared above).
-          resolveForwardedBoardSubmission(boardKey, "queued");
+        // Not injected: queue it as a turn. This worker keeps its hand-off
+        // through the queue's preparation, and the job is inserted (and the
+        // record set "queued") only while its token is current: a stale
+        // worker can't queue it after another delivered it, nor can another
+        // steer it once its job is committed (CORR-0A3-1).
+        if (
+          boardKey &&
+          handoffToken &&
+          !setForwardedBoardQueuing(boardKey, handoffToken)
+        ) {
+          handoffToken = undefined;
+          throw new Error("another worker took over these board answers");
         }
+        await fallbackAcpSteerToQueuedTurn(
+          decodeAcpSteerFallbackRequest(row),
+          boardKey && handoffToken
+            ? { key: boardKey, handoff_token: handoffToken }
+            : undefined,
+        );
         markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
         if (boardKey && handoffToken) {
@@ -11324,13 +11346,15 @@ async function steerBoardSubmissionOnce(
   // the hub keeps durably says whether it was delivered (ROBUST-E69-1), or
   // whether it may have been (ROBUST-F386-1).
   const trace = await boardSubmissionTrace(key);
+  // Written only while this admission still owns it (its token, when new).
+  const traced = admission.kind === "new" ? admission.token : undefined;
   if (trace === BOARD_SUBMISSION_UNCERTAIN) {
-    markBoardSubmissionAdmitted(key, BOARD_SUBMISSION_UNCERTAIN);
+    markBoardSubmissionAdmitted(key, BOARD_SUBMISSION_UNCERTAIN, traced);
     await recordBoardSubmissionUncertain(key);
     throw boardSubmissionUncertainError();
   }
   if (trace) {
-    markBoardSubmissionAdmitted(key, trace);
+    markBoardSubmissionAdmitted(key, trace, traced);
     return { ok: true, state: trace, threadId };
   }
   let token: string;
@@ -11388,9 +11412,13 @@ function admitBoardSubmissionTurn(request: AcpRequest): void {
 async function enqueueChatAcpTurn({
   request,
   stream,
+  boardFence,
 }: {
   request: AcpRequest;
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
+  /** A board submission's current owner: its job is inserted only while
+   * that owner is current, recorded "queued" in the same transaction. */
+  boardFence?: BoardQueueFence;
 }): Promise<void> {
   if (!conatClient) {
     throw new Error("conat client must be initialized");
@@ -11428,6 +11456,9 @@ async function enqueueChatAcpTurn({
         request.chat.project_id ?? request.project_id,
         request.session_id,
       ),
+      insertGuard: boardFence
+        ? () => commitBoardSubmissionQueued(boardFence)
+        : undefined,
     },
   );
   if (projectId && chatPath && threadId && canceled.length) {
@@ -11464,11 +11495,13 @@ async function enqueueChatAcpTurn({
 
 async function fallbackAcpSteerToQueuedTurn(
   request: AcpSteerRequest,
+  boardFence?: BoardQueueFence,
 ): Promise<AcpSteerResponse> {
   let state: AcpSteerResponse["state"] = "queued";
   let threadId: string | null | undefined;
   await enqueueChatAcpTurn({
     request,
+    boardFence,
     stream: async (payload?: AcpStreamPayload | null) => {
       if (payload?.type !== "status") {
         return;
@@ -11534,10 +11567,11 @@ async function steerAcpRequest(
       forwarded: true,
     };
   }
-  if (result.state === "not_steerable") {
-    return await fallbackAcpSteerToQueuedTurn(request);
-  }
-  return await fallbackAcpSteerToQueuedTurn(request);
+  // Queued only while this attempt still owns the submission (CORR-0A3-1).
+  const boardFence = boardAttempt
+    ? { key: boardAttempt.key, attempt_token: boardAttempt.token }
+    : undefined;
+  return await fallbackAcpSteerToQueuedTurn(request, boardFence);
 }
 
 function publicAttentionRecord(

@@ -67,6 +67,7 @@ function ensureInit(): void {
       outcome TEXT,
       uncertain_recorded INTEGER,
       handoff_token TEXT,
+      queuing_at INTEGER,
       PRIMARY KEY (project_id, path, user_message_id)
     )
   `);
@@ -507,19 +508,28 @@ export function resolveForwardedBoardSubmission(
 export function startForwardedBoardHandoff(
   key: BoardSubmissionKey,
   at = Date.now(),
+  attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS,
 ):
   | { state: "start"; token: string }
   | { state: "uncertain" }
   | { state: "delivered" }
-  | { state: "not-forwarded" } {
+  | { state: "not-forwarded" }
+  /** Another worker is queuing it as a turn right now: leave it. */
+  | { state: "busy" } {
   checkKey(key);
   ensureInit();
   const db = getAcpDatabase();
   return inTransaction(() => {
     const row = db
-      .prepare(`SELECT outcome, injected_at FROM ${TABLE} WHERE ${KEY_WHERE}`)
+      .prepare(
+        `SELECT outcome, injected_at, queuing_at FROM ${TABLE} WHERE ${KEY_WHERE}`,
+      )
       .get(...keyArgs(key)) as
-      | { outcome: string | null; injected_at: number | null }
+      | {
+          outcome: string | null;
+          injected_at: number | null;
+          queuing_at: number | null;
+        }
       | undefined;
     if (row?.outcome === "steered" || row?.outcome === "queued") {
       return { state: "delivered" as const };
@@ -537,11 +547,18 @@ export function startForwardedBoardHandoff(
       ).run(BOARD_SUBMISSION_UNCERTAIN, ...keyArgs(key));
       return { state: "uncertain" as const };
     }
+    // Another worker is queuing it: leave it while that may still finish;
+    // once stale, take over (a new token: the old worker's fenced job
+    // insert then fails, CORR-0A3-1).
+    if (row.queuing_at != null && at - row.queuing_at < attempt_ms) {
+      return { state: "busy" as const };
+    }
     // This worker owns the hand-off: only its token may clear or resolve
     // it (CORR-8BE-2).
     const token = randomUUID();
     db.prepare(
-      `UPDATE ${TABLE} SET injected_at = ?, handoff_token = ? WHERE ${KEY_WHERE}`,
+      `UPDATE ${TABLE} SET injected_at = ?, handoff_token = ?, queuing_at = NULL
+        WHERE ${KEY_WHERE}`,
     ).run(at, token, ...keyArgs(key));
     return { state: "start" as const, token };
   });
@@ -592,4 +609,61 @@ export function markBoardSubmissionForwarded(
 export function inAcpWriteTransaction<T>(fn: () => T): T {
   ensureInit();
   return inTransaction(fn);
+}
+
+/** The worker owning a forwarded submission's hand-off found no live turn
+ * to steer (nothing injected) and queues it as a turn: it keeps its token
+ * through the queue's preparation (CORR-0A3-1). False if superseded. */
+export function setForwardedBoardQueuing(
+  key: BoardSubmissionKey,
+  token: string,
+  at = Date.now(),
+): boolean {
+  checkKey(key);
+  ensureInit();
+  return changed(
+    getAcpDatabase()
+      .prepare(
+        `UPDATE ${TABLE} SET injected_at = NULL, queuing_at = ?
+          WHERE ${KEY_WHERE} AND outcome = ? AND handoff_token = ?`,
+      )
+      .run(at, ...keyArgs(key), BOARD_SUBMISSION_FORWARDED, token),
+  );
+}
+
+/** Who may queue a board submission as a turn: its current direct attempt,
+ * or the worker owning its forwarded hand-off. */
+export type BoardQueueFence =
+  | { key: BoardSubmissionKey; attempt_token: string }
+  | { key: BoardSubmissionKey; handoff_token: string };
+
+/** Run inside the job insert's transaction: record the submission "queued"
+ * if the fence's owner is still current. The compare-and-set is at the
+ * write, so a stale owner can't queue it after another delivered it, and
+ * nobody steers it once its job is committed (CORR-0A3-1). False refuses
+ * the insert. */
+export function commitBoardSubmissionQueued(fence: BoardQueueFence): boolean {
+  checkKey(fence.key);
+  ensureInit();
+  const db = getAcpDatabase();
+  const result =
+    "attempt_token" in fence
+      ? db
+          .prepare(
+            `UPDATE ${TABLE} SET outcome = 'queued', injected_at = NULL
+              WHERE ${KEY_WHERE} AND attempt_token = ? AND outcome IS NULL`,
+          )
+          .run(...keyArgs(fence.key), fence.attempt_token)
+      : db
+          .prepare(
+            `UPDATE ${TABLE}
+                SET outcome = 'queued', injected_at = NULL, queuing_at = NULL
+              WHERE ${KEY_WHERE} AND handoff_token = ? AND outcome = ?`,
+          )
+          .run(
+            ...keyArgs(fence.key),
+            fence.handoff_token,
+            BOARD_SUBMISSION_FORWARDED,
+          );
+  return changed(result);
 }

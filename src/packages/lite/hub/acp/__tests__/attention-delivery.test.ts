@@ -36,6 +36,7 @@ import {
   setCodexCredentialAdmissionResolver,
 } from "../codex-credential-admission";
 import { setHarnessLauncher } from "../harness-runtime";
+import { setAcpAdmissionLimitsProvider } from "../admission";
 import { hubApi } from "../../api";
 import { HarnessAgent } from "@cocalc/ai/acp/harness";
 
@@ -2001,6 +2002,95 @@ describe("agent RPC live guidance funding", () => {
         expect(send).not.toHaveBeenCalled();
         // not an immortal forwarded reservation
         expect(board()).toMatchObject([{ outcome: null, injected_at: null }]);
+      });
+
+      // astra's schedule (CORR-0A3-1): worker A, finding no live turn, is
+      // paused inside queue admission; worker B comes for the same steer.
+      describe("a worker queuing it keeps it until its job is committed (CORR-0A3-1)", () => {
+        const sql = jest.requireActual("../../sqlite/acp-board-submissions");
+        const keyOf = (request: AcpSteerRequest) => ({
+          account_id: accountId,
+          project_id: projectId,
+          path: record.path,
+          thread_id: record.thread_id,
+          user_message_id: request.chat.parent_message_id!,
+        });
+        // A pauses where its queue admission awaits, and B acts then.
+        async function pauseQueueAdmission(b: () => void) {
+          let ran = false;
+          setAcpAdmissionLimitsProvider(async () => {
+            if (!ran) {
+              ran = true;
+              b();
+            }
+            return {};
+          });
+        }
+        afterEach(() => setAcpAdmissionLimitsProvider(undefined));
+        async function forwardWithNoLiveTurn(id: string) {
+          const request = forward(id);
+          await acpTestInternals.handleAcpSteerRequest(request);
+          expect(board()).toMatchObject([{ outcome: "forwarded" }]);
+          jest.mocked(listRunningAcpTurnLeases).mockReturnValue([]);
+          mockLiveRuntime(request.config).running.clear();
+          return request;
+        }
+
+        it("while A queues it, B leaves it; A's job is the one delivery", async () => {
+          const request = await forwardWithNoLiveTurn("assistant-queue-busy");
+          const key = keyOf(request);
+          let b: any;
+          await pauseQueueAdmission(() => {
+            b = sql.startForwardedBoardHandoff(key);
+          });
+          await acpTestInternals.processPendingAcpSteersOnce();
+          expect(b).toEqual({ state: "busy" });
+          expect(listQueuedAcpJobs()).toHaveLength(1);
+          expect(board()).toMatchObject([{ outcome: "queued" }]);
+          expect(storedSteer(request).state).toBe("handled");
+          // and nobody steers it once its job is committed
+          expect(sql.startForwardedBoardHandoff(key)).toEqual({
+            state: "delivered",
+          });
+        });
+
+        it("a stale A whose hand-off B took over and steered queues nothing", async () => {
+          const request = await forwardWithNoLiveTurn("assistant-queue-stale");
+          const key = keyOf(request);
+          await pauseQueueAdmission(() => {
+            // A is suspended past its attempt; B takes over and steers it
+            const later = Date.now() + 3 * 60_000;
+            const b = sql.startForwardedBoardHandoff(key, later);
+            expect(b).toMatchObject({ state: "start" });
+            expect(
+              sql.resolveForwardedBoardSubmission(key, "steered", b.token),
+            ).toBe(true);
+          });
+          await acpTestInternals.processPendingAcpSteersOnce();
+          expect(listQueuedAcpJobs()).toHaveLength(0);
+          expect(board()).toMatchObject([{ outcome: "steered" }]);
+          expect(storedSteer(request).state).toBe("error");
+        });
+
+        it("a direct attempt taken over while it queues queues nothing", async () => {
+          const request = boardGuidance("assistant-direct-queue");
+          request.config = { paymentSource: "auto" };
+          mockLiveRuntime(request.config).running.clear();
+          const key = keyOf(request);
+          await pauseQueueAdmission(() => {
+            // a retry, after A's attempt went stale, claims it and steers it
+            const b = sql.claimBoardSubmissionRetry(key, {
+              now: Date.now() + 3 * 60_000,
+            });
+            expect(b).toHaveProperty("token");
+            sql.markBoardSubmissionAdmitted(key, "steered", b.token);
+          });
+          await expect(
+            acpTestInternals.handleAcpSteerRequest(request),
+          ).rejects.toThrow("Another attempt is delivering");
+          expect(listQueuedAcpJobs()).toHaveLength(0);
+          expect(board()).toMatchObject([{ outcome: "steered" }]);
+        });
       });
 
       it("a worker that delivers it resolves it steered", async () => {
