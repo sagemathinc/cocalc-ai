@@ -29,8 +29,8 @@ With an Origin header, it must be approved (see above). Without one:
 - a Referer from an approved origin is allowed (the app's <img>, iframes,
   links; the app sends strict-origin-when-cross-origin);
 - same-origin subresources are allowed on app routes;
-- a user-activated top-level explicit download (?download) of a file is
-  allowed;
+- a top-level page navigation (Sec-Fetch-Dest: document) of an app or file
+  is allowed, e.g. the app opening JupyterLab in a new tab with noreferrer;
 - everything else is refused.
 
 COCALC_PROJECT_HOST_ORIGIN_POLICY=report logs violations but behaves as
@@ -180,17 +180,6 @@ export function classifyProjectRoute(
   return "app";
 }
 
-function isExplicitDownload(req: Req & { url?: string }): boolean {
-  try {
-    return new URL(
-      req.url ?? "/",
-      "http://project-host.local",
-    ).searchParams.has("download");
-  } catch {
-    return false;
-  }
-}
-
 // Routes where the host's own pages may use the cookie: apps, and reading
 // files.
 function ownOriginRoute(req: Req, route: AmbientRoute): boolean {
@@ -239,12 +228,18 @@ export function ambientCookieRejection(
   ) {
     return;
   }
+  // A top-level page navigation (a new tab or window, a link, a redirect)
+  // replaces the whole page, so whoever started it cannot read the result.
+  // The app opens apps and files this way, often with noreferrer (no
+  // Referer). Frames, fetches and subresources from other pages stay refused.
   if (
-    route === "file" &&
+    (route === "app" || route === "file") &&
     header(req, "sec-fetch-mode").toLowerCase() === "navigate" &&
     header(req, "sec-fetch-dest").toLowerCase() === "document" &&
-    header(req, "sec-fetch-user") === "?1" &&
-    isExplicitDownload(req)
+    // Same serving-host rule as the own-origin cases: the shared host
+    // (PROJECT_HOST_PUBLIC_URL) unbound, a private app hostname only for its
+    // own project, anything else (including a failed lookup) refused.
+    ownAppOriginAllowed(req, project_id)
   ) {
     return;
   }
