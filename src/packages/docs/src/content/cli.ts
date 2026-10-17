@@ -23,9 +23,10 @@ run this, with your CoCalc site's address (for example https://cocalc.ai):
 curl -fsSL https://cocalc.ai/cli/install.sh | sh
 ~~~
 
-Every CoCalc site serves its own installer at \`/cli/install.sh\`, and the CLI
-keeps itself up to date from the site it was installed from. Follow the
-installer's printed PATH instruction if the command is not found.
+Every CoCalc site serves its own installer at \`/cli/install.sh\`. When the
+site serves CLI releases, the CLI keeps itself up to date from the site it was
+installed from. Follow the installer's printed PATH instruction if the command
+is not found.
 
 For native Windows x64, open PowerShell and run:
 
@@ -43,9 +44,12 @@ cocalc --help
 
 The standalone download includes its runtime; you do not need to build the
 repository. The Unix installer installs the CLI release your site currently
-serves, and the Windows installer defaults to the \`stable\` channel. Available
-commands can therefore differ between installed releases. Use your installed
-command's help to check an option before relying on it.
+serves, and the Windows installer defaults to the \`stable\` channel. On a site
+that serves no CLI releases (its \`/cli/site.json\` returns 404), such as a
+CoCalc Star site, \`/cli/install.sh\` runs the standalone installer instead,
+which defaults to the \`latest\` channel. Available commands can therefore
+differ between installed releases. Use your installed command's help to check
+an option before relying on it.
 
 ## Step 2: Read a page before signing in
 

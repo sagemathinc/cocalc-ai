@@ -1716,7 +1716,23 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     kind: "present",
     text: "const site = await r.site(); const { text, manifest } = await r.manifest(site.manifest);",
     reason:
-      'A site\'s /cli/install.sh is generated for the release that site currently serves, the one its /cli/site.json names; the installer has no release channel to choose. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says the Unix installer installs that release. If the code only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
+      'When a site serves CLI releases, its /cli/install.sh is generated for the release the site currently serves, the one its /cli/site.json names; that installer has no release channel to choose. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says the Unix installer installs that release. If the code only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
+  },
+  {
+    id: "cli.install.standalone-fallback",
+    file: "hub/servers/app/cli-distribution.ts",
+    kind: "present",
+    text: 'res.type("text/plain; charset=utf-8").send(legacyInstallScript());',
+    reason:
+      'A site that serves no CLI releases, whose /cli/site.json returns 404, answers /cli/install.sh with a short script that runs the standalone installer. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says so. If the code only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
+  },
+  {
+    id: "cli.install.standalone-default-channel",
+    file: "cli/install.sh",
+    kind: "present",
+    text: 'CHANNEL="${COCALC_CLI_CHANNEL:-latest}"',
+    reason:
+      'The standalone installer, which /cli/install.sh runs on a site that serves no CLI releases, installs the latest channel unless COCALC_CLI_CHANNEL names another. The CLI guide (docs/src/content/cli.ts, "Step 1: Install on your own computer") says it defaults to the latest channel. If the default only moved, point this fact at its new location; otherwise update that paragraph, then this fact.',
   },
 ];
 
