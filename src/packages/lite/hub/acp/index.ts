@@ -275,7 +275,11 @@ import {
 } from "../sqlite/acp-steers";
 import {
   admitBoardSubmission,
+  BOARD_SUBMISSION_FORWARDED,
   BOARD_SUBMISSION_UNCERTAIN,
+  clearForwardedBoardHandoff,
+  resolveForwardedBoardSubmission,
+  startForwardedBoardHandoff,
   claimBoardSubmissionRetry,
   failBoardSubmissionAttempt,
   markBoardSubmissionAdmitted,
@@ -10669,7 +10673,7 @@ async function trySteerCandidateIds({
         } catch (err) {
           if ((err as { code?: string }).code === "principal_mismatch")
             throw err;
-          if (stopOnUnknown) throw err;
+          if (stopOnUnknown) throw new BoardSteerUnknownError(err);
           if (firstError === undefined) {
             firstError = err;
           }
@@ -10970,9 +10974,20 @@ async function processPendingAcpSteersOnce(): Promise<void> {
       const ownsClaim = () =>
         !claimHeartbeatFailed &&
         ownsAcpSteerClaim({ id: row.id, claim_token: claimToken });
+      // A forwarded board submission: this worker resolves its board record,
+      // and hands it over at most once across workers (CORR-D1EE-1).
+      const boardKey = boardSubmissionKey(request);
       try {
         if (!ownsClaim()) {
           throw new Error("durable ACP steer claim was lost");
+        }
+        if (boardKey && !startForwardedBoardHandoff(boardKey)) {
+          // A previous worker started its hand-off and never finished:
+          // uncertain (now recorded so), never sent again.
+          await recordBoardSubmissionUncertain(boardKey);
+          throw new Error(
+            "an earlier worker may have delivered these board answers",
+          );
         }
         const result = await attemptAcpSteerRequest(
           request,
@@ -10980,9 +10995,12 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           ownsClaim,
         );
         if (result.state === "steered") {
+          if (boardKey) resolveForwardedBoardSubmission(boardKey, "steered");
           markAcpSteerHandled({ id: row.id, claim_token: claimToken });
           continue;
         }
+        // It answered without injecting.
+        if (boardKey) clearForwardedBoardHandoff(boardKey);
         if (!ownsClaim()) {
           throw new Error("durable ACP steer claim was lost");
         }
@@ -10993,8 +11011,23 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           continue;
         }
         await fallbackAcpSteerToQueuedTurn(decodeAcpSteerFallbackRequest(row));
+        if (boardKey) resolveForwardedBoardSubmission(boardKey, "queued");
         markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
+        if (boardKey) {
+          if (err instanceof BoardSteerUnknownError) {
+            // Its native steer failed without an answer: uncertain for good.
+            resolveForwardedBoardSubmission(
+              boardKey,
+              BOARD_SUBMISSION_UNCERTAIN,
+            );
+            await recordBoardSubmissionUncertain(boardKey);
+          } else {
+            // Failed before or without any hand-off: the errored steer row
+            // still makes a retry conservative (boardSubmissionTrace).
+            clearForwardedBoardHandoff(boardKey);
+          }
+        }
         markAcpSteerError({
           id: row.id,
           claim_token: claimToken,
@@ -11091,7 +11124,10 @@ async function boardSubmissionTrace(
   const job = getAcpJob(key);
   if (job) return job.state === "running" ? "running" : "queued";
   const steer = getAcpSteer(key);
-  if (steer && steer.state !== "error") return "steered";
+  // An errored steer may have failed after its hand-off: possibly
+  // delivered, never a clean slate (CORR-D1EE-1).
+  if (steer?.state === "error") return BOARD_SUBMISSION_UNCERTAIN;
+  if (steer) return "steered";
   if (!conatClient) return null;
   return await withChatSyncDB({
     client: conatClient,
@@ -11195,6 +11231,16 @@ const boardSubmissionUncertainError = () =>
     "CoCalc couldn't confirm whether the agent got these board answers, so it won't send them again.",
   );
 
+/** A board submission's native steer failed without an answer: it may
+ * have been injected. */
+class BoardSteerUnknownError extends Error {
+  constructor(cause: unknown) {
+    super(`${(cause as Error)?.message ?? cause}`);
+    this.name = "BoardSteerUnknownError";
+    (this as any).cause = cause;
+  }
+}
+
 /** A board submission's current attempt, passed to its hand-off. */
 interface BoardSubmissionAttempt {
   key: BoardSubmissionKey;
@@ -11208,7 +11254,7 @@ async function steerBoardSubmissionOnce(
   send: (
     request: AcpSteerRequest,
     attempt: BoardSubmissionAttempt,
-  ) => Promise<AcpSteerResponse>,
+  ) => Promise<SteerResult>,
 ): Promise<AcpSteerResponse> {
   const threadId = key.thread_id;
   // Earlier uncertain ones of this account, reconciled in the background.
@@ -11228,7 +11274,11 @@ async function steerBoardSubmissionOnce(
       if (!admission.recorded) await recordBoardSubmissionUncertain(key);
       throw boardSubmissionUncertainError();
     }
-    return { ok: true, state: admission.state as any, threadId };
+    const state =
+      admission.state === BOARD_SUBMISSION_FORWARDED
+        ? "steered"
+        : (admission.state as AcpSteerResponse["state"]);
+    return { ok: true, state, threadId };
   }
   // Even a new record may be a submission whose record has expired: what
   // the hub keeps durably says whether it was delivered (ROBUST-E69-1), or
@@ -11236,7 +11286,7 @@ async function steerBoardSubmissionOnce(
   const trace = await boardSubmissionTrace(key);
   if (trace === BOARD_SUBMISSION_UNCERTAIN) {
     markBoardSubmissionAdmitted(key, BOARD_SUBMISSION_UNCERTAIN);
-    markBoardSubmissionUncertainRecorded(key);
+    await recordBoardSubmissionUncertain(key);
     throw boardSubmissionUncertainError();
   }
   if (trace) {
@@ -11262,9 +11312,15 @@ async function steerBoardSubmissionOnce(
     token = claimed.token;
   }
   try {
-    const result = await send(request, { key, token });
+    const sent = await send(request, { key, token });
+    const { forwarded, ...result } = sent;
     if (result?.ok) {
-      markBoardSubmissionAdmitted(key, `${result.state ?? ""}`, token);
+      // Forwarded to the worker that owns the live turn: it resolves it.
+      markBoardSubmissionAdmitted(
+        key,
+        forwarded ? BOARD_SUBMISSION_FORWARDED : `${result.state ?? ""}`,
+        token,
+      );
     } else if (failBoardSubmissionAttempt(key, token)) {
       await recordBoardSubmissionUncertain(key);
     }
@@ -11399,13 +11455,18 @@ async function handleAcpSteerRequest(
   if (boardKey) {
     return await steerBoardSubmissionOnce(boardKey, request, steerAcpRequest);
   }
-  return await steerAcpRequest(request);
+  const { forwarded: _forwarded, ...result } = await steerAcpRequest(request);
+  return result;
 }
+
+/** A steer's response, and whether it was forwarded as a durable steer to
+ * the worker that owns the live turn (not sent to clients). */
+type SteerResult = AcpSteerResponse & { forwarded?: boolean };
 
 async function steerAcpRequest(
   request: AcpSteerRequest,
   boardAttempt?: BoardSubmissionAttempt,
-): Promise<AcpSteerResponse> {
+): Promise<SteerResult> {
   if (request.runtime) {
     await assertThreadRuntimeAtAdmission(request);
     request = { ...request, ...(await pinCodexCredentialAtAdmission(request)) };
@@ -11430,6 +11491,7 @@ async function steerAcpRequest(
       ok: true,
       state: "steered",
       threadId: result.threadId ?? threadId,
+      forwarded: true,
     };
   }
   if (result.state === "not_steerable") {

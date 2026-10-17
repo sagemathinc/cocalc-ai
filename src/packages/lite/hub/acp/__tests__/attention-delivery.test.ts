@@ -1803,6 +1803,116 @@ describe("agent RPC live guidance funding", () => {
       },
     );
 
+    describe("forwarded to the worker that owns the live turn (CORR-D1EE-1)", () => {
+      function forward(id: string) {
+        const request = boardGuidance(id);
+        request.config = { paymentSource: "auto" };
+        mockLiveRuntime(request.config).running.clear();
+        jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+          {
+            project_id: projectId,
+            path: record.path,
+            thread_id: record.thread_id,
+            session_id: sessionId,
+            owner_instance_id: "other-worker",
+          } as any,
+        ]);
+        return request;
+      }
+      const withheld = (packets: any[]) => {
+        const { AppServerClient } = jest.requireActual(
+          "../../../../ai/acp/codex-app-server",
+        );
+        const native: any = {
+          exited: false,
+          nextId: 1,
+          pendingRequests: new Map(),
+          send: (packet: any) => {
+            packets.push(packet);
+            return true; // accepted; its reply never comes
+          },
+        };
+        return (method: string, params: unknown) =>
+          AppServerClient.prototype.request.call(native, method, params, 5);
+      };
+      const board = () =>
+        getAcpDatabase()
+          .prepare("SELECT outcome, injected_at FROM acp_board_submissions")
+          .all() as any[];
+
+      // astra2's regression: the worker's native steer times out; a retry
+      // at once, and eight days later, sends nothing.
+      it("a worker's native timeout stays uncertain past retention", async () => {
+        const request = forward("assistant-worker");
+        await acpTestInternals.handleAcpSteerRequest(request);
+        expect(storedSteer(request).state).toBe("pending");
+        expect(board()).toMatchObject([{ outcome: "forwarded" }]);
+        const runtime = mockLiveRuntime(request.config);
+        const packets: any[] = [];
+        runtime.running
+          .get(sessionId)!
+          .client.request.mockImplementation(withheld(packets));
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request).state).toBe("error");
+        expect(packets).toHaveLength(1);
+        expect(board()).toMatchObject([{ outcome: "uncertain" }]);
+        expect(
+          rows.find((r) => r.message_id === request.chat.parent_message_id)
+            ?.acp_board_answers_uncertain_at_ms,
+        ).toBeGreaterThan(0);
+        const again = (id: string) =>
+          acpTestInternals.handleAcpSteerRequest({
+            ...request,
+            chat: { ...request.chat, message_id: id },
+          });
+        await expect(again("assistant-immediate")).rejects.toThrow(
+          "won't send them again",
+        );
+        const clock = jest
+          .spyOn(Date, "now")
+          .mockReturnValue(Date.now() + 8 * 24 * 60 * 60_000);
+        try {
+          await expect(again("assistant-later")).rejects.toThrow(
+            "won't send them again",
+          );
+        } finally {
+          clock.mockRestore();
+        }
+        expect(packets).toHaveLength(1);
+        expect(listQueuedAcpJobs()).toHaveLength(0);
+      });
+
+      it("a worker that crashed mid hand-off is not followed by another send", async () => {
+        const request = forward("assistant-crash");
+        await acpTestInternals.handleAcpSteerRequest(request);
+        // the first worker marked its hand-off, then died; its claim expired
+        const key = {
+          account_id: accountId,
+          project_id: projectId,
+          path: record.path,
+          thread_id: record.thread_id,
+          user_message_id: request.chat.parent_message_id!,
+        };
+        const sql = jest.requireActual("../../sqlite/acp-board-submissions");
+        expect(sql.startForwardedBoardHandoff(key)).toBe(true);
+        const runtime = mockLiveRuntime(request.config);
+        const send = runtime.running.get(sessionId)!.client.request;
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(send).not.toHaveBeenCalled();
+        expect(board()).toMatchObject([{ outcome: "uncertain" }]);
+        expect(storedSteer(request).state).toBe("error");
+      });
+
+      it("a worker that delivers it resolves it steered", async () => {
+        const request = forward("assistant-delivered");
+        await acpTestInternals.handleAcpSteerRequest(request);
+        mockLiveRuntime(request.config);
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request).state).toBe("handled");
+        expect(board()).toMatchObject([{ outcome: "steered" }]);
+      });
+    });
+
     it("an unknown outcome is resolved from the guidance receipt", async () => {
       const runtime = mockLiveRuntime(liveConfig);
       const send = runtime.running.get(sessionId)!.client.request;

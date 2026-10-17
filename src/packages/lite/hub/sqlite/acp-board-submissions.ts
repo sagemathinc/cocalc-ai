@@ -39,6 +39,11 @@ export const BOARD_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60_000;
  * Past that its new board submissions are refused until they are
  * reconciled (daybreak2, LIMIT-A65-1; astra2, LIMIT-268-1). */
 export const BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT = 100;
+/** The outcome of a submission whose steer was forwarded to the worker
+ * that owns the live turn (a durable steer), until that worker resolves it.
+ * Retries are answered "steered"; it holds its cap reservation and is never
+ * deleted until resolved (CORR-D1EE-1). */
+export const BOARD_SUBMISSION_FORWARDED = "forwarded";
 /** The outcome of a submission whose hand-off to a live turn started but
  * never answered: it is never sent again. */
 export const BOARD_SUBMISSION_UNCERTAIN = "uncertain";
@@ -75,6 +80,11 @@ function ensureInit(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_unmarked_idx ON ${TABLE}(account_id, admitted_at)
       WHERE outcome = 'uncertain' AND uncertain_recorded IS NULL`,
+  );
+  // An account's forwarded submissions: reservations too.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${TABLE}_forwarded_idx ON ${TABLE}(account_id)
+      WHERE outcome = 'forwarded'`,
   );
   // An account's submissions with no outcome yet: the cap's reservations.
   db.exec(
@@ -191,7 +201,7 @@ export function admitBoardSubmission(
     db.prepare(
       `DELETE FROM ${TABLE}
         WHERE admitted_at <= ?
-          AND ((outcome IS NOT NULL
+          AND ((outcome IS NOT NULL AND outcome <> 'forwarded'
                 AND (outcome <> ? OR uncertain_recorded IS NOT NULL))
                OR (outcome IS NULL AND injected_at IS NULL
                    AND (attempt_at = 0 OR attempt_at <= ?)))`,
@@ -292,7 +302,13 @@ function potentialUncertain(
           AND (attempt_at <> 0 OR injected_at IS NOT NULL)`,
     )
     .get(account_id) as { n: number };
-  return unmarked.n + pending.n;
+  const forwarded = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ${TABLE}
+        WHERE account_id = ? AND outcome = 'forwarded'`,
+    )
+    .get(account_id) as { n: number };
+  return unmarked.n + pending.n + forwarded.n;
 }
 
 /** Take over an unresolved submission whose attempt never started its
@@ -439,4 +455,80 @@ export function listUnmarkedUncertainBoardSubmissions(
         ORDER BY admitted_at LIMIT ?`,
     )
     .all(account_id, limit) as unknown as BoardSubmissionKey[];
+}
+
+/** The worker that owns the live turn resolved a forwarded submission:
+ * delivered ("steered", "queued"), uncertain (its native steer failed
+ * without an answer: then write its marker), or not delivered (null: its
+ * attempt ended before any hand-off, so a retry may send it). Only a
+ * forwarded one changes. */
+export function resolveForwardedBoardSubmission(
+  key: BoardSubmissionKey,
+  outcome: "steered" | "queued" | typeof BOARD_SUBMISSION_UNCERTAIN | null,
+): boolean {
+  checkKey(key);
+  ensureInit();
+  const result =
+    outcome == null
+      ? getAcpDatabase()
+          .prepare(
+            `UPDATE ${TABLE}
+                SET outcome = NULL, attempt_at = 0, injected_at = NULL
+              WHERE ${KEY_WHERE} AND outcome = ?`,
+          )
+          .run(...keyArgs(key), BOARD_SUBMISSION_FORWARDED)
+      : getAcpDatabase()
+          .prepare(
+            `UPDATE ${TABLE} SET outcome = ?, uncertain_recorded = NULL
+              WHERE ${KEY_WHERE} AND outcome = ?`,
+          )
+          .run(outcome, ...keyArgs(key), BOARD_SUBMISSION_FORWARDED);
+  return changed(result);
+}
+
+/** A worker is about to hand a forwarded submission to its live turn: true
+ * to proceed. False if a previous worker already started that hand-off
+ * (it crashed or lost its claim mid-steer): then it is resolved uncertain
+ * and must not be sent again (CORR-D1EE-1). */
+export function startForwardedBoardHandoff(
+  key: BoardSubmissionKey,
+  at = Date.now(),
+): boolean {
+  checkKey(key);
+  ensureInit();
+  const db = getAcpDatabase();
+  return inTransaction(() => {
+    const row = db
+      .prepare(`SELECT outcome, injected_at FROM ${TABLE} WHERE ${KEY_WHERE}`)
+      .get(...keyArgs(key)) as
+      | { outcome: string | null; injected_at: number | null }
+      | undefined;
+    if (!row || row.outcome !== BOARD_SUBMISSION_FORWARDED) return false;
+    if (row.injected_at != null) {
+      db.prepare(
+        `UPDATE ${TABLE} SET outcome = ?, uncertain_recorded = NULL
+          WHERE ${KEY_WHERE}`,
+      ).run(BOARD_SUBMISSION_UNCERTAIN, ...keyArgs(key));
+      return false;
+    }
+    db.prepare(`UPDATE ${TABLE} SET injected_at = ? WHERE ${KEY_WHERE}`).run(
+      at,
+      ...keyArgs(key),
+    );
+    return true;
+  });
+}
+
+/** A worker's hand-off of a forwarded submission answered without
+ * injecting it (another worker owns the turn): clear the mark for the
+ * next worker. */
+export function clearForwardedBoardHandoff(key: BoardSubmissionKey): void {
+  checkKey(key);
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET injected_at = NULL
+        WHERE ${KEY_WHERE} AND outcome = ?`,
+    )
+    .run(...keyArgs(key), BOARD_SUBMISSION_FORWARDED);
 }

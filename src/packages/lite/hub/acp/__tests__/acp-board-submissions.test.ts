@@ -7,17 +7,21 @@ import {
   BOARD_SUBMISSIONS_PER_THREAD_PER_HOUR as LIMIT,
   BOARD_SUBMISSION_ATTEMPT_MS as ATTEMPT,
   BOARD_SUBMISSION_RETENTION_MS as RETENTION,
+  BOARD_SUBMISSION_FORWARDED,
   BOARD_SUBMISSION_UNCERTAIN,
   BOARD_SUBMISSION_WINDOW_MS as WINDOW,
   BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT as UNMARKED_LIMIT,
   admitBoardSubmission,
   claimBoardSubmissionRetry,
+  clearForwardedBoardHandoff,
   failBoardSubmissionAttempt,
   listUnmarkedUncertainBoardSubmissions,
   markBoardSubmissionAdmitted,
   markBoardSubmissionUncertainRecorded,
   resetBoardSubmissionsForTests,
+  resolveForwardedBoardSubmission,
   setBoardSubmissionInjecting,
+  startForwardedBoardHandoff,
 } from "../../sqlite/acp-board-submissions";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
@@ -316,6 +320,73 @@ describe("unmarked uncertain records (LIMIT-A65-1)", () => {
       .map((r: any) => r.detail)
       .join("\\n");
     expect(plan).toMatch(/acp_board_submissions_unmarked_idx/);
+  });
+});
+
+describe("forwarded submissions (CORR-D1EE-1)", () => {
+  const forwarded = (id: string, thread = `t-${id}`) => {
+    const t = token(id, { thread_id: thread });
+    markBoardSubmissionAdmitted(
+      key(id, { thread_id: thread }),
+      BOARD_SUBMISSION_FORWARDED,
+      t,
+    );
+    return key(id, { thread_id: thread });
+  };
+
+  test("held reserved and kept past retention until a worker resolves them", () => {
+    for (let i = 0; i < UNMARKED_LIMIT; i++) forwarded(`f${i}`);
+    expect(admit("x", { thread_id: "x" })).toMatchObject({
+      ok: false,
+      reason: "unresolved",
+    });
+    admit("y", { thread_id: "y" }, 1_000 + RETENTION + 1); // cleanup
+    expect(ids().filter((id) => id.startsWith("f"))).toHaveLength(
+      UNMARKED_LIMIT,
+    );
+    // retries answer as delivered
+    expect(admit("f0", { thread_id: "t-f0" })).toMatchObject({
+      kind: "admitted",
+      state: BOARD_SUBMISSION_FORWARDED,
+    });
+  });
+
+  test("a worker resolves one: delivered, uncertain, or ended", () => {
+    const a = forwarded("a");
+    const b = forwarded("b");
+    const c = forwarded("c");
+    expect(resolveForwardedBoardSubmission(a, "steered")).toBe(true);
+    expect(resolveForwardedBoardSubmission(b, BOARD_SUBMISSION_UNCERTAIN)).toBe(
+      true,
+    );
+    expect(resolveForwardedBoardSubmission(c, null)).toBe(true);
+    expect(admit("a", { thread_id: "t-a" })).toMatchObject({
+      state: "steered",
+    });
+    expect(admit("b", { thread_id: "t-b" })).toMatchObject({
+      state: BOARD_SUBMISSION_UNCERTAIN,
+      recorded: false,
+    });
+    expect(admit("c", { thread_id: "t-c" })).toMatchObject({
+      kind: "unknown",
+      injecting: false,
+    });
+    // only a forwarded one changes
+    expect(resolveForwardedBoardSubmission(a, "queued")).toBe(false);
+  });
+
+  test("a hand-off is started once across workers; a second start finds it uncertain", () => {
+    const k = forwarded("h");
+    expect(startForwardedBoardHandoff(k, 2_000)).toBe(true);
+    expect(startForwardedBoardHandoff(k, 3_000)).toBe(false);
+    expect(admit("h", { thread_id: "t-h" })).toMatchObject({
+      state: BOARD_SUBMISSION_UNCERTAIN,
+    });
+    // a hand-off that answered without injecting is cleared for the next worker
+    const k2 = forwarded("h2");
+    expect(startForwardedBoardHandoff(k2, 2_000)).toBe(true);
+    clearForwardedBoardHandoff(k2);
+    expect(startForwardedBoardHandoff(k2, 3_000)).toBe(true);
   });
 });
 
