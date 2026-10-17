@@ -25,8 +25,12 @@
 // Optional: VERIFY_CMD="cocalc --profile staging2 project file cat -w <id>"
 // is run with the text file's path (relative to home) appended, to check that
 // the edits reached the file on disk.
+// Optional: CHAT_THREAD=<thread id of an agent thread in ${DIR}/agent.chat> and
+// CHAT_SEND_CMD="cocalc --profile staging2 project chat send -w <id>" also
+// open that chat and start a real agent turn just before the fault; the chat
+// must not remount and the turn's answer must show up afterwards.
 import { createRequire } from "node:module";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 const require = createRequire(import.meta.url);
 const { chromium } = require("@playwright/test");
 
@@ -40,10 +44,25 @@ const FILES = {
   markdown: "notes.md",
   notebook: "nb.ipynb",
   terminal: "shell.term",
+  chat: "agent.chat",
 };
+const CHAT_THREAD = process.env.CHAT_THREAD;
+const CHAT_SEND_CMD = process.env.CHAT_SEND_CMD;
+// CHAT_ACTIVE=1: watch the chat (not the text editor) through the fault, the
+// way someone follows an agent's turn live, and time the answer there.
+const CHAT_ACTIVE = !!process.env.CHAT_ACTIVE;
+const KINDS = [
+  "markdown",
+  "notebook",
+  "terminal",
+  ...(CHAT_THREAD ? ["chat"] : []),
+];
 // After recovery, keep watching this long for a late teardown: the browser
 // learns of a new host session only when it next refreshes routing.
 const OBSERVE_SECONDS = Number(process.env.OBSERVE_SECONDS ?? 180);
+// How often to type a line while observing. A small value (e.g. 100) types
+// densely enough to land inside a brief reconnect window.
+const TYPE_INTERVAL_MS = Number(process.env.TYPE_INTERVAL_MS ?? 10000);
 if (!PROJECT_ID) throw new Error("PROJECT_ID is required");
 
 const browser = await chromium.connectOverCDP(
@@ -100,6 +119,8 @@ const ROOT_SELECTOR = {
   markdown: "[data-slate-editor]",
   notebook: "[data-jupyter-windowed-list]",
   terminal: ".xterm",
+  // The chat log's scroller (react-virtuoso).
+  chat: "[data-virtuoso-scroller]",
 };
 
 async function tagVisibleEditor(kind) {
@@ -168,7 +189,7 @@ async function typeInText(line) {
     },
     { line, find: FIND_TEXT_CM },
   );
-  typedLines.push(line);
+  typedLines.push({ line, at: Date.now() });
 }
 
 async function textEditorValue() {
@@ -193,11 +214,21 @@ async function installBannerWatch() {
               ".ant-alert, .ant-message-notice, .ant-notification-notice",
             );
           const text = (el?.innerText ?? "").slice(0, 200);
-          if (el && re.test(text)) window.__rcxBanners.push(text);
+          // An agent's "turn finished" notice names the chat thread, which
+          // may itself match; it is not a recovery banner.
+          if (el && re.test(text) && !/turn finished/i.test(text)) {
+            window.__rcxBanners.push({ at: Date.now(), text, el });
+          }
         }
       }
     });
     obs.observe(document.body, { childList: true, subtree: true });
+    // When does each banner go away?
+    setInterval(() => {
+      for (const b of window.__rcxBanners) {
+        if (!b.gone && !b.el.isConnected) b.gone = Date.now();
+      }
+    }, 500);
   });
 }
 
@@ -246,7 +277,7 @@ try {
   // Marks this page load; a full reload of the app loses it.
   await page.evaluate((nonce) => (window.__rcxPageLoad = nonce), nonce);
   await tagVisibleEditor("text");
-  for (const kind of ["markdown", "notebook", "terminal"]) {
+  for (const kind of KINDS) {
     await openInApp(FILES[kind]);
     await page.waitForTimeout(6000);
     const n = await tagVisibleEditor(kind);
@@ -264,9 +295,59 @@ try {
   await installBannerWatch();
   await typeInText(`before fault ${nonce}`);
 
+  // Start an agent turn that is still running when the fault hits: it waits
+  // in a shell, then answers with a number only the model computes, so the
+  // answer can't be confused with the prompt.
+  let chatAnswer = null;
+  if (CHAT_THREAD && CHAT_SEND_CMD) {
+    const n = 100000 + Math.floor(Math.random() * 800000);
+    chatAnswer = `${n + 1}`;
+    const prompt = `Run the shell command \`sleep 40\`, then reply with only the number ${n} plus one, and nothing else.`;
+    report.chat_sent_at = Date.now();
+    const child = spawn(
+      "bash",
+      [
+        "-c",
+        `${CHAT_SEND_CMD} --path ${DIR}/${FILES.chat} --thread-id ${CHAT_THREAD} --stdin`,
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let sendOut = "";
+    child.stdout.on("data", (d) => (sendOut += d));
+    child.stderr.on("data", (d) => (sendOut += d));
+    child.on("exit", (code) => {
+      report.chat_send_exit = code;
+      if (code) report.notes.push(`chat send failed: ${sendOut.slice(-300)}`);
+    });
+    child.stdin.end(prompt);
+    // Let the turn get going (shell command started) before the fault.
+    await page.waitForTimeout(15000);
+    if (CHAT_ACTIVE) {
+      await openInApp(FILES.chat);
+      await page.waitForTimeout(2000);
+    }
+  }
+
   const faultStart = Date.now();
   await injectFault();
   const faultEnd = Date.now();
+  if (CHAT_ACTIVE && chatAnswer) {
+    // The chat stayed on screen through the fault: the answer should show up
+    // as soon as the turn finishes.
+    report.checks.chat_live_answer = await page
+      .waitForFunction(
+        (answer) => document.body.innerText.includes(answer),
+        chatAnswer,
+        { timeout: 240000, polling: 250 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    report.chat_live_answer_seconds_after_send = report.checks.chat_live_answer
+      ? (Date.now() - report.chat_sent_at) / 1000
+      : null;
+    await openInApp(FILES.text);
+    await page.waitForTimeout(2000);
+  }
   await typeInText(`after fault ${nonce}`);
 
   // Recovery: the text editor shows every typed line and the save state is
@@ -292,12 +373,21 @@ try {
   // Keep working in the active editor for a while: a teardown can come late,
   // when the browser next refreshes the host's routing and sees a new host
   // session.
-  for (let t = 0; t < OBSERVE_SECONDS; t += 10) {
-    await typeInText(`observing ${t}s ${nonce}`).catch((err) =>
-      report.notes.push(`type failed while observing at ${t}s: ${err.message}`),
-    );
-    await page.waitForTimeout(10000);
+  const observeStart = Date.now();
+  let typeFailures = 0;
+  for (let i = 0; Date.now() - observeStart < OBSERVE_SECONDS * 1000; i++) {
+    const t = Math.round((Date.now() - observeStart) / 1000);
+    await typeInText(`observing ${t}s #${i} ${nonce}`).catch((err) => {
+      // Dense typing would flood the notes; keep the first few.
+      if (typeFailures++ < 5) {
+        report.notes.push(
+          `type failed while observing at ${t}s: ${err.message}`,
+        );
+      }
+    });
+    await page.waitForTimeout(TYPE_INTERVAL_MS);
   }
+  report.type_failures = typeFailures;
   report.removed_roots = await page.evaluate(() => window.__rcxRemoved ?? []);
 
   const after = await survivingTags();
@@ -317,7 +407,13 @@ try {
   report.checks.recovered = recoveredAt != null;
   const valueLines = new Set(value.split("\n"));
   report.typed_lines = typedLines.length;
-  report.missing_in_editor = typedLines.filter((l) => !valueLines.has(l));
+  // Each missing line with when it was typed, relative to the fault, to line
+  // up with the console.
+  const sinceFault = ({ line, at }) =>
+    `${line} @+${((at - (report.fault_at ?? at)) / 1000).toFixed(1)}s`;
+  report.missing_in_editor = typedLines
+    .filter((l) => !valueLines.has(l.line))
+    .map(sinceFault);
   report.checks.edits_in_editor =
     value.includes(`before fault ${nonce}`) &&
     value.includes(`after fault ${nonce}`) &&
@@ -348,7 +444,9 @@ try {
       (onDisk ?? "").replaceAll("\\n", "\n").split("\n"),
     );
     report.missing_on_disk =
-      onDisk == null ? null : typedLines.filter((l) => !diskLines.has(l));
+      onDisk == null
+        ? null
+        : typedLines.filter((l) => !diskLines.has(l.line)).map(sinceFault);
     report.checks.edits_on_disk =
       onDisk != null && report.missing_on_disk.length === 0;
   }
@@ -406,7 +504,48 @@ try {
     .then(() => true)
     .catch(() => false);
 
-  report.banners = await page.evaluate(() => window.__rcxBanners ?? []);
+  if (CHAT_THREAD) {
+    await openInApp(FILES.chat);
+    report.chat_visible_at = Date.now();
+    if (chatAnswer) {
+      // The answer appears in the chat (not stuck "running" or lost). Timed
+      // from the moment the chat is on screen again: the turn has usually
+      // finished long before.
+      report.checks.chat_turn_completes = await page
+        .waitForFunction(
+          (answer) => document.body.innerText.includes(answer),
+          chatAnswer,
+          { timeout: 180000, polling: 250 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      const shownAt = Date.now();
+      report.chat_answer_seconds_after_send = report.checks.chat_turn_completes
+        ? Math.round((shownAt - report.chat_sent_at) / 1000)
+        : null;
+      report.chat_answer_seconds_after_visible = report.checks
+        .chat_turn_completes
+        ? (shownAt - report.chat_visible_at) / 1000
+        : null;
+    }
+    await page.waitForTimeout(2000);
+    // A chat detached by the tab switches before the fault is not a remount;
+    // the same element must still be the chat now.
+    report.checks.no_remount_chat = !!(await survivingTags()).chat;
+  }
+
+  report.banners = await page.evaluate(() =>
+    (window.__rcxBanners ?? []).map(({ at, text, el, gone }) => ({
+      at,
+      text,
+      // Still showing now, or when it went away (polled below).
+      gone: el.isConnected ? null : (gone ?? "gone"),
+    })),
+  );
+  for (const b of report.banners) {
+    b.at_since_fault_s =
+      report.fault_at == null ? null : (b.at - report.fault_at) / 1000;
+  }
   report.checks.no_banner = report.banners.length === 0;
   report.console = consoleCounts;
   const failed = Object.entries(report.checks).filter(([, ok]) => !ok);
