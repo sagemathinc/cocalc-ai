@@ -19,6 +19,14 @@ import { createElement, CSSProperties } from "react";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import type { CoCalcJupyter } from "@cocalc/jupyter/ipynb/parse";
 
+// Markdown images carry max-height:100% (from the static slate image element).
+// When Chrome moves such an image to the next printed page, it resolves that
+// percentage against the stretched flex row of the cell, reserves too little
+// height, and paints the image over the cells that follow. Nothing in a
+// printed notebook needs that cap.
+export const PRINT_CSS =
+  "@media print { .cocalc-slate-render img { max-height: none !important; } }";
+
 export default function exportToHTML({
   title,
   ipynb,
@@ -77,6 +85,7 @@ export default function exportToHTML({
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/${codemirror}/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${katex}/dist/katex.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@${antd}/dist/antd.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>${PRINT_CSS}</style>
 </head>
 <body>
 ${body}
