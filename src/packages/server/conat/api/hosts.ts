@@ -27,6 +27,7 @@ import type {
   HostMaintenanceNotice,
   HostLroKind,
   HostPublicRouteMode,
+  HostRuntimeFleetLatencyGate,
   HostRuntimeFleetRolloutRequest,
   HostRuntimeFleetRolloutResponse,
   HostProjectRow,
@@ -8771,10 +8772,12 @@ export async function rolloutHostRuntimeFleet({
   stabilize_seconds,
   promote_global,
   reason,
+  latency_gate,
 }: HostRuntimeFleetRolloutRequest & {
   account_id?: string;
 }): Promise<HostRuntimeFleetRolloutResponse> {
   const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+  const latencyGate = normalizeFleetRolloutLatencyGate(latency_gate);
   if (artifact !== "project-host") {
     throw new Error("paced fleet rollout currently supports project-host only");
   }
@@ -8926,6 +8929,7 @@ export async function rolloutHostRuntimeFleet({
       stabilize_seconds: normalizedStabilizeSeconds,
       promote_global: promote_global === true,
       reason: `${reason ?? ""}`.trim() || "paced_runtime_fleet_rollout",
+      latency_gate: latencyGate,
     },
     dedupe_key: `${HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND}:${JSON.stringify({
       artifact,
@@ -8962,6 +8966,14 @@ export async function rolloutHostRuntimeFleet({
     kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
     host_ids: orderedHostIds,
   };
+}
+
+function normalizeFleetRolloutLatencyGate(
+  value: unknown,
+): HostRuntimeFleetLatencyGate {
+  if (value == null || value === "") return "enforce";
+  if (value === "enforce" || value === "advisory") return value;
+  throw new Error('latency_gate must be "enforce" or "advisory"');
 }
 
 export async function upgradeHostSoftware({

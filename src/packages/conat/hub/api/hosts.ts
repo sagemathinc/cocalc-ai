@@ -248,7 +248,12 @@ export interface HostRuntimeFleetRolloutRequest {
   stabilize_seconds?: number;
   promote_global?: boolean;
   reason?: string;
+  // "enforce" (default) stops the campaign when browser latency gets worse;
+  // "advisory" records the regression and continues. Other gates always block.
+  latency_gate?: HostRuntimeFleetLatencyGate;
 }
+
+export type HostRuntimeFleetLatencyGate = "enforce" | "advisory";
 
 export interface HostRuntimeFleetRolloutResponse {
   op_id: string;

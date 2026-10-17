@@ -351,6 +351,7 @@ import {
   getUxLatencySlaThresholdsFromSettings,
   getUxLatencySummary as getUxLatencySummary0,
   recordUxLatencyEvent as recordUxLatencyEvent0,
+  type UxLatencySlaThresholds,
 } from "@cocalc/server/monitoring/ux-latency";
 import {
   DEFAULT_ADMIN_ALERT_WINDOW_HOURS,
@@ -1943,6 +1944,91 @@ function uxLatencyMetric({
   );
 }
 
+export interface UxLatencyHealthAssessment {
+  metric: string;
+  segment?: string;
+  p95_ms: number | null;
+  count: number;
+  min_samples: number;
+  warning_ms: number;
+  critical_ms: number;
+  level: LaunchHealthLevel;
+}
+
+// The browser-observed latency SLAs behind the "ux-latency" launch health
+// check. Each metric is "unknown" until it has min_samples samples; callers
+// that act on the level (such as the fleet rollout gate) may ask for more.
+export function uxLatencyHealthAssessments({
+  summary,
+  sla,
+  min_samples = 1,
+}: {
+  summary?: UxLatencySummary;
+  sla: UxLatencySlaThresholds;
+  min_samples?: number;
+}): UxLatencyHealthAssessment[] {
+  const specs: Array<{
+    metric: string;
+    segment?: string;
+    warning_ms: number;
+    min_samples?: number;
+  }> = [
+    {
+      metric: "project_start_running",
+      segment: "warm_provisioned",
+      warning_ms: sla.project_start_warm_p95_ms,
+      min_samples: 10,
+    },
+    {
+      metric: "project_terminal_ready",
+      warning_ms: sla.project_terminal_ready_p95_ms,
+    },
+    {
+      metric: "project_jupyter_ready",
+      warning_ms: sla.project_jupyter_ready_p95_ms,
+    },
+    {
+      metric: "project_exec_ready",
+      segment: "warm",
+      warning_ms: sla.project_exec_ready_p95_ms,
+    },
+    {
+      metric: UX_LATENCY_HEALTH_METRICS.fileVisible,
+      warning_ms: sla.file_open_visible_p95_ms,
+    },
+    {
+      metric: UX_LATENCY_HEALTH_METRICS.fileSyncReady,
+      warning_ms: sla.file_open_sync_ready_p95_ms,
+    },
+  ];
+  return specs.map((spec) => {
+    const row = uxLatencyMetric({
+      summary,
+      metric: spec.metric,
+      segment: spec.segment,
+    });
+    const minSamples = Math.max(1, spec.min_samples ?? 1, min_samples);
+    const p95 = row?.p95_ms ?? null;
+    const count = row?.count ?? 0;
+    return {
+      metric: spec.metric,
+      ...(spec.segment ? { segment: spec.segment } : {}),
+      p95_ms: p95,
+      count,
+      min_samples: minSamples,
+      warning_ms: spec.warning_ms,
+      critical_ms: spec.warning_ms * 2,
+      level: classifyLatencyP95Health({
+        p95,
+        sample_count: count,
+        min_samples: minSamples,
+        warning_ms: spec.warning_ms,
+        critical_ms: spec.warning_ms * 2,
+      }),
+    };
+  });
+}
+
 function launchHealthKillSwitches(
   settings: Record<string, any> | undefined,
 ): LaunchHealthKillSwitches {
@@ -2310,40 +2396,11 @@ export async function getLaunchHealth({
         : backups.bay_backup.enabled
           ? "warning"
           : "warning";
-  const latencyLevel = worstLaunchHealthLevel([
-    classifyLatencyP95Health({
-      p95: lifecycleP95,
-      sample_count: lifecycleMetric?.count,
-      min_samples: 10,
-      warning_ms: sla.project_start_warm_p95_ms,
-      critical_ms: sla.project_start_warm_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: terminalP95,
-      warning_ms: sla.project_terminal_ready_p95_ms,
-      critical_ms: sla.project_terminal_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: jupyterP95,
-      warning_ms: sla.project_jupyter_ready_p95_ms,
-      critical_ms: sla.project_jupyter_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: execP95,
-      warning_ms: sla.project_exec_ready_p95_ms,
-      critical_ms: sla.project_exec_ready_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: fileVisibleP95,
-      warning_ms: sla.file_open_visible_p95_ms,
-      critical_ms: sla.file_open_visible_p95_ms * 2,
-    }),
-    classifyLatencyP95Health({
-      p95: fileSyncReadyP95,
-      warning_ms: sla.file_open_sync_ready_p95_ms,
-      critical_ms: sla.file_open_sync_ready_p95_ms * 2,
-    }),
-  ]);
+  const latencyLevel = worstLaunchHealthLevel(
+    uxLatencyHealthAssessments({ summary: latency, sla }).map(
+      (assessment) => assessment.level,
+    ),
+  );
 
   const checks: LaunchHealthCheck[] = [
     launchHealthCheck({
