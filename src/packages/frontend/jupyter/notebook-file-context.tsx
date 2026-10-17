@@ -18,7 +18,7 @@ Exceptions:
   should then remove LegacyHtmlOutputContext): text/html output keeps exactly
   what it had before, through LegacyHtmlOutputContext.
 - ipywidgets render in their own React root with their own context
-  (widgets/manager.ts, noSanitize: trust), until widgets get their own path
+  (widgets/manager.ts, sanitized only when untrusted), until widgets get their own path
   (step 4).
 */
 
