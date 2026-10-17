@@ -127,28 +127,48 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // At most one lookup runs at a time: callers that time out stop waiting,
-// but the lookup itself keeps running and later callers reuse it. A lookup
-// still running after LOAD_MAX_AGE_MS is abandoned, and after a failure no
-// new lookup starts for RETRY_COOLDOWN_MS. So a hanging configuration read
-// costs at most one lookup per minute, not one per connection.
+// but the lookup keeps running and later callers reuse it. A lookup still
+// running after LOAD_MAX_AGE_MS is abandoned (and if it finishes later, its
+// result is ignored). After a lookup fails or a caller times out, callers
+// fail fast for RETRY_COOLDOWN_MS instead of each waiting; turning callers
+// away does not extend the cooldown. So a hanging configuration read costs
+// at most one lookup per minute, not one per connection.
 const LOAD_MAX_AGE_MS = 60_000;
 const RETRY_COOLDOWN_MS = 10_000;
-let inflight: { promise: Promise<Set<string>>; started: number } | undefined;
-let lastFailureAt = 0;
+let generation = 0;
+let inflight:
+  | { promise: Promise<Set<string>>; started: number; generation: number }
+  | undefined;
+let cooldownUntil = 0;
+
+class CooldownError extends Error {
+  constructor() {
+    super("approved origin lookup recently failed");
+  }
+}
+
+function startCooldown(): void {
+  cooldownUntil = Math.max(cooldownUntil, Date.now() + RETRY_COOLDOWN_MS);
+}
 
 function startLoad(load: () => Promise<Set<string>>): Promise<Set<string>> {
   const now = Date.now();
+  if (now < cooldownUntil) {
+    return Promise.reject(new CooldownError());
+  }
   if (inflight != null && now - inflight.started < LOAD_MAX_AGE_MS) {
     return inflight.promise;
   }
-  if (now - lastFailureAt < RETRY_COOLDOWN_MS) {
-    return Promise.reject(new Error("approved origin lookup recently failed"));
-  }
+  const mine = ++generation;
   const promise = load().then((origins) => {
-    cached = { origins, at: Date.now() };
+    // A newer lookup replaced this one: don't let a late, abandoned result
+    // overwrite what it found.
+    if (mine === generation) {
+      cached = { origins, at: Date.now() };
+    }
     return origins;
   });
-  const entry = { promise, started: now };
+  const entry = { promise, started: now, generation: mine };
   inflight = entry;
   promise.then(
     () => {
@@ -156,7 +176,7 @@ function startLoad(load: () => Promise<Set<string>>): Promise<Set<string>> {
     },
     (err) => {
       if (inflight === entry) inflight = undefined;
-      lastFailureAt = Date.now();
+      if (mine === generation) startCooldown();
       // Logged once per failed lookup, not once per waiting caller.
       logger.warn("approved origin lookup failed", { err: `${err}` });
     },
@@ -164,8 +184,8 @@ function startLoad(load: () => Promise<Set<string>>): Promise<Set<string>> {
   return promise;
 }
 
-// Wait for the shared lookup, but at most timeoutMs. A timeout starts the
-// retry cooldown so later callers fail fast instead of each waiting.
+// Wait for the shared lookup, but at most timeoutMs. A real timeout starts
+// the cooldown; being turned away by the cooldown does not extend it.
 async function waitForLoad(
   load: () => Promise<Set<string>>,
   timeoutMs: number,
@@ -173,7 +193,7 @@ async function waitForLoad(
   try {
     return await withTimeout(startLoad(load), timeoutMs);
   } catch (err) {
-    lastFailureAt = Math.max(lastFailureAt, Date.now());
+    if (!(err instanceof CooldownError)) startCooldown();
     throw err;
   }
 }
@@ -205,12 +225,12 @@ export async function approvedOrigins({
 export function resetApprovedOriginsForTests(): void {
   cached = undefined;
   inflight = undefined;
-  lastFailureAt = 0;
+  cooldownUntil = 0;
 }
 
 export function resetPendingForTests(): void {
   inflight = undefined;
-  lastFailureAt = 0;
+  cooldownUntil = 0;
 }
 
 // Why the connection must be refused, or undefined if it is acceptable.
@@ -241,11 +261,11 @@ export async function assertCookieOrigin(
   let reason: string | undefined;
   try {
     reason = await cookieOriginRejection(headers, approved);
-  } catch (err) {
-    // No approved list could be loaded: refuse when enforcing (but only
-    // connections that carry a browser Origin), only log otherwise.
+  } catch {
+    // No approved list could be loaded (the failure itself is logged once
+    // by the lookup): refuse when enforcing, but only connections that carry
+    // a browser Origin; only count and log (rate limited) otherwise.
     reason = "approved origins unavailable";
-    logger.warn("browser origin check failed", { err: `${err}` });
   }
   if (!reason) return;
   rejections.inc({ credential, reason, mode });

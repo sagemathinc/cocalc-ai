@@ -111,6 +111,74 @@ describe("hub conat cookie origin policy", () => {
     expect(hang).toHaveBeenCalledTimes(1);
   });
 
+  it("fails fast during the cooldown even while a timed-out lookup still runs", async () => {
+    const hang = jest.fn(() => new Promise<Set<string>>(() => {}));
+    await expect(approvedOrigins({ load: hang, timeoutMs: 5 })).rejects.toThrow(
+      "timed out",
+    );
+    const started = Date.now();
+    await expect(
+      approvedOrigins({ load: hang, timeoutMs: 1000 }),
+    ).rejects.toThrow("recently failed");
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(hang).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not extend the cooldown by turning callers away", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["nextTick", "setImmediate", "setTimeout"],
+    });
+    try {
+      jest.setSystemTime(new Date("2026-10-17T00:00:00Z"));
+      const fail = jest.fn(async () => {
+        throw new Error("db down");
+      });
+      await expect(approvedOrigins({ load: fail })).rejects.toThrow("db down");
+      for (const t of ["00:00:03", "00:00:06", "00:00:09"]) {
+        jest.setSystemTime(new Date(`2026-10-17T${t}Z`));
+        await expect(approvedOrigins({ load: fail })).rejects.toThrow(
+          "recently failed",
+        );
+      }
+      jest.setSystemTime(new Date("2026-10-17T00:00:11Z"));
+      const ok = jest.fn(async () => new Set(["https://cocalc.example"]));
+      await expect(approvedOrigins({ load: ok })).resolves.toEqual(
+        new Set(["https://cocalc.example"]),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("ignores a late result from an abandoned lookup", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["nextTick", "setImmediate", "setTimeout"],
+    });
+    try {
+      jest.setSystemTime(new Date("2026-10-17T00:00:00Z"));
+      let finishOld: (s: Set<string>) => void = () => {};
+      const old = () =>
+        new Promise<Set<string>>((resolve) => {
+          finishOld = resolve;
+        });
+      await expect(
+        approvedOrigins({ load: old, timeoutMs: 5 }),
+      ).rejects.toThrow();
+      // After a minute the hung lookup is abandoned and a new one succeeds.
+      jest.setSystemTime(new Date("2026-10-17T00:01:30Z"));
+      await approvedOrigins({
+        load: async () => new Set(["https://new.example"]),
+      });
+      finishOld(new Set(["https://removed.example"]));
+      await new Promise((resolve) => setImmediate(resolve));
+      await expect(
+        approvedOrigins({ load: async () => new Set(["https://x.example"]) }),
+      ).resolves.toEqual(new Set(["https://new.example"]));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("recovers after the cooldown once a failed lookup has finished", async () => {
     jest.useFakeTimers({
       doNotFake: ["nextTick", "setImmediate", "setTimeout"],
