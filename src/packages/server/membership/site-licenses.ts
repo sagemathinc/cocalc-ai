@@ -194,6 +194,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "manager-updated",
   "manager-removed",
   "site-license-updated",
+  "site-license-owner-transferred",
   "pool-created",
   "pool-updated",
   "pool-archived",
@@ -3747,6 +3748,7 @@ export async function updateSiteLicense({
   starts_at,
   expires_at,
   metadata,
+  owner_account_id,
 }: {
   actor_account_id: string;
   site_license_id: string;
@@ -3761,12 +3763,50 @@ export async function updateSiteLicense({
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown>;
+  // Transfer ownership of the license and every one of its pools.
+  owner_account_id?: string;
 }): Promise<SiteLicenseOverview> {
   const actorAccountId = normalizeAccountId(actor_account_id);
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  const nextOwnerAccountId =
+    owner_account_id === undefined
+      ? undefined
+      : normalizeAccountId(owner_account_id, "owner_account_id");
+  if (nextOwnerAccountId) {
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    await assertTargetAccountExists(nextOwnerAccountId);
+  }
   return await withLocalSiteLicenseTransaction(async (client) => {
     const current = await getSiteLicense(siteLicenseId, client);
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    const previousOwnerAccountId = current.owner_account_id ?? null;
+    const ownerChanged =
+      nextOwnerAccountId != null &&
+      nextOwnerAccountId !== previousOwnerAccountId;
+    if (ownerChanged) {
+      // The pools are membership packages owned by the license owner; they
+      // must move with the license, or the owner could not manage them.
+      await client.query(
+        "UPDATE site_licenses SET owner_account_id=$2, updated=NOW() WHERE id=$1",
+        [siteLicenseId, nextOwnerAccountId],
+      );
+      await client.query(
+        `UPDATE membership_packages SET owner_account_id=$2, updated=NOW()
+          WHERE kind='site' AND metadata->>'site_license_id'=$1`,
+        [siteLicenseId, nextOwnerAccountId],
+      );
+      await recordSiteLicenseAuditEvent({
+        site_license_id: siteLicenseId,
+        action: "site-license-owner-transferred",
+        actor_account_id: actorAccountId,
+        target_account_id: nextOwnerAccountId,
+        metadata: {
+          previous_owner_account_id: previousOwnerAccountId,
+          owner_account_id: nextOwnerAccountId,
+        },
+        client,
+      });
+    }
     const nextAllowedDomains =
       allowed_domains === undefined
         ? current.allowed_domains
@@ -3877,6 +3917,7 @@ export async function updateSiteLicense({
           starts_at,
           expires_at,
           metadata,
+          owner_account_id,
         })
           .filter(([, value]) => value !== undefined)
           .map(([field]) => field),

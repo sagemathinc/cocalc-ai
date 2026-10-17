@@ -736,6 +736,8 @@ function formatSiteLicenseAuditAction({
       return "Manager removed";
     case "site-license-updated":
       return "Site license updated";
+    case "site-license-owner-transferred":
+      return "Site license owner transferred";
     case "site-license-provisioned":
       return "Site license created";
     default:
