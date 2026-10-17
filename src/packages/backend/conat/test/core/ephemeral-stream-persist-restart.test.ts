@@ -18,7 +18,7 @@ import {
   wait,
 } from "@cocalc/backend/conat/test/setup";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
-import { cstream } from "@cocalc/conat/sync/core-stream";
+import { CoreStream, cstream } from "@cocalc/conat/sync/core-stream";
 import { dkv } from "@cocalc/conat/sync/dkv";
 import { once } from "@cocalc/util/async-utils";
 
@@ -31,6 +31,7 @@ describe("an ephemeral stream across a persist server restart", () => {
   let kvWriter;
   let kvReader;
   let persistServer;
+  let oldInstance;
   const readerChanges: any[] = [];
   const kvReaderChanges: any[] = [];
 
@@ -51,6 +52,8 @@ describe("an ephemeral stream across a persist server restart", () => {
       await writer.publish(mesg);
     }
     await wait({ until: () => reader.getAll().length == 3 });
+    oldInstance = reader.getPersistInstance();
+    expect(typeof oldInstance).toBe("string");
     reader.on("change", ({ mesg, prev }) => readerChanges.push({ mesg, prev }));
 
     kvWriter = await dkv({
@@ -124,6 +127,40 @@ describe("an ephemeral stream across a persist server restart", () => {
     expect(kvReader.get("old")).toBeUndefined();
     expect(kvReaderChanges.some((x) => x.key == "old")).toBe(true);
   }, 45_000);
+
+  it("reapplies the stream's configuration to the new instance", async () => {
+    // dkv asks for allow_msg_ttl (for tombstones); a new ephemeral instance
+    // starts with defaults
+    expect((await kvWriter.config()).allow_msg_ttl).toBe(true);
+    expect((await kvReader.config()).allow_msg_ttl).toBe(true);
+  });
+
+  it("a stream that opens later on the shared client, from a cached cursor of the old instance, reads the new one from the start", async () => {
+    expect(writer.getPersistInstance()).not.toBe(oldInstance);
+    const late = new CoreStream({
+      client: writer.client,
+      name,
+      ephemeral: true,
+      start_seq: 2,
+      start_instance: oldInstance,
+    });
+    await late.init();
+    expect(late.persistClient).toBe(writer.persistClient);
+    expect(new Set(late.getAll())).toEqual(new Set(["after"]));
+    late.close();
+  });
+
+  it("so does one whose cursor is past the new instance's newest message", async () => {
+    const late = new CoreStream({
+      client: writer.client,
+      name,
+      ephemeral: true,
+      start_seq: 1000,
+    });
+    await late.init();
+    expect(new Set(late.getAll())).toEqual(new Set(["after"]));
+    late.close();
+  });
 
   it("cleans up", async () => {
     writer?.close();

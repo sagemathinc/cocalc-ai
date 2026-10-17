@@ -49,6 +49,9 @@ type RecentLogCacheEntry = {
   // Exact consumed DStream transport ranges, not AcpStreamMessage.seq.
   liveStreamRanges?: LiveLogRanges;
   liveStreamName?: string;
+  // the persist instance those ranges came from: an ephemeral stream that
+  // has since been recreated numbers its messages anew
+  liveStreamInstance?: string | null;
 };
 
 const recentActivityLogCache = new LRUCache<string, RecentLogCacheEntry>({
@@ -786,7 +789,14 @@ export function useCodexLog({
             name: liveLogStream,
             ephemeral: true,
             maxListeners: 50,
-            ...(startSeq != null ? { start_seq: startSeq } : {}),
+            ...(startSeq != null
+              ? {
+                  start_seq: startSeq,
+                  ...(cached?.liveStreamInstance !== undefined
+                    ? { start_instance: cached.liveStreamInstance }
+                    : {}),
+                }
+              : {}),
           });
           liveStream = lease.stream;
           liveStreamRef.current = liveStream;
@@ -1036,6 +1046,9 @@ export function useCodexLog({
       liveStreamRanges: liveStreamIsProjection ? appliedLiveRanges : undefined,
       liveStreamName: liveStreamIsProjection
         ? (liveLogStream ?? undefined)
+        : undefined,
+      liveStreamInstance: liveStreamIsProjection
+        ? liveStreamRef.current?.getPersistInstance?.()
         : undefined,
     });
   }, [

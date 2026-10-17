@@ -174,6 +174,10 @@ export interface CoreStreamOptions {
   start_seq?: number;
   // optionally start bootstrap from the seq stored in this named checkpoint.
   start_checkpoint?: string;
+  // the persist instance (see getPersistInstance) that start_seq or
+  // start_checkpoint came from; if the stream's instance is now different
+  // they mean nothing there, and the stream is read from the start.
+  start_instance?: string | null;
 
   ephemeral?: boolean;
   sync?: boolean;
@@ -297,6 +301,7 @@ export class CoreStream<T = any> extends EventEmitter {
     config,
     start_seq,
     start_checkpoint,
+    start_instance,
     ephemeral = false,
     sync,
     client,
@@ -322,6 +327,8 @@ export class CoreStream<T = any> extends EventEmitter {
     };
     this._start_seq = start_seq;
     this._start_checkpoint = start_checkpoint;
+    this._start_instance = start_instance;
+    this.requestedConfig = { ...(config ?? {}) };
     this.bootstrapRetry = bootstrapRetry;
     this.pendingConfigOptions = config;
     this.initPhaseReporter = initPhaseReporter;
@@ -344,6 +351,15 @@ export class CoreStream<T = any> extends EventEmitter {
   private initialized = false;
   private initDone = false;
   private persistInstanceResets = 0;
+  private _start_instance?: string | null;
+  // the persist instance this stream's state came from: undefined before the
+  // first read, null if the server sends none (see PersistStreamClient)
+  private persistInstance?: string | null;
+  // every configuration this stream has asked for, so it can be applied again
+  // to a new instance of an ephemeral stream, which starts with defaults
+  private requestedConfig: Partial<Configuration> = {};
+  // writes wait for that, so none land under the defaults
+  private configReapply?: { promise: Promise<void>; resolve: () => void };
   private hasPendingConfigChanges = () =>
     this.pendingConfigOptions != null &&
     Object.keys(this.pendingConfigOptions).length > 0;
@@ -480,7 +496,9 @@ export class CoreStream<T = any> extends EventEmitter {
         this.setRecoveryState("recovering");
       }
     });
-    this.persistClient.on("instance-changed", this.resetForNewPersistInstance);
+    this.persistClient.on("instance-changed", (instance) => {
+      this.resetForNewPersistInstance(instance);
+    });
     this.persistClient.on("paused", () => {
       this.setRecoveryState("paused");
     });
@@ -673,9 +691,14 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.persistClient == null) {
       throw Error("disconnected");
     }
+    this.requestedConfig = { ...this.requestedConfig, ...config };
     this.currentConfig = await this.persistClient.config({ config });
     return this.currentConfig;
   };
+
+  // the persist instance this stream's state came from (see
+  // CoreStreamOptions.start_instance)
+  getPersistInstance = (): string | null | undefined => this.persistInstance;
 
   getMetadata = (): JSONValue | undefined => {
     return this.currentMetadata;
@@ -737,6 +760,7 @@ export class CoreStream<T = any> extends EventEmitter {
 
   close = () => {
     logger.debug("close", this.name);
+    this.finishConfigReapply();
     stats.closed += 1;
     stats.active = Math.max(0, stats.active - 1);
     this.listening = false;
@@ -801,11 +825,41 @@ export class CoreStream<T = any> extends EventEmitter {
         start_checkpoint,
         includeConfig,
       });
-      if (this.persistInstanceResets !== resets) {
-        // The server's instance changed during the read, so what we asked
-        // for (from our old last seq) is not all it has.
+      const info = (r: typeof result) =>
+        r.bootstrap as {
+          instance?: string | null;
+          newest_retained_seq?: number;
+        };
+      const instance = info(result).instance ?? null;
+      // what our state (or the requested start) belongs to
+      const expected =
+        this.persistInstance !== undefined
+          ? this.persistInstance
+          : start_seq != null || start_checkpoint != null
+            ? this._start_instance
+            : undefined;
+      if (expected !== undefined && instance !== expected) {
+        // The shared persist client may have seen the change (and emitted
+        // instance-changed) before this stream subscribed.
+        this.resetForNewPersistInstance(instance);
+      }
+      const startedPastEnd =
+        expected === undefined &&
+        instance != null &&
+        typeof start_seq == "number" &&
+        typeof info(result).newest_retained_seq == "number" &&
+        start_seq > info(result).newest_retained_seq! + 1;
+      if (
+        (this.persistInstanceResets !== resets || startedPastEnd) &&
+        (start_seq != null || start_checkpoint != null)
+      ) {
+        // What we asked for (from an old last seq) is not all this instance
+        // has.  A start beyond its newest message also means the start came
+        // from another instance.
         result = await this.fetchAllFromPersist({ attempt, includeConfig });
       }
+      this.persistInstance = info(result).instance ?? null;
+      await this.reapplyConfigIfNeeded();
       this.processPersistentMessages(result.messages, {
         noEmit,
         noSeqCheck: true,
@@ -917,6 +971,7 @@ export class CoreStream<T = any> extends EventEmitter {
       includeConfig,
     });
     const bootstrap = {
+      instance: result.instance ?? null,
       effective_start_seq: result.effective_start_seq,
       oldest_retained_seq: result.oldest_retained_seq,
       newest_retained_seq: result.newest_retained_seq,
@@ -1226,11 +1281,27 @@ export class CoreStream<T = any> extends EventEmitter {
   // numbers messages from 1 again.  Drop what we have, as deletes so views
   // built on this stream (dkv, dko, dstream) drop it too; the recovery that
   // follows reads the new contents from the start.
-  private resetForNewPersistInstance = () => {
+  private resetForNewPersistInstance = (instance?: string | null) => {
     if (this.raw == null) {
       return;
     }
     this.persistInstanceResets += 1;
+    if (instance !== undefined) {
+      this.persistInstance = instance;
+    }
+    if (
+      this.configReapply == null &&
+      Object.keys(this.requestedConfig).length > 0
+    ) {
+      let resolve: () => void = () => {};
+      const promise = new Promise<void>((r) => (resolve = r));
+      this.configReapply = { promise, resolve };
+      // never hold writes forever, e.g., if recovery stalls
+      setTimeout(
+        () => this.finishConfigReapply(),
+        DEFAULT_GET_ALL_TIMEOUT,
+      ).unref?.();
+    }
     const seqs = this.raw.map(({ seq }) => seq);
     if (seqs.length > 0) {
       this.processPersistentDelete(
@@ -1247,6 +1318,25 @@ export class CoreStream<T = any> extends EventEmitter {
     this.missingMessages.clear();
     this.processPersistentSetLargestSeq = 0;
     this.lastSeq = 0;
+  };
+
+  private finishConfigReapply = () => {
+    const pending = this.configReapply;
+    this.configReapply = undefined;
+    pending?.resolve();
+  };
+
+  private reapplyConfigIfNeeded = async () => {
+    if (this.configReapply == null || this.isClosed()) {
+      return;
+    }
+    try {
+      this.currentConfig = await this.persistClient.config({
+        config: this.requestedConfig,
+      });
+    } finally {
+      this.finishConfigReapply();
+    }
   };
 
   private emitChange = (e: ChangeEvent<T>) => {
@@ -1325,6 +1415,10 @@ export class CoreStream<T = any> extends EventEmitter {
       return;
     }
     const md = messageData(mesg, { headers: options?.headers });
+    if (this.configReapply != null) {
+      // only then: an await here would reorder writes behind later requests
+      await this.configReapply.promise;
+    }
     const x = await this.persistClient.set({
       key: options?.key,
       messageData: md,
@@ -1403,6 +1497,10 @@ export class CoreStream<T = any> extends EventEmitter {
         checkpoint: options?.checkpoint,
         ttl: options?.ttl,
       });
+    }
+    if (this.configReapply != null) {
+      // only then: an await here would reorder writes behind later requests
+      await this.configReapply.promise;
     }
     return await this.persistClient.setMany(v, { timeout });
   };
@@ -1735,6 +1833,10 @@ export class CoreStream<T = any> extends EventEmitter {
         return { seqs: [] };
       }
       opts = { seq };
+    }
+    if (this.configReapply != null) {
+      // only then: an await here would reorder writes behind later requests
+      await this.configReapply.promise;
     }
     return await this.persistClient.delete(opts);
   };

@@ -66,6 +66,8 @@ export interface DStreamOptions {
   // only load historic messages starting at the given seq number.
   start_seq?: number;
   start_checkpoint?: string;
+  // see CoreStreamOptions.start_instance
+  start_instance?: string | null;
   desc?: JSONValue;
 
   client?: Client;
@@ -640,6 +642,10 @@ export class DStream<T = any> extends EventEmitter {
   get start_seq(): number | undefined {
     return this.stream?.start_seq;
   }
+
+  // see CoreStream.getPersistInstance
+  getPersistInstance = (): string | null | undefined =>
+    this.stream?.getPersistInstance();
 
   // get or set config
   config = async (

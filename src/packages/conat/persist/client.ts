@@ -194,9 +194,11 @@ class PersistStreamClient extends EventEmitter {
   private changefeeds: any[] = [];
   private state: "ready" | "closed" = "ready";
   private lastSeq?: number;
-  // The server instance of an ephemeral stream (see PersistentStream.instance)
-  // and how many times it has changed under this client.
-  private instance?: string;
+  // The server instance of an ephemeral stream (see PersistentStream.instance):
+  // undefined until the first read, null if the server sent none (a disk
+  // stream, or a server from before instances), and how many times it has
+  // changed under this client.
+  private instance?: string | null;
   private instanceResets = 0;
   private changefeedDesired = false;
   private changefeedActive = false;
@@ -277,14 +279,16 @@ class PersistStreamClient extends EventEmitter {
 
   getRecoveryState = (): PersistRecoveryState => this.recoveryState;
 
+  getInstance = (): string | null | undefined => this.instance;
+
   // A new instance of an ephemeral stream starts again from seq 1 with none
   // of the old messages, so resuming from lastSeq would skip everything it
   // has.  Start over, and tell the stream so it drops its old state first.
-  private noteInstance = (instance: unknown) => {
-    if (typeof instance !== "string" || !instance) {
-      return;
-    }
-    if (this.instance != null && this.instance !== instance) {
+  private noteInstance = (header: unknown) => {
+    const instance = typeof header == "string" && header ? header : null;
+    // A change from "none" counts too: an old server restarted as a new one
+    // lost the stream just the same.
+    if (this.instance !== undefined && this.instance !== instance) {
       this.instance = instance;
       this.instanceResets += 1;
       this.lastSeq = 0;
