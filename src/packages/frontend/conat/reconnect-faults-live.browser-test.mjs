@@ -37,9 +37,13 @@ const FAULT = process.env.FAULT ?? "offline:15";
 const RECOVERY_TIMEOUT_MS = Number(process.env.RECOVERY_TIMEOUT_MS ?? 120000);
 const FILES = {
   text: "notes.txt",
+  markdown: "notes.md",
   notebook: "nb.ipynb",
   terminal: "shell.term",
 };
+// After recovery, keep watching this long for a late teardown: the browser
+// learns of a new host session only when it next refreshes routing.
+const OBSERVE_SECONDS = Number(process.env.OBSERVE_SECONDS ?? 180);
 if (!PROJECT_ID) throw new Error("PROJECT_ID is required");
 
 const browser = await chromium.connectOverCDP(
@@ -58,6 +62,9 @@ page.on("console", (msg) => {
     "getAllFromPersist - failed",
     "cross-site connection refused",
     "Editor recovered",
+    // Logged for every open file when the project's runtime is torn down
+    // (resetProjectHostRuntime -> project_file.remove).
+    "removeByName",
   ]) {
     if (text.includes(key)) consoleCounts[key] = (consoleCounts[key] ?? 0) + 1;
   }
@@ -83,6 +90,7 @@ async function openInApp(name) {
 // cell list container instead.
 const ROOT_SELECTOR = {
   text: ".CodeMirror",
+  markdown: ".CodeMirror",
   notebook: "[data-jupyter-windowed-list]",
   terminal: ".xterm",
 };
@@ -93,7 +101,22 @@ async function tagVisibleEditor(kind) {
       const els = [...document.querySelectorAll(selector)].filter(
         (e) => (e.offsetWidth || e.offsetHeight) && !e.dataset.rcx,
       );
-      for (const e of els) e.dataset.rcx = `${nonce}:${kind}`;
+      window.__rcxRoots ??= [];
+      window.__rcxRemoved ??= [];
+      for (const e of els) {
+        e.dataset.rcx = `${nonce}:${kind}`;
+        window.__rcxRoots.push({ kind, el: e });
+      }
+      // Poll the identity of every tagged root once a second and record when
+      // one leaves the document (a remount replaces it).
+      window.__rcxPoll ??= setInterval(() => {
+        for (const r of window.__rcxRoots) {
+          if (!r.gone && !r.el.isConnected) {
+            r.gone = new Date().toISOString();
+            window.__rcxRemoved.push({ kind: r.kind, at: r.gone });
+          }
+        }
+      }, 1000);
       return els.length;
     },
     { kind, selector: ROOT_SELECTOR[kind], nonce },
@@ -199,7 +222,7 @@ try {
   // Marks this page load; a full reload of the app loses it.
   await page.evaluate((nonce) => (window.__rcxPageLoad = nonce), nonce);
   await tagVisibleEditor("text");
-  for (const kind of ["notebook", "terminal"]) {
+  for (const kind of ["markdown", "notebook", "terminal"]) {
     await openInApp(FILES[kind]);
     await page.waitForTimeout(6000);
     const n = await tagVisibleEditor(kind);
@@ -242,6 +265,17 @@ try {
     recoveredAt == null ? null : Math.round((recoveredAt - faultEnd) / 1000);
   report.fault_seconds = Math.round((faultEnd - faultStart) / 1000);
 
+  // Keep working in the active editor for a while: a teardown can come late,
+  // when the browser next refreshes the host's routing and sees a new host
+  // session.
+  for (let t = 0; t < OBSERVE_SECONDS; t += 10) {
+    await typeInText(`observing ${t}s ${nonce}`).catch((err) =>
+      report.notes.push(`type failed while observing at ${t}s: ${err.message}`),
+    );
+    await page.waitForTimeout(10000);
+  }
+  report.removed_roots = await page.evaluate(() => window.__rcxRemoved ?? []);
+
   const after = await survivingTags();
   const value = (await textEditorValue()) ?? "";
   const typed = value
@@ -253,7 +287,9 @@ try {
     (nonce) => window.__rcxPageLoad === nonce,
     nonce,
   );
-  report.checks.no_remount_text = !!after.text;
+  // The active editor must never have left the document, not even briefly.
+  report.checks.no_remount_text =
+    !!after.text && !report.removed_roots.some((r) => r.kind === "text");
   report.checks.recovered = recoveredAt != null;
   report.checks.edits_in_editor =
     value.includes(`before fault ${nonce}`) &&
@@ -279,6 +315,9 @@ try {
   }
 
   // The other editors: revisit each and see whether its root survived.
+  await openInApp(FILES.markdown);
+  await page.waitForTimeout(4000);
+  report.checks.no_remount_markdown = !!(await survivingTags()).markdown;
   await openInApp(FILES.notebook);
   await page.waitForTimeout(4000);
   report.checks.no_remount_notebook = !!(await survivingTags()).notebook;
