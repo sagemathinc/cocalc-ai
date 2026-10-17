@@ -166,15 +166,6 @@ function iframeNeedsSandbox(attribs: Record<string, string>): boolean {
   return !isAllowedIframeSrc(src);
 }
 
-/*
-The safety floor: the sanitization that applies even to content marked trusted.
-
-`noSanitize` in the FileContext means "this content is trusted enough to keep
-its classes, ids and inline styles" -- it must never mean "this content may run
-scripts in our origin". Everything below is enforced on both paths.
-
-Returns the attributes to render with, or null if the element must be dropped.
-*/
 // A URL that runs script when followed or loaded.  Browsers ignore ASCII
 // whitespace and control characters around and inside the scheme, so they are
 // ignored here too.
@@ -185,6 +176,15 @@ function isScriptUrl(value: unknown): boolean {
   );
 }
 
+/*
+The safety floor: the sanitization that applies even to content marked trusted.
+
+`noSanitize` in the FileContext means "this content is trusted enough to keep
+its classes, ids and inline styles" -- it must never mean "this content may run
+scripts in our origin". Everything below is enforced on both paths.
+
+Returns the attributes to render with, or null if the element must be dropped.
+*/
 export function enforceHtmlSafetyFloor(
   name: string,
   attribs: Record<string, string> | undefined,
