@@ -13,9 +13,13 @@ subset of inline styles and presentational markup
 (components/sanitize-presentation.ts).  This fails closed: a renderer added
 later is sanitized too.
 
-The one exception, until HTML output gets its own path (trust-free notebooks
-step 2a): text/html output keeps exactly what it had before, through
-LegacyHtmlOutputContext.
+Exceptions:
+- Until HTML output gets its own path (trust-free notebooks step 2a, which
+  should then remove LegacyHtmlOutputContext): text/html output keeps exactly
+  what it had before, through LegacyHtmlOutputContext.
+- ipywidgets render in their own React root with their own context
+  (widgets/manager.ts, noSanitize: trust), until widgets get their own path
+  (step 4).
 */
 
 import type { ReactNode } from "react";

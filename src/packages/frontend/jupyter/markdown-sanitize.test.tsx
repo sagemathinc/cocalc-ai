@@ -18,6 +18,7 @@ import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-m
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { CellOutputMessages } from "./output-messages/message";
 import { NotebookFileContext } from "./notebook-file-context";
+import Html from "./output-messages/mime-types/html";
 // The registration order of a live notebook: the editor chunk (jupyter/main.tsx)
 // loads init-frontend, then the actions chunk (browser-actions.ts imports
 // nbviewer/export) loads init-nbviewer, whose handlers replace some of the
@@ -142,6 +143,21 @@ describe("text/html output keeps its old context (until #19)", () => {
     );
     expect(div.getAttributeNames()).toEqual([]);
   });
+
+  // init-frontend's handler, which output-messages/iframe.tsx also renders
+  // for small trusted blob HTML
+  it.each([true, false])(
+    "the init-frontend handler too (trusted: %s)",
+    (trust) => {
+      const { container } = inNotebook(trust, <Html value={RICH} />);
+      const div = innermost(container, "div", "rich");
+      if (trust) {
+        expect(div.getAttribute("class")).toBe("widget-x");
+      } else {
+        expect(div.getAttributeNames()).toEqual([]);
+      }
+    },
+  );
 
   it("outside a notebook (e.g., the public viewer): context unchanged", () => {
     const { container } = render(
