@@ -266,10 +266,11 @@ async function deliverOnce(
   if (existing && admitted(chat.getAcpMessageState(messageId))) return;
   await chat.dispatchChatMessage(messageId);
   if (!admitted(chat.getAcpMessageState(messageId))) {
-    // Possibly taken with the reply lost: the hub admits a board
-    // submission once, so sending it again can't deliver it twice.
+    // Possibly taken with the reply lost. The hub sends a board submission
+    // at most once: sending it again either delivers it (if it surely
+    // wasn't) or is refused (if it may have been).
     throw new BoardAnswersRefusal(
-      "Not confirmed: CoCalc couldn't confirm the agent has your answers. Send them again; they won't reach it twice.",
+      "Not confirmed: CoCalc couldn't confirm the agent got your answers, and never sends them twice. If its reply doesn't use them, change an answer and submit again.",
     );
   }
 }

@@ -1435,6 +1435,179 @@ describe("agent RPC live guidance funding", () => {
       expect(send).toHaveBeenCalledTimes(1);
     });
 
+    it("once its record has expired, a retry still steers nothing (ROBUST-E69-1)", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      await resend("assistant-1");
+      // Past the window and the record's retention: the record is gone.
+      const later = Date.now() + 8 * 24 * 60 * 60_000;
+      const now = jest.spyOn(Date, "now").mockReturnValue(later);
+      try {
+        const { admitBoardSubmission } = jest.requireActual(
+          "../../sqlite/acp-board-submissions",
+        );
+        // any admission runs the cleanup
+        admitBoardSubmission({
+          account_id: accountId,
+          project_id: projectId,
+          path: record.path,
+          thread_id: "another-thread",
+          user_message_id: "someone-else",
+        });
+        expect(
+          getAcpDatabase()
+            .prepare(
+              "SELECT * FROM acp_board_submissions WHERE user_message_id = 'rpc-guidance'",
+            )
+            .all(),
+        ).toEqual([]);
+        await expect(resend("assistant-2")).resolves.toMatchObject({
+          ok: true,
+          state: "steered",
+        });
+      } finally {
+        now.mockRestore();
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("a hand-off that timed out is never sent again (native timeout)", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      // The app server took the request, but its reply never came.
+      send.mockRejectedValueOnce(new Error("request timed out after 90000ms"));
+      await expect(resend("assistant-1")).rejects.toThrow("timed out");
+      expect(send).toHaveBeenCalledTimes(1);
+      // at once, and later: refused, not injected again
+      await expect(resend("assistant-2")).rejects.toThrow(
+        "won't send them again",
+      );
+      const later = Date.now() + 10 * 60_000;
+      const now = jest.spyOn(Date, "now").mockReturnValue(later);
+      try {
+        await expect(resend("assistant-3")).rejects.toThrow(
+          "won't send them again",
+        );
+      } finally {
+        now.mockRestore();
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("through the real app-server client: a withheld reply is never replayed", async () => {
+      // astra2's regression: the transport accepts turn/steer (so it may be
+      // injected), but its reply never comes and AppServerClient.request
+      // times out at its real boundary.
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      const { AppServerClient } = jest.requireActual(
+        "../../../../ai/acp/codex-app-server",
+      );
+      const packets: any[] = [];
+      const native: any = {
+        exited: false,
+        nextId: 1,
+        pendingRequests: new Map(),
+        send: (packet: any) => {
+          packets.push(packet);
+          return true;
+        },
+      };
+      send.mockImplementation((method: string, params: unknown) =>
+        AppServerClient.prototype.request.call(native, method, params, 5),
+      );
+      await expect(resend("assistant-1")).rejects.toThrow();
+      await expect(resend("assistant-2")).rejects.toThrow(
+        "won't send them again",
+      );
+      expect(packets).toHaveLength(1);
+    });
+
+    it("astra's takeover case: a held hand-off is never repeated (CORR-E69-2)", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      const held: { resolve: (v: any) => void; reject: (e: any) => void }[] =
+        [];
+      send.mockImplementation(
+        () => new Promise((resolve, reject) => held.push({ resolve, reject })),
+      );
+      let now = Date.now();
+      const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        const first = resend("assistant-1").catch((e) => e.message);
+        for (let i = 0; i < 1000 && held.length < 1; i++) {
+          await new Promise((r) => setImmediate(r));
+        }
+        expect(held).toHaveLength(1);
+        // at once, and after two minutes: never sent again
+        await expect(resend("assistant-2")).rejects.toThrow();
+        now += 2 * 60_000;
+        await expect(resend("assistant-3")).rejects.toThrow();
+        // the old call finally fails; a later retry still sends nothing
+        held[0].reject(new Error("old attempt finally fails"));
+        await first;
+        await expect(resend("assistant-4")).rejects.toThrow(
+          "won't send them again",
+        );
+      } finally {
+        clock.mockRestore();
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("an attempt superseded before its hand-off injects nothing (CORR-E69-2)", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      // Hold the first attempt before its hand-off (its delivery check).
+      let release!: () => void;
+      mockAuthorizeRpcExecution.mockImplementationOnce(
+        () => new Promise((resolve) => (release = () => resolve({}))),
+      );
+      const withAuth = (assistant: string) => {
+        const request = guidanceRequest(liveConfig);
+        request.chat.board_answers = true;
+        request.chat.message_id = assistant;
+        return acpTestInternals.handleAcpSteerRequest(request);
+      };
+      let now = Date.now();
+      const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        const first = withAuth("assistant-1").catch((e) => e.message);
+        for (let i = 0; i < 1000 && !release; i++) {
+          await new Promise((r) => setImmediate(r));
+        }
+        // it stalls; after two minutes a retry takes over and delivers
+        now += 2 * 60_000;
+        await expect(withAuth("assistant-2")).resolves.toMatchObject({
+          ok: true,
+          state: "steered",
+        });
+        expect(send).toHaveBeenCalledTimes(1);
+        // the old attempt resumes: it must not hand anything over
+        release();
+        expect(await first).toMatch("Another attempt");
+      } finally {
+        clock.mockRestore();
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("an hour later, with the receipt kept, a retry steers nothing", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      await resend("assistant-1");
+      const later = Date.now() + 60 * 60_000;
+      const clock = jest.spyOn(Date, "now").mockReturnValue(later);
+      try {
+        await expect(resend("assistant-2")).resolves.toMatchObject({
+          ok: true,
+        });
+      } finally {
+        clock.mockRestore();
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
     it("an unknown outcome is resolved from the guidance receipt", async () => {
       const runtime = mockLiveRuntime(liveConfig);
       const send = runtime.running.get(sessionId)!.client.request;
@@ -2011,6 +2184,28 @@ describe("board answers: the hub's bound per account and thread", () => {
     await acpTestInternals.handleAcpSteerRequest(boardRequest("once"));
     expect(mockSteer).toHaveBeenCalledTimes(1);
     expect(jobs().map((j) => j.user_message_id)).toEqual(["once"]);
+  });
+
+  it("a failure after a hand-off that injected nothing may be sent again", async () => {
+    // No live turn took it (so nothing was injected), then queueing it failed.
+    mockSteer.mockResolvedValue({ state: "missing" });
+    const jobsModule = require("../../sqlite/acp-jobs");
+    const enqueue = jest
+      .spyOn(jobsModule, "enqueueAcpJobCancelingQueuedRecoveries")
+      .mockImplementationOnce(() => {
+        throw new Error("database is busy");
+      });
+    try {
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(boardRequest("retry-me")),
+      ).rejects.toThrow("database is busy");
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(boardRequest("retry-me")),
+      ).resolves.toMatchObject({ ok: true });
+    } finally {
+      enqueue.mockRestore();
+    }
+    expect(jobs().map((j) => j.user_message_id)).toEqual(["retry-me"]);
   });
 
   it("while the first attempt may be in flight, a duplicate is told to wait", async () => {

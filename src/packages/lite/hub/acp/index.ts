@@ -275,9 +275,11 @@ import {
 } from "../sqlite/acp-steers";
 import {
   admitBoardSubmission,
+  BOARD_SUBMISSION_UNCERTAIN,
   claimBoardSubmissionRetry,
-  endBoardSubmissionAttempt,
+  failBoardSubmissionAttempt,
   markBoardSubmissionAdmitted,
+  setBoardSubmissionInjecting,
   type BoardSubmissionKey,
 } from "../sqlite/acp-board-submissions";
 import {
@@ -11096,38 +11098,66 @@ async function boardSubmissionTrace(
   return delivered ? "steered" : null;
 }
 
+/** A board submission's current attempt, passed to its hand-off. */
+interface BoardSubmissionAttempt {
+  key: BoardSubmissionKey;
+  token: string;
+}
+
 /** Steer a board submission at most once. `send` is the ordinary steer. */
 async function steerBoardSubmissionOnce(
   key: BoardSubmissionKey,
   request: AcpSteerRequest,
-  send: (request: AcpSteerRequest) => Promise<AcpSteerResponse>,
+  send: (
+    request: AcpSteerRequest,
+    attempt: BoardSubmissionAttempt,
+  ) => Promise<AcpSteerResponse>,
 ): Promise<AcpSteerResponse> {
   const threadId = key.thread_id;
   const admission = admitBoardSubmission(key);
   if (!admission.ok) throw boardSubmissionLimitError(admission.retry_after_ms);
   if (admission.kind === "admitted") {
+    if (admission.state === BOARD_SUBMISSION_UNCERTAIN) {
+      throw new Error(
+        "CoCalc couldn't confirm whether the agent got these board answers, so it won't send them again.",
+      );
+    }
     return { ok: true, state: admission.state as any, threadId };
   }
-  if (admission.kind === "unknown") {
-    const trace = await boardSubmissionTrace(key);
-    if (trace) {
-      markBoardSubmissionAdmitted(key, trace);
-      return { ok: true, state: trace, threadId };
-    }
-    if (!claimBoardSubmissionRetry(key)) {
+  // Even a new record may be a submission whose record has expired: what
+  // the hub keeps durably says whether it was delivered (ROBUST-E69-1).
+  const trace = await boardSubmissionTrace(key);
+  if (trace) {
+    markBoardSubmissionAdmitted(key, trace);
+    return { ok: true, state: trace, threadId };
+  }
+  let token: string;
+  if (admission.kind === "new") {
+    token = admission.token;
+  } else {
+    // Unresolved: taken over only if its hand-off never started and its
+    // attempt has ended; a started hand-off is never repeated (CORR-E69-2).
+    const claimed = admission.injecting ? null : claimBoardSubmissionRetry(key);
+    if (!claimed) {
       throw new Error(
         "These board answers are still being delivered; try again in a moment.",
       );
     }
+    token = claimed;
   }
   try {
-    const result = await send(request);
-    if (result?.ok) markBoardSubmissionAdmitted(key, `${result.state ?? ""}`);
-    else endBoardSubmissionAttempt(key);
+    const result = await send(request, { key, token });
+    if (result?.ok) {
+      markBoardSubmissionAdmitted(key, `${result.state ?? ""}`, token);
+    } else {
+      failBoardSubmissionAttempt(key, token);
+    }
     return result;
   } catch (err) {
-    // Whether the agent took it is unknown: a retry checks for a trace first.
-    endBoardSubmissionAttempt(key);
+    // Failed before its hand-off: a retry may take over (after a trace
+    // check). Failed during it: uncertain, never sent again. A superseded
+    // attempt changes nothing.
+    failBoardSubmissionAttempt(key, token);
     throw err;
   }
 }
@@ -11256,12 +11286,18 @@ async function handleAcpSteerRequest(
 
 async function steerAcpRequest(
   request: AcpSteerRequest,
+  boardAttempt?: BoardSubmissionAttempt,
 ): Promise<AcpSteerResponse> {
   if (request.runtime) {
     await assertThreadRuntimeAtAdmission(request);
     request = { ...request, ...(await pinCodexCredentialAtAdmission(request)) };
   }
-  const result = await attemptAcpSteerRequest(request);
+  const result = await attemptAcpSteerRequest(
+    request,
+    [],
+    undefined,
+    boardAttempt,
+  );
   if (result.state === "steered") {
     const threadId = `${request.chat?.thread_id ?? ""}`.trim();
     return {
@@ -12120,6 +12156,7 @@ async function attemptAcpSteerRequest(
   request: AcpSteerRequest,
   extraCandidateIds: string[] = [],
   claimGuard?: () => boolean,
+  boardAttempt?: BoardSubmissionAttempt,
 ): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
@@ -12196,6 +12233,21 @@ async function attemptAcpSteerRequest(
     session_id: request.session_id,
     chat: request.chat,
   }).concat(extraCandidateIds);
+  // A board submission's hand-off to a live turn, recorded first: if it
+  // fails without an answer, the guidance may have been injected
+  // (CORR-D1-1). Only the current attempt may hand it over (CORR-E69-2).
+  if (
+    boardAttempt &&
+    !setBoardSubmissionInjecting(
+      boardAttempt.key,
+      boardAttempt.token,
+      Date.now(),
+    )
+  ) {
+    throw new Error(
+      "Another attempt is delivering these board answers; this one stopped.",
+    );
+  }
   const result = await trySteerCandidateIds({
     projectId,
     threadId,
@@ -12205,6 +12257,10 @@ async function attemptAcpSteerRequest(
     claimGuard,
     hostProjectRoot,
   });
+  if (boardAttempt && result.state !== "steered") {
+    // It answered: not injected.
+    setBoardSubmissionInjecting(boardAttempt.key, boardAttempt.token, null);
+  }
   if (result.state === "steered") {
     await recordAcpGuidanceDelivered(request);
     return result;

@@ -3,14 +3,21 @@
 // - The hub's bound on how many new Sagebrush board submissions one account
 //   sends one thread an hour, whatever page, tab or channel they come from
 //   (daybreak2, LIMIT-A4B-1).
-// - Each submission's identity (its user message) and outcome, so a retry
-//   after a lost acknowledgement never steers the same guidance into a
-//   turn twice (astra2, CORR-D1-1): an admitted one answers with its
-//   recorded state; an unknown one is resolved before it is sent again.
+// - Each submission's identity (its user message) and its delivery, sent at
+//   most once (astra2/astra, CORR-D1-1, CORR-E69-2). An attempt holds a
+//   token; it may hand the guidance to a live turn only while its token is
+//   current, and only it can record how that ended. Once a hand-off has
+//   started, nothing sends the submission again unless the outcome is known:
+//   a lost reply or a timeout is not proof it wasn't injected.
 //
-// Rows older than the window are deleted at each admission, so the table
-// holds at most the last hour's admissions.
+// Two lifecycles (daybreak2/astra, ROBUST-E69-1, CORR-E69-1): the bound
+// counts only the last hour's admissions, while a submission's record is
+// kept for BOARD_SUBMISSION_RETENTION_MS, far longer than a card retries it,
+// and never deleted while its attempt may be in flight or unresolved. A
+// record that is gone is still checked against the hub's durable traces
+// before it is sent again (lite/hub/acp/index.ts).
 
+import { randomUUID } from "node:crypto";
 import { getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_board_submissions";
@@ -18,9 +25,14 @@ const TABLE = "acp_board_submissions";
 /** New board submissions one account may send one thread in WINDOW_MS. */
 export const BOARD_SUBMISSIONS_PER_THREAD_PER_HOUR = 30;
 export const BOARD_SUBMISSION_WINDOW_MS = 60 * 60_000;
-/** An attempt with no recorded outcome for this long is taken to have
- * ended (the hub restarted, or it failed): a retry may take over. */
+/** An attempt that hasn't reached its hand-off for this long is taken to
+ * have stopped (the hub restarted): a retry may take over. */
 export const BOARD_SUBMISSION_ATTEMPT_MS = 2 * 60_000;
+/** How long a submission's record (its identity and outcome) is kept. */
+export const BOARD_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60_000;
+/** The outcome of a submission whose hand-off to a live turn started but
+ * never answered: it is never sent again. */
+export const BOARD_SUBMISSION_UNCERTAIN = "uncertain";
 
 let initialized = false;
 
@@ -35,7 +47,9 @@ function ensureInit(): void {
       account_id TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       admitted_at INTEGER NOT NULL,
+      attempt_token TEXT,
       attempt_at INTEGER NOT NULL,
+      injected_at INTEGER,
       outcome TEXT,
       PRIMARY KEY (project_id, path, user_message_id)
     )
@@ -63,12 +77,13 @@ export interface BoardSubmissionKey {
 }
 
 export type BoardSubmissionAdmission =
-  /** A new submission, admitted under the bound: send it. */
-  | { ok: true; kind: "new" }
-  /** Sent before, and the agent took it: answer with this state. */
+  /** A new submission, admitted under the bound: send it, as `token`. */
+  | { ok: true; kind: "new"; token: string }
+  /** Sent before, and how it ended is recorded: answer with this state
+   * (BOARD_SUBMISSION_UNCERTAIN: refuse, and never send it again). */
   | { ok: true; kind: "admitted"; state: string }
-  /** Sent before, outcome unknown: resolve before sending again. */
-  | { ok: true; kind: "unknown"; attempt_at: number }
+  /** Sent before, still unresolved; `injecting` if its hand-off started. */
+  | { ok: true; kind: "unknown"; attempt_at: number; injecting: boolean }
   | { ok: false; retry_after_ms: number };
 
 function checkKey(key: BoardSubmissionKey): void {
@@ -98,6 +113,18 @@ function inTransaction<T>(fn: () => T): T {
   }
 }
 
+// Every write of an attempt names its key and, where it must be the
+// current attempt, its token (compare-and-set).
+const KEY_WHERE = `project_id = ? AND path = ? AND user_message_id = ? AND account_id = ?`;
+const keyArgs = (key: BoardSubmissionKey) => [
+  key.project_id,
+  key.path,
+  key.user_message_id,
+  key.account_id,
+];
+const changed = (result: unknown) =>
+  Number((result as { changes?: number | bigint })?.changes ?? 0) > 0;
+
 /** Admit one board submission message, atomically. A submission seen before
  * takes no new slot; a new one is admitted only while the account has sent
  * this thread fewer than the limit in the window. */
@@ -107,23 +134,47 @@ export function admitBoardSubmission(
     now = Date.now(),
     limit = BOARD_SUBMISSIONS_PER_THREAD_PER_HOUR,
     window_ms = BOARD_SUBMISSION_WINDOW_MS,
-  }: { now?: number; limit?: number; window_ms?: number } = {},
+    retention_ms = BOARD_SUBMISSION_RETENTION_MS,
+    attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS,
+  }: {
+    now?: number;
+    limit?: number;
+    window_ms?: number;
+    retention_ms?: number;
+    attempt_ms?: number;
+  } = {},
 ): BoardSubmissionAdmission {
   checkKey(key);
   ensureInit();
   const db = getAcpDatabase();
   const { account_id, project_id, path, thread_id, user_message_id } = key;
   return inTransaction((): BoardSubmissionAdmission => {
-    db.prepare(`DELETE FROM ${TABLE} WHERE admitted_at <= ?`).run(
-      now - window_ms,
-    );
+    // A hand-off silent for longer than an attempt may take is uncertain.
+    db.prepare(
+      `UPDATE ${TABLE} SET outcome = ?
+        WHERE outcome IS NULL AND injected_at IS NOT NULL AND injected_at <= ?`,
+    ).run(BOARD_SUBMISSION_UNCERTAIN, now - attempt_ms);
+    // Records past their retention: resolved ones, and ones whose hand-off
+    // never started and whose attempt has ended (a retry finds nothing to
+    // lose). Never one that may be in flight.
+    db.prepare(
+      `DELETE FROM ${TABLE}
+        WHERE admitted_at <= ?
+          AND (outcome IS NOT NULL
+               OR (injected_at IS NULL AND (attempt_at = 0 OR attempt_at <= ?)))`,
+    ).run(now - retention_ms, now - attempt_ms);
     const existing = db
       .prepare(
-        `SELECT account_id, outcome, attempt_at FROM ${TABLE}
+        `SELECT account_id, outcome, attempt_at, injected_at FROM ${TABLE}
           WHERE project_id = ? AND path = ? AND user_message_id = ?`,
       )
       .get(project_id, path, user_message_id) as
-      | { account_id: string; outcome: string | null; attempt_at: number }
+      | {
+          account_id: string;
+          outcome: string | null;
+          attempt_at: number;
+          injected_at: number | null;
+        }
       | undefined;
     if (existing) {
       // Only its own sender's retry is the same submission.
@@ -132,14 +183,20 @@ export function admitBoardSubmission(
       }
       return existing.outcome
         ? { ok: true, kind: "admitted", state: existing.outcome }
-        : { ok: true, kind: "unknown", attempt_at: existing.attempt_at };
+        : {
+            ok: true,
+            kind: "unknown",
+            attempt_at: existing.attempt_at,
+            injecting: existing.injected_at != null,
+          };
     }
     const recent = db
       .prepare(
         `SELECT COUNT(*) AS n, MIN(admitted_at) AS oldest FROM ${TABLE}
-          WHERE account_id = ? AND project_id = ? AND path = ? AND thread_id = ?`,
+          WHERE account_id = ? AND project_id = ? AND path = ? AND thread_id = ?
+            AND admitted_at > ?`,
       )
-      .get(account_id, project_id, path, thread_id) as {
+      .get(account_id, project_id, path, thread_id, now - window_ms) as {
       n: number;
       oldest: number | null;
     };
@@ -149,73 +206,101 @@ export function admitBoardSubmission(
         retry_after_ms: Math.max(0, (recent.oldest ?? now) + window_ms - now),
       };
     }
+    const token = randomUUID();
     db.prepare(
       `INSERT INTO ${TABLE}
-        (project_id, path, user_message_id, account_id, thread_id, admitted_at, attempt_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(project_id, path, user_message_id, account_id, thread_id, now, now);
-    return { ok: true, kind: "new" };
+        (project_id, path, user_message_id, account_id, thread_id, admitted_at,
+         attempt_token, attempt_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      project_id,
+      path,
+      user_message_id,
+      account_id,
+      thread_id,
+      now,
+      token,
+      now,
+    );
+    return { ok: true, kind: "new", token };
   });
 }
 
-/** Record that the agent took the submission, with the state to answer
- * retries with ("steered", "queued", "running"). */
+/** Take over an unresolved submission whose attempt never started its
+ * hand-off and has ended (or stopped BOARD_SUBMISSION_ATTEMPT_MS ago): its
+ * new token, or null (one is in flight, or its hand-off started). */
+export function claimBoardSubmissionRetry(
+  key: BoardSubmissionKey,
+  { now = Date.now(), attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS } = {},
+): string | null {
+  checkKey(key);
+  ensureInit();
+  const token = randomUUID();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET attempt_token = ?, attempt_at = ?
+        WHERE ${KEY_WHERE}
+          AND outcome IS NULL AND injected_at IS NULL
+          AND (attempt_at = 0 OR attempt_at <= ?)`,
+    )
+    .run(token, now, ...keyArgs(key), now - attempt_ms);
+  return changed(result) ? token : null;
+}
+
+/** The current attempt is about to hand its guidance to a live turn (at), or
+ * its hand-off answered without injecting it (null). False if `token` is no
+ * longer current: then it must not hand anything over. */
+export function setBoardSubmissionInjecting(
+  key: BoardSubmissionKey,
+  token: string,
+  at: number | null,
+): boolean {
+  checkKey(key);
+  ensureInit();
+  return changed(
+    getAcpDatabase()
+      .prepare(
+        `UPDATE ${TABLE} SET injected_at = ?
+          WHERE ${KEY_WHERE} AND attempt_token = ? AND outcome IS NULL`,
+      )
+      .run(at, ...keyArgs(key), token),
+  );
+}
+
+/** The current attempt failed: uncertain for good if its hand-off had
+ * started, else ended (a retry may take over). A stale token changes
+ * nothing. */
+export function failBoardSubmissionAttempt(
+  key: BoardSubmissionKey,
+  token: string,
+): void {
+  checkKey(key);
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+          SET outcome = CASE WHEN injected_at IS NOT NULL THEN ? ELSE NULL END,
+              attempt_at = 0
+        WHERE ${KEY_WHERE} AND attempt_token = ? AND outcome IS NULL`,
+    )
+    .run(BOARD_SUBMISSION_UNCERTAIN, ...keyArgs(key), token);
+}
+
+/** The agent took the submission: answer retries with `state` ("steered",
+ * "queued", "running"). With a token, only if it is the current attempt;
+ * without one (found from a durable trace), whatever attempt is current. */
 export function markBoardSubmissionAdmitted(
   key: BoardSubmissionKey,
   state: string,
+  token?: string,
 ): void {
   checkKey(key);
   ensureInit();
   getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE} SET outcome = ?
-        WHERE project_id = ? AND path = ? AND user_message_id = ? AND account_id = ?`,
+        WHERE ${KEY_WHERE} AND outcome IS NULL
+          AND (? IS NULL OR attempt_token = ?)`,
     )
-    .run(
-      state || "steered",
-      key.project_id,
-      key.path,
-      key.user_message_id,
-      key.account_id,
-    );
-}
-
-/** An attempt that failed with no outcome: a retry may take over at once
- * (after its evidence check). */
-export function endBoardSubmissionAttempt(key: BoardSubmissionKey): void {
-  checkKey(key);
-  ensureInit();
-  getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE} SET attempt_at = 0
-        WHERE project_id = ? AND path = ? AND user_message_id = ? AND account_id = ?
-          AND outcome IS NULL`,
-    )
-    .run(key.project_id, key.path, key.user_message_id, key.account_id);
-}
-
-/** Take over the attempt of a submission with an unknown outcome, if the
- * last attempt has ended (or is older than BOARD_SUBMISSION_ATTEMPT_MS);
- * false while one may still be in flight. */
-export function claimBoardSubmissionRetry(
-  key: BoardSubmissionKey,
-  { now = Date.now(), attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS } = {},
-): boolean {
-  checkKey(key);
-  ensureInit();
-  const result = getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE} SET attempt_at = ?
-        WHERE project_id = ? AND path = ? AND user_message_id = ? AND account_id = ?
-          AND outcome IS NULL AND (attempt_at = 0 OR attempt_at <= ?)`,
-    )
-    .run(
-      now,
-      key.project_id,
-      key.path,
-      key.user_message_id,
-      key.account_id,
-      now - attempt_ms,
-    ) as { changes?: number | bigint };
-  return Number(result?.changes ?? 0) > 0;
+    .run(state || "steered", ...keyArgs(key), token ?? null, token ?? null);
 }
