@@ -126,6 +126,15 @@ function projectedSummary(opts: {
   };
 }
 
+const SETTLED_ATTENTION_STATES = new Set([
+  "answered",
+  "declined",
+  "canceled",
+  "resolved",
+  "expired",
+  "superseded",
+]);
+
 export interface DrainAccountNotificationIndexProjectionResult {
   bay_id: string;
   dry_run: boolean;
@@ -257,7 +266,14 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     existing: existingProjection,
     created_at: payload.created_at ?? event.created_at.toISOString(),
   });
+  // A question that was answered (or no longer needs anyone) is cleared
+  // automatically: answering it is enough, without also marking the notice
+  // read. "stale" still needs the person: the agent did not take the answer.
+  const attentionSettled =
+    payload.summary?.notice_type === "codex_attention" &&
+    SETTLED_ATTENTION_STATES.has(`${payload.summary?.attention_state ?? ""}`);
   const shouldReplaceReadState =
+    attentionSettled ||
     !policy.creates_in_app ||
     (policy.creates_in_app &&
       existingProjection?.read_state?.archived === true) ||
@@ -290,7 +306,9 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
         payload.source_project_id ?? null,
         JSON.stringify(projection.summary),
         JSON.stringify(
-          policy.creates_in_app ? {} : { read: true, archived: true },
+          policy.creates_in_app && !attentionSettled
+            ? {}
+            : { read: true, archived: true },
         ),
         payload.created_at ?? event.created_at.toISOString(),
         event.created_at,
