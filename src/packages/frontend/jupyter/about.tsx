@@ -195,8 +195,8 @@ export function About(props: AboutProps) {
       <Paragraph>You are using the CoCalc Jupyter notebook.</Paragraph>
 
       <Paragraph>
-        CoCalc Jupyter Notebook is a complete open source rewrite by SageMath,
-        Inc. of the classical Jupyter Notebook client from the
+        CoCalc Jupyter Notebook is a complete rewrite by SageMath, Inc. of the
+        classical Jupyter Notebook client from the
         <A1>Jupyter project</A1>.
         CoCalc Jupyter Notebook maintains full compatibility with the file format and general
         look and feel of the classical notebook.
