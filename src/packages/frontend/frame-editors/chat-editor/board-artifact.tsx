@@ -38,6 +38,7 @@ import { Alert, Button, Space } from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { boardPostedName } from "@cocalc/util/sagebrush-board";
 import type { FileArtifactAction } from "./file-artifact";
 import {
   BOARD_FRAME_SANDBOX,
@@ -97,7 +98,7 @@ export default function BoardArtifact({
     channelRef.current?.close();
     channelRef.current = undefined;
   };
-  const name = path.split("/").pop() ?? path;
+  const name = boardPostedName(path);
   const site = new URL(frameUrl).host;
 
   useEffect(() => {

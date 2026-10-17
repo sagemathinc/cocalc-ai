@@ -7159,12 +7159,16 @@ export async function boardDecide(opts: {
   account_id?: string;
   project_id: string;
   path: string;
+  revision: string | null;
+  sha256: string;
   message: unknown;
 }) {
   const fs = async (project_id: string) =>
     fsClient({ client: await conat(), subject: fsSubject({ project_id }) });
   return await boardDecideForBoard(opts, {
     assertCollab,
+    realpath: async (project_id, path) =>
+      await (await fs(project_id)).realpath(path),
     stat: async (project_id, path) => await (await fs(project_id)).stat(path),
     readFile: async (project_id, path) =>
       String(await (await fs(project_id)).readFile(path, "utf8")),

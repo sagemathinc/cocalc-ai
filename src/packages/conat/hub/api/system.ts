@@ -2942,6 +2942,10 @@ export interface System {
     account_id?: string;
     project_id: string;
     path: string;
+    /** The card's revision for the board it posted on this channel. */
+    revision: string | null;
+    /** The SHA-256 of the text the card posted; the file must still be it. */
+    sha256: string;
     message: unknown;
   }) => Promise<{ id: string; option: string | null }>;
 

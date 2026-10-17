@@ -5,6 +5,7 @@
 
 import { boardDecideForBoard } from "./board-decide-bound";
 import { decideRequest } from "./board-decide-request";
+import { boardTextDigest } from "@cocalc/util/sagebrush-board";
 
 const ID = "33333333-3333-4333-8333-333333333333";
 
@@ -28,6 +29,8 @@ test("the bound call classifies nothing through the stub", async () => {
         account_id: "11111111-1111-4111-8111-111111111111",
         project_id: "22222222-2222-4222-8222-222222222222",
         path: "q.board.json",
+        revision: null,
+        sha256: await boardTextDigest("{}"),
         message: {
           sagebrush: "decide",
           version: 1,
@@ -37,6 +40,7 @@ test("the bound call classifies nothing through the stub", async () => {
       },
       {
         assertCollab: async () => {},
+        realpath: async (_p, path) => path,
         stat: async () => ({ size: 2 }),
         readFile: async () => "{}",
         decide: async () => {
