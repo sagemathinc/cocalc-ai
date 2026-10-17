@@ -1928,6 +1928,81 @@ describe("agent RPC live guidance funding", () => {
         expect(board()).toMatchObject([{ outcome: "steered" }]);
       });
 
+      it("a crash between forwarding and its steer leaves neither (ROBUST-053-1)", async () => {
+        const request = forward("assistant-crash-gap");
+        const steers = require("../../sqlite/acp-steers");
+        const enqueue = jest
+          .spyOn(steers, "enqueueAcpSteer")
+          .mockImplementationOnce(() => {
+            throw new Error("process killed");
+          });
+        try {
+          await expect(
+            acpTestInternals.handleAcpSteerRequest(request),
+          ).rejects.toThrow("process killed");
+        } finally {
+          enqueue.mockRestore();
+        }
+        // rolled back together: no steer, no forwarded record, no slot held
+        expect(
+          getAcpSteer({
+            project_id: projectId,
+            path: record.path,
+            user_message_id: request.chat.parent_message_id!,
+          }),
+        ).toBeUndefined();
+        expect(board()).toMatchObject([{ outcome: null }]);
+        expect(
+          getAcpDatabase()
+            .prepare(
+              "SELECT COUNT(*) AS n FROM acp_board_submissions WHERE outcome IS NULL AND (attempt_at <> 0 OR injected_at IS NOT NULL)",
+            )
+            .get(),
+        ).toEqual({ n: 0 });
+        // a retry forwards it, once
+        await expect(
+          acpTestInternals.handleAcpSteerRequest({
+            ...request,
+            chat: { ...request.chat, message_id: "assistant-retry" },
+          }),
+        ).resolves.toMatchObject({ ok: true, state: "steered" });
+        expect(board()).toMatchObject([{ outcome: "forwarded" }]);
+      });
+
+      it("a worker that queued it, then crashed, is not followed by a steer", async () => {
+        const request = forward("assistant-queued-crash");
+        await acpTestInternals.handleAcpSteerRequest(request);
+        // the earlier worker's fallback queued the turn, then the process died
+        enqueueAcpJob(request);
+        const runtime = mockLiveRuntime(request.config);
+        const send = runtime.running.get(sessionId)!.client.request;
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(send).not.toHaveBeenCalled();
+        expect(storedSteer(request).state).toBe("handled");
+        expect(board()).toMatchObject([{ outcome: "queued" }]);
+      });
+
+      it("a worker failing after its hand-off without a native answer ends the record", async () => {
+        const request = forward("assistant-lost-claim");
+        await acpTestInternals.handleAcpSteerRequest(request);
+        const runtime = mockLiveRuntime(request.config);
+        const send = runtime.running.get(sessionId)!.client.request;
+        // its claim is lost after the hand-off started, before any steer
+        const steers = require("../../sqlite/acp-steers");
+        const owns = jest
+          .spyOn(steers, "ownsAcpSteerClaim")
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false);
+        try {
+          await acpTestInternals.processPendingAcpSteersOnce();
+        } finally {
+          owns.mockRestore();
+        }
+        expect(send).not.toHaveBeenCalled();
+        // not an immortal forwarded reservation
+        expect(board()).toMatchObject([{ outcome: null, injected_at: null }]);
+      });
+
       it("a worker that delivers it resolves it steered", async () => {
         const request = forward("assistant-delivered");
         await acpTestInternals.handleAcpSteerRequest(request);

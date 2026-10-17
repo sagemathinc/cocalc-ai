@@ -278,6 +278,7 @@ import {
   BOARD_SUBMISSION_FORWARDED,
   BOARD_SUBMISSION_UNCERTAIN,
   clearForwardedBoardHandoff,
+  inAcpWriteTransaction,
   markBoardSubmissionForwarded,
   resolveForwardedBoardSubmission,
   startForwardedBoardHandoff,
@@ -10985,6 +10986,13 @@ async function processPendingAcpSteersOnce(): Promise<void> {
         if (!ownsClaim()) {
           throw new Error("durable ACP steer claim was lost");
         }
+        if (boardKey && getAcpJob(boardKey)) {
+          // An earlier worker queued it and stopped before recording so:
+          // it is delivered as a turn; nothing to send.
+          resolveForwardedBoardSubmission(boardKey, "queued");
+          markAcpSteerHandled({ id: row.id, claim_token: claimToken });
+          continue;
+        }
         if (boardKey) {
           const handoff = startForwardedBoardHandoff(boardKey);
           if (handoff.state === "delivered") {
@@ -11052,10 +11060,12 @@ async function processPendingAcpSteersOnce(): Promise<void> {
               await recordBoardSubmissionUncertain(boardKey);
             }
           } else {
-            // Failed without its steer having answered or failed: clear
-            // only this worker's own mark; the errored steer row keeps a
-            // retry conservative (boardSubmissionTrace).
-            clearForwardedBoardHandoff(boardKey, handoffToken);
+            // Failed before its native steer, or after a definite answer:
+            // not injected. Its steer is errored and never polled again, so
+            // end the record (its reservation released, no immortal
+            // forwarded row); the errored steer still makes a retry
+            // conservative (boardSubmissionTrace).
+            resolveForwardedBoardSubmission(boardKey, null, handoffToken);
           }
         }
         markAcpSteerError({
@@ -12491,28 +12501,30 @@ async function attemptAcpSteerRequest(
       candidateIds,
     })
   ) {
-    // A board submission is recorded forwarded before its durable steer
-    // can be claimed: the worker must find it so (CORR-8BEA-1).
-    if (
-      boardAttempt &&
-      !markBoardSubmissionForwarded(boardAttempt.key, boardAttempt.token)
-    ) {
-      throw new Error(
-        "Another attempt is delivering these board answers; this one stopped.",
-      );
-    }
+    // A board submission's forwarded record and its durable steer are
+    // written in ONE transaction: the steer is never claimable without the
+    // record (CORR-8BEA-1), and the record never exists without the steer
+    // to resolve it (ROBUST-053-1). A superseded attempt writes neither.
     let queued: ReturnType<typeof enqueueSteerRequestForExecution>;
-    try {
+    if (boardAttempt) {
+      // The steer table's first use may migrate (ATTACH), which SQLite
+      // can't do inside a transaction: do it first.
+      getAcpSteer(boardAttempt.key);
+      queued = inAcpWriteTransaction(() => {
+        if (
+          !markBoardSubmissionForwarded(boardAttempt.key, boardAttempt.token)
+        ) {
+          throw new Error(
+            "Another attempt is delivering these board answers; this one stopped.",
+          );
+        }
+        return enqueueSteerRequestForExecution({ request, candidateIds });
+      });
+    } else {
       queued = enqueueSteerRequestForExecution({
         request,
         candidateIds,
       });
-    } catch (err) {
-      // Not forwarded after all: nothing can deliver it, a retry may.
-      if (boardAttempt) {
-        resolveForwardedBoardSubmission(boardAttempt.key, null);
-      }
-      throw err;
     }
     try {
       await ensureDetachedWorkerRunning({ force: true });

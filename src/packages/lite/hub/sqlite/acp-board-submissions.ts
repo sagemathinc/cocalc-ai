@@ -585,3 +585,11 @@ export function markBoardSubmissionForwarded(
       .run(BOARD_SUBMISSION_FORWARDED, ...keyArgs(key), token),
   );
 }
+
+/** Run fn in one write transaction on the ACP database, which also holds
+ * the durable steers and jobs: writes to several of them commit together or
+ * not at all (ROBUST-053-1). fn must not open a transaction itself. */
+export function inAcpWriteTransaction<T>(fn: () => T): T {
+  ensureInit();
+  return inTransaction(fn);
+}
