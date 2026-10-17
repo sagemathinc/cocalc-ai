@@ -1403,6 +1403,60 @@ describe("agent RPC live guidance funding", () => {
     },
   );
 
+  describe("a board submission is steered in once (CORR-D1-1)", () => {
+    function boardGuidance(assistant: string): AcpSteerRequest {
+      const request = guidanceRequest(liveConfig);
+      delete request.chat.agent_rpc_execution;
+      request.chat.board_answers = true;
+      request.chat.message_id = assistant;
+      return request;
+    }
+    const resend = (assistant: string) =>
+      acpTestInternals.handleAcpSteerRequest(boardGuidance(assistant));
+
+    it("a retry after a lost acknowledgement answers without steering again", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      await expect(resend("assistant-1")).resolves.toMatchObject({
+        ok: true,
+        state: "steered",
+      });
+      // the hub recorded what happened, to answer a retry with
+      expect(
+        getAcpDatabase()
+          .prepare("SELECT outcome FROM acp_board_submissions")
+          .all(),
+      ).toEqual([{ outcome: "steered" }]);
+      // the reply was lost; the card (or another tab) sends it again
+      await expect(resend("assistant-2")).resolves.toMatchObject({
+        ok: true,
+        state: "steered",
+      });
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("an unknown outcome is resolved from the guidance receipt", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      await resend("assistant-1");
+      // The hub stopped after steering, before recording the outcome.
+      getAcpDatabase()
+        .prepare(
+          "UPDATE acp_board_submissions SET outcome = NULL, attempt_at = 0",
+        )
+        .run();
+      expect(
+        rows.find((r) => r.message_id === "rpc-guidance")
+          ?.acp_guidance_delivered_at_ms,
+      ).toBeGreaterThan(0);
+      await expect(resend("assistant-2")).resolves.toMatchObject({
+        ok: true,
+        state: "steered",
+      });
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it.each(["direct", "durable"])(
     "rejects %s legacy agent guidance before native injection",
     async (delivery) => {
@@ -1891,4 +1945,97 @@ it("the same guidance sent twice as its turn ends starts one turn", async () => 
     .all() as any[];
   expect(jobs).toHaveLength(1);
   expect(jobs[0].user_message_id).toBe("board-answers-user-message");
+});
+
+describe("board answers: the hub's bound per account and thread", () => {
+  const {
+    admitBoardSubmission,
+    markBoardSubmissionAdmitted,
+    BOARD_SUBMISSIONS_PER_THREAD_PER_HOUR,
+  } = jest.requireActual("../../sqlite/acp-board-submissions");
+  function boardRequest(userMessageId: string, board = true): AcpSteerRequest {
+    const base = turnRequest(undefined);
+    return {
+      ...base,
+      chat: {
+        ...base.chat!,
+        parent_message_id: userMessageId,
+        message_id: `assistant-${userMessageId}`,
+        ...(board ? { board_answers: true } : {}),
+      },
+    } as AcpSteerRequest;
+  }
+  function fill() {
+    // Earlier submissions from other pages and tabs of this account.
+    for (let i = 0; i < BOARD_SUBMISSIONS_PER_THREAD_PER_HOUR; i++) {
+      const key = {
+        account_id: accountId,
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        user_message_id: `earlier-${i}`,
+      };
+      admitBoardSubmission(key);
+      markBoardSubmissionAdmitted(key, "queued");
+    }
+  }
+  const jobs = () =>
+    getAcpDatabase().prepare("SELECT * FROM acp_jobs").all() as any[];
+
+  it("refuses a new one past the bound before any steer or turn", async () => {
+    fill();
+    mockSteer.mockResolvedValue({ state: "missing" });
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(boardRequest("one-too-many")),
+    ).rejects.toThrow("Too many board answers");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(jobs()).toEqual([]);
+  });
+
+  it("answers a retry of one already admitted, and still takes ordinary chat", async () => {
+    fill();
+    mockSteer.mockResolvedValue({ state: "missing" });
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(boardRequest("earlier-3")),
+    ).resolves.toMatchObject({ ok: true, state: "queued" });
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(boardRequest("typed", false)),
+    ).resolves.toMatchObject({ ok: true });
+    // the admitted one answers with its state and starts nothing new
+    expect(jobs().map((j) => j.user_message_id)).toEqual(["typed"]);
+  });
+
+  it("a queued one sent again starts nothing new", async () => {
+    mockSteer.mockResolvedValue({ state: "missing" }); // falls back to a turn
+    await acpTestInternals.handleAcpSteerRequest(boardRequest("once"));
+    await acpTestInternals.handleAcpSteerRequest(boardRequest("once"));
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(jobs().map((j) => j.user_message_id)).toEqual(["once"]);
+  });
+
+  it("while the first attempt may be in flight, a duplicate is told to wait", async () => {
+    let finish!: (v: any) => void;
+    mockSteer.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const first = acpTestInternals.handleAcpSteerRequest(boardRequest("slow"));
+    await new Promise((r) => setTimeout(r, 20));
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(boardRequest("slow")),
+    ).rejects.toThrow("still being delivered");
+    finish({ state: "missing" });
+    await first;
+    expect(jobs().map((j) => j.user_message_id)).toEqual(["slow"]);
+  });
+
+  it("counts a new one once, whether it steers or becomes a turn", async () => {
+    mockSteer.mockResolvedValue({ state: "missing" }); // falls back to a turn
+    await acpTestInternals.handleAcpSteerRequest(boardRequest("fresh"));
+    const n = getAcpDatabase()
+      .prepare(
+        "SELECT COUNT(*) AS n FROM acp_board_submissions WHERE user_message_id = 'fresh'",
+      )
+      .get() as any;
+    expect(n.n).toBe(1);
+  });
 });

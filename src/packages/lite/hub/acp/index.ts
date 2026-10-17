@@ -274,6 +274,13 @@ import {
   releaseAcpSteerClaim,
 } from "../sqlite/acp-steers";
 import {
+  admitBoardSubmission,
+  claimBoardSubmissionRetry,
+  endBoardSubmissionAttempt,
+  markBoardSubmissionAdmitted,
+  type BoardSubmissionKey,
+} from "../sqlite/acp-board-submissions";
+import {
   claimAcpAttentionResponseDispatch,
   claimStaleAcpAttentionContinue,
   deferAcpAttentionResponseDispatch,
@@ -11037,6 +11044,103 @@ async function assertThreadRuntimeAtAdmission(
   });
 }
 
+// A Sagebrush board submission (chat.board_answers, set by CoCalc's board
+// card) is admitted against the hub's own per-(account, thread) bound before
+// it starts or steers a turn, so no page, tab or refresh gets around it
+// (LIMIT-A4B-1). It is also admitted once: a retry, after a lost
+// acknowledgement or from another tab, answers with what happened to the
+// first instead of steering the same guidance in again (CORR-D1-1). A
+// message without the mark is ordinary chat.
+function boardSubmissionKey(request: AcpRequest): BoardSubmissionKey | null {
+  const chat = request.chat;
+  if (chat?.board_answers !== true) return null;
+  return {
+    account_id: `${request.account_id ?? ""}`.trim(),
+    project_id: `${chat.project_id ?? request.project_id ?? ""}`.trim(),
+    path: `${chat.path ?? ""}`.trim(),
+    thread_id: `${chat.thread_id ?? ""}`.trim(),
+    user_message_id: `${chat.parent_message_id ?? ""}`.trim(),
+  };
+}
+
+function boardSubmissionLimitError(retryAfterMs: number): Error {
+  const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
+  return new Error(
+    `Too many board answers sent to this conversation in the last hour; try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+  );
+}
+
+/** What already happened to a submission sent before, from what the hub
+ * keeps durably: its guidance receipt on the chat row, its turn, or its
+ * pending steer. Null when there is no trace of it. */
+async function boardSubmissionTrace(
+  key: BoardSubmissionKey,
+): Promise<AcpSteerResponse["state"] | null> {
+  const job = getAcpJob(key);
+  if (job) return job.state === "running" ? "running" : "queued";
+  const steer = getAcpSteer(key);
+  if (steer && steer.state !== "error") return "steered";
+  if (!conatClient) return null;
+  const delivered = await withChatSyncDB({
+    client: conatClient,
+    project_id: key.project_id,
+    path: key.path,
+    fn: async (syncdb) =>
+      Number(
+        syncdbField(
+          findChatRowByMessageId(syncdb, key.user_message_id),
+          "acp_guidance_delivered_at_ms",
+        ),
+      ) > 0,
+  });
+  return delivered ? "steered" : null;
+}
+
+/** Steer a board submission at most once. `send` is the ordinary steer. */
+async function steerBoardSubmissionOnce(
+  key: BoardSubmissionKey,
+  request: AcpSteerRequest,
+  send: (request: AcpSteerRequest) => Promise<AcpSteerResponse>,
+): Promise<AcpSteerResponse> {
+  const threadId = key.thread_id;
+  const admission = admitBoardSubmission(key);
+  if (!admission.ok) throw boardSubmissionLimitError(admission.retry_after_ms);
+  if (admission.kind === "admitted") {
+    return { ok: true, state: admission.state as any, threadId };
+  }
+  if (admission.kind === "unknown") {
+    const trace = await boardSubmissionTrace(key);
+    if (trace) {
+      markBoardSubmissionAdmitted(key, trace);
+      return { ok: true, state: trace, threadId };
+    }
+    if (!claimBoardSubmissionRetry(key)) {
+      throw new Error(
+        "These board answers are still being delivered; try again in a moment.",
+      );
+    }
+  }
+  try {
+    const result = await send(request);
+    if (result?.ok) markBoardSubmissionAdmitted(key, `${result.state ?? ""}`);
+    else endBoardSubmissionAttempt(key);
+    return result;
+  } catch (err) {
+    // Whether the agent took it is unknown: a retry checks for a trace first.
+    endBoardSubmissionAttempt(key);
+    throw err;
+  }
+}
+
+/** The bound alone, for a board submission entering as a turn (the steer
+ * path has already admitted it, and its retry is no new slot). */
+function admitBoardSubmissionTurn(request: AcpRequest): void {
+  const key = boardSubmissionKey(request);
+  if (!key) return;
+  const admission = admitBoardSubmission(key);
+  if (!admission.ok) throw boardSubmissionLimitError(admission.retry_after_ms);
+}
+
 async function enqueueChatAcpTurn({
   request,
   stream,
@@ -11051,6 +11155,7 @@ async function enqueueChatAcpTurn({
   // steer a running turn) is new; only the worker creates recovery
   // continuations, and they bypass this function.
   request = withoutRecoveryLineage(request);
+  admitBoardSubmissionTurn(request);
   await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
   if (!request.chat) {
@@ -11140,6 +11245,16 @@ async function fallbackAcpSteerToQueuedTurn(
 }
 
 async function handleAcpSteerRequest(
+  request: AcpSteerRequest,
+): Promise<AcpSteerResponse> {
+  const boardKey = boardSubmissionKey(request);
+  if (boardKey) {
+    return await steerBoardSubmissionOnce(boardKey, request, steerAcpRequest);
+  }
+  return await steerAcpRequest(request);
+}
+
+async function steerAcpRequest(
   request: AcpSteerRequest,
 ): Promise<AcpSteerResponse> {
   if (request.runtime) {

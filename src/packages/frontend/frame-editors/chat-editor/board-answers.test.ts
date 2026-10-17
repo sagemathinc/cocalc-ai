@@ -89,6 +89,15 @@ function open(deliver: any, current = "pub-1") {
   return { ...p, channel };
 }
 
+// Wait (boundedly) for an asynchronous step to have happened, instead of a
+// fixed sleep that a slow machine can outrun.
+async function until(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 2000 && !cond(); i++) {
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  expect(cond()).toBe(true);
+}
+
 describe("the answers channel", () => {
   test("a checked submission is delivered, then received", async () => {
     const deliver = jest.fn().mockResolvedValue(undefined);
@@ -287,13 +296,14 @@ describe("delivery", () => {
       preserveSelectedThread: true,
       skipDraftDelete: true,
       skipModelDispatch: true,
+      boardAnswers: true,
       chatIdentity: { message_id: id, thread_id: "thread-1" },
     });
   });
 
   test("received only once the agent took it (CORR-D1-1)", async () => {
     const { chat } = fakeChat();
-    let admit!: () => void;
+    let admit: (() => void) | undefined;
     chat.dispatchChatMessage.mockImplementationOnce(
       (id: string) =>
         new Promise<void>((r) => {
@@ -310,11 +320,11 @@ describe("delivery", () => {
       submission,
       stale: false,
     }).then(() => (done = true));
-    await new Promise((r) => setTimeout(r, 10));
+    await until(() => admit != null);
     expect(chat.syncdb.save).toHaveBeenCalledTimes(1);
     expect(chat.dispatchChatMessage).toHaveBeenCalledTimes(1);
     expect(done).toBe(false); // saved, but not yet admitted
-    admit();
+    admit!();
     await delivery;
     expect(done).toBe(true);
   });
@@ -431,7 +441,7 @@ describe("delivery", () => {
 describe("one row per submission", () => {
   test("two deliveries of the same id at once write one message", async () => {
     const rows: string[] = [];
-    let saved!: () => void;
+    let saved: (() => void) | undefined;
     const chat = {
       getMessagesInThread: () => [{}],
       getMessageById: () => undefined, // neither sees the other's row yet
@@ -469,8 +479,8 @@ describe("one row per submission", () => {
       submission,
       stale: false,
     });
-    await new Promise((r) => setTimeout(r, 10));
-    saved();
+    await until(() => saved != null);
+    saved!();
     await Promise.all([a, b]);
     expect(rows).toHaveLength(1);
   });
@@ -573,5 +583,29 @@ describe("an hourly cap per thread, across channels", () => {
     expect(c.sendChat).toHaveBeenCalledTimes(
       MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR + 2,
     );
+  });
+
+  test("a write that failed takes no slot (astra's note)", async () => {
+    const c = chat();
+    c.sendChat.mockReturnValue("");
+    for (let i = 0; i < MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR; i++) {
+      await expect(
+        deliverBoardAnswers({
+          chat: c,
+          threadId: "t",
+          submission: sub(0),
+          stale: false,
+        }),
+      ).rejects.toThrow("isn't ready");
+    }
+    c.sendChat.mockImplementation((opts: any) => "d");
+    await expect(
+      deliverBoardAnswers({
+        chat: c,
+        threadId: "t",
+        submission: sub(0),
+        stale: false,
+      }),
+    ).resolves.toBeUndefined();
   });
 });

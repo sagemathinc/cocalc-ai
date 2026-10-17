@@ -17,8 +17,10 @@
 // "Received" means the agent took it, not only that the row was saved: the
 // row is written without dispatch, saved, then dispatched, and delivery
 // waits for the hub to admit it (as guidance or a turn). A submission sent
-// again whose message wasn't admitted is dispatched again; the hub admits a
-// user message once, by its id (astra2, CORR-D1-1).
+// again whose admission wasn't confirmed is dispatched again: the hub admits
+// a board submission once, by its message, and answers a retry with what
+// happened to the first (lite/hub/sqlite/acp-board-submissions.ts; astra2,
+// CORR-D1-1).
 
 import { BoardAnswersRefusal } from "./board-answers-channel";
 import type { Submission } from "./board-answers-check";
@@ -40,6 +42,7 @@ export interface BoardAnswersChat {
     preserveSelectedThread?: boolean;
     skipDraftDelete?: boolean;
     skipModelDispatch?: boolean;
+    boardAnswers?: boolean;
   }): string;
   /** Dispatch a written message; resolves once the agent admitted it or
    * definitely didn't. */
@@ -149,7 +152,9 @@ export function formatBoardAnswers({
 /** The most new submissions one thread takes from this page in an hour,
  * however many boards, channels (each refresh is a new one) or cards send
  * them; each starts or steers an agent turn. A repeat of a submission
- * already sent doesn't count. */
+ * already sent doesn't count. This is an early refusal in this page; the
+ * authoritative bound, across pages, tabs and refreshes, is the hub's
+ * (lite/hub/sqlite/acp-board-submissions.ts). */
 export const MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR = 30;
 const HOUR_MS = 60 * 60_000;
 // Times of new submissions by thread (at most the cap each, so bounded by
@@ -221,8 +226,6 @@ async function deliverOnce(
         "Not sent: too many answers sent to this conversation in the last hour. Try later.",
       );
     }
-    recent.push(now);
-    recentByThread.set(threadId, recent);
     const reserved = chat.reserveChatSendIdentity({
       reply_thread_id: threadId,
     });
@@ -240,12 +243,19 @@ async function deliverOnce(
       skipDraftDelete: true,
       // Dispatched below, where delivery can wait for it.
       skipModelDispatch: true,
+      // The hub's own bound on board submissions, across pages and tabs.
+      boardAnswers: true,
     });
     if (!sent) {
       throw new BoardAnswersRefusal(
         "Not sent: the chat isn't ready. Try again in a moment.",
       );
     }
+    // Counted once the message is written (sendChat is synchronous, so
+    // nothing interleaves between the check and this), not for a write
+    // that failed (astra's note on a4bcdca33b).
+    recent.push(now);
+    recentByThread.set(threadId, recent);
   }
   if (!chat.syncdb) {
     throw new BoardAnswersRefusal(
@@ -256,8 +266,10 @@ async function deliverOnce(
   if (existing && admitted(chat.getAcpMessageState(messageId))) return;
   await chat.dispatchChatMessage(messageId);
   if (!admitted(chat.getAcpMessageState(messageId))) {
+    // Possibly taken with the reply lost: the hub admits a board
+    // submission once, so sending it again can't deliver it twice.
     throw new BoardAnswersRefusal(
-      "Not sent: the agent didn't take your answers. Try again.",
+      "Not confirmed: CoCalc couldn't confirm the agent has your answers. Send them again; they won't reach it twice.",
     );
   }
 }

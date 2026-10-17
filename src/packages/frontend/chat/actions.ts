@@ -941,6 +941,7 @@ export class ChatActions extends Actions<ChatState> {
     chatIdentity,
     recoveredNotSent,
     skipDraftDelete,
+    boardAnswers,
   }: {
     input?: string;
     artifact_feedback?: ArtifactFeedback;
@@ -973,6 +974,9 @@ export class ChatActions extends Actions<ChatState> {
     recoveredNotSent?: boolean;
     // recovery replay should not delete whatever the user is composing now
     skipDraftDelete?: boolean;
+    // a Sagebrush board submission: the hub admits these under its own
+    // per-(account, thread) bound
+    boardAnswers?: boolean;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -1056,6 +1060,7 @@ export class ChatActions extends Actions<ChatState> {
       editing: {},
     } as ChatMessage;
     if (postOnly) (message as any).post_only = true;
+    if (boardAnswers === true) (message as any).board_answers = true;
     if (!postOnly && send_mode === "immediate") {
       (message as any).acp_send_mode = "immediate";
       if (recoveredNotSent !== true) {

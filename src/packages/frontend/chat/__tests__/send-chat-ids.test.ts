@@ -2250,6 +2250,15 @@ describe("markThreadRead with UUID keys", () => {
   });
 });
 
+// Wait (boundedly) for an asynchronous step to have happened, instead of a
+// fixed sleep that a slow machine can outrun.
+async function until(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 2000 && !cond(); i++) {
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  expect(cond()).toBe(true);
+}
+
 describe("board answers through the real sendChat (astra2, CORR-D1-1)", () => {
   // The agent's admission, as processAcpLLM records it: "not-sent" when the
   // hub refused, "queue"/"sent" when it took the message.
@@ -2330,15 +2339,14 @@ describe("board answers through the real sendChat (astra2, CORR-D1-1)", () => {
       () => (settled = "received"),
       () => (settled = "refused"),
     );
-    await new Promise((r) => setTimeout(r, 10));
-    expect(actions.processAI).toHaveBeenCalledTimes(1);
+    await until(() => actions.processAI.mock.calls.length === 1);
     expect(settled).toBeUndefined(); // saved, not yet admitted
     admit("not-sent");
     await first;
     expect(settled).toBe("refused");
     // sending again: the same message, dispatched again
     const second = send();
-    await new Promise((r) => setTimeout(r, 10));
+    await until(() => actions.processAI.mock.calls.length === 2);
     admit("queue");
     await second;
     expect(actions.processAI).toHaveBeenCalledTimes(2);
@@ -2352,4 +2360,35 @@ describe("board answers through the real sendChat (astra2, CORR-D1-1)", () => {
     await send();
     expect(actions.processAI).toHaveBeenCalledTimes(2);
   });
+});
+
+it("a board submission's row carries the mark the hub limits by", () => {
+  const actions = makeActions();
+  actions.isSyncdbReady = () => true;
+  actions.sendChat({
+    input: "answers",
+    boardAnswers: true,
+    skipModelDispatch: true,
+    chatIdentity: {
+      date: "2025-01-01T00:00:00.000Z",
+      message_id: "board",
+      thread_id: "board-thread",
+    },
+  });
+  actions.sendChat({
+    input: "words",
+    skipModelDispatch: true,
+    chatIdentity: {
+      date: "2025-01-01T00:00:01.000Z",
+      message_id: "typed",
+      thread_id: "board-thread",
+    },
+  });
+  const rows = actions.syncdb.set.mock.calls.map(([row]: any) => row);
+  expect(rows.find((r: any) => r.message_id === "board")?.board_answers).toBe(
+    true,
+  );
+  expect(rows.find((r: any) => r.message_id === "typed")).not.toHaveProperty(
+    "board_answers",
+  );
 });
