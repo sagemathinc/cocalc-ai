@@ -342,6 +342,7 @@ export class CoreStream<T = any> extends EventEmitter {
   }
 
   private initialized = false;
+  private initDone = false;
   private hasPendingConfigChanges = () =>
     this.pendingConfigOptions != null &&
     Object.keys(this.pendingConfigOptions).length > 0;
@@ -391,6 +392,31 @@ export class CoreStream<T = any> extends EventEmitter {
     }
     this.setRecoveryState("recovering");
     this.recoveryRegistration?.requestRecovery({ reason, resetBackoff });
+  };
+
+  // Until init finishes, its own retry loops are the recovery: a full
+  // recoverNow() would emit the bootstrap history as live changes and report
+  // ready before init does.  So during init just reconnect the persist client.
+  private recoverPersistDisconnect = () => {
+    if (!this.initDone) {
+      void this.persistClient
+        ?.recoverNow({ reason: "persist_disconnected" })
+        .catch(() => {});
+      return;
+    }
+    this.requestRecovery({ reason: "persist_disconnected" });
+  };
+
+  // The persist client is shared by every stream on this path, so it may have
+  // disconnected before we subscribed.  Then we never see the event, and if
+  // the stream that did see it closes, nobody else recovers it.
+  private recoverIfPersistDisconnected = () => {
+    if (
+      !this.recoveryPaused &&
+      this.persistClient?.getRecoveryState() === "disconnected"
+    ) {
+      this.recoverPersistDisconnect();
+    }
   };
 
   private startListen = () => {
@@ -443,7 +469,10 @@ export class CoreStream<T = any> extends EventEmitter {
         this.setRecoveryState("paused");
         return;
       }
-      this.requestRecovery({ reason: "persist_disconnected" });
+      if (this.initDone) {
+        this.requestRecovery({ reason: "persist_disconnected" });
+      }
+      // else: init's retry loops reconnect the persist client
     });
     this.persistClient.on("recovering", () => {
       if (!this.isClosed() && !this.recoveryPaused) {
@@ -453,6 +482,7 @@ export class CoreStream<T = any> extends EventEmitter {
     this.persistClient.on("paused", () => {
       this.setRecoveryState("paused");
     });
+    this.recoverIfPersistDisconnected();
     const bootstrap = await this.getAllFromPersist({
       start_seq: this._start_seq,
       start_checkpoint: this._start_checkpoint,
@@ -483,6 +513,7 @@ export class CoreStream<T = any> extends EventEmitter {
               // fatal permission error
               throw err;
             }
+            this.recoverIfPersistDisconnected();
           }
           return false;
         },
@@ -490,6 +521,7 @@ export class CoreStream<T = any> extends EventEmitter {
       );
     }
     this.emitInitPhase("listen_started");
+    this.initDone = true;
     this.startListen();
     this.setRecoveryState("ready");
     this.emitInitPhase("init_done");
@@ -807,6 +839,9 @@ export class CoreStream<T = any> extends EventEmitter {
             );
           }
           stats.syncFromPersistRetries += 1;
+          // Retrying a disconnected persist client fails at once unless
+          // something reconnects it.
+          this.recoverIfPersistDisconnected();
           // 413: the stream holds a message too large to replay, which
           // retrying cannot fix.
           if (
