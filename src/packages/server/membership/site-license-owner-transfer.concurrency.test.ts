@@ -41,8 +41,11 @@ describeRealPostgres("site-license ownership transfer concurrency", () => {
   }, 120_000);
 
   afterAll(async () => {
-    await getPool?.().end();
-    pg?.stop();
+    try {
+      await getPool?.().end();
+    } finally {
+      pg?.stop();
+    }
   });
 
   it("a pool added during an ownership transfer belongs to the new owner", async () => {
@@ -98,6 +101,7 @@ describeRealPostgres("site-license ownership transfer concurrency", () => {
         return await original(opts, client);
       });
     const timeout = setTimeout(() => release(), 10_000);
+    const pending: Promise<unknown>[] = [];
     try {
       const adding = siteLicenses.addSiteLicensePool({
         actor_account_id: admin,
@@ -111,17 +115,23 @@ describeRealPostgres("site-license ownership transfer concurrency", () => {
           exclusive_group: "teaching",
         },
       });
+      pending.push(adding);
       await paused;
       const transferring = siteLicenses.updateSiteLicense({
         actor_account_id: admin,
         site_license_id,
         owner_account_id: nextOwner,
       });
+      pending.push(transferring);
       // The transfer must wait for the license row held by the pool creation.
       await waitForLockWaiters((sql) => getPool().query(sql), 1);
       release();
       await Promise.all([adding, transferring]);
     } finally {
+      // Even when an assertion above fails, let both transactions finish so
+      // no connection or PostgreSQL child is left behind.
+      release();
+      await Promise.allSettled(pending);
       clearTimeout(timeout);
       spy.mockRestore();
     }
