@@ -73,6 +73,21 @@ test("Agents scope cannot include unrelated chatroom threads", async () => {
   ).toBeVisible();
 });
 
+test("the agent workspace drawer is resizable and keeps its width", () => {
+  localStorage.setItem("cocalc:chat:artifactDrawerWidth", "560");
+  const syncdb = Object.assign(new EventEmitter(), { get: () => [] });
+  render(
+    <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
+      <ArtifactBrowser actions={{ syncdb } as any} onClose={() => {}} />
+    </ChatEmbeddingOptionsProvider>,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Artifacts" });
+  const wrapper = dialog.closest(".ant-drawer-content-wrapper")!;
+  expect(wrapper).toHaveStyle({ width: "560px" });
+  expect(wrapper.querySelector('[class*="dragger"]')).not.toBeNull();
+  localStorage.removeItem("cocalc:chat:artifactDrawerWidth");
+});
+
 test("direct browser hides its portal for an inactive agent workspace", async () => {
   const actions = {
     syncdb: Object.assign(new EventEmitter(), { get: () => [] }),
