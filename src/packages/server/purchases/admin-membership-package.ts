@@ -15,7 +15,9 @@ import { isValidBillingAccount } from "./billing-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { lockAccountSpending } from "./lock-account-spending";
 import {
+  assignMembershipPackageSeat,
   createMembershipPackage,
+  isEducatorTermProduct,
   resolveAdminMembershipPackageQuote,
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
@@ -525,6 +527,21 @@ async function fulfillAdminMembershipOrder(
     tag: "admin-membership-package",
   });
   await setMembershipPackagePurchaseId({ package_id, purchase_id }, client);
+  // An educator term is its owner's own seat, which can never be assigned
+  // later. Checkout assigns it in the purchase transaction, so this must too:
+  // otherwise the owner holds a package that can never give them membership.
+  if (isEducatorTermProduct({ metadata })) {
+    await assignMembershipPackageSeat(
+      {
+        package_id,
+        account_id: user_account_id,
+        assigned_by_account_id: admin_account_id,
+        metadata: { educator_term: true },
+        educator_term_initial_assignment: true,
+      },
+      client,
+    );
+  }
   await recordAccountAdminAuditEventInTransaction({
     account_id: user_account_id,
     action: "membership-package-purchase",
