@@ -343,6 +343,7 @@ export class CoreStream<T = any> extends EventEmitter {
 
   private initialized = false;
   private initDone = false;
+  private persistInstanceResets = 0;
   private hasPendingConfigChanges = () =>
     this.pendingConfigOptions != null &&
     Object.keys(this.pendingConfigOptions).length > 0;
@@ -479,6 +480,7 @@ export class CoreStream<T = any> extends EventEmitter {
         this.setRecoveryState("recovering");
       }
     });
+    this.persistClient.on("instance-changed", this.resetForNewPersistInstance);
     this.persistClient.on("paused", () => {
       this.setRecoveryState("paused");
     });
@@ -792,12 +794,18 @@ export class CoreStream<T = any> extends EventEmitter {
     let attempt = 0;
     const runOnce = async () => {
       attempt += 1;
-      const result = await this.fetchAllFromPersist({
+      const resets = this.persistInstanceResets;
+      let result = await this.fetchAllFromPersist({
         attempt,
         start_seq,
         start_checkpoint,
         includeConfig,
       });
+      if (this.persistInstanceResets !== resets) {
+        // The server's instance changed during the read, so what we asked
+        // for (from our old last seq) is not all it has.
+        result = await this.fetchAllFromPersist({ attempt, includeConfig });
+      }
       this.processPersistentMessages(result.messages, {
         noEmit,
         noSeqCheck: true,
@@ -1049,7 +1057,7 @@ export class CoreStream<T = any> extends EventEmitter {
       if (X.has(seq)) {
         delete this.kv[key];
         this.lastValueByKey.delete(key);
-        keys[key] = seq;
+        keys[seq] = key;
       }
     }
     const indexes: number[] = [];
@@ -1212,6 +1220,33 @@ export class CoreStream<T = any> extends EventEmitter {
     if (!noEmit) {
       this.emitChange({ mesg, raw, key, prev, msgID });
     }
+  };
+
+  // The ephemeral stream's server lost everything (e.g., it restarted) and
+  // numbers messages from 1 again.  Drop what we have, as deletes so views
+  // built on this stream (dkv, dko, dstream) drop it too; the recovery that
+  // follows reads the new contents from the start.
+  private resetForNewPersistInstance = () => {
+    if (this.raw == null) {
+      return;
+    }
+    this.persistInstanceResets += 1;
+    const seqs = this.raw.map(({ seq }) => seq);
+    if (seqs.length > 0) {
+      this.processPersistentDelete(
+        { op: "delete", seqs },
+        { noEmit: !this.initDone },
+      );
+    }
+    for (const key in this.kv) {
+      delete this.kv[key];
+    }
+    this.lastValueByKey.clear();
+    this.kvChangeBytes = 0;
+    this.msgIDs.clear();
+    this.missingMessages.clear();
+    this.processPersistentSetLargestSeq = 0;
+    this.lastSeq = 0;
   };
 
   private emitChange = (e: ChangeEvent<T>) => {
