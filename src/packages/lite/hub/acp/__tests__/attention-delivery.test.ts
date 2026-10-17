@@ -1740,6 +1740,69 @@ describe("agent RPC live guidance funding", () => {
       expect(send).toHaveBeenCalledTimes(1);
     });
 
+    // astra2's regression (CORR-394-1): a candidate's steer whose reply is
+    // lost, then a later candidate that can't steer, must not lead to a
+    // second native packet or a queued turn, directly or through a detached
+    // worker's poller delivering the forwarded steer.
+    it.each(["direct", "durable"])(
+      "%s: a board candidate timeout stops every later native attempt and the queue",
+      async (delivery) => {
+        const request = boardGuidance("assistant-worker");
+        request.config = { paymentSource: "auto" };
+        if (delivery === "durable") {
+          mockLiveRuntime(request.config).running.clear();
+          jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+            {
+              project_id: projectId,
+              path: record.path,
+              thread_id: record.thread_id,
+              session_id: sessionId,
+              owner_instance_id: "other-worker",
+            } as any,
+          ]);
+          await acpTestInternals.handleAcpSteerRequest(request);
+          expect(storedSteer(request).state).toBe("pending");
+        }
+        const runtime = mockLiveRuntime(request.config);
+        const active = runtime.running.get(sessionId)!;
+        // two real running handles; the second is in a compact turn
+        runtime.running.set(record.thread_id, active);
+        const { AppServerClient } = jest.requireActual(
+          "../../../../ai/acp/codex-app-server",
+        );
+        const packets: any[] = [];
+        const native: any = {
+          exited: false,
+          nextId: 1,
+          pendingRequests: new Map(),
+          send: (packet: any) => {
+            packets.push(packet);
+            if (packets.length > 1)
+              queueMicrotask(() => {
+                const pending = native.pendingRequests.get(packet.id);
+                clearTimeout(pending.timer);
+                native.pendingRequests.delete(packet.id);
+                pending.reject(new Error("cannot steer a compact turn"));
+              });
+            return true;
+          },
+        };
+        active.client.request.mockImplementation(
+          (method: string, params: unknown) =>
+            AppServerClient.prototype.request.call(native, method, params, 5),
+        );
+        if (delivery === "direct") {
+          await acpTestInternals
+            .handleAcpSteerRequest(request)
+            .catch(() => undefined);
+        } else {
+          await acpTestInternals.processPendingAcpSteersOnce();
+        }
+        expect(packets).toHaveLength(1);
+        expect(listQueuedAcpJobs()).toHaveLength(0);
+      },
+    );
+
     it("an unknown outcome is resolved from the guidance receipt", async () => {
       const runtime = mockLiveRuntime(liveConfig);
       const send = runtime.running.get(sessionId)!.client.request;

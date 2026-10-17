@@ -12374,7 +12374,10 @@ async function attemptAcpSteerRequest(
     candidateIds,
     claimGuard,
     hostProjectRoot,
-    stopOnUnknown: boardAttempt != null,
+    // From the request itself, not its caller: the rule holds on every path,
+    // including a detached worker's poller delivering a forwarded steer
+    // (CORR-394-1).
+    stopOnUnknown: boardAttempt != null || request.chat?.board_answers === true,
   });
   if (boardAttempt && result.state !== "steered") {
     // It answered: not injected.
