@@ -1265,6 +1265,7 @@ export class BaseEditorActions<
     }
     this.reconnectResource =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: this.project_id,
         canReconnect: () =>
           !this.isClosed() &&
           this._syncstring != null &&
