@@ -109,6 +109,37 @@ describe("useCodexLog after the live stream's persist instance changes", () => {
     second.unmount();
   });
 
+  it("keeps the cached instance while a remount is still acquiring the stream", async () => {
+    const logKey = `pending-${Math.random()}`;
+    const old = new FakeLiveStream("old", [[1, summary(1, "A")]]);
+    acquire.mockResolvedValueOnce({ stream: old, release: async () => {} });
+    const first = render(logKey);
+    await settle();
+    expect(texts(first.result.current.events)).toEqual(["A"]);
+    first.unmount();
+
+    // The remount's acquisition is still pending while the cache is written,
+    // and the stream then has nothing new.
+    let resolveAcquire: (lease: any) => void = () => {};
+    acquire.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveAcquire = resolve)),
+    );
+    const second = render(logKey);
+    await settle();
+    resolveAcquire({ stream: old, release: async () => {} });
+    await settle();
+    second.unmount();
+
+    // So the next remount still says which instance its cursor came from.
+    acquire.mockResolvedValueOnce({ stream: old, release: async () => {} });
+    const third = render(logKey);
+    await settle();
+    expect(acquire).toHaveBeenLastCalledWith(
+      expect.objectContaining({ start_seq: 2, start_instance: "old" }),
+    );
+    third.unmount();
+  });
+
   it("a mounted hook shows the new instance's messages after a reset", async () => {
     const logKey = `active-${Math.random()}`;
     const stream = new FakeLiveStream("old", [[1, summary(1, "A")]]);

@@ -812,6 +812,9 @@ export function useCodexLog({
             instance !== cached.liveStreamInstance
           ) {
             liveReplayRef.current = new LiveLogReplay();
+            // and the stored ranges, so the cache never pairs the old
+            // instance's ranges with the new instance
+            setLiveLog((prev) => prev ?? [], []);
           }
           lastLiveReceiptAtRef.current = Date.now();
           if (stopped) {
@@ -846,6 +849,7 @@ export function useCodexLog({
           liveStreamInstanceReset = () => {
             if (stopped) return;
             liveReplayRef.current = new LiveLogReplay();
+            setLiveLog((prev) => prev ?? [], []);
           };
           liveStream.on("instance-reset", liveStreamInstanceReset);
           liveStream.setMaxListeners(
@@ -1067,8 +1071,12 @@ export function useCodexLog({
       liveStreamName: liveStreamIsProjection
         ? (liveLogStream ?? undefined)
         : undefined,
+      // While the stream is still being acquired, keep the instance the
+      // cached ranges belong to.
       liveStreamInstance: liveStreamIsProjection
-        ? liveStreamRef.current?.getPersistInstance?.()
+        ? liveStreamRef.current != null
+          ? liveStreamRef.current.getPersistInstance?.()
+          : cache.get(cacheKey)?.liveStreamInstance
         : undefined,
     });
   }, [
