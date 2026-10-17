@@ -52,6 +52,7 @@ import {
 } from "@cocalc/backend/auth/cookie-names";
 import { conatPassword } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
+import { checkAmbientCookieRequest } from "./browser-origin-policy";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
@@ -365,6 +366,16 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       socket?.handshake?.headers?.cookie,
     );
     if (browserSession) {
+      // The browser sends this cookie on websockets opened by any site, and
+      // CORS does not apply to websockets.
+      if (
+        !checkAmbientCookieRequest(
+          { headers: socket?.handshake?.headers ?? {} },
+          "conat",
+        )
+      ) {
+        throw new Error("cross-site connection refused");
+      }
       if (
         getProjectHostManagedEgressBlockedMessage(browserSession.account_id)
       ) {
