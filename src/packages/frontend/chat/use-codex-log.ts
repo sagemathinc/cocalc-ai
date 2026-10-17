@@ -754,6 +754,7 @@ export function useCodexLog({
       | undefined;
     let liveStreamDisconnected: (() => void) | undefined;
     let liveStreamRecovered: (() => void) | undefined;
+    let liveStreamInstanceReset: (() => void) | undefined;
     let catchUpTimer: ReturnType<typeof setInterval> | undefined;
     let stopped = false;
     const scheduleBufferedFlush = (immediate: boolean = false) => {
@@ -801,6 +802,17 @@ export function useCodexLog({
           liveStream = lease.stream;
           liveStreamRef.current = liveStream;
           releaseLiveStream = lease.release;
+          // The consumed ranges are transport seqs of one persist instance; a
+          // recreated ephemeral stream numbers from 1 again.  Rendered events
+          // are kept and merged.
+          const instance = liveStream.getPersistInstance?.();
+          if (
+            cached?.liveStreamInstance !== undefined &&
+            instance !== undefined &&
+            instance !== cached.liveStreamInstance
+          ) {
+            liveReplayRef.current = new LiveLogReplay();
+          }
           lastLiveReceiptAtRef.current = Date.now();
           if (stopped) {
             await releaseLiveStream({ immediate: true });
@@ -831,6 +843,11 @@ export function useCodexLog({
           liveStream.on("recovering", liveStreamDisconnected);
           liveStream.on("paused", liveStreamDisconnected);
           liveStream.on("recovered", liveStreamRecovered);
+          liveStreamInstanceReset = () => {
+            if (stopped) return;
+            liveReplayRef.current = new LiveLogReplay();
+          };
+          liveStream.on("instance-reset", liveStreamInstanceReset);
           liveStream.setMaxListeners(
             Math.max(liveStream.getMaxListeners(), 50),
           );
@@ -995,6 +1012,9 @@ export function useCodexLog({
         }
         if (liveStream && liveStreamRecovered) {
           liveStream.off("recovered", liveStreamRecovered);
+        }
+        if (liveStream && liveStreamInstanceReset) {
+          liveStream.off("instance-reset", liveStreamInstanceReset);
         }
       } catch {
         // ignore

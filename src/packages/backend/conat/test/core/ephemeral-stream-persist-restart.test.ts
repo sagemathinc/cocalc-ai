@@ -20,6 +20,7 @@ import {
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { CoreStream, cstream } from "@cocalc/conat/sync/core-stream";
 import { dkv } from "@cocalc/conat/sync/dkv";
+import { dstream } from "@cocalc/conat/sync/dstream";
 import { once } from "@cocalc/util/async-utils";
 
 beforeAll(before);
@@ -33,6 +34,8 @@ describe("an ephemeral stream across a persist server restart", () => {
   let persistServer;
   let oldInstance;
   const readerChanges: any[] = [];
+  let dsReader;
+  const dsEvents: string[] = [];
   const kvReaderChanges: any[] = [];
 
   it("opens an ephemeral stream and kv on two connections", async () => {
@@ -55,6 +58,15 @@ describe("an ephemeral stream across a persist server restart", () => {
     oldInstance = reader.getPersistInstance();
     expect(typeof oldInstance).toBe("string");
     reader.on("change", ({ mesg, prev }) => readerChanges.push({ mesg, prev }));
+    dsReader = await dstream({
+      client: connect(),
+      name,
+      ephemeral: true,
+      noCache: true,
+    });
+    await wait({ until: () => dsReader.length == 3 });
+    dsReader.on("instance-reset", () => dsEvents.push("instance-reset"));
+    dsReader.on("change", (mesg) => dsEvents.push(mesg));
 
     kvWriter = await dkv({
       client: connect(),
@@ -122,6 +134,13 @@ describe("an ephemeral stream across a persist server restart", () => {
         .map(({ prev }) => prev)
         .sort(),
     ).toEqual(["a", "b", "c"]);
+    // a DStream tells its users to forget seqs before any new message
+    await wait({ until: () => dsEvents.includes("after") });
+    expect(dsEvents.indexOf("instance-reset")).toBeGreaterThan(-1);
+    expect(dsEvents.indexOf("instance-reset")).toBeLessThan(
+      dsEvents.indexOf("after"),
+    );
+    expect(new Set(dsReader.getAll())).toEqual(new Set(["after"]));
   }, 45_000);
 
   it("a kv drops lost keys and sees new ones", async () => {
@@ -187,6 +206,7 @@ describe("an ephemeral stream across a persist server restart", () => {
   it("cleans up", async () => {
     writer?.close();
     reader?.close();
+    dsReader?.close();
     kvWriter?.close();
     kvReader?.close();
     await persistServer?.close();

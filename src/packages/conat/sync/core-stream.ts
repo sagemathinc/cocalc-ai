@@ -1300,6 +1300,10 @@ export class CoreStream<T = any> extends EventEmitter {
       this.configReapplyPending = true;
       this.closeWriteGate();
     }
+    // Before any message of the new instance: consumers that track seqs
+    // themselves (e.g., which ones they have already shown) must forget them,
+    // since the new instance numbers from 1 again.
+    this.emit("instance-reset", this.persistInstance);
     const seqs = this.raw.map(({ seq }) => seq);
     if (seqs.length > 0) {
       this.processPersistentDelete(
