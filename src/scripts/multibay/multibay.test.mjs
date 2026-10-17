@@ -1269,6 +1269,125 @@ describe("admin entitlement overrides across bays", () => {
   });
 });
 
+describe("sensor budgets on the account's home bay", () => {
+  // carol is homed on the attached bay; her watchers are set from the seed,
+  // as when one of her agents works in a project the seed owns. The budget
+  // calls cross the real fabric and are counted only on her home bay.
+  let carol;
+  let project_id;
+  const agent_id = randomUUID();
+  // Runs the budget calls on the seed, as the sensor code does, and returns
+  // each outcome (an error's message instead of throwing).
+  const fromSeed = (calls) =>
+    runInBay(
+      cluster,
+      SEED,
+      `const { sensorBudget } = server("agents/cocalc-connector-routing.js");
+       const out = [];
+       for (const [method, opts] of ${JSON.stringify(calls)}) {
+         try {
+           out.push({ ok: true, r: (await sensorBudget[method](opts)) ?? null });
+         } catch (err) {
+           out.push({ ok: false, error: String(err?.message ?? err) });
+         }
+       }
+       return out;`,
+    );
+  const watcher = () => ({
+    account_id: carol.account_id,
+    project_id,
+    agent_id,
+    sensor_id: randomUUID(),
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+
+  before(async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
+    // alice's own project: a new one would use up her project limit, which
+    // later scenarios need.
+    project_id = alice.project;
+    assert.equal(await owningBay(project_id), SEED);
+    // Two wakes a day: the watcher cap against churn is then 4 x 2 = 8.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { setAccountEntitlementOverrideLocal } = server("membership/entitlement-overrides.js");
+       await setAccountEntitlementOverrideLocal({
+         account_id: ${JSON.stringify(carol.account_id)},
+         actor_account_id: ${JSON.stringify(carol.account_id)},
+         override: { usage_limits: { sensor_max_wakes_per_day: { mode: "set", value: 2 } } },
+         reason: "multibay sensor budget test",
+       });`,
+    );
+  });
+
+  it("counts watchers set from another bay on the home bay, capped only against churn", async () => {
+    // Set and released (never fired) eight times: more than the two wakes,
+    // which watchers no longer use up until they fire.
+    const calls = [];
+    for (let i = 0; i < 8; i++) {
+      const w = watcher();
+      calls.push(["reserveWatcher", w]);
+      calls.push([
+        "releaseWatcher",
+        { account_id: w.account_id, sensor_id: w.sensor_id },
+      ]);
+    }
+    calls.push(["reserveWatcher", watcher()]);
+    const out = await fromSeed(calls);
+    assert.deepEqual(
+      out.slice(0, 16).map((o) => o.ok),
+      Array(16).fill(true),
+      JSON.stringify(out),
+    );
+    assert.equal(out[16].ok, false);
+    assert.match(out[16].error, /at most 8 watchers a day/);
+    assert.deepEqual(await countsFor(ATTACHED), { watch: 8 });
+    assert.deepEqual(await countsFor(SEED), {});
+  });
+
+  it("refuses a watcher on the home bay once the day's wakes are spent", async () => {
+    const wake = () => ({
+      account_id: carol.account_id,
+      project_id,
+      agent_id,
+      sensor_id: randomUUID(),
+      run_id: randomUUID(),
+    });
+    const out = await fromSeed([
+      ["reserveWake", wake()],
+      ["reserveWake", wake()],
+      ["reserveWake", wake()],
+      ["reserveWatcher", watcher()],
+    ]);
+    assert.deepEqual(
+      out.slice(0, 3).map((o) => o.r?.reserved),
+      [true, true, false],
+      JSON.stringify(out),
+    );
+    // Checked before the churn cap: it could never wake the agent.
+    assert.equal(out[3].ok, false);
+    assert.match(out[3].error, /used all 2 wakes/);
+    assert.deepEqual(await countsFor(ATTACHED), { wake: 2, watch: 8 });
+    assert.deepEqual(await countsFor(SEED), {});
+  });
+
+  async function countsFor(bay) {
+    return await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT kind, count(*)::int AS n FROM agent_sensor_events WHERE account_id=$1 GROUP BY kind ORDER BY kind",
+         [${JSON.stringify(carol.account_id)}]);
+       return Object.fromEntries(rows.map((r) => [r.kind, r.n]));`,
+    );
+  }
+});
+
 describe("fabric faults", () => {
   it("answers a change on the owning bay while the other bay is frozen", async () => {
     // alice (homed on the seed) collaborates on bob's project. With the seed
