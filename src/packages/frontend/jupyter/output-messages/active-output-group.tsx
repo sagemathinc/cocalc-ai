@@ -32,6 +32,13 @@ import type { Map } from "immutable";
 import { useEffect, useRef } from "react";
 import jquerySource from "jquery/dist/jquery.min.js?raw";
 import AutosizedIframe from "./autosized-iframe";
+import {
+  APPLY_THEME_FUNCTION,
+  resolveShellTheme,
+  sameTheme,
+  useThemeChanges,
+} from "./frame-theme";
+import type { ShellTheme } from "./frame-theme";
 
 export const ACTIVE_OUTPUT_MESSAGE = "cocalc-active-outputs";
 
@@ -118,17 +125,7 @@ const BOOTSTRAP = `(function () {
   var root = document.getElementById("cocalc-outputs");
   var rendered = new Map(); // index -> { kind, value, className, div }
   // The app's resolved palette, as shell-owned variables.
-  function applyTheme(theme) {
-    if (!theme || typeof theme !== "object") return;
-    var style = document.documentElement.style;
-    [["text", "--shell-text"], ["surface", "--shell-surface"], ["dangerBg", "--shell-danger-bg"]].forEach(function (p) {
-      var v = theme[p[0]];
-      if (typeof v === "string" && CSS.supports("color", v)) style.setProperty(p[1], v);
-    });
-    if (theme.colorScheme === "dark" || theme.colorScheme === "light") {
-      style.colorScheme = theme.colorScheme;
-    }
-  }
+  ${APPLY_THEME_FUNCTION}
   function run(div, code) {
     try {
       new Function("element", code).call(window, jQuery(div));
@@ -209,37 +206,6 @@ function sameOutputs(a: ActiveOutput[], b: ActiveOutput[]): boolean {
   );
 }
 
-export interface ShellTheme {
-  text: string;
-  surface: string;
-  dangerBg: string;
-  colorScheme: string;
-}
-
-// The app palette as resolved at the frame's position (the CSS variables
-// inherit onto the iframe element).
-export function resolveShellTheme(el: Element): ShellTheme {
-  const style = getComputedStyle(el);
-  const v = (name: string) =>
-    style.getPropertyValue(`--cocalc-ui-${name}`).trim();
-  return {
-    text: v("text"),
-    surface: v("surface"),
-    dangerBg: v("dangerBg"),
-    colorScheme: style.colorScheme?.includes("dark") ? "dark" : "light",
-  };
-}
-
-function sameTheme(a: ShellTheme | null, b: ShellTheme): boolean {
-  return (
-    a != null &&
-    a.text === b.text &&
-    a.surface === b.surface &&
-    a.dangerBg === b.dangerBg &&
-    a.colorScheme === b.colorScheme
-  );
-}
-
 export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const outputsRef = useRef<ActiveOutput[]>(outputs);
@@ -269,27 +235,14 @@ export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
     postedRef.current = outputs;
     post(frameRef.current);
   }, [outputs]);
-  // Follow the app's theme (explicit light/dark, or the system preference).
-  useEffect(() => {
-    const update = () => {
-      const iframe = frameRef.current;
-      if (iframe == null) return;
-      if (!sameTheme(themeRef.current, resolveShellTheme(iframe))) {
-        post(iframe);
-      }
-    };
-    const observer = new MutationObserver(update);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-cocalc-theme", "class", "style"],
-    });
-    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-    media?.addEventListener?.("change", update);
-    return () => {
-      observer.disconnect();
-      media?.removeEventListener?.("change", update);
-    };
-  }, []);
+  // Follow the app's theme.
+  useThemeChanges(() => {
+    const iframe = frameRef.current;
+    if (iframe == null) return;
+    if (!sameTheme(themeRef.current, resolveShellTheme(iframe))) {
+      post(iframe);
+    }
+  });
   return (
     <AutosizedIframe
       srcDoc={SHELL_DOCUMENT}
