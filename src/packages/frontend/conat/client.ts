@@ -177,8 +177,17 @@ const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
 const PROJECT_HOST_BAY_MISMATCH_RETRY_MS = 60_000;
 const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
-const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
+// A restarted project host is usually back within 2-5 s (the host agent
+// respawns it on its next poll), so retry often at first: a single 5 s wait
+// after just missing it doubled the outage.
+const ROUTED_HOST_RECONNECT_DELAYS_MS = [
+  750, 1_000, 1_500, 1_500, 2_000, 2_000, 3_000, 5_000,
+] as const;
+// Refresh the host token and browser session only once reconnecting has
+// failed this many times AND for this long: a routine restart must not cost a
+// new sign-in.
 const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
+const ROUTED_HOST_REFRESH_AUTH_AFTER_MS = 10_000;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
 const FOREGROUND_WAKE_ACCOUNT_REPAIR_TIMEOUT_MS = 5_000;
@@ -267,6 +276,8 @@ type RoutedHubClientState = {
   reconnectTimer?: ReturnType<typeof setTimeout>;
   connectInFlight?: Promise<boolean>;
   reconnectAttempts: number;
+  // when the current run of failed reconnects started
+  reconnectFailingSince?: number;
   lastConnectError?: unknown;
 };
 
@@ -2508,13 +2519,18 @@ export class ConatClient extends EventEmitter {
       });
       this.invalidateProjectHostBrowserSession(routing_key);
     }
-    if (state.reconnectAttempts >= ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS) {
+    if (
+      state.reconnectAttempts >= ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS &&
+      Date.now() - (state.reconnectFailingSince ?? Date.now()) >=
+        ROUTED_HOST_REFRESH_AUTH_AFTER_MS
+    ) {
       const tokenState = this.projectHostTokens[host_id];
       if (!(tokenState?.retryAfter != null && tokenState.lastError != null)) {
         this.invalidateProjectHostToken(host_id);
         this.invalidateProjectHostBrowserSession(routing_key);
       }
       state.reconnectAttempts = 0;
+      state.reconnectFailingSince = Date.now();
     }
     if (state.client.conn?.connected) {
       return;
@@ -2535,6 +2551,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected || state.reconnectTimer != null) {
       return;
     }
+    state.reconnectFailingSince ??= Date.now();
     const delayMs =
       ROUTED_HOST_RECONNECT_DELAYS_MS[
         Math.min(
@@ -2822,6 +2839,7 @@ export class ConatClient extends EventEmitter {
         public_directory_share_id: state.public_directory_share_id,
       });
       state.reconnectAttempts = 0;
+      delete state.reconnectFailingSince;
       if (state.reconnectTimer != null) {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
