@@ -146,6 +146,21 @@ export function formatBoardAnswers({
   return lines.join("\n");
 }
 
+/** The most new submissions one thread takes from this page in an hour,
+ * however many boards, channels (each refresh is a new one) or cards send
+ * them; each starts or steers an agent turn. A repeat of a submission
+ * already sent doesn't count. */
+export const MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR = 30;
+const HOUR_MS = 60 * 60_000;
+// Times of new submissions by thread (at most the cap each, so bounded by
+// the threads this page has delivered to).
+const recentByThread = new Map<string, number[]>();
+
+/** For tests. */
+export function resetBoardAnswersDeliveryForTests(): void {
+  recentByThread.clear();
+}
+
 // Deliveries in flight in this page, by message id. A submission id comes
 // from one frame (the frame makes it at Submit and keeps nothing), so a
 // repeat reaches the same page; two cards given the same id share one
@@ -197,6 +212,17 @@ async function deliverOnce(
   }
   const existing = chat.getMessageById(messageId) != null;
   if (!existing) {
+    const now = Date.now();
+    const recent = (recentByThread.get(threadId) ?? []).filter(
+      (t) => now - t < HOUR_MS,
+    );
+    if (recent.length >= MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR) {
+      throw new BoardAnswersRefusal(
+        "Not sent: too many answers sent to this conversation in the last hour. Try later.",
+      );
+    }
+    recent.push(now);
+    recentByThread.set(threadId, recent);
     const reserved = chat.reserveChatSendIdentity({
       reply_thread_id: threadId,
     });

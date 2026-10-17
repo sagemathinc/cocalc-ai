@@ -17,6 +17,8 @@ import {
 import {
   boardAnswersMessageId,
   deliverBoardAnswers,
+  MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR,
+  resetBoardAnswersDeliveryForTests,
   formatBoardAnswers,
   uuidV5,
 } from "./board-answers-deliver";
@@ -509,5 +511,67 @@ describe("the answers are data to chat too (CORR-D1-2)", () => {
     });
     expect(text).not.toMatch(/@codex\.board/i);
     expect(text).toMatch(/^\*\*Board answers\*\*, page 1\./);
+  });
+});
+
+describe("an hourly cap per thread, across channels", () => {
+  beforeEach(() => resetBoardAnswersDeliveryForTests());
+  afterEach(() => jest.useRealTimers());
+
+  function chat() {
+    const rows = new Set<string>();
+    return {
+      getMessagesInThread: () => [{}],
+      getMessageById: (id?: string) => (id && rows.has(id) ? {} : undefined),
+      reserveChatSendIdentity: () => ({
+        date: "d",
+        message_id: "x",
+        thread_id: "t",
+      }),
+      sendChat: jest.fn((opts: any) => {
+        rows.add(opts.chatIdentity.message_id);
+        return "d";
+      }),
+      dispatchChatMessage: async () => {},
+      getAcpMessageState: () => "sent",
+      syncdb: { save: async () => {} },
+    };
+  }
+  const sub = (n: number): any => ({
+    id: `0d9f3b6e-6a31-4c2f-9d6b-${n.toString(16).padStart(12, "0")}`,
+    name: null,
+    revision: null,
+    page: { number: 1 },
+    answers: {},
+    notes: {},
+    comment: "",
+  });
+
+  test("new submissions past the cap are refused; repeats and other threads are not", async () => {
+    jest.useFakeTimers({
+      now: 0,
+      doNotFake: ["setTimeout", "setImmediate", "queueMicrotask", "nextTick"],
+    });
+    const c = chat();
+    const send = (n: number, threadId = "t") =>
+      deliverBoardAnswers({
+        chat: c,
+        threadId,
+        submission: sub(n),
+        stale: false,
+      });
+    for (let i = 0; i < MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR; i++)
+      await send(i);
+    await expect(send(999)).rejects.toBeInstanceOf(BoardAnswersRefusal);
+    await send(0); // a repeat: already sent, not counted
+    await send(999, "other"); // another conversation
+    expect(c.sendChat).toHaveBeenCalledTimes(
+      MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR + 1,
+    );
+    jest.setSystemTime(60 * 60_000);
+    await send(999);
+    expect(c.sendChat).toHaveBeenCalledTimes(
+      MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR + 2,
+    );
   });
 });
