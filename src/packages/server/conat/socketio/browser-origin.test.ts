@@ -12,7 +12,10 @@ const baysMock = jest.fn(async () => ({
   "bay-1": "https://bay-1-cocalc.example",
 }));
 jest.mock("@cocalc/server/bay-public-origin", () => ({
-  getSitePublicOrigin: () => siteMock(),
+  getSiteBrowserOrigins: async () => {
+    const site = await siteMock();
+    return site ? [site] : [];
+  },
   getClusterBayPublicOrigins: (opts) => baysMock(opts),
 }));
 
@@ -75,17 +78,26 @@ describe("hub conat cookie origin policy", () => {
   });
 
   it("never approves an origin because the request's Host names it", async () => {
-    // Even with no configured site at all.
-    siteMock.mockResolvedValueOnce(undefined as any);
-    for (const headers of [
+    const forged = [
       { origin: "https://evil.example", host: "evil.example" },
       {
         origin: "https://evil.example",
         "x-forwarded-host": "evil.example",
         "x-forwarded-proto": "https",
       },
-    ]) {
+    ];
+    for (const headers of forged) {
       expect(await cookieOriginRejection(headers)).toBe("origin not allowed");
+    }
+    // With no configured site the policy is "not configured" (never
+    // enforced, see the top of browser-origin.ts); the Host still approves
+    // nothing.
+    for (const headers of forged) {
+      resetApprovedOriginsForTests();
+      siteMock.mockResolvedValueOnce(undefined as any);
+      await expect(cookieOriginRejection(headers)).rejects.toThrow(
+        "no approved origins are configured",
+      );
     }
   });
 

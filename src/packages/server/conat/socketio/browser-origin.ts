@@ -8,7 +8,9 @@ by a cookie (remember_me, or the API-key and project-secret cookies) and it
 carries an Origin, that Origin must be approved.
 
 Approved origins come only from configuration, never from the request: the
-configured site origin, the bay public origins, and
+configured site origins (getSiteBrowserOrigins: as configured, with its
+scheme and port, shared with the project hosts' list), the bay public
+origins, and
 COCALC_CONAT_ALLOWED_ORIGINS (comma separated, e.g. a dev server). The list
 is cached, the lookup is bounded in time, and a failed lookup keeps the last
 complete list.
@@ -16,7 +18,8 @@ complete list.
 Enforcement never locks everyone out because of the server's own state: it
 refuses only origins missing from a known, nonempty list. With no list (the
 configuration can't be read, e.g. a process started without database access)
-or an empty one (misconfiguration), connections are let through and the
+or an empty one (misconfiguration, including an unknown site origin),
+connections are let through and the
 problem is logged loudly and counted, since no attacker can cause either and
 refusing would refuse every real user.
 
@@ -34,7 +37,7 @@ import { Counter } from "prom-client";
 import { getLogger } from "@cocalc/backend/logger";
 import {
   getClusterBayPublicOrigins,
-  getSitePublicOrigin,
+  getSiteBrowserOrigins,
 } from "@cocalc/server/bay-public-origin";
 
 const logger = getLogger("conat-auth:browser-origin");
@@ -101,8 +104,16 @@ let lastStaleLog = 0;
 
 async function loadConfiguredOrigins(): Promise<Set<string>> {
   const origins = new Set<string>();
-  const site = originOfUrl(await getSitePublicOrigin());
-  if (site) origins.add(site);
+  for (const site of await getSiteBrowserOrigins()) {
+    const parsed = originOfUrl(site);
+    if (parsed) origins.add(parsed);
+  }
+  if (origins.size === 0) {
+    // The site's own origin is unknown: enforcing the rest (bays, the
+    // explicit list) would refuse the site itself, so this is "not
+    // configured" (see the top of this file).
+    return origins;
+  }
   for (const origin of Object.values(
     await getClusterBayPublicOrigins({ strict: true }),
   )) {

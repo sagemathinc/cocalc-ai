@@ -40,6 +40,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 jest.mock("@cocalc/server/bay-public-origin", () => ({
   getSitePublicOrigin: async () => "https://example.test",
+  getSiteBrowserOrigins: async () => ["https://example.test"],
   getBayPublicOrigin: async (bay) => `https://${bay}.example.test`,
   getClusterBayPublicOrigins: async () => ({
     "bay-b": "https://home-bay.example.test",

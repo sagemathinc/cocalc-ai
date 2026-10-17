@@ -132,6 +132,7 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
 jest.mock("@cocalc/server/bay-public-origin", () => ({
   ...jest.requireActual("@cocalc/server/bay-public-origin"),
   getSitePublicOrigin: jest.fn(async () => "https://cocalc.example"),
+  getSiteBrowserOrigins: jest.fn(async () => ["https://cocalc.example"]),
   getClusterBayPublicOrigins: jest.fn(async () => ({})),
 }));
 

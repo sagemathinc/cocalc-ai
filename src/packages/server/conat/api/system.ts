@@ -325,7 +325,7 @@ import {
 import {
   getBayPublicOrigin,
   getClusterBayPublicOrigins,
-  getSitePublicOrigin,
+  getSiteBrowserOrigins,
 } from "@cocalc/server/bay-public-origin";
 import { conat } from "@cocalc/backend/conat";
 import {
@@ -8254,8 +8254,9 @@ async function getBrowserOriginsForProjectHosts(
 ): Promise<string[] | undefined> {
   const origins = new Set<string>([new URL(url).origin]);
   try {
-    const site = await getSitePublicOrigin();
-    if (site) origins.add(site);
+    for (const site of await getSiteBrowserOrigins()) {
+      origins.add(site);
+    }
     for (const origin of Object.values(
       await getClusterBayPublicOrigins({ strict: true }),
     )) {
