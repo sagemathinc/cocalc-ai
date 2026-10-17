@@ -1202,16 +1202,19 @@ function waitForHealthCheckSync(
     pollMs: number;
     pid?: number;
     label: string;
-    allowPidReplacement?: boolean;
   },
 ): void {
-  const { timeoutMs, pollMs, pid, label, allowPidReplacement = false } = opts;
+  const { timeoutMs, pollMs, pid, label } = opts;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (check()) {
       return;
     }
-    if (pid != null && !isRunning(pid) && !allowPidReplacement) {
+    // Every managed start runs under the daemon control lock, so nothing else
+    // can have replaced this process: if it exited, fail now and release the
+    // lock, and the host agent retries (with backoff) instead of this caller
+    // holding the component down until the timeout.
+    if (pid != null && !isRunning(pid)) {
       throw new Error(`${label} exited before becoming healthy`);
     }
     sleepMs(pollMs);
@@ -1884,7 +1887,6 @@ function startManagedConatRouter(opts: {
       ),
       pid: child.pid,
       label: "project-host conat router",
-      allowPidReplacement: true,
     });
   } catch (err) {
     fs.rmSync(routerPidPath, { force: true });
@@ -2238,7 +2240,6 @@ function startManagedConatPersist(opts: {
         ),
         pid: child.pid,
         label: "project-host conat persist",
-        allowPidReplacement: true,
       },
     );
   } catch (err) {
@@ -2713,11 +2714,17 @@ export function startDaemon(index = 0): void {
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
 }
 
-// The running managed processes the host agent keeps alive (project-host and,
-// when managed here, the conat router and persist server), from their pid
-// files.  Cheap: the host agent checks them between its full passes so it can
-// respawn one as soon as it exits instead of on the next poll.
-export function runningManagedDaemonPids(index = 0): number[] {
+// Marks a managed process that should exist but has no valid pid file: it is
+// never running.
+export const MISSING_DAEMON_PID = 0;
+
+// What the host agent watches between its full passes so it can respawn a
+// managed process as soon as it exits instead of on the next poll: one entry
+// per process it keeps alive (project-host and, when managed here, the conat
+// router and persist server).  A dead pid stays in the list, and a missing or
+// invalid pid file is MISSING_DAEMON_PID, so either makes the next pass come
+// early.  Cheap: reads a few small files.
+export function managedDaemonWatchPids(index = 0): number[] {
   const {
     pidPath,
     managedRouter,
@@ -2728,20 +2735,20 @@ export function runningManagedDaemonPids(index = 0): number[] {
   const paths = [pidPath];
   if (managedRouter) paths.push(routerPidPath);
   if (managedPersist) paths.push(persistPidPath);
-  const pids: number[] = [];
-  for (const path of paths) {
+  return paths.map((path) => {
     try {
       const pid = Number(fs.readFileSync(path, "utf8"));
-      if (Number.isInteger(pid) && pid > 0 && isRunning(pid)) pids.push(pid);
+      return Number.isInteger(pid) && pid > 0 ? pid : MISSING_DAEMON_PID;
     } catch {
-      // not started yet
+      return MISSING_DAEMON_PID;
     }
-  }
-  return pids;
+  });
 }
 
 export function isDaemonPidRunning(pid: number): boolean {
-  return isRunning(pid);
+  // Never pass 0 or a negative pid to kill(): they mean a process group or
+  // every process.
+  return Number.isInteger(pid) && pid > 0 && isRunning(pid);
 }
 
 export function ensureDaemon(index = 0, options?: EnsureOptions): void {
@@ -3315,6 +3322,7 @@ export function handleDaemonCli(argv: string[]): boolean {
 }
 
 export const __test__ = {
+  waitForHealthCheckSync,
   archivePreviousComponentLog,
   captureDirFromRootctlOutput,
   captureProcessForensics,

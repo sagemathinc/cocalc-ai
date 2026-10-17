@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { __test__, isDaemonPidRunning, MISSING_DAEMON_PID } from "./daemon";
 import { earlyPassDelayMs, waitForNextPass } from "./host-agent";
 
 // A fake clock: wait() advances it instead of sleeping.
@@ -38,6 +40,35 @@ describe("host agent: respawn a managed process as soon as it exits", () => {
     expect(c.now()).toBeLessThanOrEqual(1250);
   });
 
+  it("also when the process died before the wait began (e.g. right after it was started)", async () => {
+    const c = clock();
+    const result = await waitForNextPass({
+      pollMs: 5000,
+      minDelayMs: 0,
+      pids: [11, 12],
+      isRunning: (pid) => pid != 12,
+      ...c,
+    });
+    expect(result).toBe("exited");
+    expect(c.now()).toBe(250);
+  });
+
+  it("a managed process with no pid file counts as not running", async () => {
+    expect(isDaemonPidRunning(MISSING_DAEMON_PID)).toBe(false);
+    // and no pid that kill() would treat as a process group or everyone
+    expect(isDaemonPidRunning(-1)).toBe(false);
+    expect(isDaemonPidRunning(process.pid)).toBe(true);
+    const c = clock();
+    const result = await waitForNextPass({
+      pollMs: 5000,
+      minDelayMs: 0,
+      pids: [process.pid, MISSING_DAEMON_PID],
+      isRunning: isDaemonPidRunning,
+      ...c,
+    });
+    expect(result).toBe("exited");
+  });
+
   it("not before the minimum delay, so a crash loop is not respawned in a tight loop", async () => {
     const c = clock();
     const result = await waitForNextPass({
@@ -74,5 +105,22 @@ describe("host agent: respawn a managed process as soon as it exits", () => {
     expect([0, 1, 2, 3, 4, 10].map((n) => earlyPassDelayMs(n, 5000))).toEqual([
       0, 1000, 2000, 4000, 5000, 5000,
     ]);
+  });
+});
+
+describe("a managed start whose process exits before it is healthy", () => {
+  it("fails at once instead of holding the control lock until the timeout", () => {
+    // a pid that has certainly exited
+    const pid = spawnSync("true").pid!;
+    const started = Date.now();
+    expect(() =>
+      __test__.waitForHealthCheckSync(() => false, {
+        timeoutMs: 60_000,
+        pollMs: 50,
+        pid,
+        label: "conat router",
+      }),
+    ).toThrow("conat router exited before becoming healthy");
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });

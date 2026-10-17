@@ -8,7 +8,7 @@ import {
   inspectProjectHostRuntime,
   isDaemonPidRunning,
   restartProjectHost,
-  runningManagedDaemonPids,
+  managedDaemonWatchPids,
 } from "./daemon";
 import {
   appendSupervisionEvent,
@@ -725,7 +725,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
     let pids: number[] = [];
     try {
-      pids = runningManagedDaemonPids(index);
+      pids = managedDaemonWatchPids(index);
     } catch (err) {
       logger.debug("host-agent could not read managed pids", {
         err: `${err}`,
