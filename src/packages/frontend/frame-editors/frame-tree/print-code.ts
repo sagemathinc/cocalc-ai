@@ -11,6 +11,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { React } from "../../app-framework";
 import { print_window, popup } from "./print";
 import { path_split } from "@cocalc/util/misc";
+import {
+  PASSIVE_DOCUMENT_CSP,
+  escapeHtmlText,
+} from "@cocalc/frontend/misc/print-document";
 import { CodeMirrorStatic } from "../../jupyter/codemirror-static";
 import type { Options as CodeMirrorStaticOptions } from "../../jupyter/codemirror-static";
 import type * as CodeMirror from "codemirror";
@@ -68,7 +72,8 @@ export function print_code(opts: Options) {
   const t: string = `\
 <html lang="en">
     <head>
-        <title>${path_split(opts.path).tail}</title>
+        ${PASSIVE_DOCUMENT_CSP}
+        <title>${escapeHtmlText(path_split(opts.path).tail)}</title>
         <meta name="google" content="notranslate"/>
         <style>${CODEMIRROR_CSS}</style>
     </head>

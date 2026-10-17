@@ -18,6 +18,10 @@ import { renderToString } from "react-dom/server";
 import { createElement, CSSProperties } from "react";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import type { CoCalcJupyter } from "@cocalc/jupyter/ipynb/parse";
+import {
+  PASSIVE_DOCUMENT_CSP,
+  escapeHtmlText,
+} from "@cocalc/frontend/misc/print-document";
 
 export default function exportToHTML({
   title,
@@ -25,12 +29,16 @@ export default function exportToHTML({
   cocalcJupyter,
   fontSize,
   style,
+  passive,
 }: {
   title?: string;
   ipynb?: string;
   cocalcJupyter?: CoCalcJupyter;
   fontSize?: number;
   style?: CSSProperties;
+  // Block all scripts in the resulting document, e.g., for an untrusted
+  // notebook, whose HTML outputs are included unsanitized.
+  passive?: boolean;
 }): string {
   let notebook;
   if (ipynb != null) {
@@ -71,7 +79,8 @@ export default function exportToHTML({
 
   return `<html>
 <head>
-<title>${title}</title>
+${passive ? PASSIVE_DOCUMENT_CSP : ""}
+<title>${escapeHtmlText(title ?? "")}</title>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/${codemirror}/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />

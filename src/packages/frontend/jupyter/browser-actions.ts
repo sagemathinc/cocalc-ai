@@ -2995,7 +2995,13 @@ export class JupyterActions extends JupyterActions0 {
       kernelspec,
     };
     const { base: title } = parse(this.path);
-    return exportToHTML({ cocalcJupyter, title });
+    // An untrusted notebook's HTML outputs are included as is, and the print
+    // popup has the app's origin, so block all scripts in the document.
+    return exportToHTML({
+      cocalcJupyter,
+      title,
+      passive: !store.get("trust"),
+    });
   };
 
   nbconvertToHtml = async (

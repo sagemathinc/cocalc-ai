@@ -15,6 +15,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { React, Redux, redux } from "@cocalc/frontend/app-framework";
 import { BASE_URL } from "@cocalc/frontend/misc";
 import { resource_links_string } from "@cocalc/frontend/misc/resource-links";
+import {
+  PASSIVE_DOCUMENT_CSP,
+  escapeHtmlText,
+} from "@cocalc/frontend/misc/print-document";
 
 let BLOCKED: boolean | undefined = undefined;
 
@@ -105,12 +109,13 @@ function write_content(w, opts: PrintOptions): void {
   w.document.close();
 }
 
-function html_with_deps(html: string, title: string): string {
+export function html_with_deps(html: string, title: string): string {
   const links = resource_links_string(BASE_URL);
   return `\
 <html lang="en">
     <head>
-        <title>${title}</title>
+        ${PASSIVE_DOCUMENT_CSP}
+        <title>${escapeHtmlText(title)}</title>
         <meta name="google" content="notranslate"/>
         ${links}
     </head>
