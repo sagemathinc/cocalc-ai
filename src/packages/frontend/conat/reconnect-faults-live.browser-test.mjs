@@ -279,11 +279,42 @@ try {
   }
 
   // The other editors: revisit each and see whether its root survived.
-  for (const kind of ["notebook", "terminal"]) {
-    await openInApp(FILES[kind]);
-    await page.waitForTimeout(4000);
-    report.checks[`no_remount_${kind}`] = !!(await survivingTags())[kind];
-  }
+  await openInApp(FILES.notebook);
+  await page.waitForTimeout(4000);
+  report.checks.no_remount_notebook = !!(await survivingTags()).notebook;
+  // The notebook still runs code and shows the output: catches a kernel,
+  // runtime-state or live-run output stream that stays stuck after recovery.
+  const cellMarker = `rcx-cell-${Date.now()}`;
+  const ranAt = Date.now();
+  await page.evaluate((code) => {
+    const list = document.querySelector("[data-jupyter-windowed-list]");
+    const cm = [...(list?.querySelectorAll(".CodeMirror") ?? [])].find(
+      (e) => e.offsetWidth || e.offsetHeight,
+    )?.CodeMirror;
+    if (!cm) throw new Error("no visible notebook cell editor");
+    cm.setValue(code);
+    cm.focus();
+  }, `print("${cellMarker}")`);
+  await page.keyboard.press("Shift+Enter");
+  report.checks.notebook_runs = await page
+    .waitForFunction(
+      (marker) => {
+        const list = document.querySelector("[data-jupyter-windowed-list]");
+        // The marker appears once in the input; a second time means output.
+        return (list?.innerText.split(marker).length ?? 0) - 1 >= 2;
+      },
+      cellMarker,
+      { timeout: 90000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  report.notebook_run_seconds = report.checks.notebook_runs
+    ? Math.round((Date.now() - ranAt) / 1000)
+    : null;
+
+  await openInApp(FILES.terminal);
+  await page.waitForTimeout(4000);
+  report.checks.no_remount_terminal = !!(await survivingTags()).terminal;
   // Terminal answers a new command.
   const marker = `rcx-term-${Date.now()}`;
   await page.locator(".xterm").first().click();
