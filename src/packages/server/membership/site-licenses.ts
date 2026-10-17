@@ -3234,39 +3234,69 @@ async function getSiteLicenseOverviewWithoutAuthorization({
   );
 }
 
-export async function adminProvisionSiteLicense({
-  actor_account_id,
-  owner_account_id,
-  name,
-  organization_name,
-  allowed_domains,
-  pools,
-  custom_terms_url,
-  custom_policy_url,
-  terms_version_label,
-  renewal_policy,
-  overage_policy,
-  starts_at,
-  expires_at,
-  metadata,
-  trusted_admin = false,
-}: {
-  actor_account_id: string;
-  owner_account_id?: string | null;
-  name: string;
-  organization_name: string;
-  allowed_domains: string[];
-  pools: SiteLicensePoolConfig[];
-  custom_terms_url?: string | null;
-  custom_policy_url?: string | null;
-  terms_version_label?: string | null;
-  renewal_policy?: string | null;
-  overage_policy?: string | null;
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
-  trusted_admin?: boolean;
-}): Promise<SiteLicenseOverview> {
+// Errors from adminProvisionSiteLicense thrown before its transaction tried to
+// commit: nothing was written, so callers may record a definite failure rather
+// than an indeterminate outcome.
+const provisionRejectedBeforeCommit = new WeakSet<object>();
+
+export function isSiteLicenseProvisionRejected(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err != null &&
+    provisionRejectedBeforeCommit.has(err)
+  );
+}
+
+export async function adminProvisionSiteLicense(
+  opts: Parameters<typeof provisionSiteLicense>[0],
+): Promise<SiteLicenseOverview> {
+  const progress = { commitAttempted: false };
+  try {
+    return await provisionSiteLicense(opts, progress);
+  } catch (err) {
+    if (!progress.commitAttempted && typeof err === "object" && err != null) {
+      provisionRejectedBeforeCommit.add(err);
+    }
+    throw err;
+  }
+}
+
+async function provisionSiteLicense(
+  {
+    actor_account_id,
+    owner_account_id,
+    name,
+    organization_name,
+    allowed_domains,
+    pools,
+    custom_terms_url,
+    custom_policy_url,
+    terms_version_label,
+    renewal_policy,
+    overage_policy,
+    starts_at,
+    expires_at,
+    metadata,
+    trusted_admin = false,
+  }: {
+    actor_account_id: string;
+    owner_account_id?: string | null;
+    name: string;
+    organization_name: string;
+    allowed_domains: string[];
+    pools: SiteLicensePoolConfig[];
+    custom_terms_url?: string | null;
+    custom_policy_url?: string | null;
+    terms_version_label?: string | null;
+    renewal_policy?: string | null;
+    overage_policy?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+    trusted_admin?: boolean;
+  },
+  progress: { commitAttempted: boolean },
+): Promise<SiteLicenseOverview> {
   const actorAccountId = normalizeAccountId(actor_account_id);
   if (!trusted_admin && !(await isAdmin(actorAccountId))) {
     throw Error("must be an admin");
@@ -3416,6 +3446,7 @@ export async function adminProvisionSiteLicense({
       site_license_id,
       client,
     });
+    progress.commitAttempted = true;
     await client.query("COMMIT");
     return overview;
   } catch (err) {

@@ -20,6 +20,7 @@ import {
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
   getSiteLicenseOverview,
+  isSiteLicenseProvisionRejected,
   removeSiteLicenseManager,
   setSiteLicenseManager,
   updateSiteLicense,
@@ -845,7 +846,9 @@ export async function provisionCommercialSiteLicense(
     recordCommercialProviderFailure("site-license-provision");
     await setCommercialProviderOperationStatus({
       id: reservation.operation.id,
-      status: "indeterminate",
+      // A license creation rejected before commit (e.g., a domain overlap)
+      // wrote nothing, so it must not fence later provisioning of this order.
+      status: isSiteLicenseProvisionRejected(err) ? "failed" : "indeterminate",
       error: err,
     });
     throw err;
