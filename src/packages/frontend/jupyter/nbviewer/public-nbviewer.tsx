@@ -45,7 +45,12 @@ export default function PublicNBViewer({ content, ...props }: Props) {
     );
   }
 
-  return <Notebook cocalcJupyter={cocalcJupyter} readOnly {...props} />;
+  // No viewer of a public notebook ever chose to trust it, so it renders like
+  // an untrusted notebook in the app: sanitized HTML, isolated output in
+  // opaque sandboxed frames, no JavaScript output.
+  return (
+    <Notebook cocalcJupyter={cocalcJupyter} readOnly trust={false} {...props} />
+  );
 }
 
 function toFencedCodeBlock(content: string, language = ""): string {

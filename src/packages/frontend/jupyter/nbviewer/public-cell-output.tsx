@@ -4,9 +4,7 @@
  */
 
 import { Alert } from "antd";
-import { createContext, useContext, type JSX } from "react";
-import HTML from "@cocalc/frontend/components/html-ssr";
-import { FileContext } from "@cocalc/frontend/lib/file-context";
+import type { JSX } from "react";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import {
   Ansi,
@@ -21,20 +19,7 @@ import {
 } from "@cocalc/frontend/jupyter/output-messages/style";
 import AutosizedIframe from "@cocalc/frontend/jupyter/output-messages/autosized-iframe";
 import type { KernelSpec } from "@cocalc/jupyter/ipynb/parse";
-
-/*
-How HTML output is shown in the public viewer.  No viewer ever chose to trust
-a public notebook, so by default its HTML is passive: sanitized by the central
-renderer, with no scripts.  The viewer can switch the page to interactive
-output, which runs each HTML output in its own opaque sandboxed iframe
-(scripts, but no access to this page, its origin, or other outputs).
-*/
-export const PublicOutputModeContext = createContext<{ interactive: boolean }>({
-  interactive: false,
-});
-
-// The only sandbox for active public output: scripts in an opaque origin.
-const INTERACTIVE_SANDBOX = "allow-scripts";
+import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 
 interface Props {
   cell: { [key: string]: any };
@@ -127,7 +112,7 @@ function PublicOutputMessage({
     return <TracebackOutput traceback={message.traceback} />;
   }
   if (message?.data != null) {
-    return <RenderData data={message.data} kernelspec={kernelspec} />;
+    return renderData(message.data, kernelspec);
   }
   if (message?.output_type === "display_data") {
     return null;
@@ -178,23 +163,11 @@ function TracebackOutput({ traceback }: { traceback: unknown }): JSX.Element {
   );
 }
 
-function RenderData({
-  data,
-  kernelspec,
-}: {
-  data: { [key: string]: any };
-  kernelspec?: KernelSpec;
-}): JSX.Element {
-  const { interactive } = useContext(PublicOutputModeContext);
-  let type = getTypeToRender(data, kernelspec);
-  if (!interactive && (type === "text/html" || type === "iframe")) {
-    // Passive mode: HTML that needs scripts (e.g., Plotly) would be blank, so
-    // prefer a static image of the same output when there is one.
-    const image = Object.keys(data).find((t) => t.startsWith("image/"));
-    if (image != null && /<script\b/i.test(`${data[type] ?? ""}`)) {
-      type = image;
-    }
-  }
+function renderData(
+  data: { [key: string]: any },
+  kernelspec?: KernelSpec,
+): JSX.Element {
+  const type = getTypeToRender(data, kernelspec);
   const value = data?.[type];
 
   switch (type) {
@@ -203,11 +176,7 @@ function RenderData({
 
     case "text/html":
     case "iframe":
-      return interactive ? (
-        <InteractiveHtml value={value} />
-      ) : (
-        <PassiveHtml value={value} />
-      );
+      return renderHtml(value);
 
     case "text/markdown":
     case "text/latex":
@@ -269,22 +238,18 @@ function getPriority(type: string): number {
   return 0;
 }
 
-function PassiveHtml({ value }: { value: unknown }): JSX.Element {
+function renderHtml(value: unknown): JSX.Element {
+  const content = `${value ?? ""}`;
+  if (shouldIsolateHtmlOutput(content)) {
+    return <AutosizedIframe srcDoc={content} title="Jupyter HTML output" />;
+  }
   return (
-    <div className="cocalc-jupyter-rendered" style={{ overflowX: "auto" }}>
-      <FileContext.Provider value={{ noSanitize: false }}>
-        <HTML value={`${value ?? ""}`} />
-      </FileContext.Provider>
-    </div>
-  );
-}
-
-function InteractiveHtml({ value }: { value: unknown }): JSX.Element {
-  return (
-    <AutosizedIframe
-      srcDoc={`${value ?? ""}`}
-      sandbox={INTERACTIVE_SANDBOX}
-      title="Jupyter HTML output"
+    // Public notebook viewers render on a dedicated raw subdomain with no
+    // authenticated CoCalc state, so we intentionally avoid sanitization and
+    // iframe sandboxing here in order to preserve notebook HTML behavior.
+    <div
+      className="cocalc-jupyter-rendered"
+      dangerouslySetInnerHTML={{ __html: content }}
     />
   );
 }

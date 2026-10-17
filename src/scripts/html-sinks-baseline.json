@@ -130,7 +130,7 @@
     "noSanitize": 1
   },
   "src/packages/frontend/jupyter/nbviewer/public-cell-output.tsx": {
-    "noSanitize": 1,
+    "dangerouslySetInnerHTML": 1,
     "srcDoc": 1
   },
   "src/packages/frontend/jupyter/notebook-file-context.tsx": {
