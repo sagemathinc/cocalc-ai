@@ -13,6 +13,7 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { setNotificationsOpen } from "../drawer-state";
 import { NotificationFilter, MentionInfo } from "./types";
 import { BOOKMARK_ICON_NAME } from "./util";
 
@@ -104,6 +105,8 @@ export function MentionRow(props: Props) {
   }
 
   async function clickRow(): Promise<void> {
+    // Leave the drawer (if open) so it doesn't cover the mention it opens.
+    setNotificationsOpen(false);
     // Regarding chat -- if no fragment, assume chat.
     // If fragment given, then it can explicitly specify chat, e.g.,
     //    file.txt#chat=true,id=092ab039
