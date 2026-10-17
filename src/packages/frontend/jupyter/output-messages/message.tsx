@@ -130,18 +130,26 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     const group = React.useMemo(
       () =>
         trust
-          ? activeGroup(obj, (m) => {
-              const data = m.get("data");
-              return data == null || typeof data.keySeq !== "function"
-                ? undefined
-                : selectMimeType(data.keySeq().toJS(), kernelspec, trust);
-            })
+          ? activeGroup(
+              obj,
+              (m) => {
+                const data = m.get("data");
+                return data == null || typeof data.keySeq !== "function"
+                  ? undefined
+                  : selectMimeType(data.keySeq().toJS(), kernelspec, trust);
+              },
+              // ANSI escapes stripped, as plain text in the frame.
+              (m) =>
+                Anser.ansiToText(
+                  m.get("traceback") != null
+                    ? m.get("traceback").join("\n")
+                    : `${m.get("text") ?? ""}`,
+                ),
+            )
           : null,
       [obj, kernelspec, trust],
     );
-    const inGroup = new Set(
-      (group ?? []).map((o) => parseInt(o.key.split(":")[0])),
-    );
+    const inGroup = new Set((group ?? []).map((o) => o.index));
     const firstInGroup = Math.min(...inGroup);
     for (const n of numericallyOrderedKeys(obj)) {
       const mesg = obj[n];

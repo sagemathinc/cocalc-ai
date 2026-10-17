@@ -45,29 +45,37 @@ describe("activeGroup uses the renderer's MIME choice", () => {
     expect(group?.map((o) => o.kind)).toEqual(["javascript"]);
   });
 
-  it("groups selected JS and HTML in order, keyed by position and content", () => {
+  const sel = (m) => (m.get("data") ? select(m) : undefined);
+
+  it("groups selected JS and HTML in order, by position", () => {
     const messages = [
       fromJS({ name: "stdout", text: "a" }),
       bundle({ "text/html": "<div id=t></div>" }),
       bundle({ "application/javascript": "f()" }),
     ];
-    const group = activeGroup(messages as any, (m) =>
-      m.get("data") ? select(m) : undefined,
-    )!;
-    expect(group.map((o) => [o.kind, o.key.split(":")[0]])).toEqual([
-      ["html", "1"],
-      ["javascript", "2"],
+    const group = activeGroup(messages as any, sel)!;
+    expect(group.map((o) => [o.kind, o.index])).toEqual([
+      ["html", 1],
+      ["javascript", 2],
     ]);
-    const changed = activeGroup(
-      [
-        messages[0],
-        messages[1],
-        bundle({ "application/javascript": "g()" }),
-      ] as any,
-      (m) => (m.get("data") ? select(m) : undefined),
-    )!;
-    expect(changed[0].key).toBe(group[0].key);
-    expect(changed[1].key).not.toBe(group[1].key);
+  });
+
+  it("carries text between frame outputs into the frame, keeping order", () => {
+    const messages = [
+      bundle({ "text/html": "<div id=t></div>" }),
+      fromJS({ name: "stdout", text: "between" }),
+      fromJS({ traceback: ["Err: boom"], ename: "Err", evalue: "boom" }),
+      bundle({ "application/javascript": "f()" }),
+      fromJS({ name: "stdout", text: "after" }),
+    ];
+    const group = activeGroup(messages as any, sel)!;
+    expect(group.map((o) => [o.kind, o.index, o.className])).toEqual([
+      ["html", 0, undefined],
+      ["text", 1, "output_stdout"],
+      ["text", 2, "output_error"],
+      ["javascript", 3, undefined],
+    ]);
+    expect(group[2].value).toContain("Err: boom");
   });
 });
 

@@ -177,6 +177,7 @@
     "build": "rm -rf dist && pnpm i18n:compile && tsc --build",
     "test": "pnpm -C .. lint:frontend && jest",
     "test:e2e": "playwright test",
+    "test:browser-security": "node jupyter/output-messages/active-output-group.browser-test.mjs",
     "test:e2e:chat": "playwright test -c playwright.chat.config.ts",
     "generate:active-users-map": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./admin/scripts/generate-active-users-map.mjs",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores cspell,@cspell/dict-typescript,events,@formatjs/cli,react-test-renderer,jest-environment-jsdom,slate-dom,typescript",

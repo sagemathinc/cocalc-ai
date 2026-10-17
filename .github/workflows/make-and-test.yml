@@ -247,6 +247,15 @@ jobs:
         if: matrix.lane == 'rest'
         run: cd src/packages/static && pnpm run check-ultralite-budgets
 
+      # Real-browser tests of security boundaries jsdom can't exercise
+      # (e.g., script isolation in sandboxed output frames).
+      - name: Frontend browser security tests
+        if: matrix.lane == 'frontend-1'
+        run: |
+          CHROMIUM_PATH="$(command -v chromium || command -v chromium-browser || command -v google-chrome)"
+          export CHROMIUM_PATH
+          pnpm -C src/packages/frontend test:browser-security
+
       - name: Test ${{ matrix.lane }} packages
         env:
           COCALC_RUNTIME_STORAGE_ALLOW_DIRECT: "yes"

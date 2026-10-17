@@ -14,11 +14,12 @@ renders into other outputs of the same cell (Bokeh, or JS that fills a sibling
 div), which is why they share a frame.
 
 The frame's document is a constant shell (jQuery and a small bootstrap), so it
-loads once.  The parent posts the cell's current outputs, keyed by position
-and content.  The frame keeps outputs whose key is unchanged, inserts new ones
-in order and removes stale ones; only then does it run each new JavaScript
-output, once, with `element` set to a jQuery wrapper of its own div (as in
-classic Jupyter).  Scripts run via `new Function` inside the frame, so syntax
+loads once.  The parent posts the cell's current outputs by position.  The
+frame keeps an output whose exact kind and value are unchanged, replaces one
+that changed, inserts new ones in order and removes stale ones; only then does
+it run each new JavaScript output, once, with `element` set to a jQuery
+wrapper of its own div (as in classic Jupyter).  Plain text outputs between
+the frame's outputs are carried in as text, so the cell's order is kept.  Scripts run via `new Function` inside the frame, so syntax
 errors are caught and shown.
 
 The frame has no access to this page, its origin or the session.  Scripts can
@@ -28,16 +29,21 @@ Other outputs of the cell (text, images, errors, ...) render normally.
 */
 
 import type { Map } from "immutable";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import jquerySource from "jquery/dist/jquery.min.js?raw";
 import AutosizedIframe from "./autosized-iframe";
 
 export const ACTIVE_OUTPUT_MESSAGE = "cocalc-active-outputs";
 
 export interface ActiveOutput {
-  key: string;
-  kind: "html" | "javascript";
+  // position of the output in the cell
+  index: number;
+  // "text": plain text output (stdout, stderr, an error) between other
+  // outputs of the frame, carried along so the cell's order is kept.
+  kind: "html" | "javascript" | "text";
   value: string;
+  // class for text outputs, e.g. "output_stderr"
+  className?: string;
 }
 
 function text(value: unknown): string {
@@ -48,22 +54,16 @@ function text(value: unknown): string {
   return Array.isArray(js) ? js.join("") : `${js}`;
 }
 
-// A short content hash, so a changed output (update_display_data) gets a new
-// key and runs once more, while an unchanged one never re-runs.
-function hash(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
-  }
-  return (h >>> 0).toString(36) + "." + s.length.toString(36);
-}
-
-// The outputs (by index into messages) that render in the frame, given the
-// MIME type selected for each message; null if no JavaScript output is
-// selected in this cell.
+// The outputs that render in the frame, given the MIME type selected for each
+// message (the Data renderer's choice); null if no JavaScript output is
+// selected in this cell.  Plain text outputs (streams, errors) that come
+// between the first and last frame output go into the frame too, as text, so
+// the cell's order is kept; any other output kind there renders after the
+// frame (a known reordering).
 export function activeGroup(
   messages: Map<string, any>[],
   selectedType: (message: Map<string, any>) => string | undefined,
+  plainText: (message: Map<string, any>) => string = defaultPlainText,
 ): ActiveOutput[] | null {
   const selected = messages.map((m) =>
     m == null ? undefined : selectedType(m),
@@ -71,23 +71,59 @@ export function activeGroup(
   if (!selected.includes("application/javascript")) {
     return null;
   }
+  const isActive = (type) =>
+    type === "application/javascript" || type === "text/html";
+  const first = selected.findIndex(isActive);
+  let last = first;
+  selected.forEach((type, i) => {
+    if (isActive(type)) last = i;
+  });
   const outputs: ActiveOutput[] = [];
   selected.forEach((type, i) => {
-    if (type !== "application/javascript" && type !== "text/html") return;
-    const value = text(messages[i].getIn(["data", type]));
-    outputs.push({
-      key: `${i}:${hash(value)}`,
-      kind: type === "application/javascript" ? "javascript" : "html",
-      value,
-    });
+    const m = messages[i];
+    if (m == null) return;
+    if (isActive(type)) {
+      outputs.push({
+        index: i,
+        kind: type === "application/javascript" ? "javascript" : "html",
+        value: text(m.getIn(["data", type])),
+      });
+    } else if (i > first && i < last && isPlainText(m)) {
+      outputs.push({
+        index: i,
+        kind: "text",
+        value: plainText(m),
+        className:
+          m.get("traceback") != null
+            ? "output_error"
+            : `output_${m.get("name")}`,
+      });
+    }
   });
   return outputs;
 }
 
-// Runs in the frame.  Accepts updates only from the parent window.
+function isPlainText(m: Map<string, any>): boolean {
+  return (
+    m.get("name") === "stdout" ||
+    m.get("name") === "stderr" ||
+    m.get("traceback") != null
+  );
+}
+
+function defaultPlainText(m: Map<string, any>): string {
+  if (m.get("traceback") != null) {
+    return text(m.get("traceback")?.join?.("\n") ?? m.get("traceback"));
+  }
+  return text(m.get("text"));
+}
+
+// Runs in the frame.  Accepts updates only from the parent window.  Each
+// position keeps its element while its exact kind and value are unchanged;
+// otherwise it is replaced (and new JavaScript runs once).
 const BOOTSTRAP = `(function () {
   var root = document.getElementById("cocalc-outputs");
-  var rendered = new Map();
+  var rendered = new Map(); // index -> { kind, value, div }
   function run(div, code) {
     try {
       new Function("element", code).call(window, jQuery(div));
@@ -106,28 +142,34 @@ const BOOTSTRAP = `(function () {
     var toRun = [];
     var prev = null;
     data.outputs.forEach(function (o) {
-      if (!o || typeof o.key !== "string" || typeof o.value !== "string") return;
-      wanted.add(o.key);
-      var div = rendered.get(o.key);
-      if (!div) {
-        div = document.createElement("div");
+      if (!o || typeof o.index !== "number" || typeof o.value !== "string") return;
+      if (o.kind !== "html" && o.kind !== "javascript" && o.kind !== "text") return;
+      wanted.add(o.index);
+      var cur = rendered.get(o.index);
+      if (!cur || cur.kind !== o.kind || cur.value !== o.value) {
+        if (cur) cur.div.remove();
+        var div = document.createElement(o.kind === "text" ? "pre" : "div");
         if (o.kind === "javascript") {
           div.className = "output_javascript";
           toRun.push([div, o.value]);
+        } else if (o.kind === "text") {
+          div.className = typeof o.className === "string" ? o.className : "output_text";
+          div.textContent = o.value;
         } else {
           div.className = "output_html";
           div.innerHTML = o.value;
         }
-        rendered.set(o.key, div);
+        cur = { kind: o.kind, value: o.value, div: div };
+        rendered.set(o.index, cur);
       }
       var next = prev ? prev.nextSibling : root.firstChild;
-      if (div !== next) root.insertBefore(div, next);
-      prev = div;
+      if (cur.div !== next) root.insertBefore(cur.div, next);
+      prev = cur.div;
     });
-    rendered.forEach(function (div, key) {
-      if (!wanted.has(key)) {
-        div.remove();
-        rendered.delete(key);
+    rendered.forEach(function (cur, index) {
+      if (!wanted.has(index)) {
+        cur.div.remove();
+        rendered.delete(index);
       }
     });
     // All outputs are in the DOM before any new script runs, so a script can
@@ -158,11 +200,10 @@ export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
       "*",
     );
   };
-  // Keys only change when outputs do; posting the same list is a no-op.
-  const keys = useMemo(() => outputs.map((o) => o.key).join("|"), [outputs]);
+  // The frame compares exact values, so posting an unchanged list is a no-op.
   useEffect(() => {
     post(frameRef.current);
-  }, [keys]);
+  }, [outputs]);
   return (
     <AutosizedIframe
       srcDoc={SHELL_DOCUMENT}

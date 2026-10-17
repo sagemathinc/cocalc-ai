@@ -137,6 +137,50 @@ try {
     "order kept",
   );
 
+  // Exact identity: a colliding pair under a 32-bit hash, and a kind change
+  // with the same value, are both real updates.
+  await set({});
+  await set({
+    0: js('window.__last = "5opiHUtIFGpE"; element.text("5opiHUtIFGpE")'),
+  });
+  f = await frame();
+  await f.waitForFunction(() => window.__last === "5opiHUtIFGpE");
+  await set({
+    0: js('window.__last = "149ArEHM7oZ6"; element.text("149ArEHM7oZ6")'),
+  });
+  await f.waitForFunction(() => window.__last === "149ArEHM7oZ6");
+  const same = "<b>x</b>";
+  await set({ 0: html(same), 1: js("window.__k = 1;") });
+  await set({ 0: js("element.text('now js')"), 1: js("window.__k = 1;") });
+  await f.waitForFunction(
+    () =>
+      document.querySelector(".output_javascript")?.textContent === "now js",
+  );
+
+  // Text between frame outputs stays in order inside the frame.
+  await set({});
+  await set({
+    0: html("<div>first</div>"),
+    1: { name: "stdout", text: "printed between" },
+    2: { output_type: "error", ename: "E", evalue: "v", traceback: ["E: v"] },
+    3: js("element.text('script')"),
+    4: { name: "stdout", text: "printed after" },
+  });
+  f = await frame();
+  await f.waitForFunction(
+    () =>
+      document.querySelector(".output_javascript")?.textContent === "script",
+  );
+  assert.equal(
+    await f.evaluate(() =>
+      [...document.querySelectorAll("#cocalc-outputs > *")]
+        .map((d) => d.className)
+        .join(","),
+    ),
+    "output_html,output_stdout,output_error,output_javascript",
+  );
+  assert.match(await page.locator("#cell").innerText(), /printed after/);
+
   // 2. JavaScript can target an output that comes after it.
   await set({});
   await set({
