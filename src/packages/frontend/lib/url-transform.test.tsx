@@ -209,4 +209,32 @@ describe("srcset parsing", () => {
     expect(html).toContain('alt="probe"');
     expect(html).toContain('src="/files/v.mp4"');
   });
+
+  it("treats only ASCII whitespace as a separator", () => {
+    // A no-break space makes the browser drop the candidate; so must we.
+    expect(parseSrcset("https://e.example/x.png\u00a01x")).toEqual([
+      { url: "https://e.example/x.png\u00a01x", descriptors: "" },
+    ]);
+    expect(parseSrcset("a.png \u00a01x")).toEqual([]);
+    expect(parseSrcset("a.png 1x\u00a0")).toEqual([]);
+  });
+
+  it("noSanitize srcset uses the untagged result, like src", () => {
+    const html = renderToStaticMarkup(
+      <FileContext.Provider
+        value={{
+          noSanitize: true,
+          urlTransform: (url, tag) =>
+            tag == null ? `/untagged/${url}` : `/tagged/${url}`,
+        }}
+      >
+        <HTML
+          value={`<div><img src="a.png" srcset="b.png 1x" alt="x"></div>`}
+        />
+      </FileContext.Provider>,
+    );
+    expect(html).toContain('src="/untagged/a.png"');
+    expect(html).toMatch(/srcset="\/untagged\/b.png 1x"/i);
+    expect(html).not.toContain("/tagged/");
+  });
 });

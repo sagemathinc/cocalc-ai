@@ -48,7 +48,13 @@ export interface SrcsetCandidate {
   descriptors: string;
 }
 
-const DESCRIPTORS = /^(?:\s*\d+(?:\.\d+)?[wxh])*\s*$/i;
+// Only ASCII whitespace separates srcset tokens (as in the HTML spec); any
+// other character, e.g. a no-break space, makes the descriptor invalid.
+const ASCII_SPACE = "[\\t\\n\\f\\r ]";
+const DESCRIPTORS = new RegExp(
+  `^(?:${ASCII_SPACE}*\\d+(?:\\.\\d+)?[wxh])*${ASCII_SPACE}*$`,
+  "i",
+);
 
 /*
 Parse a srcset the way browsers do (HTML "parse a srcset attribute"): a URL
@@ -83,11 +89,16 @@ export function parseSrcset(input: string): SrcsetCandidate[] {
         else if (c === "," && depth === 0) break;
         pos++;
       }
-      descriptors = input.slice(descriptorStart, pos).trim();
+      descriptors = input
+        .slice(descriptorStart, pos)
+        .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
       pos++; // the comma
     }
     if (url && DESCRIPTORS.test(descriptors)) {
-      candidates.push({ url, descriptors: descriptors.replace(/\s+/g, " ") });
+      candidates.push({
+        url,
+        descriptors: descriptors.replace(/[\t\n\f\r ]+/g, " "),
+      });
     }
   }
   return candidates;

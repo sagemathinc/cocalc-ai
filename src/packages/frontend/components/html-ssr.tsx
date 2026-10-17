@@ -25,6 +25,7 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
 import {
+  URL_REJECTED,
   applyUrlTransform,
   applyUrlTransformToSrcset,
 } from "@cocalc/frontend/lib/url-transform";
@@ -172,21 +173,21 @@ export default function HTML({
       if (noSanitize && urlTransform != null && attribs != null) {
         // since we did not sanitize the HTML (which also does urlTransform),
         // we have to do the urlTransform here instead.
+        // Rejection is decided with the element's tag (so, e.g., a transform
+        // that rejects all images works here too).  A URL that is not
+        // rejected is transformed without a tag, as it always has been here.
+        const transform = (url: string) =>
+          applyUrlTransform(urlTransform, url, name) == null
+            ? URL_REJECTED
+            : urlTransform(url);
         let transformed: Record<string, string> | undefined = undefined;
         for (const attrib of URL_ATTRIBS) {
           const value = attribs[attrib];
           if (value == null) continue;
-          // Rejection is decided with the element's tag (so, e.g., a transform
-          // that rejects all images works here too).  A URL that is not
-          // rejected is transformed without a tag, as it always has been here.
-          let x: string | null;
-          if (attrib === "srcset") {
-            x = applyUrlTransformToSrcset(urlTransform, value, name);
-          } else if (applyUrlTransform(urlTransform, value, name) == null) {
-            x = null;
-          } else {
-            x = applyUrlTransform(urlTransform, value);
-          }
+          const x =
+            attrib === "srcset"
+              ? applyUrlTransformToSrcset(transform, value)
+              : applyUrlTransform(transform, value);
           if (x === value) continue;
           transformed ??= { ...attribs };
           if (x == null) {
