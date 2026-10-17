@@ -37,8 +37,8 @@ export default function exportToHTML({
 }: Options & {
   // Block all scripts in the resulting document, e.g., for an untrusted
   // notebook, whose HTML outputs are included unsanitized.  (To print in a
-  // same-origin popup use exportToHTMLParts with writePassiveDocument, which
-  // also removes navigation and frames.)
+  // same-origin popup use writePassiveHtmlDocument, which also removes
+  // navigation and frames.)
   passive?: boolean;
 }): string {
   const { title, head, body } = exportToHTMLParts(opts);

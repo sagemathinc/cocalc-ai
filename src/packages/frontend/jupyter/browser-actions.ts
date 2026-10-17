@@ -59,8 +59,8 @@ import { WidgetManager } from "./widgets/manager";
 import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
-import exportToHTML, { exportToHTMLParts } from "./nbviewer/export";
-import { writePassiveDocument } from "@cocalc/frontend/misc/print-document";
+import exportToHTML from "./nbviewer/export";
+import { writePassiveHtmlDocument } from "@cocalc/frontend/misc/print-document";
 import { getExportKernelSpec } from "./export-kernelspec";
 import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
@@ -2996,13 +2996,17 @@ export class JupyterActions extends JupyterActions0 {
       kernelspec,
     };
     const { base: title } = parse(this.path);
-    return { cocalcJupyter, title, passive: !store.get("trust") };
+    return { cocalcJupyter, title };
   };
 
-  toHTML = async () => {
-    // An untrusted notebook's HTML outputs are included as is, so block all
-    // scripts in the document.
-    return exportToHTML(await this.toExportInput());
+  // Whether an export of this notebook must not run its scripts: its HTML
+  // outputs are included as is, so unless the reader trusts it, yes.
+  isPassiveExport = (): boolean => !this.store?.get("trust");
+
+  toHTML = async ({
+    passive = this.isPassiveExport(),
+  }: { passive?: boolean } = {}) => {
+    return exportToHTML({ ...(await this.toExportInput()), passive });
   };
 
   nbconvertToHtml = async (
@@ -3018,25 +3022,27 @@ export class JupyterActions extends JupyterActions0 {
         printWindow = window.open("", "_blank");
         if (printWindow == null) throw Error("failed to open popup window");
       }
-      const input = await this.toExportInput();
+      // Decided once, so the document and how it is written agree.
+      const passive = this.isPassiveExport();
+      const html = await this.toHTML({ passive });
       if (this.isClosed()) {
         printWindow?.close();
         return;
       }
       if (format === "cocalc-html") {
-        downloadHTML(exportToHTML(input), `${parse(this.path).name}.html`);
+        downloadHTML(html, `${parse(this.path).name}.html`);
         this.setState({ nbconvert: { ...result, state: "done", error: "" } });
         return;
       }
       const popup = printWindow!;
       if (popup.closed) throw Error("Print window was closed. Please retry.");
-      if (input.passive) {
+      if (passive) {
         // Untrusted: the popup has the app's origin, so write it through the
         // passive-document boundary (CSP, no navigation, no frames).
-        writePassiveDocument(popup, exportToHTMLParts(input));
+        writePassiveHtmlDocument(popup, html);
       } else {
         popup.document.open();
-        popup.document.write(exportToHTML(input));
+        popup.document.write(html);
       }
       let printing: Promise<void> | undefined;
       const print = () => {

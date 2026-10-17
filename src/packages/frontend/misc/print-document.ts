@@ -65,8 +65,9 @@ export interface PassiveDocument {
   head?: string;
   // Trusted inline style for <body>.
   bodyStyle?: string;
-  // Untrusted HTML for the body.
-  body: string;
+  // Untrusted HTML for the body, or an element of an inert (DOMParser)
+  // document whose children are the body.
+  body: string | HTMLElement;
 }
 
 // Parse untrusted HTML in an inert document and remove everything that can
@@ -79,7 +80,12 @@ export function passiveBody(html: string): HTMLElement {
   );
   // Anything the parser hoisted into <head> (e.g., a leading <meta>) is
   // dropped together with the head.
-  const body = parsed.body;
+  return passivize(parsed.body);
+}
+
+// Remove, in place, everything that can navigate or embed another document,
+// run script, or submit.  body must belong to an inert document.
+function passivize(body: HTMLElement): HTMLElement {
   for (const elt of Array.from(body.querySelectorAll(REMOVED_ELEMENTS))) {
     elt.remove();
   }
@@ -106,7 +112,8 @@ export function writePassiveDocument(
   w: Window,
   { title, head = "", bodyStyle, body }: PassiveDocument,
 ): void {
-  const content = passiveBody(body);
+  const content =
+    typeof body === "string" ? passiveBody(body) : passivize(body);
   const doc = w.document;
   doc.open();
   doc.write(
@@ -123,4 +130,24 @@ export function writePassiveDocument(
     ...Array.from(content.childNodes).map((node) => doc.importNode(node, true)),
   );
   doc.close();
+}
+
+// Write a complete exported HTML document (e.g., a Jupyter export) through the
+// passive boundary.  Only the title and https stylesheet links of its <head>
+// are kept (the head is the exporter's template: content in the body can't
+// add to it); the body is passivized in the inert parse and imported as nodes,
+// never reparsed.
+export function writePassiveHtmlDocument(w: Window, html: string): void {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const head = Array.from(
+    parsed.head.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
+  )
+    .map((link) => link.getAttribute("href") ?? "")
+    .filter((href) => /^https:\/\//i.test(href))
+    .map(
+      (href) =>
+        `<link rel="stylesheet" href="${escapeHtmlText(href)}" crossorigin="anonymous" referrerpolicy="no-referrer">`,
+    )
+    .join("");
+  writePassiveDocument(w, { title: parsed.title, head, body: parsed.body });
 }
