@@ -1991,6 +1991,58 @@ function registerMaintenanceCommands(
   receivables: Command,
   deps: ReceivablesCommandDeps,
 ) {
+  mutationOptions(
+    receivables
+      .command("resolve-operation <order>")
+      .description(
+        "resolve an indeterminate provider operation as failed, releasing its fence, once it is known to have written nothing",
+      )
+      .requiredOption(
+        "--operation-id <uuid>",
+        "commercial provider operation id",
+      )
+      .requiredOption(
+        "--evidence <text>",
+        "how you established that the operation wrote nothing",
+      ),
+    "resolve the reviewed operation as failed",
+  ).action(async (orderRef: string, opts: any, command: Command) => {
+    await deps.withContext(
+      command,
+      "admin receivables resolve-operation",
+      async (ctx) => {
+        const operationId = `${opts.operationId ?? ""}`.trim().toLowerCase();
+        if (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+            operationId,
+          )
+        ) {
+          throw new Error("--operation-id must be a UUID");
+        }
+        const evidence = `${opts.evidence ?? ""}`.trim();
+        if (evidence.length < 10) {
+          throw new Error("--evidence must explain why nothing was written");
+        }
+        const order = await ctx.hub.commercialOrders.get({
+          id: normalizeOrderReference(orderRef),
+          reason: requireReason(opts.reason),
+        });
+        const request = {
+          id: order.id,
+          ...commonMutationRequest("provider-operation-resolve", order, opts, {
+            operation_id: operationId,
+            resolution: "failed",
+            evidence,
+          }),
+        } as any;
+        if (!opts.commit) {
+          return preview("provider-operation-resolve", order, request);
+        }
+        return await ctx.hub.commercialOrders.resolveProviderOperation(request);
+      },
+    );
+  });
+
   commitOnlyOptions(
     receivables
       .command("retry-stripe-event <event-id>")
