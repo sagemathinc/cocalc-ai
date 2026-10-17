@@ -72,10 +72,13 @@ function faithful(nodes: Node[]): boolean {
         return false;
       }
     } else if (tag === "head") {
-      // html-ssr drops it; fine only if it holds nothing but inline math
+      // html-ssr drops it with everything in it (even inline math), so it
+      // may hold only whitespace and comments
       if (
         !(node.children ?? []).every(
-          (c) => c.type === "text" || isInlineMathScript(c),
+          (c) =>
+            c.type === "comment" ||
+            (c.type === "text" && !`${(c as any).data ?? ""}`.trim()),
         )
       ) {
         return false;

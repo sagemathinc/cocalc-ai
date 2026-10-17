@@ -185,6 +185,25 @@ try {
   );
 
   // 4. The notebook's table style, with the content's own CSS winning.
+  // the notebook's table margin (jupyter.css), which authored CSS overrides
+  const margins = await table.evaluate(() => {
+    const style = document.createElement("style");
+    style.textContent = ".authored { margin-top: 3px }";
+    document.head.append(style);
+    const authored = document.createElement("table");
+    authored.className = "authored";
+    document.body.append(authored);
+    const r = {
+      base: getComputedStyle(document.querySelector("table.dataframe"))
+        .marginTop,
+      authored: getComputedStyle(authored).marginTop,
+    };
+    authored.remove();
+    style.remove();
+    return r;
+  });
+  assert.deepEqual(margins, { base: "17px", authored: "3px" });
+
   const cellStyle = await table.evaluate(() => {
     const td = document.querySelector("tbody td");
     const cs = getComputedStyle(td);
