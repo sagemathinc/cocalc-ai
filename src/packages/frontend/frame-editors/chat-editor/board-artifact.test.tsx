@@ -17,8 +17,23 @@ const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
 const actions = { fs: () => ({ stat, readFile }), open_file };
+const PROJECT = "22222222-2222-4222-8222-222222222222";
 jest.mock("@cocalc/frontend/project/context", () => ({
-  useProjectContext: () => ({ actions }),
+  useProjectContext: () => ({ actions, project_id: PROJECT }),
+}));
+let mockDecideEnabled: boolean | undefined = undefined;
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...jest.requireActual("@cocalc/frontend/app-framework"),
+  useTypedRedux: (store: string, key: string) =>
+    store === "customize" && key === "board_decide_enabled"
+      ? mockDecideEnabled
+      : undefined,
+}));
+const boardDecide = jest.fn();
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: { hub: { system: { boardDecide: (o) => boardDecide(o) } } },
+  },
 }));
 
 const FRAME = "https://sagebrush.test/frame/board/";
@@ -26,6 +41,21 @@ const PATH = "/home/user/overnight.board.json";
 const TITLE = "Sagebrush board: overnight.board.json";
 const TEXT = '{"format":"sagebrush-board","version":1}';
 const READY = { sagebrush: "ready", version: 1 };
+
+// jsdom has no crypto.subtle; a secure browser context does.
+function withSubtle() {
+  const real = Object.getOwnPropertyDescriptor(globalThis.crypto, "subtle");
+  beforeAll(() => {
+    Object.defineProperty(globalThis.crypto, "subtle", {
+      configurable: true,
+      value: require("crypto").webcrypto.subtle,
+    });
+  });
+  afterAll(() => {
+    if (real) Object.defineProperty(globalThis.crypto, "subtle", real);
+    else delete (globalThis.crypto as any).subtle;
+  });
+}
 
 // The frame is mounted once the file has been read.
 function watch(frame: HTMLIFrameElement) {
@@ -56,6 +86,7 @@ function fromFrame(frame: HTMLIFrameElement | Window | null, data: unknown) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDecideEnabled = undefined;
   stat.mockResolvedValue({ size: 100 });
   readFile.mockResolvedValue(TEXT);
 });
@@ -203,4 +234,209 @@ test("frame URLs and board paths", () => {
   expect(boardFrameUrl("not a url")).toBeUndefined();
   expect(isBoardPath("/a/b/Plan.Board.JSON")).toBe(true);
   expect(isBoardPath("/a/b/plan.json")).toBe(false);
+});
+
+describe("the answers bootstrap (board-host-protocol.md)", () => {
+  const deliver = jest.fn().mockResolvedValue(undefined);
+
+  // test/setup.js's MessageChannel only carries port2 -> port1; these tests
+  // need both directions and close(), as in a browser.
+  class TestPort {
+    other?: TestPort;
+    closed = false;
+    onmessage: ((e: { data: unknown }) => void) | null = null;
+    postMessage(data: unknown) {
+      const to = this.other;
+      if (this.closed || !to) return;
+      setTimeout(() => {
+        if (!to.closed && !this.closed) to.onmessage?.({ data });
+      }, 0);
+    }
+    close() {
+      this.closed = true;
+    }
+  }
+  class TestChannel {
+    port1 = new TestPort();
+    port2 = new TestPort();
+    constructor() {
+      this.port1.other = this.port2;
+      this.port2.other = this.port1;
+    }
+  }
+  const realChannel = (globalThis as any).MessageChannel;
+  beforeAll(() => {
+    (globalThis as any).MessageChannel = TestChannel;
+  });
+  afterAll(() => {
+    (globalThis as any).MessageChannel = realChannel;
+  });
+
+  async function renderAnswering() {
+    render(
+      <BoardArtifact
+        path={PATH}
+        frameUrl={FRAME}
+        deliverAnswers={deliver}
+        revision="pub-1"
+      />,
+    );
+    const frame = (await screen.findByTitle(TITLE)) as HTMLIFrameElement;
+    await screen.findByText("Current saved board");
+    const nonce = new URL(frame.getAttribute("src")!).hash.replace(
+      "#sb-nonce=",
+      "",
+    );
+    return { frame, posted: watch(frame), nonce };
+  }
+
+  // The reply on a granted port, if any, within a moment.
+  function replyOn(port: any, message: unknown): Promise<unknown> {
+    return new Promise((resolve) => {
+      port.onmessage = (e) => resolve(e.data);
+      port.postMessage(message);
+      setTimeout(() => resolve(undefined), 200);
+    });
+  }
+  const SUBMIT = {
+    sagebrush: "answers",
+    version: 1,
+    id: "0d9f3b6e-6a31-4c2f-9d6b-0f6f2c1b7a11",
+    name: "overnight.board.json",
+    revision: "pub-1",
+    page: { number: 1 },
+    answers: {},
+    notes: {},
+    comment: "",
+  };
+
+  test("the frame is loaded with a fresh nonce in its fragment", async () => {
+    const { frame, nonce } = await renderAnswering();
+    expect(frame.getAttribute("src")).toBe(`${FRAME}#sb-nonce=${nonce}`);
+    expect(nonce).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test("the first ready with the nonce gets the board, its revision and a port", async () => {
+    const { frame, posted, nonce } = await renderAnswering();
+    fromFrame(frame, { ...READY, nonce });
+    expect(posted).toHaveBeenCalledTimes(1);
+    const [message, target, transfer] = posted.mock.calls[0];
+    expect(message).toEqual({
+      sagebrush: "board",
+      version: 1,
+      text: TEXT,
+      name: "overnight.board.json",
+      revision: "pub-1",
+    });
+    expect(target).toBe("*");
+    expect(transfer).toHaveLength(1);
+    expect(transfer[0]).toBeInstanceOf(TestPort);
+    // The port answers: Sagebrush's check refuses (this board asks nothing).
+    const reply: any = await replyOn(transfer[0], SUBMIT);
+    expect(reply).toMatchObject({ sagebrush: "refused", id: SUBMIT.id });
+    expect(deliver).not.toHaveBeenCalled();
+    fromFrame(frame, { ...READY, nonce }); // a second ready: nothing more
+    expect(posted).toHaveBeenCalledTimes(1);
+  });
+
+  test("a ready without the nonce gets the board without a port (no Submit)", async () => {
+    const { frame, posted } = await renderAnswering();
+    fromFrame(frame, { ...READY, nonce: "not-the-nonce" });
+    expect(posted).toHaveBeenCalledTimes(1);
+    expect(posted.mock.calls[0][2]).toBeUndefined();
+    expect(posted.mock.calls[0][0]).toEqual({
+      sagebrush: "board",
+      version: 1,
+      text: TEXT,
+      name: "overnight.board.json",
+    });
+  });
+
+  test("a document that replaced the first one gets nothing", async () => {
+    const { frame, posted, nonce } = await renderAnswering();
+    fireEvent.load(frame);
+    fireEvent.load(frame); // a second document in the frame
+    fromFrame(frame, { ...READY, nonce });
+    expect(posted).not.toHaveBeenCalled();
+  });
+
+  test("a second load closes a granted channel", async () => {
+    const { frame, posted, nonce } = await renderAnswering();
+    fromFrame(frame, { ...READY, nonce });
+    fireEvent.load(frame);
+    const port = posted.mock.calls[0][2][0];
+    expect(await replyOn(port, SUBMIT)).toMatchObject({ sagebrush: "refused" });
+    fireEvent.load(frame); // another document: the channel closes
+    expect(await replyOn(port, SUBMIT)).toBeUndefined();
+  });
+
+  test("without delivery (read-only views) there is no nonce and no port", async () => {
+    const { frame, posted } = await renderBoard();
+    expect(frame.getAttribute("src")).toBe(FRAME);
+    fromFrame(frame, { ...READY, nonce: "anything" });
+    expect(posted.mock.calls[0][2]).toBeUndefined();
+  });
+
+  describe("deciding (board-host-protocol.md, Deciding)", () => {
+    withSubtle();
+    const DECIDE = {
+      sagebrush: "decide",
+      version: 1,
+      id: "6b1f0c1e-2d3a-4f5b-8c7d-9e0f1a2b3c4d",
+      name: "overnight.board.json",
+      revision: "pub-1",
+      page: { number: 1 },
+      item: "q",
+      note: "it is prime",
+    };
+    async function port() {
+      const { frame, posted, nonce } = await renderAnswering();
+      fromFrame(frame, { ...READY, nonce });
+      return posted.mock.calls[0][2][0];
+    }
+
+    test("goes only to the hub, with the board this card posted", async () => {
+      mockDecideEnabled = true;
+      boardDecide.mockResolvedValue({ id: DECIDE.id, option: "prime" });
+      const p = await port();
+      const forged = {
+        ...DECIDE,
+        revision: "pub-0",
+        prompt: "other",
+        options: [{ name: "x" }],
+      };
+      expect(await replyOn(p, forged)).toEqual({
+        sagebrush: "decided",
+        version: 1,
+        id: DECIDE.id,
+        option: "prime",
+      });
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(TEXT),
+      );
+      const sha256 = Array.from(new Uint8Array(digest), (b) =>
+        b.toString(16).padStart(2, "0"),
+      ).join("");
+      expect(boardDecide).toHaveBeenCalledTimes(1);
+      expect(boardDecide.mock.calls[0][0]).toMatchObject({
+        project_id: PROJECT,
+        path: PATH,
+        revision: "pub-1", // the card's, not the message's
+        sha256,
+        message: forged,
+      });
+      expect(deliver).not.toHaveBeenCalled();
+    });
+
+    test("where the site doesn't check answers, it is refused without a call", async () => {
+      const p = await port();
+      expect(await replyOn(p, DECIDE)).toMatchObject({
+        sagebrush: "refused",
+        id: DECIDE.id,
+      });
+      expect(boardDecide).not.toHaveBeenCalled();
+      expect(deliver).not.toHaveBeenCalled();
+    });
+  });
 });

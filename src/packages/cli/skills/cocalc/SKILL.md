@@ -391,9 +391,9 @@ else, and then works offline, so check as much as you like:
 
 ```sh
 d=$(mktemp -d) && cd "$d" &&
-npm pack sagebrush@0.4.0 --silent >/dev/null &&
-echo "3cb4c90bd61b6145124c30c80bfb7e5b21e1d225486834a666c40ffd39e72f4958294c5be2f02b64080b56203399bf268a93ea5ee31530c9109aedc4c6bf4fdf  sagebrush-0.4.0.tgz" | sha512sum -c --quiet - &&
-tar -xzf sagebrush-0.4.0.tgz && node=$(command -v node) &&
+npm pack sagebrush@0.5.0 --silent >/dev/null &&
+echo "5125f945ce85dc2170b32f19830509829cd3d0082d903c977b17243473f789f9c733b968f92d927f781e3784a2316b3352156dca5a2724cc9259cb1414fef2a2  sagebrush-0.5.0.tgz" | sha512sum -c --quiet - &&
+tar -xzf sagebrush-0.5.0.tgz && node=$(command -v node) &&
 sb() { env -i HOME="$d" PATH=/usr/bin:/bin "$node" "$d/package/bin/sagebrush.cjs" "$@"; }
 ```
 

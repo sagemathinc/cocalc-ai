@@ -28,6 +28,7 @@ import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-ho
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
 import { isBoardPath, useBoardFrameUrl } from "./board-artifact-frame";
+import type { DeliverBoardAnswers } from "./board-answers-channel";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
 const NotebookArtifact = lazyWithRetry(
@@ -189,6 +190,8 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           frameUrl={boardFrameUrl}
           historical={props.historical}
           onToolbarActions={props.onToolbarActions}
+          deliverAnswers={props.deliverBoardAnswers}
+          revision={props.revision}
         />
       </Suspense>
     );
@@ -229,6 +232,11 @@ function SavedFileArtifact({
   // one-row header (and menu) instead of a toolbar here; the path is shown
   // there too.
   onToolbarActions?: (actions: FileArtifactAction[]) => void;
+  // A Sagebrush board's answers go to the artifact's agent: given only where
+  // the viewer may answer (see board-artifact.tsx).
+  deliverBoardAnswers?: DeliverBoardAnswers;
+  // The artifact's current revision, for a board's answers.
+  revision?: string | null;
 }) {
   const compact = onToolbarActions !== undefined;
   const { actions, projectAccess } = useProjectContext();

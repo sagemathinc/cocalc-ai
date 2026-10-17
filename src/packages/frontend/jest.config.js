@@ -9,7 +9,16 @@ module.exports = {
   workerIdleMemoryLimit: "512MB",
   transform: {
     "^.+\\.tsx?$": ["ts-jest", { tsconfig: "<rootDir>/tsconfig.test.json" }],
+    // @sagemathinc/sagebrush-board ships ES modules only: compile its
+    // self-contained submission check to CommonJS for Jest.
+    "[/\\\\]@sagemathinc[/\\\\]sagebrush-board[/\\\\]dist[/\\\\].+\\.js$": [
+      "ts-jest",
+      { tsconfig: { allowJs: true, module: "commonjs" } },
+    ],
   },
+  transformIgnorePatterns: [
+    "/node_modules/(?!.*@sagemathinc[+/]sagebrush-board)",
+  ],
   testEnvironment: "jsdom",
   testEnvironmentOptions: {
     // needed or jest imports the ts directly rather than the compiled
@@ -27,6 +36,9 @@ module.exports = {
     "^@cocalc/frontend/users$": "<rootDir>/test/mocks/frontend-users.js",
     "^@cocalc/frontend/frame-editors/generic/chat$":
       "<rootDir>/test/mocks/generic-chat.js",
+    // Its exports have only "import"; the real module, transformed below.
+    "^@sagemathinc/sagebrush-board/submission$":
+      "<rootDir>/node_modules/@sagemathinc/sagebrush-board/dist/submission.js",
     "^@cocalc/frontend/(.*)$": "<rootDir>/$1",
     "^antd-img-crop$": "<rootDir>/test/mocks/antd-img-crop.js",
     "^p-limit$": "<rootDir>/test/mocks/p-limit.js",

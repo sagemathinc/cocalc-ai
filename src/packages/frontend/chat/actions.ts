@@ -941,6 +941,7 @@ export class ChatActions extends Actions<ChatState> {
     chatIdentity,
     recoveredNotSent,
     skipDraftDelete,
+    boardAnswers,
   }: {
     input?: string;
     artifact_feedback?: ArtifactFeedback;
@@ -973,6 +974,9 @@ export class ChatActions extends Actions<ChatState> {
     recoveredNotSent?: boolean;
     // recovery replay should not delete whatever the user is composing now
     skipDraftDelete?: boolean;
+    // a Sagebrush board submission: the hub admits these under its own
+    // per-(account, thread) bound
+    boardAnswers?: boolean;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -1056,6 +1060,7 @@ export class ChatActions extends Actions<ChatState> {
       editing: {},
     } as ChatMessage;
     if (postOnly) (message as any).post_only = true;
+    if (boardAnswers === true) (message as any).board_answers = true;
     if (!postOnly && send_mode === "immediate") {
       (message as any).acp_send_mode = "immediate";
       if (recoveredNotSent !== true) {
@@ -3489,6 +3494,36 @@ export class ChatActions extends Actions<ChatState> {
       llm,
       dateLimit: date0,
     });
+  };
+
+  // Dispatch a message already written with sendChat({ skipModelDispatch }),
+  // resolving only once the agent has admitted it or definitely not (see
+  // getAcpMessageState). The hub admits a user message once, by message_id,
+  // so dispatching one again is safe.
+  dispatchChatMessage = async (messageId: string): Promise<void> => {
+    const raw = this.getMessageById(messageId);
+    if (raw == null) return;
+    const obj = this.toImmutableRecord(raw);
+    const { message } = normalizeChatMessage(
+      (obj.toJS?.() ?? obj) as ChatMessage,
+    );
+    if (message == null) return;
+    await this.processAI({
+      message,
+      acpSendMode:
+        field<string>(message, "acp_send_mode") === "immediate"
+          ? "immediate"
+          : undefined,
+    });
+  };
+
+  /** A message's agent state: "sending" or "not-sent" until the agent has
+   * admitted it; then "queue", "sent", "running", or none. */
+  getAcpMessageState = (messageId: string): string | undefined => {
+    const local = this.store?.get("acpState")?.get?.(`message:${messageId}`);
+    if (typeof local === "string" && local) return local;
+    const state = field<string>(this.getMessageById(messageId), "acp_state");
+    return typeof state === "string" && state ? state : undefined;
   };
 
   showTimeTravelInNewTab = () => {
