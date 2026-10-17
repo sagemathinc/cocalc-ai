@@ -13,6 +13,7 @@ import { React, Rendered, redux } from "@cocalc/frontend/app-framework";
 import { HiddenXS } from "@cocalc/frontend/components/hidden-visible";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-markdown";
+import { NotebookMarkdownContext } from "./notebook-markdown-context";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
@@ -283,7 +284,9 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           style={{ width: "100%", wordWrap: "break-word", overflow: "auto" }}
           className="cocalc-jupyter-rendered cocalc-jupyter-rendered-md"
         >
-          <MostlyStaticMarkdown value={value} onChange={setCellInput} />
+          <NotebookMarkdownContext>
+            <MostlyStaticMarkdown value={value} onChange={setCellInput} />
+          </NotebookMarkdownContext>
         </div>
       );
     }

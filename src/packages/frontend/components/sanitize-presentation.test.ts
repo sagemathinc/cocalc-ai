@@ -67,6 +67,8 @@ describe("sanitizeInlineStyle", () => {
     ["color: red} body{display:none"],
     ["color: <script>"],
     ["pointer-events: none"],
+    // paints outside its element
+    ["text-shadow: 0 -345px 0 red"],
   ])("drops %s", (style) => {
     expect(sanitizeInlineStyle(style)).toBeUndefined();
   });

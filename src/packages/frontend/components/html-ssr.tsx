@@ -151,6 +151,12 @@ export default function HTML({
               urlTransform,
               sanitizeOptions,
             );
+        if (!noSanitize && typeof sanitizedAttribs.style === "string") {
+          // a vetted style (allowSafeStyles), as the object React expects
+          (sanitizedAttribs as any).style = attributesToProps({
+            style: sanitizedAttribs.style,
+          }).style;
+        }
         return (
           <AnchorTagComponent {...sanitizedAttribs}>
             {domToReact(children as any, options)}

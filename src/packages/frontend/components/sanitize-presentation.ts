@@ -116,7 +116,6 @@ const STYLE_PROPERTIES = new Set([
   "text-decoration-line",
   "text-decoration-style",
   "text-indent",
-  "text-shadow",
   "text-transform",
   "vertical-align",
   "white-space",
@@ -251,6 +250,18 @@ function declarations(style: string): string[] {
   return out;
 }
 
+// The value of one declaration if it is safe to keep, else undefined.  Also
+// for styles that don't come from a style attribute (e.g., Slate's color and
+// font marks, parsed from <span style>).
+export function sanitizeStyleDeclaration(
+  property: string,
+  value: string,
+): string | undefined {
+  const p = property.trim().toLowerCase();
+  const v = value.trim();
+  return STYLE_PROPERTIES.has(p) && v && safeStyleValue(p, v) ? v : undefined;
+}
+
 // The declarations of an inline style that are safe to keep, or undefined if
 // none are.
 export function sanitizeInlineStyle(style: string): string | undefined {
@@ -262,12 +273,8 @@ export function sanitizeInlineStyle(style: string): string | undefined {
     const colon = decl.indexOf(":");
     if (colon === -1) continue;
     const property = decl.slice(0, colon).trim().toLowerCase();
-    const value = decl.slice(colon + 1).trim();
-    if (
-      STYLE_PROPERTIES.has(property) &&
-      value &&
-      safeStyleValue(property, value)
-    ) {
+    const value = sanitizeStyleDeclaration(property, decl.slice(colon + 1));
+    if (value != null) {
       kept.push(`${property}: ${value}`);
     }
   }

@@ -24,7 +24,7 @@
     "innerHTML assignment": 1
   },
   "src/packages/frontend/components/html-ssr.tsx": {
-    "noSanitize": 4
+    "noSanitize": 5
   },
   "src/packages/frontend/components/html.tsx": {
     "dangerouslySetInnerHTML": 2
@@ -135,6 +135,9 @@
   "src/packages/frontend/jupyter/nbviewer/public-cell-output.tsx": {
     "dangerouslySetInnerHTML": 1,
     "srcDoc": 1
+  },
+  "src/packages/frontend/jupyter/notebook-markdown-context.tsx": {
+    "noSanitize": 1
   },
   "src/packages/frontend/jupyter/output-messages/autosized-iframe.tsx": {
     "srcDoc": 2
