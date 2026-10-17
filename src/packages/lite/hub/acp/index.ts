@@ -1,4 +1,5 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import path from "node:path";
 import { hubApi } from "../api";
@@ -335,6 +336,7 @@ import {
   discoverHarnessControls,
   forkHarnessSession,
   harnessForkSource,
+  assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
@@ -4161,12 +4163,9 @@ export class ChatStreamWriter {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
-        if (
-          !(
-            this.syncdbError != null &&
-            isProjectAcpStorageError(this.syncdbError)
-          )
-        ) {
+        if (!(
+          this.syncdbError != null && isProjectAcpStorageError(this.syncdbError)
+        )) {
           await this.syncdb!.save();
         }
       } catch (err) {
@@ -7347,8 +7346,7 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let acpSessionPublisherOverride:
-  | ((row: AcpSessionRow) => void | Promise<void>)
-  | undefined;
+  ((row: AcpSessionRow) => void | Promise<void>) | undefined;
 
 export function setAcpSessionPublisherOverride(
   publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
@@ -7415,8 +7413,7 @@ export async function runDetachedAcpQueueWorker(
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
   let workerControlService:
-    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
-    | undefined;
+    Awaited<ReturnType<typeof initAcpDaemonControlService>> | undefined;
   let workerFatalError: unknown;
   let workerHeartbeatFailureCount = 0;
   const markWorkerFatalError = ({
@@ -10591,8 +10588,7 @@ async function trySteerCandidateIds({
   // Harness agents (Claude) take pasted images as content blocks, exactly as
   // for a new turn; prepared once, only if a harness agent is asked.
   let harnessRequest:
-    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
-    | undefined;
+    Promise<Awaited<ReturnType<typeof materializeBlobs>>> | undefined;
   try {
     for (const id of ids) {
       // Cached writer/lease aliases can outlive an ACP reset. Only the current
@@ -11316,7 +11312,7 @@ async function deliverAsyncAttentionAnswer(
           throw Error(
             "The question's execution configuration is unavailable; send your answer in the agent conversation.",
           );
-        assertConfiguredHarnessRuntime(source, runtime?.toJS?.() ?? runtime);
+        assertAnswerHarnessProfile(source, runtime?.toJS?.() ?? runtime);
         // Admission can precede session creation. New questions carry the
         // actual native ID; old records are usable only with an admitted ID.
         const questionSessionId =
@@ -11333,7 +11329,9 @@ async function deliverAsyncAttentionAnswer(
           },
         );
         harnessExecution = {
-          runtime: source.runtime,
+          // The question's harness profile (checked above) with the thread's
+          // current model and effort, which the answer's turn then uses.
+          runtime: parseAcpHarnessRuntime(runtime?.toJS?.() ?? runtime),
           harness_credential: source.harness_credential,
           session_id: session.session_id,
         };
@@ -12523,8 +12521,7 @@ async function handleAcpControlRequestNow(
     }
     const currentRequest = decodeAcpJobRequest(current);
     let fundingRecovery:
-      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
-      | undefined;
+      Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"] | undefined;
     if (request.action === "resend_with_payment") {
       const payment = request.payment_recovery!;
       if (

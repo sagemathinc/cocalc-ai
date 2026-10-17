@@ -15,8 +15,7 @@ type Factory = (
 ) => ReturnType<HarnessLauncher>;
 let launcher: Factory | undefined;
 let authorityValidator:
-  | ((binding: HarnessBinding) => Promise<void>)
-  | undefined;
+  ((binding: HarnessBinding) => Promise<void>) | undefined;
 const discovering = new Map<
   string,
   { projectId: string; finished: Promise<void> }
@@ -50,8 +49,7 @@ export function setHarnessLauncher(next?: Factory): void {
 }
 
 let rateLimitRecorder:
-  | ((binding: HarnessBinding, rateLimit: unknown) => void)
-  | undefined;
+  ((binding: HarnessBinding, rateLimit: unknown) => void) | undefined;
 
 /** Where a turn's reported subscription limits go (the project host). */
 export function setHarnessRateLimitRecorder(
@@ -306,6 +304,29 @@ export function assertConfiguredHarnessRuntime(
   )
     throw Error(
       "This thread uses an ACP harness; reload its runtime settings before sending",
+    );
+}
+
+/**
+ * An answer to an agent's question runs in that question's own turn and
+ * session, with that turn's runtime. Refuse it only if the thread now uses a
+ * different harness profile (adapter, working directory, execution policy):
+ * changing the model, effort or fast mode while the turn ran must not strand
+ * the answer, as a full-runtime comparison did.
+ */
+export function assertAnswerHarnessProfile(
+  source: Pick<AcpRequest, "runtime">,
+  configured: unknown,
+): void {
+  if (configured == null) return;
+  const expected = parseAcpHarnessRuntime(configured).profile;
+  if (
+    !source.runtime ||
+    JSON.stringify(parseAcpHarnessRuntime(source.runtime).profile) !==
+      JSON.stringify(expected)
+  )
+    throw Error(
+      "This thread now uses a different agent runtime; send your answer in the agent conversation",
     );
 }
 
