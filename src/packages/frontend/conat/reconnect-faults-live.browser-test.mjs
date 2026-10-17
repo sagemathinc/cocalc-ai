@@ -55,8 +55,14 @@ page.setDefaultTimeout(30000);
 const nonce = `rcx-${Date.now().toString(36)}`;
 const report = { fault: FAULT, nonce, checks: {}, notes: [] };
 const consoleCounts = {};
+// Full timestamped console, written to CONSOLE_OUT (if set) so DOM-leave
+// times in removed_roots can be lined up with what the frontend logged.
+const consoleLines = [];
 page.on("console", (msg) => {
   const text = msg.text();
+  if (consoleLines.length < 20000) {
+    consoleLines.push(`${Date.now()} ${msg.type()} ${text.slice(0, 2000)}`);
+  }
   for (const key of [
     "failed to fetch acp log",
     "getAllFromPersist - failed",
@@ -192,6 +198,7 @@ async function installBannerWatch() {
 
 async function injectFault() {
   if (FAULT === "none") return;
+  report.fault_at = Date.now();
   if (FAULT.startsWith("offline:")) {
     const seconds = Number(FAULT.slice("offline:".length));
     await context.setOffline(true);
@@ -390,6 +397,10 @@ try {
   report.error = `${error?.stack ?? error}`.slice(0, 2000);
   exitCode = 2;
 } finally {
+  if (process.env.CONSOLE_OUT) {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(process.env.CONSOLE_OUT, consoleLines.join("\n") + "\n");
+  }
   console.log(JSON.stringify(report, null, 2));
   await page.close().catch(() => {});
   // Never close the browser: over CDP that can close the human's browser.
