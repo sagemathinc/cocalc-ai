@@ -1,5 +1,6 @@
 import {
   isFileServerNotInitializedError,
+  isTransientDisconnectSaveError,
   saveToDiskWithFileServerRetry,
 } from "../actions-base";
 
@@ -69,5 +70,40 @@ describe("saveToDiskWithFileServerRetry", () => {
       ),
     ).toBe(true);
     expect(isFileServerNotInitializedError(new Error("timeout"))).toBe(false);
+  });
+
+  it("retries a save that failed only because the connection dropped", async () => {
+    const save = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("socket has been disconnected"))
+      .mockRejectedValueOnce(new Error("disconnected"))
+      .mockResolvedValueOnce(undefined);
+    const wait = jest.fn(async () => undefined);
+
+    await saveToDiskWithFileServerRetry({
+      retryDelaysMs: [10, 20, 30],
+      save,
+      wait,
+    });
+
+    expect(save).toHaveBeenCalledTimes(3);
+  });
+
+  it("recognizes connection drops but not other failures", () => {
+    expect(
+      isTransientDisconnectSaveError(
+        new Error("Error: socket has been disconnected"),
+      ),
+    ).toBe(true);
+    expect(isTransientDisconnectSaveError("socket is disconnected")).toBe(true);
+    expect(isTransientDisconnectSaveError(new Error("disconnected"))).toBe(
+      true,
+    );
+    expect(isTransientDisconnectSaveError(new Error("permission denied"))).toBe(
+      false,
+    );
+    expect(
+      isTransientDisconnectSaveError(new Error("disk quota exceeded")),
+    ).toBe(false);
   });
 });
