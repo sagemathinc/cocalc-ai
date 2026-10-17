@@ -279,6 +279,7 @@ import {
   claimBoardSubmissionRetry,
   failBoardSubmissionAttempt,
   markBoardSubmissionAdmitted,
+  markBoardSubmissionUncertainRecorded,
   setBoardSubmissionInjecting,
   type BoardSubmissionKey,
 } from "../sqlite/acp-board-submissions";
@@ -11077,26 +11078,85 @@ function boardSubmissionLimitError(retryAfterMs: number): Error {
  * pending steer. Null when there is no trace of it. */
 async function boardSubmissionTrace(
   key: BoardSubmissionKey,
-): Promise<AcpSteerResponse["state"] | null> {
+): Promise<
+  AcpSteerResponse["state"] | typeof BOARD_SUBMISSION_UNCERTAIN | null
+> {
   const job = getAcpJob(key);
   if (job) return job.state === "running" ? "running" : "queued";
   const steer = getAcpSteer(key);
   if (steer && steer.state !== "error") return "steered";
   if (!conatClient) return null;
-  const delivered = await withChatSyncDB({
+  return await withChatSyncDB({
     client: conatClient,
     project_id: key.project_id,
     path: key.path,
-    fn: async (syncdb) =>
-      Number(
-        syncdbField(
-          findChatRowByMessageId(syncdb, key.user_message_id),
-          "acp_guidance_delivered_at_ms",
-        ),
-      ) > 0,
+    fn: async (syncdb) => {
+      const row = findChatRowByMessageId(syncdb, key.user_message_id);
+      if (Number(syncdbField(row, "acp_guidance_delivered_at_ms")) > 0) {
+        return "steered";
+      }
+      // Its hand-off failed without an answer, once (ROBUST-F386-1).
+      if (Number(syncdbField(row, BOARD_UNCERTAIN_FIELD)) > 0) {
+        return BOARD_SUBMISSION_UNCERTAIN;
+      }
+      return null;
+    },
   });
-  return delivered ? "steered" : null;
 }
+
+// On a board submission's chat message: its hand-off to a live turn failed
+// without an answer, so it may have reached the agent, and is never sent
+// again. Kept with the message, it outlives the hub's own record.
+const BOARD_UNCERTAIN_FIELD = "acp_board_answers_uncertain_at_ms";
+
+async function recordBoardSubmissionUncertain(
+  key: BoardSubmissionKey,
+): Promise<void> {
+  if (!conatClient) return;
+  try {
+    const written = await withChatSyncDB({
+      client: conatClient,
+      project_id: key.project_id,
+      path: key.path,
+      fn: async (syncdb) => {
+        const current = findChatRowByMessageId(syncdb, key.user_message_id);
+        const date = normalizeIsoDateString(
+          syncdbField<string>(current, "date"),
+        );
+        const sender = syncdbField<string>(current, "sender_id");
+        if (!date || !sender) return false;
+        if (Number(syncdbField(current, BOARD_UNCERTAIN_FIELD)) > 0) {
+          return true;
+        }
+        syncdb.set({
+          event: "chat",
+          date,
+          sender_id: sender,
+          message_id: key.user_message_id,
+          thread_id: syncdbField<string>(current, "thread_id") ?? key.thread_id,
+          [BOARD_UNCERTAIN_FIELD]: Date.now(),
+        });
+        syncdb.commit();
+        await syncdb.save();
+        return true;
+      },
+    });
+    if (written) markBoardSubmissionUncertainRecorded(key);
+  } catch (err) {
+    // The record stays (and never expires) until the marker is written.
+    logger.warn("failed to record an uncertain board submission", {
+      project_id: key.project_id,
+      path: key.path,
+      user_message_id: key.user_message_id,
+      err,
+    });
+  }
+}
+
+const boardSubmissionUncertainError = () =>
+  new Error(
+    "CoCalc couldn't confirm whether the agent got these board answers, so it won't send them again.",
+  );
 
 /** A board submission's current attempt, passed to its hand-off. */
 interface BoardSubmissionAttempt {
@@ -11118,15 +11178,20 @@ async function steerBoardSubmissionOnce(
   if (!admission.ok) throw boardSubmissionLimitError(admission.retry_after_ms);
   if (admission.kind === "admitted") {
     if (admission.state === BOARD_SUBMISSION_UNCERTAIN) {
-      throw new Error(
-        "CoCalc couldn't confirm whether the agent got these board answers, so it won't send them again.",
-      );
+      if (!admission.recorded) await recordBoardSubmissionUncertain(key);
+      throw boardSubmissionUncertainError();
     }
     return { ok: true, state: admission.state as any, threadId };
   }
   // Even a new record may be a submission whose record has expired: what
-  // the hub keeps durably says whether it was delivered (ROBUST-E69-1).
+  // the hub keeps durably says whether it was delivered (ROBUST-E69-1), or
+  // whether it may have been (ROBUST-F386-1).
   const trace = await boardSubmissionTrace(key);
+  if (trace === BOARD_SUBMISSION_UNCERTAIN) {
+    markBoardSubmissionAdmitted(key, BOARD_SUBMISSION_UNCERTAIN);
+    markBoardSubmissionUncertainRecorded(key);
+    throw boardSubmissionUncertainError();
+  }
   if (trace) {
     markBoardSubmissionAdmitted(key, trace);
     return { ok: true, state: trace, threadId };
@@ -11149,15 +11214,17 @@ async function steerBoardSubmissionOnce(
     const result = await send(request, { key, token });
     if (result?.ok) {
       markBoardSubmissionAdmitted(key, `${result.state ?? ""}`, token);
-    } else {
-      failBoardSubmissionAttempt(key, token);
+    } else if (failBoardSubmissionAttempt(key, token)) {
+      await recordBoardSubmissionUncertain(key);
     }
     return result;
   } catch (err) {
     // Failed before its hand-off: a retry may take over (after a trace
-    // check). Failed during it: uncertain, never sent again. A superseded
-    // attempt changes nothing.
-    failBoardSubmissionAttempt(key, token);
+    // check). Failed during it: uncertain, never sent again, and marked on
+    // its message. A superseded attempt changes nothing.
+    if (failBoardSubmissionAttempt(key, token)) {
+      await recordBoardSubmissionUncertain(key);
+    }
     throw err;
   }
 }

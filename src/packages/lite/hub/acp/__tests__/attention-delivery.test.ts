@@ -1523,6 +1523,44 @@ describe("agent RPC live guidance funding", () => {
       expect(packets).toHaveLength(1);
     });
 
+    it("an uncertain one is still refused after its record expires (ROBUST-F386-1)", async () => {
+      const runtime = mockLiveRuntime(liveConfig);
+      const send = runtime.running.get(sessionId)!.client.request;
+      send.mockRejectedValueOnce(new Error("request timed out after 90000ms"));
+      await expect(resend("assistant-1")).rejects.toThrow("timed out");
+      // no receipt, but the uncertain marker is on its message
+      const message = rows.find((r) => r.message_id === "rpc-guidance");
+      expect(message?.acp_guidance_delivered_at_ms).toBeUndefined();
+      expect(message?.acp_board_answers_uncertain_at_ms).toBeGreaterThan(0);
+      const later = Date.now() + 8 * 24 * 60 * 60_000;
+      const clock = jest.spyOn(Date, "now").mockReturnValue(later);
+      try {
+        const { admitBoardSubmission } = jest.requireActual(
+          "../../sqlite/acp-board-submissions",
+        );
+        admitBoardSubmission({
+          account_id: accountId,
+          project_id: projectId,
+          path: record.path,
+          thread_id: "another-thread",
+          user_message_id: "someone-else",
+        }); // runs the cleanup
+        expect(
+          getAcpDatabase()
+            .prepare(
+              "SELECT * FROM acp_board_submissions WHERE user_message_id = 'rpc-guidance'",
+            )
+            .all(),
+        ).toEqual([]);
+        await expect(resend("assistant-2")).rejects.toThrow(
+          "won't send them again",
+        );
+      } finally {
+        clock.mockRestore();
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
     it("astra's takeover case: a held hand-off is never repeated (CORR-E69-2)", async () => {
       const runtime = mockLiveRuntime(liveConfig);
       const send = runtime.running.get(sessionId)!.client.request;

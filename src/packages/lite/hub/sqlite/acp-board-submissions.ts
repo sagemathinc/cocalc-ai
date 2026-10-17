@@ -12,10 +12,13 @@
 //
 // Two lifecycles (daybreak2/astra, ROBUST-E69-1, CORR-E69-1): the bound
 // counts only the last hour's admissions, while a submission's record is
-// kept for BOARD_SUBMISSION_RETENTION_MS, far longer than a card retries it,
-// and never deleted while its attempt may be in flight or unresolved. A
-// record that is gone is still checked against the hub's durable traces
-// before it is sent again (lite/hub/acp/index.ts).
+// kept for BOARD_SUBMISSION_RETENTION_MS and never deleted while its attempt
+// may be live. A record that is gone is still checked against the hub's
+// durable traces before it is sent again (lite/hub/acp/index.ts). An
+// uncertain submission leaves no such trace by itself, so the hub writes
+// one, on its chat message; its record is deleted only once that marker is
+// written (uncertain_recorded), so "uncertain" never expires
+// (ROBUST-F386-1).
 
 import { randomUUID } from "node:crypto";
 import { getAcpDatabase } from "./acp-database";
@@ -51,6 +54,7 @@ function ensureInit(): void {
       attempt_at INTEGER NOT NULL,
       injected_at INTEGER,
       outcome TEXT,
+      uncertain_recorded INTEGER,
       PRIMARY KEY (project_id, path, user_message_id)
     )
   `);
@@ -59,6 +63,12 @@ function ensureInit(): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_admitted_idx ON ${TABLE}(admitted_at)`,
+  );
+  // Only hand-offs still unresolved: what the silence check reads, without
+  // scanning the table (LIMIT-F386-2).
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${TABLE}_injecting_idx ON ${TABLE}(injected_at)
+      WHERE outcome IS NULL AND injected_at IS NOT NULL`,
   );
   initialized = true;
 }
@@ -80,8 +90,9 @@ export type BoardSubmissionAdmission =
   /** A new submission, admitted under the bound: send it, as `token`. */
   | { ok: true; kind: "new"; token: string }
   /** Sent before, and how it ended is recorded: answer with this state
-   * (BOARD_SUBMISSION_UNCERTAIN: refuse, and never send it again). */
-  | { ok: true; kind: "admitted"; state: string }
+   * (BOARD_SUBMISSION_UNCERTAIN: refuse, and never send it again; record
+   * its marker if `recorded` is false). */
+  | { ok: true; kind: "admitted"; state: string; recorded: boolean }
   /** Sent before, still unresolved; `injecting` if its hand-off started. */
   | { ok: true; kind: "unknown"; attempt_at: number; injecting: boolean }
   | { ok: false; retry_after_ms: number };
@@ -154,18 +165,22 @@ export function admitBoardSubmission(
       `UPDATE ${TABLE} SET outcome = ?
         WHERE outcome IS NULL AND injected_at IS NOT NULL AND injected_at <= ?`,
     ).run(BOARD_SUBMISSION_UNCERTAIN, now - attempt_ms);
-    // Records past their retention: resolved ones, and ones whose hand-off
-    // never started and whose attempt has ended (a retry finds nothing to
-    // lose). Never one that may be in flight.
+    // Records past their retention: resolved ones (an uncertain one only once
+    // its marker is on its message), and ones whose hand-off never started
+    // and whose attempt has ended (a retry finds nothing to lose). Never one
+    // that may be in flight.
     db.prepare(
       `DELETE FROM ${TABLE}
         WHERE admitted_at <= ?
-          AND (outcome IS NOT NULL
-               OR (injected_at IS NULL AND (attempt_at = 0 OR attempt_at <= ?)))`,
-    ).run(now - retention_ms, now - attempt_ms);
+          AND ((outcome IS NOT NULL
+                AND (outcome <> ? OR uncertain_recorded IS NOT NULL))
+               OR (outcome IS NULL AND injected_at IS NULL
+                   AND (attempt_at = 0 OR attempt_at <= ?)))`,
+    ).run(now - retention_ms, BOARD_SUBMISSION_UNCERTAIN, now - attempt_ms);
     const existing = db
       .prepare(
-        `SELECT account_id, outcome, attempt_at, injected_at FROM ${TABLE}
+        `SELECT account_id, outcome, attempt_at, injected_at, uncertain_recorded
+           FROM ${TABLE}
           WHERE project_id = ? AND path = ? AND user_message_id = ?`,
       )
       .get(project_id, path, user_message_id) as
@@ -174,6 +189,7 @@ export function admitBoardSubmission(
           outcome: string | null;
           attempt_at: number;
           injected_at: number | null;
+          uncertain_recorded: number | null;
         }
       | undefined;
     if (existing) {
@@ -182,7 +198,12 @@ export function admitBoardSubmission(
         throw new Error("this board submission was sent by another account");
       }
       return existing.outcome
-        ? { ok: true, kind: "admitted", state: existing.outcome }
+        ? {
+            ok: true,
+            kind: "admitted",
+            state: existing.outcome,
+            recorded: existing.uncertain_recorded != null,
+          }
         : {
             ok: true,
             kind: "unknown",
@@ -268,22 +289,43 @@ export function setBoardSubmissionInjecting(
 }
 
 /** The current attempt failed: uncertain for good if its hand-off had
- * started, else ended (a retry may take over). A stale token changes
- * nothing. */
+ * started (then true: write its marker), else ended (a retry may take
+ * over). A stale token changes nothing. */
 export function failBoardSubmissionAttempt(
   key: BoardSubmissionKey,
   token: string,
+): boolean {
+  checkKey(key);
+  ensureInit();
+  const db = getAcpDatabase();
+  db.prepare(
+    `UPDATE ${TABLE}
+          SET outcome = CASE WHEN injected_at IS NOT NULL THEN ? ELSE NULL END,
+              attempt_at = 0
+        WHERE ${KEY_WHERE} AND attempt_token = ? AND outcome IS NULL`,
+  ).run(BOARD_SUBMISSION_UNCERTAIN, ...keyArgs(key), token);
+  const row = db
+    .prepare(
+      `SELECT outcome FROM ${TABLE} WHERE ${KEY_WHERE} AND attempt_token = ?`,
+    )
+    .get(...keyArgs(key), token) as { outcome: string | null } | undefined;
+  return row?.outcome === BOARD_SUBMISSION_UNCERTAIN;
+}
+
+/** The uncertain marker is on the submission's message: its record may now
+ * expire like any other. */
+export function markBoardSubmissionUncertainRecorded(
+  key: BoardSubmissionKey,
+  at = Date.now(),
 ): void {
   checkKey(key);
   ensureInit();
   getAcpDatabase()
     .prepare(
-      `UPDATE ${TABLE}
-          SET outcome = CASE WHEN injected_at IS NOT NULL THEN ? ELSE NULL END,
-              attempt_at = 0
-        WHERE ${KEY_WHERE} AND attempt_token = ? AND outcome IS NULL`,
+      `UPDATE ${TABLE} SET uncertain_recorded = ?
+        WHERE ${KEY_WHERE} AND outcome = ?`,
     )
-    .run(BOARD_SUBMISSION_UNCERTAIN, ...keyArgs(key), token);
+    .run(at, ...keyArgs(key), BOARD_SUBMISSION_UNCERTAIN);
 }
 
 /** The agent took the submission: answer retries with `state` ("steered",

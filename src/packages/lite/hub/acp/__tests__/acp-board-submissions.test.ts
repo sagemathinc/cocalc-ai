@@ -13,6 +13,7 @@ import {
   claimBoardSubmissionRetry,
   failBoardSubmissionAttempt,
   markBoardSubmissionAdmitted,
+  markBoardSubmissionUncertainRecorded,
   resetBoardSubmissionsForTests,
   setBoardSubmissionInjecting,
 } from "../../sqlite/acp-board-submissions";
@@ -68,7 +69,11 @@ test("at most LIMIT new submissions per account and thread in the window", () =>
 test("an admitted submission answers retries with its state", () => {
   const t = token("m");
   markBoardSubmissionAdmitted(key("m"), "queued", t);
-  expect(admit("m")).toEqual({ ok: true, kind: "admitted", state: "queued" });
+  expect(admit("m")).toMatchObject({
+    ok: true,
+    kind: "admitted",
+    state: "queued",
+  });
 });
 
 test("past the window a record still counts as sent, but not toward the bound", () => {
@@ -76,7 +81,7 @@ test("past the window a record still counts as sent, but not toward the bound", 
     markBoardSubmissionAdmitted(key(`m${i}`), "steered", token(`m${i}`));
   }
   const later = 1_000 + WINDOW + 1;
-  expect(admit("m0", {}, later)).toEqual({
+  expect(admit("m0", {}, later)).toMatchObject({
     ok: true,
     kind: "admitted",
     state: "steered",
@@ -98,7 +103,7 @@ describe("attempts", () => {
     const t = token("m");
     expect(setBoardSubmissionInjecting(key("m"), t, 1_500)).toBe(true);
     failBoardSubmissionAttempt(key("m"), t);
-    expect(admit("m")).toEqual({
+    expect(admit("m")).toMatchObject({
       ok: true,
       kind: "admitted",
       state: BOARD_SUBMISSION_UNCERTAIN,
@@ -128,10 +133,11 @@ describe("attempts", () => {
       claimBoardSubmissionRetry(key("m"), { now: 1_000 + 2 * ATTEMPT }),
     ).toBeNull();
     // silent past an attempt's time: uncertain
-    expect(admit("m", {}, 1_000 + ATTEMPT)).toEqual({
+    expect(admit("m", {}, 1_000 + ATTEMPT)).toMatchObject({
       ok: true,
       kind: "admitted",
       state: BOARD_SUBMISSION_UNCERTAIN,
+      recorded: false,
     });
   });
 
@@ -167,7 +173,8 @@ test("records go after their retention, never while an attempt is live", () => {
   const late = 1_000 + RETENTION + 1;
   markBoardSubmissionAdmitted(key("done"), "queued", token("done"));
   failBoardSubmissionAttempt(key("ended"), token("ended")); // never handed off
-  // a hand-off silent for long: resolved as uncertain, then it can go
+  // a hand-off silent for long: resolved as uncertain, and kept until its
+  // marker is on its message (ROBUST-F386-1)
   setBoardSubmissionInjecting(key("silent"), token("silent"), 1_000);
   // an old record whose attempt was just claimed: live, so it stays
   failBoardSubmissionAttempt(key("live"), token("live"));
@@ -175,7 +182,43 @@ test("records go after their retention, never while an attempt is live", () => {
     expect.any(String),
   );
   admit("new", {}, late);
-  expect(ids()).toEqual(["live", "new"]);
+  expect(ids()).toEqual(["live", "new", "silent"]);
+});
+
+test("an uncertain record outlives its retention until its marker is written (ROBUST-F386-1)", () => {
+  const late = 1_000 + RETENTION + 1;
+  for (const id of ["unmarked", "marked"]) {
+    const t = token(id);
+    setBoardSubmissionInjecting(key(id), t, 1_000);
+    expect(failBoardSubmissionAttempt(key(id), t)).toBe(true);
+  }
+  markBoardSubmissionUncertainRecorded(key("marked"), 1_200);
+  admit("new", {}, late);
+  expect(ids()).toEqual(["new", "unmarked"]);
+  expect(admit("unmarked", {}, late)).toEqual({
+    ok: true,
+    kind: "admitted",
+    state: BOARD_SUBMISSION_UNCERTAIN,
+    recorded: false,
+  });
+});
+
+test("a failure before the hand-off is not uncertain", () => {
+  expect(failBoardSubmissionAttempt(key("m"), token("m"))).toBe(false);
+});
+
+test("the silence check searches its partial index, not the table (LIMIT-F386-2)", () => {
+  admit("m"); // creates the table and its indexes
+  const plan = getAcpDatabase()
+    .prepare(
+      `EXPLAIN QUERY PLAN UPDATE acp_board_submissions SET outcome = ?
+        WHERE outcome IS NULL AND injected_at IS NOT NULL AND injected_at <= ?`,
+    )
+    .all("uncertain", 0)
+    .map((r: any) => r.detail)
+    .join("\\n");
+  expect(plan).toMatch(/USING INDEX acp_board_submissions_injecting_idx/);
+  expect(plan).not.toMatch(/^SCAN acp_board_submissions$/m);
 });
 
 test("another account's message id is not the same submission", () => {
