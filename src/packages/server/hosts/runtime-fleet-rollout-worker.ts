@@ -82,6 +82,9 @@ type RecoveryStopGateSnapshot = {
   latency_level: LaunchHealthLevel;
   // Evidence behind latency_level (absent in baselines saved before it).
   latency_metrics?: UxLatencyHealthAssessment[];
+  // Set when the latency summary could not be read; latency_level is then
+  // "critical", as in launch health, so a failed read never passes the gate.
+  latency_error?: string;
   hosts: Record<string, RecoveryStopGateHost>;
   advisories?: string[];
 };
@@ -114,6 +117,23 @@ function rolloutLatencyLevel(
   return "unknown";
 }
 
+// "unknown" means too few samples, which never stops a campaign; a failed
+// read is "critical" instead, so it is not mistaken for a quiet site.
+function rolloutLatencySnapshot(
+  capture: { metrics: UxLatencyHealthAssessment[] } | { error: string },
+): Pick<
+  RecoveryStopGateSnapshot,
+  "latency_level" | "latency_metrics" | "latency_error"
+> {
+  if ("error" in capture) {
+    return { latency_level: "critical", latency_error: capture.error };
+  }
+  return {
+    latency_level: rolloutLatencyLevel(capture.metrics),
+    latency_metrics: capture.metrics,
+  };
+}
+
 async function captureRolloutLatency(): Promise<UxLatencyHealthAssessment[]> {
   const [summary, settings] = await Promise.all([
     getUxLatencySummary({ window_minutes: ROLLOUT_LATENCY_WINDOW_MINUTES }),
@@ -137,10 +157,13 @@ async function captureRecoveryStopGate({
     getLaunchHealth({ account_id }),
     getProjectRecoveryHealth(),
     getProjectHostStoragePressureWindows({ bay_id: getConfiguredBayId() }),
-    captureRolloutLatency().catch((err) => {
-      logger.warn("fleet rollout latency summary failed", { err: `${err}` });
-      return undefined;
-    }),
+    captureRolloutLatency().then(
+      (metrics) => ({ metrics }),
+      (err) => {
+        logger.warn("fleet rollout latency summary failed", { err: `${err}` });
+        return { error: `${err}` };
+      },
+    ),
   ]);
   const level = (id: string): LaunchHealthLevel =>
     health.checks.find((check) => check.id === id)?.level ?? "unknown";
@@ -161,10 +184,7 @@ async function captureRecoveryStopGate({
   return {
     checked_at: health.checked_at,
     recovery_level: level("project-recovery"),
-    latency_level: latencyMetrics
-      ? rolloutLatencyLevel(latencyMetrics)
-      : "unknown",
-    ...(latencyMetrics ? { latency_metrics: latencyMetrics } : {}),
+    ...rolloutLatencySnapshot(latencyMetrics),
     hosts,
   };
 }
@@ -205,7 +225,12 @@ function latencyRegression({
       (metric) =>
         `${metric.metric}${metric.segment ? `/${metric.segment}` : ""} P95 ${Math.round(metric.p95_ms ?? 0)}ms n=${metric.count} (warning at ${metric.warning_ms}ms)`,
     );
-  return `interactive latency health worsened from ${baseline.latency_level} to ${current.latency_level}${worse.length ? `: ${worse.join(", ")}` : ""}`;
+  const detail = current.latency_error
+    ? `: latency summary unavailable (${current.latency_error})`
+    : worse.length
+      ? `: ${worse.join(", ")}`
+      : "";
+  return `interactive latency health worsened from ${baseline.latency_level} to ${current.latency_level}${detail}`;
 }
 
 function recoveryStopGateFailure({
@@ -1226,6 +1251,7 @@ export function startHostRuntimeFleetRolloutWorker({
 
 export const __test__ = {
   latencyRegression,
+  rolloutLatencySnapshot,
   normalizedLatencyGateMode,
   rolloutLatencyLevel,
   recoveryStopGateAdvisories,

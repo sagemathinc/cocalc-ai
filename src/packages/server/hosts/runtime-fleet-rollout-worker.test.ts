@@ -598,6 +598,28 @@ describe("fleet recovery stop gates", () => {
     ).toBe("unknown");
   });
 
+  test("a failed latency read is critical, not a quiet site", () => {
+    const failed = __test__.rolloutLatencySnapshot({ error: "Error: boom" });
+    expect(failed).toEqual({
+      latency_level: "critical",
+      latency_error: "Error: boom",
+    });
+    const after = { ...current(), ...failed };
+    expect(gate(after)).toMatch(/latency summary unavailable \(Error: boom\)/);
+    // The advisory gate records it without stopping.
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: baseline(),
+        current: after,
+        host_ids: ["canary"],
+        latency_gate: "advisory",
+      }),
+    ).toBeUndefined();
+    expect(__test__.rolloutLatencySnapshot({ metrics: [] }).latency_level).toBe(
+      "unknown",
+    );
+  });
+
   test("only enforce and advisory are latency gate modes", () => {
     expect(__test__.normalizedLatencyGateMode("advisory")).toBe("advisory");
     expect(__test__.normalizedLatencyGateMode("enforce")).toBe("enforce");
