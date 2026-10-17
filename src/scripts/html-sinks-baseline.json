@@ -41,11 +41,7 @@
     "document.write": 1,
     "innerHTML assignment": 1
   },
-  "src/packages/frontend/components/math/katex.tsx": {
-    "dangerouslySetInnerHTML": 1,
-    "innerHTML assignment": 1
-  },
-  "src/packages/frontend/components/math/ssr.tsx": {
+  "src/packages/frontend/components/math/segments.tsx": {
     "dangerouslySetInnerHTML": 1
   },
   "src/packages/frontend/components/sanitize-html.ts": {
