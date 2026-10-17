@@ -75,6 +75,20 @@ describe("an ephemeral stream across a persist server restart", () => {
   }, 30_000);
 
   it("restarts the router and the persist server", async () => {
+    // The first attempt to apply the configuration to the new instance fails
+    // on every kv client, as on a connection that is still settling.
+    for (const kv of [kvWriter, kvReader]) {
+      const persistClient = (kv as any).kv.persistClient;
+      const config = persistClient.config;
+      let failed = false;
+      persistClient.config = async (opts) => {
+        if (!failed) {
+          failed = true;
+          throw new Error("transient failure");
+        }
+        return await config(opts);
+      };
+    }
     const disconnected = once(writer.persistClient, "disconnected", 15_000);
     await restartServer();
     await disconnected;
@@ -128,12 +142,20 @@ describe("an ephemeral stream across a persist server restart", () => {
     expect(kvReaderChanges.some((x) => x.key == "old")).toBe(true);
   }, 45_000);
 
-  it("reapplies the stream's configuration to the new instance", async () => {
+  it("reapplies the stream's configuration to the new instance, despite a failed first attempt", async () => {
     // dkv asks for allow_msg_ttl (for tombstones); a new ephemeral instance
-    // starts with defaults
-    expect((await kvWriter.config()).allow_msg_ttl).toBe(true);
-    expect((await kvReader.config()).allow_msg_ttl).toBe(true);
-  });
+    // starts with defaults.  Read the server's config without asking for any
+    // (config() with no options would not prove it was reapplied).
+    for (const kv of [kvWriter, kvReader]) {
+      const stream = (kv as any).kv;
+      await wait({
+        timeout: 20_000,
+        until: async () =>
+          (await stream.persistClient.config({ config: {} })).allow_msg_ttl ===
+          true,
+      });
+    }
+  }, 30_000);
 
   it("a stream that opens later on the shared client, from a cached cursor of the old instance, reads the new one from the start", async () => {
     expect(writer.getPersistInstance()).not.toBe(oldInstance);

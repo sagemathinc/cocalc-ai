@@ -358,8 +358,15 @@ export class CoreStream<T = any> extends EventEmitter {
   // every configuration this stream has asked for, so it can be applied again
   // to a new instance of an ephemeral stream, which starts with defaults
   private requestedConfig: Partial<Configuration> = {};
-  // writes wait for that, so none land under the defaults
-  private configReapply?: { promise: Promise<void>; resolve: () => void };
+  // set from that reset until the configuration is applied again; a failed
+  // attempt keeps it, and recovery tries again
+  private configReapplyPending = false;
+  // meanwhile writes wait at this gate, so none land under the defaults; it
+  // opens when the configuration is applied, or after a bound
+  private writeGate?: {
+    promise: Promise<void>;
+    open: () => void;
+  };
   private hasPendingConfigChanges = () =>
     this.pendingConfigOptions != null &&
     Object.keys(this.pendingConfigOptions).length > 0;
@@ -760,7 +767,7 @@ export class CoreStream<T = any> extends EventEmitter {
 
   close = () => {
     logger.debug("close", this.name);
-    this.finishConfigReapply();
+    this.openWriteGate();
     stats.closed += 1;
     stats.active = Math.max(0, stats.active - 1);
     this.listening = false;
@@ -1289,18 +1296,9 @@ export class CoreStream<T = any> extends EventEmitter {
     if (instance !== undefined) {
       this.persistInstance = instance;
     }
-    if (
-      this.configReapply == null &&
-      Object.keys(this.requestedConfig).length > 0
-    ) {
-      let resolve: () => void = () => {};
-      const promise = new Promise<void>((r) => (resolve = r));
-      this.configReapply = { promise, resolve };
-      // never hold writes forever, e.g., if recovery stalls
-      setTimeout(
-        () => this.finishConfigReapply(),
-        DEFAULT_GET_ALL_TIMEOUT,
-      ).unref?.();
+    if (Object.keys(this.requestedConfig).length > 0) {
+      this.configReapplyPending = true;
+      this.closeWriteGate();
     }
     const seqs = this.raw.map(({ seq }) => seq);
     if (seqs.length > 0) {
@@ -1320,23 +1318,44 @@ export class CoreStream<T = any> extends EventEmitter {
     this.lastSeq = 0;
   };
 
-  private finishConfigReapply = () => {
-    const pending = this.configReapply;
-    this.configReapply = undefined;
-    pending?.resolve();
-  };
-
-  private reapplyConfigIfNeeded = async () => {
-    if (this.configReapply == null || this.isClosed()) {
+  private closeWriteGate = () => {
+    if (this.writeGate != null) {
       return;
     }
-    try {
-      this.currentConfig = await this.persistClient.config({
-        config: this.requestedConfig,
-      });
-    } finally {
-      this.finishConfigReapply();
+    let resolve: () => void = () => {};
+    const promise = new Promise<void>((r) => (resolve = r));
+    // never hold writes forever, e.g., if recovery stalls; the configuration
+    // is still applied once recovery succeeds
+    const timer = setTimeout(() => gate.open(), DEFAULT_GET_ALL_TIMEOUT);
+    timer.unref?.();
+    const gate = {
+      promise,
+      open: () => {
+        clearTimeout(timer);
+        if (this.writeGate === gate) {
+          this.writeGate = undefined;
+        }
+        resolve();
+      },
+    };
+    this.writeGate = gate;
+  };
+
+  private openWriteGate = () => {
+    this.writeGate?.open();
+  };
+
+  // Throws if the configuration can't be applied, so the recovery read that
+  // called it fails and is retried.
+  private reapplyConfigIfNeeded = async () => {
+    if (!this.configReapplyPending || this.isClosed()) {
+      return;
     }
+    this.currentConfig = await this.persistClient.config({
+      config: this.requestedConfig,
+    });
+    this.configReapplyPending = false;
+    this.openWriteGate();
   };
 
   private emitChange = (e: ChangeEvent<T>) => {
@@ -1415,9 +1434,9 @@ export class CoreStream<T = any> extends EventEmitter {
       return;
     }
     const md = messageData(mesg, { headers: options?.headers });
-    if (this.configReapply != null) {
+    if (this.writeGate != null) {
       // only then: an await here would reorder writes behind later requests
-      await this.configReapply.promise;
+      await this.writeGate.promise;
     }
     const x = await this.persistClient.set({
       key: options?.key,
@@ -1498,9 +1517,9 @@ export class CoreStream<T = any> extends EventEmitter {
         ttl: options?.ttl,
       });
     }
-    if (this.configReapply != null) {
+    if (this.writeGate != null) {
       // only then: an await here would reorder writes behind later requests
-      await this.configReapply.promise;
+      await this.writeGate.promise;
     }
     return await this.persistClient.setMany(v, { timeout });
   };
@@ -1834,9 +1853,9 @@ export class CoreStream<T = any> extends EventEmitter {
       }
       opts = { seq };
     }
-    if (this.configReapply != null) {
+    if (this.writeGate != null) {
       // only then: an await here would reorder writes behind later requests
-      await this.configReapply.promise;
+      await this.writeGate.promise;
     }
     return await this.persistClient.delete(opts);
   };
