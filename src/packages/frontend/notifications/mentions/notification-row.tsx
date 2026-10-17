@@ -25,6 +25,7 @@ import { codexNotificationFragment } from "../codex-notification-target";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { notificationAgentName } from "@cocalc/frontend/agents/notification-name";
 import { isConversationStoragePath } from "@cocalc/util/people";
+import { setNotificationsOpen } from "../drawer-state";
 import {
   openConversation,
   useNotificationConversation,
@@ -191,6 +192,9 @@ export function NotificationRow(props: Props) {
 
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
+    // Following a notification from the drawer leaves the drawer: it would
+    // otherwise cover the target it opened.
+    setNotificationsOpen(false);
     try {
       if (conversation) {
         await openConversation(conversation);
@@ -232,6 +236,7 @@ export function NotificationRow(props: Props) {
           href={action_link}
           onClick={(e) => {
             e.stopPropagation();
+            setNotificationsOpen(false);
           }}
         >
           {action_label ?? "Open"}

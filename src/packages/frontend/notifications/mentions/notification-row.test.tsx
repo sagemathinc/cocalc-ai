@@ -7,6 +7,10 @@ import { NotificationRow } from "./notification-row";
 import { resetConversationLookupForTests } from "./conversation-lookup";
 
 const open_file = jest.fn();
+const mockSetNotificationsOpen = jest.fn();
+jest.mock("../drawer-state", () => ({
+  setNotificationsOpen: (...args: any[]) => mockSetNotificationsOpen(...args),
+}));
 const mark = jest.fn();
 const markMany = jest.fn();
 const respondAccessRequest = jest.fn();
@@ -79,6 +83,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 describe("NotificationRow", () => {
   beforeEach(() => {
     open_file.mockReset();
+    mockSetNotificationsOpen.mockReset();
     mark.mockReset();
     markMany.mockReset();
     respondAccessRequest.mockReset();
@@ -542,5 +547,63 @@ describe("NotificationRow", () => {
     expect(screen.queryByText("Approve collaborator")).toBeNull();
     expect(screen.queryByText("Deny")).toBeNull();
     expect(respondAccessRequest).not.toHaveBeenCalled();
+  });
+  describe("leaving the notifications drawer", () => {
+    const notice = (extra: Record<string, unknown> = {}) =>
+      fromJS({
+        kind: "account_notice",
+        target: "acct-1",
+        time: new Date("2026-10-17T00:00:00.000Z"),
+        title: "Build finished",
+        body_markdown: "done",
+        users: { "acct-1": { read: false, saved: false } },
+        ...extra,
+      }) as any;
+
+    it("closes the drawer when a row opens its target", async () => {
+      render(
+        <NotificationRow
+          id="notice-1"
+          user_map={{}}
+          mention={notice({ project_id: "project-1", path: "work/a.md" })}
+        />,
+      );
+      fireEvent.click(screen.getByText("Build finished"));
+      expect(mockSetNotificationsOpen).toHaveBeenCalledWith(false);
+      await waitFor(() => expect(open_file).toHaveBeenCalled());
+    });
+
+    it("closes the drawer when an action link is followed", () => {
+      render(
+        <NotificationRow
+          id="notice-1"
+          user_map={{}}
+          mention={notice({
+            action_link: "/hosts",
+            action_label: "Open dedicated hosts",
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByText("Open dedicated hosts"));
+      expect(mockSetNotificationsOpen).toHaveBeenCalledWith(false);
+    });
+
+    it("stays open for controls in the row and rows with nothing to open", () => {
+      render(
+        <NotificationRow
+          id="notice-1"
+          user_map={{}}
+          mention={notice({ project_id: "project-1", path: "work/a.md" })}
+        />,
+      );
+      fireEvent.click(screen.getByText("Mark Read"));
+      expect(mockSetNotificationsOpen).not.toHaveBeenCalled();
+
+      render(
+        <NotificationRow id="notice-2" user_map={{}} mention={notice()} />,
+      );
+      fireEvent.click(screen.getAllByText("Build finished")[1]);
+      expect(mockSetNotificationsOpen).not.toHaveBeenCalled();
+    });
   });
 });
