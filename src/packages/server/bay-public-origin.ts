@@ -362,7 +362,22 @@ export async function getSiteBrowserOrigins(): Promise<string[]> {
     // not a URL; the hostname form below may still apply
   }
   const site = normalizeHostname(raw);
-  if (site) origins.add(`${defaultSchemeForHostname(site)}://${site}`);
+  if (site) {
+    // The hostname on its default scheme and port, e.g., behind a TLS proxy
+    // on 443.
+    origins.add(`${defaultSchemeForHostname(site)}://${site}`);
+    if (!/^https?:\/\//i.test(raw)) {
+      // No scheme given: also the hostname's default scheme with the
+      // configured port (http://localhost:9100 for dns=localhost:9100).
+      try {
+        const port = new URL(`https://${raw}`).port;
+        if (port)
+          origins.add(`${defaultSchemeForHostname(site)}://${site}:${port}`);
+      } catch {
+        // not a URL
+      }
+    }
+  }
   return [...origins];
 }
 

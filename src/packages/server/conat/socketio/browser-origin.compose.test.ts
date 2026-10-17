@@ -49,6 +49,10 @@ describe("cookie origin policy with the real site configuration", () => {
     ["http://cocalc.internal:8080", "http://cocalc.internal:8080"],
     ["http://cocalc.internal", "http://cocalc.internal"],
     ["localhost:9100", "https://localhost:9100"],
+    ["localhost:9100", "http://localhost:9100"],
+    // the hostname form: the site behind a TLS proxy on 443
+    ["cocalc.example.org:8443", "https://cocalc.example.org"],
+    ["http://cocalc.example.org:8080", "https://cocalc.example.org"],
     ["http://localhost:9100", "http://localhost:9100"],
   ])("dns=%s approves its own page %s", async (setting, page) => {
     dns = setting;
