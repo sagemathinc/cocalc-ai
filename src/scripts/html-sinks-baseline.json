@@ -148,6 +148,9 @@
   "src/packages/frontend/jupyter/status.tsx": {
     "dangerouslySetInnerHTML": 4
   },
+  "src/packages/frontend/jupyter/trust-fidelity.browser-test.mjs": {
+    "noSanitize": 1
+  },
   "src/packages/frontend/jupyter/widgets/manager.ts": {
     "noSanitize": 1
   },
