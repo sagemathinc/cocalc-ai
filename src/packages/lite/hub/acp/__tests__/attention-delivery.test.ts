@@ -143,7 +143,7 @@ function claudeTurnRequest(): AcpRequest {
         version: 2,
         kind: "acp",
         id: "claude-code",
-        revision: "0.85.1",
+        revision: "0.93.0",
         cwd: "/home/user",
         credentialMode: "project-managed",
         executionPolicy: "full-access",
