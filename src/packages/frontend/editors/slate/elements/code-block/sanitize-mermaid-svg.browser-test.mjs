@@ -165,6 +165,45 @@ try {
   assert.match(more.rectAnimation, /^cocalc-svg-[0-9a-f]+-victim$/);
   assert.deepEqual(hits, []);
 
+  // 1c. CSS variables can't smuggle values past the declaration checks.
+  await page.goto(origin);
+  await page.addScriptTag({ content: script });
+  const vars = await page.evaluate(async (origin) => {
+    const page = document.createElement("style");
+    page.textContent = `:root { --asset: url(${origin}/probe-var) }
+      @keyframes victim { from { opacity: .7 } to { opacity: .7 } }`;
+    document.head.append(page);
+    const svg = `<svg id="d3" xmlns="http://www.w3.org/2000/svg">
+      <style>
+        #d3 { --pos: fixed; position: var(--pos); --name: victim }
+        #d3 rect { animation: 100s var(--name); fill: var(--asset) }
+        #d3 circle { --x: 1; stroke: red }
+      </style>
+      <rect width="10" height="10"/>
+      <circle r="5" style="--pos: fixed; position: var(--pos); fill: var(--asset); stroke: blue"/>
+    </svg>`;
+    const clean = policy.sanitizeMermaidSvg(svg);
+    document.getElementById("root").replaceChildren(clean);
+    await new Promise((r) => setTimeout(r, 200));
+    const rect = clean.querySelector("rect");
+    const circle = clean.querySelector("circle");
+    return {
+      rootPosition: getComputedStyle(clean).position,
+      circlePosition: getComputedStyle(circle).position,
+      rectAnimation: getComputedStyle(rect).animationName,
+      circleStroke: getComputedStyle(circle).stroke,
+      css: clean.querySelector("style").textContent,
+      inline: circle.getAttribute("style"),
+    };
+  }, origin);
+  await page.waitForTimeout(500);
+  assert.notEqual(vars.rootPosition, "fixed");
+  assert.notEqual(vars.circlePosition, "fixed");
+  assert.equal(vars.rectAnimation, "none");
+  assert.equal(vars.circleStroke, "rgb(0, 0, 255)");
+  assert.doesNotMatch(vars.css + vars.inline, /var\(|--/);
+  assert.deepEqual(hits, []);
+
   // 2. Real mermaid output: the sanitized diagram computes the same styles as
   // the raw one, and loads nothing.
   for (const [name, svg] of Object.entries(fixtures)) {

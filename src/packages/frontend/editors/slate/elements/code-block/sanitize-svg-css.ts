@@ -20,6 +20,9 @@ and rebuilt from the parsed rules:
 - @keyframes names are global, so each is renamed to a scope-specific name
   and animation-name references are rewritten to match; references to any
   other keyframes become none.
+- Custom properties (--*) and any declaration using var(), env() or attr()
+  are dropped: substitution happens after this check, so it could bring
+  back anything the check removes.
 - Any declaration whose value uses a function that can load a resource
   (url() other than a same-document #fragment, image-set(), image(),
   cross-fade(), element(), src(), ...) is dropped, as are fixed and sticky
@@ -32,6 +35,7 @@ and alternate spellings don't matter.
 
 const RESOURCE_FUNCTION =
   /(?:^|[^\w-])(?:-webkit-|-moz-)?(?:url|image-set|image|cross-fade|element|src|paint)\s*\(/i;
+const SUBSTITUTION_FUNCTION = /(?:^|[^\w-])(?:var|env|attr)\s*\(/i;
 const FRAGMENT_URL = /url\(\s*(["']?)#[\w.:-]*\1\s*\)/gi;
 const SCOPE_TOKEN = /^[A-Za-z0-9-]+$/;
 export const SCOPE_ATTRIBUTE = "data-cocalc-svg-scope";
@@ -39,7 +43,10 @@ export const SCOPE_ATTRIBUTE = "data-cocalc-svg-scope";
 // True if a CSS value could load anything other than a same-document
 // fragment.
 export function isExternalCssValue(value: string): boolean {
-  return RESOURCE_FUNCTION.test(value.replace(FRAGMENT_URL, ""));
+  return (
+    SUBSTITUTION_FUNCTION.test(value) ||
+    RESOURCE_FUNCTION.test(value.replace(FRAGMENT_URL, ""))
+  );
 }
 
 function isUnsafeDeclaration(property: string, value: string): boolean {
@@ -56,9 +63,20 @@ function sanitizeDeclarations(
   keyframes: Map<string, string> = new Map(),
 ): void {
   for (const property of Array.from(style)) {
-    if (isUnsafeDeclaration(property, style.getPropertyValue(property))) {
+    const value = style.getPropertyValue(property);
+    if (
+      property.startsWith("--") ||
+      // A longhand of a shorthand that uses var() reads back as "".
+      value === "" ||
+      SUBSTITUTION_FUNCTION.test(value) ||
+      isUnsafeDeclaration(property, value)
+    ) {
       style.removeProperty(property);
     }
+  }
+  if (SUBSTITUTION_FUNCTION.test(style.cssText)) {
+    // Fail closed if a substitution survived in some serialization.
+    style.cssText = "";
   }
   const names = style.getPropertyValue("animation-name");
   if (names) {
