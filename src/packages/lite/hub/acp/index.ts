@@ -280,6 +280,8 @@ import {
   failBoardSubmissionAttempt,
   markBoardSubmissionAdmitted,
   markBoardSubmissionUncertainRecorded,
+  forgetUncertainBoardSubmission,
+  listUnmarkedUncertainBoardSubmissions,
   setBoardSubmissionInjecting,
   type BoardSubmissionKey,
 } from "../sqlite/acp-board-submissions";
@@ -11109,24 +11111,27 @@ async function boardSubmissionTrace(
 // again. Kept with the message, it outlives the hub's own record.
 const BOARD_UNCERTAIN_FIELD = "acp_board_answers_uncertain_at_ms";
 
+/** Write the uncertain marker on the submission's message: "written" (or
+ * already there), "gone" (the chat loaded and the message isn't in it), or
+ * "failed" (the chat couldn't be reached: the record stays, fail closed). */
 async function recordBoardSubmissionUncertain(
   key: BoardSubmissionKey,
-): Promise<void> {
-  if (!conatClient) return;
+): Promise<"written" | "gone" | "failed"> {
+  if (!conatClient) return "failed";
   try {
-    const written = await withChatSyncDB({
+    const result = await withChatSyncDB({
       client: conatClient,
       project_id: key.project_id,
       path: key.path,
-      fn: async (syncdb) => {
+      fn: async (syncdb): Promise<"written" | "gone"> => {
         const current = findChatRowByMessageId(syncdb, key.user_message_id);
         const date = normalizeIsoDateString(
           syncdbField<string>(current, "date"),
         );
         const sender = syncdbField<string>(current, "sender_id");
-        if (!date || !sender) return false;
+        if (!date || !sender) return "gone";
         if (Number(syncdbField(current, BOARD_UNCERTAIN_FIELD)) > 0) {
-          return true;
+          return "written";
         }
         syncdb.set({
           event: "chat",
@@ -11138,18 +11143,45 @@ async function recordBoardSubmissionUncertain(
         });
         syncdb.commit();
         await syncdb.save();
-        return true;
+        return "written";
       },
     });
-    if (written) markBoardSubmissionUncertainRecorded(key);
+    if (result === "written") markBoardSubmissionUncertainRecorded(key);
+    return result;
   } catch (err) {
-    // The record stays (and never expires) until the marker is written.
+    // The record stays (it never expires unmarked) until the marker is
+    // written; the account's cap bounds how many can wait.
     logger.warn("failed to record an uncertain board submission", {
       project_id: key.project_id,
       path: key.path,
       user_message_id: key.user_message_id,
       err,
     });
+    return "failed";
+  }
+}
+
+// Retry the markers of an account's unmarked uncertain submissions, a few
+// at a time; forget those whose message is gone (nothing can send them
+// again). One pass per account at a time (LIMIT-A65-1).
+const boardReconciling = new Map<string, Promise<void>>();
+async function reconcileUncertainBoardSubmissions(
+  account_id: string,
+): Promise<void> {
+  const running = boardReconciling.get(account_id);
+  if (running) return await running;
+  const pass = (async () => {
+    for (const key of listUnmarkedUncertainBoardSubmissions(account_id, 5)) {
+      if ((await recordBoardSubmissionUncertain(key)) === "gone") {
+        forgetUncertainBoardSubmission(key);
+      }
+    }
+  })();
+  boardReconciling.set(account_id, pass);
+  try {
+    await pass;
+  } finally {
+    boardReconciling.delete(account_id);
   }
 }
 
@@ -11174,8 +11206,18 @@ async function steerBoardSubmissionOnce(
   ) => Promise<AcpSteerResponse>,
 ): Promise<AcpSteerResponse> {
   const threadId = key.thread_id;
+  // Earlier uncertain ones of this account, reconciled in the background.
+  void reconcileUncertainBoardSubmissions(key.account_id).catch(() => {});
   const admission = admitBoardSubmission(key);
-  if (!admission.ok) throw boardSubmissionLimitError(admission.retry_after_ms);
+  if (!admission.ok) {
+    if (admission.reason === "unresolved") {
+      await reconcileUncertainBoardSubmissions(key.account_id);
+      throw new Error(
+        "CoCalc is still confirming earlier board answers from this account; try again in a few minutes.",
+      );
+    }
+    throw boardSubmissionLimitError(admission.retry_after_ms);
+  }
   if (admission.kind === "admitted") {
     if (admission.state === BOARD_SUBMISSION_UNCERTAIN) {
       if (!admission.recorded) await recordBoardSubmissionUncertain(key);

@@ -9,9 +9,12 @@ import {
   BOARD_SUBMISSION_RETENTION_MS as RETENTION,
   BOARD_SUBMISSION_UNCERTAIN,
   BOARD_SUBMISSION_WINDOW_MS as WINDOW,
+  BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT as UNMARKED_LIMIT,
   admitBoardSubmission,
   claimBoardSubmissionRetry,
   failBoardSubmissionAttempt,
+  forgetUncertainBoardSubmission,
+  listUnmarkedUncertainBoardSubmissions,
   markBoardSubmissionAdmitted,
   markBoardSubmissionUncertainRecorded,
   resetBoardSubmissionsForTests,
@@ -200,6 +203,61 @@ test("an uncertain record outlives its retention until its marker is written (RO
     kind: "admitted",
     state: BOARD_SUBMISSION_UNCERTAIN,
     recorded: false,
+  });
+});
+
+describe("unmarked uncertain records (LIMIT-A65-1)", () => {
+  const uncertain = (id: string, thread = `t-${id}`, now = 1_000) => {
+    const t = token(id, { thread_id: thread }, now);
+    setBoardSubmissionInjecting(key(id, { thread_id: thread }), t, now);
+    failBoardSubmissionAttempt(key(id, { thread_id: thread }), t);
+  };
+
+  test("past the account's cap, its new submissions are refused", () => {
+    for (let i = 0; i < UNMARKED_LIMIT; i++) uncertain(`u${i}`);
+    expect(admit("fresh", { thread_id: "fresh" })).toEqual({
+      ok: false,
+      retry_after_ms: ATTEMPT,
+      reason: "unresolved",
+    });
+    // another account is not affected
+    expect(admit("other", { account_id: OTHER }).ok).toBe(true);
+    // once one is marked on its message, there is room again
+    markBoardSubmissionUncertainRecorded(key("u0", { thread_id: "t-u0" }));
+    expect(admit("fresh", { thread_id: "fresh" })).toMatchObject({
+      ok: true,
+      kind: "new",
+    });
+  });
+
+  test("reconciliation reads a few, oldest first; a forgotten one goes", () => {
+    uncertain("b", "tb", 2_000);
+    uncertain("a", "ta", 1_000);
+    uncertain("c", "tc", 3_000);
+    expect(
+      listUnmarkedUncertainBoardSubmissions(ACCOUNT, 2).map(
+        (k) => k.user_message_id,
+      ),
+    ).toEqual(["a", "b"]);
+    forgetUncertainBoardSubmission(key("a", { thread_id: "ta" }));
+    expect(ids()).not.toContain("a");
+    // only an unmarked uncertain one can be forgotten
+    markBoardSubmissionAdmitted(key("ok"), "steered", token("ok"));
+    forgetUncertainBoardSubmission(key("ok"));
+    expect(ids()).toContain("ok");
+  });
+
+  test("the cap's count uses its partial index", () => {
+    admit("m");
+    const plan = getAcpDatabase()
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM acp_board_submissions
+          WHERE account_id = ? AND outcome = 'uncertain' AND uncertain_recorded IS NULL`,
+      )
+      .all(ACCOUNT)
+      .map((r: any) => r.detail)
+      .join("\\n");
+    expect(plan).toMatch(/acp_board_submissions_unmarked_idx/);
   });
 });
 

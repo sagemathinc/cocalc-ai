@@ -33,6 +33,10 @@ export const BOARD_SUBMISSION_WINDOW_MS = 60 * 60_000;
 export const BOARD_SUBMISSION_ATTEMPT_MS = 2 * 60_000;
 /** How long a submission's record (its identity and outcome) is kept. */
 export const BOARD_SUBMISSION_RETENTION_MS = 7 * 24 * 60 * 60_000;
+/** Unresolved uncertain submissions (their marker not yet on their
+ * message) one account may hold; past that its new board submissions are
+ * refused until they are reconciled (daybreak2, LIMIT-A65-1). */
+export const BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT = 100;
 /** The outcome of a submission whose hand-off to a live turn started but
  * never answered: it is never sent again. */
 export const BOARD_SUBMISSION_UNCERTAIN = "uncertain";
@@ -63,6 +67,12 @@ function ensureInit(): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_admitted_idx ON ${TABLE}(admitted_at)`,
+  );
+  // An account's uncertain submissions not yet marked on their messages:
+  // what its cap counts and reconciliation reads (LIMIT-A65-1).
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${TABLE}_unmarked_idx ON ${TABLE}(account_id, admitted_at)
+      WHERE outcome = 'uncertain' AND uncertain_recorded IS NULL`,
   );
   // Only hand-offs still unresolved: what the silence check reads, without
   // scanning the table (LIMIT-F386-2).
@@ -95,7 +105,7 @@ export type BoardSubmissionAdmission =
   | { ok: true; kind: "admitted"; state: string; recorded: boolean }
   /** Sent before, still unresolved; `injecting` if its hand-off started. */
   | { ok: true; kind: "unknown"; attempt_at: number; injecting: boolean }
-  | { ok: false; retry_after_ms: number };
+  | { ok: false; retry_after_ms: number; reason?: "unresolved" };
 
 function checkKey(key: BoardSubmissionKey): void {
   if (
@@ -144,12 +154,14 @@ export function admitBoardSubmission(
   {
     now = Date.now(),
     limit = BOARD_SUBMISSIONS_PER_THREAD_PER_HOUR,
+    unmarked_limit = BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT,
     window_ms = BOARD_SUBMISSION_WINDOW_MS,
     retention_ms = BOARD_SUBMISSION_RETENTION_MS,
     attempt_ms = BOARD_SUBMISSION_ATTEMPT_MS,
   }: {
     now?: number;
     limit?: number;
+    unmarked_limit?: number;
     window_ms?: number;
     retention_ms?: number;
     attempt_ms?: number;
@@ -210,6 +222,18 @@ export function admitBoardSubmission(
             attempt_at: existing.attempt_at,
             injecting: existing.injected_at != null,
           };
+    }
+    // Fail closed while too many of this account's uncertain submissions
+    // are unmarked: they are kept until reconciled, so they must be bounded.
+    const unmarked = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM ${TABLE}
+          WHERE account_id = ? AND outcome = 'uncertain'
+            AND uncertain_recorded IS NULL`,
+      )
+      .get(account_id) as { n: number };
+    if (unmarked.n >= unmarked_limit) {
+      return { ok: false, retry_after_ms: attempt_ms, reason: "unresolved" };
     }
     const recent = db
       .prepare(
@@ -345,4 +369,35 @@ export function markBoardSubmissionAdmitted(
           AND (? IS NULL OR attempt_token = ?)`,
     )
     .run(state || "steered", ...keyArgs(key), token ?? null, token ?? null);
+}
+
+/** Some of an account's uncertain submissions whose marker is not yet on
+ * their message, oldest first: what reconciliation retries. */
+export function listUnmarkedUncertainBoardSubmissions(
+  account_id: string,
+  limit = 5,
+): BoardSubmissionKey[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT account_id, project_id, path, thread_id, user_message_id
+         FROM ${TABLE}
+        WHERE account_id = ? AND outcome = 'uncertain'
+          AND uncertain_recorded IS NULL
+        ORDER BY admitted_at LIMIT ?`,
+    )
+    .all(account_id, limit) as unknown as BoardSubmissionKey[];
+}
+
+/** An uncertain submission whose message is proven gone: nothing can send
+ * it again, so its record goes. */
+export function forgetUncertainBoardSubmission(key: BoardSubmissionKey): void {
+  checkKey(key);
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `DELETE FROM ${TABLE} WHERE ${KEY_WHERE} AND outcome = ?
+          AND uncertain_recorded IS NULL`,
+    )
+    .run(...keyArgs(key), BOARD_SUBMISSION_UNCERTAIN);
 }

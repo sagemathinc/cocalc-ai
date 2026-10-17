@@ -1561,6 +1561,92 @@ describe("agent RPC live guidance funding", () => {
       expect(send).toHaveBeenCalledTimes(1);
     });
 
+    describe("unmarked uncertain records are bounded (LIMIT-A65-1)", () => {
+      const sql = jest.requireActual("../../sqlite/acp-board-submissions");
+      const unmarked = () =>
+        getAcpDatabase()
+          .prepare(
+            "SELECT user_message_id FROM acp_board_submissions WHERE outcome = 'uncertain' AND uncertain_recorded IS NULL",
+          )
+          .all()
+          .map((r: any) => r.user_message_id);
+      const uncertainFor = (id: string, thread = "t-" + id) => {
+        const key = {
+          account_id: accountId,
+          project_id: projectId,
+          path: record.path,
+          thread_id: thread,
+          user_message_id: id,
+        };
+        const a = sql.admitBoardSubmission(key);
+        sql.setBoardSubmissionInjecting(key, a.token, Date.now());
+        sql.failBoardSubmissionAttempt(key, a.token);
+        return key;
+      };
+      const settle = async () => {
+        for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+      };
+
+      it("a marker that can't be written keeps the record; a retry writes it", async () => {
+        const runtime = mockLiveRuntime(liveConfig);
+        const send = runtime.running.get(sessionId)!.client.request;
+        const chat = jest.mocked(acquireChatSyncDB);
+        const working = chat.getMockImplementation()!;
+        send.mockImplementationOnce(async () => {
+          chat.mockRejectedValue(new Error("chat store unavailable"));
+          throw new Error("request timed out after 90000ms");
+        });
+        await expect(resend("assistant-1")).rejects.toThrow("timed out");
+        expect(unmarked()).toEqual(["rpc-guidance"]);
+        // the store is back: the retry writes the marker, and is refused
+        chat.mockImplementation(working);
+        await expect(resend("assistant-2")).rejects.toThrow(
+          "won't send them again",
+        );
+        expect(unmarked()).toEqual([]);
+        expect(
+          rows.find((r) => r.message_id === "rpc-guidance")
+            ?.acp_board_answers_uncertain_at_ms,
+        ).toBeGreaterThan(0);
+        expect(send).toHaveBeenCalledTimes(1);
+      });
+
+      it("one whose message is gone is reclaimed by reconciliation", async () => {
+        mockLiveRuntime(liveConfig);
+        uncertainFor("never-existed");
+        expect(unmarked()).toEqual(["never-existed"]);
+        await resend("assistant-1"); // any board submission reconciles
+        await settle();
+        expect(unmarked()).toEqual([]);
+        expect(
+          getAcpDatabase()
+            .prepare(
+              "SELECT * FROM acp_board_submissions WHERE user_message_id = 'never-existed'",
+            )
+            .all(),
+        ).toEqual([]);
+      });
+
+      it("past the account's cap, new submissions are refused before any send", async () => {
+        const runtime = mockLiveRuntime(liveConfig);
+        const send = runtime.running.get(sessionId)!.client.request;
+        for (let i = 0; i < sql.BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT; i++) {
+          uncertainFor(`stuck-${i}`); // each on a fresh thread
+        }
+        // the chat store is down, so none can be reconciled
+        jest
+          .mocked(acquireChatSyncDB)
+          .mockRejectedValue(new Error("chat store unavailable"));
+        await expect(resend("assistant-1")).rejects.toThrow(
+          "still confirming earlier board answers",
+        );
+        expect(send).not.toHaveBeenCalled();
+        expect(unmarked()).toHaveLength(
+          sql.BOARD_UNMARKED_UNCERTAIN_PER_ACCOUNT,
+        );
+      });
+    });
+
     it("astra's takeover case: a held hand-off is never repeated (CORR-E69-2)", async () => {
       const runtime = mockLiveRuntime(liveConfig);
       const send = runtime.running.get(sessionId)!.client.request;
