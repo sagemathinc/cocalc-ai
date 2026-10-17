@@ -2434,6 +2434,8 @@ export class ConatClient extends EventEmitter {
       reconnectAttempts: state.reconnectAttempts,
       ...this.reconnectDebugContext(),
     });
+    const wasOffline =
+      typeof navigator !== "undefined" && navigator.onLine === false;
     try {
       await waitForOnline();
     } catch {
@@ -2445,6 +2447,10 @@ export class ConatClient extends EventEmitter {
     }
     if (!this.isCurrentRoutedHostState(routing_key, state)) {
       return;
+    }
+    // Only time spent failing while online counts toward refreshing auth.
+    if (wasOffline || state.reconnectFailingSince == null) {
+      state.reconnectFailingSince = Date.now();
     }
     reconnectDebugLog(
       `browser is online for routed host reconnect ${host_id}`,
@@ -2551,7 +2557,6 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected || state.reconnectTimer != null) {
       return;
     }
-    state.reconnectFailingSince ??= Date.now();
     const delayMs =
       ROUTED_HOST_RECONNECT_DELAYS_MS[
         Math.min(
