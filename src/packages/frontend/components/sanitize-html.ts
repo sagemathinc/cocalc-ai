@@ -4,6 +4,12 @@
  */
 
 import {
+  PRESENTATION_TAGS,
+  sanitizeInlineStyle,
+  sanitizePresentationAttribute,
+  type SanitizeOptions,
+} from "./sanitize-presentation";
+import {
   applyUrlTransform,
   applyUrlTransformToSrcset,
   parseSrcset,
@@ -212,8 +218,15 @@ export function enforceHtmlSafetyFloor(
   return floored;
 }
 
-export function isAllowedHtmlTag(name: string): boolean {
-  return ALLOWED_TAGS.has(name.toLowerCase());
+export function isAllowedHtmlTag(
+  name: string,
+  options?: SanitizeOptions,
+): boolean {
+  const tag = name.toLowerCase();
+  return (
+    ALLOWED_TAGS.has(tag) ||
+    (!!options?.safeStyles && PRESENTATION_TAGS.has(tag))
+  );
 }
 
 export function shouldDropHtmlTagContents(name: string): boolean {
@@ -260,19 +273,30 @@ export function sanitizeHtmlAttributes(
   name: string,
   attribs: Record<string, string> | undefined,
   urlTransform?: UrlTransform,
+  options?: SanitizeOptions,
 ): Record<string, string> {
   const tag = name.toLowerCase();
   const allowed = ALLOWED_ATTRIBUTES[tag];
-  if (allowed == null || attribs == null) {
+  if (attribs == null) {
     return {};
   }
   const sanitized: Record<string, string> = {};
   for (const [rawAttr, rawValue] of Object.entries(attribs)) {
     const attr = rawAttr.toLowerCase();
-    if (!allowed.has(attr) || attr.startsWith("on")) {
+    if (rawValue == null || attr.startsWith("on")) {
       continue;
     }
-    if (rawValue == null) {
+    if (options?.safeStyles && !allowed?.has(attr)) {
+      const value =
+        attr === "style"
+          ? sanitizeInlineStyle(rawValue)
+          : sanitizePresentationAttribute(tag, attr, rawValue);
+      if (value != null) {
+        sanitized[attr] = value;
+      }
+      continue;
+    }
+    if (!allowed?.has(attr)) {
       continue;
     }
     const transformed =

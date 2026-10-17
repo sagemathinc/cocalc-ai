@@ -51,8 +51,14 @@ export default function HTML({
   style?: React.CSSProperties;
   inline?: boolean;
 }) {
-  const { urlTransform, AnchorTagComponent, noSanitize, MathComponent } =
-    useFileContext();
+  const {
+    urlTransform,
+    AnchorTagComponent,
+    noSanitize,
+    allowSafeStyles,
+    MathComponent,
+  } = useFileContext();
+  const sanitizeOptions = { safeStyles: !!allowSafeStyles };
   if (inline && isStandaloneDocumentHtmlTag(value)) {
     // Markdown parsers classify a prose token such as `<body>` as inline HTML.
     // Mounting React's singleton document elements below a span corrupts the
@@ -139,7 +145,12 @@ export default function HTML({
       if (AnchorTagComponent != null && name == "a") {
         const sanitizedAttribs = noSanitize
           ? attribs
-          : sanitizeHtmlAttributes(name, attribs, urlTransform);
+          : sanitizeHtmlAttributes(
+              name,
+              attribs,
+              urlTransform,
+              sanitizeOptions,
+            );
         return (
           <AnchorTagComponent {...sanitizedAttribs}>
             {domToReact(children as any, options)}
@@ -148,7 +159,7 @@ export default function HTML({
       }
 
       if (!noSanitize) {
-        if (!isAllowedHtmlTag(name)) {
+        if (!isAllowedHtmlTag(name, sanitizeOptions)) {
           if (shouldDropHtmlTagContents(name)) {
             return React.createElement(React.Fragment);
           }
@@ -159,7 +170,7 @@ export default function HTML({
           );
         }
         const props = attributesToProps(
-          sanitizeHtmlAttributes(name, attribs, urlTransform),
+          sanitizeHtmlAttributes(name, attribs, urlTransform, sanitizeOptions),
         );
         return React.createElement(
           name,

@@ -1267,7 +1267,10 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     <FileContext.Provider
       value={{
         ...fileContext,
-        noSanitize: !!trust,
+        // Notebook Markdown and HTML are always sanitized, trusted or not;
+        // the notebook keeps safe inline styles and presentational markup.
+        noSanitize: false,
+        allowSafeStyles: true,
         HeadingTagComponent,
         disableMarkdownCodebar: true,
       }}

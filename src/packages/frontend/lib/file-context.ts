@@ -56,6 +56,11 @@ export interface IFileContext {
 
   noSanitize?: boolean;
 
+  // When sanitizing, also keep a vetted subset of inline styles and
+  // presentational tags and attributes (<font color>, align, colspan, ...);
+  // see components/sanitize-presentation.ts.
+  allowSafeStyles?: boolean;
+
   // If true, when rendering append a random query param after the source of any image
   // to force it to reload.  This is, e.g., useful for R markdown, where each time it
   // updates, the images may change, by their names don't, so we have to break the browser cache.
