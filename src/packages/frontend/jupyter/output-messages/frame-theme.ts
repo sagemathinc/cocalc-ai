@@ -125,23 +125,9 @@ export const FRAME_THEME_HEAD = `<style>${FRAME_BASE_CSS}</style><script>(functi
   });
 })();</script>`;
 
-// Inserts FRAME_THEME_HEAD at the start of the document's head, so it comes
-// before any of the content's own styles and scripts.
+// Puts FRAME_THEME_HEAD before the content, never inside it (see
+// injectResizeBridge in autosized-iframe.tsx): it ends up in the head, before
+// the content's own styles and scripts.
 export function withFrameTheme(html: string): string {
-  const head = /<head(\s[^>]*)?>/i.exec(html);
-  if (head != null) {
-    const at = head.index + head[0].length;
-    return html.slice(0, at) + FRAME_THEME_HEAD + html.slice(at);
-  }
-  const root = /<html(\s[^>]*)?>/i.exec(html);
-  if (root != null) {
-    const at = root.index + root[0].length;
-    return html.slice(0, at) + FRAME_THEME_HEAD + html.slice(at);
-  }
-  const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
-  if (doctype != null) {
-    const at = doctype[0].length;
-    return html.slice(0, at) + FRAME_THEME_HEAD + html.slice(at);
-  }
   return FRAME_THEME_HEAD + html;
 }

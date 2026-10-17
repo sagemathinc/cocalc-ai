@@ -52,6 +52,10 @@ export interface IFileContext {
 
   noSanitize?: boolean;
 
+  // Rendering a static document (notebook export to HTML/PDF), where nothing
+  // runs after rendering -- e.g., nothing can size an iframe to its content.
+  staticExport?: boolean;
+
   // If true, when rendering append a random query param after the source of any image
   // to force it to reload.  This is, e.g., useful for R markdown, where each time it
   // updates, the images may change, by their names don't, so we have to break the browser cache.

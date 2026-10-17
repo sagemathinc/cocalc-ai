@@ -76,19 +76,12 @@ describe("HtmlOutput", () => {
 });
 
 describe("withFrameTheme", () => {
+  // Prepended, never inserted: "<head>" or "</body>" may be inside a script.
   it.each([
-    ["<p>x</p>", `${FRAME_THEME_HEAD}<p>x</p>`],
-    [
-      '<html lang="en"><head><style>p{}</style></head><body>x</body></html>',
-      `<html lang="en"><head>${FRAME_THEME_HEAD}<style>p{}</style></head><body>x</body></html>`,
-    ],
-    [
-      "<html><body>x</body></html>",
-      `<html>${FRAME_THEME_HEAD}<body>x</body></html>`,
-    ],
-    ["<!DOCTYPE html><p>x</p>", `<!DOCTYPE html>${FRAME_THEME_HEAD}<p>x</p>`],
-    ["<header>x</header>", `${FRAME_THEME_HEAD}<header>x</header>`],
-  ])("puts the theme first in %s", (html, expected) => {
-    expect(withFrameTheme(html)).toBe(expected);
+    ["<p>x</p>"],
+    ['<html lang="en"><head><style>p{}</style></head><body>x</body></html>'],
+    ['<script>var s = "<head>";</script><div>x</div>'],
+  ])("puts the theme before %s", (html) => {
+    expect(withFrameTheme(html)).toBe(FRAME_THEME_HEAD + html);
   });
 });

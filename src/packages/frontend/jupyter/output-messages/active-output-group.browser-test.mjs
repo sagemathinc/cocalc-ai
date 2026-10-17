@@ -77,7 +77,9 @@ try {
     await page.waitForTimeout(300);
   };
   const frame = async () => {
-    const handle = await page.waitForSelector("#cell iframe");
+    const handle = await page.waitForSelector(
+      '#cell iframe[title="Jupyter JavaScript output"]',
+    );
     const f = await handle.contentFrame();
     await f.waitForFunction(() => document.readyState === "complete");
     return f;
@@ -86,9 +88,11 @@ try {
   // 1. Streaming: appending outputs never re-runs earlier JavaScript.
   await set({ 0: html("<div id='target'>target</div>") });
   assert.equal(
-    await page.locator("#cell iframe").count(),
+    await page
+      .locator('#cell iframe[title="Jupyter JavaScript output"]')
+      .count(),
     0,
-    "no frame before JS",
+    "no JavaScript frame before JS",
   );
   await set({ 0: html("<div id='target'>target</div>"), 1: js(COUNT) });
   let f = await frame();

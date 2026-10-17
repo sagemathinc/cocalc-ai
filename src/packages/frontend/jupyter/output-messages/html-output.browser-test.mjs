@@ -16,6 +16,22 @@ const app = await bundleFrontend(`
   import { CellOutputMessages } from "./jupyter/output-messages/message";
   import { appearanceStyleSheet } from "@cocalc/util/appearance-palette";
   import "./jupyter/output-messages/mime-types/init-frontend";
+  import { sanitizedHtmlIsFaithful } from "./jupyter/output-messages/html-fidelity";
+  import { INLINE, FRAMED } from "./jupyter/output-messages/html-fidelity.test.cases";
+  import exportToHTML from "./jupyter/nbviewer/export";
+  window.__classify = () => ({
+    inline: INLINE.filter(([, h]) => !sanitizedHtmlIsFaithful(h)).map(([n]) => n),
+    framed: FRAMED.filter(([, h]) => sanitizedHtmlIsFaithful(h)).map(([n]) => n),
+  });
+  window.__export = (html) =>
+    exportToHTML({
+      title: "t",
+      cocalcJupyter: {
+        cellList: ["a"],
+        cells: { a: { id: "a", cell_type: "code", input: "x", output: { 0: { data: { "text/html": html } } } } },
+        kernelspec: { name: "python3", display_name: "Python 3", language: "python" },
+      },
+    });
   function App() {
     const [output, setOutput] = useState(fromJS({}));
     window.__setOutput = (o) => setOutput(fromJS(o));
@@ -61,6 +77,13 @@ const ESCAPE = `<p id="escape">x</p><script>
   document.getElementById("escape").textContent = JSON.stringify(r);
 </script>`;
 
+// Structural tokens inside a script string (review of #19): nothing may be
+// inserted there.
+const TOKEN = (token) => `<div id=x>before</div><script>
+  var marker = ${JSON.stringify(token)};
+  document.getElementById("x").textContent = "ran";
+</script>`;
+
 let browser;
 try {
   browser = await chromium.launch({
@@ -83,9 +106,11 @@ try {
 
   await page.evaluate((o) => window.__setOutput(o), {
     0: html('<b id="inline" class="ant-btn" style="color:red">inline</b>x'),
-    1: html('<b id="plain" class="ant-btn">plain</b>'),
+    1: html('<b class="ant-btn" data-x="1">plain</b>'),
     2: html(DATAFRAME),
     3: html(ESCAPE),
+    4: html(TOKEN("<head>")),
+    5: html(TOKEN("</body>")),
   });
 
   // 1. Faithful HTML is inline and sanitized (class and id dropped), even in
@@ -106,9 +131,9 @@ try {
   // 2. Styled and active output are framed, opaque.
   const frames = page.locator("#cell iframe");
   await page.waitForFunction(
-    () => document.querySelectorAll("#cell iframe").length === 3,
+    () => document.querySelectorAll("#cell iframe").length === 5,
   );
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     assert.equal(
       await frames.nth(i).getAttribute("sandbox"),
       "allow-forms allow-scripts allow-presentation",
@@ -223,6 +248,50 @@ try {
     },
   );
   assert.equal(await page.title(), "app");
+
+  // 7. Script content containing "<head>" or "</body>" runs intact.
+  for (const i of [3, 4]) {
+    const f = await frame(i);
+    await f.waitForFunction(
+      () => document.getElementById("x")?.textContent === "ran",
+      null,
+      { timeout: 5000 },
+    );
+    assert.doesNotMatch(
+      await f.evaluate(() => document.body.innerText),
+      /marker/,
+      "no script text leaked into the page",
+    );
+  }
+
+  // 8. The classifier gives the same answers with the browser's parser as in
+  // the Jest (Node parser) tests.
+  assert.deepEqual(await page.evaluate(() => window.__classify()), {
+    inline: [],
+    framed: [],
+  });
+
+  // 9. Static export: an isolated output's frame is sized by the exported
+  // document itself.
+  const exported = await page.evaluate(() =>
+    window.__export(
+      '<div style="height:700px">tall</div><script>window.PLOTLYENV = {};</script>',
+    ),
+  );
+  const doc = await browser.newPage();
+  await doc.route(/^https?:\/\//, (route) => route.abort());
+  await doc.setContent(exported, { waitUntil: "domcontentloaded" });
+  await doc.waitForFunction(
+    () => {
+      const h = document
+        .querySelector("iframe")
+        ?.getBoundingClientRect().height;
+      return h != null && h > 650;
+    },
+    null,
+    { timeout: 10000 },
+  );
+  await doc.close();
 
   assert.deepEqual(errors, []);
   console.log("html-output browser test: ok");

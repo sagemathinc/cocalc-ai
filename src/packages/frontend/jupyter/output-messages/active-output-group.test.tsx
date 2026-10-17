@@ -149,7 +149,13 @@ describe("CellOutputMessages", () => {
       <CellOutputMessages output={output} trust={false} />,
     );
     await act(async () => {});
-    expect(container.querySelector("iframe")).toBeNull();
+    // (the HTML output may have its own frame; no frame carries the script)
+    expect(
+      container.querySelector('iframe[title="Jupyter JavaScript output"]'),
+    ).toBeNull();
+    for (const frame of Array.from(container.querySelectorAll("iframe"))) {
+      expect(frame.getAttribute("srcdoc")).not.toContain("__ranInApp");
+    }
     expect(container.textContent).toContain("not running untrusted Javascript");
   });
 });

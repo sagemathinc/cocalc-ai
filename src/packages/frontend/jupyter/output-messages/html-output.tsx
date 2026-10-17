@@ -7,7 +7,8 @@
 HTML output of a notebook cell.  It never renders unsanitized in the app page,
 whether or not the notebook is trusted: output that sanitizing would visibly
 change (styles, scripts, maps, plots, ...) renders in an opaque frame, which
-follows the app's theme; the rest renders inline, sanitized.
+follows the app's theme; the rest renders inline, sanitized.  (Static export,
+which can't size frames, is the one exception; see HtmlOutput.)
 */
 
 import { useMemo, useRef } from "react";
@@ -17,10 +18,6 @@ import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 import AutosizedIframe from "./autosized-iframe";
 import { useFrameTheme, withFrameTheme } from "./frame-theme";
 import { sanitizedHtmlIsFaithful } from "./html-fidelity";
-
-export function htmlOutputNeedsFrame(html: string): boolean {
-  return shouldIsolateHtmlOutput(html) || !sanitizedHtmlIsFaithful(html);
-}
 
 export function FramedHtml({ html }: { html: string }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -50,6 +47,21 @@ export function SanitizedHtml({ html }: { html: string }) {
 
 export default function HtmlOutput({ value }: { value: unknown }) {
   const html = `${value ?? ""}`;
-  const framed = useMemo(() => htmlOutputNeedsFrame(html), [html]);
-  return framed ? <FramedHtml html={html} /> : <SanitizedHtml html={html} />;
+  const { staticExport } = useFileContext();
+  const faithful = useMemo(() => sanitizedHtmlIsFaithful(html), [html]);
+  if (shouldIsolateHtmlOutput(html)) {
+    return <FramedHtml html={html} />;
+  }
+  if (faithful) {
+    return <SanitizedHtml html={html} />;
+  }
+  if (staticExport) {
+    // A static document can't size a frame to its content, so styled output
+    // renders inline under the exporter's own policy, as export always did
+    // (html-ssr with the safety floor: React renders no scripts or on*
+    // handlers).  Isolated output above stays framed; the exported document
+    // sizes those frames (STATIC_RESIZE_LISTENER).
+    return <HTML value={html} />;
+  }
+  return <FramedHtml html={html} />;
 }

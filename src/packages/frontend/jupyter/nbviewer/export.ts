@@ -18,6 +18,7 @@ import { renderToString } from "react-dom/server";
 import { createElement, CSSProperties } from "react";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import type { CoCalcJupyter } from "@cocalc/jupyter/ipynb/parse";
+import { STATIC_RESIZE_LISTENER } from "@cocalc/frontend/jupyter/output-messages/autosized-iframe";
 
 export default function exportToHTML({
   title,
@@ -58,6 +59,7 @@ export default function exportToHTML({
     {
       value: {
         noSanitize: true,
+        staticExport: true,
         is_visible: true,
         disableMarkdownCodebar: true,
         disableExtraButtons: true,
@@ -77,6 +79,7 @@ export default function exportToHTML({
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/${codemirror}/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${katex}/dist/katex.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@${antd}/dist/antd.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+${STATIC_RESIZE_LISTENER}
 </head>
 <body>
 ${body}

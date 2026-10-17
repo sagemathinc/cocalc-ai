@@ -226,6 +226,23 @@ function resizeAccessibleChildIframes(doc: Document, depth: number): void {
   }
 }
 
+// For a static document (notebook export), which has no React to listen for
+// the bridge's height messages: sizes each frame from the messages its own
+// window sends, with the same cap.  (Unlike the app, no rate limit is needed:
+// the exported document is the user's to view.)
+export const STATIC_RESIZE_LISTENER = `<script>
+window.addEventListener("message", function (event) {
+  var data = event.data;
+  if (!data || data.type !== ${JSON.stringify(RESIZE_MESSAGE_TYPE)} || typeof data.height !== "number" || !isFinite(data.height)) return;
+  var frames = document.getElementsByTagName("iframe");
+  for (var i = 0; i < frames.length; i++) {
+    if (frames[i].contentWindow === event.source) {
+      frames[i].style.height = Math.min(${MAX_HEIGHT}, Math.max(${MIN_HEIGHT}, Math.ceil(data.height) + ${HEIGHT_SLACK})) + "px";
+    }
+  }
+});
+</script>`;
+
 function normalizeHeight(height: number): number {
   if (!Number.isFinite(height)) return DEFAULT_HEIGHT;
   return Math.min(
@@ -279,11 +296,13 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
   function send() {
     parent.postMessage({ type: ${JSON.stringify(RESIZE_MESSAGE_TYPE)}, id: id, height: height() }, "*");
   }
-  if (typeof ResizeObserver !== "undefined") {
-    var observer = new ResizeObserver(send);
-    if (document.documentElement) observer.observe(document.documentElement);
-    if (document.body) observer.observe(document.body);
-  }
+  // This runs first, before the content (and its body) is parsed.
+  var observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(send) : null;
+  if (observer && document.documentElement) observer.observe(document.documentElement);
+  document.addEventListener("DOMContentLoaded", function () {
+    if (observer && document.body) observer.observe(document.body);
+    send();
+  });
   window.addEventListener("load", send);
   setTimeout(send, 0);
   setTimeout(send, 100);
@@ -292,11 +311,10 @@ function injectResizeBridge(srcDoc: string, resizeId: string): string {
   setTimeout(send, 2500);
 })();
 </script>`;
-  if (/<\/body\s*>/i.test(srcDoc)) {
-    return srcDoc.replace(/<\/body\s*>/i, `${script}</body>`);
-  }
-  if (/<\/html\s*>/i.test(srcDoc)) {
-    return srcDoc.replace(/<\/html\s*>/i, `${script}</html>`);
-  }
-  return `${srcDoc}${script}`;
+  // Prepended, never inserted: finding a place inside the content would mean
+  // parsing it like the browser does ("</body>" may be inside a script).  The
+  // parser keeps this in the head and merges a later <html>'s attributes, and
+  // an iframe srcdoc document is never in quirks mode, so a later doctype
+  // changes nothing.
+  return `${script}${srcDoc}`;
 }
