@@ -18,7 +18,6 @@ import {
   upgradeHostSoftware,
 } from "@cocalc/server/conat/api/hosts";
 import { computeHostOperationalAvailability } from "@cocalc/server/conat/api/hosts-normalization";
-import { fleetCampaignSupersededReason } from "./runtime-fleet-supersession";
 import {
   hostOverridesEveryRolloutTarget,
   loadHostRuntimeDeploymentTargetKeys,
@@ -971,27 +970,6 @@ async function handleRollout(op: LroSummary): Promise<void> {
     if (recoveryStopGateBaseline.recovery_level === "unknown") {
       throw new Error("fleet rollout requires known project recovery health");
     }
-    // A resumed campaign must not deploy over intent that moved on while it
-    // was paused, including changes that raced the resume.
-    const resumed = Array.isArray(input.resumes) && input.resumes.length > 0;
-    const assertNotSuperseded = async () => {
-      if (!resumed) return;
-      const superseded = await fleetCampaignSupersededReason({
-        op_id: op.op_id,
-        version,
-        components,
-        host_ids: hostIds,
-        completed_host_ids: Array.from(resultByHost.values())
-          .filter((result) => result.status === "succeeded")
-          .map((result) => result.host_id),
-      });
-      if (superseded) {
-        throw new Error(
-          `fleet rollout paused: superseded since it was created: ${superseded}`,
-        );
-      }
-    };
-    await assertNotSuperseded();
     await publishProgress({
       phase: "starting",
       message: `starting paced rollout of ${components.join(", ")} from ${version} (latency gate: ${latencyGate})`,
@@ -1091,7 +1069,6 @@ async function handleRollout(op: LroSummary): Promise<void> {
         host_ids: hostIds,
         latency_gate: latencyGate,
       });
-      await assertNotSuperseded();
       await publishProgress({
         phase: "promoting",
         message: "promoting successful rollout as the bay default",

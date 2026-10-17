@@ -30,7 +30,6 @@ import type {
   HostRuntimeFleetLatencyGate,
   HostRuntimeFleetRolloutRequest,
   HostRuntimeFleetRolloutResponse,
-  HostRuntimeFleetRolloutResumeRequest,
   HostProjectRow,
   HostProjectsResponse,
   HostProjectStateFilter,
@@ -148,12 +147,10 @@ import {
   updateCopyStatus as updateCopyStatusDb,
 } from "@cocalc/server/projects/copy-db";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
-import { fleetCampaignSupersededReason } from "@cocalc/server/hosts/runtime-fleet-supersession";
 import {
   createLro,
   getLro,
   listLro,
-  requeueFailedLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -8977,110 +8974,6 @@ function normalizeFleetRolloutLatencyGate(
   if (value == null || value === "") return "enforce";
   if (value === "enforce" || value === "advisory") return value;
   throw new Error('latency_gate must be "enforce" or "advisory"');
-}
-
-export async function resumeHostRuntimeFleetRollout({
-  account_id,
-  op_id,
-  reason,
-  latency_gate,
-}: HostRuntimeFleetRolloutResumeRequest & {
-  account_id?: string;
-}): Promise<HostRuntimeFleetRolloutResponse> {
-  const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
-  const opId = `${op_id ?? ""}`.trim();
-  const resumeReason = `${reason ?? ""}`.trim();
-  if (!opId) throw new Error("op_id is required");
-  if (!resumeReason) {
-    throw new Error("a reason is required to resume a fleet rollout");
-  }
-  const op = await getLro(opId);
-  if (!op || op.kind !== HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND) {
-    throw new Error(`fleet rollout ${opId} not found`);
-  }
-  // Only a campaign the worker paused (a failed host, a health gate) can
-  // continue. A canceled campaign stays canceled.
-  if (op.status !== "failed" || op.progress_summary?.phase !== "paused") {
-    throw new Error(
-      `fleet rollout ${opId} is ${op.status}${op.progress_summary?.phase ? ` (${op.progress_summary.phase})` : ""}; only a paused campaign can be resumed`,
-    );
-  }
-  const previousGate = normalizeFleetRolloutLatencyGate(op.input?.latency_gate);
-  const latencyGate =
-    latency_gate == null
-      ? previousGate
-      : normalizeFleetRolloutLatencyGate(latency_gate);
-  const resumes = Array.isArray(op.input?.resumes) ? op.input.resumes : [];
-  const completedHostIds = (
-    Array.isArray(op.progress_summary?.hosts) ? op.progress_summary.hosts : []
-  )
-    .filter((host: any) => host?.status === "succeeded")
-    .map((host: any) => `${host.host_id}`);
-  const superseded = await fleetCampaignSupersededReason({
-    op_id: opId,
-    version: `${op.input?.version ?? ""}`.trim(),
-    components: normalizeFleetRolloutComponents(op.input?.components),
-    host_ids: Array.isArray(op.input?.host_ids) ? op.input.host_ids : [],
-    completed_host_ids: completedHostIds,
-  });
-  if (superseded) {
-    throw new Error(
-      `cannot resume fleet rollout ${opId}: ${superseded}; start a new campaign instead`,
-    );
-  }
-  // The worker checks again when it picks the campaign up, which catches
-  // intent that changes between this check and the requeue.
-  const requeued = await requeueFailedLro({
-    op_id: opId,
-    kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
-    input_patch: {
-      latency_gate: latencyGate,
-      resumes: [
-        ...resumes,
-        {
-          at: new Date().toISOString(),
-          by: requested_by,
-          reason: resumeReason,
-          paused_error: op.error ?? null,
-          latency_gate: latencyGate,
-        },
-      ],
-    },
-  });
-  if (!requeued) {
-    throw new Error(
-      `fleet rollout ${opId} changed while resuming; inspect it and retry`,
-    );
-  }
-  await publishLroSummary({
-    scope_type: requeued.scope_type,
-    scope_id: requeued.scope_id,
-    summary: requeued,
-  });
-  await publishLroEvent({
-    scope_type: requeued.scope_type,
-    scope_id: requeued.scope_id,
-    op_id: requeued.op_id,
-    event: {
-      type: "progress",
-      ts: Date.now(),
-      phase: "queued",
-      message: `paced project-host rollout resumed (latency gate: ${latencyGate}): ${resumeReason}`,
-      progress: requeued.progress_summary?.progress ?? 0,
-      detail: requeued.input,
-    },
-  }).catch(() => undefined);
-  return {
-    op_id: requeued.op_id,
-    scope_type: "hub",
-    scope_id: requeued.scope_id,
-    service: PERSIST_SERVICE,
-    stream_name: lroStreamName(requeued.op_id),
-    kind: HOST_RUNTIME_FLEET_ROLLOUT_LRO_KIND,
-    host_ids: Array.isArray(requeued.input?.host_ids)
-      ? requeued.input.host_ids
-      : [],
-  };
 }
 
 export async function upgradeHostSoftware({

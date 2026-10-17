@@ -398,43 +398,6 @@ export async function updateLro({
   return rows[0] as LroSummary | undefined;
 }
 
-// Put a failed operation back in the queue for its worker, keeping its
-// progress_summary (the worker's resume state) and merging input_patch into
-// its input. Returns undefined unless the operation was failed and not
-// dismissed.
-export async function requeueFailedLro({
-  op_id,
-  kind,
-  input_patch,
-  ttl_ms = 7 * 24 * 60 * 60 * 1000,
-}: {
-  op_id: string;
-  kind: string;
-  input_patch: Record<string, unknown>;
-  ttl_ms?: number;
-}): Promise<LroSummary | undefined> {
-  await ensureLroSchema();
-  const { rows } = await pool().query(
-    `UPDATE long_running_operations
-        SET status = 'queued',
-            error = NULL,
-            finished_at = NULL,
-            owner_type = NULL,
-            owner_id = NULL,
-            heartbeat_at = NULL,
-            input = COALESCE(input, '{}'::jsonb) || $3::jsonb,
-            expires_at = GREATEST(expires_at, now() + ($4::text || ' milliseconds')::interval),
-            updated_at = now()
-      WHERE op_id = $1
-        AND kind = $2
-        AND status = 'failed'
-        AND dismissed_at IS NULL
-      RETURNING *`,
-    [op_id, kind, JSON.stringify(input_patch), ttl_ms],
-  );
-  return rows[0] as LroSummary | undefined;
-}
-
 export async function mergeLroResult({
   op_id,
   result,
@@ -458,24 +421,17 @@ export async function mergeLroResult({
   return rows[0] as LroSummary | undefined;
 }
 
-// With if_status, dismiss only while the operation still has one of those
-// statuses, checked in the same UPDATE: a caller that validated "failed" must
-// not dismiss an operation that was requeued meanwhile, which would leave a
-// queued operation that no worker ever claims.
 export async function dismissLro({
   op_id,
   dismissed_by,
-  if_status,
 }: {
   op_id: string;
   dismissed_by?: string | null;
-  if_status?: LroStatus[];
 }): Promise<LroSummary | undefined> {
   return await updateLro({
     op_id,
     dismissed_at: new Date(),
     dismissed_by: dismissed_by ?? null,
-    if_status,
   });
 }
 

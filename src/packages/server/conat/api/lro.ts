@@ -205,14 +205,12 @@ export async function dismiss({
   const updated = await dismissLro({
     op_id,
     dismissed_by: account_id ?? null,
-    if_status: DISMISSABLE_STATUSES,
   });
-  if (!updated) {
-    throw new Error("can only dismiss completed operations");
+  if (updated) {
+    await publishLroSummary({
+      scope_type: updated.scope_type,
+      scope_id: updated.scope_id,
+      summary: updated,
+    });
   }
-  await publishLroSummary({
-    scope_type: updated.scope_type,
-    scope_id: updated.scope_id,
-    summary: updated,
-  });
 }

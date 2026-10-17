@@ -255,14 +255,6 @@ export interface HostRuntimeFleetRolloutRequest {
 
 export type HostRuntimeFleetLatencyGate = "enforce" | "advisory";
 
-export interface HostRuntimeFleetRolloutResumeRequest {
-  op_id: string;
-  // Why it is safe to continue; recorded in the campaign input.
-  reason: string;
-  // Change the campaign's latency gate from now on.
-  latency_gate?: HostRuntimeFleetLatencyGate;
-}
-
 export interface HostRuntimeFleetRolloutResponse {
   op_id: string;
   scope_type: "hub";
@@ -1890,7 +1882,6 @@ export const hosts = {
   reconcileHostRuntimeDeployments: authFirstRequireAccount,
   rollbackHostRuntimeDeployments: authFirstRequireAccount,
   rolloutHostRuntimeFleet: authFirstRequireAccount,
-  resumeHostRuntimeFleetRollout: authFirstRequireAccount,
   getHostManagedComponentStatus: authFirstRequireAccount,
   rolloutHostManagedComponents: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
@@ -2242,11 +2233,6 @@ export interface Hosts {
   }) => Promise<HostLroResponse>;
   rolloutHostRuntimeFleet: (
     opts: HostRuntimeFleetRolloutRequest & { account_id?: string },
-  ) => Promise<HostRuntimeFleetRolloutResponse>;
-  // Continue a paused (failed) fleet rollout campaign: it keeps its saved
-  // health baseline and completed hosts, and rechecks the gates first.
-  resumeHostRuntimeFleetRollout: (
-    opts: HostRuntimeFleetRolloutResumeRequest & { account_id?: string },
   ) => Promise<HostRuntimeFleetRolloutResponse>;
 
   // host calls getBackupConfig function to get backup configuration

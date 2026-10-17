@@ -894,11 +894,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "restarts project-host control daemons across a fleet cohort",
   },
-  "hosts.resumeHostRuntimeFleetRollout": {
-    decision: "fresh-auth-required",
-    reason:
-      "continues restarting project-host control daemons across a fleet cohort, possibly with a relaxed latency gate",
-  },
   "hosts.setHostAccess": {
     decision: "fresh-auth-required",
     reason: "host access mutation",

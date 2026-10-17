@@ -25,7 +25,6 @@ type Capture = {
     record_runtime_deployments?: boolean;
   }>;
   fleetRolloutRequests?: Array<Record<string, any>>;
-  fleetResumeRequests?: Array<Record<string, any>>;
   reconciles: string[];
   reconcileRequests?: Array<{
     id: string;
@@ -161,7 +160,6 @@ function makeDeps(
   capture.reconcileRequests ??= [];
   capture.upgradeRequests ??= [];
   capture.fleetRolloutRequests ??= [];
-  capture.fleetResumeRequests ??= [];
   capture.hostRootfsImageRequests ??= [];
   capture.hostProjectsRequests ??= [];
   capture.hostProjectStops ??= [];
@@ -284,18 +282,6 @@ function makeDeps(
                 stream_name: "lro-fleet-op-1",
                 kind: "host-runtime-fleet-rollout",
                 host_ids: request.host_ids,
-              };
-            },
-            resumeHostRuntimeFleetRollout: async (request) => {
-              capture.fleetResumeRequests!.push(request);
-              return {
-                op_id: request.op_id,
-                scope_type: "hub",
-                scope_id: "fleet-scope-1",
-                service: "persist",
-                stream_name: `lro-${request.op_id}`,
-                kind: "host-runtime-fleet-rollout",
-                host_ids: ["quiet-host", "busy-host"],
               };
             },
             reconcileHostSoftware: async ({
@@ -1535,41 +1521,6 @@ test("host deploy rollout-fleet passes an advisory latency gate and rejects othe
   assert.equal(capture.fleetRolloutRequests?.[0]?.latency_gate, "advisory");
   await assert.rejects(run("off"), /latency-gate/);
   assert.equal(capture.fleetRolloutRequests?.length, 1);
-});
-
-test("host deploy resume-fleet requeues a paused campaign with a reason", async () => {
-  const capture: Capture = {
-    upgrades: [],
-    reconciles: [],
-    rollouts: [],
-    runtimeDeploymentReconciles: [],
-    runtimeDeploymentStatusRequests: [],
-    runtimeDeploymentSetRequests: [],
-  };
-  const program = new Command();
-  registerHostCommand(program, makeDeps(capture));
-  await program.parseAsync([
-    "node",
-    "test",
-    "host",
-    "deploy",
-    "resume-fleet",
-    "fleet-op-7",
-    "--reason",
-    "latency warning from 20 samples at 1am",
-    "--latency-gate",
-    "advisory",
-    "--wait",
-  ]);
-  assert.deepEqual(capture.fleetResumeRequests, [
-    {
-      op_id: "fleet-op-7",
-      reason: "latency warning from 20 samples at 1am",
-      latency_gate: "advisory",
-    },
-  ]);
-  assert.equal(capture.data.status, "succeeded");
-  assert.equal(capture.data.op_id, "fleet-op-7");
 });
 
 test("host upgrade --wait emits progress on stderr in json output mode", async () => {
