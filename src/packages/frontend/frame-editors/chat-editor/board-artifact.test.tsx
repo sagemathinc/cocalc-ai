@@ -331,7 +331,7 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
     expect(target).toBe("*");
     expect(transfer).toHaveLength(1);
     expect(transfer[0]).toBeInstanceOf(TestPort);
-    // The port answers: here the pending package's check refuses, in its words.
+    // The port answers: Sagebrush's check refuses (this board asks nothing).
     const reply: any = await replyOn(transfer[0], SUBMIT);
     expect(reply).toMatchObject({ sagebrush: "refused", id: SUBMIT.id });
     expect(deliver).not.toHaveBeenCalled();

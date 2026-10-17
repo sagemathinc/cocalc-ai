@@ -956,6 +956,9 @@ importers:
       '@jitl/quickjs-wasmfile-release-asyncify':
         specifier: 0.32.0
         version: 0.32.0
+      '@sagemathinc/sagebrush-board':
+        specifier: 0.2.0
+        version: 0.2.0
       immer:
         specifier: ^11.1.0
         version: 11.1.0
