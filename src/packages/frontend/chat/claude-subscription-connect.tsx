@@ -129,6 +129,12 @@ export function ClaudeSubscriptionConnect({
   // A code that could not be submitted stays editable for another try.
   const [codeError, setCodeError] = useState("");
   const [open, setOpen] = useState(false);
+  // Named while connecting, so the picker never shows a generic label; a
+  // reconnect keeps the subscription's existing name.
+  const [name, setName] = useState("");
+  const nameRef = useRef(name);
+  nameRef.current = name;
+  const reconnecting = useRef(false);
   // Briefly confirm success after the sign-in panel closes.
   const [justConnected, setJustConnected] = useState(false);
   useEffect(() => {
@@ -157,6 +163,7 @@ export function ClaudeSubscriptionConnect({
   );
   const start = async (credentialId?: string) => {
     const started = ++attempt.current;
+    reconnecting.current = credentialId != null;
     setBusy(true);
     setLogin(undefined);
     setSubmitting(false);
@@ -261,6 +268,16 @@ export function ClaudeSubscriptionConnect({
           }
           if (next.state === "completed" && next.credentialId && !completed) {
             completed = true;
+            const label = nameRef.current.trim().slice(0, 60);
+            if (label && !reconnecting.current) {
+              try {
+                await webapp_client.conat_client.hub.system.updateClaudeSubscriptionLabel(
+                  { id: next.credentialId, label },
+                );
+              } catch {
+                // Connected either way; it can be renamed in settings.
+              }
+            }
             await connected(next.credentialId);
             if (active && started === attempt.current) {
               // Done: close the sign-in rather than leave it on screen.
@@ -338,7 +355,28 @@ export function ClaudeSubscriptionConnect({
           />
         ) : (
           <>
-            <Step number={1} title="Sign in to Claude">
+            {!reconnecting.current && (
+              <Step number={1} title="Name this subscription">
+                <Input
+                  aria-label="Subscription name"
+                  placeholder="e.g. Max 20x (work)"
+                  maxLength={60}
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+                <Typography.Text
+                  type="secondary"
+                  style={{ display: "block", marginTop: 4 }}
+                >
+                  Shown wherever you choose how agents pay, e.g. to switch
+                  agents to another subscription.
+                </Typography.Text>
+              </Step>
+            )}
+            <Step
+              number={reconnecting.current ? 1 : 2}
+              title="Sign in to Claude"
+            >
               <Button
                 type={codeSubmitted ? "default" : "primary"}
                 href={login?.verificationUrl}
@@ -358,7 +396,10 @@ export function ClaudeSubscriptionConnect({
                   : "Preparing sign-in..."}
               </Button>
             </Step>
-            <Step number={2} title="Paste the authentication code">
+            <Step
+              number={reconnecting.current ? 2 : 3}
+              title="Paste the authentication code"
+            >
               {!login?.verificationUrl ? (
                 <Typography.Text type="secondary">
                   Claude shows the code after you sign in.

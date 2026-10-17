@@ -71,6 +71,12 @@ test.each([false, true])(
             resolveSubmit = () => resolve(undefined);
           }),
       );
+    const rename = jest
+      .spyOn(
+        webapp_client.conat_client.hub.system,
+        "updateClaudeSubscriptionLabel",
+      )
+      .mockResolvedValue({ updated: true } as any);
     const onConnected = jest.fn();
     try {
       render(
@@ -92,6 +98,15 @@ test.each([false, true])(
         project_id: "project-a",
         ...(reconnect ? { credential_id: "credential-1" } : {}),
       });
+      // A new subscription is named while connecting; a reconnect keeps its name.
+      const nameField = screen.queryByRole("textbox", {
+        name: "Subscription name",
+      });
+      if (reconnect) {
+        expect(nameField).toBeNull();
+      } else {
+        await user.type(nameField!, "Max 20x (work)");
+      }
       expect(
         screen.getByRole("link", { name: "Open Claude sign-in" }),
       ).toHaveAttribute("href", "https://claude.com/oauth/authorize");
@@ -136,11 +151,26 @@ test.each([false, true])(
         project_id: "project-a",
         id: "login-1",
       });
-      expect(onConnected).toHaveBeenCalledWith("credential-1");
+      await waitFor(() =>
+        expect(onConnected).toHaveBeenCalledWith("credential-1"),
+      );
+      if (reconnect) {
+        expect(rename).not.toHaveBeenCalled();
+      } else {
+        expect(rename).toHaveBeenCalledWith({
+          id: "credential-1",
+          label: "Max 20x (work)",
+        });
+        // Named before the caller hears about it, so it shows the name.
+        expect(rename.mock.invocationCallOrder[0]).toBeLessThan(
+          onConnected.mock.invocationCallOrder[0],
+        );
+      }
       expect(screen.getByRole("status")).toHaveTextContent(
         "Claude subscription connected.",
       );
     } finally {
+      rename.mockRestore();
       start.mockRestore();
       status.mockRestore();
       submit.mockRestore();
