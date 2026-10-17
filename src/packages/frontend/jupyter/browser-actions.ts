@@ -64,10 +64,7 @@ import { getExportKernelSpec } from "./export-kernelspec";
 import { waitForPrintImages } from "./print-images";
 import { initializeExport } from "./export-startup";
 import { downloadHTML } from "./download-html";
-import {
-  JUPYTER_MIMETYPES,
-  splitSourceLines,
-} from "@cocalc/jupyter/util/misc";
+import { JUPYTER_MIMETYPES, splitSourceLines } from "@cocalc/jupyter/util/misc";
 import { parse } from "path";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import getKernelSpec from "@cocalc/frontend/jupyter/kernelspecs";
@@ -211,9 +208,7 @@ function normalizePortableIpynbForComparison(ipynb: any): any {
       },
     );
     if (!complete) continue;
-    cell.source = wasArray
-      ? splitSourceLines(rewritten)
-      : rewritten;
+    cell.source = wasArray ? splitSourceLines(rewritten) : rewritten;
     delete cell.attachments;
   }
   return normalized;
@@ -1526,10 +1521,8 @@ export class JupyterActions extends JupyterActions0 {
           "bug -- ipywidgets_state must be defined (browser-actions)",
         );
       }
-      this.widget_manager = new WidgetManager({
-        ipywidgets_state: ipywidgets_state!,
-        actions: this,
-      });
+      this.syncWidgetManagerWithTrust();
+      this.store.on("change", this.syncWidgetManagerWithTrust);
       const rtcLastChangedMsAtReady = this.getRtcLastChangedMs();
 
       // Start watch/bootstrap decision before local user heartbeat writes a
@@ -1745,9 +1738,38 @@ export class JupyterActions extends JupyterActions0 {
     await this.format_cells(this.store.get_cell_ids_list(), sync);
   }
 
+  // Widgets run code from the notebook's saved widget state (built-in views
+  // insert HTML, custom widgets load modules), so they are active output like
+  // trusted HTML and JavaScript: the widget manager exists only while the
+  // notebook is trusted, and is torn down if trust is lost.
+  private syncWidgetManagerWithTrust = (): void => {
+    if (this.isClosed()) return;
+    const trusted = !!this.store?.get("trust");
+    if (trusted && this.widget_manager == null) {
+      const ipywidgets_state = this.syncdb?.ipywidgets_state;
+      if (
+        ipywidgets_state == null ||
+        ipywidgets_state.get_state() == "closed"
+      ) {
+        return;
+      }
+      this.widget_manager = new WidgetManager({
+        ipywidgets_state,
+        actions: this,
+      });
+    } else if (!trusted && this.widget_manager != null) {
+      const widget_manager = this.widget_manager;
+      this.widget_manager = undefined;
+      widget_manager.close();
+    }
+  };
+
   public async close(): Promise<void> {
     try {
       if (this.isClosed()) return;
+      this.store?.removeListener?.("change", this.syncWidgetManagerWithTrust);
+      this.widget_manager?.close();
+      this.widget_manager = undefined;
       this.exportStartup?.abort();
       this.exportStartup = undefined;
       this.recordJupyterOpenIncomplete("editor_closed");

@@ -322,7 +322,11 @@ import {
   releaseProjectAppPrivateHostname as releaseProjectAppPrivateHostnameRaw,
   reserveProjectAppPrivateHostname as reserveProjectAppPrivateHostnameRaw,
 } from "@cocalc/server/app-private-hostnames";
-import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOrigin,
+  getClusterBayPublicOrigins,
+  getSitePublicOrigin,
+} from "@cocalc/server/bay-public-origin";
 import { conat } from "@cocalc/backend/conat";
 import {
   createInterBayAccountLocalClient,
@@ -8223,7 +8227,7 @@ export async function getPublicSiteUrl({
   account_id?: string;
   project_id?: string;
   host_id?: string;
-}): Promise<{ url: string }> {
+}): Promise<{ url: string; browser_origins?: string[] }> {
   if (!account_id && !project_id && !host_id) {
     throw Error("must be signed in");
   }
@@ -8238,7 +8242,32 @@ export async function getPublicSiteUrl({
   if (basePath?.length) {
     url = `${url.replace(/\/+$/, "")}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
   }
-  return { url: url.replace(/\/+$/, "") };
+  url = url.replace(/\/+$/, "");
+  if (!host_id) return { url };
+  return { url, browser_origins: await getBrowserOriginsForProjectHosts(url) };
+}
+
+// The complete list, or undefined if any lookup failed: project hosts replace
+// their list only with a complete one and otherwise keep the last good list.
+async function getBrowserOriginsForProjectHosts(
+  url: string,
+): Promise<string[] | undefined> {
+  const origins = new Set<string>([new URL(url).origin]);
+  try {
+    const site = await getSitePublicOrigin();
+    if (site) origins.add(site);
+    for (const origin of Object.values(
+      await getClusterBayPublicOrigins({ strict: true }),
+    )) {
+      origins.add(origin);
+    }
+  } catch (err) {
+    logger.warn("unable to list bay public origins for project hosts", {
+      err: `${err}`,
+    });
+    return undefined;
+  }
+  return [...origins];
 }
 
 function clean(v?: string): string | undefined {

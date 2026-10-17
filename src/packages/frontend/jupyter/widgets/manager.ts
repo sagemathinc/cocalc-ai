@@ -46,6 +46,22 @@ export class WidgetManager {
   private state_lock: Set<string> = new Set();
   private watching: Set<string> = new Set();
   public k3dObjectIds = new Set<number>();
+  private closed = false;
+  // React roots of nested Output widget content and their containers,
+  // unmounted on close() or once their container has left the page.
+  public outputRoots = new Map<ReactDOM.Root, Element>();
+
+  addOutputRoot = (root: ReactDOM.Root, container: Element): void => {
+    for (const [old, div] of this.outputRoots) {
+      if (!div.isConnected) {
+        try {
+          old.unmount();
+        } catch {}
+        this.outputRoots.delete(old);
+      }
+    }
+    this.outputRoots.set(root, container);
+  };
 
   constructor({
     ipywidgets_state,
@@ -61,15 +77,88 @@ export class WidgetManager {
     }
     const provider = new Environment(this);
     this.manager = createWidgetManager(provider);
+    this.guardCodeActivation();
 
     this.initAllModels();
-    this.ipywidgets_state.on("change", async (keys) => {
-      for (const key of keys) {
-        const [, model_id, type] = JSON.parse(key);
-        this.handleIpwidgetsTableChange({ model_id, type });
-      }
-    });
+    this.ipywidgets_state.on("change", this.handleStateChange);
   }
+
+  private handleStateChange = async (keys) => {
+    if (this.closed) return;
+    for (const key of keys) {
+      const [, model_id, type] = JSON.parse(key);
+      this.handleIpwidgetsTableChange({ model_id, type });
+    }
+  };
+
+  isClosed = (): boolean => this.closed;
+
+  // Every model and view class the widget library uses is loaded through
+  // loadClass, and every model and view is created through new_model,
+  // create_view or render. Refuse these once closed, and recheck after a
+  // class finishes loading, so no widget code (module, constructor,
+  // deserializer, view.render) starts after close(). Constructing a model or
+  // view happens synchronously right after its class resolves.
+  private guardCodeActivation = (): void => {
+    const manager = this.manager as any;
+    const guard = (name: string, recheckAfter: boolean) => {
+      const original = manager?.[name];
+      if (typeof original != "function") return;
+      manager[name] = async (...args) => {
+        this.assertOpen();
+        const result = await original.apply(manager, args);
+        if (recheckAfter) this.assertOpen();
+        return result;
+      };
+    };
+    guard("loadClass", true);
+    guard("new_model", false);
+    guard("create_view", false);
+    guard("render", false);
+  };
+
+  // Stop all widget activity: no more state updates are applied, no messages
+  // go to the kernel, and every model is closed (which removes its views).
+  // Used when the notebook stops being trusted. The shared ipywidgets_state
+  // itself belongs to the syncdb and stays open.
+  close = (): void => {
+    if (this.closed) return;
+    this.closed = true;
+    this.ipywidgets_state.removeListener("change", this.handleStateChange);
+    const closeModel = (promise) => {
+      Promise.resolve(promise)
+        .then((model) => {
+          // comm_closed=true: our comm's close() is not implemented.
+          model?.close?.(true);
+        })
+        .catch(() => {});
+    };
+    const manager = this.manager as any;
+    for (const id of Object.keys(manager?._models ?? {})) {
+      closeModel(manager._models[id]);
+    }
+    for (const root of this.outputRoots.keys()) {
+      try {
+        root.unmount();
+      } catch {}
+    }
+    this.outputRoots.clear();
+    // Work that started before close() (e.g. a model whose state was still
+    // loading) may register a model afterwards: close those as they appear.
+    if (manager != null) {
+      manager.register_model = (_model_id: string, promise) => {
+        closeModel(promise);
+      };
+    }
+  };
+
+  // Every await in the widget code paths can cross a close(): check again
+  // before doing anything with the result.
+  assertOpen = (): void => {
+    if (this.closed) {
+      throw Error("widgets are disabled because the notebook is not trusted");
+    }
+  };
 
   private initAllModels = async () => {
     /*
@@ -84,7 +173,7 @@ VBox([s1, s2])
     if (this.ipywidgets_state.get_state() == "init") {
       await once(this.ipywidgets_state, "ready");
     }
-    if (this.ipywidgets_state.get_state() != "ready") {
+    if (this.ipywidgets_state.get_state() != "ready" || this.closed) {
       return;
     }
     for (const { model_id, type } of this.ipywidgets_state.keys()) {
@@ -155,6 +244,7 @@ VBox([s1, s2])
     merge: boolean,
   ): Promise<void> => {
     const model = await this.manager.get_model(model_id);
+    if (this.closed) return;
     log("updateModel", { model_id, merge, changed });
     if (model.module == "k3d") {
       // k3d invents its own ad hoc inter-model reference scheme, so we have
@@ -163,6 +253,7 @@ VBox([s1, s2])
         while (!isSubset(changed.object_ids, this.k3dObjectIds)) {
           log("k3d -- waiting for object_ids", changed.object_ids);
           await delay(K3D_DELAY_MS);
+          if (this.closed) return;
         }
       }
     }
@@ -173,6 +264,7 @@ VBox([s1, s2])
     }
 
     changed = await this.deserializeState(model, changed);
+    if (this.closed) return;
 
     if (changed.hasOwnProperty("outputs") && changed["outputs"] == null) {
       // It can definitely be 'undefined' but set, e.g., the 'out.clear_output()' example at
@@ -199,6 +291,7 @@ VBox([s1, s2])
     }
 
     const success = await this.dereferenceModelLinks(changed);
+    if (this.closed) return;
     if (!success) {
       console.warn(
         "update model suddenly references not known models -- can't handle this yet (TODO!); ignoring update.",
@@ -259,8 +352,9 @@ VBox([s1, s2])
     this.state_lock.add(model_id);
     log("handleValueChange: got model and now making this change -- ", changed);
     await this.updateModel(model_id, changed, true);
+    if (this.closed) return;
     const model = await this.manager.get_model(model_id);
-    if (model != null) {
+    if (model != null && !this.closed) {
       await model.state_change;
     }
     this.state_lock.delete(model_id);
@@ -308,7 +402,7 @@ VBox([s1, s2])
     */
     const { buffer_paths, buffers } =
       await this.ipywidgets_state.getModelBuffers(model_id);
-    if (buffer_paths.length == 0) {
+    if (buffer_paths.length == 0 || this.closed) {
       return;
     }
     log("handleBuffersChange: ", { model_id, buffer_paths, buffers });
@@ -325,7 +419,9 @@ VBox([s1, s2])
     }
     if (len(change) > 0) {
       const model = await this.manager.get_model(model_id);
+      if (this.closed) return;
       const deserializedChange = await this.deserializeState(model, change);
+      if (this.closed) return;
       log("handleBuffersChange: settings ", model_id, {
         change,
         deserializedChange,
@@ -342,12 +438,13 @@ VBox([s1, s2])
   private ipywidgets_state_MessageChange = async (model_id: string) => {
     // does this needs to tie into openCommChannel in the Environment...?
     const x = await this.ipywidgets_state.getMessage(model_id);
-    if (x == null) {
+    if (x == null || this.closed) {
       return;
     }
     const { message, buffers } = x;
     log("handleMessageChange: ", model_id, message, buffers);
     const model = await this.manager.get_model(model_id);
+    if (this.closed) return;
     // Sending DataViews is critical, e.g., it's assumed by ipycanvas
     //    https://github.com/sagemathinc/cocalc/issues/5159
     const views = buffers.map((buffer) => new DataView(buffer));
@@ -363,6 +460,7 @@ VBox([s1, s2])
     // than once at a time.
     this.watching.add(model_id);
     const model = await this.manager.get_model(model_id);
+    if (this.closed) return;
     this.last_changed[model_id] = { last_changed: 0 };
     model.on("change", this.handleModelChange);
   };
@@ -375,7 +473,9 @@ VBox([s1, s2])
     const { model_id } = model;
     let changed = model.changed;
     log("handleModelChange", model_id, changed);
+    if (this.closed) return;
     await model.state_change;
+    if (this.closed) return;
     if (this.state_lock.has(model_id)) {
       log("handleModelChange: ignoring change due to state lock");
       return;
@@ -438,6 +538,8 @@ VBox([s1, s2])
     // and RTC.
     const deserialized: DeserializedModelState = {};
     await this.setBuffers(model_id, serialized_state);
+    // Deserializers are widget code.
+    this.assertOpen();
     for (const k in serialized_state) {
       const deserialize = serializers[k]?.deserialize;
       if (
@@ -541,7 +643,11 @@ VBox([s1, s2])
     buffers?: ArrayBuffer[];
   }): Promise<IClassicComm> => {
     log("openCommChannel", { comm_id, target_name, data, buffers, _metadata });
+    // Opening the comm is the last step before a model (and possibly its
+    // custom module) is created, so refuse it once closed.
+    this.assertOpen();
     const { sendCommMessageToKernel } = this.actions;
+    const isClosed = this.isClosed;
 
     // TODO: we do not currently have anything at all that
     // routes messages to this.
@@ -571,6 +677,11 @@ VBox([s1, s2])
         buffers?: ArrayBuffer[] | ArrayBufferView[],
       ): string {
         log("comm.send", { data, buffers, metadata, callbacks });
+        if (isClosed()) {
+          throw Error(
+            "widgets are disabled because the notebook is not trusted",
+          );
+        }
         const msg_id = uuid();
         sendCommMessageToKernel({
           msg_id,
@@ -630,14 +741,17 @@ class Environment implements WidgetEnvironment {
 
   async getSerializedModelState(model_id) {
     // log("getSerializedModelState", model_id);
+    this.manager.assertOpen();
     if (this.manager.ipywidgets_state.get_state() != "ready") {
       await once(this.manager.ipywidgets_state, "ready");
+      this.manager.assertOpen();
     }
     let state = this.manager.ipywidgets_state.getSerializedModelState(model_id);
     if (!state) {
       log("getSerializedModelState", model_id, "not yet known -- waiting");
       while (state == null) {
         await once(this.manager.ipywidgets_state, "change");
+        this.manager.assertOpen();
         state = this.manager.ipywidgets_state.getSerializedModelState(model_id);
       }
     }
@@ -658,6 +772,7 @@ class Environment implements WidgetEnvironment {
         );
 
         await once(this.manager.ipywidgets_state, "change");
+        this.manager.assertOpen();
         state = this.manager.ipywidgets_state.getSerializedModelState(model_id);
       }
     }
@@ -673,6 +788,7 @@ class Environment implements WidgetEnvironment {
     }
     const { buffer_paths, buffers } =
       await this.manager.ipywidgets_state.getModelBuffers(model_id);
+    this.manager.assertOpen();
 
     if (buffers.length > 0) {
       for (let i = 0; i < buffer_paths.length; i++) {
@@ -682,13 +798,16 @@ class Environment implements WidgetEnvironment {
     }
 
     log("getSerializedModelState", { model_id, state });
-    setTimeout(() => this.manager.watchModel(model_id), 1);
+    setTimeout(() => {
+      this.manager.watchModel(model_id).catch(() => {});
+    }, 1);
 
     if (state._model_module == "k3d") {
       if (state.object_ids != null) {
         while (!isSubset(state.object_ids, this.manager.k3dObjectIds)) {
           log("k3d -- waiting for object_ids", state.object_ids);
           await delay(K3D_DELAY_MS);
+          this.manager.assertOpen();
         }
       }
       if (state.id != null) {
@@ -712,7 +831,7 @@ class Environment implements WidgetEnvironment {
   async renderOutput(outputItem: any, destination: Element): Promise<void> {
     // the gaussian plume notebook has example of this!
     log("renderOutput", { outputItem, destination });
-    if (outputItem == null) {
+    if (outputItem == null || this.manager.isClosed()) {
       return;
     }
     const message = fromJS(outputItem);
@@ -750,6 +869,7 @@ class Environment implements WidgetEnvironment {
       ),
     );
     const root = ReactDOM.createRoot(myDiv);
+    this.manager.addOutputRoot(root, myDiv);
     root.render(component);
   }
 }

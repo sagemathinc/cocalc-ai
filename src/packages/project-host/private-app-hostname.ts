@@ -37,6 +37,19 @@ const PRIVATE_APP_HOSTNAME_REQUEST_CONTEXT = Symbol(
 const PRIVATE_APP_HOSTNAME_REWRITE_PROMISE = Symbol(
   "cocalc-private-app-hostname-rewrite-promise",
 );
+const PRIVATE_APP_HOSTNAME_PROJECT = Symbol(
+  "cocalc-private-app-hostname-project",
+);
+
+// The project whose private app hostname this request was sent to, if any.
+// Set by the rewriter even for explicit /<project_id>/... paths, which it does
+// not rewrite, so the origin policy can tell when a private app's page tries
+// to reach another project.
+export function getPrivateAppHostnameProject(
+  req: IncomingMessage,
+): string | undefined {
+  return (req as any)[PRIVATE_APP_HOSTNAME_PROJECT];
+}
 
 type PrivateAppHostnameRequest = IncomingMessage & {
   [PRIVATE_APP_HOSTNAME_REQUEST_CONTEXT]?: PrivateAppHostnameRequestContext;
@@ -166,7 +179,6 @@ export function createPrivateAppHostnameRequestRewriter({
     if (!currentUrl) return;
     const parsed = new URL(currentUrl, "http://project-host.local");
     const maybeProjectPrefix = (parsed.pathname || "/").split("/")[1];
-    if (maybeProjectPrefix && isValidUUID(maybeProjectPrefix)) return;
 
     const hostname = normalizeHostHeader(req.headers.host);
     if (!hostname) return;
@@ -192,6 +204,8 @@ export function createPrivateAppHostnameRequestRewriter({
       routeCache.set(hostname, route);
     }
     if (!route) return;
+    (req as any)[PRIVATE_APP_HOSTNAME_PROJECT] = route.project_id;
+    if (maybeProjectPrefix && isValidUUID(maybeProjectPrefix)) return;
 
     (req as PrivateAppHostnameRequest)[PRIVATE_APP_HOSTNAME_REQUEST_CONTEXT] = {
       canonical_base_path: normalizePrefix(
