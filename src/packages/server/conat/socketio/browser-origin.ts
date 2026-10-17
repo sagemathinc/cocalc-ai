@@ -13,6 +13,13 @@ COCALC_CONAT_ALLOWED_ORIGINS (comma separated, e.g. a dev server). The list
 is cached, the lookup is bounded in time, and a failed lookup keeps the last
 complete list.
 
+Enforcement never locks everyone out because of the server's own state: it
+refuses only origins missing from a known, nonempty list. With no list (the
+configuration can't be read, e.g. a process started without database access)
+or an empty one (misconfiguration), connections are let through and the
+problem is logged loudly and counted, since no attacker can cause either and
+refusing would refuse every real user.
+
 Connections without an Origin are not browsers (the CLI, the mobile app,
 service clients) and are not affected. Explicit credentials (bearer,
 computer login, project secret in the auth payload) and internal cookies
@@ -83,10 +90,14 @@ function header(headers: any, name: string): string {
 }
 
 const CACHE_MS = 60_000;
-// A list older than this is not used, even when a refresh fails.
+// A list older than this is still used when refreshes keep failing (refusing
+// every browser would be worse than approving a just-removed origin), but it
+// is logged as an error.
 const MAX_STALE_MS = 10 * 60_000;
 const LOOKUP_TIMEOUT_MS = 2_000;
 let cached: { origins: Set<string>; at: number } | undefined;
+let lastLoggedList = "";
+let lastStaleLog = 0;
 
 async function loadConfiguredOrigins(): Promise<Set<string>> {
   const origins = new Set<string>();
@@ -165,6 +176,19 @@ function startLoad(load: () => Promise<Set<string>>): Promise<Set<string>> {
     // overwrite what it found.
     if (mine === generation) {
       cached = { origins, at: Date.now() };
+      const list = [...origins].sort().join(", ");
+      if (list !== lastLoggedList) {
+        lastLoggedList = list;
+        // What enforcement would approve, so it can be checked before
+        // enforcing.
+        if (origins.size === 0) {
+          logger.error(
+            "no approved browser origins are configured: cookie origin checks are not enforced",
+          );
+        } else {
+          logger.info("approved browser origins", { origins: list });
+        }
+      }
     }
     return origins;
   });
@@ -198,10 +222,10 @@ async function waitForLoad(
   }
 }
 
-// The approved origins, from a cache refreshed every minute. While a list
-// less than 10 minutes old exists, connections never wait: the stale list
-// is used and refreshed in the background. Without a usable list, wait for
-// a bounded lookup and throw if it fails.
+// The approved origins, from a cache refreshed every minute. Once a list has
+// been loaded, connections never wait: the last list is used and refreshed in
+// the background (and logged as an error once it is over 10 minutes old).
+// Without any list, wait for a bounded lookup and throw if it fails.
 export async function approvedOrigins({
   load = loadConfiguredOrigins,
   timeoutMs = LOOKUP_TIMEOUT_MS,
@@ -213,17 +237,23 @@ export async function approvedOrigins({
   if (cached != null) {
     const age = now - cached.at;
     if (age < CACHE_MS) return cached.origins;
-    if (age < MAX_STALE_MS) {
-      // Failures are logged inside startLoad.
-      startLoad(load).catch(() => {});
-      return cached.origins;
+    // Failures are logged inside startLoad.
+    startLoad(load).catch(() => {});
+    if (age >= MAX_STALE_MS && now - lastStaleLog > 60_000) {
+      lastStaleLog = now;
+      logger.error("approved browser origins could not be refreshed", {
+        ageMinutes: Math.round(age / 60_000),
+      });
     }
+    return cached.origins;
   }
   return await waitForLoad(load, timeoutMs);
 }
 
 export function resetApprovedOriginsForTests(): void {
   cached = undefined;
+  lastLoggedList = "";
+  lastStaleLog = 0;
   inflight = undefined;
   cooldownUntil = 0;
 }
@@ -244,9 +274,24 @@ export async function cookieOriginRejection(
   if (!originHeader) return;
   const origin = parseOrigin(originHeader);
   if (!origin) return "invalid or opaque origin";
-  if ((await approved()).has(origin)) return;
+  const origins = await approved();
+  if (origins.size === 0) throw new NoApprovedOriginsError();
+  if (origins.has(origin)) return;
   return "origin not allowed";
 }
+
+class NoApprovedOriginsError extends Error {
+  constructor() {
+    super("no approved origins are configured");
+  }
+}
+
+// Reasons that come from the server's own state, not from the request: these
+// are never refused (see the top of this file).
+const NOT_ENFORCED = new Set([
+  "approved origins unavailable",
+  "no approved origins configured",
+]);
 
 const lastLogged = new Map<string, number>();
 
@@ -261,11 +306,13 @@ export async function assertCookieOrigin(
   let reason: string | undefined;
   try {
     reason = await cookieOriginRejection(headers, approved);
-  } catch {
-    // No approved list could be loaded (the failure itself is logged once
-    // by the lookup): refuse when enforcing, but only connections that carry
-    // a browser Origin; only count and log (rate limited) otherwise.
-    reason = "approved origins unavailable";
+  } catch (err) {
+    // No usable list (the lookup failure itself is logged once by the
+    // lookup): counted and logged below, never refused.
+    reason =
+      err instanceof NoApprovedOriginsError
+        ? "no approved origins configured"
+        : "approved origins unavailable";
   }
   if (!reason) return;
   rejections.inc({ credential, reason, mode });
@@ -285,11 +332,7 @@ export async function assertCookieOrigin(
       },
     );
   }
-  if (mode === "enforce") {
-    throw Error(
-      reason === "approved origins unavailable"
-        ? "unable to verify connection origin"
-        : "cross-site connection refused",
-    );
+  if (mode === "enforce" && !NOT_ENFORCED.has(reason)) {
+    throw Error("cross-site connection refused");
   }
 }

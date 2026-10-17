@@ -240,11 +240,23 @@ describe("hub conat cookie origin policy", () => {
         approvedOrigins({ load: hang, timeoutMs: 50 }),
       ).resolves.toEqual(new Set(["https://old.example"]));
       expect(hang).toHaveBeenCalledTimes(1);
-      // A removed origin is not approved forever: after 10 minutes the old
-      // list is no longer used.
+      // Refreshes keep failing for over 10 minutes: the last list is still
+      // used (refusing every browser would be worse), and a refresh is tried.
       jest.setSystemTime(new Date("2026-10-17T00:11:00Z"));
       resetPendingForTests();
+      const failing = jest.fn(async (): Promise<Set<string>> => {
+        throw Error("database unavailable");
+      });
+      await expect(approvedOrigins({ load: failing })).resolves.toEqual(
+        new Set(["https://old.example"]),
+      );
+      expect(failing).toHaveBeenCalledTimes(1);
+      // Once a refresh succeeds, the new list replaces it.
+      await Promise.resolve();
+      resetPendingForTests();
       const fresh = jest.fn(async () => new Set(["https://new.example"]));
+      await approvedOrigins({ load: fresh });
+      await new Promise((resolve) => setImmediate(resolve));
       await expect(approvedOrigins({ load: fresh })).resolves.toEqual(
         new Set(["https://new.example"]),
       );
@@ -260,18 +272,54 @@ describe("hub conat cookie origin policy", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it("bounds a hanging lookup: refuses in enforce, only logs in report", async () => {
-    const hang = () => new Promise<Set<string>>(() => {});
-    const approved = () => approvedOrigins({ load: hang, timeoutMs: 20 });
-    const browser = { origin: "https://cocalc.example" };
-    await expect(
-      assertCookieOrigin(browser, "remember-me", approved),
-    ).resolves.toBeUndefined();
-    resetApprovedOriginsForTests();
-    process.env.COCALC_CONAT_ORIGIN_POLICY = "enforce";
-    await expect(
-      assertCookieOrigin(browser, "remember-me", approved),
-    ).rejects.toThrow("unable to verify connection origin");
+  // The server's own state must never lock every browser out (cf. a
+  // respawned process without the configuration, cocalc-ai #1136).
+  describe("never a lockout from the server's own state, even in enforce", () => {
+    const browsers = [
+      { origin: "https://cocalc.example" },
+      { origin: "https://evil.example" },
+    ];
+    beforeEach(() => {
+      process.env.COCALC_CONAT_ORIGIN_POLICY = "enforce";
+    });
+
+    it("a hanging lookup (bounded) lets connections through", async () => {
+      const hang = () => new Promise<Set<string>>(() => {});
+      const approved = () => approvedOrigins({ load: hang, timeoutMs: 20 });
+      for (const browser of browsers) {
+        await expect(
+          assertCookieOrigin(browser, "remember-me", approved),
+        ).resolves.toBeUndefined();
+      }
+    });
+
+    it("a process that can't read the configuration lets connections through", async () => {
+      siteMock.mockRejectedValueOnce(Error("no database configured"));
+      for (const browser of browsers) {
+        await expect(
+          assertCookieOrigin(browser, "remember-me"),
+        ).resolves.toBeUndefined();
+      }
+    });
+
+    it("an empty configuration lets connections through", async () => {
+      siteMock.mockResolvedValueOnce("");
+      baysMock.mockResolvedValueOnce({});
+      for (const browser of browsers) {
+        await expect(
+          assertCookieOrigin(browser, "remember-me"),
+        ).resolves.toBeUndefined();
+      }
+    });
+
+    it("but a known, nonempty list is enforced", async () => {
+      await expect(
+        assertCookieOrigin(browsers[1], "remember-me"),
+      ).rejects.toThrow("cross-site connection refused");
+      await expect(
+        assertCookieOrigin(browsers[0], "remember-me"),
+      ).resolves.toBeUndefined();
+    });
   });
 
   it("only logs by default (report), refuses in enforce, does nothing when off", async () => {
