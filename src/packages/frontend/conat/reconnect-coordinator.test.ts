@@ -214,6 +214,59 @@ describe("ReconnectCoordinator", () => {
     }
   });
 
+  it("a plain pass for some projects reconnects only their disconnected resources", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      isConnected: () => true,
+    });
+    const reconnects = {
+      live: jest.fn(),
+      disconnected: jest.fn(),
+      other: jest.fn(),
+      none: jest.fn(),
+    };
+    const resources = [
+      coordinator.registerResource({
+        project_id: "restarted",
+        isConnected: () => true,
+        reconnect: async () => reconnects.live(),
+      }),
+      coordinator.registerResource({
+        project_id: "restarted",
+        isConnected: () => false,
+        reconnect: async () => reconnects.disconnected(),
+      }),
+      coordinator.registerResource({
+        project_id: "other",
+        isConnected: () => false,
+        reconnect: async () => reconnects.other(),
+      }),
+      coordinator.registerResource({
+        isConnected: () => false,
+        reconnect: async () => reconnects.none(),
+      }),
+    ];
+
+    try {
+      coordinator.requestResourceReconnects({
+        includeBackground: true,
+        projectIds: new Set(["restarted"]),
+        reason: "project_host_session_changed",
+      });
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(reconnects.disconnected).toHaveBeenCalledTimes(1);
+      expect(reconnects.live).not.toHaveBeenCalled();
+      expect(reconnects.other).not.toHaveBeenCalled();
+      expect(reconnects.none).not.toHaveBeenCalled();
+    } finally {
+      for (const resource of resources) resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
   it("probes foreground resources when the tab becomes foreground", async () => {
     const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
     const reconnect = jest.fn(async () => {});

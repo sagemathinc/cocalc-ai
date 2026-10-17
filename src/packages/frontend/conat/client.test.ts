@@ -4240,6 +4240,10 @@ describe("ConatClient routed project-host reconnect", () => {
     const reconnectSpy = jest
       .spyOn(client, "reconnect")
       .mockImplementation(() => undefined);
+    const resourceReconnects = jest.spyOn(
+      client.reconnectCoordinator,
+      "requestResourceReconnects",
+    );
 
     client.getOrCreateRoutedHubClient({
       host_id: "host-1",
@@ -4264,6 +4268,16 @@ describe("ConatClient routed project-host reconnect", () => {
     // rather than rebuilding them.
     expect(reconnectProjectHostRuntime).toHaveBeenCalledWith();
     expect(resetProjectHostRuntime).not.toHaveBeenCalled();
+    // Only the restarted host's projects, and not forced: a forced pass would
+    // rebuild healthy editors' changefeeds while the user types.
+    const sessionPass = resourceReconnects.mock.calls
+      .map(([request]: any) => request)
+      .find((request) => request?.reason === "project_host_session_changed");
+    expect(sessionPass).toBeDefined();
+    expect(sessionPass.force).toBeFalsy();
+    expect([...sessionPass.projectIds]).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+    ]);
     jest.advanceTimersByTime(50);
     expect(reconnectSpy).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].client).toBe(routedClient1);
