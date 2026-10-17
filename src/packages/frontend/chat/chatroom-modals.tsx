@@ -27,7 +27,6 @@ import {
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
-import { resolveCodexCompletionNotificationEnabled } from "@cocalc/util/notification-preferences";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -76,7 +75,6 @@ interface ChatRoomModalsProps {
   path: string;
   selectedThreadKey?: string | null;
   selectedThreadLabel?: string;
-  accountCompletionNotificationDefault?: boolean;
   onHandlers?: (handlers: ChatRoomModalHandlers) => void;
 }
 
@@ -94,7 +92,6 @@ export function ChatRoomModals({
   path,
   selectedThreadKey,
   selectedThreadLabel,
-  accountCompletionNotificationDefault = true,
   onHandlers,
 }: ChatRoomModalsProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -104,8 +101,6 @@ export function ChatRoomModals({
   const [editingThread, setEditingThread] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);
   const [behaviorOpen, setBehaviorOpen] = useState<boolean>(false);
-  const [notifyOnTurnFinish, setNotifyOnTurnFinish] = useState(true);
-  const [notificationChanged, setNotificationChanged] = useState(false);
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
   const [renameAccentColor, setRenameAccentColor] = useState<
@@ -180,14 +175,6 @@ export function ChatRoomModals({
       );
       setRenameImage(metadata?.thread_image?.trim() || "");
       setRenameAgentMode(agentMode);
-      setNotifyOnTurnFinish(
-        resolveCodexCompletionNotificationEnabled({
-          override: metadata?.codex_completion_notification,
-          legacy: metadata?.acp_config,
-          accountDefault: accountCompletionNotificationDefault,
-        }),
-      );
-      setNotificationChanged(false);
       const savedConfig = { ...(metadata?.acp_config ?? {}) };
       delete savedConfig.notifyOnTurnFinish;
       setRenameCodexConfig({
@@ -213,13 +200,7 @@ export function ChatRoomModals({
         }),
       });
     },
-    [
-      actions,
-      path,
-      defaultSessionMode,
-      workspaceWorkingDirectory,
-      accountCompletionNotificationDefault,
-    ],
+    [actions, path, defaultSessionMode, workspaceWorkingDirectory],
   );
 
   const openAppearanceModal = useCallback(
@@ -320,12 +301,6 @@ export function ChatRoomModals({
           ),
         sessionId: normalizeCodexSessionId(renameCodexConfig.sessionId),
       });
-      if (notificationChanged) {
-        actions.setCodexCompletionNotificationOverride(
-          editingThread,
-          notifyOnTurnFinish ? "on" : "off",
-        );
-      }
     }
     antdMessage.success("Behavior saved.");
     closeEditingModals();
@@ -797,15 +772,6 @@ export function ChatRoomModals({
           </div>
           {renameAgentMode === "codex" ? (
             <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-              <Checkbox
-                checked={!notifyOnTurnFinish}
-                onChange={(event) => {
-                  setNotifyOnTurnFinish(!event.target.checked);
-                  setNotificationChanged(true);
-                }}
-              >
-                Mute completion notifications for this thread
-              </Checkbox>
               <div>
                 <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                   Codex model

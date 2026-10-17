@@ -139,7 +139,6 @@ import {
 } from "@cocalc/util/ai/codex";
 import { getLiveCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
 import { CodexConfigButton, CodexPaymentCredentialsModal } from "./codex";
-import { showLocalCodexTurnCompletionToast } from "@cocalc/frontend/notifications/codex-turn-toast";
 import {
   resultKey,
   setUnseenResult,
@@ -1568,18 +1567,6 @@ function ChatPanelContent({
       const completedAt = Number(current.newestMessageDate ?? "");
       if (Number.isFinite(completedAt) && completedAt > newestCompletedAt) {
         newestCompletedAt = completedAt;
-      }
-      if (previous.notifyOnTurnFinish || current.notifyOnTurnFinish) {
-        showLocalCodexTurnCompletionToast({
-          account_id,
-          project_id,
-          path,
-          thread_id: current.threadId,
-          thread_label: current.threadLabel,
-          agent_label: current.agentLabel,
-          newest_message_date: current.newestMessageDate,
-          stable_source_id: current.stableSourceId,
-        });
       }
     }
     if (isChatForeground) return;
@@ -3071,9 +3058,6 @@ function ChatPanelContent({
         <>
           <ChatRoomModals
             actions={actions}
-            accountCompletionNotificationDefault={
-              accountCompletionNotificationDefault
-            }
             path={path}
             selectedThreadKey={selectedThreadKey}
             selectedThreadLabel={selectedThread?.label}

@@ -39,7 +39,6 @@ const CODEX_EVENT_ROWS: Array<{
   label: string;
 }> = [
   { key: "attention", label: "Needs attention" },
-  { key: "completion", label: "Turn completed" },
   { key: "terminal_failure", label: "Turn failed" },
 ];
 
@@ -137,15 +136,6 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
       ...next.ai.events[eventClass],
       ...patch,
     };
-    on_change(OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY, next);
-  }
-
-  function setCompletionDefault(enabled: boolean): void {
-    const next = normalizeNotificationPreferencesV2(
-      notificationPreferencesV2,
-      notificationPreferences,
-    );
-    next.ai.completion_default = enabled;
     on_change(OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY, next);
   }
 
@@ -268,14 +258,6 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
         )}
         <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Text strong>Codex and agents</Text>
-          <Space wrap>
-            <Switch
-              aria-label="Notify when Codex turns complete by default"
-              checked={notificationPreferencesV2.ai.completion_default}
-              onChange={setCompletionDefault}
-            />
-            <Text>Notify when Codex turns complete by default</Text>
-          </Space>
           <div style={{ maxWidth: "100%", overflowX: "auto" }}>
             <Table
               aria-label="Codex and agent notification channels"

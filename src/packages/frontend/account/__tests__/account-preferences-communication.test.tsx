@@ -200,7 +200,11 @@ describe("AccountPreferencesCommunication", () => {
     expect(screen.getByText("Chat replies")).toBeTruthy();
     expect(screen.getByText("Codex and agents")).toBeTruthy();
     expect(screen.getByText("Needs attention")).toBeTruthy();
-    expect(screen.getByText("Turn completed")).toBeTruthy();
+    // Finished turns do not notify; only questions and failures do.
+    expect(screen.queryByText("Turn completed")).toBeNull();
+    expect(
+      screen.queryByText("Notify when Codex turns complete by default"),
+    ).toBeNull();
     expect(screen.getByText("Turn failed")).toBeTruthy();
     expect(screen.queryByText("AI activity")).toBeNull();
     expect(screen.queryByText("project invitations")).toBeNull();
@@ -217,7 +221,6 @@ describe("AccountPreferencesCommunication", () => {
         ),
     ).toEqual([
       "attention",
-      "completion",
       "terminal_failure",
       "security",
       "billing",
