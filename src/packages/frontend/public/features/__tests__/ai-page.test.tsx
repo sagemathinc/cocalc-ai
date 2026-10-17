@@ -11,6 +11,7 @@ import {
   PUBLIC_AI_MENTIONS_LINE,
 } from "@cocalc/util/public-ai-page-content";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import PublicFeaturesApp from "../app";
 
 beforeAll(() => {
@@ -219,5 +220,73 @@ describe("AI feature page", () => {
       }
     }
     expect(container.textContent).not.toContain(PUBLIC_AI_MENTIONS_LINE);
+  });
+});
+
+describe("AI page ways to run CoCalc", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function operatingSection(): HTMLElement {
+    return screen
+      .getByRole("heading", {
+        level: 2,
+        name: "Choose who runs CoCalc.",
+      })
+      .closest("section")!;
+  }
+
+  it("names only the products the public pages show", () => {
+    renderAiPage(COCALC_AI);
+    const section = operatingSection();
+
+    expect(
+      within(section)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Hosted CoCalc.ai", "CoCalc Plus or Star"]);
+    expect(
+      within(section).getByText(
+        "Use Plus on your own computer, or run a shared Star site in one Docker container.",
+      ),
+    ).not.toBeNull();
+    expect(section.textContent).not.toMatch(/Launchpad|Rocket/);
+    expect(
+      within(section).getByRole("link", { name: "Where to run CoCalc" }),
+    ).toHaveAttribute("href", "/products");
+  });
+
+  it("names CoCalc Star alone once Plus is hidden again", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    renderAiPage(COCALC_AI);
+    const section = operatingSection();
+
+    expect(
+      within(section)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Hosted CoCalc.ai", "CoCalc Star"]);
+    expect(
+      within(section).getByText(
+        "Run a shared Star site in one Docker container.",
+      ),
+    ).not.toBeNull();
+    expect(section.textContent).not.toMatch(/Plus|Launchpad|Rocket/);
+  });
+
+  it("names every product once every product is shown", () => {
+    for (const id of ["plus", "launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    renderAiPage(COCALC_AI);
+
+    expect(
+      within(operatingSection())
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "Hosted CoCalc.ai",
+      "CoCalc Plus or Star",
+      "Launchpad or Rocket",
+    ]);
   });
 });

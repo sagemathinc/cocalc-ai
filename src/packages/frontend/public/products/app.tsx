@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { type ReactNode, useEffect } from "react";
+import { Fragment, type ReactNode, useEffect } from "react";
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -16,7 +16,26 @@ import {
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
-import { CANONICAL_PUBLIC_SITE_ORIGIN } from "@cocalc/util/public-site-policy";
+import { getHiddenPublicProductRedirect } from "@cocalc/util/public-product-availability";
+import {
+  getPublicProductPageCopy,
+  getPublicWhereToRunActions,
+  getPublicWhereToRunComparison,
+  getPublicWhereToRunHeadline,
+  getPublicWhereToRunIntro,
+  getPublicWhereToRunPaths,
+  publicProductTextParts,
+  PUBLIC_PRODUCT_SHARED_NOTE,
+  PUBLIC_WHERE_TO_RUN_COMPARISON_LINKS,
+  PUBLIC_WHERE_TO_RUN_CONTACT,
+  PUBLIC_WHERE_TO_RUN_PATHS_TITLE,
+  PUBLIC_WHERE_TO_RUN_TITLE,
+  PUBLIC_WHERE_TO_RUN_WORKFLOW,
+  type PublicProductBlock,
+  type PublicProductLink,
+  type PublicProductPageCopy,
+  type PublicWhereToRunComparison,
+} from "@cocalc/util/public-products-content";
 import {
   appPath,
   builtinPolicyPath,
@@ -24,6 +43,7 @@ import {
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
+import { navigatePublic } from "../navigation";
 import { publicPath } from "../routes";
 import { PublicGrid, PublicSection } from "../layout/shell";
 import { CodeBlock } from "../common";
@@ -44,86 +64,31 @@ const PRODUCT_OVERVIEW_CSS = `
 }
 
 .cocalc-products-overview-title.ant-typography {
-  font-size: clamp(38px, 5vw, 58px);
-  letter-spacing: -0.045em;
-  line-height: 1.04;
+  font-size: clamp(30px, 3.6vw, 44px);
+  letter-spacing: -0.035em;
+  line-height: 1.1;
   margin: 0;
-  max-width: 12ch;
+  max-width: 24ch;
 }
 
-.cocalc-products-overview-eyebrow {
-  color: ${PUBLIC_COLORS.brand};
-  font-size: ${PUBLIC_TYPE.eyebrow}px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.cocalc-products-decision-list {
+.cocalc-products-paths-panel {
   background: ${PUBLIC_COLORS.surface};
   border: 1px solid ${PUBLIC_COLORS.border};
   border-radius: ${PUBLIC_RADIUS.media}px;
   box-shadow: ${PUBLIC_ELEVATION.panelStrong};
-  padding: 20px;
-}
-
-.cocalc-products-decision-row {
-  align-items: flex-start;
-  border-bottom: 1px solid ${PUBLIC_COLORS.border};
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 30px minmax(0, 1fr);
-  padding: 14px 0;
-}
-
-.cocalc-products-decision-row:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.cocalc-products-decision-number {
-  align-items: center;
-  background: ${PUBLIC_COLORS.brandTint};
-  border: 1px solid ${PUBLIC_COLORS.brandSubtle};
-  border-radius: 50%;
-  color: ${PUBLIC_COLORS.brand};
-  display: flex;
-  font-size: 12px;
-  font-weight: 700;
-  height: 30px;
-  justify-content: center;
-  width: 30px;
-}
-
-.cocalc-products-model-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.cocalc-products-model-card {
-  background: ${PUBLIC_COLORS.surface};
-  border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  box-shadow: ${PUBLIC_ELEVATION.card};
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-height: 100%;
-  padding: 22px;
-}
-
-.cocalc-products-model-meta {
-  background: ${PUBLIC_COLORS.surfaceMuted};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  padding: 12px 14px;
+  gap: 12px;
+  padding: 20px;
 }
 
 .cocalc-products-path-list {
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .cocalc-products-path-option {
@@ -141,6 +106,54 @@ const PRODUCT_OVERVIEW_CSS = `
 .cocalc-products-path-option:hover {
   border-color: ${PUBLIC_COLORS.linkHover};
   color: inherit;
+}
+
+.cocalc-products-compare-table {
+  background: ${PUBLIC_COLORS.surface};
+  border: 1px solid ${PUBLIC_COLORS.border};
+  border-collapse: separate;
+  border-radius: ${PUBLIC_RADIUS.panel}px;
+  border-spacing: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.cocalc-products-compare-caption {
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.cocalc-products-compare-table th,
+.cocalc-products-compare-table td {
+  padding: 14px 18px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.cocalc-products-compare-table thead th {
+  background: ${alpha(PUBLIC_COLORS.brandTint, 0.5)};
+  border-bottom: 1px solid ${PUBLIC_COLORS.border};
+  color: ${PUBLIC_COLORS.heading};
+}
+
+.cocalc-products-compare-row + .cocalc-products-compare-row th,
+.cocalc-products-compare-row + .cocalc-products-compare-row td {
+  border-top: 1px solid ${PUBLIC_COLORS.border};
+}
+
+.cocalc-products-compare-table tbody th {
+  color: ${PUBLIC_COLORS.heading};
+  width: 26%;
+}
+
+.cocalc-products-compare-table td {
+  width: 37%;
 }
 
 .cocalc-products-workflow-grid {
@@ -162,7 +175,6 @@ const PRODUCT_OVERVIEW_CSS = `
 }
 
 @media (max-width: 900px) {
-  .cocalc-products-model-grid,
   .cocalc-products-workflow-grid {
     grid-template-columns: 1fr;
   }
@@ -174,58 +186,70 @@ const PRODUCT_OVERVIEW_CSS = `
   }
 
   .cocalc-products-overview-title.ant-typography {
-    font-size: clamp(34px, 12vw, 48px);
-    max-width: 10.5ch;
+    font-size: clamp(26px, 7.5vw, 34px);
+    max-width: none;
   }
 
   .cocalc-products-overview-hero .ant-btn {
     width: 100%;
   }
+
+  .cocalc-products-compare-table,
+  .cocalc-products-compare-table thead,
+  .cocalc-products-compare-table tbody,
+  .cocalc-products-compare-table tr,
+  .cocalc-products-compare-table th,
+  .cocalc-products-compare-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .cocalc-products-compare-table thead {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  .cocalc-products-compare-table tbody tr {
+    padding: 14px 16px;
+  }
+
+  .cocalc-products-compare-row + .cocalc-products-compare-row {
+    border-top: 1px solid ${PUBLIC_COLORS.border};
+  }
+
+  .cocalc-products-compare-table tbody th,
+  .cocalc-products-compare-table tbody td {
+    border-top: 0 !important;
+    padding: 0;
+    width: 100%;
+  }
+
+  .cocalc-products-compare-table tbody td {
+    margin-top: 8px;
+  }
+
+  .cocalc-products-compare-table tbody td::before {
+    color: ${PUBLIC_COLORS.heading};
+    content: attr(data-label);
+    display: block;
+    font-size: ${PUBLIC_TYPE.caption}px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
 }
 `;
 
-interface ProductAction {
-  href: string;
-  label: string;
-  primary?: boolean;
-}
-
-function supportContactPath({
-  body,
-  context,
-  subject,
-  title,
-}: {
-  body: string;
-  context: string;
-  subject: string;
-  title: string;
-}): string {
-  const params = new URLSearchParams({
-    body,
-    context,
-    subject,
-    title,
-    type: "purchase",
-  });
-  return `${appPath("support/new")}?${params.toString()}`;
-}
-
-function supportProductPath(product: "Launchpad" | "Rocket"): string {
-  if (product === "Launchpad") {
-    return supportContactPath({
-      body: "I want to talk with CoCalc about CoCalc Launchpad. Helpful context: expected users or projects, pilot/lab/workshop/department scope, operating environment, who will own infrastructure, recovery, and ongoing operations, timeline, support expectations, and whether pricing, site licensing, data-location, privacy, or security questions are part of the decision.",
-      context: "product-cocalc-launchpad",
-      subject: "CoCalc Launchpad",
-      title: "Talk with CoCalc about Launchpad",
-    });
-  }
-  return supportContactPath({
-    body: "I want to talk with CoCalc about CoCalc Rocket. Helpful context: organization type, expected users or projects, private-cloud requirements, infrastructure constraints, and timeline.",
-    context: "product-cocalc-rocket",
-    subject: "CoCalc Rocket",
-    title: "Talk with CoCalc about Rocket",
-  });
+// A product page link: a path relative to the site's base path, a fragment on
+// the same page, or an absolute URL.
+function productHref(href: string): string {
+  return href.startsWith("#") || /^https?:\/\//.test(href)
+    ? href
+    : appPath(href);
 }
 
 interface ProductDetailPoint {
@@ -246,116 +270,91 @@ function titleForRoute(route: PublicProductsRoute): string {
       return "CoCalc Star";
     case "products":
     default:
-      return "Ways to Run CoCalc";
+      return PUBLIC_WHERE_TO_RUN_TITLE;
   }
+}
+
+// The workflow cards' icons, by the page each card links to.
+const WORKFLOW_ICONS: Record<string, IconName> = {
+  "features/ai": "robot",
+  "features/compare": "exchange",
+  "features/research-compute": "server",
+};
+
+// A path on the Where to run CoCalc page, with its link resolved.
+function overviewHref(href: string): string {
+  return /^https?:\/\//.test(href) ? href : publicPath(href);
+}
+
+// The table's narrow-screen layout is the React page's own, so only its
+// caption describes it.
+const COMPARISON_NARROW_SCREEN_NOTE =
+  "On narrow screens, each row is shown as labelled stacked fields with the same column meaning.";
+
+function WhereToRunComparison({
+  comparison,
+}: {
+  comparison: PublicWhereToRunComparison;
+}) {
+  return (
+    <PublicSection>
+      <Title id="cocalc-products-compare-title" level={2} style={{ margin: 0 }}>
+        {comparison.title}
+      </Title>
+      <table
+        aria-describedby="cocalc-products-compare-caption"
+        aria-labelledby="cocalc-products-compare-title"
+        className="cocalc-products-compare-table"
+      >
+        <caption
+          className="cocalc-products-compare-caption"
+          id="cocalc-products-compare-caption"
+        >
+          {comparison.caption} {COMPARISON_NARROW_SCREEN_NOTE}
+        </caption>
+        <thead>
+          <tr>
+            <td />
+            <th scope="col">CoCalc.ai</th>
+            <th scope="col">CoCalc Star</th>
+          </tr>
+        </thead>
+        <tbody>
+          {comparison.rows.map((row) => (
+            <tr className="cocalc-products-compare-row" key={row.label}>
+              <th scope="row">{row.label}</th>
+              <td data-label="CoCalc.ai">{row.cocalcAi}</td>
+              <td data-label="CoCalc Star">{row.star}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Flex gap={16} wrap>
+        {PUBLIC_WHERE_TO_RUN_COMPARISON_LINKS.map(({ href, label }) => (
+          <LinkButton href={appPath(href)} key={href}>
+            {label}
+          </LinkButton>
+        ))}
+      </Flex>
+    </PublicSection>
+  );
 }
 
 function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
   const privacyHref = builtinPolicyPath(config, "privacy");
   const trustHref = builtinPolicyPath(config, "trust");
-  const hostedPricingHref = `${CANONICAL_PUBLIC_SITE_ORIGIN}/pricing`;
   const canEvaluateResearchCompute =
     getPublicFeaturePage("research-compute", {
       cocalc_product: config?.cocalc_product,
     }) != null;
-  const models = [
-    {
-      fit: "Individuals and teams that want managed hosted projects without operating CoCalc infrastructure.",
-      icon: "cloud",
-      operator: "CoCalc operates the service and its platform infrastructure.",
-      paths: [
-        {
-          detail: "Managed hosted projects for individuals and teams.",
-          href: hostedPricingHref,
-          title: "CoCalc.ai",
-        },
-      ],
-      startHere: true,
-      title: "Hosted by CoCalc",
-    },
-    {
-      fit: "Local individual work or a small shared site when you accept responsibility for the runtime, updates, and recovery.",
-      icon: "laptop",
-      operator: "You or your team operate the machine and the CoCalc runtime.",
-      paths: [
-        {
-          detail: "A local, one-user runtime on Linux or macOS.",
-          href: publicPath("products/cocalc-plus"),
-          title: "CoCalc Plus",
-        },
-        {
-          detail: "A free shared CoCalc site in one Docker container.",
-          href: publicPath("products/cocalc-star"),
-          title: "CoCalc Star",
-        },
-      ],
-      startHere: false,
-      title: "Run it yourself",
-    },
-    {
-      fit: "Pilots through institutional deployments that need private infrastructure, explicit operating ownership, and commercial planning.",
-      icon: "servers",
-      operator:
-        "Your organization operates the infrastructure, recovery, and ongoing service.",
-      paths: [
-        {
-          detail:
-            "A bounded private deployment for a pilot, lab, workshop, team, or department.",
-          href: publicPath("products/cocalc-launchpad"),
-          title: "CoCalc Launchpad",
-        },
-        {
-          detail:
-            "Broader customer-operated private-cloud planning for an institution or enterprise.",
-          href: publicPath("products/cocalc-rocket"),
-          title: "CoCalc Rocket",
-        },
-      ],
-      startHere: false,
-      title: "Customer-operated private deployment",
-    },
-  ] satisfies {
-    fit: string;
-    icon: IconName;
-    operator: string;
-    paths: { detail: string; href: string; title: string }[];
-    startHere: boolean;
-    title: string;
-  }[];
+  // CoCalc.ai, then only the products the public pages show.
+  const paths = getPublicWhereToRunPaths();
+  const comparison = getPublicWhereToRunComparison();
 
-  const workflowLinks = [
-    {
-      body: "See how people and agents use the same project files, notebooks, terminals, services, and review context.",
-      href: publicPath("features/ai"),
-      icon: "robot",
-      label: "Explore AI agent workflows",
-      title: "Agents and collaboration",
-    },
-    ...(canEvaluateResearchCompute
-      ? [
-          {
-            body: "Compare whole-project hosts, remote Jupyter kernels, and optional managed VMs before choosing capacity.",
-            href: publicPath("features/research-compute"),
-            icon: "server" as IconName,
-            label: "Plan research compute",
-            title: "Compute capacity",
-          },
-        ]
-      : []),
-    {
-      body: "Decide whether the work needs a persistent shared workspace or an API-managed execution environment.",
-      href: publicPath("features/compare"),
-      icon: "exchange",
-      label: "Compare with agent sandboxes",
-      title: "Execution model",
-    },
-  ] satisfies {
-    body: string;
-    href: string;
-    icon: IconName;
-    label: string;
-    title: string;
-  }[];
+  const workflowLinks = PUBLIC_WHERE_TO_RUN_WORKFLOW.cards.filter(
+    ({ href }) =>
+      href !== "features/research-compute" || canEvaluateResearchCompute,
+  );
 
   return (
     <Flex vertical gap={48}>
@@ -367,15 +366,12 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
         <Row align="middle" gutter={[40, 36]}>
           <Col xs={24} lg={14}>
             <Flex vertical gap={22}>
-              <Text className="cocalc-products-overview-eyebrow">
-                Operating models
-              </Text>
               <Title
                 className="cocalc-products-overview-title"
                 id="cocalc-products-overview-title"
                 level={2}
               >
-                Choose who operates CoCalc and where it runs.
+                {getPublicWhereToRunHeadline()}
               </Title>
               <Paragraph
                 style={{
@@ -386,175 +382,60 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                   maxWidth: 680,
                 }}
               >
-                Start with the operating boundary, then choose the product.
-                Every path keeps files, notebooks, terminals, and services in a
-                project workspace that persists across sessions. Collaboration,
-                history, recovery, compute, and agent features depend on the
-                product and deployment.
+                {getPublicWhereToRunIntro()}
               </Paragraph>
-              <Flex gap={12} wrap>
-                <Button href={hostedPricingHref} size="large" type="primary">
-                  Start on CoCalc.ai
-                </Button>
-                <Button href={publicPath("features/compare")} size="large">
-                  Compare execution models
-                </Button>
-              </Flex>
+              <ProductActions
+                actions={getPublicWhereToRunActions()}
+                size="large"
+              />
             </Flex>
           </Col>
           <Col xs={24} lg={10}>
-            <div className="cocalc-products-decision-list">
-              <Text strong>Answer these first</Text>
-              {[
-                {
-                  body: "CoCalc, an individual user, or your organization",
-                  title: "Who operates the service?",
-                },
-                {
-                  body: "CoCalc-hosted, one machine, or private infrastructure",
-                  title: "Where should it run?",
-                },
-                {
-                  body: "Individual work, a small shared site, or an organizational rollout",
-                  title: "Who needs to use it?",
-                },
-              ].map((item, index) => (
-                <div className="cocalc-products-decision-row" key={item.title}>
-                  <span className="cocalc-products-decision-number">
-                    {index + 1}
-                  </span>
-                  <div>
-                    <Text strong style={{ display: "block" }}>
-                      {item.title}
-                    </Text>
-                    <Text style={{ color: PUBLIC_COLORS.mutedText }}>
-                      {item.body}
-                    </Text>
-                  </div>
-                </div>
-              ))}
+            <div className="cocalc-products-paths-panel">
+              <Text id="cocalc-products-paths-title" strong>
+                {PUBLIC_WHERE_TO_RUN_PATHS_TITLE}
+              </Text>
+              <ul
+                aria-labelledby="cocalc-products-paths-title"
+                className="cocalc-products-path-list"
+              >
+                {paths.map((path) => (
+                  <li key={path.title}>
+                    <a
+                      className="cocalc-products-path-option"
+                      href={overviewHref(path.href)}
+                    >
+                      <span>
+                        <Text strong style={{ display: "block" }}>
+                          {path.title}
+                        </Text>
+                        <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+                          {path.detail}
+                        </Text>
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          color: PUBLIC_COLORS.brand,
+                          paddingTop: 2,
+                        }}
+                      >
+                        <Icon name="arrow-right" />
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </div>
           </Col>
         </Row>
       </section>
 
-      <PublicSection>
-        <Title level={2} style={{ margin: 0 }}>
-          Three operating models, five product paths.
-        </Title>
-        <Paragraph
-          style={{
-            color: PUBLIC_COLORS.mutedText,
-            fontSize: PUBLIC_TYPE.lead,
-            margin: 0,
-            maxWidth: 780,
-          }}
-        >
-          Pick the model that matches operational ownership. The product links
-          then show the narrower installation, deployment, and commercial
-          boundary.
-        </Paragraph>
-        <div
-          aria-label="CoCalc operating model chooser"
-          className="cocalc-products-model-grid"
-          role="list"
-        >
-          {models.map((model) => (
-            <article
-              className="cocalc-products-model-card"
-              key={model.title}
-              role="listitem"
-            >
-              <Flex align="center" gap={12}>
-                <span
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: PUBLIC_COLORS.brandTint,
-                    border: `1px solid ${PUBLIC_COLORS.brandSubtle}`,
-                    borderRadius: PUBLIC_RADIUS.panel,
-                    color: PUBLIC_COLORS.brand,
-                    display: "flex",
-                    flex: "0 0 42px",
-                    fontSize: 20,
-                    height: 42,
-                    justifyContent: "center",
-                    width: 42,
-                  }}
-                >
-                  <Icon name={model.icon} />
-                </span>
-                <div style={{ minWidth: 0 }}>
-                  {model.startHere ? (
-                    <Text
-                      strong
-                      style={{
-                        color: PUBLIC_COLORS.brand,
-                        display: "block",
-                        fontSize: PUBLIC_TYPE.caption,
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Fastest path to start
-                    </Text>
-                  ) : null}
-                  <Title level={3} style={{ margin: 0 }}>
-                    {model.title}
-                  </Title>
-                </div>
-              </Flex>
-              <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-                {model.fit}
-              </Paragraph>
-              <div className="cocalc-products-model-meta">
-                <Text
-                  strong
-                  style={{
-                    display: "block",
-                    fontSize: PUBLIC_TYPE.caption,
-                    marginBottom: 4,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Operating owner
-                </Text>
-                <Text>{model.operator}</Text>
-              </div>
-              <div className="cocalc-products-path-list">
-                {model.paths.map((path) => (
-                  <a
-                    className="cocalc-products-path-option"
-                    href={path.href}
-                    key={path.title}
-                  >
-                    <span>
-                      <Text strong style={{ display: "block" }}>
-                        {path.title}
-                      </Text>
-                      <Text style={{ color: PUBLIC_COLORS.mutedText }}>
-                        {path.detail}
-                      </Text>
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        color: PUBLIC_COLORS.brand,
-                        paddingTop: 2,
-                      }}
-                    >
-                      <Icon name="arrow-right" />
-                    </span>
-                  </a>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      </PublicSection>
+      {comparison ? <WhereToRunComparison comparison={comparison} /> : null}
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Plan the workflow after the operating model.
+          {PUBLIC_WHERE_TO_RUN_WORKFLOW.title}
         </Title>
         <Paragraph
           style={{
@@ -564,9 +445,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
             maxWidth: 780,
           }}
         >
-          The product choice tells you who runs CoCalc. The next decision is how
-          people, agents, and compute should use the project within that
-          deployment.
+          {PUBLIC_WHERE_TO_RUN_WORKFLOW.body}
         </Paragraph>
         <div className="cocalc-products-workflow-grid">
           {workflowLinks.map((item) => (
@@ -575,7 +454,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
                 aria-hidden="true"
                 style={{ color: PUBLIC_COLORS.brand, fontSize: 22 }}
               >
-                <Icon name={item.icon} />
+                <Icon name={WORKFLOW_ICONS[item.href] ?? "star"} />
               </span>
               <Title level={3} style={{ margin: 0 }}>
                 {item.title}
@@ -589,7 +468,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
               >
                 {item.body}
               </Paragraph>
-              <LinkButton href={item.href}>{item.label}</LinkButton>
+              <LinkButton href={publicPath(item.href)}>{item.label}</LinkButton>
             </div>
           ))}
         </div>
@@ -597,7 +476,7 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Add procurement, governance, and support to the chosen path.
+          {PUBLIC_WHERE_TO_RUN_CONTACT.title}
         </Title>
         <Paragraph
           style={{
@@ -607,28 +486,12 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
             maxWidth: 780,
           }}
         >
-          Use site licensing for procurement, governance, support expectations,
-          rollout, data-location, privacy, or security questions. Licensing does
-          not decide where CoCalc runs or who operates it; apply it to the
-          hosted, local, single-VM, or private path you selected.
+          {PUBLIC_WHERE_TO_RUN_CONTACT.body}
         </Paragraph>
-        <Flex gap={12} wrap>
-          <Button
-            href={supportContactPath({
-              body: "I want to talk with CoCalc about operating model, site licensing, or an organizational buying route. Helpful context: where you want CoCalc to run, who will operate it, expected users or projects, procurement needs, data-location, privacy, or security questions, and support expectations.",
-              context: "products-site-licensing",
-              subject: "Operating model and site licensing",
-              title: "Talk with CoCalc about operating models",
-            })}
-            size="large"
-            type="primary"
-          >
-            Discuss an organizational path
-          </Button>
-          <Button href={appPath("pricing")} size="large">
-            Review pricing and licensing
-          </Button>
-        </Flex>
+        <ProductActions
+          actions={PUBLIC_WHERE_TO_RUN_CONTACT.links}
+          size="large"
+        />
         {trustHref || privacyHref ? (
           <Flex aria-label="Product trust materials" gap={14} role="group" wrap>
             {trustHref ? (
@@ -646,13 +509,21 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
   );
 }
 
-function ProductActions({ actions }: { actions: ProductAction[] }) {
+function ProductActions({
+  actions,
+  size,
+}: {
+  actions: readonly PublicProductLink[];
+  size?: "large";
+}) {
+  if (actions.length === 0) return null;
   return (
     <Flex gap={12} wrap>
       {actions.map((action) => (
         <Button
-          href={action.href}
+          href={productHref(action.href)}
           key={`${action.label}-${action.href}`}
+          size={size}
           type={action.primary ? "primary" : "default"}
         >
           {action.label}
@@ -662,33 +533,29 @@ function ProductActions({ actions }: { actions: ProductAction[] }) {
   );
 }
 
-function ProductLeadSection({
-  actions,
-  body,
-  title,
-}: {
-  actions: ProductAction[];
-  body: ReactNode;
-  title: string;
-}) {
+function ProductLeadSection({ copy }: { copy: PublicProductPageCopy }) {
   return (
     <PublicSection>
       <Title
         level={2}
         style={{ fontSize: PUBLIC_TYPE.title, lineHeight: 1.3, margin: 0 }}
       >
-        {title}
+        {copy.lead.title}
       </Title>
-      <Paragraph
-        style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: "72ch" }}
-      >
-        {body}
-      </Paragraph>
-      <ProductActions actions={actions} />
+      {copy.lead.paragraphs.map((paragraph) => (
+        <Paragraph
+          key={paragraph}
+          style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: "72ch" }}
+        >
+          {paragraph}
+        </Paragraph>
+      ))}
+      <ProductActions actions={copy.lead.actions} />
     </PublicSection>
   );
 }
 
+// The note after the lead, as the crawler fallback prints it.
 function ProductSharedProjectNote() {
   return (
     <div
@@ -703,12 +570,9 @@ function ProductSharedProjectNote() {
         padding: "2px 0 2px 14px",
       }}
     >
-      <Text strong>One project model, different operating paths.</Text>{" "}
+      <Text strong>{PUBLIC_PRODUCT_SHARED_NOTE.title}</Text>{" "}
       <Text style={{ color: PUBLIC_COLORS.mutedText }}>
-        The product path changes where CoCalc runs and who operates it. Files,
-        notebooks, and terminals stay organized around a project; collaboration,
-        history, recovery, and agent features depend on the product and
-        deployment configuration.
+        {PUBLIC_PRODUCT_SHARED_NOTE.body}
       </Text>
     </div>
   );
@@ -717,11 +581,14 @@ function ProductSharedProjectNote() {
 function ProductDetailCard({
   children,
   icon,
+  id,
   role,
   title,
 }: {
   children: ReactNode;
   icon: IconName;
+  // A link target, such as the install card's. A link lands focus on it too.
+  id?: string;
   role?: "listitem";
   title: string;
 }) {
@@ -729,7 +596,9 @@ function ProductDetailCard({
     <section
       aria-label={title}
       className="cocalc-public-products-detail-card"
+      id={id}
       role={role}
+      tabIndex={id ? -1 : undefined}
       style={{
         background: PUBLIC_COLORS.surface,
         border: `1px solid ${PUBLIC_COLORS.border}`,
@@ -740,6 +609,8 @@ function ProductDetailCard({
         height: "100%",
         minHeight: 188,
         padding: 18,
+        // Keep the card's title below the page header.
+        scrollMarginTop: id ? "var(--cocalc-public-anchor-offset)" : undefined,
       }}
     >
       <Flex align="center" gap={10}>
@@ -803,7 +674,108 @@ function ProductDetailGrid({
   );
 }
 
-function ProductNotesList({ items }: { items: ReactNode[] }) {
+// The page's positioning cards, each with its icon.
+function productPoints(
+  copy: PublicProductPageCopy,
+  icons: readonly IconName[],
+): ProductDetailPoint[] {
+  return copy.points.map((point, index) => ({
+    ...point,
+    icon: icons[index] ?? "star",
+  }));
+}
+
+// A paragraph's text, code and links, as the crawler fallback renders them.
+function ProductText({
+  block,
+}: {
+  block: Parameters<typeof publicProductTextParts>[0];
+}) {
+  return (
+    <>
+      {publicProductTextParts(block).map((part, index) =>
+        "code" in part ? (
+          <Text code key={index}>
+            {part.code}
+          </Text>
+        ) : "link" in part ? (
+          <a href={productHref(part.link.href)} key={index}>
+            {part.link.label}
+          </a>
+        ) : (
+          <Fragment key={index}>{part.text}</Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
+// A card's blocks, in order. Text-only cards space their paragraphs; in cards
+// with commands, each step sits next to its command.
+function ProductBlocks({ blocks }: { blocks: readonly PublicProductBlock[] }) {
+  const margin = blocks.some(
+    (block) => typeof block !== "string" && "code" in block,
+  )
+    ? 0
+    : "0 0 8px";
+  return (
+    <>
+      {blocks.map((block, index) =>
+        typeof block === "string" || "text" in block ? (
+          <Paragraph key={index} style={{ margin }}>
+            <ProductText block={block} />
+          </Paragraph>
+        ) : "note" in block ? (
+          <Paragraph
+            key={index}
+            style={{ color: PUBLIC_COLORS.mutedText, margin }}
+          >
+            {block.note}
+          </Paragraph>
+        ) : (
+          <CodeBlock ariaLabel={block.label} code={block.code} key={index} />
+        ),
+      )}
+    </>
+  );
+}
+
+// The page's sections, one card each, in the order of the copy: an array, so
+// that PublicGrid lays out each card. The install card takes installId as its
+// id, so links such as #install-cocalc-star land on it.
+function productSectionCards(
+  copy: PublicProductPageCopy,
+  icons: Record<string, IconName>,
+  installId?: string,
+): ReactNode[] {
+  return copy.sections.map((section) => (
+    <ProductDetailCard
+      icon={icons[section.key] ?? "star"}
+      id={section.key === "install" ? installId : undefined}
+      key={section.key}
+      title={section.title}
+    >
+      <ProductBlocks blocks={section.blocks} />
+      {section.links?.length ? (
+        <ProductActions actions={section.links} />
+      ) : null}
+    </ProductDetailCard>
+  ));
+}
+
+// The card of the page's notes, if it has any.
+function productNotesCard(
+  copy: PublicProductPageCopy,
+  icon: IconName,
+): ReactNode {
+  return copy.notes.length > 0 ? (
+    <ProductDetailCard icon={icon} key="notes" title={copy.notesTitle}>
+      <ProductNotesList items={copy.notes} />
+    </ProductDetailCard>
+  ) : null;
+}
+
+function ProductNotesList({ items }: { items: readonly ReactNode[] }) {
   return (
     <ul style={{ margin: 0, paddingLeft: 20 }}>
       {items.map((item, index) => (
@@ -819,370 +791,104 @@ function ProductNotesList({ items }: { items: ReactNode[] }) {
 }
 
 function CocalcRocketPage() {
-  const detailItems = [
-    {
-      body: "Industry R&D organizations, research and national labs, enterprises, and government teams planning a broader customer-operated CoCalc deployment with governance, procurement, support, and rollout requirements.",
-      icon: "rocket",
-      title: "Who it fits",
-    },
-    {
-      body: "Runs on customer-operated infrastructure. The repository provides a systemd/VM bay runtime bundle and a minimal Kubernetes Helm chart to adapt to the chosen environment. Project compute runs on project hosts.",
-      icon: "servers",
-      title: "How it runs",
-    },
-    {
-      body: "Use Rocket when the deployment decision includes private infrastructure, capacity planning, operational ownership, support expectations, and commercial terms.",
-      icon: "cloud",
-      title: "When to choose it",
-    },
-  ] satisfies ProductDetailPoint[];
+  const copy = getPublicProductPageCopy("rocket");
 
   return (
     <Flex vertical gap={18}>
-      <ProductLeadSection
-        actions={[
-          {
-            href: supportProductPath("Rocket"),
-            label: "Talk with CoCalc about Rocket",
-            primary: true,
-          },
-          { href: appPath("pricing"), label: "Pricing and licensing" },
-        ]}
-        title="Planning an institutional private CoCalc deployment?"
-        body="Run durable projects inside infrastructure you control and govern."
-      />
+      <ProductLeadSection copy={copy} />
       <ProductSharedProjectNote />
       <ProductDetailGrid
-        items={detailItems}
+        items={productPoints(copy, ["rocket", "servers", "cloud"])}
         label="CoCalc Rocket positioning"
       />
       <PublicGrid columns={2}>
-        <ProductDetailCard
-          icon="rocket"
-          title="Boundary: planned private cloud"
-        >
-          <ProductNotesList
-            items={[
-              "Rocket starts with a deployment and commercial conversation, not a self-service installer.",
-              "It is for customer-operated private-cloud planning with infrastructure, governance, support requirements, and clear ownership of ongoing operations.",
-              "Use Launchpad when the immediate need is a smaller bounded private deployment.",
-            ]}
-          />
-        </ProductDetailCard>
-        <ProductDetailCard icon="servers" title="Plan Rocket with CoCalc">
-          <Paragraph style={{ marginTop: 0 }}>
-            Start with support when the decision includes infrastructure,
-            rollout, governance, site licensing, or deployment-planning
-            expectations.
-          </Paragraph>
-          <ProductActions
-            actions={[
-              {
-                href: publicPath("products/cocalc-launchpad"),
-                label: "View CoCalc Launchpad",
-              },
-              {
-                href: publicPath("products"),
-                label: "All product paths",
-              },
-            ]}
-          />
-        </ProductDetailCard>
+        {productNotesCard(copy, "rocket")}
+        {productSectionCards(copy, { plan: "servers" })}
       </PublicGrid>
+      <ProductActions actions={copy.links} />
     </Flex>
   );
 }
 
 function CocalcStarPage() {
-  // One-line commands: they work unchanged in macOS and Linux terminals and in
-  // Windows PowerShell, where backslash line continuations do not.
-  const tryCommand =
-    "docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 8170:80 -e COCALC_STAR_HTTP_PORT=8170 sagemathinc/star";
-  const serverCommand =
-    "docker run -d --name cocalc-star --restart unless-stopped --privileged --cgroupns=host -v cocalc-star:/var/lib/cocalc -p 443:443 -p 80:80 -e COCALC_STAR_DOMAIN=star.example.com sagemathinc/star";
-  const logsCommand = "docker logs -f cocalc-star";
-  const upgradeCommands =
-    "docker pull sagemathinc/star\ndocker rm -f cocalc-star\n# then run the same docker run command you installed with";
-  const removeCommands =
-    "docker rm -f cocalc-star\ndocker volume rm cocalc-star\ndocker rmi sagemathinc/star";
-  const adminLinkCommand = "docker exec cocalc-star star admin-link";
-  const detailItems = [
-    {
-      body: "Labs, courses, and small teams that want their own shared CoCalc: Jupyter, LaTeX, terminals, and collaboration on their own hardware.",
-      icon: "star",
-      title: "Who it fits",
-    },
-    {
-      body: "One Docker container and one Docker volume on macOS, Windows, or Linux. Every project runs in its own isolated container inside it.",
-      icon: "servers",
-      title: "How it runs",
-    },
-    {
-      body: "Free. Upgrades are a new image, and removing the container and volume removes all of its data.",
-      icon: "cloud",
-      title: "Easy to try, easy to undo",
-    },
-  ] satisfies ProductDetailPoint[];
+  const copy = getPublicProductPageCopy("star");
 
   return (
     <Flex vertical gap={18}>
-      <ProductLeadSection
-        actions={[
-          {
-            href: "#install-cocalc-star",
-            label: "Install CoCalc Star",
-            primary: true,
-          },
-          {
-            href: publicPath("products/cocalc-launchpad"),
-            label: "View CoCalc Launchpad",
-          },
-          {
-            href: publicPath("products/cocalc-rocket"),
-            label: "View CoCalc Rocket",
-          },
-        ]}
-        title="Run your own CoCalc with one Docker command."
-        body="CoCalc Star is free. Run it with Docker Desktop on your laptop, or Docker Engine on a Linux server with automatic HTTPS."
-      />
+      <ProductLeadSection copy={copy} />
       <ProductSharedProjectNote />
-      <ProductDetailGrid items={detailItems} label="CoCalc Star positioning" />
+      <ProductDetailGrid
+        items={productPoints(copy, ["star", "servers", "cloud"])}
+        label="CoCalc Star positioning"
+      />
       <PublicGrid columns={2}>
-        <ProductDetailCard icon="star" title="Install CoCalc Star">
-          <div id="install-cocalc-star" />
-          <Paragraph style={{ margin: 0 }}>
-            1. Install{" "}
-            <a href="https://www.docker.com/products/docker-desktop/">
-              Docker Desktop
-            </a>{" "}
-            on macOS or Windows, or Docker Engine with cgroup v2 on Linux, and
-            start it. Give Docker at least 4 CPUs and 16 GB of memory, with at
-            least 50 GB of free disk space for its volume.
-          </Paragraph>
-          <Paragraph style={{ margin: 0 }}>
-            2. Run this in a terminal (on Windows, in PowerShell):
-          </Paragraph>
-          <CodeBlock ariaLabel="Install command" code={tryCommand} />
-          <Paragraph style={{ margin: 0 }}>
-            3. Follow the first start, which takes a few minutes:
-          </Paragraph>
-          <CodeBlock ariaLabel="Follow the first start" code={logsCommand} />
-          <Paragraph style={{ margin: 0 }}>
-            When it prints a link starting with{" "}
-            <Text code>http://localhost:8170</Text>, open it to create your
-            admin account.
-          </Paragraph>
-        </ProductDetailCard>
-        <ProductDetailCard icon="servers" title="On a server with a domain">
-          <Paragraph style={{ margin: 0 }}>
-            Point a DNS name at a Linux server with Docker and open port 443,
-            then run the same command with your domain. HTTPS certificates are
-            obtained and renewed automatically.
-          </Paragraph>
-          <CodeBlock ariaLabel="Server install command" code={serverCommand} />
-          <Paragraph style={{ margin: 0 }}>
-            Lost the admin link, or someone else used it? Create a new one:
-          </Paragraph>
-          <CodeBlock ariaLabel="New admin link" code={adminLinkCommand} />
-        </ProductDetailCard>
-        <ProductDetailCard icon="cloud" title="Upgrade">
-          <Paragraph style={{ margin: 0 }}>
-            All accounts, projects, settings, and certificates live in the{" "}
-            <Text code>cocalc-star</Text> volume. To upgrade, replace the
-            container:
-          </Paragraph>
-          <CodeBlock ariaLabel="Upgrade commands" code={upgradeCommands} />
-          <Paragraph style={{ margin: 0 }}>
-            Running projects stop during the upgrade and can be started again
-            right away.
-          </Paragraph>
-        </ProductDetailCard>
-        <ProductDetailCard icon="star" title="Remove it completely">
-          <Paragraph style={{ margin: 0 }}>
-            Star writes no files outside Docker. This deletes CoCalc Star and
-            all of its data:
-          </Paragraph>
-          <CodeBlock ariaLabel="Remove commands" code={removeCommands} />
-          <ProductNotesList
-            items={[
-              "On Linux hosts with AppArmor, a small kernel profile for Star's bundled container runtime stays loaded until the host restarts; the setup guide shows how to unload it sooner.",
-              "Star is one machine: it is not a high-availability or scale-out deployment.",
-              "Use Launchpad or Rocket when private deployment or institutional rollout is the real decision.",
-            ]}
-          />
-        </ProductDetailCard>
+        {productSectionCards(
+          copy,
+          {
+            agents: "robot",
+            install: "star",
+            remove: "star",
+            server: "servers",
+            upgrade: "cloud",
+          },
+          "install-cocalc-star",
+        )}
+        {productNotesCard(copy, "server")}
       </PublicGrid>
-      <Flex gap={12} wrap>
-        <Button href="https://hub.docker.com/r/sagemathinc/star">
-          Docker Hub
-        </Button>
-        <Button href={appPath("docs/self-hosting/cocalc-star")}>
-          Read Star setup guide
-        </Button>
-      </Flex>
+      <ProductActions actions={copy.links} />
     </Flex>
   );
 }
 
 function CocalcLaunchpadPage() {
-  const installCommand =
-    "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
-  const detailItems = [
-    {
-      body: "Workshops and departments that need a customer-operated CoCalc environment for a bounded group, run by their own IT or operations team.",
-      icon: "servers",
-      title: "Who it fits",
-    },
-    {
-      body: "Runs as a lightweight private deployment operated by the customer. It gives operators more control over the environment than Star.",
-      icon: "cloud",
-      title: "How it runs",
-    },
-    {
-      body: "Use Launchpad when a hosted account is not the right fit and a single public-VM appliance is too constrained for the pilot or department.",
-      icon: "star",
-      title: "When to choose it",
-    },
-  ] satisfies ProductDetailPoint[];
+  const copy = getPublicProductPageCopy("launchpad");
 
   return (
     <Flex vertical gap={18}>
-      <ProductLeadSection
-        actions={[
-          {
-            href: supportProductPath("Launchpad"),
-            label: "Talk with CoCalc about Launchpad",
-            primary: true,
-          },
-          {
-            href: "#install-cocalc-launchpad",
-            label: "Review Launchpad installer",
-          },
-          { href: appPath("pricing"), label: "Pricing and licensing" },
-          {
-            href: publicPath("products/cocalc-star"),
-            label: "View CoCalc Star",
-          },
-        ]}
-        title="Need a bounded private CoCalc deployment?"
-        body="A lightweight private environment you operate — more control than a hosted account."
-      />
+      <ProductLeadSection copy={copy} />
       <ProductSharedProjectNote />
       <ProductDetailGrid
-        items={detailItems}
+        items={productPoints(copy, ["servers", "cloud", "star"])}
         label="CoCalc Launchpad positioning"
       />
       <PublicGrid columns={2}>
-        <ProductDetailCard icon="servers" title="Install CoCalc Launchpad">
-          <div id="install-cocalc-launchpad" />
-          <Paragraph style={{ margin: 0 }}>
-            For evaluation or operator setup, copy and run this in your
-            terminal:
-          </Paragraph>
-          <CodeBlock ariaLabel="Install command" code={installCommand} />
-          <Flex gap={12} wrap>
-            <Button href="https://software.cocalc.ai/software/cocalc-launchpad/install.sh">
-              Open install script
-            </Button>
-            <Button href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
-              Open software page
-            </Button>
-          </Flex>
-          <Paragraph style={{ margin: 0 }}>
-            Current supported targets are Linux on x64 or arm64, and macOS on
-            arm64.
-          </Paragraph>
-        </ProductDetailCard>
-        <ProductDetailCard
-          icon="cloud"
-          title="Boundary: bounded private deployment"
-        >
-          <ProductNotesList
-            items={[
-              "Launchpad is customer-operated and sized for a pilot, lab, workshop, department, or platform team.",
-              "The customer or administrator owns infrastructure, recovery, and ongoing operations.",
-              "Use Star if one machine running Docker is enough.",
-              "Use Rocket when governance, support, and broader private-cloud planning are the main decision.",
-            ]}
-          />
-        </ProductDetailCard>
+        {productSectionCards(
+          copy,
+          { install: "servers" },
+          "install-cocalc-launchpad",
+        )}
+        {productNotesCard(copy, "cloud")}
       </PublicGrid>
+      <ProductActions actions={copy.links} />
     </Flex>
   );
 }
 
 function CocalcPlusPage() {
-  const installCommand =
-    "curl -fsSL https://software.cocalc.ai/software/plus/install.sh | sh";
-  const detailItems = [
-    {
-      body: "Individual users who want a local CoCalc project environment before choosing hosted collaboration or a shared deployment.",
-      icon: "laptop",
-      title: "Who it fits",
-    },
-    {
-      body: "Runs on one Linux or macOS machine and is operated by the user. It is the local, one-user runtime in the product family.",
-      icon: "cloud",
-      title: "How it runs",
-    },
-    {
-      body: "Use Plus for local evaluation, demos, personal projects, and learning the CoCalc project model without creating a hosted account.",
-      icon: "star",
-      title: "When to choose it",
-    },
-  ] satisfies ProductDetailPoint[];
+  const copy = getPublicProductPageCopy("plus");
 
   return (
     <Flex vertical gap={18}>
-      <ProductLeadSection
-        actions={[
-          {
-            href: "#install-cocalc-plus",
-            label: "Install CoCalc Plus",
-            primary: true,
-          },
-          { href: appPath("pricing"), label: "Pricing and licensing" },
-          {
-            href: publicPath("products/cocalc-star"),
-            label: "View CoCalc Star",
-          },
-        ]}
-        title="Need local CoCalc before choosing a shared path?"
-        body="Use the same project-centered workflow on your own machine, with the runtime and local data under your control."
-      />
+      <ProductLeadSection copy={copy} />
       <ProductSharedProjectNote />
-      <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />
+      <ProductDetailGrid
+        items={productPoints(copy, ["laptop", "cloud", "star"])}
+        label="CoCalc Plus positioning"
+      />
       <PublicGrid columns={2}>
-        <ProductDetailCard icon="laptop" title="Install CoCalc Plus locally">
-          <div id="install-cocalc-plus" />
-          <Paragraph style={{ margin: 0 }}>
-            The current install flow uses the hosted software distribution:
-          </Paragraph>
-          <CodeBlock ariaLabel="Install command" code={installCommand} />
-          <Flex gap={12} wrap>
-            <Button href="https://software.cocalc.ai/software/plus/install.sh">
-              Open install script
-            </Button>
-          </Flex>
-          <Paragraph style={{ margin: 0 }}>
-            Current target platforms are Linux and macOS. The installer places
-            the runtime in a user-owned location and adds a launcher if needed.
-          </Paragraph>
-        </ProductDetailCard>
-        <ProductDetailCard
-          icon="cloud"
-          title="Boundary: local, one-user runtime"
-        >
-          <ProductNotesList
-            items={[
-              "Plus is for local evaluation or individual work on one machine.",
-              "It is self-serve local software; the user operates the runtime and local data.",
-              "Use hosted CoCalc.ai when collaborators need shared projects operated by CoCalc.",
-              "Use Star, Launchpad, or Rocket when the group needs a shared deployment.",
-            ]}
-          />
-        </ProductDetailCard>
+        {productSectionCards(
+          copy,
+          {
+            agents: "robot",
+            install: "laptop",
+            uninstall: "trash",
+            update: "cloud-download",
+          },
+          "install-cocalc-plus",
+        )}
+        {productNotesCard(copy, "cloud")}
       </PublicGrid>
+      <ProductActions actions={copy.links} />
     </Flex>
   );
 }
@@ -1194,8 +900,39 @@ export default function PublicProductsApp({
   config?: PublicConfig;
   initialRoute: PublicProductsRoute;
 }) {
-  const title = titleForRoute(initialRoute);
+  // A hidden product's page redirects to the products page, here as on the
+  // server, for links followed inside the public app and for a page opened
+  // through the static shell. It keeps the query string, as the server's
+  // redirect does, and the fragment, which the browser keeps across that
+  // redirect.
+  const redirect = getHiddenPublicProductRedirect(initialRoute.view);
+  const route: PublicProductsRoute =
+    redirect != null ? { view: "products" } : initialRoute;
+  const title = titleForRoute(route);
   const marketingConfig = getPublicMarketingConfig(config);
+
+  useEffect(() => {
+    if (redirect == null) return;
+    navigatePublic(
+      `${publicPath(redirect)}${window.location.search}${window.location.hash}`,
+      true,
+    );
+  }, [redirect]);
+
+  // A link from another page to a card on this one, such as Where to run
+  // CoCalc's "Install CoCalc Star", lands on that card, and so does focus, so
+  // the next Tab goes on from the card rather than from the top of the page.
+  // Wait a frame: the public app scrolls to the top of each page it opens.
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (!id) return;
+    const frame = window.requestAnimationFrame(() => {
+      const card = document.getElementById(id);
+      card?.scrollIntoView?.({ block: "start" });
+      card?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [route.view]);
 
   useEffect(() => {
     document.title = title;
@@ -1207,13 +944,13 @@ export default function PublicProductsApp({
       config={marketingConfig}
       title={title}
     >
-      {initialRoute.view === "products-cocalc-plus" ? (
+      {route.view === "products-cocalc-plus" ? (
         <CocalcPlusPage />
-      ) : initialRoute.view === "products-cocalc-rocket" ? (
+      ) : route.view === "products-cocalc-rocket" ? (
         <CocalcRocketPage />
-      ) : initialRoute.view === "products-cocalc-star" ? (
+      ) : route.view === "products-cocalc-star" ? (
         <CocalcStarPage />
-      ) : initialRoute.view === "products-cocalc-launchpad" ? (
+      ) : route.view === "products-cocalc-launchpad" ? (
         <CocalcLaunchpadPage />
       ) : (
         <ProductsOverviewPage config={marketingConfig} />

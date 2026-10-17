@@ -13,6 +13,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import { BulletList, featureAppPath as appPath } from "./page-components";
 import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 
@@ -214,8 +215,8 @@ export default function SlidesFeaturePage({
             },
             { href: appPath("features/teaching"), label: "Teaching" },
             {
-              href: appPath("products"),
-              label: "Compare operating models",
+              href: appPath(PUBLIC_PRODUCTS_PAGE_LINK.href),
+              label: PUBLIC_PRODUCTS_PAGE_LINK.label,
             },
             ...(helpEmail
               ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]

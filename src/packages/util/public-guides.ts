@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { isPublicProductShown } from "./public-product-availability";
 import { FIELD_GUIDES_URL } from "./theme";
 
 const GUIDE_BASE = FIELD_GUIDES_URL.replace(/\/$/, "");
@@ -32,7 +33,9 @@ export const PUBLIC_FEATURED_GUIDES = [
   },
 ] as const;
 
-export const PUBLIC_GUIDE_GROUPS = [
+// Every guide group, including guides about products the public pages may
+// hide. Read them through getPublicGuideGroups.
+const PUBLIC_GUIDE_GROUPS = [
   {
     guides: [
       {
@@ -101,6 +104,8 @@ export const PUBLIC_GUIDE_GROUPS = [
         body: "Install a self-contained one-user CoCalc for a laptop, workstation, or SSH machine.",
         href: fieldGuidePath("cocalc-plus"),
         icon: "laptop",
+        // Listed only while the public pages show CoCalc Plus.
+        product: "plus",
         title: "CoCalc Plus",
       },
       {
@@ -130,6 +135,32 @@ export const PUBLIC_GUIDE_GROUPS = [
     ],
     intro:
       "Self-hosting, local evaluation, durable collaborative projects, and architecture.",
+    // Without the CoCalc Plus guide.
+    introWithoutPlus:
+      "Self-hosting, durable collaborative projects, and architecture.",
     title: "Operating paths",
   },
 ] as const;
+
+type PublicGuideGroup = (typeof PUBLIC_GUIDE_GROUPS)[number];
+type PublicGuide = PublicGuideGroup["guides"][number];
+
+// The guide groups the public pages list: a guide about a product shows only
+// while the public pages show that product. The React page and the crawler
+// fallback both list these.
+export function getPublicGuideGroups(): {
+  guides: PublicGuide[];
+  intro: string;
+  title: PublicGuideGroup["title"];
+}[] {
+  return PUBLIC_GUIDE_GROUPS.map((group) => ({
+    guides: (group.guides as readonly PublicGuide[]).filter(
+      (guide) => !("product" in guide) || isPublicProductShown(guide.product),
+    ),
+    intro:
+      "introWithoutPlus" in group && !isPublicProductShown("plus")
+        ? group.introWithoutPlus
+        : group.intro,
+    title: group.title,
+  }));
+}

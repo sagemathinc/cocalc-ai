@@ -10,6 +10,7 @@ import initSitemap, {
 } from "./sitemap";
 import { UNPUBLISHED_TEAM_PROFILE_SLUGS } from "@cocalc/util/public-about-content";
 import { getPublicFeatureIndexPages } from "@cocalc/util/public-feature-pages";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import { docsPath, listDocsEntries } from "@cocalc/docs";
 
 jest.mock("@cocalc/database/postgres/news", () => ({
@@ -46,6 +47,8 @@ jest.mock("@cocalc/database/settings/customize", () => ({
 import getCustomize from "@cocalc/database/settings/customize";
 
 const mockedCustomize = jest.mocked(getCustomize);
+
+afterEach(() => jest.restoreAllMocks());
 
 function requestFor(host?: string) {
   return {
@@ -193,6 +196,49 @@ describe("public sitemap", () => {
     expect(builtin).toContain("/policies");
     expect(builtin).toContain("/policies/privacy");
     expect(builtin).not.toContain("/policies/imprint");
+  });
+
+  it("lists only the product pages the public pages show", async () => {
+    const productPaths = async () =>
+      (await publicSitemapPaths(requestFor("cocalc.ai"))).filter((path) =>
+        path.startsWith("/products"),
+      );
+    expect(await productPaths()).toEqual([
+      "/products",
+      "/products/cocalc-plus",
+      "/products/cocalc-star",
+    ]);
+    const { renderSitemapXml } = await import("./sitemap");
+    const xml = await renderSitemapXml(requestFor("cocalc.ai"));
+    expect(xml).toContain("/products/cocalc-plus<");
+    // Launchpad and Rocket are hidden: their pages leave the sitemap.
+    expect(xml).not.toMatch(/products\/cocalc-(launchpad|rocket)/);
+
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "launchpad", true);
+    expect(await productPaths()).toEqual([
+      "/products",
+      "/products/cocalc-plus",
+      "/products/cocalc-star",
+      "/products/cocalc-launchpad",
+    ]);
+
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    expect(await productPaths()).toEqual([
+      "/products",
+      "/products/cocalc-star",
+      "/products/cocalc-launchpad",
+    ]);
+  });
+
+  it("serves the listed product pages without a redirect on cocalc.ai", async () => {
+    const paths = (await publicSitemapPaths(requestFor("cocalc.ai"))).filter(
+      (path) => path.startsWith("/products"),
+    );
+    for (const path of paths) {
+      const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+    }
   });
 
   it("serves every listed path through current public route handlers", async () => {

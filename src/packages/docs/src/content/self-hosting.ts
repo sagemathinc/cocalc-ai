@@ -3,6 +3,23 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// The ways to run CoCalc that the public pages present: CoCalc.ai, CoCalc
+// Plus and Star. CoCalc Launchpad and Rocket are left out until each has a
+// current release; when one returns, add its line back:
+//
+// - Use CoCalc Launchpad for a bounded private deployment operated by your
+//   team, with more control over the environment than Star.
+// - Discuss CoCalc Rocket with CoCalc when planning a broader private-cloud
+//   deployment, including infrastructure, operational ownership, and support
+//   requirements. Rocket has VM and Kubernetes deployment paths.
+const STAR_PRODUCT_BOUNDARIES = `
+- Use CoCalc.ai for projects hosted and run by SageMath, Inc.
+- Use CoCalc Plus for a local single-user install.
+- Use CoCalc Star for a shared site in one Docker container.
+
+For a larger private deployment, talk with us.
+`.trim();
+
 export const COCALC_STAR_BODY = `
 ## What CoCalc Star is
 
@@ -139,13 +156,7 @@ projects have no disk quota and share the volume's space.
 
 ## Product boundaries
 
-- Use CoCalc Plus for a local single-user install.
-- Use CoCalc Star for a shared site in one Docker container.
-- Use CoCalc Launchpad for a bounded private deployment operated by your team,
-  with more control over the environment than Star.
-- Discuss CoCalc Rocket with CoCalc when planning a broader private-cloud
-  deployment, including infrastructure, operational ownership, and support
-  requirements. Rocket has VM and Kubernetes deployment paths.
+${STAR_PRODUCT_BOUNDARIES}
 
 ## Map the connections
 

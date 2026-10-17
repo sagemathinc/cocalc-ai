@@ -7,7 +7,10 @@ import {
   PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET,
   PUBLIC_COMPARE_COLLABORATION_BULLET,
 } from "@cocalc/util/public-compare-content";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import PublicFeaturesApp from "../app";
+
+afterEach(() => jest.restoreAllMocks());
 
 const COCALC_AI = {
   cocalc_product: "launchpad",
@@ -88,6 +91,41 @@ describe("Compare page", () => {
       screen.getByText(
         "The work must persist across sessions, collaborators, reviews, and handoffs",
       ),
+    ).not.toBeNull();
+  });
+});
+
+// The rows that name the ways to run CoCalc read the product switches when
+// the page renders, so they follow a switch that changes.
+describe("Compare page ways to run CoCalc", () => {
+  function operatingRow(): HTMLElement {
+    return screen.getByRole("rowheader", { name: "Who operates it?" })
+      .parentElement!;
+  }
+
+  it("names hosted, local and single-VM deployment while Launchpad and Rocket are hidden", () => {
+    renderCompare(COCALC_AI);
+
+    expect(operatingRow().textContent).toContain(
+      "Teams need hosted, local, and single-VM deployment choices.",
+    );
+    expect(
+      screen.getByText("Hosted, local, and single-VM deployment."),
+    ).not.toBeNull();
+    expect(operatingRow().textContent).not.toMatch(/private/);
+  });
+
+  it("names every way to run CoCalc once every product is shown", () => {
+    for (const id of ["plus", "launchpad", "rocket"] as const) {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, id, true);
+    }
+    renderCompare(COCALC_AI);
+
+    expect(operatingRow().textContent).toContain(
+      "Teams need hosted, local, single-VM, and private deployment choices.",
+    );
+    expect(
+      screen.getByText("Hosted, local, single-VM, and private deployment."),
     ).not.toBeNull();
   });
 });
