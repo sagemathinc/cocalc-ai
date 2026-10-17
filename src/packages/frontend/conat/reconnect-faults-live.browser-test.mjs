@@ -232,9 +232,53 @@ async function installBannerWatch() {
   });
 }
 
+// FAULT=visibility:<seconds>: hide and show the tab every 5 s (for the app,
+// by overriding document.visibilityState / hasFocus and firing the events,
+// so the real browser's tabs don't move). Each return to the foreground may
+// force a recovery probe of the visible, live editor (throttled to one per
+// resource per minute). Runs in the background while typing continues.
+async function toggleVisibility(seconds) {
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => (window.__rcxHidden ? "hidden" : "visible"),
+    });
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => !!window.__rcxHidden,
+    });
+    document.hasFocus = () => !window.__rcxHidden;
+  });
+  report.visibility_shown_at = [];
+  const start = Date.now();
+  while (Date.now() - start < seconds * 1000) {
+    await page.evaluate(() => {
+      window.__rcxHidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("blur"));
+    });
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      window.__rcxHidden = false;
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    report.visibility_shown_at.push(Date.now() - report.fault_at);
+    await page.waitForTimeout(4500);
+  }
+}
+let visibilityToggling = Promise.resolve();
+
 async function injectFault() {
   if (FAULT === "none") return;
   report.fault_at = Date.now();
+  if (FAULT.startsWith("visibility:")) {
+    const seconds = Number(FAULT.slice("visibility:".length));
+    visibilityToggling = toggleVisibility(seconds).catch((err) =>
+      report.notes.push(`visibility toggling failed: ${err.message}`),
+    );
+    return;
+  }
   if (FAULT.startsWith("offline:")) {
     const seconds = Number(FAULT.slice("offline:".length));
     await context.setOffline(true);
@@ -405,6 +449,7 @@ try {
     await page.waitForTimeout(1000);
   }
   await denseAfterFault;
+  // (visibility toggling, if any, keeps going through the observe phase)
   report.recovery_seconds =
     recoveredAt == null ? null : Math.round((recoveredAt - faultEnd) / 1000);
   report.fault_seconds = Math.round((faultEnd - faultStart) / 1000);
@@ -427,6 +472,7 @@ try {
     await page.waitForTimeout(TYPE_INTERVAL_MS);
   }
   report.type_failures = typeFailures;
+  await visibilityToggling;
   report.removed_roots = await page.evaluate(() => window.__rcxRemoved ?? []);
 
   const after = await survivingTags();
