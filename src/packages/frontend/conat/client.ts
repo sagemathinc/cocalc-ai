@@ -2528,6 +2528,10 @@ export class ConatClient extends EventEmitter {
       });
       this.invalidateProjectHostBrowserSession(routing_key);
     }
+    if (lastBrowserOnlineAt > (state.reconnectFailingSince ?? 0)) {
+      // offline and back again while refreshing the routing info
+      state.reconnectFailingSince = lastBrowserOnlineAt;
+    }
     if (
       state.reconnectAttempts >= ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS &&
       Date.now() - (state.reconnectFailingSince ?? Date.now()) >=
