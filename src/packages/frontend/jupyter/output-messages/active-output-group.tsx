@@ -116,7 +116,19 @@ function defaultPlainText(m: Map<string, any>): string {
 // otherwise it is replaced (and new JavaScript runs once).
 const BOOTSTRAP = `(function () {
   var root = document.getElementById("cocalc-outputs");
-  var rendered = new Map(); // index -> { kind, value, div }
+  var rendered = new Map(); // index -> { kind, value, className, div }
+  // The app's resolved palette, as shell-owned variables.
+  function applyTheme(theme) {
+    if (!theme || typeof theme !== "object") return;
+    var style = document.documentElement.style;
+    [["text", "--shell-text"], ["surface", "--shell-surface"], ["dangerBg", "--shell-danger-bg"]].forEach(function (p) {
+      var v = theme[p[0]];
+      if (typeof v === "string" && CSS.supports("color", v)) style.setProperty(p[1], v);
+    });
+    if (theme.colorScheme === "dark" || theme.colorScheme === "light") {
+      style.colorScheme = theme.colorScheme;
+    }
+  }
   function run(div, code) {
     try {
       new Function("element", code).call(window, jQuery(div));
@@ -131,6 +143,7 @@ const BOOTSTRAP = `(function () {
     if (event.source !== window.parent) return;
     var data = event.data;
     if (!data || data.type !== ${JSON.stringify(ACTIVE_OUTPUT_MESSAGE)} || !Array.isArray(data.outputs)) return;
+    applyTheme(data.theme);
     var wanted = new Set();
     var toRun = [];
     var prev = null;
@@ -177,7 +190,7 @@ function scriptBody(code: string): string {
   return code.replace(/<\/(script)/gi, "<\\/$1").replace(/<!--/g, "<\\!--");
 }
 
-export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:sans-serif}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:#fdd}</style><script>${scriptBody(
+export const SHELL_DOCUMENT = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;font-family:sans-serif;color:var(--shell-text,CanvasText);background:var(--shell-surface,transparent)}pre.output_stdout,pre.output_stderr{margin:0;padding:2px 4px;white-space:pre-wrap;font-family:monospace}pre.output_stderr{background:var(--shell-danger-bg,#fff0f0)}</style><script>${scriptBody(
   `${jquerySource}`,
 )}</script></head><body><div id="cocalc-outputs"></div><script>${scriptBody(
   BOOTSTRAP,
@@ -196,14 +209,52 @@ function sameOutputs(a: ActiveOutput[], b: ActiveOutput[]): boolean {
   );
 }
 
+export interface ShellTheme {
+  text: string;
+  surface: string;
+  dangerBg: string;
+  colorScheme: string;
+}
+
+// The app palette as resolved at the frame's position (the CSS variables
+// inherit onto the iframe element).
+export function resolveShellTheme(el: Element): ShellTheme {
+  const style = getComputedStyle(el);
+  const v = (name: string) =>
+    style.getPropertyValue(`--cocalc-ui-${name}`).trim();
+  return {
+    text: v("text"),
+    surface: v("surface"),
+    dangerBg: v("dangerBg"),
+    colorScheme: style.colorScheme?.includes("dark") ? "dark" : "light",
+  };
+}
+
+function sameTheme(a: ShellTheme | null, b: ShellTheme): boolean {
+  return (
+    a != null &&
+    a.text === b.text &&
+    a.surface === b.surface &&
+    a.dangerBg === b.dangerBg &&
+    a.colorScheme === b.colorScheme
+  );
+}
+
 export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const outputsRef = useRef<ActiveOutput[]>(outputs);
   outputsRef.current = outputs;
+  const themeRef = useRef<ShellTheme | null>(null);
   const post = (iframe: HTMLIFrameElement | null) => {
+    if (iframe == null) return;
+    themeRef.current = resolveShellTheme(iframe);
     // The frame is an opaque origin, so its origin can't be named here.
-    iframe?.contentWindow?.postMessage(
-      { type: ACTIVE_OUTPUT_MESSAGE, outputs: outputsRef.current },
+    iframe.contentWindow?.postMessage(
+      {
+        type: ACTIVE_OUTPUT_MESSAGE,
+        outputs: outputsRef.current,
+        theme: themeRef.current,
+      },
       "*",
     );
   };
@@ -218,6 +269,27 @@ export function ActiveOutputGroup({ outputs }: { outputs: ActiveOutput[] }) {
     postedRef.current = outputs;
     post(frameRef.current);
   }, [outputs]);
+  // Follow the app's theme (explicit light/dark, or the system preference).
+  useEffect(() => {
+    const update = () => {
+      const iframe = frameRef.current;
+      if (iframe == null) return;
+      if (!sameTheme(themeRef.current, resolveShellTheme(iframe))) {
+        post(iframe);
+      }
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-cocalc-theme", "class", "style"],
+    });
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    media?.addEventListener?.("change", update);
+    return () => {
+      observer.disconnect();
+      media?.removeEventListener?.("change", update);
+    };
+  }, []);
   return (
     <AutosizedIframe
       srcDoc={SHELL_DOCUMENT}

@@ -13,12 +13,16 @@ const app = await bundleFrontend(`
   import { createRoot } from "react-dom/client";
   import { fromJS } from "immutable";
   import { CellOutputMessages } from "./jupyter/output-messages/message";
+  import { appearanceStyleSheet } from "@cocalc/util/appearance-palette";
   import "./jupyter/output-messages/mime-types/init-frontend";
   function App() {
     const [output, setOutput] = useState(fromJS({}));
     window.__setOutput = (o) => setOutput(fromJS(o));
     return <div id="cell"><CellOutputMessages output={output} trust /></div>;
   }
+  const sheet = document.createElement("style");
+  sheet.textContent = appearanceStyleSheet();
+  document.head.append(sheet);
   document.cookie = "app_session=secret";
   localStorage.setItem("app_marker", "secret");
   createRoot(document.getElementById("root")).render(<App />);
@@ -201,6 +205,63 @@ try {
     "output_html,output_stdout,output_stderr,output_javascript",
   );
   assert.match(await page.locator("#cell").innerText(), /printed after/);
+
+  // Theme: the frame follows the app's explicit light/dark palette, without
+  // reloading or re-running scripts.
+  await set({});
+  await set({
+    0: js(COUNT),
+    1: { name: "stderr", text: "warned" },
+    2: html("<b>t</b>"),
+  });
+  f = await frame();
+  await f.waitForFunction(() => window.__runs >= 1);
+  const runsBefore = await f.evaluate(() => window.__runs);
+  for (const theme of ["dark", "light", "dark"]) {
+    await page.evaluate(
+      (t) => document.documentElement.setAttribute("data-cocalc-theme", t),
+      theme,
+    );
+    const expected = await page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.color = "var(--cocalc-ui-text)";
+      probe.style.background = "var(--cocalc-ui-surface)";
+      probe.style.borderColor = "var(--cocalc-ui-dangerBg)";
+      document.body.append(probe);
+      const cs = getComputedStyle(probe);
+      const r = {
+        text: cs.color,
+        surface: cs.backgroundColor,
+        danger: cs.borderTopColor,
+      };
+      probe.remove();
+      return r;
+    });
+    await f.waitForFunction(
+      (e) => getComputedStyle(document.body).color === e.text,
+      expected,
+      { timeout: 5000 },
+    );
+    const actual = await f.evaluate(() => ({
+      text: getComputedStyle(document.body).color,
+      surface: getComputedStyle(document.body).backgroundColor,
+      danger: getComputedStyle(document.querySelector("pre.output_stderr"))
+        .backgroundColor,
+      scheme: document.documentElement.style.colorScheme,
+    }));
+    assert.deepEqual(
+      { text: actual.text, surface: actual.surface, danger: actual.danger },
+      expected,
+      `frame palette follows ${theme}`,
+    );
+    assert.equal(actual.scheme, theme);
+  }
+  assert.equal(
+    await f.evaluate(() => window.__runs),
+    runsBefore,
+    "theme change re-ran no script",
+  );
+  if (process.env.SHOW_THEME) console.log("dark/light palette checked");
 
   // 2. JavaScript can target an output that comes after it.
   await set({});
