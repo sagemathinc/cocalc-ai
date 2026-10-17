@@ -4127,6 +4127,7 @@ describe("ConatClient routed project-host reconnect", () => {
       },
     );
     const resetProjectHostRuntime = jest.fn();
+    const reconnectProjectHostRuntime = jest.fn();
 
     jest.resetModules();
 
@@ -4147,7 +4148,10 @@ describe("ConatClient routed project-host reconnect", () => {
         getActions: jest.fn(() => ({
           ensure_host_info: ensureHostInfo,
         })),
-        getProjectActions: jest.fn(() => ({ resetProjectHostRuntime })),
+        getProjectActions: jest.fn(() => ({
+          resetProjectHostRuntime,
+          reconnectProjectHostRuntime,
+        })),
       },
     }));
 
@@ -4256,7 +4260,10 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(close1).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-2");
-    expect(resetProjectHostRuntime).toHaveBeenCalledWith();
+    // A restart at the same address reconnects the open editors in place
+    // rather than rebuilding them.
+    expect(reconnectProjectHostRuntime).toHaveBeenCalledWith();
+    expect(resetProjectHostRuntime).not.toHaveBeenCalled();
     jest.advanceTimersByTime(50);
     expect(reconnectSpy).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].client).toBe(routedClient1);
