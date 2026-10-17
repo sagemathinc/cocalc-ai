@@ -1859,9 +1859,11 @@ export class ConatClient extends EventEmitter {
         actions?.resetProjectHostRuntime?.();
       }
     }
+    // Not forced: the session is often learned long after the restart, when
+    // the editors have already reconnected, and a forced pass would rebuild
+    // their healthy changefeeds while the user types.
     this.reconnectCoordinator.requestResourceReconnects({
       includeBackground: true,
-      force: true,
       projectIds: affectedProjectIds,
       reason: "project_host_session_changed",
       resetBackoff: true,
