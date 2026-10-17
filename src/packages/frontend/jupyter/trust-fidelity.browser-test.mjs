@@ -262,6 +262,21 @@ const EXPECTED_ERRORS = {
   "plotly-init-notebook-mode": [/Plotly is not defined/],
 };
 
+// Reject if promise doesn't settle within ms: hostile or busy output must
+// never stall the harness.
+function bounded(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Error(`${label} timed out`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// How long one frame may take to answer a check before it counts as unknown.
+const FRAME_EVAL_MS = Number(process.env.FRAME_EVAL_MS ?? 2000);
+
 // After a check first passes, it must still pass this much later.
 const SETTLE_MS = Number(process.env.CASE_SETTLE_MS ?? 2000);
 
@@ -308,52 +323,67 @@ function runCheck(root, check) {
 async function frameChain(frame) {
   const chain = [];
   for (let f = frame; f && f.parentFrame(); f = f.parentFrame()) {
-    const el = await f.frameElement().catch(() => null);
+    const el = await bounded(
+      f.frameElement(),
+      FRAME_EVAL_MS,
+      "frame element",
+    ).catch(() => null);
     chain.unshift(
       el
-        ? await el
-            .evaluate((e) => ({
+        ? await bounded(
+            el.evaluate((e) => ({
               sandbox: e.getAttribute("sandbox"),
               title: e.getAttribute("title") ?? "",
               width: Math.round(e.getBoundingClientRect().width),
               height: Math.round(e.getBoundingClientRect().height),
-            }))
-            .catch(() => ({ unknown: true }))
+            })),
+            FRAME_EVAL_MS,
+            "frame boundary",
+          ).catch(() => ({ unknown: true }))
         : { unknown: true },
     );
   }
   return chain;
 }
 
-// Where the check passes now: "page", a frame (returned), or nothing.
+// Where the check passes now: "page", or the first matching frame.  Every
+// frame is still visited, so uninspectable siblings are always counted.
 async function locate(page, check, errors) {
-  const inPage = await page
-    .locator("section[data-case]")
-    .evaluate(
-      (el, [fn, c]) => new Function(`return (${fn})`)()(el, c),
-      [runCheck.toString(), check],
-    )
-    .catch((e) => {
-      errors.push(`check: ${e.message.slice(0, 160)}`);
-      return "";
-    });
-  if (inPage) return { works: inPage, where: "page", frame: null, unknown: 0 };
+  const inPage = await bounded(
+    page
+      .locator("section[data-case]")
+      .evaluate(
+        (el, [fn, c]) => new Function(`return (${fn})`)()(el, c),
+        [runCheck.toString(), check],
+      ),
+    FRAME_EVAL_MS * 2,
+    "page check",
+  ).catch((e) => {
+    errors.push(`check: ${e.message.slice(0, 160)}`);
+    return "";
+  });
+  let found = inPage ? { works: inPage, where: "page", frame: null } : null;
   let unknown = 0;
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
     let r;
     try {
-      r = await frame.evaluate(
-        ([fn, c]) => new Function(`return (${fn})`)()(document, c),
-        [runCheck.toString(), check],
+      // Bounded: a busy or hung frame is "unknown", not a stalled harness.
+      r = await bounded(
+        frame.evaluate(
+          ([fn, c]) => new Function(`return (${fn})`)()(document, c),
+          [runCheck.toString(), check],
+        ),
+        FRAME_EVAL_MS,
+        "frame evaluation",
       );
     } catch {
       unknown += 1;
       continue;
     }
-    if (r) return { works: r, where: "frame", frame, unknown };
+    if (r && found == null) found = { works: r, where: "frame", frame };
   }
-  return { works: "", where: "", frame: null, unknown };
+  return { ...(found ?? { works: "", where: "", frame: null }), unknown };
 }
 
 async function measureCase(browser, name, trust) {
@@ -397,7 +427,13 @@ async function measureCase(browser, name, trust) {
       // It must still hold after settling (late load failures, blank redraws).
       await page.waitForTimeout(SETTLE_MS);
       const again = await locate(page, check, errors);
-      if (!again.works || again.where !== found.where) {
+      // Same place, and for a frame the same frame (a marker that moves to a
+      // sibling frame is not the output that first passed).
+      if (
+        !again.works ||
+        again.where !== found.where ||
+        again.frame !== found.frame
+      ) {
         errors.push(`unstable: passed in ${found.where}, then failed`);
         found = again;
       }
@@ -417,13 +453,16 @@ async function measureCase(browser, name, trust) {
     await section
       .screenshot({
         path: `${outDir}/${trust ? "trusted" : "untrusted"}-${name}.png`,
+        timeout: 10000,
       })
       .catch((e) => errors.push(`screenshot: ${e.message.slice(0, 120)}`));
   } catch (e) {
     errors.push(`harness: ${e.message.slice(0, 200)}`);
     result.where = "error";
   } finally {
-    await page.close();
+    await bounded(page.close(), 10000, "page close").catch((e) =>
+      errors.push(`harness: ${e.message}`),
+    );
   }
   result.unexpectedErrors = errors.filter(
     (e) => !(EXPECTED_ERRORS[name] ?? []).some((re) => re.test(e)),
@@ -466,11 +505,20 @@ try {
     for (const trust of [true, false]) {
       for (const name of Object.keys(WORKS)) {
         if (process.env.ONLY_CASE && process.env.ONLY_CASE !== name) continue;
-        report[trust ? "trusted" : "untrusted"][name] = await measureCase(
-          browser,
-          name,
-          trust,
-        );
+        // A watchdog per case: one stalled case can't stall the run.
+        report[trust ? "trusted" : "untrusted"][name] = await bounded(
+          measureCase(browser, name, trust),
+          DEADLINE_MS + SETTLE_MS + 60000,
+          "case",
+        ).catch((e) => ({
+          works: "",
+          where: "error",
+          matched: null,
+          frames: [],
+          unknownFrames: 0,
+          errors: [`harness: ${e.message}`],
+          unexpectedErrors: [`harness: ${e.message}`],
+        }));
         if (process.env.VERBOSE) {
           console.error(
             JSON.stringify(report[trust ? "trusted" : "untrusted"][name]).slice(
