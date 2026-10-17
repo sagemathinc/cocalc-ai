@@ -24,6 +24,7 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
+import { applyUrlTransform } from "@cocalc/frontend/lib/url-transform";
 import {
   enforceHtmlSafetyFloor,
   isAllowedHtmlTag,
@@ -168,21 +169,29 @@ export default function HTML({
       if (noSanitize && urlTransform != null && attribs != null) {
         // since we did not sanitize the HTML (which also does urlTransform),
         // we have to do the urlTransform here instead.
+        let transformed: Record<string, string> | undefined = undefined;
         for (const attrib of URL_ATTRIBS) {
-          if (attribs[attrib] != null) {
-            const x = urlTransform(attribs[attrib]);
-            if (x != null) {
-              const props = attributesToProps(attribs);
-              props[attrib] = x;
-              return React.createElement(
-                name,
-                props,
-                children && children?.length > 0
-                  ? domToReact(children as any, options)
-                  : undefined,
-              );
-            }
+          const value = attribs[attrib];
+          if (value == null) continue;
+          // (Called without a tag here, as it always has been.)
+          const x = applyUrlTransform(urlTransform, value);
+          if (x === value) continue;
+          transformed ??= { ...attribs };
+          if (x == null) {
+            // rejected by urlTransform
+            delete transformed[attrib];
+          } else {
+            transformed[attrib] = x;
           }
+        }
+        if (transformed != null) {
+          return React.createElement(
+            name,
+            attributesToProps(transformed),
+            children && children?.length > 0
+              ? domToReact(children as any, options)
+              : undefined,
+          );
         }
       }
     } catch (err) {

@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  applyUrlTransform,
+  type UrlTransform,
+} from "@cocalc/frontend/lib/url-transform";
+
 const ALLOWED_TAGS = new Set([
   "address",
   "article",
@@ -255,7 +260,7 @@ function isAllowedIframeSrc(value: string): boolean {
 export function sanitizeHtmlAttributes(
   name: string,
   attribs: Record<string, string> | undefined,
-  urlTransform?: (url: string, tag?: string) => string | undefined,
+  urlTransform?: UrlTransform,
 ): Record<string, string> {
   const tag = name.toLowerCase();
   const allowed = ALLOWED_ATTRIBUTES[tag];
@@ -271,10 +276,13 @@ export function sanitizeHtmlAttributes(
     if (rawValue == null) {
       continue;
     }
-    const transformed =
-      URL_ATTRIBUTES.has(attr) && urlTransform != null
-        ? (urlTransform(rawValue, tag) ?? rawValue)
-        : rawValue;
+    const transformed = URL_ATTRIBUTES.has(attr)
+      ? applyUrlTransform(urlTransform, rawValue, tag)
+      : rawValue;
+    if (transformed == null) {
+      // rejected by urlTransform
+      continue;
+    }
     if (attr === "srcset") {
       const clean = sanitizeSrcset(transformed);
       if (clean != null) {
