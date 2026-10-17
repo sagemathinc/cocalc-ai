@@ -6,6 +6,7 @@ import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
 import {
   AgentRpcCapacity,
   agentRpcCapacityReason,
+  type AgentRpcCapacityFull,
 } from "@cocalc/conat/agents/rpc-capacity";
 import { validateAttachmentLocation } from "@cocalc/conat/agents/attachments";
 import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
@@ -522,16 +523,22 @@ export function createAgentRpcService(
         };
       } catch (error) {
         const code = (error as { code?: string })?.code;
+        const full = (error as { full?: AgentRpcCapacityFull })?.full;
         const failure =
           error instanceof PreparationFailure
             ? error.failure
-            : code === "host_overloaded" ||
-                code === "project_overloaded" ||
-                code === "attachment_preparation_expired" ||
-                code === "attachment_invalid" ||
-                code === "attachment_limit_exceeded"
-              ? ({ code, reason: code } as const)
-              : executionFailure(error);
+            : full
+              ? ({
+                  code: full.code,
+                  reason: agentRpcCapacityReason(full),
+                } as const)
+              : code === "host_overloaded" ||
+                  code === "project_overloaded" ||
+                  code === "attachment_preparation_expired" ||
+                  code === "attachment_invalid" ||
+                  code === "attachment_limit_exceeded"
+                ? ({ code, reason: code } as const)
+                : executionFailure(error);
         return rpcOutcome(e, "rejected", { ...failure, chat_effect: "none" });
       }
     },

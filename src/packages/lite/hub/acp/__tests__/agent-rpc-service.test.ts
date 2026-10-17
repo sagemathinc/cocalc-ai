@@ -416,6 +416,21 @@ test("retained attempt evidence does not leak a newly staged duplicate attachmen
   expect(deps.discardAttachments).toHaveBeenCalledTimes(1);
 });
 
+test("a full attachment preparation says the recipient is busy", async () => {
+  const { e, deps } = attachmentFixture();
+  const capacity = new AgentRpcCapacity(1, 1);
+  const held = capacity.acquire("someone-else");
+  const service = createAgentRpcService(deps, undefined, capacity);
+  expect(await service.prepareAttachments(e)).toMatchObject({
+    outcome: "rejected",
+    code: "host_overloaded",
+    chat_effect: "none",
+    reason:
+      "the recipient is busy (1 of 1 messages to the recipient's host are being delivered right now); retry in a few seconds",
+  });
+  if (!("code" in held)) held.release();
+});
+
 test("attachment preparations share capacity with ordinary text messages", async () => {
   const { e, deps } = attachmentFixture();
   const service = createAgentRpcService(

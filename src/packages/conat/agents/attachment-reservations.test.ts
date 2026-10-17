@@ -112,7 +112,7 @@ describe("attachment preparation admission", () => {
     expect(s.start).toHaveBeenCalledTimes(1);
     expect(s.adapter.stage).not.toHaveBeenCalled();
     expect(s.adapter.submit).not.toHaveBeenCalled();
-    expect(s.capacity.acquire(s.envelope.target.project_id)).toEqual({
+    expect(s.capacity.acquire(s.envelope.target.project_id)).toMatchObject({
       code: "host_overloaded",
     });
     await s.reservations.cancel(ticket.reservation_id, s.request);
@@ -233,7 +233,7 @@ describe("attachment preparation admission", () => {
     const rejected = expect(prepared).rejects.toThrow("expired");
     await jest.advanceTimersByTimeAsync(30_001);
     await rejected;
-    expect(s.capacity.acquire(s.envelope.target.project_id)).toEqual({
+    expect(s.capacity.acquire(s.envelope.target.project_id)).toMatchObject({
       code: "host_overloaded",
     });
     start.resolve();
@@ -279,7 +279,7 @@ describe("attachment preparation admission", () => {
     );
     const rejected = expect(committing).rejects.toThrow("expired");
     await jest.advanceTimersByTimeAsync(30_001);
-    expect(s.capacity.acquire(s.envelope.target.project_id)).toEqual({
+    expect(s.capacity.acquire(s.envelope.target.project_id)).toMatchObject({
       code: "host_overloaded",
     });
     staged.resolve();
