@@ -33,6 +33,7 @@ const identities = new Map([
 const checkNetwork = jest.fn();
 const assertHost = jest.fn(async () => {});
 const submitAgentRpc = jest.fn();
+const createAdmission = jest.fn(async (_state: unknown) => {});
 const remoteSubmit = jest.fn();
 let remoteTarget = false;
 const query = jest.fn(async () => ({
@@ -89,7 +90,7 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   createHostControlClient: () => ({ submitAgentRpc }),
 }));
 jest.mock("./admission-state", () => ({
-  createAgentRpcAdmissionState: async () => {},
+  createAgentRpcAdmissionState: (state: unknown) => createAdmission(state),
   deleteAgentRpcAdmissionState: async () => {},
   claimAgentRpcAdmissionState: async () => undefined,
   getAgentRpcAdmissionState: async () => undefined,
@@ -103,6 +104,7 @@ import {
   executionOfEnvelope,
 } from "./rpc";
 import { verifyAgentRpcReportCapability } from "./rpc-report-capability";
+import { AgentRpcCapacityError } from "./admission-capacity";
 import { agentMessagingSubject } from "@cocalc/conat/agents/protocol";
 
 const source = { project_id: sourceProject, agent_id: sourceAgent };
@@ -157,6 +159,7 @@ beforeEach(() => {
   remoteSubmit.mockReset();
   assertHost.mockClear();
   query.mockClear();
+  createAdmission.mockReset().mockResolvedValue(undefined);
   submitAgentRpc.mockReset().mockImplementation(async (envelope) => ({
     version: 3,
     target: envelope.target,
@@ -239,6 +242,59 @@ test("cross-bay submission does not require the source identity in the target ba
   } finally {
     identities.set(sourceAgent, sourceIdentity);
   }
+});
+
+describe("full admission capacity", () => {
+  const send = () =>
+    agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "hello",
+      },
+    });
+
+  test("a busy recipient is waited for briefly, then delivered", async () => {
+    createAdmission.mockRejectedValueOnce(
+      new AgentRpcCapacityError("recipient", "permit", 32, 32),
+    );
+    await expect(send()).resolves.toMatchObject({ outcome: "accepted" });
+    expect(createAdmission).toHaveBeenCalledTimes(2);
+    expect(submitAgentRpc).toHaveBeenCalledTimes(1);
+  });
+
+  test("a recipient that stays busy is rejected with the reason", async () => {
+    createAdmission.mockRejectedValue(
+      new AgentRpcCapacityError("recipient", "permit", 32, 32),
+    );
+    const outcome = await send();
+    expect(outcome).toMatchObject({
+      outcome: "rejected",
+      code: "project_overloaded",
+      chat_effect: "none",
+    });
+    expect(outcome.reason).toBe(
+      "the recipient is busy (32 of 32 messages to the recipient's project are being delivered right now); retry in a few seconds",
+    );
+    expect(submitAgentRpc).not.toHaveBeenCalled();
+  }, 10_000);
+
+  test("a sender over its own limit is told so", async () => {
+    createAdmission.mockRejectedValue(
+      new AgentRpcCapacityError("sender", "permit", 64, 64),
+    );
+    const outcome = await send();
+    expect(outcome.outcome).toBe("rejected");
+    expect(outcome.code).toBeUndefined();
+    expect(outcome.reason).toContain("you have too many messages in flight");
+  }, 10_000);
 });
 
 test("a queued message carries the hub's capability to report its failed turn", async () => {

@@ -3,7 +3,10 @@ import getLogger from "@cocalc/backend/logger";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
-import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
+import {
+  AgentRpcCapacity,
+  agentRpcCapacityReason,
+} from "@cocalc/conat/agents/rpc-capacity";
 import { validateAttachmentLocation } from "@cocalc/conat/agents/attachments";
 import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
 import { AgentAttachmentReservations } from "@cocalc/conat/agents/attachment-reservations";
@@ -215,12 +218,14 @@ export function createAgentRpcService(
         onNewAttempt?.();
         const lease = staged
           ? { track: <T>(work: Promise<T>) => work, release: () => {} }
-          : capacity.acquire(e.target.project_id);
+          : await capacity.acquireWithin(
+              e.target.project_id,
+              capacityWaitMs(e.deadline),
+            );
         if ("code" in lease)
           return rpcOutcome(e, "rejected", {
             code: lease.code,
-            reason:
-              "Recipient messaging capacity is full; no message was submitted or queued for retry",
+            reason: agentRpcCapacityReason(lease),
             chat_effect: "none",
           });
         let admissionStarted = false;
@@ -589,6 +594,21 @@ export function createAgentRpcService(
     },
     close: () => reservations.close(),
   };
+}
+
+// A full recipient waits briefly for a slot, but only while enough of the
+// submission deadline remains for the delivery itself.
+const CAPACITY_WAIT_MAX_MS = 5_000;
+const CAPACITY_DELIVERY_RESERVE_MS = 20_000;
+export function capacityWaitMs(deadline: number, now = Date.now()): number {
+  if (!Number.isFinite(deadline)) return 0;
+  return Math.max(
+    0,
+    Math.min(
+      CAPACITY_WAIT_MAX_MS,
+      deadline - now - CAPACITY_DELIVERY_RESERVE_MS,
+    ),
+  );
 }
 
 // Process-local evidence shared by host RPC invocations; never persisted in V1.
