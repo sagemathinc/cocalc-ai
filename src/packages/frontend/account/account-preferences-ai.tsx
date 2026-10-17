@@ -4,6 +4,10 @@
  */
 
 import { AgentMemoryPanel } from "./agent-memory-settings";
+import {
+  AGENT_LOCATION_LABEL,
+  AgentLocationSetting,
+} from "./agent-location-setting";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Alert, Button, Modal, Typography } from "antd";
 import { useState } from "react";
@@ -40,6 +44,7 @@ export const ACCOUNT_PREFERENCES_AI_PAGE = {
     ...Object.values(CODEX_DEFAULTS_LABELS),
     ...Object.values(CODEX_CREDENTIALS_LABELS),
     "Agent memory",
+    AGENT_LOCATION_LABEL,
   ],
   icon: ({ context }) => (
     <AIAvatar
@@ -122,6 +127,9 @@ export function AccountPreferencesAI() {
       <CodexDefaultsPanel other_settings={other_settings} />
       <Panel header="Agent memory">
         <AgentMemoryPanel />
+      </Panel>
+      <Panel header="Your time and location for agents">
+        <AgentLocationSetting />
       </Panel>
     </>
   );

@@ -65,6 +65,10 @@ jest.mock("../agent-messaging-settings", () => ({
 jest.mock("../agent-memory-settings", () => ({
   AgentMemoryPanel: () => <div>Agent memory controls</div>,
 }));
+jest.mock("../agent-location-setting", () => ({
+  AGENT_LOCATION_LABEL: "Let agents use my approximate location",
+  AgentLocationSetting: () => <div>Agent location controls</div>,
+}));
 
 jest.mock("@cocalc/frontend/misc/ai-usage-status", () => ({
   AIUsageStatus: () => <div>AIUsageStatus</div>,

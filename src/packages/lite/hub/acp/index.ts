@@ -241,6 +241,7 @@ import {
   type AcpSessionRow,
   type AcpSessionState,
 } from "../sqlite/acp-sessions";
+import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
@@ -4161,12 +4162,9 @@ export class ChatStreamWriter {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
-        if (
-          !(
-            this.syncdbError != null &&
-            isProjectAcpStorageError(this.syncdbError)
-          )
-        ) {
+        if (!(
+          this.syncdbError != null && isProjectAcpStorageError(this.syncdbError)
+        )) {
           await this.syncdb!.save();
         }
       } catch (err) {
@@ -7347,8 +7345,7 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let acpSessionPublisherOverride:
-  | ((row: AcpSessionRow) => void | Promise<void>)
-  | undefined;
+  ((row: AcpSessionRow) => void | Promise<void>) | undefined;
 
 export function setAcpSessionPublisherOverride(
   publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
@@ -7415,8 +7412,7 @@ export async function runDetachedAcpQueueWorker(
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
   let workerControlService:
-    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
-    | undefined;
+    Awaited<ReturnType<typeof initAcpDaemonControlService>> | undefined;
   let workerFatalError: unknown;
   let workerHeartbeatFailureCount = 0;
   const markWorkerFatalError = ({
@@ -8345,9 +8341,17 @@ async function executeAcpRequest({
         if (memory.event) {
           await wrappedStream({ type: "event", event: memory.event });
         }
+        // The person's local time (and place, if they allow it), so the
+        // agent does not assume UTC for "today" or "6am".
+        const userTimeContext = agentUserTimeContext(
+          request.account_id,
+          request.chat?.user_locale,
+        );
         await currentAgent.evaluate({
           ...request,
-          agent_memory_context: memory.context,
+          agent_memory_context:
+            [userTimeContext, memory.context].filter(Boolean).join("\n\n") ||
+            undefined,
           mentionReferences,
           readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
           prompt: withComputerNote(
@@ -10591,8 +10595,7 @@ async function trySteerCandidateIds({
   // Harness agents (Claude) take pasted images as content blocks, exactly as
   // for a new turn; prepared once, only if a harness agent is asked.
   let harnessRequest:
-    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
-    | undefined;
+    Promise<Awaited<ReturnType<typeof materializeBlobs>>> | undefined;
   try {
     for (const id of ids) {
       // Cached writer/lease aliases can outlive an ACP reset. Only the current
@@ -12523,8 +12526,7 @@ async function handleAcpControlRequestNow(
     }
     const currentRequest = decodeAcpJobRequest(current);
     let fundingRecovery:
-      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
-      | undefined;
+      Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"] | undefined;
     if (request.action === "resend_with_payment") {
       const payment = request.payment_recovery!;
       if (
