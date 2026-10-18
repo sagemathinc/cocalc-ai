@@ -40,6 +40,18 @@ export type AuthCommandDeps = {
   revokeSession?: (api: string, cookie: string) => Promise<boolean>;
 };
 
+// A fetch for a stored profile's cookie, scoped to that profile's own site so
+// a direct transport does not check it against the default API instead.
+export function profileScopedFetch(
+  api: string,
+  relayFetch: typeof fetchWithProjectApiRelay = fetchWithProjectApiRelay,
+): typeof fetch {
+  return ((input: string | URL, init?: RequestInit) =>
+    relayFetch(input, init, undefined, {
+      credentialSite: api,
+    })) as typeof fetch;
+}
+
 export function registerAuthCommand(
   program: Command,
   deps: AuthCommandDeps,
@@ -69,7 +81,7 @@ export function registerAuthCommand(
   const revokeSession =
     deps.revokeSession ??
     ((api: string, cookie: string) =>
-      signOutSession(api, cookie, fetchWithProjectApiRelay as typeof fetch));
+      signOutSession(api, cookie, profileScopedFetch(api)));
 
   const auth = program.command("auth").description("auth profile management");
 
@@ -1330,24 +1342,54 @@ Examples:
           const config = loadAuthConfig(configPath);
           const localOnly = !!opts.localOnly;
 
+          // Signing out waits on the network, and another CLI process may save
+          // the config meanwhile. Re-read it afterwards and remove only the
+          // profiles processed here, unchanged: a profile added or signed in
+          // again in between keeps its new session and stays.
+          const removeProcessed = (processed: Record<string, any>) => {
+            const latest = loadAuthConfig(configPath);
+            const removed: string[] = [];
+            for (const [name, profile] of Object.entries(processed)) {
+              if (
+                latest.profiles[name] &&
+                JSON.stringify(latest.profiles[name]) ===
+                  JSON.stringify(profile)
+              ) {
+                delete latest.profiles[name];
+                removed.push(name);
+              }
+            }
+            if (
+              latest.current_profile != null &&
+              !latest.profiles[latest.current_profile]
+            ) {
+              latest.current_profile = Object.keys(latest.profiles).sort()[0];
+            }
+            saveAuthConfig(latest, configPath);
+            return { latest, removed };
+          };
+
           if (opts.all) {
+            const processed = structuredClone(config.profiles);
             const sessions: Record<string, string> = {};
-            for (const [name, profile] of Object.entries(config.profiles)) {
+            for (const [name, profile] of Object.entries(processed)) {
               sessions[name] = await revokeProfileSession(
                 profile as any,
                 localOnly,
               );
             }
-            config.profiles = {};
-            config.current_profile = undefined;
-            saveAuthConfig(config, configPath);
+            const { latest, removed } = removeProcessed(processed);
+            const changed = Object.keys(processed).filter(
+              (name) => !removed.includes(name) && latest.profiles[name],
+            );
             const unconfirmed =
               Object.values(sessions).includes("not confirmed");
             return {
               removed: "all",
               server_sessions: sessions,
-              current_profile: null,
-              remaining_profiles: 0,
+              current_profile: latest.current_profile ?? null,
+              remaining_profiles: Object.keys(latest.profiles).length,
+              ...(changed.length ? { kept_changed_profiles: changed } : {}),
               ...(unconfirmed ? { warning: NOT_CONFIRMED_WARNING } : {}),
             };
           }
@@ -1358,21 +1400,22 @@ Examples:
           if (!config.profiles[target]) {
             throw new Error(`auth profile '${target}' not found`);
           }
+          const processed = structuredClone({
+            [target]: config.profiles[target],
+          });
           const serverSession = await revokeProfileSession(
-            config.profiles[target],
+            processed[target],
             localOnly,
           );
-          delete config.profiles[target];
-          if (config.current_profile === target) {
-            const next = Object.keys(config.profiles).sort()[0];
-            config.current_profile = next;
-          }
-          saveAuthConfig(config, configPath);
+          const { latest: updated, removed } = removeProcessed(processed);
           return {
-            removed: target,
+            removed: removed.includes(target) ? target : null,
+            ...(removed.includes(target) || !updated.profiles[target]
+              ? {}
+              : { kept_changed_profiles: [target] }),
             server_session: serverSession,
-            current_profile: config.current_profile ?? null,
-            remaining_profiles: Object.keys(config.profiles).length,
+            current_profile: updated.current_profile ?? null,
+            remaining_profiles: Object.keys(updated.profiles).length,
             ...(serverSession === "not confirmed"
               ? { warning: NOT_CONFIRMED_WARNING }
               : {}),

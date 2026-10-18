@@ -7,7 +7,11 @@ import { Command } from "commander";
 import { createHash, randomUUID } from "node:crypto";
 import { readExternalAgentCredential } from "../core/external-agent-profile";
 
-import { registerAuthCommand, type AuthCommandDeps } from "./auth";
+import {
+  profileScopedFetch,
+  registerAuthCommand,
+  type AuthCommandDeps,
+} from "./auth";
 import { sanitizeProfileName } from "../../core/auth-config";
 import { cookieNameFor, normalizeSecretValue } from "../../core/auth-cookies";
 
@@ -126,7 +130,7 @@ function logoutFixture(
       },
     }),
   );
-  return { program, capture, calls, saved: () => saved };
+  return { program, capture, calls, config, saved: () => saved };
 }
 
 test("auth logout signs out the profile's own server session, then removes it", async () => {
@@ -200,6 +204,53 @@ test("auth logout --all still removes every profile when a sign-out throws", asy
   });
   assert.match(f.capture.data.warning, /may still be valid/);
   assert.deepEqual(f.saved().profiles, {});
+});
+
+test("auth logout --all keeps a profile added while it waited on the server", async () => {
+  let config: any;
+  const f = logoutFixture(async (_api, cookie) => {
+    // Another CLI process signs in to a new profile meanwhile.
+    if (cookie.includes("prod")) {
+      config.profiles.fresh = { cookie: "remember_me=fresh-secret" };
+    }
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.deepEqual(Object.keys(f.saved().profiles), ["fresh"]);
+  assert.equal(f.capture.data.remaining_profiles, 1);
+  assert.equal(f.capture.data.server_sessions.fresh, undefined);
+});
+
+test("auth logout keeps a profile that was signed in again while it waited", async () => {
+  let config: any;
+  const f = logoutFixture(async () => {
+    config.profiles.prod = {
+      api: "https://cocalc.ai",
+      cookie: "remember_me=new-secret",
+    };
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.equal(f.capture.data.removed, null);
+  assert.deepEqual(f.capture.data.kept_changed_profiles, ["prod"]);
+  assert.equal(f.saved().profiles.prod.cookie, "remember_me=new-secret");
+});
+
+test("a profile's sign-out request is scoped to the profile's own site", async () => {
+  const calls: any[] = [];
+  const relayFetch = (async (...args: any[]) => {
+    calls.push(args);
+    return new Response(JSON.stringify({ status: "success" }));
+  }) as any;
+  const scoped = profileScopedFetch("https://bay-2.cocalc.ai", relayFetch);
+  await scoped("https://bay-2.cocalc.ai/api/v2/accounts/sign-out", {
+    method: "POST",
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][3], { credentialSite: "https://bay-2.cocalc.ai" });
+  assert.equal(calls[0][2], undefined);
 });
 
 test("external agent login creates only a separate scoped profile, despite ambient human credentials", async () => {
