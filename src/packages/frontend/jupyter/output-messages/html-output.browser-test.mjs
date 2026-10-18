@@ -311,9 +311,22 @@ try {
       '<div style="height:700px">tall</div><script>window.PLOTLYENV = {};</script>',
     ),
   );
+  console.log("DEBUG browser version", browser.version(), "exported length", exported.length);
+  console.log("DEBUG exported head", JSON.stringify(exported.slice(0, 600)));
+  browser.on("disconnected", () => console.log("DEBUG browser disconnected"));
   const doc = await browser.newPage();
+  doc.on("crash", () => console.log("DEBUG page crashed"));
+  doc.on("close", () => console.log("DEBUG page closed"));
+  doc.on("console", (m) => console.log("DEBUG page console", m.type(), m.text().slice(0, 300)));
+  doc.on("pageerror", (e) => console.log("DEBUG pageerror", String(e).slice(0, 300)));
+  doc.on("framenavigated", (fr) => console.log("DEBUG framenavigated", fr.url().slice(0, 200)));
   await doc.route(/^https?:\/\//, (route) => route.abort());
-  await doc.setContent(exported, { waitUntil: "domcontentloaded" });
+  try {
+    await doc.setContent(exported, { waitUntil: "domcontentloaded" });
+  } catch (err) {
+    console.log("DEBUG setContent failed", String(err).slice(0, 500), "isClosed", doc.isClosed(), "connected", browser.isConnected());
+    throw err;
+  }
   await doc.waitForFunction(
     () => {
       const h = document
