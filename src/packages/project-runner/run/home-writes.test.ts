@@ -98,13 +98,40 @@ describe("project start writes into the home", () => {
     expect(await readFile(startup, "utf8")).toBe("# mine\n");
   });
 
-  it.each([".ssh", ".ssh/.cocalc", ".local", ".local/share/cocalc"])(
-    "startup scripts never write outside when %s is a symlink",
+  it.each([".ssh", ".ssh/.cocalc"])(
+    "startup fails closed and never writes outside when %s is a symlink",
     async (link) => {
       await mkdir(join(home, link, ".."), { recursive: true });
       await symlink(outside, join(home, link));
       await expect(writeStartupScripts(home)).rejects.toThrow(/ELOOP/);
       await outsideUnchanged();
+    },
+  );
+
+  it.each([
+    [".local", "outside the home"],
+    [".local/share/cocalc", "outside the home"],
+    [".local", "inside the home (relative, as users do)"],
+  ])(
+    "skips startup.sh when %s is a symlink %s, writing nothing through it",
+    async (link, where) => {
+      await mkdir(join(home, link, ".."), { recursive: true });
+      if (where.startsWith("inside")) {
+        await mkdir(join(home, "portable-scripts", ".local"), {
+          recursive: true,
+        });
+        await symlink("portable-scripts/.local", join(home, link));
+      } else {
+        await symlink(outside, join(home, link));
+      }
+      await writeStartupScripts(home);
+      expect((await stat(join(home, START_PROJECT_SSH))).isFile()).toBe(true);
+      await outsideUnchanged();
+      if (where.startsWith("inside")) {
+        expect(await readdir(join(home, "portable-scripts", ".local"))).toEqual(
+          [],
+        );
+      }
     },
   );
 

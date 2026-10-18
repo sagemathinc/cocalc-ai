@@ -9,8 +9,14 @@ import {
 } from "@cocalc/util/project-startup-script";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { isAbsolute, join, relative } from "node:path";
-import { writeFileBeneathHome } from "@cocalc/backend/files/beneath-home";
+import {
+  isSymlinkRefusal,
+  writeFileBeneathHome,
+} from "@cocalc/backend/files/beneath-home";
+import getLogger from "@cocalc/backend/logger";
 import { hostPathForProjectPath } from "./project-path";
+
+const logger = getLogger("project-runner:startup-scripts");
 
 // Both files are under the project user's home, so they are written through
 // beneath-home: a symlinked parent fails the write instead of redirecting it
@@ -27,13 +33,23 @@ export async function writeStartupScripts(home: string) {
     hostPathForProjectPath(home, join(home, PROJECT_STARTUP_SCRIPT_PATH)),
   );
   if (startup.startsWith("..") || isAbsolute(startup)) return;
-  // Created once; the user may edit or remove its contents afterwards.
-  writeFileBeneathHome(home, startup, PROJECT_STARTUP_SCRIPT_TEMPLATE, {
-    mode: 0o700,
-    dirMode: 0o700,
-    chmodDir: false,
-    noReplace: true,
-  });
+  // Created once; the user may edit or remove its contents afterwards. It is
+  // only a template, so a symlink in its path (users link ~/.local to
+  // somewhere else in their home) skips it rather than failing the start.
+  try {
+    writeFileBeneathHome(home, startup, PROJECT_STARTUP_SCRIPT_TEMPLATE, {
+      mode: 0o700,
+      dirMode: 0o700,
+      chmodDir: false,
+      noReplace: true,
+    });
+  } catch (err) {
+    if (!isSymlinkRefusal(err)) throw err;
+    logger.warn("not creating startup.sh: its path contains a symlink", {
+      home,
+      startup,
+    });
+  }
 }
 
 // These scripts are run every time a project starts,
