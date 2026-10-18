@@ -282,6 +282,28 @@ export function ArtifactResults({
   );
 }
 
+const ARTIFACT_DRAWER_WIDTH_KEY = "cocalc:chat:artifactDrawerWidth";
+const DEFAULT_ARTIFACT_DRAWER_WIDTH = 400;
+const MIN_ARTIFACT_DRAWER_WIDTH = 280;
+const ARTIFACT_DRAWER_WIDTH_STEP = 80;
+
+function clampArtifactDrawerWidth(width: number): number {
+  const max =
+    typeof window === "undefined" ? Infinity : Math.max(window.innerWidth, 0);
+  return Math.round(Math.max(MIN_ARTIFACT_DRAWER_WIDTH, Math.min(width, max)));
+}
+
+function readArtifactDrawerWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(ARTIFACT_DRAWER_WIDTH_KEY));
+    return saved > 0 && Number.isFinite(saved)
+      ? clampArtifactDrawerWidth(saved)
+      : DEFAULT_ARTIFACT_DRAWER_WIDTH;
+  } catch {
+    return DEFAULT_ARTIFACT_DRAWER_WIDTH;
+  }
+}
+
 export default function ArtifactBrowser({
   actions,
   threadId,
@@ -304,6 +326,16 @@ export default function ArtifactBrowser({
   const [sort, setSort] = useState<"published" | "created" | "title">(
     "published",
   );
+  const [drawerWidth, setDrawerWidth] = useState(readArtifactDrawerWidth);
+  const resizeDrawer = (width: number) => {
+    const next = clampArtifactDrawerWidth(width);
+    setDrawerWidth(next);
+    try {
+      localStorage.setItem(ARTIFACT_DRAWER_WIDTH_KEY, String(next));
+    } catch {
+      // The drawer still resizes when storage is unavailable.
+    }
+  };
   if (agentWorkspace && agentWorkspaceActive === false) return null;
   if (agentWorkspace) {
     return (
@@ -311,7 +343,34 @@ export default function ArtifactBrowser({
         open
         title="Artifacts"
         placement="right"
-        size={400}
+        size={drawerWidth}
+        resizable={{ onResize: resizeDrawer }}
+        extra={
+          // A keyboard path for the pointer-only drag handle.
+          <Space.Compact>
+            <Button
+              size="small"
+              aria-label="Make the artifacts panel narrower"
+              title="Narrower"
+              disabled={drawerWidth <= MIN_ARTIFACT_DRAWER_WIDTH}
+              onClick={() =>
+                resizeDrawer(drawerWidth - ARTIFACT_DRAWER_WIDTH_STEP)
+              }
+            >
+              <Icon name="minus" />
+            </Button>
+            <Button
+              size="small"
+              aria-label="Make the artifacts panel wider"
+              title="Wider"
+              onClick={() =>
+                resizeDrawer(drawerWidth + ARTIFACT_DRAWER_WIDTH_STEP)
+              }
+            >
+              <Icon name="plus" />
+            </Button>
+          </Space.Compact>
+        }
         mask={false}
         onClose={onClose}
         styles={{ wrapper: { maxWidth: "100%" }, body: { padding: 16 } }}
