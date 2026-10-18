@@ -93,6 +93,39 @@ export function isFileServerNotInitializedError(err: unknown): boolean {
   return message.toLowerCase().includes(FILE_SERVER_NOT_INITIALIZED);
 }
 
+// A save that failed only because the connection to the project dropped (a
+// project-host restart, a brief network or tunnel blip) is retried like an
+// uninitialized file server: the connection is usually back within seconds,
+// and showing "Error saving file to disk" for that is alarming and wrong.
+export function isTransientDisconnectSaveError(err: unknown): boolean {
+  // conat's structured code when a request's reply inbox was lost with the
+  // connection (the message is "request reply inbox was replaced or closed")
+  if ((err as { code?: unknown })?.code === "CONNECTION_LOST") {
+    return true;
+  }
+  const message = (
+    typeof err === "string"
+      ? err
+      : typeof (err as { message?: unknown })?.message === "string"
+        ? (err as { message: string }).message
+        : `${err}`
+  )
+    .toLowerCase()
+    .trim();
+  return (
+    message.includes("socket has been disconnected") ||
+    message.includes("socket is disconnected") ||
+    message === "disconnected" ||
+    message === "error: disconnected"
+  );
+}
+
+function isRetryableSaveError(err: unknown): boolean {
+  return (
+    isFileServerNotInitializedError(err) || isTransientDisconnectSaveError(err)
+  );
+}
+
 export async function saveToDiskWithFileServerRetry({
   retryDelaysMs = SAVE_TO_DISK_FILE_SERVER_RETRY_DELAYS_MS,
   save,
@@ -110,7 +143,7 @@ export async function saveToDiskWithFileServerRetry({
       return;
     } catch (err) {
       if (
-        !isFileServerNotInitializedError(err) ||
+        !isRetryableSaveError(err) ||
         attempt >= retryDelaysMs.length ||
         !shouldRetry()
       ) {
