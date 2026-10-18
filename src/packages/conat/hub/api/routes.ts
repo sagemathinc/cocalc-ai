@@ -142,6 +142,10 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.startCourseSecretCleanup": courseProjectFromOpts,
   "projects.getCourseSecretSyncStatus": courseProjectFromOpts,
   "projects.revokeCourseSecretPolicy": courseProjectFromOpts,
+  // Course managers are the course project's collaborators, known on its
+  // bay; that bay grants them access to student projects on other bays.
+  "projects.ensureCourseManagerAccess": courseProjectFromOpts,
+  "projects.repairAcceptedCourseStudentInviteAccounts": courseProjectFromOpts,
   // A document's edit history (TimeTravel) lives with its project.
   "sync.history": projectFromOpts,
   "sync.purgeHistory": projectFromOpts,

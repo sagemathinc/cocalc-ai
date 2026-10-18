@@ -2480,13 +2480,19 @@ export interface ProjectCollabInviteRespondRequest {
   trusted_product_access_checked?: boolean;
 }
 
+// Sent by the course project's owning bay, which has checked the caller's
+// access to the course: source_bay_id is the authenticated calling bay
+// (typed services enforce that), and the receiving bay accepts the request
+// only if that bay owns the course project.
 export interface ProjectAcceptedCourseStudentInviteAccountRepairRequest {
+  source_bay_id: string;
   account_id: string;
   course_project_id: string;
   students: CourseStudentInviteAccountRepairInput[];
 }
 
 export interface ProjectEnsureCourseManagerAccessRequest {
+  source_bay_id: string;
   account_id: string;
   course_project_id: string;
   course_path?: string;
