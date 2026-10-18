@@ -1303,10 +1303,15 @@ Examples:
   ): Promise<"revoked" | "not confirmed" | "no browser session" | "skipped"> {
     if (!profile?.cookie?.trim()) return "no browser session";
     if (localOnly) return "skipped";
+    // Only the site that issued the cookie can revoke it. A legacy profile
+    // without a stored API gets no request: sending the cookie to whatever
+    // the default API is now would leak it and could falsely confirm, since
+    // sign-out succeeds when no session matches.
+    if (!profile.api?.trim()) return "not confirmed";
     // Never let a failed attempt (e.g. an invalid stored API URL) stop the
     // local profile from being removed: logout must stay a recovery path.
     try {
-      const api = normalizeUrl(profile.api ?? defaultApiBaseUrl());
+      const api = normalizeUrl(profile.api);
       return (await revokeSession(api, profile.cookie.trim()))
         ? "revoked"
         : "not confirmed";

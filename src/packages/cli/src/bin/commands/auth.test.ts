@@ -148,6 +148,17 @@ test("auth logout signs out the profile's own server session, then removes it", 
 
 test("auth logout without a server confirmation still removes the profile and warns", async () => {
   const f = logoutFixture(async () => false);
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.deepEqual(f.calls, [
+    { api: "https://cocalc.ai", cookie: "remember_me=prod-secret" },
+  ]);
+  assert.equal(f.capture.data.server_session, "not confirmed");
+  assert.match(f.capture.data.warning, /may still be valid/);
+  assert.equal(f.saved().profiles.prod, undefined);
+});
+
+test("auth logout never sends a cookie to an inferred API", async () => {
+  const f = logoutFixture(async () => true);
   await f.program.parseAsync([
     "node",
     "test",
@@ -156,10 +167,8 @@ test("auth logout without a server confirmation still removes the profile and wa
     "--target-profile",
     "staging",
   ]);
-  // A profile without its own api uses the default API.
-  assert.deepEqual(f.calls, [
-    { api: "https://lite4.cocalc.ai", cookie: "remember_me=staging-secret" },
-  ]);
+  // The staging profile has a cookie but no stored api: no request at all.
+  assert.deepEqual(f.calls, []);
   assert.equal(f.capture.data.server_session, "not confirmed");
   assert.match(f.capture.data.warning, /may still be valid/);
   assert.equal(f.saved().profiles.staging, undefined);
@@ -182,10 +191,10 @@ test("auth logout --local-only leaves the server session alone", async () => {
 test("auth logout --all signs out every browser-cookie profile", async () => {
   const f = logoutFixture(async () => true);
   await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 1);
   assert.deepEqual(f.capture.data.server_sessions, {
     prod: "revoked",
-    staging: "revoked",
+    staging: "not confirmed",
     keyonly: "no browser session",
   });
   assert.deepEqual(f.saved().profiles, {});
@@ -199,7 +208,7 @@ test("auth logout --all still removes every profile when a sign-out throws", asy
   await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
   assert.deepEqual(f.capture.data.server_sessions, {
     prod: "not confirmed",
-    staging: "revoked",
+    staging: "not confirmed",
     keyonly: "no browser session",
   });
   assert.match(f.capture.data.warning, /may still be valid/);
