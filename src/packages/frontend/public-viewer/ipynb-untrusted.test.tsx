@@ -167,4 +167,17 @@ describe("public notebooks render as untrusted", () => {
       .pop();
     expect(box?.style.backgroundColor).toBe("rgb(255, 255, 204)");
   });
+
+  it("clips Markdown cells, as the live notebook does", async () => {
+    const root = renderPublic(markdownNotebook("A plain paragraph"));
+    const text = await screen.findByText("A plain paragraph");
+    let el: HTMLElement | null = text;
+    let clipped = false;
+    while (el && el !== root) {
+      if (["auto", "hidden", "clip"].includes(el.style.overflow))
+        clipped = true;
+      el = el.parentElement;
+    }
+    expect(clipped).toBe(true);
+  });
 });
