@@ -4248,6 +4248,66 @@ normalize_project_io_class_state
             "9110",
         )
 
+    # JavaScript's Number(value) for each input, restricted to ports 1-65535,
+    # as checked against node: project-host reads its port settings this way.
+    JS_PORT_CASES = [
+        ("9010", 9010), ("9010.0", 9010), ("9.01e3", 9010), ("+9010", 9010),
+        (" 9010 ", 9010), ("0x2332", 9010), ("0X2332", 9010), ("0o21462", 9010),
+        ("0b10001100110010", 9010), ("09010", 9010), ("9010.", 9010),
+        ("  +.9010e4 ", 9010), (".5e4", 5000), ("1.0e+3", 1000), ("65535", 65535),
+        ("-9010", None), ("9010abc", None), ("", None), ("1_000", None),
+        ("Infinity", None), ("0", None), ("9010.5", None), ("1e999", None),
+        ("+0x10", None), ("00x10", None), ("0x", None), ("65536", None),
+    ]
+
+    def test_port_parsing_matches_javascript_number(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = self._storage_wrapper_for(make_cfg(tmpdir))
+        function = "project_host_port_number() {" + script.split(
+            "\nproject_host_port_number() {", 1
+        )[1].split("\n}\n", 1)[0] + "\n}\n"
+        for value, expected in self.JS_PORT_CASES:
+            with self.subTest(value=value):
+                shell = subprocess.run(
+                    ["bash", "-c", function + 'project_host_port_number "$1"', "_", value],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertEqual(int(shell) if shell else None, expected)
+                python = bootstrap.js_positive_integer(value)
+                self.assertEqual(
+                    python if python is not None and python <= 65535 else None,
+                    expected,
+                )
+
+    def test_project_egress_conat_port_accepts_what_project_host_accepts(self) -> None:
+        # Values project-host runs with even though they are not plain digits.
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=9010.0\n")), "9110"
+        )
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(local_env="PORT=h:9.01e3\n")),
+            "9110",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=+9555\n"
+                )
+            ),
+            "9555",
+        )
+        self.assertEqual(
+            bootstrap.project_conat_router_port(["PORT=9010.0"]), 9110
+        )
+        self.assertEqual(
+            bootstrap.project_conat_router_port(
+                ["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0x2553"]
+            ),
+            9555,
+        )
+
     def test_project_egress_rules_render_as_nft(self) -> None:
         rules = self._egress_rules()
         prefix = 'add rule inet cocalc_project_network output socket cgroupv2 level 1 "cocalc-project-pool"'

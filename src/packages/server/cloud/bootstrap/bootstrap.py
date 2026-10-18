@@ -2187,6 +2187,29 @@ def project_host_local_env_path(env_path: Path) -> Path:
     )
 
 
+JS_DECIMAL_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+JS_RADIX_NUMBER = {"0x": (16, "0123456789abcdef"), "0o": (8, "01234567"), "0b": (2, "01")}
+
+
+def js_positive_integer(value: str | None) -> int | None:
+    """JavaScript's Number(value) when it is a positive integer, else None:
+    how project-host reads its port settings (parsePort, parsePositiveInteger)."""
+    text = str(value if value is not None else "").strip()
+    if JS_DECIMAL_NUMBER.fullmatch(text):
+        number = float(text)
+    elif (
+        text[:2].lower() in JS_RADIX_NUMBER
+        and len(text) > 2
+        and all(c in JS_RADIX_NUMBER[text[:2].lower()][1] for c in text[2:].lower())
+    ):
+        number = float(int(text[2:], JS_RADIX_NUMBER[text[:2].lower()][0]))
+    else:
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return int(number) if number == int(number) and number > 0 else None
+
+
 def project_conat_router_port(env_lines: list[str]) -> int:
     """The port of this host's conat router, the one host-local service
     besides DNS that projects may connect to. Derived as project-host derives
@@ -2203,19 +2226,21 @@ def project_conat_router_port(env_lines: list[str]) -> int:
         if parsed is not None:
             env[parsed[0]] = parsed[1].strip().strip("\"'")
 
-    def port(value: str | None) -> int | None:
-        # As project-host's parsePort: the text after the last ":".
-        try:
-            number = int(str(value).strip().rsplit(":", 1)[-1].strip())
-        except (TypeError, ValueError):
-            return None
-        return number if 1 <= number <= 65535 else None
+    def valid(number: int | None) -> int | None:
+        return number if number is not None and number <= 65535 else None
 
-    explicit = port(env.get("COCALC_PROJECT_HOST_CONAT_ROUTER_PORT"))
+    # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT is
+    # read by parsePort, i.e. Number() of the text after the last ":".
+    explicit = valid(
+        js_positive_integer(env.get("COCALC_PROJECT_HOST_CONAT_ROUTER_PORT"))
+    )
     if explicit is not None:
         return explicit
-    derived = port(str((port(env.get("PORT")) or DEFAULT_PROJECT_HOST_PORT) + 100))
-    return derived if derived is not None else DEFAULT_PROJECT_HOST_PORT + 100
+    raw_port = env.get("PORT")
+    base = (
+        js_positive_integer(raw_port.rsplit(":", 1)[-1]) if raw_port else None
+    ) or DEFAULT_PROJECT_HOST_PORT
+    return valid(base + 100) or DEFAULT_PROJECT_HOST_PORT + 100
 
 
 def read_env_assignments(path: str | Path) -> dict[str, str]:
@@ -8453,14 +8478,28 @@ project_host_env_value() {
     project_host_env_file_value "$PROJECT_HOST_ENV_FILE" "$1"
 }
 
-# project-host's parsePort: the text after the last ":", trimmed, as a port
-# number; prints nothing when it is not one.
+# JavaScript's Number(value) as project-host reads its port settings: prints
+# it when it is an integer from 1 to 65535, else nothing. Accepts what Number
+# accepts: surrounding whitespace, decimal with sign, fraction and exponent
+# (9010.0, 9.01e3, +9010), and 0x/0o/0b literals.
 project_host_port_number() {
-  local value="${1##*:}"
+  local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
-  if [[ "$value" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$value))" -ge 1 ] && [ "$((10#$value))" -le 65535 ]; then
-    echo "$((10#$value))"
+  if [[ "$value" =~ ^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$ ]]; then
+    awk -v s="$value" 'BEGIN { n = s + 0; if (n == int(n) && n >= 1 && n <= 65535) printf "%d", n }'
+    return 0
+  elif [[ "$value" =~ ^0[xX]0*[0-9a-fA-F]{1,4}$ ]]; then
+    value="$((16#${value:2}))"
+  elif [[ "$value" =~ ^0[oO]0*[0-7]{1,6}$ ]]; then
+    value="$((8#${value:2}))"
+  elif [[ "$value" =~ ^0[bB]0*[01]{1,16}$ ]]; then
+    value="$((2#${value:2}))"
+  else
+    return 0
+  fi
+  if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]; then
+    echo "$value"
   fi
 }
 
@@ -8482,12 +8521,14 @@ project_conat_router_port() {
     echo "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
     return
   fi
+  # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT goes
+  # through parsePort, i.e. Number() of the text after the last ":".
   explicit="$(project_host_port_number "$explicit")"
   if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ]; then
     echo "$explicit"
     return
   fi
-  base="$(project_host_port_number "$base")"
+  base="$(project_host_port_number "${base##*:}")"
   [ -n "$base" ] || base=9002
   if [ "$((base + 100))" -le 65535 ]; then
     echo "$((base + 100))"
