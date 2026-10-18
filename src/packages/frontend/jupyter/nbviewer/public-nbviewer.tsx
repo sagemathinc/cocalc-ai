@@ -49,7 +49,8 @@ export default function PublicNBViewer({ content, ...props }: Props) {
   // an untrusted notebook in the app: sanitized HTML, isolated output in
   // opaque sandboxed frames, no JavaScript output.
   return (
-    <Notebook cocalcJupyter={cocalcJupyter} readOnly trust={false} {...props} />
+    // trust comes last, so no caller's props can override it
+    <Notebook cocalcJupyter={cocalcJupyter} readOnly {...props} trust={false} />
   );
 }
 

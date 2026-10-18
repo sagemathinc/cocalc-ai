@@ -40,6 +40,19 @@ function notebook(outputs: object[]): string {
   });
 }
 
+function markdownNotebook(source: string): string {
+  return JSON.stringify({
+    cells: [{ cell_type: "markdown", metadata: {}, source: [source] }],
+    metadata: {},
+    nbformat: 4,
+    nbformat_minor: 5,
+  });
+}
+
+// A 1x1 PNG, as Jupyter attachments and pasted images embed them.
+const PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function html(value: string) {
   return {
     output_type: "display_data",
@@ -127,5 +140,31 @@ describe("public notebooks render as untrusted", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect((window as any).__xss).toBeUndefined();
     expect(root.querySelector("script")).toBeNull();
+  });
+
+  it("keeps data: images in Markdown cells and in HTML output", async () => {
+    for (const content of [
+      markdownNotebook(`Pasted ![pasted](${PNG}) image`),
+      markdownNotebook(`<img src="${PNG}" alt="pasted"> image`),
+      notebook([html(`<p>output <img src="${PNG}" alt="pasted"></p>`)]),
+    ]) {
+      const root = renderPublic(content);
+      await screen.findAllByText(/image|output/);
+      const img = root.querySelector("img");
+      expect(img?.getAttribute("src")).toBe(PNG);
+    }
+  });
+
+  it("keeps an instructor's safe styles in Markdown cells", async () => {
+    const root = renderPublic(
+      markdownNotebook(
+        '<div style="background-color: #ffffcc; padding: 8px">A styled instructor box</div>\n',
+      ),
+    );
+    await screen.findByText("A styled instructor box");
+    const box = [...root.querySelectorAll<HTMLElement>("div")]
+      .filter((d) => d.textContent?.trim() === "A styled instructor box")
+      .pop();
+    expect(box?.style.backgroundColor).toBe("rgb(255, 255, 204)");
   });
 });

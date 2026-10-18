@@ -18,9 +18,10 @@ export default function PublicViewerIpynbRenderer({
   fileContext: IFileContext;
 }): JSX.Element {
   // A public notebook is untrusted content: render its HTML through the
-  // central sanitizer, keeping the viewer's URL and link handling.
+  // central sanitizer, keeping the viewer's URL and link handling, and the
+  // vetted safe styles and presentational markup notebooks keep elsewhere.
   return withViewerFileContext(
     <JupyterNotebook content={content} style={style} />,
-    { ...fileContext, noSanitize: false },
+    { ...fileContext, noSanitize: false, allowSafeStyles: true },
   );
 }
