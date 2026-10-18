@@ -136,8 +136,13 @@ export function writePassiveDocument(
 // passive boundary.  Only the title and https stylesheet links of its <head>
 // are kept (the head is the exporter's template: content in the body can't
 // add to it); the body is passivized in the inert parse and imported as nodes,
-// never reparsed.
-export function writePassiveHtmlDocument(w: Window, html: string): void {
+// never reparsed.  `css` is the caller's own constant stylesheet (never
+// document content), e.g. the exporter's print rules.
+export function writePassiveHtmlDocument(
+  w: Window,
+  html: string,
+  { css }: { css?: string } = {},
+): void {
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const head = Array.from(
     parsed.head.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
@@ -149,5 +154,10 @@ export function writePassiveHtmlDocument(w: Window, html: string): void {
         `<link rel="stylesheet" href="${escapeHtmlText(href)}" crossorigin="anonymous" referrerpolicy="no-referrer">`,
     )
     .join("");
-  writePassiveDocument(w, { title: parsed.title, head, body: parsed.body });
+  const style = css ? `<style>${css.replace(/<\//g, "<\\/")}</style>` : "";
+  writePassiveDocument(w, {
+    title: parsed.title,
+    head: head + style,
+    body: parsed.body,
+  });
 }

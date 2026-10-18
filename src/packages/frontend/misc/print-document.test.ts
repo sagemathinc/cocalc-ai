@@ -10,6 +10,7 @@ import {
   escapeHtmlText,
   passiveBody,
   writePassiveDocument,
+  writePassiveHtmlDocument,
 } from "./print-document";
 
 export function popupWindow(): Window {
@@ -101,6 +102,40 @@ describe("writePassiveDocument", () => {
     ]) {
       expect(content).toContain(directive);
     }
+  });
+});
+
+describe("writePassiveHtmlDocument", () => {
+  it("keeps https stylesheets and the caller's css, never the document's styles", () => {
+    const w = popupWindow();
+    writePassiveHtmlDocument(
+      w,
+      `<html><head><title>n.ipynb</title>
+<link rel="stylesheet" href="https://cdn.example/a.css">
+<style>body{background:url(javascript:1)}</style>
+<script>parent.__xss = 5</script>
+</head><body><p>cell</p></body></html>`,
+      { css: "@media print { img { max-height: none !important; } }" },
+    );
+    const doc = w.document;
+    expect(doc.title).toBe("n.ipynb");
+    expect(
+      doc.head.querySelector('link[rel="stylesheet"]')?.getAttribute("href"),
+    ).toBe("https://cdn.example/a.css");
+    const styles = Array.from(doc.head.querySelectorAll("style")).map(
+      (s) => s.textContent,
+    );
+    expect(styles).toEqual([
+      "@media print { img { max-height: none !important; } }",
+    ]);
+    expect(doc.querySelector("script")).toBeNull();
+    expect(doc.body.querySelector("p")?.textContent).toBe("cell");
+  });
+
+  it("writes no style without css", () => {
+    const w = popupWindow();
+    writePassiveHtmlDocument(w, "<html><head></head><body>x</body></html>");
+    expect(w.document.head.querySelector("style")).toBeNull();
   });
 });
 

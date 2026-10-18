@@ -59,7 +59,7 @@ import { WidgetManager } from "./widgets/manager";
 import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
-import exportToHTML from "./nbviewer/export";
+import exportToHTML, { PRINT_CSS } from "./nbviewer/export";
 import { writePassiveHtmlDocument } from "@cocalc/frontend/misc/print-document";
 import { getExportKernelSpec } from "./export-kernelspec";
 import { waitForPrintImages } from "./print-images";
@@ -3040,7 +3040,7 @@ export class JupyterActions extends JupyterActions0 {
       if (passive) {
         // Untrusted: the popup has the app's origin, so write it through the
         // passive-document boundary (CSP, no navigation, no frames).
-        writePassiveHtmlDocument(popup, html);
+        writePassiveHtmlDocument(popup, html, { css: PRINT_CSS });
       } else {
         popup.document.open();
         popup.document.write(html);
