@@ -222,7 +222,19 @@ import {
   classifyProjectRoute,
   corsOrigin,
   setHubBrowserOrigins,
+  approvedBrowserOrigins,
 } from "./browser-origin-policy";
+import { getProjectHostAuthPublicKey } from "./auth-public-key";
+import {
+  createContentOriginHandler,
+  installContentHostnameUpgradeGuard,
+  isContentHostname,
+} from "./content-origin";
+import {
+  getProjectContentDomain,
+  hasProjectContentReadAccess,
+  projectContentEpoch,
+} from "./content-origin-access";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -393,6 +405,29 @@ export async function main(
 
   // 1) HTTP + conat server
   const app = express();
+  // The per-project content origin (trust-free step 6) owns every request on
+  // a content hostname, before any other route; see content-origin.ts.
+  const contentDomain = getProjectContentDomain();
+  let handleContentRequest:
+    | ((
+        req: IncomingMessage,
+        res: ServerResponse,
+        next: NextFunction,
+      ) => Promise<void>)
+    | undefined;
+  if (contentDomain) {
+    app.use((req, res, next) => {
+      if (!isContentHostname(req.headers.host, contentDomain)) {
+        return next();
+      }
+      if (!handleContentRequest) {
+        res.statusCode = 503;
+        res.end();
+        return;
+      }
+      void handleContentRequest(req, res, next).catch(() => res.destroy());
+    });
+  }
   let handlePrivateAppHttpRequest:
     | ((
         req: IncomingMessage,
@@ -410,6 +445,9 @@ export async function main(
   });
   app.use(express.json());
   const { httpServer } = await startHttpListener(app, port, host, tls);
+  if (contentDomain) {
+    installContentHostnameUpgradeGuard(httpServer, contentDomain);
+  }
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,
@@ -426,6 +464,33 @@ export async function main(
     systemAccountPassword: localConatPassword,
   });
   setConatServer(conatRouterUrl);
+  if (contentDomain) {
+    handleContentRequest = createContentOriginHandler({
+      domain: contentDomain,
+      host_id: hostId,
+      getPublicKey: getProjectHostAuthPublicKey,
+      frameAncestors: () => [...approvedBrowserOrigins()],
+      hasReadAccess: hasProjectContentReadAccess,
+      currentEpoch: projectContentEpoch,
+      serveFile: async ({ req, res, project_id, account_id }) => {
+        await ensureFileDownloadReadServer({ client: conatClient, project_id });
+        await handleFileDownload({
+          req,
+          res,
+          client: conatClient,
+          account_id,
+          // Served on the project's own origin, so SVG may render inline.
+          allowUnsafe: true,
+          readServiceName: PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,
+        });
+      },
+      onError: ({ project_id, err }) =>
+        logger.debug("content origin request failed", {
+          project_id,
+          err: `${err}`,
+        }),
+    });
+  }
   setConatClient({
     conat: () => conatClient,
     getLogger,
