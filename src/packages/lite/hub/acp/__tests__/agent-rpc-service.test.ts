@@ -415,6 +415,21 @@ test("retained attempt evidence does not leak a newly staged duplicate attachmen
   expect(deps.discardAttachments).toHaveBeenCalledTimes(1);
 });
 
+test("a full attachment preparation says the recipient is busy", async () => {
+  const { e, deps } = attachmentFixture();
+  const capacity = new AgentRpcCapacity(1, 1);
+  const held = capacity.acquire("someone-else");
+  const service = createAgentRpcService(deps, undefined, capacity);
+  expect(await service.prepareAttachments(e)).toMatchObject({
+    outcome: "rejected",
+    code: "host_overloaded",
+    chat_effect: "none",
+    reason:
+      "the recipient is busy (1 of 1 messages to the recipient's host are being delivered right now); retry in a few seconds",
+  });
+  if (!("code" in held)) held.release();
+});
+
 test("attachment preparations share capacity with ordinary text messages", async () => {
   const { e, deps } = attachmentFixture();
   const service = createAgentRpcService(
@@ -781,11 +796,13 @@ test("host admission is shared across service facades and rejects before chat or
   const pending = a.submit(first.e);
   await started;
   try {
-    expect(await b.submit(second.e)).toMatchObject({
+    const rejected = await b.submit(second.e);
+    expect(rejected).toMatchObject({
       outcome: "rejected",
       code: "host_overloaded",
       chat_effect: "none",
     });
+    expect(rejected.reason).toContain("1 of 1 messages");
     expect(second.deps.withChat).not.toHaveBeenCalled();
     expect(second.deps.ensureRunning).not.toHaveBeenCalled();
     expect(second.deps.admit).not.toHaveBeenCalled();
@@ -865,7 +882,9 @@ test("startup timeout retains host capacity until the actual startup settles", a
       code: "startup_deadline",
       chat_effect: "none",
     });
-    expect(capacity.acquire("other")).toEqual({ code: "host_overloaded" });
+    expect(capacity.acquire("other")).toMatchObject({
+      code: "host_overloaded",
+    });
     finish();
     await jest.advanceTimersByTimeAsync(1);
     expect("code" in capacity.acquire("other")).toBe(false);
