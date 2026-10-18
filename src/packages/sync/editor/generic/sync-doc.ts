@@ -220,6 +220,42 @@ logger.debug("init");
 // Where to load older history from: the stream position of the snapshot
 // before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
 // stream if the oldest loaded snapshot is the first one or none is loaded.
+// Max later patches snapshotTimeAvoidingMismatch checks.
+const SNAPSHOT_MISMATCH_SCAN = 200;
+
+// snapshot() refuses a patch whose value differs from the hash its author
+// recorded, and every client picks the same candidate, so one such patch used
+// to stop snapshots for good (history then grows without bound, and every
+// open loads all of it).  Use the nearest later patch whose value is not known
+// to differ instead, preferring a clean cut.  Leaves the newest patch alone.
+export function snapshotTimeAvoidingMismatch(
+  session: any,
+  candidate: PatchId,
+  maxScan: number = SNAPSHOT_MISMATCH_SCAN,
+): PatchId | undefined {
+  if (
+    typeof session?.verifyValue !== "function" ||
+    session.verifyValue(candidate) !== "mismatch"
+  ) {
+    return candidate;
+  }
+  const later = (session.history({ includeSnapshots: false }) as Patch[])
+    .filter((p) => comparePatchId(p.time, candidate) > 0)
+    .slice(0, -1);
+  let firstUsable: PatchId | undefined;
+  for (let i = 0; i < Math.min(later.length, maxScan); i++) {
+    const time = later[i].time;
+    if (session.verifyValue(time) === "mismatch") {
+      continue;
+    }
+    if (typeof session.isCut !== "function" || session.isCut(time)) {
+      return time;
+    }
+    firstUsable ??= time;
+  }
+  return firstUsable;
+}
+
 export function prevSeqForMoreHistoryFromHistory(
   history: {
     time: PatchId;
@@ -2494,7 +2530,17 @@ export class SyncDoc extends EventEmitter {
       dbg("not making a snapshot: more history is needed for exact values");
       return;
     }
-    const time = this.patchflowSnapshotCandidate(interval, max_size);
+    const candidate = this.patchflowSnapshotCandidate(interval, max_size);
+    const time =
+      candidate == null
+        ? undefined
+        : snapshotTimeAvoidingMismatch(this.patchflowSession, candidate);
+    if (candidate != null && time !== candidate) {
+      dbg("candidate value differs from its hash; using a later patch", {
+        candidate,
+        time,
+      });
+    }
     if (time != null) {
       dbg("yes, try to make a snapshot at time", time);
       try {
@@ -3653,9 +3699,14 @@ export class SyncDoc extends EventEmitter {
       }
       return window.length >= 4 * interval ? window[idx].time : undefined;
     };
-    // Rule 1: interval count
+    // Rule 1: interval count.  Far behind (snapshots stalled, or none for a
+    // long time), snapshot near the end in one step, so the next client to
+    // open the document loads about one interval, not the whole backlog.
     if (window.length >= 2 * interval) {
-      const idx = Math.min(interval, window.length - 1);
+      const idx =
+        window.length >= 4 * interval
+          ? window.length - interval
+          : Math.min(interval, window.length - 1);
       return nearestCut(idx);
     }
     // Rule 2: size threshold
