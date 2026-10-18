@@ -7,7 +7,7 @@
 
 jest.mock("@cocalc/frontend/alerts", () => ({ alert_message: jest.fn() }));
 
-import { activateTerminalLink, isOpenableTerminalLink } from "./terminal-links";
+import { activateTerminalLink, openableTerminalLink } from "./terminal-links";
 
 describe("OSC 8 terminal links", () => {
   let open: jest.SpyInstance;
@@ -28,20 +28,25 @@ describe("OSC 8 terminal links", () => {
     " JavaScript:void 0",
     "data:text/plain,hello",
     "file:///etc/hostname",
+    "mailto:a@b.c",
     "not a url",
   ])("never opens %j", (uri) => {
-    expect(isOpenableTerminalLink(uri)).toBe(false);
+    expect(openableTerminalLink(uri)).toBeUndefined();
     activateTerminalLink(event, uri);
     expect(confirm).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
   });
 
-  it.each(["https://example.com/a", "http://example.com/", "mailto:a@b.c"])(
-    "opens %s in a new tab without an opener after confirmation",
-    (uri) => {
+  it.each([
+    ["https://example.com/a", "https://example.com/a"],
+    ["http://example.com", "http://example.com/"],
+    ["HTTPS://Example.COM/a b", "https://example.com/a%20b"],
+  ])(
+    "opens %s as %s in a new tab without an opener after confirmation",
+    (uri, href) => {
       activateTerminalLink(event, uri);
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining(uri));
-      expect(open).toHaveBeenCalledWith(uri, "_blank");
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining(href));
+      expect(open).toHaveBeenCalledWith(href, "_blank");
       expect(tab.opener).toBeNull();
     },
   );
