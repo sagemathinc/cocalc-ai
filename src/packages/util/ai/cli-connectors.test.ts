@@ -50,6 +50,33 @@ test("Cloudflare scopes use OAuth client scope IDs, not wrangler's names", () =>
   }
 });
 
+test("Cloudflare presets request exactly the scopes registered on the client", () => {
+  // The IDs in parentheses on the OAuth client's scope list in the dashboard.
+  expect(cloudflareScopes(["workers"])).toEqual([
+    "account-settings.read",
+    "user-details.read",
+    "workers-scripts.admin",
+    "workers-kv-storage.write",
+    "workers-routes.write",
+    "page.write",
+  ]);
+  expect(cloudflareScopes(["r2"])).toEqual([
+    "account-settings.read",
+    "user-details.read",
+    "workers-r2.read",
+    "workers-r2.write",
+    "workers-r2-bucket-item.read",
+    "workers-r2-bucket-item.write",
+  ]);
+  expect(cloudflareScopes(["dns"])).toEqual([
+    "account-settings.read",
+    "user-details.read",
+    "zone.read",
+    "dns.read",
+    "dns.write",
+  ]);
+});
+
 test("Workers alone never grants DNS changes", () => {
   expect(cloudflareScopes(["workers"])).not.toContain("dns.write");
 });
