@@ -9,10 +9,14 @@
 // mode: guidance steering the agent's running turn, or a new turn when none
 // is running (the hub decides; a steer that finds no turn becomes a turn).
 //
-// The message id is derived from the thread and the submission id, so the
-// submission id is the delivery's idempotency key in the chat document
-// itself: sending again, after a reload or from another tab, finds the same
-// message and writes nothing new.
+// The message id is derived from the thread and the submission id. The
+// frame makes a new random id at each Submit and keeps it only in its own
+// memory, so a repeat of a submission (Send again) comes to the same page:
+// there it finds the same message and writes nothing new. Across pages the
+// chat row doesn't dedupe (its key includes the date each page picks), but
+// the hub admits each message id once: forged repeats (another tab's frame
+// has its own ids) racing across pages can leave duplicate rows, but never a
+// second delivery of that message.
 //
 // "Received" means the agent took it, not only that the row was saved: the
 // row is written without dispatch, saved, then dispatched, and delivery
