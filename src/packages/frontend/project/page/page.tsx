@@ -353,6 +353,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     const delay = hostUnavailableBannerDelay({
       candidate: hostUnavailableCandidate,
       recoveryActive: hostRecovery.active,
+      confirmedByHost: hostOperational.state === "unavailable",
       unavailableSince: projectHostConnection.unavailableSince,
     });
     if (delay == null) {
@@ -370,6 +371,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     return () => window.clearTimeout(timer);
   }, [
     hostRecovery.active,
+    hostOperational.state,
     hostUnavailableCandidate,
     projectHostConnection.unavailableSince,
   ]);
