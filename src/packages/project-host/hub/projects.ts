@@ -3866,20 +3866,32 @@ export async function updateProjectUsers({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  // Not queued behind start and stop: a start that hangs would otherwise block
-  // every agent and browser token for the project (each token first syncs
-  // users), and the waiting requests would use up the host's API handlers.
-  // Safe unqueued because only the newest users_revision is kept
+  const apply = () => {
+    // Store collaborator map in the generic sqlite row mirror used by conat auth.
+    // This is separate from the concrete projects SQL table schema.
+    upsertProject({ project_id, users, users_revision });
+    clearProjectHostConatAuthCaches();
+  };
+  // A versioned update is not queued behind start and stop: a start that hangs
+  // would otherwise block every agent and browser token for the project (each
+  // token first syncs users), and the waiting requests would use up the host's
+  // API handlers. That is safe because only the newest users_revision is kept
   // (sqlite/projects.ts), so an older start cannot restore an older list.
-  applyProjectRuntimeAuthorityUpdate({
+  // An unversioned update (an older bay during a rolling upgrade) has no such
+  // guard against a start that captured an older unversioned list, so it stays
+  // queued as before.
+  if (Number.isFinite(users_revision) && Number(users_revision) >= 0) {
+    applyProjectRuntimeAuthorityUpdate({
+      project_id,
+      revision: runtime_lifecycle_revision,
+      fn: apply,
+    });
+    return;
+  }
+  await withProjectRuntimeLifecycle({
     project_id,
     revision: runtime_lifecycle_revision,
-    fn: () => {
-      // Store collaborator map in the generic sqlite row mirror used by conat auth.
-      // This is separate from the concrete projects SQL table schema.
-      upsertProject({ project_id, users, users_revision });
-      clearProjectHostConatAuthCaches();
-    },
+    fn: async () => apply(),
   });
 }
 
