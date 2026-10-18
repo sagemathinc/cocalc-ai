@@ -13,6 +13,7 @@ import {
 } from "@cocalc/database/postgres/project-host-metrics";
 import { createLro, ensureLroSchema } from "@cocalc/server/lro/lro-db";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { byHostId, conditionAlert, conditionCleared } from "./condition-alert";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { runProjectHostRuntimeMaintenance } from "./runtime-maintenance";
 import {
@@ -84,11 +85,8 @@ const RUNNING_STALE_REPAIR_SUPPRESS_MS = Math.max(
 const PRESSURE_ALERT_LIMIT = 25;
 const CONAT_PERSIST_ALERT_LIMIT = 25;
 const ROOT_FILESYSTEM_ALERT_LIMIT = 25;
-// A condition alert repeats only when its condition changes. Its body lists
-// stable facts (which hosts, at what level), never counters, measurements or
-// timestamps, so the message dedupe on subject and body suppresses an
-// unchanged condition until the reminder interval passes, while a new host or
-// a worse level alerts at once.
+// Condition alerts (see condition-alert.ts) list stable facts only (which
+// hosts, at what level), never counters, measurements or timestamps.
 const HOST_CONDITION_ALERT_REMINDER_MINUTES = 6 * 60;
 const ROOT_FILESYSTEM_ALERT_REMINDER_MINUTES = 24 * 60;
 const GIB = 1024 ** 3;
@@ -1084,9 +1082,15 @@ async function enqueueRunningStaleHostRepairs(
   return queued;
 }
 
+const RUNNING_STALE_ALERT_SUBJECT =
+  "Running project hosts remain unresponsive after remediation";
+
 export async function runRunningStaleHostAlertCheck(): Promise<number> {
   const rows = await getRunningStaleHosts();
-  if (!rows.length) return 0;
+  if (!rows.length) {
+    await conditionCleared(RUNNING_STALE_ALERT_SUBJECT);
+    return 0;
+  }
   const repairCount = await enqueueRunningStaleHostRepairs(rows);
   const activeTransitions = await getActiveHostHeartbeatTransitions(
     rows.map(({ id }) => id),
@@ -1099,10 +1103,10 @@ export async function runRunningStaleHostAlertCheck(): Promise<number> {
       ),
   );
   if (escalatedRows.length) {
-    await adminAlert({
-      subject: "Running project hosts remain unresponsive after remediation",
-      body: formatRunningStaleHostAlertBody(escalatedRows),
-      dedupMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
+    await conditionAlert({
+      subject: RUNNING_STALE_ALERT_SUBJECT,
+      body: formatRunningStaleHostAlertBody(byHostId(escalatedRows)),
+      reminderMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
     });
   }
   if (repairCount) {
@@ -1526,12 +1530,16 @@ async function getRootFilesystemAlertRows(): Promise<RootFilesystemAlertRow[]> {
 }
 
 export async function runRootFilesystemAlertCheck(): Promise<number> {
+  const subject = "Project-host root filesystems are low on space";
   const rows = await getRootFilesystemAlertRows();
-  if (!rows.length) return 0;
-  await adminAlert({
-    subject: "Project-host root filesystems are low on space",
-    body: formatRootFilesystemAlertBody(rows),
-    dedupMinutes: ROOT_FILESYSTEM_ALERT_REMINDER_MINUTES,
+  if (!rows.length) {
+    await conditionCleared(subject);
+    return 0;
+  }
+  await conditionAlert({
+    subject,
+    body: formatRootFilesystemAlertBody(byHostId(rows)),
+    reminderMinutes: ROOT_FILESYSTEM_ALERT_REMINDER_MINUTES,
   });
   return rows.length;
 }
@@ -1735,12 +1743,16 @@ async function getRuntimeDegradedHosts(): Promise<RuntimeDegradedHostRow[]> {
 }
 
 export async function runRuntimeDegradedHostAlertCheck(): Promise<number> {
+  const subject = "Project hosts have degraded container runtimes";
   const rows = await getRuntimeDegradedHosts();
-  if (!rows.length) return 0;
-  await adminAlert({
-    subject: "Project hosts have degraded container runtimes",
-    body: formatRuntimeDegradedHostAlertBody(rows),
-    dedupMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
+  if (!rows.length) {
+    await conditionCleared(subject);
+    return 0;
+  }
+  await conditionAlert({
+    subject,
+    body: formatRuntimeDegradedHostAlertBody(byHostId(rows)),
+    reminderMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
   });
   return rows.length;
 }
@@ -1796,12 +1808,16 @@ async function getAcpWorkerDegradedHosts(): Promise<
 }
 
 export async function runAcpWorkerDegradedHostAlertCheck(): Promise<number> {
+  const subject = "Project hosts have unstable ACP workers";
   const rows = await getAcpWorkerDegradedHosts();
-  if (!rows.length) return 0;
-  await adminAlert({
-    subject: "Project hosts have unstable ACP workers",
-    body: formatAcpWorkerDegradedHostAlertBody(rows),
-    dedupMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
+  if (!rows.length) {
+    await conditionCleared(subject);
+    return 0;
+  }
+  await conditionAlert({
+    subject,
+    body: formatAcpWorkerDegradedHostAlertBody(byHostId(rows)),
+    reminderMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
   });
   return rows.length;
 }
