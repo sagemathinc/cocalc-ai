@@ -8,31 +8,47 @@ import {
   PROJECT_STARTUP_SCRIPT_TEMPLATE,
 } from "@cocalc/util/project-startup-script";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
+import {
+  isSymlinkRefusal,
+  writeFileBeneathHome,
+} from "@cocalc/backend/files/beneath-home";
+import getLogger from "@cocalc/backend/logger";
 import { hostPathForProjectPath } from "./project-path";
 
+const logger = getLogger("project-runner:startup-scripts");
+
+// Both files are under the project user's home, so they are written through
+// beneath-home: a symlinked parent fails the write instead of redirecting it
+// to a host directory or another project.
 export async function writeStartupScripts(home: string) {
-  const ssh = join(home, START_PROJECT_SSH);
-  await mkdir(dirname(ssh), { recursive: true, mode: 0o700 });
-  await writeFile(ssh, START_PROJECT_SSH_SERVER_SH, {
+  writeFileBeneathHome(home, START_PROJECT_SSH, START_PROJECT_SSH_SERVER_SH, {
     mode: 0o700,
+    dirMode: 0o700,
+    chmodDir: false,
   });
 
-  const startup = hostPathForProjectPath(
+  const startup = relative(
     home,
-    join(home, PROJECT_STARTUP_SCRIPT_PATH),
+    hostPathForProjectPath(home, join(home, PROJECT_STARTUP_SCRIPT_PATH)),
   );
-  await mkdir(dirname(startup), { recursive: true, mode: 0o700 });
+  if (startup.startsWith("..") || isAbsolute(startup)) return;
+  // Created once; the user may edit or remove its contents afterwards. It is
+  // only a template, so a symlink in its path (users link ~/.local to
+  // somewhere else in their home) skips it rather than failing the start.
   try {
-    await writeFile(startup, PROJECT_STARTUP_SCRIPT_TEMPLATE, {
-      flag: "wx",
+    writeFileBeneathHome(home, startup, PROJECT_STARTUP_SCRIPT_TEMPLATE, {
       mode: 0o700,
+      dirMode: 0o700,
+      chmodDir: false,
+      noReplace: true,
     });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-      throw err;
-    }
+    if (!isSymlinkRefusal(err)) throw err;
+    logger.warn("not creating startup.sh: its path contains a symlink", {
+      home,
+      startup,
+    });
   }
 }
 

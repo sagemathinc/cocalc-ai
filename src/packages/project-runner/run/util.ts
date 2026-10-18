@@ -1,16 +1,12 @@
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import {
-  copyFile,
-  lstat,
-  mkdir,
-  readlink,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+  mkdirBeneathHome,
+  rmBeneathHome,
+  writeFileBeneathHome,
+} from "@cocalc/backend/files/beneath-home";
 import getLogger from "@cocalc/backend/logger";
 import { dataPath, secretTokenPath } from "./env";
-import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-containing-directory-exists";
 import { root } from "@cocalc/backend/data";
 
 const logger = getLogger("project-runner:util");
@@ -123,23 +119,27 @@ async function ensureShellFile({
     return;
   }
 
-  await rm(target, { force: true });
-
+  // The home belongs to the project user: write through beneath-home, which
+  // replaces whatever is at the target (an escaping symlink included) and
+  // never follows a link swapped in after the check above.
+  const name = `.${file}`;
   for (const source of templateSources(file)) {
+    let content: string;
     try {
-      await copyFile(source, target);
-      logger.debug("ensureConfFilesExists: copied template", {
-        file,
-        source,
-        target,
-      });
-      return;
+      content = await readFile(source, "utf8");
     } catch {
-      // try next source candidate
+      continue; // try next source candidate
     }
+    writeFileBeneathHome(home, name, content, { mode: 0o644 });
+    logger.debug("ensureConfFilesExists: copied template", {
+      file,
+      source,
+      target,
+    });
+    return;
   }
 
-  await writeFile(target, DEFAULT_SHELL_FILES[file], { mode: 0o644 });
+  writeFileBeneathHome(home, name, DEFAULT_SHELL_FILES[file], { mode: 0o644 });
   logger.warn("ensureConfFilesExists: wrote fallback shell file", {
     file,
     target,
@@ -152,18 +152,25 @@ export async function ensureConfFilesExists(HOME: string): Promise<void> {
   await ensureShellFile({ home: HOME, file: "bash_profile" });
 }
 
+// The data directory and secret token live under the project user's home, so
+// every step goes through beneath-home: a symlinked parent (say ~/.cache
+// pointing at a host directory or another project) fails the step instead of
+// deleting or writing outside the home.
 export async function setupDataPath(HOME: string): Promise<void> {
-  const data = dataPath(HOME);
+  const data = relative(HOME, dataPath(HOME));
   logger.debug(`setup "${data}"...`);
-  await rm(data, { recursive: true, force: true });
-  await mkdir(data, { recursive: true });
+  await rmBeneathHome(HOME, data);
+  mkdirBeneathHome(HOME, data, 0o755);
 }
 
 export async function writeSecretToken(
   HOME: string,
   secretToken: string,
 ): Promise<void> {
-  const path = secretTokenPath(HOME);
-  await ensureContainingDirectoryExists(path);
-  await writeFile(path, secretToken);
+  writeFileBeneathHome(
+    HOME,
+    relative(HOME, secretTokenPath(HOME)),
+    secretToken,
+    { mode: 0o600, dirMode: 0o755, chmodDir: false },
+  );
 }
