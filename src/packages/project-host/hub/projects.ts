@@ -82,7 +82,10 @@ import {
   reconcileManagedProjectVolumeQuota,
 } from "../file-server";
 import { currentProjectVolumeLifecycleGeneration } from "../project-volume-lifecycle";
-import { withProjectRuntimeLifecycle } from "../runtime-lifecycle";
+import {
+  applyProjectRuntimeAuthorityUpdate,
+  withProjectRuntimeLifecycle,
+} from "../runtime-lifecycle";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import type { Configuration } from "@cocalc/conat/project/runner/types";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -3814,7 +3817,12 @@ async function refreshAuthorizedKeys(
   upsertProject({ project_id, authorized_keys });
   if (authorized_keys != null) {
     try {
-      await writeManagedAuthorizedKeys(project_id, authorized_keys);
+      // Write the newest stored keys: key updates are not serialized, so a
+      // slower write must not put back an older key list.
+      await writeManagedAuthorizedKeys(
+        project_id,
+        getProject(project_id)?.authorized_keys ?? authorized_keys,
+      );
     } catch (err) {
       logger.debug("refreshAuthorizedKeys: failed to write managed keys", {
         project_id,
@@ -3837,7 +3845,7 @@ export async function updateAuthorizedKeys({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  await withProjectRuntimeLifecycle({
+  await applyProjectRuntimeAuthorityUpdate({
     project_id,
     revision: runtime_lifecycle_revision,
     fn: async () =>
@@ -3860,10 +3868,10 @@ export async function updateProjectUsers({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  await withProjectRuntimeLifecycle({
+  applyProjectRuntimeAuthorityUpdate({
     project_id,
     revision: runtime_lifecycle_revision,
-    fn: async () => {
+    fn: () => {
       // Store collaborator map in the generic sqlite row mirror used by conat auth.
       // This is separate from the concrete projects SQL table schema.
       upsertProject({ project_id, users, users_revision });

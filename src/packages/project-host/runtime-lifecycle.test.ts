@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { getProject, upsertProject } from "./sqlite/projects";
 import {
+  applyProjectRuntimeAuthorityUpdate,
+  MAX_QUEUED_LIFECYCLE_OPERATIONS_PER_PROJECT,
   resetProjectRuntimeLifecycleForTesting,
   withProjectRuntimeLifecycle,
 } from "./runtime-lifecycle";
@@ -117,4 +119,88 @@ describe("project runtime lifecycle", () => {
       ).rejects.toThrow("stale runtime lifecycle");
     },
   );
+
+  test("authority updates do not wait behind a start that hangs", async () => {
+    let releaseStart!: () => void;
+    const hung = withProjectRuntimeLifecycle({
+      project_id,
+      revision: 2,
+      fn: async () =>
+        await new Promise<void>((resolve) => {
+          releaseStart = resolve;
+        }),
+    });
+    await Promise.resolve();
+
+    expect(
+      applyProjectRuntimeAuthorityUpdate({
+        project_id,
+        revision: 2,
+        fn: () => "users",
+      }),
+    ).toBe("users");
+    // The restart fence still holds without the queue.
+    expect(() =>
+      applyProjectRuntimeAuthorityUpdate({
+        project_id,
+        revision: 1,
+        fn: () => "stale",
+      }),
+    ).toThrow("stale runtime lifecycle");
+    expect(() =>
+      applyProjectRuntimeAuthorityUpdate({ project_id, fn: () => "legacy" }),
+    ).toThrow("runtime lifecycle revision required");
+    // A newer authority revision is recorded, fencing older queued work.
+    applyProjectRuntimeAuthorityUpdate({
+      project_id,
+      revision: 3,
+      fn: () => undefined,
+    });
+    expect(getProject(project_id)?.runtime_lifecycle_revision).toBe(3);
+    const staleStop = withProjectRuntimeLifecycle({
+      project_id,
+      revision: 2,
+      fn: async () => "stop",
+    });
+
+    releaseStart();
+    await hung;
+    await expect(staleStop).rejects.toThrow("stale runtime lifecycle");
+  });
+
+  test("caps the operations one project can queue", async () => {
+    let releaseStart!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const running = [
+      withProjectRuntimeLifecycle({ project_id, fn: async () => await gate }),
+    ];
+    for (let i = 1; i < MAX_QUEUED_LIFECYCLE_OPERATIONS_PER_PROJECT; i++) {
+      running.push(
+        withProjectRuntimeLifecycle({ project_id, fn: async () => undefined }),
+      );
+    }
+
+    const refused = withProjectRuntimeLifecycle({
+      project_id,
+      fn: async () => undefined,
+    });
+    await expect(refused).rejects.toThrow(
+      `${MAX_QUEUED_LIFECYCLE_OPERATIONS_PER_PROJECT} runtime lifecycle operations waiting`,
+    );
+    await expect(refused).rejects.toMatchObject({ code: 503 });
+    // Other projects on the host are unaffected.
+    const other = randomUUID();
+    upsertProject({ project_id: other, runtime_lifecycle_revision: 0 });
+    await expect(
+      withProjectRuntimeLifecycle({ project_id: other, fn: async () => "ok" }),
+    ).resolves.toBe("ok");
+
+    releaseStart();
+    await Promise.all(running);
+    await expect(
+      withProjectRuntimeLifecycle({ project_id, fn: async () => "after" }),
+    ).resolves.toBe("after");
+  });
 });
