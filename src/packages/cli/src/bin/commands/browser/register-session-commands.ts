@@ -179,6 +179,32 @@ export function resolveBrowserSessionDaemonScriptPath({
   return candidates.find((path) => existsSync(path));
 }
 
+/**
+ * The origin of the CoCalc site this session belongs to. The project host
+ * issues browser-session cookies only for its site's pages (browser-origin-
+ * policy refuses a bootstrap POST without an approved Origin), and this
+ * request acts for that site, so it says so. The site's public URL, not the
+ * API address the CLI happens to use (inside a project that can be local).
+ */
+export async function browserSessionSiteOrigin(ctx: {
+  apiBaseUrl: string;
+  hub: {
+    system: {
+      getPublicSiteUrl?: (opts?: Record<string, never>) => Promise<{
+        url: string;
+      }>;
+    };
+  };
+}): Promise<string> {
+  try {
+    const url = (await ctx.hub.system.getPublicSiteUrl?.({}))?.url;
+    if (url) return new URL(url).origin;
+  } catch {
+    // Fall back to the API address's origin.
+  }
+  return new URL(ctx.apiBaseUrl).origin;
+}
+
 async function resolveProjectHostBrowserSessionCookies({
   ctx,
   deps,
@@ -218,6 +244,7 @@ async function resolveProjectHostBrowserSessionCookies({
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
+        Origin: await browserSessionSiteOrigin(ctx),
       },
     },
     { apiBaseUrl: ctx.apiBaseUrl, host_id, project_id },
