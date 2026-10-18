@@ -414,6 +414,28 @@ describe("Codex question attention", () => {
     );
   });
 
+  it("shows the person's own saved answer after a reload", () => {
+    const stale = {
+      ...questionRecord,
+      state: "stale" as const,
+      response_submitted_at: 10,
+      own_response: { answers: { [questionRecord.questions[0].id]: ["US"] } },
+    };
+    render(<CodexAttentionCard initialRecord={stale} />);
+    const region = screen.getByRole("region", { name: "Response for Region" });
+    expect(region).toHaveTextContent("US");
+    expect(region).not.toHaveTextContent("not available");
+
+    const declined = {
+      ...stale,
+      own_response: { answers: {}, declined: true },
+    };
+    render(<CodexAttentionCard initialRecord={declined} />);
+    expect(
+      screen.getAllByRole("region", { name: "Response for Region" })[1],
+    ).toHaveTextContent("Declined to answer");
+  });
+
   it("does not replace a submitted receipt with an older in-flight poll", async () => {
     let finishPoll!: (value: any) => void;
     const oldPoll = new Promise<any>((resolve) => {

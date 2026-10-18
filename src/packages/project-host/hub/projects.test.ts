@@ -480,6 +480,72 @@ describe("project host start ordering", () => {
     expect(upsertProject).not.toHaveBeenCalled();
   });
 
+  it("syncs users while a project start hangs, but queues key updates", async () => {
+    let finishStart!: (value: any) => void;
+    const runnerApi = {
+      start: jest.fn(
+        async () =>
+          await new Promise((resolve) => {
+            finishStart = resolve;
+          }),
+      ),
+      stop: jest.fn(),
+    } as any;
+    const { updateAuthorizedKeys, updateProjectUsers, wireProjectsApi } =
+      await import("./projects");
+    wireProjectsApi(runnerApi);
+    const started = hubApi.projects.start({
+      project_id,
+      authorized_keys: "ssh-ed25519 old",
+    });
+    for (let i = 0; i < 200 && !runnerApi.start.mock.calls.length; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(runnerApi.start).toHaveBeenCalled();
+
+    const users = { [project_id]: { group: "owner" } };
+    await updateProjectUsers({ project_id, users, users_revision: 5 });
+    expect(upsertProject).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id, users, users_revision: 5 }),
+    );
+    // Without a users_revision nothing stops the resumed start from writing
+    // back an older list, so an unversioned update waits for the start.
+    const legacyUsers = { [project_id]: { group: "owner" }, other: {} };
+    let legacyDone = false;
+    const legacy = updateProjectUsers({ project_id, users: legacyUsers }).then(
+      () => {
+        legacyDone = true;
+      },
+    );
+    // The start writes the keys it captured, so a newer key list must wait
+    // for it and land last.
+    let keysDone = false;
+    const keys = updateAuthorizedKeys({
+      project_id,
+      authorized_keys: "ssh-ed25519 new",
+    }).then(() => {
+      keysDone = true;
+    });
+    await flushMicrotasks();
+    expect(keysDone).toBe(false);
+    expect(legacyDone).toBe(false);
+    expect(upsertProject).not.toHaveBeenCalledWith(
+      expect.objectContaining({ users: legacyUsers }),
+    );
+
+    finishStart({ state: "running", http_port: 1234, ssh_port: 2222 });
+    await started;
+    await keys;
+    await legacy;
+    expect(upsertProject).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id, users: legacyUsers }),
+    );
+    expect(writeManagedAuthorizedKeys).toHaveBeenLastCalledWith(
+      project_id,
+      "ssh-ed25519 new",
+    );
+  });
+
   it("avoids project ports occupied by non-listening TCP sockets", async () => {
     const { parseOccupiedPortOffsetsFromProcNet } = await import("./projects");
     const procNet = [

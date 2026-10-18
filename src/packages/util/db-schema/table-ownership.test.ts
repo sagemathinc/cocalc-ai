@@ -53,16 +53,6 @@ const LEGACY_DUAL_SCHEMA_OWNERSHIP: Record<string, string> = {
   public_project_path_slugs: "packages/server/public-directory-shares/index.ts",
   public_project_paths: "packages/server/public-directory-shares/index.ts",
   rootfs_rustic_repos: "packages/server/rootfs/rustic-repo-schema.ts",
-  site_license_audit_log: "packages/server/membership/site-licenses.ts",
-  site_license_external_claim_consumptions:
-    "packages/server/membership/site-licenses.ts",
-  site_license_external_claim_keys:
-    "packages/server/membership/site-licenses.ts",
-  site_license_external_claim_pools:
-    "packages/server/membership/site-licenses.ts",
-  site_license_managers: "packages/server/membership/site-licenses.ts",
-  site_license_pool_requests: "packages/server/membership/site-licenses.ts",
-  site_licenses: "packages/server/membership/site-licenses.ts",
 };
 
 const ALLOWED_OWNERSHIP_BY_REFERENCE_FIELD: Record<

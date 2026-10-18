@@ -35,8 +35,17 @@ describe("projects host operational display state", () => {
     ).toBe(true);
   });
 
-  it("suppresses brief unconfirmed project-host disconnects", () => {
-    const now = new Date("2026-08-12T19:00:05.000Z").getTime();
+  it("suppresses unconfirmed project-host disconnects for 30 s", () => {
+    const now = new Date("2026-08-12T19:00:30.000Z").getTime();
+    // a routine host restart (15 s) shows nothing
+    expect(
+      hostUnavailableBannerDelay({
+        candidate: true,
+        recoveryActive: false,
+        unavailableSince: "2026-08-12T19:00:15.000Z",
+        now,
+      }),
+    ).toBe(15_000);
     expect(
       hostUnavailableBannerDelay({
         candidate: true,
@@ -53,6 +62,27 @@ describe("projects host operational display state", () => {
         now,
       }),
     ).toBe(0);
+  });
+
+  it("shows a host-reported outage immediately, without the grace period", () => {
+    // host_info says off/starting, but there is no spot-recovery phase or
+    // maintenance record: still a confirmed outage, not a routed blip.
+    expect(
+      hostUnavailableBannerDelay({
+        candidate: true,
+        recoveryActive: false,
+        confirmedByHost: true,
+        unavailableSince: "2026-08-12T19:00:29.000Z",
+        now: new Date("2026-08-12T19:00:30.000Z").getTime(),
+      }),
+    ).toBe(0);
+    expect(
+      hostUnavailableBannerDelay({
+        candidate: false,
+        recoveryActive: false,
+        confirmedByHost: true,
+      }),
+    ).toBeUndefined();
   });
 
   it("shows confirmed recovery immediately and hides on reconnection", () => {

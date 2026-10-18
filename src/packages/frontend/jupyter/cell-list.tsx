@@ -5,6 +5,7 @@
 
 // React component that renders the ordered list of cells
 
+import { NotebookFileContext } from "./notebook-file-context";
 import jquery from "jquery";
 import { findCellElement } from "./find-cell-element";
 import useResizeObserver from "use-resize-observer";
@@ -30,7 +31,6 @@ import {
   eventTargetsElement,
   isInsideKeyboardBoundary,
 } from "@cocalc/frontend/keyboard/boundary";
-import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { JupyterActions } from "./browser-actions";
@@ -448,8 +448,6 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     cellViewMode,
     cellListResize.width,
   ]);
-
-  const fileContext = useFileContext();
 
   // Keep the blocks array referentially stable across unrelated cell changes
   // (edits, execution results): recompute, but reuse the previous array when
@@ -1264,16 +1262,12 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
   }
 
   return (
-    <FileContext.Provider
-      value={{
-        ...fileContext,
-        noSanitize: !!trust,
-        HeadingTagComponent,
-        disableMarkdownCodebar: true,
-      }}
+    <NotebookFileContext
+      trust={trust}
+      value={{ HeadingTagComponent, disableMarkdownCodebar: true }}
     >
       {body}
       {minimap.settingsModal}
-    </FileContext.Provider>
+    </NotebookFileContext>
   );
 };

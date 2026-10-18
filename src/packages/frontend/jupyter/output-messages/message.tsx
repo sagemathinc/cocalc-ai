@@ -12,6 +12,9 @@ import type { Map } from "immutable";
 import React from "react";
 import type { JupyterActions } from "@cocalc/jupyter/redux/actions";
 import { AITools } from "@cocalc/jupyter/types";
+import useJupyterContext from "@cocalc/frontend/jupyter/jupyter-context";
+import { ActiveOutputGroup, activeGroup } from "./active-output-group";
+import { selectMimeType } from "./mime-types/data";
 import { InputDone } from "./input-done";
 import { Data } from "./mime-types/data";
 import { MoreOutput } from "./more-output";
@@ -120,15 +123,46 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     let hasIframes: boolean = false;
     let hasError: boolean = false;
     let traceback: string = "";
+    // JavaScript output never runs in this page: in a trusted notebook, a
+    // cell's JavaScript and HTML outputs render together in one opaque
+    // sandboxed frame.  (Untrusted notebooks don't run it at all.)
+    const { kernelspec } = useJupyterContext();
+    const group = React.useMemo(
+      () =>
+        trust
+          ? activeGroup(
+              obj,
+              (m) => {
+                const data = m.get("data");
+                return data == null || typeof data.keySeq !== "function"
+                  ? undefined
+                  : selectMimeType(data.keySeq().toJS(), kernelspec, trust);
+              },
+              // ANSI escapes stripped, as plain text in the frame.
+              (m) => Anser.ansiToText(`${m.get("text") ?? ""}`),
+            )
+          : null,
+      [obj, kernelspec, trust],
+    );
+    const inGroup = new Set((group ?? []).map((o) => o.index));
+    const firstInGroup = Math.min(...inGroup);
     for (const n of numericallyOrderedKeys(obj)) {
       const mesg = obj[n];
-      if (mesg != null) {
-        if (mesg.get("traceback")) {
-          const t = mesg.get("traceback").join("\n");
-          // if user clicks "Stop" there is a traceback, but it's not an error to fix with AI.
-          hasError = !t.includes("KeyboardInterrupt");
-          traceback += t + "\n";
+      // Error bookkeeping applies to every message, wherever it renders.
+      if (mesg?.get("traceback")) {
+        const t = mesg.get("traceback").join("\n");
+        // if user clicks "Stop" there is a traceback, but it's not an error to fix with AI.
+        hasError = !t.includes("KeyboardInterrupt");
+        traceback += t + "\n";
+      }
+      if (mesg != null && group != null && inGroup.has(n)) {
+        if (n === firstInGroup) {
+          hasIframes = true;
+          v.push(<ActiveOutputGroup key="active-group" outputs={group} />);
         }
+        continue;
+      }
+      if (mesg != null) {
         if (scrolled && !hasIframes && mesg.getIn(["data", "iframe"])) {
           hasIframes = true;
         }

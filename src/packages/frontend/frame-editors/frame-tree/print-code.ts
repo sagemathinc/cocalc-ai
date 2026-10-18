@@ -11,6 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { React } from "../../app-framework";
 import { print_window, popup } from "./print";
 import { path_split } from "@cocalc/util/misc";
+import { writePassiveDocument } from "@cocalc/frontend/misc/print-document";
 import { CodeMirrorStatic } from "../../jupyter/codemirror-static";
 import type { Options as CodeMirrorStaticOptions } from "../../jupyter/codemirror-static";
 import type * as CodeMirror from "codemirror";
@@ -65,20 +66,12 @@ export function print_code(opts: Options) {
   const font_size =
     opts.font_size != null ? `font-size:${opts.font_size}px` : "";
 
-  const t: string = `\
-<html lang="en">
-    <head>
-        <title>${path_split(opts.path).tail}</title>
-        <meta name="google" content="notranslate"/>
-        <style>${CODEMIRROR_CSS}</style>
-    </head>
-    <body style='${font_size}'>
-        ${s}
-    </body>
-</html>\
-`;
-  w.document.write(t);
-  w.document.close();
+  writePassiveDocument(w, {
+    title: path_split(opts.path).tail,
+    head: `<meta name="google" content="notranslate"/><style>${CODEMIRROR_CSS}</style>`,
+    bodyStyle: font_size,
+    body: s,
+  });
   print_window(w);
 }
 

@@ -324,8 +324,9 @@ const surfaces = [
     // update brings it to 326.9 KiB, and the web browser guide (#939) to
     // 330.9 KiB; keep a narrow margin for other guides. The CoCalc access
     // guide's "Read and manage my notifications" entry brings it to 332.1 KiB
-    // (2026-10-17).
-    max: 333 * KiB,
+    // (2026-10-17). The six guide corrections and the LaTeX build
+    // explanation (#1128) add about 1.3 KiB.
+    max: 336 * KiB,
   },
   {
     label: "minimal project settings",

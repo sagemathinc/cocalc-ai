@@ -82,7 +82,10 @@ import {
   reconcileManagedProjectVolumeQuota,
 } from "../file-server";
 import { currentProjectVolumeLifecycleGeneration } from "../project-volume-lifecycle";
-import { withProjectRuntimeLifecycle } from "../runtime-lifecycle";
+import {
+  applyProjectRuntimeAuthorityUpdate,
+  withProjectRuntimeLifecycle,
+} from "../runtime-lifecycle";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import type { Configuration } from "@cocalc/conat/project/runner/types";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -3837,6 +3840,9 @@ export async function updateAuthorizedKeys({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
+  // Unlike the collaborator map, the key list has no revision of its own, and
+  // start() writes the keys it captured; so key updates stay queued behind
+  // start and stop. They are rare, and the queue is capped per project.
   await withProjectRuntimeLifecycle({
     project_id,
     revision: runtime_lifecycle_revision,
@@ -3860,15 +3866,32 @@ export async function updateProjectUsers({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
+  const apply = () => {
+    // Store collaborator map in the generic sqlite row mirror used by conat auth.
+    // This is separate from the concrete projects SQL table schema.
+    upsertProject({ project_id, users, users_revision });
+    clearProjectHostConatAuthCaches();
+  };
+  // A versioned update is not queued behind start and stop: a start that hangs
+  // would otherwise block every agent and browser token for the project (each
+  // token first syncs users), and the waiting requests would use up the host's
+  // API handlers. That is safe because only the newest users_revision is kept
+  // (sqlite/projects.ts), so an older start cannot restore an older list.
+  // An unversioned update (an older bay during a rolling upgrade) has no such
+  // guard against a start that captured an older unversioned list, so it stays
+  // queued as before.
+  if (Number.isFinite(users_revision) && Number(users_revision) >= 0) {
+    applyProjectRuntimeAuthorityUpdate({
+      project_id,
+      revision: runtime_lifecycle_revision,
+      fn: apply,
+    });
+    return;
+  }
   await withProjectRuntimeLifecycle({
     project_id,
     revision: runtime_lifecycle_revision,
-    fn: async () => {
-      // Store collaborator map in the generic sqlite row mirror used by conat auth.
-      // This is separate from the concrete projects SQL table schema.
-      upsertProject({ project_id, users, users_revision });
-      clearProjectHostConatAuthCaches();
-    },
+    fn: async () => apply(),
   });
 }
 

@@ -2753,6 +2753,124 @@ class BootstrapLogRotationTest(unittest.TestCase):
             self.assertTrue(log_path.with_name("bootstrap.log.1").exists())
 
 
+class BootstrapBundleFallbackManifestTest(unittest.TestCase):
+    """A kept installed version whose directory is gone and that can't be
+    downloaded falls back to the latest manifest instead of failing."""
+
+    def make_fixture(self, tmpdir: str, *, fallback: bool):
+        cfg = replace(make_cfg(tmpdir), bootstrap_user="", ssh_user="")
+        root = Path(tmpdir) / "bundles"
+        root.mkdir()
+        tarball = Path(tmpdir) / "latest.tar.xz"
+        with tarfile.open(tarball, mode="w:xz") as archive:
+            payload = b"ok\n"
+            member = tarfile.TarInfo("bundle/marker")
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        bundle = bootstrap.BundleSpec(
+            url="https://example.invalid/software/project-host/kept/bundle-linux.tar.xz",
+            sha256=None,
+            remote=str(Path(tmpdir) / "download.tar.xz"),
+            root=str(root),
+            dir=str(root / "kept"),
+            current=str(root / "current"),
+            version="kept",
+            fallback_manifest_url=(
+                "https://example.invalid/software/project-host/latest-linux.json"
+                if fallback
+                else None
+            ),
+        )
+        return cfg, bundle, root, tarball
+
+    def download(self, tarball: Path):
+        def fake_download(_cfg, url, dest):
+            if "/kept/" in url:
+                raise RuntimeError("HTTP Error 404: Not Found")
+            Path(dest).write_bytes(tarball.read_bytes())
+
+        return fake_download
+
+    def test_falls_back_to_latest_manifest_when_kept_version_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, tarball = self.make_fixture(tmpdir, fallback=True)
+            manifest = {
+                "url": "https://example.invalid/software/project-host/latest-v/bundle-linux.tar.xz",
+                "sha256": hashlib.sha256(tarball.read_bytes()).hexdigest(),
+                "version": "latest-v",
+            }
+            with mock.patch.object(
+                bootstrap, "download_file", side_effect=self.download(tarball)
+            ) as download, mock.patch.object(
+                bootstrap, "fetch_json", return_value=manifest
+            ), mock.patch.object(bootstrap, "prune_bundle_versions"):
+                resolved = bootstrap.extract_bundle_unlocked(cfg, bundle)
+            # Without a checksum the kept version is never downloaded: only
+            # the verified latest bundle is.
+            self.assertEqual(
+                [call.args[1] for call in download.call_args_list],
+                [manifest["url"]],
+            )
+            self.assertEqual(resolved.version, "latest-v")
+            self.assertEqual((root / "current").resolve(), root / "latest-v")
+            self.assertTrue((root / "latest-v" / "marker").exists())
+
+    def test_reuses_kept_version_when_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, tarball = self.make_fixture(tmpdir, fallback=True)
+            (root / "kept").mkdir()
+            with mock.patch.object(
+                bootstrap, "download_file", side_effect=self.download(tarball)
+            ) as download, mock.patch.object(bootstrap, "prune_bundle_versions"):
+                resolved = bootstrap.extract_bundle_unlocked(cfg, bundle)
+            download.assert_not_called()
+            self.assertEqual(resolved.version, "kept")
+            self.assertEqual((root / "current").resolve(), root / "kept")
+
+    def test_fallback_manifest_survives_desired_state_rewrite(self) -> None:
+        # record_operation_start rewrites bootstrap-desired-state.json before
+        # extraction, and `bootstrap.py --only ...` reloads it later: the
+        # fallback must round-trip or the guard against an unverified
+        # download disappears on retries and subset refreshes.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            fallback = "https://example.invalid/software/project-host/latest-linux.json"
+            cfg = replace(
+                cfg,
+                project_host_bundle=replace(
+                    cfg.project_host_bundle, fallback_manifest_url=fallback
+                ),
+                project_bundle=replace(
+                    cfg.project_bundle,
+                    fallback_manifest_url="https://example.invalid/software/project/latest-linux.json",
+                ),
+            )
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir()
+            (state_dir / "bootstrap-host-facts.json").write_text(
+                json.dumps(bootstrap.build_host_facts(cfg))
+            )
+            (state_dir / "bootstrap-desired-state.json").write_text(
+                json.dumps(bootstrap.build_desired_state(cfg))
+            )
+            reloaded = bootstrap.load_config(str(state_dir))
+            self.assertEqual(reloaded.project_host_bundle.fallback_manifest_url, fallback)
+            self.assertEqual(
+                reloaded.project_bundle.fallback_manifest_url,
+                "https://example.invalid/software/project/latest-linux.json",
+            )
+            self.assertIsNone(reloaded.tools_bundle.fallback_manifest_url)
+
+    def test_raises_without_a_fallback_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, _root, tarball = self.make_fixture(tmpdir, fallback=False)
+            with mock.patch.object(
+                bootstrap, "download_file", side_effect=self.download(tarball)
+            ), mock.patch.object(bootstrap, "prune_bundle_versions"):
+                with self.assertRaises(RuntimeError):
+                    bootstrap.extract_bundle_unlocked(cfg, bundle)
+
+
 class BootstrapBundleRetentionTest(unittest.TestCase):
     def setUp(self) -> None:
         repair = mock.patch.object(bootstrap, "run_best_effort")

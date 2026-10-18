@@ -81,7 +81,8 @@ export function latexMathToHtml(s: string): string {
       ? mathToHtml(s.slice(1, s.length - 1), true)
       : mathToHtml(s, false);
   if (err) {
-    return `<span style="color:#ff6666">${err}</span>`;
+    // err quotes the input, so it must be escaped.
+    return `<span style="color:#ff6666">${escapeHtml(err)}</span>`;
   } else {
     return __html;
   }
@@ -96,4 +97,13 @@ export function latexMathToHtmlOrError(s: string): {
     : s.startsWith("$")
       ? mathToHtml(s.slice(1, s.length - 1), true)
       : mathToHtml(s, false);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

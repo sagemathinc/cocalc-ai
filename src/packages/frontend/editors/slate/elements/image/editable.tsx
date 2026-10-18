@@ -12,6 +12,7 @@ import { FOCUSED_COLOR } from "../../util";
 import { Resizable } from "re-resizable";
 import { Image, imageMaxWidth } from "./index";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
+import { applyUrlTransform } from "@cocalc/frontend/lib/url-transform";
 
 // NOTE: We do NOT use maxWidth:100% since that ends up
 // making the resizing screw up the aspect ratio.
@@ -136,7 +137,7 @@ register({
                 setHeight(height);
               }}
               ref={imageRef}
-              src={urlTransform?.(src, "img") ?? src}
+              src={applyUrlTransform(urlTransform, src, "img") ?? undefined}
               alt={alt}
               title={title}
               style={{

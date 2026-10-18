@@ -6,6 +6,10 @@
 import type { Map } from "immutable";
 
 import { filename_extension, startswith } from "@cocalc/util/misc";
+import {
+  URL_REJECTED,
+  type UrlTransformResult,
+} from "@cocalc/frontend/lib/url-transform";
 
 // Resolve "attachment:<name>" URLs against the cell's stored attachments,
 // returning a data: URI. Used by both the regular CellInput markdown path and
@@ -13,7 +17,7 @@ import { filename_extension, startswith } from "@cocalc/util/misc";
 export function attachmentTransform(
   cell: Map<string, any>,
   href?: string,
-): string | undefined {
+): UrlTransformResult {
   if (!href || !startswith(href, "attachment:")) {
     return;
   }
@@ -27,6 +31,7 @@ export function attachmentTransform(
       }
       return `data:image/${ext};base64,${data.get("value")}`;
     default:
-      return "";
+      // Missing or unsupported attachment: drop the URL.
+      return URL_REJECTED;
   }
 }

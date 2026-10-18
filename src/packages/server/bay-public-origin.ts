@@ -345,6 +345,42 @@ export async function getClusterBayPublicOrigins({
   return result;
 }
 
+// The origins browsers use for the configured site (the dns setting): the site
+// as configured, keeping its scheme and port (https when none is given, as in
+// getPublicSiteUrl), and the hostname form getSitePublicOrigin returns. Empty
+// when no site is configured. Shared by every browser-origin allowlist, so the
+// hub and the project hosts agree.
+export async function getSiteBrowserOrigins(): Promise<string[]> {
+  const settings = await getServerSettings();
+  const raw = trim(settings.dns);
+  if (!raw) return [];
+  const origins = new Set<string>();
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    origins.add(url.origin.toLowerCase());
+  } catch {
+    // not a URL; the hostname form below may still apply
+  }
+  const site = normalizeHostname(raw);
+  if (site) {
+    // The hostname on its default scheme and port, e.g., behind a TLS proxy
+    // on 443.
+    origins.add(`${defaultSchemeForHostname(site)}://${site}`);
+    if (!/^https?:\/\//i.test(raw)) {
+      // No scheme given: also the hostname's default scheme with the
+      // configured port (http://localhost:9100 for dns=localhost:9100).
+      try {
+        const port = new URL(`https://${raw}`).port;
+        if (port)
+          origins.add(`${defaultSchemeForHostname(site)}://${site}:${port}`);
+      } catch {
+        // not a URL
+      }
+    }
+  }
+  return [...origins];
+}
+
 export async function getSitePublicOrigin(): Promise<string | undefined> {
   const site = await getConfiguredSiteDnsHostname();
   if (!site) return;

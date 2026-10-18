@@ -39,6 +39,7 @@ import {
   isBayCredentialUserActive,
 } from "@cocalc/server/inter-bay/bay-credentials";
 import { getLogger } from "@cocalc/backend/logger";
+import { assertCookieOrigin } from "./browser-origin";
 import {
   getConfiguredClusterId,
   getConfiguredClusterRole,
@@ -401,6 +402,7 @@ export async function getUser(
 
   if (cookies[API_COOKIE_NAME]) {
     // account API key
+    await assertCookieOrigin(socket.handshake.headers, "api-key-cookie");
     const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!, {
       recordActivity: !options?.revalidation,
     });
@@ -414,6 +416,7 @@ export async function getUser(
     };
   }
   if (cookies[PROJECT_SECRET_COOKIE_NAME]) {
+    await assertCookieOrigin(socket.handshake.headers, "project-secret-cookie");
     const project_id = cookies[PROJECT_ID_COOKIE_NAME];
     if (!project_id) {
       throw Error(
@@ -433,6 +436,7 @@ export async function getUser(
     }
   }
 
+  await assertCookieOrigin(socket.handshake.headers, "remember-me");
   const values = getRememberMeCookieValuesFromHeader(
     socket.handshake.headers.cookie,
     getRememberMeCookieNamesForRequest({
