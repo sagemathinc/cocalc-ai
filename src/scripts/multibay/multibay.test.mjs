@@ -14,10 +14,13 @@
 
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { MultibayCluster } from "./cluster.mjs";
+import { MultibayCluster, SRC } from "./cluster.mjs";
 import {
   AccountClient,
   createAccount,
@@ -1868,5 +1871,72 @@ describe("an agent's own network name across bays", () => {
       discover(randomUUID()),
       /expired, revoked, or invalid/,
     );
+  });
+});
+
+describe("CLI logout across bays", () => {
+  // `cocalc auth logout` must end the profile's session where it lives: on
+  // the account's home bay, which issued the cookie.
+  it("revokes the session on the profile's home bay", async () => {
+    const carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
+    const session = await new AccountClient(cluster, carol).signIn();
+    session.close();
+    const sessions = () =>
+      runInBay(
+        cluster,
+        ATTACHED,
+        `const { getRememberMeHashFromCookieValue } = server("auth/remember-me.js");
+         const getPool = require("@cocalc/database/pool").default;
+         const hash = getRememberMeHashFromCookieValue(${JSON.stringify(session.cookie)});
+         const { rows } = await getPool().query(
+           "SELECT count(*)::int AS n FROM remember_me WHERE hash = $1::CHAR(127)",
+           [hash.slice(0, 127)],
+         );
+         return rows[0].n;`,
+      );
+    assert.equal(await sessions(), 1);
+
+    const dir = mkdtempSync(path.join(tmpdir(), "multibay-logout-"));
+    const config = path.join(dir, "config.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        current_profile: "carol",
+        profiles: {
+          carol: {
+            api: cluster.url(ATTACHED),
+            cookie: `remember_me=${session.cookie}`,
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    // A clean CLI environment: no ambient credentials or API defaults.
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("COCALC_")),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(SRC, "packages/cli/dist/bin/cocalc.js"),
+        "--json",
+        "auth",
+        "logout",
+      ],
+      {
+        env: { ...env, HOME: dir, COCALC_CLI_CONFIG: config },
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.data.removed, "carol");
+    assert.equal(output.data.server_session, "revoked");
+    assert.equal(await sessions(), 0);
+    assert.deepEqual(JSON.parse(readFileSync(config, "utf8")).profiles, {});
   });
 });

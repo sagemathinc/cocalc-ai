@@ -250,7 +250,11 @@ export async function signOutSession(
         signal: AbortSignal.timeout(10_000),
       },
     );
-    return response.ok;
+    if (!response.ok) return false;
+    // The endpoint reports a failed revocation as HTTP 200 with {error}; only
+    // {status: "success"} means the session was signed out.
+    const body = await response.json();
+    return body?.status === "success";
   } catch {
     return false;
   }
