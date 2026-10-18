@@ -314,13 +314,16 @@ try {
   console.log("DEBUG browser version", browser.version(), "exported length", exported.length);
   console.log("DEBUG exported head", JSON.stringify(exported.slice(0, 600)));
   browser.on("disconnected", () => console.log("DEBUG browser disconnected"));
-  const doc = await browser.newPage();
+  // Offline instead of aborting each request: the exported document links
+  // CDN stylesheets, and aborting them by request interception crashed the
+  // whole browser in CI (Chrome 155).
+  const docContext = await browser.newContext({ offline: true });
+  const doc = await docContext.newPage();
   doc.on("crash", () => console.log("DEBUG page crashed"));
   doc.on("close", () => console.log("DEBUG page closed"));
   doc.on("console", (m) => console.log("DEBUG page console", m.type(), m.text().slice(0, 300)));
   doc.on("pageerror", (e) => console.log("DEBUG pageerror", String(e).slice(0, 300)));
   doc.on("framenavigated", (fr) => console.log("DEBUG framenavigated", fr.url().slice(0, 200)));
-  await doc.route(/^https?:\/\//, (route) => route.abort());
   try {
     await doc.setContent(exported, { waitUntil: "domcontentloaded" });
   } catch (err) {
@@ -337,7 +340,7 @@ try {
     null,
     { timeout: 10000 },
   );
-  await doc.close();
+  await docContext.close();
 
   assert.deepEqual(errors, []);
   console.log("html-output browser test: ok");
