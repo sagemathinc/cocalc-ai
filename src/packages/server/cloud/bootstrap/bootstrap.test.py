@@ -2301,12 +2301,17 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
             "cannot join the existing user namespace",
             "failed to reexec runtime",
             "invalid internal status",
+            "cannot set user namespace",
         ):
             with self.subTest(error=error):
                 proc = subprocess.CompletedProcess([], 125, "", error)
                 self.assertTrue(bootstrap.podman_has_stale_boot_state(proc))
-        proc = subprocess.CompletedProcess([], 124, "", "operation timed out")
-        self.assertFalse(bootstrap.podman_has_stale_boot_state(proc))
+        for error in (
+            "operation timed out",
+            "cannot set user namespace mode when joining pod with infra container",
+        ):
+            proc = subprocess.CompletedProcess([], 125, "", error)
+            self.assertFalse(bootstrap.podman_has_stale_boot_state(proc))
 
     def test_stale_boot_repair_refuses_live_project_runtimes(self) -> None:
         cfg = make_cfg(tempfile.mkdtemp())
@@ -3741,6 +3746,86 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             ],
             "disabled",
         )
+
+    def test_storage_wrapper_drops_stale_podman_pause_pid(self) -> None:
+        # The RootFS helper's Podman runtime dir is on persistent storage, so
+        # after a reboot or a new container pause.pid can name a reused PID;
+        # Podman then fails with "cannot set user namespace".
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            captured: dict[str, str] = {}
+            original_text_write_atomic = bootstrap.text_write_atomic
+            original_chmod = bootstrap.os.chmod
+            original_chown = bootstrap.os.chown
+
+            def capture_write(path, data, **_kwargs):
+                captured[str(path)] = data
+                return len(data)
+
+            try:
+                bootstrap.text_write_atomic = capture_write
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.os.chown = lambda *_args, **_kwargs: None
+                bootstrap.install_privileged_wrappers(cfg)
+            finally:
+                bootstrap.text_write_atomic = original_text_write_atomic
+                bootstrap.os.chmod = original_chmod
+                bootstrap.os.chown = original_chown
+
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            self.assertIn(
+                'drop_stale_podman_pause_pid "$runtime_dir" "$runtime_uid"',
+                script.split("\nrun_rootfs_podman_as_user() {", 1)[1],
+            )
+            name = "drop_stale_podman_pause_pid"
+            function = (
+                f"{name}() {{"
+                + script.split(f"\n{name}() {{", 1)[1].split("\n}\n", 1)[0]
+                + "\n}\n"
+            )
+            runtime_dir = Path(tmpdir) / "runtime"
+            pause_pid_file = runtime_dir / "libpod" / "tmp" / "pause.pid"
+            pause_pid_file.parent.mkdir(parents=True)
+
+            def check(content: str) -> bool:
+                pause_pid_file.write_text(content, encoding="utf-8")
+                subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        function + f'{name} "$1" "$2"',
+                        "bash",
+                        str(runtime_dir),
+                        str(os.getuid()),
+                    ],
+                    check=True,
+                )
+                return pause_pid_file.exists()
+
+            # An unrelated live process of this user in the initial user
+            # namespace (the reused-PID case), a gone PID and garbage.
+            unrelated = subprocess.Popen(["sleep", "30"])
+            try:
+                self.assertFalse(check(f"{unrelated.pid}\n"))
+            finally:
+                unrelated.kill()
+                unrelated.wait()
+            self.assertFalse(check(f"{unrelated.pid}\n"))
+            self.assertFalse(check("not-a-pid"))
+
+            # A live process in its own user namespace is a real pause process.
+            pause = subprocess.Popen(
+                ["unshare", "--user", "sleep", "30"],
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                time.sleep(0.2)
+                if pause.poll() is not None:
+                    self.skipTest("unprivileged user namespaces are unavailable")
+                self.assertTrue(check(f"{pause.pid}\n"))
+            finally:
+                pause.kill()
+                pause.wait()
 
     def test_storage_wrapper_project_network_policy_is_off_without_socket_cgroup_match(
         self,
