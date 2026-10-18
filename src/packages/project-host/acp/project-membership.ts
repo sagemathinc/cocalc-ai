@@ -111,6 +111,16 @@ export async function isAcpProjectMember({
       });
     }
   }
+  // A collaborator sync may have stored a newer list while the bay was being
+  // asked (the upsert above refuses to replace it). The newer list decides,
+  // so an account removed since the bay's reply cannot run a turn.
+  const newer = localProjectRow(project_id);
+  if (
+    newer?.users_revision != null &&
+    authoritative.users_revision != null &&
+    newer.users_revision > authoritative.users_revision
+  )
+    return isMember(newer.users, account_id);
   return true;
 }
 

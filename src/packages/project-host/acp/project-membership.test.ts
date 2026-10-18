@@ -105,6 +105,30 @@ describe("isAcpProjectMember", () => {
     });
   });
 
+  it("a newer local list wins over a stale reply from the bay", async () => {
+    rows.set(JSON.stringify({ project_id }), {
+      project_id,
+      users: { [collaborator]: "collaborator" },
+      users_revision: 4,
+    });
+    // While the bay answers with revision 5 (owner still a member), a
+    // collaborator sync installs revision 6, which removed the owner.
+    mockCallHub.mockImplementation(async () => {
+      rows.set(JSON.stringify({ project_id }), {
+        project_id,
+        users: { [collaborator]: "collaborator" },
+        users_revision: 6,
+      });
+      return {
+        users: { [owner]: { group: "owner" }, [collaborator]: "collaborator" },
+        users_revision: 5,
+      };
+    });
+    expect(await isAcpProjectMember({ account_id: owner, project_id })).toBe(
+      false,
+    );
+  });
+
   it("fails closed when the owning bay cannot be asked", async () => {
     mockCallHub.mockRejectedValue(new Error("timeout"));
     expect(await isAcpProjectMember({ account_id: removed, project_id })).toBe(
