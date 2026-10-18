@@ -42,8 +42,7 @@
     "innerHTML assignment": 1
   },
   "src/packages/frontend/components/math/katex.tsx": {
-    "dangerouslySetInnerHTML": 1,
-    "innerHTML assignment": 1
+    "dangerouslySetInnerHTML": 1
   },
   "src/packages/frontend/components/math/ssr.tsx": {
     "dangerouslySetInnerHTML": 1
@@ -152,7 +151,7 @@
     "dangerouslySetInnerHTML": 3
   },
   "src/packages/frontend/markdown/markdown-input/main.tsx": {
-    "dangerouslySetInnerHTML": 1
+    "noSanitize": 1
   },
   "src/packages/frontend/misc/misc.ts": {
     "innerHTML assignment": 1

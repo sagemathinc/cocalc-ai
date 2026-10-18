@@ -34,8 +34,10 @@ export default function KaTeX({ data, inMarkdown }: Props) {
     void ensureJqueryPluginsInitialized()
       .then(() => {
         if (!active || ref.current == null) return;
-        // This path processes mixed text/math nodes that are not already Markdown.
-        ref.current.innerHTML = data;
+        // This path processes mixed text/math nodes that are not already
+        // Markdown.  data is text, never HTML: the katex plugin finds the math
+        // in the DOM's text nodes.
+        ref.current.textContent = data;
         $(ref.current).katex({ preProcess: true });
       })
       .catch(() => {

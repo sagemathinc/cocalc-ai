@@ -143,7 +143,7 @@ export default function HTML({
       }
 
       if (!noSanitize) {
-        if (!isAllowedHtmlTag(name)) {
+        if (!isAllowedHtmlTag(name, attribs)) {
           if (shouldDropHtmlTagContents(name)) {
             return React.createElement(React.Fragment);
           }
