@@ -391,7 +391,7 @@ path = sys.argv[3]
 data = json.load(open(os.environ["FAKE_GH"]))
 if path == "repos/a/b/pulls/7":
     rows = [{"sha": "abc"}]
-elif path == "repos/a/b/commits/abc/check-runs?per_page=100":
+elif path == "repos/a/b/commits/abc/check-runs?filter=latest&per_page=100":
     rows = data["runs"]
 elif path == "repos/a/b/commits/abc/status":
     rows = data["statuses"]
@@ -417,11 +417,10 @@ for row in rows:
         },
       });
     };
-    const done = (name: string, conclusion: string, started_at = "1") => ({
+    const done = (name: string, conclusion: string) => ({
       name,
       status: "completed",
       conclusion,
-      started_at,
     });
     // Nothing reported yet, or something still running: keep waiting.
     expect(run({ runs: [] })).toBe("");
@@ -439,19 +438,23 @@ for row in rows:
         statuses: [{ context: "deploy", state: "pending" }],
       }),
     ).toBe("");
-    // A rerun counts, not the run it replaced.
+    // Not known to be finished (as in gh pr checks): keep waiting.
+    expect(run({ runs: [done("build", "stale")] })).toBe("");
     expect(
       parseSensorWake(
         run({
-          runs: [
-            done("test", "failure", "1"),
-            done("test", "success", "2"),
-            done("build", "skipped"),
-          ],
+          runs: [done("build", "skipped"), done("lint", "neutral")],
           statuses: [{ context: "deploy", state: "success" }],
         }),
       )?.summary,
     ).toBe("CI finished on a/b#7: all 3 checks passed");
+    // Same-named checks of different workflows are different checks (GitHub
+    // already gives only the latest attempt of each).
+    expect(
+      parseSensorWake(
+        run({ runs: [done("test", "failure"), done("test", "success")] }),
+      )?.summary,
+    ).toBe("CI finished on a/b#7: 1 of 2 checks failed: test");
     expect(
       parseSensorWake(
         run({

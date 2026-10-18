@@ -1446,6 +1446,67 @@ describe("sensor budgets on the account's home bay", () => {
     assert.deepEqual(await countsFor(SEED), {});
   });
 
+  it("reads a ci watcher's GitHub grant on the home bay, from another bay", async () => {
+    // A ci watcher is refused, or gives up, unless the agent has the GitHub
+    // connector. Grants live on the account's home bay (here the attached
+    // one); the check runs where the project is (the seed) and issues no
+    // token.
+    const grant_id = randomUUID();
+    const hasGithub = async (opts = {}) =>
+      await runInBay(
+        cluster,
+        SEED,
+        `const { sensorConnectors } = server("agents/cocalc-connector-routing.js");
+         return await sensorConnectors.hasCli(${JSON.stringify({
+           account_id: carol.account_id,
+           agent_id,
+           source_project_id: project_id,
+           connector: "github",
+           ...opts,
+         })});`,
+      );
+    const setGrant = async (sql, params) =>
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(${JSON.stringify(sql)}, ${JSON.stringify(params)});`,
+      );
+    assert.equal(await hasGithub(), false);
+    await setGrant(
+      "INSERT INTO agent_connector_grants (grant_id, account_id, agent_id, source_project_id, connector, connection_id, scope, enabled) VALUES ($1, $2, $3, $4, 'github', $5, '{}'::jsonb, true)",
+      [grant_id, carol.account_id, agent_id, project_id, randomUUID()],
+    );
+    assert.equal(await hasGithub(), true);
+    // Only this agent, this project and this connector.
+    assert.equal(await hasGithub({ agent_id: randomUUID() }), false);
+    assert.equal(await hasGithub({ connector: "cloudflare" }), false);
+    // Turned off, or its connection gone: no longer counts.
+    await setGrant(
+      "UPDATE agent_connector_grants SET enabled=false WHERE grant_id=$1",
+      [grant_id],
+    );
+    assert.equal(await hasGithub(), false);
+    await setGrant(
+      "UPDATE agent_connector_grants SET enabled=true, connection_id=NULL WHERE grant_id=$1",
+      [grant_id],
+    );
+    assert.equal(await hasGithub(), false);
+    // Nothing about the grant reached the seed's own database.
+    assert.equal(
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT count(*)::int AS n FROM agent_connector_grants WHERE account_id=$1",
+           [${JSON.stringify(carol.account_id)}]);
+         return rows[0].n;`,
+      ),
+      0,
+    );
+  });
+
   async function countsFor(bay) {
     return await runInBay(
       cluster,

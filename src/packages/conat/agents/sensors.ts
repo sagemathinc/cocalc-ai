@@ -576,23 +576,21 @@ export function sensorWatchScript(watch: SensorWatch): string | undefined {
     return [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
 repo = P["repo"]
 sha = gh("repos/%s/pulls/%d" % (repo, P["pr"]), "{sha: .head.sha}")[0]["sha"]
-# Like gh pr checks: the latest run of each check, and commit statuses.
-latest = {}
-for c in gh("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), ".check_runs[] | {name, status, conclusion, started_at}"):
-    prev = latest.get(c["name"])
-    if prev is None or (c.get("started_at") or "") >= (prev.get("started_at") or ""):
-        latest[c["name"]] = c
+# Like gh pr checks: check runs (GitHub returns only the latest attempt of
+# each; same-named checks of different suites stay separate) and statuses.
+# Anything not known to be finished counts as pending, e.g. "stale".
 def run_bucket(c):
-    if c.get("status") != "completed":
-        return "pending"
-    if c.get("conclusion") in ("success", "neutral", "skipped"):
+    state = c.get("conclusion") if c.get("status") == "completed" else c.get("status")
+    if state in ("success", "neutral", "skipped"):
         return "pass"
-    if c.get("conclusion") == "cancelled":
+    if state in ("failure", "timed_out", "action_required", "startup_failure", "error"):
+        return "fail"
+    if state == "cancelled":
         return "cancel"
-    return "fail"
-checks = [{"name": c["name"], "bucket": run_bucket(c)} for c in latest.values()]
+    return "pending"
+checks = [{"name": c["name"], "bucket": run_bucket(c)} for c in gh("repos/%s/commits/%s/check-runs?filter=latest&per_page=100" % (repo, sha), ".check_runs[] | {name, status, conclusion}")]
 for s in gh("repos/%s/commits/%s/status" % (repo, sha), ".statuses[] | {context, state}"):
-    checks.append({"name": s["context"], "bucket": {"success": "pass", "pending": "pending"}.get(s["state"], "fail")})
+    checks.append({"name": s["context"], "bucket": {"success": "pass", "failure": "fail", "error": "fail"}.get(s["state"], "pending")})
 if not checks or any(c["bucket"] == "pending" for c in checks):
     sys.exit(0)
 failed = [c["name"] for c in checks if c["bucket"] in ("fail", "cancel")]
