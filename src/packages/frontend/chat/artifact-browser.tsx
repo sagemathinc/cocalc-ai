@@ -285,6 +285,7 @@ export function ArtifactResults({
 const ARTIFACT_DRAWER_WIDTH_KEY = "cocalc:chat:artifactDrawerWidth";
 const DEFAULT_ARTIFACT_DRAWER_WIDTH = 400;
 const MIN_ARTIFACT_DRAWER_WIDTH = 280;
+const ARTIFACT_DRAWER_WIDTH_STEP = 80;
 
 function clampArtifactDrawerWidth(width: number): number {
   const max =
@@ -326,6 +327,15 @@ export default function ArtifactBrowser({
     "published",
   );
   const [drawerWidth, setDrawerWidth] = useState(readArtifactDrawerWidth);
+  const resizeDrawer = (width: number) => {
+    const next = clampArtifactDrawerWidth(width);
+    setDrawerWidth(next);
+    try {
+      localStorage.setItem(ARTIFACT_DRAWER_WIDTH_KEY, String(next));
+    } catch {
+      // The drawer still resizes when storage is unavailable.
+    }
+  };
   if (agentWorkspace && agentWorkspaceActive === false) return null;
   if (agentWorkspace) {
     return (
@@ -334,17 +344,33 @@ export default function ArtifactBrowser({
         title="Artifacts"
         placement="right"
         size={drawerWidth}
-        resizable={{
-          onResize: (value) => {
-            const next = clampArtifactDrawerWidth(value);
-            setDrawerWidth(next);
-            try {
-              localStorage.setItem(ARTIFACT_DRAWER_WIDTH_KEY, String(next));
-            } catch {
-              // The drawer still resizes when storage is unavailable.
-            }
-          },
-        }}
+        resizable={{ onResize: resizeDrawer }}
+        extra={
+          // A keyboard path for the pointer-only drag handle.
+          <Space.Compact>
+            <Button
+              size="small"
+              aria-label="Make the artifacts panel narrower"
+              title="Narrower"
+              disabled={drawerWidth <= MIN_ARTIFACT_DRAWER_WIDTH}
+              onClick={() =>
+                resizeDrawer(drawerWidth - ARTIFACT_DRAWER_WIDTH_STEP)
+              }
+            >
+              <Icon name="minus" />
+            </Button>
+            <Button
+              size="small"
+              aria-label="Make the artifacts panel wider"
+              title="Wider"
+              onClick={() =>
+                resizeDrawer(drawerWidth + ARTIFACT_DRAWER_WIDTH_STEP)
+              }
+            >
+              <Icon name="plus" />
+            </Button>
+          </Space.Compact>
+        }
         mask={false}
         onClose={onClose}
         styles={{ wrapper: { maxWidth: "100%" }, body: { padding: 16 } }}
