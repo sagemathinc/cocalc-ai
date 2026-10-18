@@ -110,9 +110,9 @@ export async function withProjectRuntimeLifecycle<T>({
   }
 }
 
-// For authority updates (collaborator map, managed SSH keys): they only rewrite
-// the host's local mirror, so they need the restart fence but not the queue.
-// Waiting behind a start or stop that hangs would block agent and browser
+// For authority updates that are safe without the queue (the collaborator map,
+// whose own revision keeps only the newest list): they need the restart fence,
+// but waiting behind a start or stop that hangs would block agent and browser
 // token issuance for the project, and pile up handlers until the host's whole
 // API refuses every request.
 export function applyProjectRuntimeAuthorityUpdate<T>({

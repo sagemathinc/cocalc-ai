@@ -480,7 +480,7 @@ describe("project host start ordering", () => {
     expect(upsertProject).not.toHaveBeenCalled();
   });
 
-  it("applies authority updates while a project start hangs", async () => {
+  it("syncs users while a project start hangs, but queues key updates", async () => {
     let finishStart!: (value: any) => void;
     const runnerApi = {
       start: jest.fn(
@@ -494,7 +494,10 @@ describe("project host start ordering", () => {
     const { updateAuthorizedKeys, updateProjectUsers, wireProjectsApi } =
       await import("./projects");
     wireProjectsApi(runnerApi);
-    const started = hubApi.projects.start({ project_id });
+    const started = hubApi.projects.start({
+      project_id,
+      authorized_keys: "ssh-ed25519 old",
+    });
     for (let i = 0; i < 200 && !runnerApi.start.mock.calls.length; i++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -502,17 +505,28 @@ describe("project host start ordering", () => {
 
     const users = { [project_id]: { group: "owner" } };
     await updateProjectUsers({ project_id, users });
-    await updateAuthorizedKeys({
-      project_id,
-      authorized_keys: "ssh-ed25519 fresh",
-    });
     expect(upsertProject).toHaveBeenCalledWith(
       expect.objectContaining({ project_id, users }),
     );
-    expect(writeManagedAuthorizedKeys).toHaveBeenCalled();
+    // The start writes the keys it captured, so a newer key list must wait
+    // for it and land last.
+    let keysDone = false;
+    const keys = updateAuthorizedKeys({
+      project_id,
+      authorized_keys: "ssh-ed25519 new",
+    }).then(() => {
+      keysDone = true;
+    });
+    await flushMicrotasks();
+    expect(keysDone).toBe(false);
 
     finishStart({ state: "running", http_port: 1234, ssh_port: 2222 });
     await started;
+    await keys;
+    expect(writeManagedAuthorizedKeys).toHaveBeenLastCalledWith(
+      project_id,
+      "ssh-ed25519 new",
+    );
   });
 
   it("avoids project ports occupied by non-listening TCP sockets", async () => {

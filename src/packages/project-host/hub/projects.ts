@@ -3817,12 +3817,7 @@ async function refreshAuthorizedKeys(
   upsertProject({ project_id, authorized_keys });
   if (authorized_keys != null) {
     try {
-      // Write the newest stored keys: key updates are not serialized, so a
-      // slower write must not put back an older key list.
-      await writeManagedAuthorizedKeys(
-        project_id,
-        getProject(project_id)?.authorized_keys ?? authorized_keys,
-      );
+      await writeManagedAuthorizedKeys(project_id, authorized_keys);
     } catch (err) {
       logger.debug("refreshAuthorizedKeys: failed to write managed keys", {
         project_id,
@@ -3845,7 +3840,10 @@ export async function updateAuthorizedKeys({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  await applyProjectRuntimeAuthorityUpdate({
+  // Unlike the collaborator map, the key list has no revision of its own, and
+  // start() writes the keys it captured; so key updates stay queued behind
+  // start and stop. They are rare, and the queue is capped per project.
+  await withProjectRuntimeLifecycle({
     project_id,
     revision: runtime_lifecycle_revision,
     fn: async () =>
@@ -3868,6 +3866,11 @@ export async function updateProjectUsers({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
+  // Not queued behind start and stop: a start that hangs would otherwise block
+  // every agent and browser token for the project (each token first syncs
+  // users), and the waiting requests would use up the host's API handlers.
+  // Safe unqueued because only the newest users_revision is kept
+  // (sqlite/projects.ts), so an older start cannot restore an older list.
   applyProjectRuntimeAuthorityUpdate({
     project_id,
     revision: runtime_lifecycle_revision,
