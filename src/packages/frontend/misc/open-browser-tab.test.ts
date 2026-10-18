@@ -39,3 +39,14 @@ describe("open_new_tab", () => {
     },
   );
 });
+
+describe("open_new_tab opener", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("detaches the opened tab from this page by default", () => {
+    const tab: any = { closed: false, opener: window };
+    jest.spyOn(window, "open").mockImplementation(() => tab);
+    expect(open_new_tab("https://example.com/")).toBe(tab);
+    expect(tab.opener).toBeNull();
+  });
+});
