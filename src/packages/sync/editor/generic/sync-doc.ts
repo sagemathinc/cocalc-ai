@@ -217,9 +217,6 @@ function syncDebug(event: string, data: () => Record<string, unknown>): void {
 }
 logger.debug("init");
 
-// Where to load older history from: the stream position of the snapshot
-// before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
-// stream if the oldest loaded snapshot is the first one or none is loaded.
 // Where to load more history from: the stream position of the patch of the
 // previous snapshot. Given where the loaded history starts (firstLoadedSeq),
 // step back to the nearest snapshot before it: the latest prev_seq below it.
