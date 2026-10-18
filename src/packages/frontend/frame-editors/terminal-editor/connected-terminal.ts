@@ -490,6 +490,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.set_connection_status("disconnected");
     this.reconnectResource =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: this.project_id,
         canReconnect: () => !this.isClosed() && !this.ptyExited,
         isConnected: () => this.getWritablePty() != null,
         probeOnForeground: () => this.is_visible,

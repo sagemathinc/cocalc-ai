@@ -160,6 +160,7 @@ describe("project-host HTTP session cookie", () => {
       headers: {
         [PROJECT_HOST_API_KEY_HTTP_HEADER]: "invalid",
         cookie: `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`,
+        "sec-fetch-site": "none",
       },
     } as any;
     mockVerifyHttpToken.mockImplementation(() => {
@@ -299,6 +300,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/`,
@@ -322,6 +324,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       socket: {},
@@ -353,6 +356,7 @@ describe("project-host HTTP session cookie", () => {
       const req = {
         headers: {
           cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "sec-fetch-site": "none",
           "x-forwarded-proto": "https",
         },
         socket: {},
@@ -388,6 +392,7 @@ describe("project-host HTTP session cookie", () => {
       const req = {
         headers: {
           cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "sec-fetch-site": "none",
           "x-forwarded-proto": "https",
         },
         socket: {},
@@ -553,6 +558,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "GET",
@@ -584,6 +590,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         host: "dev-1234.example.com",
         "x-forwarded-proto": "https",
       },
@@ -622,6 +629,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "GET",
@@ -654,6 +662,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/`,
@@ -663,6 +672,193 @@ describe("project-host HTTP session cookie", () => {
       auth.authorizeUpgradeRequest(req, project_id),
     ).resolves.toMatchObject({
       account_id,
+    });
+  });
+
+  describe("origin of cookie-authenticated requests", () => {
+    const savedSiteUrl = process.env.COCALC_SITE_URL;
+    const savedMode = process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+    const savedPublicUrl = process.env.PROJECT_HOST_PUBLIC_URL;
+    beforeEach(() => {
+      process.env.COCALC_SITE_URL = "https://cocalc.example";
+      process.env.PROJECT_HOST_PUBLIC_URL = "https://host-1.cocalc.example";
+      delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+    });
+    afterEach(() => {
+      if (savedSiteUrl == null) delete process.env.COCALC_SITE_URL;
+      else process.env.COCALC_SITE_URL = savedSiteUrl;
+      if (savedPublicUrl == null) delete process.env.PROJECT_HOST_PUBLIC_URL;
+      else process.env.PROJECT_HOST_PUBLIC_URL = savedPublicUrl;
+      if (savedMode == null)
+        delete process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY;
+      else process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY = savedMode;
+    });
+
+    const request = (
+      headers: Record<string, string>,
+      cookie?: string,
+      url = `/${project_id}/files/notes.txt`,
+    ) =>
+      ({
+        headers: {
+          cookie:
+            cookie ??
+            `cocalc_project_host_session=${encodeURIComponent(
+              createProjectHostBrowserSessionToken({
+                account_id,
+                now_ms: Date.now(),
+              }),
+            )}`,
+          host: "host-1.cocalc.example",
+          "x-forwarded-proto": "https",
+          ...headers,
+        },
+        method: "GET",
+        socket: {},
+        url,
+      }) as any;
+
+    it.each([
+      ["a foreign origin", { origin: "https://evil.example" }],
+      ["an opaque origin", { origin: "null" }],
+      [
+        "a cross-site subresource without an origin",
+        { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors" },
+      ],
+      ["a request without fetch metadata", {}],
+      [
+        "a foreign iframe",
+        {
+          "sec-fetch-site": "cross-site",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-dest": "iframe",
+          referer: "https://evil.example/",
+        },
+      ],
+    ])(
+      "refuses file access by browser session cookie from %s",
+      async (_, headers) => {
+        const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+        await expect(
+          auth.authorizeHttpRequest(
+            request(headers),
+            createResponse(),
+            project_id,
+          ),
+        ).rejects.toThrow("cross-site request refused");
+        await expect(
+          auth.authorizeUpgradeRequest(request(headers), project_id),
+        ).rejects.toThrow("cross-site request refused");
+      },
+    );
+
+    it("refuses the HTTP session cookie from a foreign origin", async () => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      const cookie = `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`;
+      await expect(
+        auth.authorizeHttpRequest(
+          request({ origin: "https://evil.example" }, cookie),
+          createResponse(),
+          project_id,
+        ),
+      ).rejects.toThrow("cross-site request refused");
+    });
+
+    it.each([
+      ["the site origin", { origin: "https://cocalc.example" }],
+      [
+        "an app page (Referer)",
+        {
+          "sec-fetch-site": "same-site",
+          "sec-fetch-dest": "iframe",
+          referer: "https://cocalc.example/",
+        },
+      ],
+      ["a typed URL", { "sec-fetch-site": "none" }],
+      ["the host's own origin", { origin: "https://host-1.cocalc.example" }],
+      [
+        "the host's own page (HTML preview assets)",
+        { "sec-fetch-site": "same-origin" },
+      ],
+    ])(
+      "accepts file access by browser session cookie from %s",
+      async (_, headers) => {
+        const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+        await expect(
+          auth.authorizeHttpRequest(
+            request(headers),
+            createResponse(),
+            project_id,
+          ),
+        ).resolves.toBeUndefined();
+      },
+    );
+
+    it("accepts an app talking to its own origin", async () => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      await expect(
+        auth.authorizeHttpRequest(
+          request(
+            { origin: "https://host-1.cocalc.example" },
+            undefined,
+            `/${project_id}/apps/python-hello/api`,
+          ),
+          createResponse(),
+          project_id,
+        ),
+      ).resolves.toBeUndefined();
+    });
+
+    it("prefers an explicit bearer over refused cookies, and never falls back", async () => {
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      const now_s = Math.floor(Date.now() / 1000);
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        sub: account_id,
+        act: "account",
+        iat: now_s,
+        exp: now_s + 600,
+      });
+      const foreign = {
+        origin: "https://evil.example",
+        authorization: "Bearer explicit-token",
+      };
+      await expect(
+        auth.authorizeHttpRequest(
+          request(foreign),
+          createResponse(),
+          project_id,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        auth.authorizeUpgradeRequest(request(foreign), project_id),
+      ).resolves.toMatchObject({ account_id });
+
+      // An invalid explicit bearer fails even with an approved cookie.
+      mockVerifyProjectHostAuthToken.mockImplementation(() => {
+        throw new Error("bad token");
+      });
+      await expect(
+        auth.authorizeHttpRequest(
+          request({
+            origin: "https://cocalc.example",
+            authorization: "Bearer bad-token",
+          }),
+          createResponse(),
+          project_id,
+        ),
+      ).rejects.toThrow("bad token");
+    });
+
+    it("only logs in report mode", async () => {
+      process.env.COCALC_PROJECT_HOST_ORIGIN_POLICY = "report";
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      await expect(
+        auth.authorizeHttpRequest(
+          request({ origin: "https://evil.example" }),
+          createResponse(),
+          project_id,
+        ),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -715,6 +911,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
@@ -755,6 +952,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
@@ -779,6 +977,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         [PRIVATE_APP_HOST_HEADER]: "dev-abc.example.com",
       },
       socket: {},
@@ -817,6 +1016,7 @@ describe("project-host HTTP session cookie", () => {
       const req = {
         headers: {
           cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "sec-fetch-site": "none",
         },
         socket: {},
         url: `/${project_id}/apps/python-hello/socket`,
@@ -850,6 +1050,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       socket: {},
       url: `/${project_id}/apps/python-hello/?${PROJECT_HOST_HTTP_AUTH_QUERY_PARAM}=secret&x=1`,
@@ -882,6 +1083,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "HEAD",
@@ -905,6 +1107,41 @@ describe("project-host HTTP session cookie", () => {
     expect(res.end).not.toHaveBeenCalled();
   });
 
+  it("does not apply share or viewer file access to an app path with a nested file marker", async () => {
+    const share_id = "00000000-1000-4000-8000-000000000042";
+    const visitor_id = "00000000-1000-4000-8000-000000000043";
+    getRowMock.mockReturnValue({ users: {} });
+    mockCallHub.mockResolvedValue({
+      project_id,
+      share_id,
+      read_policy: { rules: [{ action: "include", path: "**" }] },
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id: visitor_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
+        "x-forwarded-proto": "https",
+      },
+      method: "GET",
+      socket: {},
+      url: `/${project_id}/apps/x/${project_id}/files/probe?viewer=1&share=${share_id}`,
+    } as any;
+    const res = createResponse();
+    res.end = jest.fn();
+
+    await expect(
+      auth.authorizeHttpRequest(req, res, project_id),
+    ).rejects.toThrow("not a collaborator");
+    expect(mockCallHub).not.toHaveBeenCalled();
+  });
+
   it("authorizes inline public share file previews for signed-in non-collaborators", async () => {
     const share_id = "00000000-1000-4000-8000-000000000042";
     const visitor_id = "00000000-1000-4000-8000-000000000043";
@@ -924,6 +1161,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
         "x-forwarded-proto": "https",
       },
       method: "GET",
@@ -960,6 +1198,7 @@ describe("project-host HTTP session cookie", () => {
     const req = {
       headers: {
         cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "sec-fetch-site": "none",
       },
       method: "GET",
       socket: {},

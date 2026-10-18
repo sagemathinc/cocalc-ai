@@ -32,6 +32,7 @@ describe("IpyWidget initialization", () => {
         <IpyWidget
           value={Map({ model_id: "model-1" })}
           actions={actions as any}
+          trust
         />,
       );
       await act(async () => {
@@ -69,6 +70,7 @@ describe("IpyWidget initialization", () => {
       <IpyWidget
         value={Map({ model_id: "model-1" })}
         actions={actions as any}
+        trust
       />,
     );
 
@@ -82,5 +84,83 @@ describe("IpyWidget initialization", () => {
     await waitFor(() => {
       expect(state.getSerializedModelState).toHaveBeenCalledWith("model-1");
     });
+  });
+
+  it.each([false, undefined])(
+    "shows a passive placeholder and touches no widget state when trust is %s",
+    async (trust) => {
+      const renderWidget = jest.fn(async () => {});
+      const getSerializedModelState = jest.fn(() => ({
+        _model_name: "HTMLModel",
+      }));
+      const trustNotebook = jest.fn(async () => {});
+      const actions = {
+        store: { get: (key: string) => (key == "trust" ? false : undefined) },
+        trust_notebook: trustNotebook,
+        widget_manager: {
+          ipywidgets_state: {
+            get_state: () => "ready",
+            getSerializedModelState,
+          },
+          manager: { render: renderWidget },
+        },
+      };
+      const { getByText } = render(
+        <IpyWidget
+          value={Map({ model_id: "model-1" })}
+          actions={actions as any}
+          trust={trust}
+        />,
+      );
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(
+        getByText("Widget not shown because this notebook is not trusted."),
+      ).toBeTruthy();
+      expect(getSerializedModelState).not.toHaveBeenCalled();
+      expect(renderWidget).not.toHaveBeenCalled();
+      getByText("Trust notebook...").click();
+      expect(trustNotebook).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("removes a view that finishes rendering after trust is lost", async () => {
+    let finish: () => void = () => {};
+    const renderWidget = jest.fn(
+      (_id: string, div: HTMLElement) =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            const view = document.createElement("div");
+            view.className = "late-widget-view";
+            div.appendChild(view);
+            resolve();
+          };
+        }),
+    );
+    const actions = {
+      store: { get: () => false },
+      trust_notebook: jest.fn(),
+      widget_manager: {
+        ipywidgets_state: {
+          get_state: () => "ready",
+          getSerializedModelState: () => ({ _model_name: "IntSliderModel" }),
+        },
+        manager: { render: renderWidget },
+      },
+    };
+    const value = Map({ model_id: "model-1" });
+    const { container, rerender } = render(
+      <IpyWidget value={value} actions={actions as any} trust />,
+    );
+    await waitFor(() => expect(renderWidget).toHaveBeenCalledTimes(1));
+    rerender(
+      <IpyWidget value={value} actions={actions as any} trust={false} />,
+    );
+    await act(async () => {
+      finish();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(container.querySelector(".late-widget-view")).toBeNull();
   });
 });

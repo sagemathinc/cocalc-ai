@@ -1,4 +1,5 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import path from "node:path";
 import { hubApi } from "../api";
@@ -241,6 +242,7 @@ import {
   type AcpSessionRow,
   type AcpSessionState,
 } from "../sqlite/acp-sessions";
+import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
@@ -335,6 +337,7 @@ import {
   discoverHarnessControls,
   forkHarnessSession,
   harnessForkSource,
+  assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
@@ -2826,25 +2829,24 @@ export class ChatStreamWriter {
       case "error":
         this.setThreadState("error");
         this.finalizeLease("error", this.lastErrorText ?? undefined);
-        await this.publishCodexTurnCompletionNoticeBestEffort("error");
+        await this.publishTurnErrorNoticeBestEffort();
         return;
       case "interrupt":
         this.setThreadState("interrupted");
         this.finalizeLease("completed");
         return;
       case "summary":
+        // A finished turn is not a notification: the sidebar shows unseen
+        // results. Only failures, which need someone, notify.
         this.setThreadState("complete");
         this.finalizeLease("completed");
-        await this.publishCodexTurnCompletionNoticeBestEffort("complete");
         return;
       default:
         return;
     }
   }
 
-  private async publishCodexTurnCompletionNoticeBestEffort(
-    terminalState: "complete" | "error",
-  ): Promise<void> {
+  private async publishTurnErrorNoticeBestEffort(): Promise<void> {
     if (
       this.completionNoticePublished ||
       process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS === "0"
@@ -2857,34 +2859,6 @@ export class ChatStreamWriter {
         return;
       }
       const threadConfig = preferredThreadConfigRow(this.syncdb, threadId);
-      const override = this.recordField<string>(
-        threadConfig,
-        "codex_completion_notification",
-      );
-      const liveAcpConfig = syncdbField(threadConfig, "acp_config");
-      const liveLegacyPreference = syncdbField<boolean>(
-        liveAcpConfig,
-        "notifyOnTurnFinish",
-      );
-      const submittedLegacyPreference = this.metadata.notify_on_turn_finish;
-      const legacyPreference =
-        submittedLegacyPreference === true || liveLegacyPreference === true
-          ? true
-          : submittedLegacyPreference === false ||
-              liveLegacyPreference === false
-            ? false
-            : true;
-      const shouldNotify =
-        override === "on"
-          ? true
-          : override === "off"
-            ? false
-            : typeof this.metadata.completion_notification_enabled === "boolean"
-              ? this.metadata.completion_notification_enabled
-              : legacyPreference;
-      if (!shouldNotify) {
-        return;
-      }
       const threadLabel =
         this.recordField<string>(threadConfig, "name") ?? undefined;
       const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
@@ -2900,8 +2874,8 @@ export class ChatStreamWriter {
         stable_source_id:
           `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
           undefined,
-        terminal_state: terminalState,
-        error_text: terminalState === "error" ? this.lastErrorText : undefined,
+        terminal_state: "error",
+        error_text: this.lastErrorText,
         agent_label: this.agentLabel,
       });
       await publishCodexTurnNotice({
@@ -2911,7 +2885,7 @@ export class ChatStreamWriter {
       });
       this.completionNoticePublished = true;
     } catch (err) {
-      logger.warn("failed to publish codex turn completion notice", {
+      logger.warn("failed to publish an agent turn error notice", {
         chatKey: this.chatKey,
         project_id: this.metadata.project_id,
         path: this.metadata.path,
@@ -4161,12 +4135,9 @@ export class ChatStreamWriter {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
-        if (
-          !(
-            this.syncdbError != null &&
-            isProjectAcpStorageError(this.syncdbError)
-          )
-        ) {
+        if (!(
+          this.syncdbError != null && isProjectAcpStorageError(this.syncdbError)
+        )) {
           await this.syncdb!.save();
         }
       } catch (err) {
@@ -7347,8 +7318,7 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let acpSessionPublisherOverride:
-  | ((row: AcpSessionRow) => void | Promise<void>)
-  | undefined;
+  ((row: AcpSessionRow) => void | Promise<void>) | undefined;
 
 export function setAcpSessionPublisherOverride(
   publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
@@ -7415,8 +7385,7 @@ export async function runDetachedAcpQueueWorker(
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
   let workerControlService:
-    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
-    | undefined;
+    Awaited<ReturnType<typeof initAcpDaemonControlService>> | undefined;
   let workerFatalError: unknown;
   let workerHeartbeatFailureCount = 0;
   const markWorkerFatalError = ({
@@ -8345,9 +8314,17 @@ async function executeAcpRequest({
         if (memory.event) {
           await wrappedStream({ type: "event", event: memory.event });
         }
+        // The person's local time (and place, if they allow it), so the
+        // agent does not assume UTC for "today" or "6am".
+        const userTimeContext = agentUserTimeContext(
+          request.account_id,
+          request.chat?.user_locale,
+        );
         await currentAgent.evaluate({
           ...request,
-          agent_memory_context: memory.context,
+          agent_memory_context:
+            [userTimeContext, memory.context].filter(Boolean).join("\n\n") ||
+            undefined,
           mentionReferences,
           readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
           prompt: withComputerNote(
@@ -10591,8 +10568,7 @@ async function trySteerCandidateIds({
   // Harness agents (Claude) take pasted images as content blocks, exactly as
   // for a new turn; prepared once, only if a harness agent is asked.
   let harnessRequest:
-    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
-    | undefined;
+    Promise<Awaited<ReturnType<typeof materializeBlobs>>> | undefined;
   try {
     for (const id of ids) {
       // Cached writer/lease aliases can outlive an ACP reset. Only the current
@@ -11316,7 +11292,7 @@ async function deliverAsyncAttentionAnswer(
           throw Error(
             "The question's execution configuration is unavailable; send your answer in the agent conversation.",
           );
-        assertConfiguredHarnessRuntime(source, runtime?.toJS?.() ?? runtime);
+        assertAnswerHarnessProfile(source, runtime?.toJS?.() ?? runtime);
         // Admission can precede session creation. New questions carry the
         // actual native ID; old records are usable only with an admitted ID.
         const questionSessionId =
@@ -11333,7 +11309,9 @@ async function deliverAsyncAttentionAnswer(
           },
         );
         harnessExecution = {
-          runtime: source.runtime,
+          // The question's harness profile (checked above) with the thread's
+          // current model and effort, which the answer's turn then uses.
+          runtime: parseAcpHarnessRuntime(runtime?.toJS?.() ?? runtime),
           harness_credential: source.harness_credential,
           session_id: session.session_id,
         };
@@ -12523,8 +12501,7 @@ async function handleAcpControlRequestNow(
     }
     const currentRequest = decodeAcpJobRequest(current);
     let fundingRecovery:
-      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
-      | undefined;
+      Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"] | undefined;
     if (request.action === "resend_with_payment") {
       const payment = request.payment_recovery!;
       if (

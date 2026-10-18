@@ -38,7 +38,15 @@ interface WidgetProps {
   id?: string;
 }
 
-export function IpyWidget({ id: cell_id, value, actions }: WidgetProps) {
+export function IpyWidget({
+  id: cell_id,
+  value,
+  actions,
+  trust: trustProp,
+}: WidgetProps) {
+  // Some output renderers don't pass trust; fall back to the notebook's own
+  // trust state (the widget manager only exists while it is trusted).
+  const trust = trustProp ?? !!actions?.store?.get("trust");
   // console.log("IpyWidget", { value: value.toJS(), actions });
   const [unknown, setUnknown] = useState<boolean>(false);
   const divRef = useRef<any>(null);
@@ -58,6 +66,9 @@ export function IpyWidget({ id: cell_id, value, actions }: WidgetProps) {
     let canceled = false;
     valueRef.current = value;
     setUnknown(false);
+    if (!trust) {
+      return;
+    }
     void (async () => {
       const ipywidgets_state = actions?.widget_manager?.ipywidgets_state;
       if (ipywidgets_state == null) {
@@ -120,10 +131,10 @@ ax.plot(x, y)
     return () => {
       canceled = true;
     };
-  }, [actions, value]);
+  }, [actions, value, trust]);
 
   useEffect(() => {
-    if (actions == null || !isVisible || !isReady) {
+    if (!trust || actions == null || !isVisible || !isReady) {
       // console.log("IpyWidget: not rendering due to actions=null");
       return;
     }
@@ -150,12 +161,39 @@ ax.plot(x, y)
       // console.log("IpyWidget: not rendering due to manager not being set");
       return;
     }
-    render({ manager, id, div });
+    let canceled = false;
+    render({ manager, id, div, isCanceled: () => canceled });
 
     return () => {
+      canceled = true;
       $(div).empty();
     };
-  }, [isVisible, isReady]);
+  }, [isVisible, isReady, trust]);
+
+  if (!trust) {
+    // Widget state saved in the notebook can contain HTML and load code, so
+    // widgets are active output: shown only in a trusted notebook.
+    return (
+      <Alert
+        showIcon
+        style={{ margin: "15px" }}
+        type="info"
+        title="Widget not shown because this notebook is not trusted."
+        description={
+          actions != null ? (
+            <Button
+              size="small"
+              onClick={() => {
+                void actions.trust_notebook();
+              }}
+            >
+              Trust notebook...
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  }
 
   if (unknown) {
     const msg = "Run cell to load widget";
@@ -218,9 +256,15 @@ function observeDiv(div) {
 }
 
 // Inside the render function, after the widget is rendered, observe the div
-async function render({ manager, id, div }) {
+async function render({ manager, id, div, isCanceled }) {
   try {
     await manager.render(id, div);
+    if (isCanceled()) {
+      // Trust was lost or the output went away while the view was being
+      // created: don't leave a late view behind.
+      $(div).empty();
+      return;
+    }
 
     // Observe div for changes -- see https://github.com/sagemathinc/cocalc/issues/8042
     observeDiv(div);

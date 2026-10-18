@@ -3852,6 +3852,93 @@ reconcile_project_io_policy
                 ],
             )
 
+    def test_io_class_state_normalize_is_fork_free_and_forgets_stale_projects(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                container_runtime_bundle=bootstrap.BundleSpec(
+                    "", None, "", "", "", ""
+                ),
+            )
+            captured: dict[str, str] = {}
+            with mock.patch.object(
+                bootstrap,
+                "text_write_atomic",
+                side_effect=lambda path, data, **_kwargs: captured.__setitem__(
+                    str(path), data
+                ),
+            ), mock.patch.object(bootstrap.os, "chmod"), mock.patch.object(
+                bootstrap.os, "chown"
+            ):
+                bootstrap.install_privileged_wrappers(cfg)
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            self.assertIn('PROJECT_IO_CLASS_STATE_RETENTION_DAYS="90"', script)
+            body = (
+                "normalize_project_io_class_state() {"
+                + script.split("normalize_project_io_class_state() {", 1)[1].split(
+                    "\n}\n", 1
+                )[0]
+                + "\n}\n"
+            )
+            # The per-file loop must not fork: prod hosts had up to 29k files.
+            loop = body.split("for state_file in", 1)[1].split("\n  done\n", 1)[0]
+            self.assertNotIn("$(", loop)
+            self.assertNotIn("is_project_uuid", loop)
+            self.assertNotIn("cat ", loop)
+
+            state = Path(tmpdir) / "io-class"
+            pool = Path(tmpdir) / "pool"
+            startup = Path(tmpdir) / "startup"
+            state.mkdir()
+            pool.mkdir()
+            startup.mkdir()
+            old = time.time() - 120 * 24 * 3600
+
+            def pid(i: int) -> str:
+                return f"00000000-0000-4000-8000-{i:012d}"
+
+            # Many valid, recent files: kept and not rewritten.
+            for i in range(3000):
+                (state / pid(i)).write_text("member\n")
+                os.utime(state / pid(i), (old + 1, time.time() - 3600))
+            recent_mtime = (state / pid(0)).stat().st_mtime
+            # Invalid content is normalized to the lowest class.
+            (state / pid(3000)).write_text("bogus\n")
+            # Not a project id: removed.
+            (state / "not-a-uuid").write_text("member\n")
+            # Old files: removed unless the project has a cgroup here.
+            for i in (4001, 4002, 4003):
+                (state / pid(i)).write_text("premium\n")
+                os.utime(state / pid(i), (old, old))
+            (pool / f"project-{pid(4002)}").mkdir()
+            (startup / f"project-{pid(4003)}").mkdir()
+            harness = f"""
+set -euo pipefail
+PROJECT_IO_CLASS_STATE_DIR={json.dumps(str(state))}
+PROJECT_IO_CLASS_STATE_RETENTION_DAYS=90
+PROJECT_POOL_CGROUP_DEFAULT={json.dumps(str(pool))}
+PROJECT_STARTUP_CGROUP_DEFAULT={json.dumps(str(startup))}
+{body}
+normalize_project_io_class_state
+"""
+            started = time.monotonic()
+            subprocess.run(
+                ["bash", "-c", harness], check=True, capture_output=True, text=True
+            )
+            # The old loop forked three processes per file (tens of seconds
+            # here); the fork-free one is well under a second.
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertEqual((state / pid(0)).read_text(), "member\n")
+            self.assertEqual((state / pid(0)).stat().st_mtime, recent_mtime)
+            self.assertEqual((state / pid(3000)).read_text(), "standard\n")
+            self.assertFalse((state / "not-a-uuid").exists())
+            self.assertFalse((state / pid(4001)).exists())
+            self.assertEqual((state / pid(4002)).read_text(), "premium\n")
+            self.assertEqual((state / pid(4003)).read_text(), "premium\n")
+            self.assertEqual(len(list(state.iterdir())), 3000 + 1 + 2)
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:

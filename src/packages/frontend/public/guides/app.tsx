@@ -23,8 +23,8 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import {
+  getPublicGuideGroups,
   PUBLIC_FEATURED_GUIDES,
-  PUBLIC_GUIDE_GROUPS,
 } from "@cocalc/util/public-guides";
 import { PUBLIC_COLORS, PUBLIC_ELEVATION } from "@cocalc/frontend/public/theme";
 import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
@@ -176,7 +176,7 @@ function GuideDirectory({ config }: { config?: PublicConfig }) {
             }}
           >
             <Flex vertical gap={24}>
-              {PUBLIC_GUIDE_GROUPS.map((group) => (
+              {getPublicGuideGroups().map((group) => (
                 <section key={group.title}>
                   <Row gutter={[18, 14]}>
                     <Col xs={24} lg={7}>

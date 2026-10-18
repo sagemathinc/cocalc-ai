@@ -18,6 +18,24 @@ import {
 import { effectiveApiKeyScope } from "./api-key-scope";
 import { ensureApiKeysV2Schema } from "./manage";
 import { normalizeApiKeyIssuanceSequence } from "./issuance-sequence";
+import { SOLO_PROJECT_ACCOUNT_CAPABILITIES } from "./solo-project-capabilities";
+
+async function connectorSourceProject(
+  account_id: string,
+  key_id: string,
+): Promise<string | null> {
+  // Ordinary manual-key operation does not depend on agent tables existing.
+  const { rows: tables } = await getPool().query(
+    "SELECT to_regclass('public.agent_cocalc_connector_turns') AS name",
+  );
+  if (!tables[0]?.name) return null;
+  const { rows } = await getPool().query(
+    `SELECT source_project_id FROM agent_cocalc_connector_turns
+      WHERE account_id=$1 AND key_id=$2 LIMIT 1`,
+    [account_id, key_id],
+  );
+  return rows[0]?.source_project_id ?? null;
+}
 
 export interface ApiKeyAuthorizationState {
   hash: string;
@@ -25,6 +43,11 @@ export interface ApiKeyAuthorizationState {
   scope_revision: number;
   issuance_sequence: string;
   expire_ms?: number;
+  // Only for keys whose scope holds a solo-project account capability (see
+  // cocalc-connector-scope.ts): the agent project a managed CoCalc connector
+  // turn key belongs to, or null for any other key. Absent from an older home
+  // bay; callers that need it must then fail closed.
+  connector_source_project_id?: string | null;
 }
 
 export async function getApiKeyAuthorizationStateLocal({
@@ -63,21 +86,33 @@ export async function getApiKeyAuthorizationStateLocal({
   ) {
     return null;
   }
+  let scope: ApiKeyScope;
+  let issuance_sequence: string;
   try {
-    return {
-      hash: row.hash,
-      scope: effectiveApiKeyScope({
-        scope: row.scope,
-        capabilities: row.capabilities ?? [],
-        allowed_project_ids: row.allowed_project_ids ?? [],
-      }),
-      scope_revision,
-      issuance_sequence: normalizeApiKeyIssuanceSequence(row.issuance_sequence),
-      ...(expire_ms == null ? {} : { expire_ms }),
-    };
+    scope = effectiveApiKeyScope({
+      scope: row.scope,
+      capabilities: row.capabilities ?? [],
+      allowed_project_ids: row.allowed_project_ids ?? [],
+    });
+    issuance_sequence = normalizeApiKeyIssuanceSequence(row.issuance_sequence);
   } catch {
     return null;
   }
+  return {
+    hash: row.hash,
+    scope,
+    scope_revision,
+    issuance_sequence,
+    ...(expire_ms == null ? {} : { expire_ms }),
+    ...(scope.account.some((cap) => SOLO_PROJECT_ACCOUNT_CAPABILITIES.has(cap))
+      ? {
+          connector_source_project_id: await connectorSourceProject(
+            account_id,
+            key_id,
+          ),
+        }
+      : {}),
+  };
 }
 
 // Internal bay-to-bay operation, not a browser or API-key authority surface.

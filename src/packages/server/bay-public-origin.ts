@@ -306,9 +306,12 @@ export async function getDerivedBayPublicHostname(
   });
 }
 
-export async function getClusterBayPublicOrigins(): Promise<
-  Record<string, string>
-> {
+export async function getClusterBayPublicOrigins({
+  strict = false,
+}: {
+  // Throw instead of returning a partial result when the registry fails.
+  strict?: boolean;
+} = {}): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
   for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
     const origin = await getBayPublicOrigin(bay_id);
@@ -333,7 +336,8 @@ export async function getClusterBayPublicOrigins(): Promise<
       if (!bay_id || !origin || !isUsablePublicOrigin(origin)) continue;
       result[bay_id] = origin;
     }
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     // Keep CORS/origin checks best-effort. Static config is still enough for
     // simpler deployments, and registry access can fail transiently on attached
     // bays during startup.

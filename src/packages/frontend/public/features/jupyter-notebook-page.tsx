@@ -12,12 +12,14 @@ import {
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { CodeBlock } from "@cocalc/frontend/public/common";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PLUS_FEATURE_LINES } from "@cocalc/util/public-feature-pages";
 import {
   BulletList,
   featureAppPath as appPath,
   featureSignUpPath,
   featureAsset,
   LinkButton,
+  PlusSentence,
 } from "./page-components";
 import { FeatureInfo, FeatureInfoHeading, ZoomableImage } from "./feature-info";
 import { ContextList, FeatureFinalBand, StoryCard } from "./feature-visuals";
@@ -285,10 +287,12 @@ export default function JupyterNotebookFeaturePage({
             can instead run on another machine.
           </Paragraph>
           <Paragraph>
-            Hosted project images provide Linux software; native CoCalc Plus
-            uses your computer's operating system and installed tools. Select
-            the kernel that has the dependencies your notebook needs, or follow
-            the{" "}
+            Hosted project images provide Linux software.
+            <PlusSentence>
+              {PUBLIC_PLUS_FEATURE_LINES.jupyter}
+            </PlusSentence>{" "}
+            Select the kernel that has the dependencies your notebook needs, or
+            follow the{" "}
             <a href={appPath("docs/jupyter/custom-kernels")}>
               custom kernel instructions
             </a>{" "}

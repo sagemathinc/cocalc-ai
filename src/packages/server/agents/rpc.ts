@@ -80,10 +80,12 @@ function networkMemberLabel(member: AgentNetworkMember): string {
     ? `@${member.name}`
     : member.thread_title?.trim() || `Agent ${member.member_id.slice(0, 8)}`;
 }
+import { AgentRpcCapacityError } from "./admission-capacity";
 import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
   deleteAgentRpcAdmissionState,
+  findAgentRpcPreparation,
   getAgentRpcAdmissionState,
   hashAgentRpcAdmissionBinding,
 } from "./admission-state";
@@ -377,8 +379,7 @@ async function submitAgentRpcOperation(
   let permitId: string | undefined;
   let proof: AgentNetworkAuthorization | undefined;
   let observedOutcome:
-    | import("@cocalc/conat/agents/rpc").AgentRpcOutcome
-    | undefined;
+    import("@cocalc/conat/agents/rpc").AgentRpcOutcome | undefined;
   try {
     const checked = opts.authorization
       ? validateSnapshotAuthorization(
@@ -441,37 +442,59 @@ async function submitAgentRpcOperation(
         });
       }
     }
-    if (phase !== "prepare" && envelope.snapshot_manifest) {
-      const prepared = await claimAgentRpcAdmissionState({
-        token_id: envelope.attachment_reservation!,
-        kind: "preparation",
-        binding_hash: hashAgentRpcAdmissionBinding(preparationKey(envelope)),
-        host_id: host.host_id,
-        project_id: envelope.target.project_id,
-        account_id: envelope.account_id,
+    // A send with attachments consumes its one-shot preparation only after
+    // its permit is admitted, so a refused permit leaves the reservation for
+    // a retry or cancel instead of burning it.
+    const preparation =
+      phase !== "prepare" && envelope.snapshot_manifest
+        ? {
+            token_id: envelope.attachment_reservation!,
+            binding_hash: hashAgentRpcAdmissionBinding(
+              preparationKey(envelope),
+            ),
+            host_id: host.host_id,
+            project_id: envelope.target.project_id,
+            account_id: envelope.account_id,
+          }
+        : undefined;
+    const unavailable = () =>
+      rpcOutcome(opts.request, "rejected", {
+        code: "attachment_preparation_unavailable",
+        reason:
+          "Attachment preparation expired, changed, or was already used; no message was submitted",
+        chat_effect: "none",
       });
-      if (!prepared)
-        return rpcOutcome(opts.request, "rejected", {
-          code: "attachment_preparation_unavailable",
-          reason:
-            "Attachment preparation expired, changed, or was already used; no message was submitted",
-          chat_effect: "none",
-        });
+    if (preparation) {
+      const prepared = await findAgentRpcPreparation(preparation);
+      if (!prepared) return unavailable();
       envelope.deadline = Math.min(
         envelope.deadline,
         prepared.expires_at.getTime(),
       );
     }
     permitId = envelope.permit_id;
-    await createAgentRpcAdmissionState({
-      token_id: envelope.permit_id,
-      kind: "permit",
-      binding_hash: hashAgentRpcAdmissionBinding(agentRpcEnvelopeKey(envelope)),
-      host_id: host.host_id,
-      project_id: envelope.target.project_id,
-      account_id: envelope.account_id,
-      expires_at: new Date(envelope.deadline),
-    });
+    await createAgentRpcAdmissionState(
+      {
+        token_id: envelope.permit_id,
+        kind: "permit",
+        binding_hash: hashAgentRpcAdmissionBinding(
+          agentRpcEnvelopeKey(envelope),
+        ),
+        host_id: host.host_id,
+        project_id: envelope.target.project_id,
+        account_id: envelope.account_id,
+        expires_at: new Date(envelope.deadline),
+      },
+      { coveredBy: preparation },
+    );
+    if (
+      preparation &&
+      !(await claimAgentRpcAdmissionState({
+        ...preparation,
+        kind: "preparation",
+      }))
+    )
+      return unavailable();
     if (phase === "prepare") {
       const ready = await host.api.prepareAgentRpcAttachments(envelope);
       validateAgentRpcPreparation(ready, opts.request);
@@ -523,12 +546,21 @@ async function submitAgentRpcOperation(
         code:
           error instanceof PersonalAgentAuthorizationError
             ? "network_unavailable"
-            : undefined,
+            : !submissionStarted &&
+                error instanceof AgentRpcCapacityError &&
+                error.scope === "recipient"
+              ? "project_overloaded"
+              : undefined,
         reason: submissionStarted
           ? "Recipient acknowledgment unavailable"
           : error instanceof PersonalAgentAuthorizationError
             ? error.denial
-            : "Network, execution account, target, or host unavailable",
+            : error instanceof AgentRpcCapacityError
+              ? error.reason
+              : "Network, execution account, target, or host unavailable",
+        ...(!submissionStarted && error instanceof AgentRpcCapacityError
+          ? { chat_effect: "none" as const }
+          : {}),
       },
     );
     return observedOutcome;

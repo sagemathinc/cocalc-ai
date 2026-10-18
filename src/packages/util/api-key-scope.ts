@@ -30,6 +30,7 @@ export const VIEWER_PROJECT_API_KEY_CAPABILITIES: readonly ApiKeyCapability[] =
 const ACCOUNT_CAPABILITIES = new Set<ApiKeyCapability>([
   "account:read",
   "api-key:revoke:request",
+  "notifications:manage",
   "project:create",
   "project:list",
 ]);

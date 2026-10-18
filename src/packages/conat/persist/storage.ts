@@ -62,6 +62,7 @@ DEVELOPMENT:
 */
 
 import { refCacheSync } from "@cocalc/util/refcache";
+import { randomId } from "@cocalc/conat/names";
 import {
   createDatabase,
   type Database,
@@ -572,6 +573,11 @@ function summarizeOpenStreams(now: number) {
 
 // persistence for stream of messages with subject
 export class PersistentStream extends EventEmitter {
+  // Identifies this in-memory copy of an ephemeral stream.  Its contents and
+  // seq numbers do not survive a persist server restart, so a client that
+  // sees a different instance knows to start over rather than resume from
+  // its last seq.  Undefined for disk-backed streams, whose seqs persist.
+  readonly instance?: string;
   private readonly options: StorageOptions;
   private readonly db: Database;
   private readonly dbPath?: string;
@@ -597,6 +603,9 @@ export class PersistentStream extends EventEmitter {
       options = { compression: DEFAULT_COMPRESSION, ...options };
       this.options = options;
       this.storageKind = this.options.ephemeral ? "ephemeral" : "disk";
+      if (this.options.ephemeral) {
+        this.instance = randomId();
+      }
       const location = this.options.ephemeral
         ? ":memory:"
         : this.options.path + ".db";

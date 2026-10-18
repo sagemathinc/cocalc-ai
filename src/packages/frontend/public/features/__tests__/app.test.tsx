@@ -3,8 +3,23 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicFeaturePage,
+  PUBLIC_API_HTTP_INTEGRATIONS,
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_IN_PROJECTS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
+  PUBLIC_CLI_ON_YOUR_COMPUTER,
+  PUBLIC_CLI_START_AUTOMATING,
+  PUBLIC_CLI_TERMS,
+  PUBLIC_FEATURE_PAGES,
+  PUBLIC_PLUS_FEATURE_LINES,
+} from "@cocalc/util/public-feature-pages";
 import { PUBLIC_FEATURES_HEADLINE } from "@cocalc/util/public-features-index";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import PublicFeaturesApp from "../app";
 import { getFeatureIndexPages } from "../catalog";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
@@ -176,9 +191,13 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("link", { name: "Plan research compute" }),
     ).toHaveAttribute("href", "/features/research-compute");
+    // The operating section's button and the related link at the end of the
+    // page, both with the products page's name.
     expect(
-      screen.getByRole("link", { name: "Compare ways to run CoCalc" }),
-    ).toHaveAttribute("href", "/products");
+      screen
+        .getAllByRole("link", { name: "Where to run CoCalc" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/products", "/products"]);
     expect(screen.getByText(/Review Codex activity and diffs/)).not.toBeNull();
     expect(
       screen.queryByText(/files touched during agent-assisted work/),
@@ -790,8 +809,8 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Start with a board or deck")).not.toBeNull();
   });
 
-  it("renders the richer api feature page", () => {
-    render(
+  it("renders the CLI and API page", () => {
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "api", view: "detail" }}
@@ -799,13 +818,137 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
+      screen.getByRole("heading", { level: 1, name: "CLI and API" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: "The CLI your agents use, and your scripts can too.",
+      }),
+    ).not.toBeNull();
+    expect(
       screen.getByText(
-        "Drive your projects, notebooks, and terminals from your own code",
+        `${PUBLIC_CLI_IN_PROJECTS} ${PUBLIC_CLI_ON_YOUR_COMPUTER}`,
+      ),
+    ).not.toBeNull();
+    // The crawler fallback renders these paragraphs from the page's record.
+    for (const paragraph of [
+      PUBLIC_API_HTTP_INTEGRATIONS,
+      PUBLIC_CLI_START_AUTOMATING,
+    ]) {
+      expect(screen.getByText(paragraph)).not.toBeNull();
+      expect(
+        getPublicFeaturePage("api")?.sections?.flatMap(
+          ({ paragraphs = [] }) => paragraphs,
+        ),
+      ).toContain(paragraph);
+    }
+    // The terms sentence, with links to the terms and their API section.
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.classList.contains("ant-typography") === true &&
+          element.textContent === PUBLIC_CLI_TERMS,
       ),
     ).not.toBeNull();
     expect(
+      screen.getByRole("link", { name: "CoCalc.ai Terms of Service" }),
+    ).toHaveAttribute("href", "https://cocalc.ai/policies/terms");
+    expect(screen.getByRole("link", { name: "API Terms" })).toHaveAttribute(
+      "href",
+      "https://cocalc.ai/policies/terms#api-terms",
+    );
+    expect(
+      screen.getByRole("link", { name: "CLI documentation" }),
+    ).toHaveAttribute("href", "https://cocalc.ai/docs/cli/use-cocalc-cli");
+    expect(
       screen.getByText("A documented route, not fragile UI scripts"),
     ).not.toBeNull();
+    // The install section, after the two CLI sentences, with CoCalc.ai's
+    // command, as in the crawler fallback.
+    const install = screen.getByRole("region", {
+      name: PUBLIC_CLI_INSTALL_TITLE,
+    });
+    expect(
+      within(install).getByRole("heading", {
+        level: 3,
+        name: PUBLIC_CLI_INSTALL_TITLE,
+      }),
+    ).not.toBeNull();
+    expect(within(install).getByText(PUBLIC_CLI_INSTALL_STEP)).not.toBeNull();
+    expect(
+      within(install).getByLabelText("Install command").textContent,
+    ).toContain("curl -fsSL https://cocalc.ai/cli/install.sh | sh");
+    expect(
+      within(install).getByText(PUBLIC_CLI_INSTALL_WINDOWS),
+    ).not.toBeNull();
+    const installText = install.textContent?.replace(/\s+/g, " ") ?? "";
+    for (const { code, text } of PUBLIC_CLI_COMPUTER_COMMANDS) {
+      expect(installText).toContain(`${code} ${text}`);
+    }
+    // Agents run `cocalc agent` and `cocalc sensor` inside projects, and the
+    // page names no computer command.
+    expect(container.textContent ?? "").not.toMatch(
+      /cocalc (agent|sensor)\b|cocalc computer/,
+    );
+  });
+
+  it.each([
+    ["cocalc.ai", { cocalc_product: "launchpad", dns: "cocalc.ai" }],
+    [
+      "a server with a domain",
+      { cocalc_product: "launchpad", dns: "star.example.com" },
+    ],
+    ["this computer", { cocalc_product: "launchpad", dns: "localhost:8170" }],
+    [
+      "a CoCalc Plus install",
+      { cocalc_product: "plus", dns: "localhost:5000" },
+    ],
+  ])(
+    "shows CoCalc.ai's install command on the CLI and API page, on %s",
+    (_site, config) => {
+      render(
+        <PublicFeaturesApp
+          config={{ ...config, site_name: "CoCalc" }}
+          initialRoute={{ slug: "api", view: "detail" }}
+        />,
+      );
+      const command = within(
+        screen.getByRole("region", { name: PUBLIC_CLI_INSTALL_TITLE }),
+      ).getByLabelText("Install command").textContent;
+      expect(command).toContain(PUBLIC_CLI_INSTALL_COMMAND);
+      expect(command).toContain(
+        "curl -fsSL https://cocalc.ai/cli/install.sh | sh",
+      );
+    },
+  );
+
+  it("moves from the terms links to the documentation with the keyboard", async () => {
+    const user = userEvent.setup();
+    render(
+      <PublicFeaturesApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={{ slug: "api", view: "detail" }}
+      />,
+    );
+    const terms = screen.getByRole("link", {
+      name: "CoCalc.ai Terms of Service",
+    });
+    const cliDocs = screen.getByRole("link", { name: "CLI documentation" });
+    const follow = jest.fn((event: Event) => event.preventDefault());
+    cliDocs.addEventListener("click", follow);
+
+    terms.focus();
+    await user.tab();
+    expect(screen.getByRole("link", { name: "API Terms" })).toHaveFocus();
+    await user.tab();
+    expect(cliDocs).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(follow).toHaveBeenCalledTimes(1);
+    await user.tab();
+    expect(
+      screen.getByRole("link", { name: "API documentation" }),
+    ).toHaveFocus();
   });
 
   it.each([
@@ -946,9 +1089,17 @@ describe("PublicFeaturesApp", () => {
       screen.getByText(/If your design requires automatic fleets/),
     ).not.toBeNull();
     expect(screen.getByText("Where to go next")).not.toBeNull();
+    // Only the ways to run CoCalc that the public pages show: Launchpad and
+    // Rocket are hidden.
     expect(
-      screen.getByText("Hosted, local, single-VM, and private deployment."),
+      screen.getByText("Hosted, local, and single-VM deployment."),
     ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Teams need hosted, local, and single-VM deployment choices.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText(/private deployment/)).toBeNull();
     const supportHref =
       screen
         .getByRole("link", { name: "Talk with CoCalc" })
@@ -1355,4 +1506,86 @@ describe("research compute product visibility", () => {
       ).toBeNull();
     },
   );
+});
+
+// Launchpad and Rocket are hidden until their releases are current, so no
+// feature page names them, as in the crawler fallback (see
+// hub/servers/app/public-prerender.test.ts). CoCalc Plus is shown; a test
+// below hides it again to check that its name goes too.
+describe("feature pages while Launchpad and Rocket are hidden", () => {
+  const COCALC_AI_SITE = {
+    cocalc_product: "launchpad",
+    dns: "cocalc.ai",
+    site_name: "CoCalc",
+  };
+  const SLUGS = PUBLIC_FEATURE_PAGES.filter(({ slug }) =>
+    getPublicFeaturePage(slug, COCALC_AI_SITE),
+  ).map(({ slug }) => slug);
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(SLUGS)("names neither of them on the %s page", (slug) => {
+    render(
+      <PublicFeaturesApp
+        config={COCALC_AI_SITE}
+        initialRoute={{ slug, view: "detail" }}
+      />,
+    );
+    expect(document.body.textContent).not.toMatch(/\b(Launchpad|Rocket)\b/);
+  });
+
+  it.each(SLUGS)(
+    "names no hidden product on the %s page once Plus is hidden again",
+    (slug) => {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+      render(
+        <PublicFeaturesApp
+          config={COCALC_AI_SITE}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+      expect(document.body.textContent).not.toMatch(
+        /\b(Plus|Launchpad|Rocket)\b/,
+      );
+    },
+  );
+
+  // The pages that compare CoCalc Plus with a hosted project, and what each
+  // says about Plus.
+  const PLUS_SENTENCES = [
+    ["jupyter-notebook", [PUBLIC_PLUS_FEATURE_LINES.jupyter]],
+    [
+      "python",
+      [
+        PUBLIC_PLUS_FEATURE_LINES.python,
+        PUBLIC_PLUS_FEATURE_LINES.pythonStorage,
+      ],
+    ],
+    ["sage", [PUBLIC_PLUS_FEATURE_LINES.sage]],
+    ["octave", [PUBLIC_PLUS_FEATURE_LINES.octave]],
+  ] as const;
+
+  it.each([
+    ["while Plus is shown", COCALC_AI_SITE],
+    [
+      "on a CoCalc Plus install",
+      { cocalc_product: "plus", site_name: "CoCalc" },
+    ],
+  ])("says how CoCalc Plus differs %s", (_state, config) => {
+    for (const [slug, sentences] of PLUS_SENTENCES) {
+      const { unmount } = render(
+        <PublicFeaturesApp
+          config={config}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+      const text = document.body.textContent?.replace(/\s+/g, " ") ?? "";
+      for (const sentence of sentences) {
+        expect(text).toContain(sentence);
+      }
+      // The Plus installer has builds for Linux and Apple silicon Macs only.
+      expect(text).not.toMatch(/Windows Plus|Native (CoCalc )?Plus/);
+      unmount();
+    }
+  });
 });

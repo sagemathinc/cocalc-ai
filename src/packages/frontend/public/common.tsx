@@ -23,6 +23,7 @@ import {
 } from "@cocalc/frontend/public/layout/shell";
 import type { PublicTopNavActiveKey } from "@cocalc/frontend/public/layout/top-nav";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_PRODUCTS_PAGE_LINK } from "@cocalc/util/public-products-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import "./code-block.css";
 
@@ -171,7 +172,9 @@ export function PublicNextStep({
         >
           {authenticated ? "Open projects" : signUpLabel}
         </Button>
-        <Button href={appPath("products")}>Compare operating models</Button>
+        <Button href={appPath(PUBLIC_PRODUCTS_PAGE_LINK.href)}>
+          {PUBLIC_PRODUCTS_PAGE_LINK.label}
+        </Button>
         <Button href={appPath("support")}>Review support and sales</Button>
       </Flex>
     </PublicSection>

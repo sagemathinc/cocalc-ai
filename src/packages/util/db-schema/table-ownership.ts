@@ -33,10 +33,7 @@ export type TableAuthorityKey =
   | "mixed";
 
 export type TablePortabilityStatus =
-  | "portable"
-  | "rebuildable"
-  | "stable"
-  | "unsupported";
+  "portable" | "rebuildable" | "stable" | "unsupported";
 
 export type TableReferenceField =
   | "account_id"
@@ -500,6 +497,15 @@ export const TABLE_OWNERSHIP = {
     },
     notes:
       "Durable outbox of purge requests to OAuth clients, queued by account deletion on the account's home bay and delivered by that bay's worker until the client accepts them. The account is already deleted, so rows never move.",
+  }),
+
+  ...entries(["admin_alert_state"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Bay-local memory of when each condition alert last cleared, so a recurrence alerts again within the reminder interval. Losing rows only delays a recurrence alert until the reminder interval passes.",
+    rebuild: "No rebuild: rows are recreated by the next alert checks.",
   }),
 
   ...entries(["agent_rpc_admission_state"], {

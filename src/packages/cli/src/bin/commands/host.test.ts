@@ -1469,6 +1469,7 @@ test("host deploy rollout-fleet queues one canary-first durable campaign", async
       stabilize_seconds: 10,
       promote_global: true,
       reason: undefined,
+      latency_gate: "enforce",
     },
   ]);
   assert.equal(capture.data.status, "succeeded");
@@ -1476,6 +1477,50 @@ test("host deploy rollout-fleet queues one canary-first durable campaign", async
   assert.deepEqual(capture.data.excluded_pinned_hosts, [
     { host_id: "pinned-host", name: "pinned-host" },
   ]);
+});
+
+test("host deploy rollout-fleet passes an advisory latency gate and rejects others", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const now = new Date().toISOString();
+  const deps = makeDeps(capture, {
+    listHosts: async () => [
+      {
+        id: "quiet-host",
+        name: "quiet-host",
+        status: "running",
+        bay_id: "bay-1",
+        last_seen: now,
+      },
+    ],
+  });
+  const run = async (gate: string) => {
+    const program = new Command();
+    program.exitOverride();
+    registerHostCommand(program, deps);
+    await program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "deploy",
+      "rollout-fleet",
+      "--all-online",
+      "--desired-version",
+      "ph-v2",
+      "--latency-gate",
+      gate,
+    ]);
+  };
+  await run("advisory");
+  assert.equal(capture.fleetRolloutRequests?.[0]?.latency_gate, "advisory");
+  await assert.rejects(run("off"), /latency-gate/);
+  assert.equal(capture.fleetRolloutRequests?.length, 1);
 });
 
 test("host upgrade --wait emits progress on stderr in json output mode", async () => {

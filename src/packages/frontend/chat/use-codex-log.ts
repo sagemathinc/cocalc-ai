@@ -20,6 +20,11 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { LiveLogReplay } from "./live-log-replay";
 import type { LiveLogRanges } from "./live-log-replay";
 import { canCacheActivityLog } from "./log-cache-budget";
+import {
+  logFetchDelay,
+  noteLogFetchFailure,
+  noteLogFetchSuccess,
+} from "./log-fetch-backoff";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
 // lite/hub/acp.ts. We delay the initial AKV fetch to let the first persisted
@@ -44,6 +49,9 @@ type RecentLogCacheEntry = {
   // Exact consumed DStream transport ranges, not AcpStreamMessage.seq.
   liveStreamRanges?: LiveLogRanges;
   liveStreamName?: string;
+  // the persist instance those ranges came from: an ephemeral stream that
+  // has since been recreated numbers its messages anew
+  liveStreamInstance?: string | null;
 };
 
 const recentActivityLogCache = new LRUCache<string, RecentLogCacheEntry>({
@@ -536,17 +544,35 @@ export function useCodexLog({
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    async function fetchLog() {
-      if (!enabled || !hasLogRef || !projectId || akvLoaded) {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const backoffKey = `${projectId}\0${logStore}\0${logKey}`;
+    const retryLater = () => {
+      if (cancelled) return;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(
+        () => fetchLog({ retry: true }),
+        logFetchDelay(backoffKey),
+      );
+    };
+    async function fetchLog({ retry = false }: { retry?: boolean } = {}) {
+      if (cancelled || !enabled || !hasLogRef || !projectId || akvLoaded) {
         return;
       }
-      if (!cancelled) {
+      if (logFetchDelay(backoffKey) > 0) {
+        retryLater();
+        return;
+      }
+      // An automatic retry keeps the current error, so the row neither flickers
+      // nor reports the same failure again (see the toast in message.tsx).
+      if (!retry) {
         setLoadState("loading");
         setLoadError(undefined);
       }
       try {
         const data = await fetchPersistedLog();
+        noteLogFetchSuccess(backoffKey);
         if (!cancelled) {
+          setLoadError(undefined);
           // If the log has not yet been persisted, leave fetchedLog as null so
           // we will retry (immediately below and on the delayed retry).
           if (data == null) {
@@ -562,20 +588,23 @@ export function useCodexLog({
         }
         // console.log(data);
       } catch (err) {
+        noteLogFetchFailure(backoffKey, err);
         if (!cancelled) {
           setLoadState("error");
           setLoadError(`${(err as any)?.message ?? err ?? "Unknown error"}`);
         }
-        console.warn("failed to fetch acp log", err);
+        retryLater();
       }
     }
     void fetchLog();
-    if (!generating || liveLogStream) return;
-    // Also delay and call again to let the throttled writer persist the first batch.
-    timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
+    if (generating && !liveLogStream) {
+      // Also delay and call again to let the throttled writer persist the first batch.
+      timer = setTimeout(() => fetchLog(), LOG_PERSIST_THROTTLE_MS + 500);
+    }
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [
     hasLogRef,
@@ -616,6 +645,7 @@ export function useCodexLog({
     reconnectResourceRef.current?.close();
     reconnectResourceRef.current =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: projectId,
         canReconnect: () => canReconnectLive,
         isConnected: () => !hasLiveSource || liveConnectedRef.current,
         probeOnForeground: () => hasLiveSource,
@@ -633,7 +663,9 @@ export function useCodexLog({
                 }
               })
               .catch((err) => {
-                console.warn("codex log reconnect fetch failed", err);
+                console.warn(
+                  `codex log reconnect fetch failed: ${(err as any)?.message ?? err}`,
+                );
               });
           }
           if (!mountedRef.current || !hasLiveSource) {
@@ -691,6 +723,7 @@ export function useCodexLog({
     hasLiveSource,
     liveStreamIsProjection,
     mergeLogs,
+    projectId,
     setLiveConnectionState,
     setLiveLog,
     waitForLiveReconnect,
@@ -723,6 +756,7 @@ export function useCodexLog({
       | undefined;
     let liveStreamDisconnected: (() => void) | undefined;
     let liveStreamRecovered: (() => void) | undefined;
+    let liveStreamInstanceReset: (() => void) | undefined;
     let catchUpTimer: ReturnType<typeof setInterval> | undefined;
     let stopped = false;
     const scheduleBufferedFlush = (immediate: boolean = false) => {
@@ -758,11 +792,32 @@ export function useCodexLog({
             name: liveLogStream,
             ephemeral: true,
             maxListeners: 50,
-            ...(startSeq != null ? { start_seq: startSeq } : {}),
+            ...(startSeq != null
+              ? {
+                  start_seq: startSeq,
+                  ...(cached?.liveStreamInstance !== undefined
+                    ? { start_instance: cached.liveStreamInstance }
+                    : {}),
+                }
+              : {}),
           });
           liveStream = lease.stream;
           liveStreamRef.current = liveStream;
           releaseLiveStream = lease.release;
+          // The consumed ranges are transport seqs of one persist instance; a
+          // recreated ephemeral stream numbers from 1 again.  Rendered events
+          // are kept and merged.
+          const instance = liveStream.getPersistInstance?.();
+          if (
+            cached?.liveStreamInstance !== undefined &&
+            instance !== undefined &&
+            instance !== cached.liveStreamInstance
+          ) {
+            liveReplayRef.current = new LiveLogReplay();
+            // and the stored ranges, so the cache never pairs the old
+            // instance's ranges with the new instance
+            setLiveLog((prev) => prev ?? [], []);
+          }
           lastLiveReceiptAtRef.current = Date.now();
           if (stopped) {
             await releaseLiveStream({ immediate: true });
@@ -793,6 +848,12 @@ export function useCodexLog({
           liveStream.on("recovering", liveStreamDisconnected);
           liveStream.on("paused", liveStreamDisconnected);
           liveStream.on("recovered", liveStreamRecovered);
+          liveStreamInstanceReset = () => {
+            if (stopped) return;
+            liveReplayRef.current = new LiveLogReplay();
+            setLiveLog((prev) => prev ?? [], []);
+          };
+          liveStream.on("instance-reset", liveStreamInstanceReset);
           liveStream.setMaxListeners(
             Math.max(liveStream.getMaxListeners(), 50),
           );
@@ -958,6 +1019,9 @@ export function useCodexLog({
         if (liveStream && liveStreamRecovered) {
           liveStream.off("recovered", liveStreamRecovered);
         }
+        if (liveStream && liveStreamInstanceReset) {
+          liveStream.off("instance-reset", liveStreamInstanceReset);
+        }
       } catch {
         // ignore
       }
@@ -1008,6 +1072,13 @@ export function useCodexLog({
       liveStreamRanges: liveStreamIsProjection ? appliedLiveRanges : undefined,
       liveStreamName: liveStreamIsProjection
         ? (liveLogStream ?? undefined)
+        : undefined,
+      // While the stream is still being acquired, keep the instance the
+      // cached ranges belong to.
+      liveStreamInstance: liveStreamIsProjection
+        ? liveStreamRef.current != null
+          ? liveStreamRef.current.getPersistInstance?.()
+          : cache.get(cacheKey)?.liveStreamInstance
         : undefined,
     });
   }, [
@@ -1187,6 +1258,7 @@ export function useCodexLiveActivityStatus({
     reconnectResourceRef.current?.close();
     reconnectResourceRef.current =
       webapp_client.conat_client.registerReconnectResource({
+        project_id: projectId,
         canReconnect: () => canReconnectLive,
         isConnected: () => liveConnectedRef.current,
         probeOnForeground: () => canReconnectLive,
@@ -1243,7 +1315,12 @@ export function useCodexLiveActivityStatus({
       reconnectResourceRef.current?.close();
       reconnectResourceRef.current = null;
     };
-  }, [canReconnectLive, setLiveConnectionState, waitForLiveReconnect]);
+  }, [
+    canReconnectLive,
+    projectId,
+    setLiveConnectionState,
+    waitForLiveReconnect,
+  ]);
 
   useEffect(() => {
     if (!canReconnectLive) {

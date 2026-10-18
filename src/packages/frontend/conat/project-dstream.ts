@@ -106,6 +106,7 @@ function cacheKey(opts: SharedProjectDStreamOptions): string {
       project_id: opts.project_id,
       name: opts.name,
       start_seq: opts.start_seq,
+      start_instance: opts.start_instance,
       config: opts.config,
       desc: opts.desc,
       ephemeral: !!opts.ephemeral,

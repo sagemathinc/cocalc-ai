@@ -47,7 +47,7 @@ export default function SiteFundedCodexStatusCard() {
   return (
     <Card
       size="small"
-      title="Site-funded Codex pools"
+      title="Site-funded AI pool"
       extra={
         <Button
           size="small"
