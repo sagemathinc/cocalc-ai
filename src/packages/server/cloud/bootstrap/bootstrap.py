@@ -2181,7 +2181,9 @@ def project_conat_router_port(env_lines: list[str]) -> int:
     """The port of this host's conat router, the one host-local service
     besides DNS that projects may connect to. Derived as project-host derives
     it (project-host/daemon.ts): COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else
-    PORT + 100, with PORT defaulting to 9002."""
+    PORT + 100, with PORT defaulting to 9002. That is daemon index 0, the only
+    one bootstrap runs; another daemon on the same host (index > 0, PORT
+    9002 + index) would need its router port allowed too."""
     env: dict[str, str] = {}
     for line in env_lines:
         try:
@@ -6757,7 +6759,10 @@ PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"
 # arrives at the host's own services (sshd, the project-host API, ...), and a
 # connection to a VPC address leaves as the host. The only host-local services
 # a project needs are the host resolver (pasta forwards the project's DNS to
-# it) and this host's conat router. DNS to a private resolver stays allowed.
+# it) and this host's conat router. DNS to a private address stays allowed so
+# a host whose resolver is on its VPC keeps working; on GCP the project's DNS
+# goes to the host's 127.0.0.53, so this could later be narrowed to the
+# host's actual resolvers.
 PROJECT_CONAT_ROUTER_PORT="__PROJECT_CONAT_ROUTER_PORT__"
 PROJECT_HOST_LOCAL_ALLOWED_PORTS="{ 53, ${PROJECT_CONAT_ROUTER_PORT} }"
 PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"
