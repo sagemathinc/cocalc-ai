@@ -169,6 +169,16 @@ function iframeNeedsSandbox(attribs: Record<string, string>): boolean {
   return !isAllowedIframeSrc(src);
 }
 
+// A URL that runs script when followed or loaded.  Browsers ignore ASCII
+// whitespace and control characters around and inside the scheme, so they are
+// ignored here too.
+function isScriptUrl(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    /^(?:javascript|vbscript):/i.test(value.replace(/[\u0000-\u0020]/g, ""))
+  );
+}
+
 /*
 The safety floor: the sanitization that applies even to content marked trusted.
 
@@ -185,6 +195,24 @@ export function enforceHtmlSafetyFloor(
   const tag = name.toLowerCase();
   if (NEVER_RENDERED_TAGS.has(tag)) {
     return null;
+  }
+  if (
+    tag === "script" &&
+    !(attribs?.type ?? "").trim().toLowerCase().startsWith("math/tex")
+  ) {
+    // Rendered on the client a script element never runs, but server-rendered
+    // markup (notebook export, also shown in a print popup of the app's
+    // origin) is parsed as a document, where it would.  Inline math scripts
+    // are typeset, and their type is not executable anyway.
+    return null;
+  }
+  if (attribs != null && Object.values(attribs).some(isScriptUrl)) {
+    // Never a script URL in any attribute (href, src, action, formaction,
+    // ...).  React neutralizes javascript: URLs in some attributes; the
+    // floor does not depend on that.
+    attribs = Object.fromEntries(
+      Object.entries(attribs).filter(([, value]) => !isScriptUrl(value)),
+    );
   }
   if (tag !== "iframe" || !iframeNeedsSandbox(attribs ?? {})) {
     // The overwhelmingly common case. Return the input untouched rather than

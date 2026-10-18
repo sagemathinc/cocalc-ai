@@ -105,6 +105,44 @@ describe("safety floor (applies even when noSanitize is set)", () => {
     expect(renderTrusted('<embed src="x.swf">')).not.toContain("<embed");
   });
 
+  // Server-rendered markup (e.g., notebook export, also written into a print
+  // popup of the app's origin) is parsed as a document, so a <script> element
+  // in it runs.
+  it("never emits a script element, except inline math", () => {
+    const html = renderTrusted(
+      '<p>a</p><script>window.ran = 1</script><SCRIPT type="text/javascript">window.ran = 2</SCRIPT><script type="math/tex">x^2</script>',
+    );
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toContain("window.ran");
+    expect(html).toContain("x^2");
+  });
+
+  it("drops script URLs, however they are written", () => {
+    const html = renderTrusted(
+      [
+        '<a href="javascript:alert(1)">a</a>',
+        '<a href=" JaVaScRiPt:alert(2)">b</a>',
+        '<a href="java&#x09;script:alert(3)">c</a>',
+        '<a href="&#x01;javascript:alert(4)">d</a>',
+        '<a href="vbscript:msgbox(5)">e</a>',
+        '<form action="javascript:alert(6)"><button formaction="javascript:alert(7)">f</button></form>',
+        '<iframe src="javascript:alert(8)"></iframe>',
+        '<a href="https://example.com/javascript:ok">g</a>',
+      ].join(""),
+    );
+    // (not even React's neutralized javascript: replacement)
+    expect(html).not.toMatch(/="\s*(java|vb)script:/i);
+    expect(html).toContain("https://example.com/javascript:ok");
+  });
+
+  it("drops event handler attributes", () => {
+    const html = renderTrusted(
+      '<b onclick="alert(1)" ONMOUSEOVER="alert(2)">x</b><img src="x.png" onerror="alert(3)">',
+    );
+    expect(html).not.toMatch(/\son[a-z]+=/i);
+    expect(html).toContain("x.png");
+  });
+
   it("still keeps classes and styles, which is what noSanitize is for", () => {
     const html = renderTrusted('<div class="keep" style="color:red">hi</div>');
     expect(html).toContain('class="keep"');
