@@ -86,12 +86,6 @@
   "src/packages/frontend/frame-editors/chat-editor/workbench.tsx": {
     "noSanitize": 1
   },
-  "src/packages/frontend/frame-editors/frame-tree/print-code.ts": {
-    "document.write": 1
-  },
-  "src/packages/frontend/frame-editors/frame-tree/print.ts": {
-    "document.write": 1
-  },
   "src/packages/frontend/frame-editors/html-editor/iframe-html.tsx": {
     "srcDoc": 2
   },
