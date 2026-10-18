@@ -1,3 +1,4 @@
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type {
   AcpStreamEvent,
   AcpStreamMessage,
@@ -240,6 +241,7 @@ export function buildAcpChatContext({
   parent_message_id,
   sendMode,
   completionNotificationEnabled,
+  userLocale,
 }: {
   project_id?: string;
   path?: string;
@@ -255,6 +257,7 @@ export function buildAcpChatContext({
   parent_message_id?: string;
   sendMode?: "immediate";
   completionNotificationEnabled?: boolean;
+  userLocale?: AgentUserLocale;
 }): AcpChatContext {
   if (!project_id) throw new Error("Codex requires a project context to run");
   if (!path) throw new Error("Codex requires a chat file path");
@@ -276,6 +279,7 @@ export function buildAcpChatContext({
     parent_message_id,
     send_mode: sendMode,
     completion_notification_enabled: completionNotificationEnabled,
+    ...(userLocale ? { user_locale: userLocale } : {}),
   };
 }
 
@@ -839,14 +843,12 @@ export function getLiveResponseBlocks(
   let activeSegmentBaseText: string | undefined;
   let pendingGuidanceSplitBaseText: string | undefined;
   let pendingAgentBoundary:
-    | { baseText: string | undefined; strength: "hard" | "soft" }
-    | undefined;
+    { baseText: string | undefined; strength: "hard" | "soft" } | undefined;
   // Guidance that arrived while an agent message was being written. It is
   // shown once that message reaches a markdown block boundary (or ends), so
   // it never splits a sentence, list, or code block.
   let deferredGuidance:
-    | { items: typeof blocks; splitAt: number; blockIndex: number }
-    | undefined;
+    { items: typeof blocks; splitAt: number; blockIndex: number } | undefined;
   const flushDeferredGuidance = () => {
     if (deferredGuidance == null) return;
     blocks.push(...deferredGuidance.items);
@@ -1179,11 +1181,7 @@ function mergeProgressiveEventText({
 }
 
 type NormalizedTextRelation =
-  | "equal"
-  | "previous-prefix"
-  | "next-prefix"
-  | "different"
-  | "empty";
+  "equal" | "previous-prefix" | "next-prefix" | "different" | "empty";
 
 interface NormalizedTextCursor {
   text: string;

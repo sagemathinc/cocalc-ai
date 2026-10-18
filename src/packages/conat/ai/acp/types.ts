@@ -9,6 +9,7 @@ import type {
 import type { HarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
 import type { AgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 
@@ -91,6 +92,10 @@ export interface AcpChatContext {
   // Version 2 effective account + thread policy. Unlike the legacy field,
   // false here is an intentional effective opt-out.
   completion_notification_enabled?: boolean;
+  // The sender's time zone and (if they allow it) approximate location, from
+  // their browser; the host remembers the latest per account for turns that
+  // no browser started.
+  user_locale?: AgentUserLocale;
 }
 
 export type AcpRequest = {
@@ -230,9 +235,7 @@ export type AcpControlResponse = {
 };
 
 export type AcpAttentionSourceKind =
-  | "codex_sync_question"
-  | "codex_async_question"
-  | "cocalc_action";
+  "codex_sync_question" | "codex_async_question" | "cocalc_action";
 
 export type AcpAttentionKind =
   | "question"

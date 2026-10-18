@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type { ChatSnapshot } from "./types";
 import {
   PROJECT_CHAT_SESSION_NOT_FOUND,
@@ -39,13 +40,19 @@ function snapshot(revision: number, content: string): ChatSnapshot {
   };
 }
 
-function createClient(projectHostClient: any) {
+function createClient(
+  projectHostClient: any,
+  userLocale: () => AgentUserLocale | undefined = () => ({
+    time_zone: "America/Los_Angeles",
+  }),
+) {
   return new RemoteHeadlessChatClient({
     account_id: ACCOUNT_ID,
     project_id: PROJECT_ID,
     path: PATH,
     projectHostClient,
     selected_thread_id: THREAD_ID,
+    userLocale,
   });
 }
 
@@ -192,6 +199,8 @@ test("routes guidance and thread configuration through the open session", async 
           send_mode: "immediate",
           text: "Check the edge case",
           thread_id: THREAD_ID,
+          // The project cannot know the person's time zone: the client sends it.
+          user_locale: { time_zone: "America/Los_Angeles" },
         },
       ],
     ],
@@ -390,3 +399,33 @@ function streamStub() {
     removeListener: jest.fn(),
   };
 }
+
+test("sends this device's time zone when no locale provider is given", async () => {
+  const request = jest.fn(async (_subject, [name, args]) => ({
+    data:
+      name === "open"
+        ? {
+            session_id: "session-1",
+            stream_name: "stream-1",
+            snapshot: snapshot(1, "ready"),
+          }
+        : { message_id: "m-1", thread_id: args[0].thread_id },
+  }));
+  const client = new RemoteHeadlessChatClient({
+    account_id: ACCOUNT_ID,
+    project_id: PROJECT_ID,
+    path: PATH,
+    projectHostClient: {
+      request,
+      sync: { dstream: jest.fn(async () => streamStub()) },
+    } as any,
+    selected_thread_id: THREAD_ID,
+  });
+  await client.open();
+  await client.sendToExistingCodexThread({ thread_id: THREAD_ID, text: "hi" });
+  const send = request.mock.calls.find(([, [name]]) => name === "send")!;
+  expect(send[1][1][0].user_locale).toEqual({
+    time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+  await client.close();
+});

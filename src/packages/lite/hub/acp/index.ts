@@ -241,6 +241,7 @@ import {
   type AcpSessionRow,
   type AcpSessionState,
 } from "../sqlite/acp-sessions";
+import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
@@ -8311,9 +8312,17 @@ async function executeAcpRequest({
         if (memory.event) {
           await wrappedStream({ type: "event", event: memory.event });
         }
+        // The person's local time (and place, if they allow it), so the
+        // agent does not assume UTC for "today" or "6am".
+        const userTimeContext = agentUserTimeContext(
+          request.account_id,
+          request.chat?.user_locale,
+        );
         await currentAgent.evaluate({
           ...request,
-          agent_memory_context: memory.context,
+          agent_memory_context:
+            [userTimeContext, memory.context].filter(Boolean).join("\n\n") ||
+            undefined,
           mentionReferences,
           readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
           prompt: withComputerNote(
