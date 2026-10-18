@@ -503,17 +503,8 @@ stage_static_bundle_release() {
   extract_dir="$(as_bay mktemp -d "${TARGET_RELEASE}.static-bundle.XXXXXX")"
   trap 'as_bay rm -rf "$extract_dir"' RETURN
   extract_as_bay "$STATIC_BUNDLE_PATH" "$extract_dir" --strip-components=1
-  if [[ ! -f "${extract_dir}/runtime/control-plane/static/frontend-build.json" ]]; then
-    echo "static bundle is missing runtime/control-plane/static/frontend-build.json" >&2
-    exit 1
-  fi
 
-  # The bundle carries the complete static directory. Drop the hardlinked copy
-  # of the current one first: overlaying onto it would keep every chunk it had
-  # accumulated. preserve_previous_static_assets then adds back only the
-  # previous build's declared chunks.
   run as_bay rm -rf \
-    "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
     "${TARGET_RELEASE}/runtime/control-plane/cdn" \
     "${TARGET_RELEASE}/runtime/control-plane/webapp" \

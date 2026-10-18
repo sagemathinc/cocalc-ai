@@ -224,62 +224,6 @@ if prepare_frontend_asset_history >"${TMP_ROOT}/oversized-assets.log" 2>&1; then
 fi
 grep -q 'frontend asset manifest exceeds 10000 files' "${TMP_ROOT}/oversized-assets.log"
 
-# A static-bundle deploy starts from a hardlinked copy of the current release.
-# Chunks the current static directory had accumulated beyond its declared
-# build must not survive into the staged release (prod 10-18).
-saved_current_link="$CURRENT_LINK"
-saved_target_release="$TARGET_RELEASE"
-SB_ROOT="${TMP_ROOT}/static-stage"
-SB_CURRENT="${SB_ROOT}/releases/current-build"
-mkdir -p "${SB_CURRENT}/runtime/control-plane/static" "${SB_ROOT}/bundle/cocalc-bay-static-sb/runtime/control-plane/static"
-printf '%s\n' declared > "${SB_CURRENT}/runtime/control-plane/static/declared-1111111111111111.js"
-printf '%s\n' historic > "${SB_CURRENT}/runtime/control-plane/static/historic-2222222222222222.js"
-printf '%s\n' old-page > "${SB_CURRENT}/runtime/control-plane/static/public.html"
-printf '%s\n' '{"schema":1,"fingerprint":"current","build_timestamp":1,"assets":["declared-1111111111111111.js"]}' > \
-  "${SB_CURRENT}/runtime/control-plane/static/frontend-build.json"
-SB_BUNDLE_STATIC="${SB_ROOT}/bundle/cocalc-bay-static-sb/runtime/control-plane/static"
-printf '%s\n' new > "${SB_BUNDLE_STATIC}/new-3333333333333333.js"
-printf '%s\n' new-page > "${SB_BUNDLE_STATIC}/public.html"
-printf '%s\n' '{"schema":1,"fingerprint":"new","build_timestamp":2,"assets":["new-3333333333333333.js"]}' > \
-  "${SB_BUNDLE_STATIC}/frontend-build.json"
-tar -czf "${SB_ROOT}/static.tar.gz" -C "${SB_ROOT}/bundle" cocalc-bay-static-sb
-ln -sfn "$SB_CURRENT" "${SB_ROOT}/current"
-CURRENT_LINK="${SB_ROOT}/current"
-TARGET_RELEASE="${SB_ROOT}/releases/next-build"
-STATIC_BUNDLE_PATH="${SB_ROOT}/static.tar.gz"
-stage_static_bundle_release >/dev/null
-prepare_frontend_asset_history >/dev/null
-SB_STAGED="${TARGET_RELEASE}/runtime/control-plane/static"
-for kept in new-3333333333333333.js declared-1111111111111111.js; do
-  [[ -f "${SB_STAGED}/${kept}" ]] || { echo "static-bundle stage lost ${kept}" >&2; exit 1; }
-done
-if [[ -e "${SB_STAGED}/historic-2222222222222222.js" ]]; then
-  echo "static-bundle stage kept an undeclared chunk from the current release" >&2
-  exit 1
-fi
-[[ "$(cat "${SB_STAGED}/public.html")" == "new-page" ]] ||
-  { echo "static-bundle stage did not install the bundle's entrypoint" >&2; exit 1; }
-[[ -f "${SB_CURRENT}/runtime/control-plane/static/historic-2222222222222222.js" ]] ||
-  { echo "staging changed the current release" >&2; exit 1; }
-node - "${SB_STAGED}/frontend-build-history.json" <<'NODE'
-const fs = require("node:fs");
-const history = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const listed = history.builds.map(({ assets }) => assets.join(","));
-if (listed.join("|") !== "new-3333333333333333.js|declared-1111111111111111.js") {
-  throw new Error(`unexpected static-bundle history: ${listed.join("|")}`);
-}
-NODE
-# A static bundle without a frontend manifest is refused before staging.
-rm "${SB_BUNDLE_STATIC}/frontend-build.json"
-tar -czf "${SB_ROOT}/static.tar.gz" -C "${SB_ROOT}/bundle" cocalc-bay-static-sb
-if (stage_static_bundle_release >/dev/null 2>&1); then
-  echo "static bundle without a frontend manifest was staged" >&2
-  exit 1
-fi
-STATIC_BUNDLE_PATH=""
-CURRENT_LINK="$saved_current_link"
-TARGET_RELEASE="$saved_target_release"
-
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
 TARGET_RELEASE="$VALIDATION_RELEASE"
 OVERLAY_MODE="rocket-bundle"
