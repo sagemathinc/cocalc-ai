@@ -377,6 +377,49 @@ describe("the answers bootstrap (board-host-protocol.md)", () => {
     expect(posted.mock.calls[0][2]).toBeUndefined();
   });
 
+  // Codex on #1134: a plain-http site (cocalc-star on a LAN) has no
+  // crypto.randomUUID; boards still show there, and still take answers.
+  describe("without crypto.randomUUID (a plain-http site)", () => {
+    const real = Object.getOwnPropertyDescriptor(
+      globalThis.crypto,
+      "randomUUID",
+    );
+    beforeAll(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        configurable: true,
+        value: undefined,
+      });
+    });
+    afterAll(() => {
+      if (real) Object.defineProperty(globalThis.crypto, "randomUUID", real);
+      else delete (globalThis.crypto as any).randomUUID;
+    });
+
+    test("a read-only board still shows", async () => {
+      const { frame, posted } = await renderBoard();
+      expect(screen.queryByText(/randomUUID/)).toBeNull();
+      fromFrame(frame, READY);
+      expect(posted).toHaveBeenCalledWith(
+        {
+          sagebrush: "board",
+          version: 1,
+          text: TEXT,
+          name: "overnight.board.json",
+        },
+        "*",
+      );
+    });
+
+    test("a board taking answers still gets its nonce and port", async () => {
+      const { frame, posted, nonce } = await renderAnswering();
+      expect(nonce).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      fromFrame(frame, { ...READY, nonce });
+      expect(posted.mock.calls[0][2]).toHaveLength(1);
+    });
+  });
+
   describe("deciding (board-host-protocol.md, Deciding)", () => {
     withSubtle();
     const DECIDE = {

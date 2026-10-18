@@ -57,6 +57,18 @@ import {
 } from "./board-answers-channel";
 import { boardDecider } from "./board-decide-card";
 
+/** A fresh nonce for one frame (a version 4 UUID). From
+ * crypto.getRandomValues, which every origin has: randomUUID is missing on a
+ * plain-http site (cocalc-star on a LAN), where a board must still show
+ * (Codex on #1134). */
+function frameNonce(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 export default function BoardArtifact({
   path,
   frameUrl,
@@ -141,7 +153,7 @@ export default function BoardArtifact({
           setBoard({
             id: refresh,
             text,
-            nonce: crypto.randomUUID(),
+            nonce: frameNonce(),
             revision: revisionRef.current,
           });
       } catch (err) {
