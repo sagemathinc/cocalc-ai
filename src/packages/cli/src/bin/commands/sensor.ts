@@ -30,7 +30,7 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
 
 1. Watchers: CoCalc's own one-shot checks. No approval; use them instead of
    polling, then end your turn. You get one turn when it happens:
-     cocalc sensor watch ci --repo owner/name --pr 123
+     cocalc sensor watch ci --repo owner/name --pr 123   # needs the GitHub connector
      cocalc sensor watch file --path out.log [--match 'BUILD DONE']
      cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
      cocalc sensor watch exit -- make test   # runs it in a project terminal
@@ -240,7 +240,9 @@ export function registerSensorCommand(
     value == null ? {} : { hours: Number(value) };
   watch
     .command("ci")
-    .description("when a GitHub pull request's checks have all finished")
+    .description(
+      "when a GitHub pull request's checks have all finished (needs the agent's GitHub connector; without it, use: watch exit -- gh pr checks <n> --watch)",
+    )
     .requiredOption("--repo <owner/name>", "repository")
     .requiredOption("--pr <number>", "pull request number")
     .option("--hours <n>", "give up after this many hours (default 24)")

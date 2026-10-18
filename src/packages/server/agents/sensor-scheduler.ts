@@ -34,7 +34,7 @@ import { nextSensorRunAt } from "@cocalc/util/ai/sensor-schedule";
 import { assertActor } from "./access";
 import { hostFor } from "./rpc";
 import { issueSensorRunCredentials } from "./sensor-credentials";
-import { sensorBudget } from "./cocalc-connector-routing";
+import { sensorBudget, sensorConnectors } from "./cocalc-connector-routing";
 import { pruneSensorEvents } from "./sensor-budget";
 import { notifySensorPausedBestEffort } from "./sensor-notify";
 import {
@@ -249,6 +249,7 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
   let connectors: SensorConnector[] = [];
   // Wakes held earlier that this run's wake includes.
   let combinedRuns: string[] = [];
+  let missingNow: SensorConnector[] = [];
   try {
     await db.query(
       // Database time, comparable with approved_at when the wake executes.
@@ -309,6 +310,26 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     ) {
       const wake: SensorWake = {
         summary: `Gave up: "${spec.title}" did not happen before ${spec.expires_at}.`,
+      };
+      prompt = sensorWakePrompt({
+        title: spec.title,
+        sensor_id: row.sensor_id,
+        ran_at: started,
+        wake,
+      });
+      summary = wake.summary;
+      finished = true;
+    } else if (
+      spec.kind === "watch" &&
+      (missingNow = await missingWatcherConnectors(row, spec)).length > 0
+    ) {
+      // A watcher cannot be resumed, so it gives up and its agent is told
+      // why, rather than pausing with a notice to a person who cannot act.
+      const names = missingNow
+        .map((c) => SENSOR_CONNECTOR_LABELS[c])
+        .join(" and ");
+      const wake: SensorWake = {
+        summary: `Gave up: "${spec.title}" needs ${names}, which this agent no longer has (the person who owns it turns it on in the agent's Connectors menu).`,
       };
       prompt = sensorWakePrompt({
         title: spec.title,
@@ -824,6 +845,26 @@ async function finishRun(
       reason: pause,
     });
   }
+}
+
+/** The connectors a watcher uses that its agent does not have now. */
+async function missingWatcherConnectors(
+  row: { approved_by: string; agent_id: string; project_id: string },
+  spec: SensorSpec,
+): Promise<SensorConnector[]> {
+  const missing: SensorConnector[] = [];
+  for (const connector of sensorUses(spec)) {
+    if (
+      !(await sensorConnectors.hasCli({
+        account_id: row.approved_by,
+        agent_id: row.agent_id,
+        source_project_id: row.project_id,
+        connector,
+      }))
+    )
+      missing.push(connector);
+  }
+  return missing;
 }
 
 /** Watchers that fired more than a day ago; their wakes have long run. */
