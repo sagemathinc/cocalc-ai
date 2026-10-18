@@ -58,6 +58,8 @@ import { setTheme } from "./themes";
 import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 import { resolveAppearanceEditorTheme } from "@cocalc/util/appearance-editor";
 import { termPath } from "@cocalc/util/terminal/names";
+import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
+import { terminalLinkHandler } from "./terminal-links";
 import { dirname } from "path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { type TerminalClient } from "@cocalc/conat/project/terminal";
@@ -799,6 +801,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       // TUI applications can own mouse drags. Give macOS users the xterm
       // equivalent of Shift-drag on other platforms to select terminal text.
       macOptionClickForcesSelection: true,
+      // OSC 8 hyperlinks in terminal output; see terminal-links.ts.
+      linkHandler: terminalLinkHandler,
     };
     const settings = this.account_store.get("terminal");
     if (settings == null) {
@@ -2389,7 +2393,7 @@ async function touchPath(project_id: string, path: string): Promise<void> {
 
 export function handleLink(_: MouseEvent, uri: string): void {
   if (!isCoCalcURL(uri)) {
-    window.open(uri, "_blank");
+    open_new_tab(uri);
     return;
   }
   // This horrendous code is because process-links is so "badly"
