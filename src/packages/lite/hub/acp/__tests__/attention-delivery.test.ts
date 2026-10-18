@@ -352,6 +352,82 @@ it.each([true, false])(
   },
 );
 
+it.each([true, false])(
+  "delivers an answer after the thread's model or effort changed (running=%s)",
+  async (running) => {
+    const previous = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("must not launch during delivery");
+    });
+    const source = claudeTurnRequest();
+    source.runtime!.settings = {
+      configOptions: [{ id: "effort", value: "xhigh" }],
+    };
+    // Changed in the thread's settings while the question's turn ran.
+    rows[0].agent_runtime = {
+      ...source.runtime,
+      settings: { configOptions: [{ id: "effort", value: "medium" }] },
+    };
+    rows[0].agent_session_id = "claude-session";
+    const job = startRunningTurn(source);
+    if (!running) setAcpJobState({ op_id: job.op_id, state: "done" });
+    const steer = jest.fn(async (id) => ({
+      state: id === "claude-session" && running ? "steered" : "missing",
+      threadId: id,
+    }));
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      "claude",
+      projectId,
+      { steer } as any,
+      true,
+    );
+    try {
+      const result = await acpTestInternals.deliverAsyncAttentionAnswer({
+        ...record,
+        chat: {
+          ...source.chat!,
+          ...record.chat,
+          harness_session_id: "claude-session",
+        },
+      });
+      expect(result.state).toBe(running ? "steered" : "queued");
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      if (previous === undefined) delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previous;
+    }
+  },
+);
+
+it("does not deliver an answer once the thread uses another harness profile", async () => {
+  const previous = process.env.COCALC_ACP_HARNESSES;
+  process.env.COCALC_ACP_HARNESSES = "1";
+  const source = claudeTurnRequest();
+  rows[0].agent_runtime = {
+    ...source.runtime,
+    profile: { ...source.runtime!.profile, cwd: "/home/user/elsewhere" },
+  };
+  rows[0].agent_session_id = "claude-session";
+  startRunningTurn(source);
+  try {
+    await expect(
+      acpTestInternals.deliverAsyncAttentionAnswer({
+        ...record,
+        chat: {
+          ...source.chat!,
+          ...record.chat,
+          harness_session_id: "claude-session",
+        },
+      }),
+    ).rejects.toThrow(/different agent runtime/);
+  } finally {
+    if (previous === undefined) delete process.env.COCALC_ACP_HARNESSES;
+    else process.env.COCALC_ACP_HARNESSES = previous;
+  }
+});
+
 it.each([false, true])(
   "refreshes cold queued ACP context without replacing admitted choices (RPC=%s)",
   async (rpc) => {

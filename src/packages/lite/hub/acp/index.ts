@@ -1,4 +1,5 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
 import path from "node:path";
 import { hubApi } from "../api";
@@ -336,6 +337,7 @@ import {
   discoverHarnessControls,
   forkHarnessSession,
   harnessForkSource,
+  assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
@@ -11290,7 +11292,7 @@ async function deliverAsyncAttentionAnswer(
           throw Error(
             "The question's execution configuration is unavailable; send your answer in the agent conversation.",
           );
-        assertConfiguredHarnessRuntime(source, runtime?.toJS?.() ?? runtime);
+        assertAnswerHarnessProfile(source, runtime?.toJS?.() ?? runtime);
         // Admission can precede session creation. New questions carry the
         // actual native ID; old records are usable only with an admitted ID.
         const questionSessionId =
@@ -11307,7 +11309,9 @@ async function deliverAsyncAttentionAnswer(
           },
         );
         harnessExecution = {
-          runtime: source.runtime,
+          // The question's harness profile (checked above) with the thread's
+          // current model and effort, which the answer's turn then uses.
+          runtime: parseAcpHarnessRuntime(runtime?.toJS?.() ?? runtime),
           harness_credential: source.harness_credential,
           session_id: session.session_id,
         };
