@@ -28,8 +28,11 @@ jest.mock("antd", () => ({
   },
 }));
 
+let mockLite = false;
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: false,
+  get lite() {
+    return mockLite;
+  },
 }));
 
 jest.mock("../other-settings", () => ({
@@ -89,6 +92,17 @@ describe("AccountPreferencesAI", () => {
       }
       return undefined;
     });
+  });
+
+  it("offers the location switch in Lite too", () => {
+    mockLite = true;
+    try {
+      render(<AccountPreferencesAI />);
+      expect(screen.getByText("LiteAISettings")).toBeTruthy();
+      expect(screen.getByText("Agent location controls")).toBeTruthy();
+    } finally {
+      mockLite = false;
+    }
   });
 
   it("shows AI usage in non-lite AI preferences", () => {

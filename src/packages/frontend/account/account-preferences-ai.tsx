@@ -101,6 +101,9 @@ export function AccountPreferencesAI() {
         <CodexSubagentConcurrencyField />
         <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
+        <Panel header="Your time and location for agents">
+          <AgentLocationSetting />
+        </Panel>
       </>
     );
   }

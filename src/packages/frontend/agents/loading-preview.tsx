@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
+import { browserAgentUserLocale } from "@cocalc/frontend/chat/agent-user-locale";
 import {
   createRemoteHeadlessChatClient,
   type HeadlessChatClient,
@@ -62,6 +63,7 @@ export function AgentLoadingPreview({
         selected_thread_id: agent.thread_id,
         initial_message_limit: PREVIEW_MESSAGE_LIMIT,
         readyTimeoutMs: 10_000,
+        userLocale: browserAgentUserLocale,
       });
       unsubscribe = client.subscribe((snapshot) => {
         if (disposed || !snapshot.ready) return;
