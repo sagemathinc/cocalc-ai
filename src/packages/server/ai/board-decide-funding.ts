@@ -28,10 +28,14 @@ import {
   finishSiteFundedSpeechGlobal,
   reserveSiteFundedSpeechGlobal,
 } from "./site-funded-speech-reservations";
-import type { DecideFunding } from "./board-decide";
+import { DECIDE_LIMITS, type DecideFunding } from "./board-decide";
 
 const RESERVATION_TAG = "board-decide-reservation";
 const COMMITTED_TAG = "board-decide";
+// A hold released after its call failed: kept (at no cost) until the
+// reservations expire, so the call still counts toward the account's
+// per-minute limit.
+const RELEASED_TAG = "board-decide-released";
 const RESERVATION_TTL_MS = 5 * 60_000;
 const PRICE_VERSION = "board-decide-2026-10-16";
 const logger = getLogger("server:ai:board-decide-funding");
@@ -91,10 +95,29 @@ export function siteFundedDecideFunding({
         }
         await client.query(
           `DELETE FROM ai_usage_log
-           WHERE account_id=$1 AND tag=$2
-             AND time < NOW() - ($3::BIGINT * INTERVAL '1 millisecond')`,
-          [accountId, RESERVATION_TAG, RESERVATION_TTL_MS],
+           WHERE account_id=$1 AND tag IN ($2, $3)
+             AND time < NOW() - ($4::BIGINT * INTERVAL '1 millisecond')`,
+          [accountId, RESERVATION_TAG, RELEASED_TAG, RESERVATION_TTL_MS],
         );
+        // The account's calls in the last minute, held, done or failed,
+        // counted under its row's lock: one limit across every hub replica
+        // (the per-process count in board-decide.ts is only a cheap guard
+        // in front of this one).
+        const recent = await client.query(
+          `SELECT COUNT(*) AS n FROM ai_usage_log
+           WHERE account_id=$1 AND tag IN ($2, $3, $4)
+             AND time > NOW() - INTERVAL '1 minute'`,
+          [accountId, RESERVATION_TAG, COMMITTED_TAG, RELEASED_TAG],
+        );
+        if (
+          Number(recent.rows[0]?.n ?? 0) >=
+          DECIDE_LIMITS.callsPerAccountPerMinute
+        ) {
+          throw codedError(
+            "Too many answers checked. Try again in a minute.",
+            429,
+          );
+        }
         const requested = microusdToUsageUnits(microusd);
         for (const window of status.windows) {
           const { rows } = await client.query(
@@ -215,9 +238,16 @@ export function siteFundedDecideFunding({
           const results = await Promise.allSettled([
             finishSiteFundedSpeechGlobal({ requestId, status: "released" }),
             getPool().query(
-              `DELETE FROM ai_usage_log
+              `UPDATE ai_usage_log
+                  SET input=$4, tag=$5, cost_microusd=0
                WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
-              [accountId, requestId, RESERVATION_TAG],
+              [
+                accountId,
+                requestId,
+                RESERVATION_TAG,
+                "[board-decide-released]",
+                RELEASED_TAG,
+              ],
             ),
           ]);
           const failure = results.find(

@@ -23,8 +23,9 @@
 // board, MAX_IN_FLIGHT_TOTAL in flight and MAX_CALLS_PER_MINUTE_TOTAL a
 // minute, both before the file is read (the spec's "per user and board, and
 // bounds the total rate it serves"). These are per hub process; the hard
-// bounds are the per-account rate limit in board-decide.ts and the
-// account's AI allowance and the site pool.
+// bounds, shared by every replica and atomic, are in the funding's
+// reservation (board-decide-funding.ts): the account's per-minute limit,
+// its AI allowance, and the site pool.
 
 import { decideRequest } from "./board-decide-request";
 import type { DecideResult } from "./board-decide";

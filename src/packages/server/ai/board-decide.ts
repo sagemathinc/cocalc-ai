@@ -94,6 +94,9 @@ export function resetBoardDecideStateForTests(): void {
   usedRequestIds.clear();
 }
 
+// This process's count: a cheap guard before the funding's reservation,
+// which enforces callsPerAccountPerMinute atomically for every replica
+// (board-decide-funding.ts).
 function checkRate(accountId: string, now: number): void {
   const recent = (recentCalls.get(accountId) ?? []).filter(
     (t) => now - t < RATE_WINDOW_MS,
