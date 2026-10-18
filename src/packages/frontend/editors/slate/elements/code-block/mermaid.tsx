@@ -8,6 +8,7 @@ import ShowError from "@cocalc/frontend/components/error";
 import { delay } from "awaiting";
 import { uuid, replace_all } from "@cocalc/util/misc";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
+import { sanitizeMermaidSvg } from "./sanitize-mermaid-svg";
 
 interface Props {
   value: string;
@@ -37,7 +38,7 @@ export default function Mermaid({ value, style }: Props) {
       return;
     }
     if (!value.trim()) {
-      elt.innerHTML = "";
+      elt.replaceChildren();
       return;
     }
     (async () => {
@@ -47,7 +48,9 @@ export default function Mermaid({ value, style }: Props) {
         setMermaidError("");
         const mermaid = await getMermaid();
         const { svg } = await mermaid.render(id, value);
-        elt.innerHTML = svg;
+        const clean = sanitizeMermaidSvg(svg);
+        if (clean == null) throw Error("mermaid did not produce an SVG");
+        elt.replaceChildren(clean);
       } catch (err) {
         setMermaidError(err.str ?? `${err}`);
       } finally {

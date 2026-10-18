@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { delay } from "awaiting";
 import { replace_all, uuid } from "@cocalc/util/misc";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
+import { sanitizeMermaidSvg } from "./sanitize-mermaid-svg";
 
 interface Props {
   value: string;
@@ -33,7 +34,7 @@ export default function PublicViewerMermaid({ value, style }: Props) {
     const elt = mermaidRef.current;
     if (!elt) return;
     if (!value.trim()) {
-      elt.innerHTML = "";
+      elt.replaceChildren();
       return;
     }
     void (async () => {
@@ -43,7 +44,9 @@ export default function PublicViewerMermaid({ value, style }: Props) {
         setMermaidError("");
         const mermaid = await getMermaid();
         const { svg } = await mermaid.render(id, value);
-        elt.innerHTML = svg;
+        const clean = sanitizeMermaidSvg(svg);
+        if (clean == null) throw Error("mermaid did not produce an SVG");
+        elt.replaceChildren(clean);
       } catch (err) {
         setMermaidError(err?.str ?? `${err}`);
       } finally {
