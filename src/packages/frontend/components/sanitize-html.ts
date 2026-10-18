@@ -3,6 +3,20 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  PRESENTATION_TAGS,
+  sanitizeInlineStyle,
+  sanitizePresentationAttribute,
+  type SanitizeOptions,
+} from "./sanitize-presentation";
+import {
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+  parseSrcset,
+  serializeSrcset,
+  type UrlTransform,
+} from "@cocalc/frontend/lib/url-transform";
+
 const ALLOWED_TAGS = new Set([
   "address",
   "article",
@@ -238,6 +252,7 @@ export function enforceHtmlSafetyFloor(
 export function isAllowedHtmlTag(
   name: string,
   attribs?: Record<string, string>,
+  options?: SanitizeOptions,
 ): boolean {
   const tag = name.toLowerCase();
   if (tag === "input") {
@@ -245,7 +260,10 @@ export function isAllowedHtmlTag(
     // sanitizeHtmlAttributes); every other input type is dropped.
     return attribs?.type?.toLowerCase() === "checkbox";
   }
-  return ALLOWED_TAGS.has(tag);
+  return (
+    ALLOWED_TAGS.has(tag) ||
+    (!!options?.safeStyles && PRESENTATION_TAGS.has(tag))
+  );
 }
 
 export function shouldDropHtmlTagContents(name: string): boolean {
@@ -274,13 +292,21 @@ export function isSafeHtmlUrl(value: string): boolean {
   }
 }
 
-function sanitizeSrcset(value: string): string | undefined {
-  const candidates = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => isSafeHtmlUrl(part.split(/\s+/)[0] ?? ""));
-  return candidates.length > 0 ? candidates.join(", ") : undefined;
+// An image URL: a safe URL, or a data: image (e.g., a Jupyter attachment, or
+// an image pasted into Markdown).  In an <img> an image never runs script.
+export function isSafeImageUrl(value: string): boolean {
+  return (
+    isSafeHtmlUrl(value) ||
+    /^data:image\/[a-z0-9.+-]+(;[a-z0-9.+=-]+)*,/i.test(value.trim())
+  );
+}
+
+function sanitizeSrcset(
+  value: string,
+  isSafe: (url: string) => boolean,
+): string | undefined {
+  const candidates = parseSrcset(value).filter(({ url }) => isSafe(url));
+  return candidates.length > 0 ? serializeSrcset(candidates) : undefined;
 }
 
 function isAllowedIframeSrc(value: string): boolean {
@@ -295,7 +321,8 @@ function isAllowedIframeSrc(value: string): boolean {
 export function sanitizeHtmlAttributes(
   name: string,
   attribs: Record<string, string> | undefined,
-  urlTransform?: (url: string, tag?: string) => string | undefined,
+  urlTransform?: UrlTransform,
+  options?: SanitizeOptions,
 ): Record<string, string> {
   const tag = name.toLowerCase();
   if (tag === "input") {
@@ -312,30 +339,54 @@ export function sanitizeHtmlAttributes(
     return checkbox;
   }
   const allowed = ALLOWED_ATTRIBUTES[tag];
-  if (allowed == null || attribs == null) {
+  if (attribs == null) {
     return {};
   }
   const sanitized: Record<string, string> = {};
   for (const [rawAttr, rawValue] of Object.entries(attribs)) {
     const attr = rawAttr.toLowerCase();
-    if (!allowed.has(attr) || attr.startsWith("on")) {
+    if (rawValue == null || attr.startsWith("on")) {
       continue;
     }
-    if (rawValue == null) {
+    if (options?.safeStyles && !allowed?.has(attr)) {
+      const value =
+        attr === "style"
+          ? sanitizeInlineStyle(rawValue)
+          : sanitizePresentationAttribute(tag, attr, rawValue);
+      if (value != null) {
+        sanitized[attr] = value;
+      }
+      continue;
+    }
+    if (!allowed?.has(attr)) {
       continue;
     }
     const transformed =
-      URL_ATTRIBUTES.has(attr) && urlTransform != null
-        ? (urlTransform(rawValue, tag) ?? rawValue)
-        : rawValue;
+      attr === "srcset"
+        ? applyUrlTransformToSrcset(urlTransform, rawValue, tag)
+        : URL_ATTRIBUTES.has(attr)
+          ? applyUrlTransform(urlTransform, rawValue, tag)
+          : rawValue;
+    if (transformed == null) {
+      // rejected by urlTransform
+      continue;
+    }
     if (attr === "srcset") {
-      const clean = sanitizeSrcset(transformed);
+      const clean = sanitizeSrcset(
+        transformed,
+        tag === "img" ? isSafeImageUrl : isSafeHtmlUrl,
+      );
       if (clean != null) {
         sanitized[attr] = clean;
       }
       continue;
     }
-    if (URL_ATTRIBUTES.has(attr) && !isSafeHtmlUrl(transformed)) {
+    if (
+      URL_ATTRIBUTES.has(attr) &&
+      !(tag === "img" && attr === "src"
+        ? isSafeImageUrl(transformed)
+        : isSafeHtmlUrl(transformed))
+    ) {
       continue;
     }
     if (

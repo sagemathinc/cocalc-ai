@@ -80,6 +80,9 @@ export function exportToHTMLParts({
     notebook = createElement(NBViewer, {
       key: "x",
       content: ipynb,
+      // Export renders the notebook as its owner sees it; printing an
+      // untrusted notebook is protected separately, in the print path.
+      trust: true,
       fontSize,
       style,
     });
@@ -87,6 +90,7 @@ export function exportToHTMLParts({
     notebook = createElement(Notebook, {
       key: "x",
       cocalcJupyter,
+      trust: true,
       fontSize,
       style,
     });

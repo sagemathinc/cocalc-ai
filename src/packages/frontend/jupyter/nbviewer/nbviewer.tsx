@@ -21,6 +21,7 @@ interface Props {
   style?: CSSProperties;
   cellListStyle?: CSSProperties;
   scrollBottom?: boolean;
+  trust: boolean;
 }
 
 export default function NBViewer({

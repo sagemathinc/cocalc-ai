@@ -24,7 +24,7 @@
     "innerHTML assignment": 1
   },
   "src/packages/frontend/components/html-ssr.tsx": {
-    "noSanitize": 4
+    "noSanitize": 6
   },
   "src/packages/frontend/components/html.tsx": {
     "dangerouslySetInnerHTML": 2
@@ -110,15 +110,15 @@
   "src/packages/frontend/jupyter/browser-actions.ts": {
     "document.write": 1
   },
-  "src/packages/frontend/jupyter/cell-list.tsx": {
-    "noSanitize": 1
-  },
   "src/packages/frontend/jupyter/nbviewer/export.ts": {
     "noSanitize": 1
   },
   "src/packages/frontend/jupyter/nbviewer/public-cell-output.tsx": {
     "dangerouslySetInnerHTML": 1,
     "srcDoc": 1
+  },
+  "src/packages/frontend/jupyter/notebook-file-context.tsx": {
+    "noSanitize": 2
   },
   "src/packages/frontend/jupyter/output-messages/active-output-group.tsx": {
     "innerHTML assignment": 1,
@@ -156,6 +156,9 @@
     "innerHTML assignment": 1
   },
   "src/packages/frontend/project/page/content.tsx": {
+    "noSanitize": 1
+  },
+  "src/packages/frontend/public-viewer/renderers/ipynb.tsx": {
     "noSanitize": 1
   },
   "src/packages/frontend/public-viewer/viewer-file-context.tsx": {
