@@ -1281,6 +1281,106 @@ describe("site license seat pools", () => {
     ).rejects.toThrow(`site license domain '${updatedDomain}' overlaps`);
   });
 
+  it("transfers site-license ownership together with its pools", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const next_owner_account_id = uuid();
+    const domain = `transfer-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(next_owner_account_id);
+    await markAdmin(admin_account_id);
+    const overview = await provisionSiteLicenseForTest({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Transfer Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+        {
+          pool_name: "Instructors",
+          membership_class: instructorTier,
+          seat_count: 2,
+          requires_approval: true,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+    const site_license_id = overview.site_license.id;
+    const owners = async () =>
+      (
+        await getPool().query(
+          `SELECT owner_account_id::text AS owner FROM site_licenses WHERE id=$1::uuid
+           UNION ALL
+           SELECT owner_account_id::text FROM membership_packages
+            WHERE kind='site' AND metadata->>'site_license_id'=$1::text`,
+          [site_license_id],
+        )
+      ).rows.map(({ owner }) => owner);
+    expect(await owners()).toEqual([
+      owner_account_id,
+      owner_account_id,
+      owner_account_id,
+    ]);
+
+    await expect(
+      updateSiteLicense({
+        actor_account_id: owner_account_id,
+        site_license_id,
+        owner_account_id: next_owner_account_id,
+      }),
+    ).rejects.toThrow("must be an admin");
+    await expect(
+      updateSiteLicense({
+        actor_account_id: admin_account_id,
+        site_license_id,
+        owner_account_id: uuid(),
+      }),
+    ).rejects.toThrow("not found");
+    expect(await owners()).toEqual([
+      owner_account_id,
+      owner_account_id,
+      owner_account_id,
+    ]);
+
+    const transferred = await updateSiteLicense({
+      actor_account_id: admin_account_id,
+      site_license_id,
+      owner_account_id: next_owner_account_id,
+    });
+    expect(transferred.site_license.owner_account_id).toBe(
+      next_owner_account_id,
+    );
+    expect(transferred.site_license.name).toBe("Transfer Campus");
+    expect(await owners()).toEqual([
+      next_owner_account_id,
+      next_owner_account_id,
+      next_owner_account_id,
+    ]);
+    expect(transferred.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "site-license-owner-transferred",
+          actor_account_id: admin_account_id,
+          target_account_id: next_owner_account_id,
+          metadata: expect.objectContaining({
+            previous_owner_account_id: owner_account_id,
+            owner_account_id: next_owner_account_id,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("updates site-license settings and managers", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();

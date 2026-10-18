@@ -19,6 +19,10 @@ interface Props {
   cellListStyle?: CSSProperties;
   scrollBottom?: boolean;
   readOnly?: boolean;
+  // Whether the reader trusts this notebook's output (JavaScript, unsanitized
+  // HTML, same-origin frames).  Every caller must decide: a public viewer
+  // never trusts, since no viewer ever chose to.
+  trust: boolean;
 }
 
 export default function Notebook({
@@ -30,6 +34,7 @@ export default function Notebook({
   cellListStyle,
   scrollBottom,
   readOnly,
+  trust,
 }: Props) {
   const ref = useBottomScroller<HTMLDivElement>(scrollBottom, cocalcJupyter);
   let { cellList, cells, cmOptions, metadata, kernelspec } = cocalcJupyter;
@@ -38,7 +43,7 @@ export default function Notebook({
   }
 
   return (
-    <JupyterContext.Provider value={{ kernelspec, trust: true }}>
+    <JupyterContext.Provider value={{ kernelspec, trust }}>
       <div ref={ref} style={style}>
         <div style={{ margin: "15px", textAlign: "right" }}>
           <b>Kernel:</b> {kernelspec.display_name}

@@ -46,12 +46,8 @@ import latexEnvs from "@cocalc/util/latex-envs";
 import { type AKV, akv } from "@cocalc/conat/sync/akv";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { outputLimitBytes } from "@cocalc/jupyter/execute/output-budget";
-import {
-  JUPYTER_MIMETYPES,
-  isJupyterBase64MimeType,
-} from "@cocalc/jupyter/util/misc";
-import { isSha1, sha1 } from "@cocalc/util/misc";
-import { shouldUseIframe } from "@cocalc/jupyter/util/iframe";
+import { sha1 } from "@cocalc/util/misc";
+import { blobifyOutputData } from "@cocalc/jupyter/util/blobify-output";
 import { join } from "path";
 import {
   isActiveJupyterRuntimeCellState,
@@ -2941,18 +2937,13 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       return;
     }
 
-    // Here we compute sha1 and start saving the blob to the blob store
-    // over the network.  There is no guarantee that will work and this
-    // won't just be lost. It's unlikely but could happen.  This is
-    // always output images in notebooks, so not critical data.
-    // By doing this, the blobs gets saved in parallel and code that
-    // uses this for import etc. is non-async, so simpler.
-    const saveBlob = (data: string, type: string) => {
-      const buf = Buffer.from(
-        data,
-        isJupyterBase64MimeType(type) ? "base64" : undefined,
-      );
-      const s: string = sha1(buf);
+    // Here we start saving each blob to the blob store over the network.
+    // There is no guarantee that will work and this won't just be lost.
+    // It's unlikely but could happen.  This is always output images in
+    // notebooks, so not critical data.  By doing this, the blobs get saved in
+    // parallel and code that uses this for import etc. is non-async, so
+    // simpler.
+    blobifyOutputData(content.data, (buf, s, type) => {
       (async () => {
         try {
           await this.asyncBlobStore.set(s, buf);
@@ -2963,45 +2954,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
           // less efficient.
         }
       })();
+      dbg("put content in blob store: ", { type, sha1: s });
       return s;
-    };
-
-    let type: string;
-    for (type of JUPYTER_MIMETYPES) {
-      if (content.data[type] == null) {
-        continue;
-      }
-      if (
-        type.split("/")[0] === "image" ||
-        type === "application/pdf" ||
-        type === "text/html"
-      ) {
-        // Store all images and PDF and text/html in a binary blob store, so we don't have
-        // to involve it in realtime sync.  It tends to be large, etc.
-        if (isSha1(content.data[type])) {
-          // it was already processed, e.g., this happens when a browser that was
-          // processing output closes and we cutoff to the project processing output.
-          continue;
-        }
-        if (type == "text/html" && !shouldUseIframe(content.data[type])) {
-          continue;
-        }
-        const s = saveBlob(content.data[type], type);
-        if (s) {
-          dbg("put content in blob store: ", { type, sha1: s });
-          // only remove if the save actually worked -- we don't want to break output
-          // for the user for a little optimization!
-          if (type == "text/html") {
-            // NOTE: in general, this may or may not get rendered as an iframe --
-            // we use iframe for backward compatibility.
-            content.data["iframe"] = s;
-            delete content.data["text/html"];
-          } else {
-            content.data[type] = s;
-          }
-        }
-      }
-    }
+    });
   };
 
   private cellOutputHandler = (cell) => {

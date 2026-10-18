@@ -12,6 +12,7 @@ import { stripMathEnvironment } from "@cocalc/frontend/editors/slate/elements/ma
 import $ from "jquery";
 import { tex2jax } from "./tex2jax";
 import { macros } from "./math-katex";
+import { katexTrust } from "@cocalc/frontend/misc/katex-trust";
 
 // gets defined below.
 let renderToString: any = undefined;
@@ -58,7 +59,8 @@ function katex_plugin(elt, preProcess): void {
       const katex_options = {
         displayMode: (node[0] as any).type == "math/tex; mode=display",
         macros,
-        trust: true,
+        // Deny by default: only \href/\url to http(s) and mailto.
+        trust: katexTrust,
         globalGroup: true, // See https://github.com/sagemathinc/cocalc/issues/5750
       };
       let text = node.text();

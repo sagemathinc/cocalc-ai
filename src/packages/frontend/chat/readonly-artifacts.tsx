@@ -7,6 +7,7 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 
 const FileArtifact = lazy(() =>
   import("@cocalc/frontend/frame-editors/chat-editor/file-artifact").then(
@@ -116,7 +117,9 @@ export function ReadonlyArtifactCards({
         noSanitize: false,
         disableMarkdownCodebar: true,
         urlTransform: (url, tag) =>
-          tag?.toLowerCase() === "img" ? "" : context.urlTransform?.(url, tag),
+          tag?.toLowerCase() === "img"
+            ? URL_REJECTED
+            : context.urlTransform?.(url, tag),
       }}
     >
       {rows

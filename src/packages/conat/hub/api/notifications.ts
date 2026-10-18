@@ -142,6 +142,33 @@ export interface ListNotificationsOptions {
   kind?: string;
   project_id?: string | null;
   state?: NotificationInboxState;
+  // Only notifications created at or after this time (ISO string or Date).
+  since?: string | Date;
+  // Paging through every notification: rows come in notification_id order
+  // (stable even while notifications change), after this id if given. Pass
+  // the previous page's last notification_id. Without page, newest first.
+  page?: { after_notification_id?: string };
+}
+
+export interface NotificationSummaryOptions {
+  account_id?: string;
+  kind?: string;
+  project_id?: string | null;
+  state?: NotificationInboxState;
+  since?: string | Date;
+}
+
+export interface NotificationSummaryResult {
+  total: number;
+  // Largest groups first; at most 200.
+  groups: {
+    kind: string;
+    origin_label: string | null;
+    title: string | null;
+    count: number;
+    unread: number;
+    latest_at: Date | null;
+  }[];
 }
 
 export interface NotificationListSnapshot {
@@ -254,6 +281,9 @@ export interface Notifications {
     opts?: ListNotificationsOptions,
   ) => Promise<NotificationListSnapshot>;
   counts: (opts?: { account_id?: string }) => Promise<NotificationCountsResult>;
+  summary: (
+    opts?: NotificationSummaryOptions,
+  ) => Promise<NotificationSummaryResult>;
   claimCodexNotificationDelivery: (
     opts: ClaimCodexNotificationDeliveryOptions,
   ) => Promise<ClaimCodexNotificationDeliveryResult>;
@@ -413,6 +443,7 @@ export const notifications = {
   list: authFirstRequireAccount,
   listSnapshot: authFirstRequireAccount,
   counts: authFirstRequireAccount,
+  summary: authFirstRequireAccount,
   claimCodexNotificationDelivery: authFirstRequireAccount,
   markRead: authFirstRequireAccount,
   markAllRead: authFirstRequireAccount,

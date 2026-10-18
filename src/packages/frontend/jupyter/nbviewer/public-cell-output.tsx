@@ -241,7 +241,13 @@ function getPriority(type: string): number {
 function renderHtml(value: unknown): JSX.Element {
   const content = `${value ?? ""}`;
   if (shouldIsolateHtmlOutput(content)) {
-    return <AutosizedIframe srcDoc={content} title="Jupyter HTML output" />;
+    return (
+      <AutosizedIframe
+        srcDoc={content}
+        profile="opaque-scripts"
+        title="Jupyter HTML output"
+      />
+    );
   }
   return (
     // Public notebook viewers render on a dedicated raw subdomain with no

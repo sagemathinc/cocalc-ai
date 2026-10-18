@@ -51,6 +51,7 @@ import {
   grantComputeVmProjectAccess,
   listComputeVmProjectAccess,
   revokeComputeVmProjectAccess,
+  updateComputeVmProjectAccessState,
 } from "./project-access";
 import { backfillComputeVmProjectAccess } from "@cocalc/database/postgres/schema/compute-vm-project-access";
 
@@ -239,6 +240,42 @@ describe("compute VM durable state", () => {
       ready_at: null,
     });
     expect(timings[0]?.created_at).toBeInstanceOf(Date);
+  });
+
+  it("counts failed project access syncs until one succeeds", async () => {
+    const owner = randomUUID();
+    const project = randomUUID();
+    const vm = await insertComputeVm(
+      vmInput({ owner_account_id: owner, project_id: null }),
+    );
+    await grantComputeVmProjectAccess({
+      owner_account_id: owner,
+      vm_id: vm.id,
+      project_id: project,
+      ssh_public_key: "ssh-ed25519 AAAAPROJECT project",
+      created_by_account_id: owner,
+    });
+    const fail = async () =>
+      await updateComputeVmProjectAccessState({
+        vm_id: vm.id,
+        project_id: project,
+        state: "degraded",
+        error: "host busy",
+        sync_failed: true,
+      });
+
+    expect((await fail())?.metadata?.sync_failures).toBe(1);
+    const second = await fail();
+    expect(second).toMatchObject({ state: "degraded", error: "host busy" });
+    expect(second?.metadata?.sync_failures).toBe(2);
+    const ready = await updateComputeVmProjectAccessState({
+      vm_id: vm.id,
+      project_id: project,
+      state: "ready",
+      error: null,
+    });
+    expect(ready?.state).toBe("ready");
+    expect(ready?.metadata?.sync_failures).toBeUndefined();
   });
 
   it("resolves only active project access grants", async () => {

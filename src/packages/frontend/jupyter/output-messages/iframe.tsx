@@ -8,21 +8,10 @@ Handle iframe output messages involving a src doc.
 */
 
 import { Spin } from "antd";
-import { delay } from "awaiting";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import useBlob from "./use-blob";
-import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
-import useCounter from "@cocalc/frontend/app-framework/counter-hook";
-import HTML from "./mime-types/html";
 import ShowError from "@cocalc/frontend/components/error";
-import AutosizedIframe from "./autosized-iframe";
-import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
-// This impact loading the iframe data from the backend project (via the sha1 hash).
-// Doing retries is useful, e.g., since the project might not be running.
-const MAX_ATTEMPTS = 10;
-const MAX_WAIT = 5000;
-const BACKOFF = 1.3;
-const UNTRUSTED_IFRAME_SANDBOX = "allow-forms allow-scripts allow-presentation";
+import HtmlOutput from "./html-output";
 
 interface Props {
   sha1: string;
@@ -32,20 +21,16 @@ interface Props {
   trust?: boolean;
 }
 
+// The blob is HTML; it renders like any other HTML output (trust plays no
+// part).
 export default function IFrame(props: Props) {
   const [error, setError] = useState<string>("");
-  const src = useBlob({
+  const html = useBlob({
     sha1: props.sha1,
     actions: props.actions,
     type: "text/html",
     setError,
-    leaveAsString: (content: string) => {
-      if (!props.trust) {
-        // never leave as string when not trusted -- iframes are safer.
-        return false;
-      }
-      return !shouldIsolateHtmlOutput(content);
-    },
+    leaveAsString: () => true,
   });
 
   if (error) {
@@ -57,83 +42,12 @@ export default function IFrame(props: Props) {
       />
     );
   }
-  if (!src) {
+  if (html == null) {
     return (
       <div>
         <Spin delay={1000} />
       </div>
     );
   }
-  if (src.startsWith("blob:")) {
-    return (
-      <AutosizedIframe
-        src={src}
-        sandbox={props.trust ? undefined : UNTRUSTED_IFRAME_SANDBOX}
-        title="Jupyter HTML output"
-      />
-    );
-  }
-  if (props.trust && !shouldIsolateHtmlOutput(src)) {
-    // Trusted HTML that does not require iframe isolation is rendered inline so
-    // it gets normal notebook output sizing and avoids wrapping top-level
-    // iframe snippets in an extra iframe.
-    return (
-      <HTML
-        id={props.cacheid}
-        index={props.index}
-        trust={props.trust}
-        value={src}
-      />
-    );
-  }
-  return <NonCachedIFrame src={src} />;
-}
-
-function NonCachedIFrame({ src }) {
-  const { val: attempts, inc: incAttempts } = useCounter();
-  const [failed, setFailed] = useState<boolean>(false);
-  const delayRef = useRef<number>(500);
-  const isMountedRef = useIsMountedRef();
-  async function load_error(): Promise<void> {
-    if (attempts >= MAX_ATTEMPTS) {
-      setFailed(true);
-      return;
-    }
-    await delay(delayRef.current);
-    if (!isMountedRef.current) return;
-    delayRef.current = Math.min(MAX_WAIT, delayRef.current * BACKOFF);
-    incAttempts();
-  }
-
-  if (failed) {
-    return <div>Failed to load iframe contents</div>;
-  }
-
-  if (!src) {
-    return;
-  }
-  let srcDoc: undefined | string = undefined;
-  if (
-    !(
-      src.startsWith("https:") ||
-      src.startsWith("http:") ||
-      src.startsWith("blob:")
-    )
-  ) {
-    srcDoc = src;
-    src = undefined;
-  }
-
-  return (
-    <AutosizedIframe
-      src={src}
-      srcDoc={srcDoc}
-      onError={load_error}
-      title="Jupyter HTML output"
-    />
-  );
-}
-
-export function isLikelyIframe(content: string): boolean {
-  return shouldIsolateHtmlOutput(content);
+  return <HtmlOutput value={html} />;
 }

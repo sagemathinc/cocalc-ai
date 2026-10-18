@@ -1,4 +1,5 @@
 import { Suspense, useMemo, useState } from "react";
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 import { Alert, Button, ConfigProvider, Space } from "antd";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import type { ArtifactRecord } from "@cocalc/chat";
@@ -206,7 +207,7 @@ export function GitHubPRArtifact({
               disableMarkdownCodebar: true,
               urlTransform: (url, tag) =>
                 tag?.toLowerCase() === "img"
-                  ? ""
+                  ? URL_REJECTED
                   : context.urlTransform?.(url, tag),
             }}
           >

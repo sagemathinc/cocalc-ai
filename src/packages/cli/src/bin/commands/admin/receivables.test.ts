@@ -1593,3 +1593,70 @@ test("receivables Stripe event retry previews and commits explicitly", async () 
   assert.equal(calls[0].event_id, "evt_retry123");
   assert.match(calls[0].idempotency_key, /^receivables-stripe-event-retry-/);
 });
+
+test("receivables resolve-operation previews, requires evidence and commits with a version", async () => {
+  const calls: any[] = [];
+  const api = {
+    get: async () => order(),
+    resolveProviderOperation: async (opts: any) => {
+      calls.push(opts);
+      return order({ version: 8 });
+    },
+  };
+  const OP = "44444444-4444-4444-8444-444444444444";
+  const base = [
+    "node",
+    "test",
+    "admin",
+    "receivables",
+    "resolve-operation",
+    "AR-2026-000123",
+    "--operation-id",
+    OP,
+    "--reason",
+    "release the fence of a rejected provision",
+  ];
+  const dryRun = setup(api);
+  await dryRun.program.parseAsync([
+    ...base,
+    "--evidence",
+    "domain overlap rejected before anything was written",
+  ]);
+  assert.equal(calls.length, 0);
+  assert.equal((dryRun.output() as any).preview, true);
+  assert.equal((dryRun.output() as any).request.resolution, "failed");
+
+  const noEvidence = setup(api);
+  await assert.rejects(
+    noEvidence.program.parseAsync([...base, "--evidence", "x", "--commit"]),
+  );
+  const noVersion = setup(api);
+  await assert.rejects(
+    noVersion.program.parseAsync([
+      ...base,
+      "--evidence",
+      "domain overlap rejected before anything was written",
+      "--commit",
+    ]),
+  );
+  assert.equal(calls.length, 0);
+
+  const commit = setup(api);
+  await commit.program.parseAsync([
+    ...base,
+    "--evidence",
+    "domain overlap rejected before anything was written",
+    "--expected-version",
+    "7",
+    "--commit",
+  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, order().id);
+  assert.equal(calls[0].operation_id, OP);
+  assert.equal(calls[0].resolution, "failed");
+  assert.equal(calls[0].expected_version, 7);
+  assert.match(
+    calls[0].idempotency_key,
+    /^receivables-provider-operation-resolve-/,
+  );
+});

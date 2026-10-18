@@ -48,6 +48,7 @@ import type {
   CommercialQuoteVoidRequest,
   CommercialReconcilePreview,
   CommercialReconcilePreviewRequest,
+  CommercialProviderOperationResolveRequest,
   CommercialStripeEventRetryRequest,
   CommercialStripeEventRetryResult,
   CommercialStripeQuoteAcceptRequest,
@@ -534,6 +535,15 @@ export async function retryStripeEvent(
   opts: CommercialStripeEventRetryRequest,
 ): Promise<CommercialStripeEventRetryResult> {
   return await invoke("retryStripeEvent", opts, {
+    fresh: true,
+    capability: "reconciliation",
+  });
+}
+
+export async function resolveProviderOperation(
+  opts: CommercialProviderOperationResolveRequest,
+): Promise<CommercialOrder> {
+  return await invoke("resolveProviderOperation", opts, {
     fresh: true,
     capability: "reconciliation",
   });

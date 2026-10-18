@@ -798,6 +798,74 @@ describe("hiding projects across bays", () => {
   });
 });
 
+describe("leaving projects across bays", () => {
+  // leaver, homed on the seed, collaborates on a project on each bay and
+  // leaves both in one call. The call runs once per bay with that bay's
+  // project; the attached bay records the part forwarded to it, after asking
+  // the seed (leaver's home) for fresh auth. Own accounts: projects count
+  // against each account's limit.
+  let leaver;
+  const member = async (bay, project_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT users -> $2::text ->> 'group' AS grp FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project_id)}, ${JSON.stringify(leaver.account_id)}]);
+       return rows[0]?.grp ?? null;`,
+    );
+  const forwardedLeaves = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.leaveOrDeleteProjects' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(leaver.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("leaves a project on each bay, each on its own bay", async () => {
+    leaver = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "leaver",
+    });
+    leaver.client = await client(leaver);
+    const seedOwner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "seed-owner",
+    });
+    seedOwner.client = await client(seedOwner);
+    const attachedOwner = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "attached-owner",
+    });
+    attachedOwner.client = await client(attachedOwner);
+    const local = await createProject(seedOwner.client, "leave-seed");
+    const remote = await createProject(attachedOwner.client, "leave-attached");
+    await invite(seedOwner, leaver, local);
+    await invite(attachedOwner, leaver, remote);
+    assert.equal(await owningBay(remote), ATTACHED);
+    assert.equal(await member(ATTACHED, remote), "collaborator");
+    assert.equal(await member(SEED, local), "collaborator");
+
+    const before = await forwardedLeaves();
+    assert.deepEqual(
+      await leaver.client.call("projects.leaveOrDeleteProjects", {
+        project_ids: [local, remote],
+      }),
+      [
+        { project_id: local, action: "removed_self" },
+        { project_id: remote, action: "removed_self" },
+      ],
+    );
+    assert.equal(await forwardedLeaves(), before + 1);
+    assert.equal(await member(ATTACHED, remote), null);
+    assert.equal(await member(SEED, local), null);
+  });
+});
+
 describe("bulk project stop across bays", () => {
   // carol, homed on the seed, stops a project on each bay in one call. Each
   // project's stop is its own call, forwarded to the project's bay when it is
@@ -1386,6 +1454,102 @@ describe("sensor budgets on the account's home bay", () => {
        return Object.fromEntries(rows.map((r) => [r.kind, r.n]));`,
     );
   }
+});
+
+describe("site-license ownership transfer across bays", () => {
+  // Site licenses and their pools live on the seed. An admin homed on the
+  // attached bay transfers a seed license owned by alice (seed) to bob
+  // (attached), through the public API and the inter-bay seed client.
+  let admin;
+  let site_license_id;
+
+  async function seedOwners() {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(site_license_id)};
+       const license = await getPool().query(
+         "SELECT owner_account_id::text AS owner FROM site_licenses WHERE id=$1::uuid", [id]);
+       const pools = await getPool().query(
+         "SELECT owner_account_id::text AS owner FROM membership_packages WHERE kind='site' AND metadata->>'site_license_id'=$1::text ORDER BY created", [id]);
+       return { license: license.rows[0]?.owner ?? null, pools: pools.rows.map((r) => r.owner) };`,
+    );
+  }
+
+  it("lets an admin homed on the attached bay transfer a seed license and its pools", async () => {
+    admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "zara",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    site_license_id = await runInBay(
+      cluster,
+      SEED,
+      `const { createTestMembershipTier } = server("purchases/test-data.js");
+       const { adminProvisionSiteLicense } = server("membership/site-licenses.js");
+       const tier = "multibay-site-" + ${JSON.stringify(randomUUID().slice(0, 8))};
+       await createTestMembershipTier({ id: tier, priority: 10, price_yearly: 100 });
+       const pool = (pool_name, seat_count) => ({
+         pool_name, membership_class: tier, seat_count, requires_approval: false,
+         verification_policy: "email-domain", exclusive_group: "teaching" });
+       const overview = await adminProvisionSiteLicense({
+         actor_account_id: ${JSON.stringify(alice.account_id)},
+         owner_account_id: ${JSON.stringify(alice.account_id)},
+         name: "Multibay Transfer Campus",
+         organization_name: "Multibay University",
+         allowed_domains: ["multibay-transfer-" + ${JSON.stringify(randomUUID().slice(0, 8))} + ".edu"],
+         pools: [pool("Students", 10), pool("Instructors", 2)],
+         trusted_admin: true,
+       });
+       return overview.site_license.id;`,
+    );
+    assert.deepEqual(await seedOwners(), {
+      license: alice.account_id,
+      pools: [alice.account_id, alice.account_id],
+    });
+
+    const overview = await admin.client.call("purchases.updateSiteLicense", {
+      site_license_id,
+      owner_account_id: bob.account_id,
+    });
+    assert.equal(overview.site_license.owner_account_id, bob.account_id);
+    assert.deepEqual(await seedOwners(), {
+      license: bob.account_id,
+      pools: [bob.account_id, bob.account_id],
+    });
+    const read = await admin.client.call("purchases.getSiteLicenseOverview", {
+      site_license_id,
+    });
+    assert.equal(read.site_license.owner_account_id, bob.account_id);
+    assert.ok(
+      read.recent_audit_events.some(
+        (event) =>
+          event.action === "site-license-owner-transferred" &&
+          event.metadata?.previous_owner_account_id === alice.account_id &&
+          event.metadata?.owner_account_id === bob.account_id,
+      ),
+    );
+  });
+
+  it("refuses an ownership transfer by a non-admin on the attached bay", async () => {
+    await assert.rejects(
+      bob.client.call("purchases.updateSiteLicense", {
+        site_license_id,
+        owner_account_id: alice.account_id,
+      }),
+      /admin/,
+    );
+    assert.equal((await seedOwners()).license, bob.account_id);
+  });
 });
 
 describe("fabric faults", () => {

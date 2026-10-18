@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 import { PublicAliasInfo } from "@cocalc/frontend/components/public-alias-info";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -466,7 +467,7 @@ function LibraryArtifactContent({
               disableMarkdownCodebar: true,
               urlTransform: (url, tag) =>
                 tag?.toLowerCase() === "img"
-                  ? ""
+                  ? URL_REJECTED
                   : context.urlTransform?.(url, tag),
             }}
           >

@@ -4,10 +4,11 @@
  */
 
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
-import { isSafeHtmlUrl } from "@cocalc/frontend/components/sanitize-html";
+import { isSafeImageUrl } from "@cocalc/frontend/components/sanitize-html";
 import { dict } from "@cocalc/util/misc";
 import { parseFragmentElement } from "../../markdown-to-slate/util";
 import { register, SlateElement } from "../register";
+import { applyUrlTransform } from "@cocalc/frontend/lib/url-transform";
 
 export interface Image extends SlateElement {
   type: "image";
@@ -87,9 +88,11 @@ register({
     const { urlTransform, reloadImages, noSanitize } = useFileContext();
     const node = element as Image;
     const { src, alt, title } = node;
-    const transformedSrc = urlTransform?.(src, "img") ?? src;
+    const transformedSrc = applyUrlTransform(urlTransform, src, "img");
     const safeSrc =
-      noSanitize || isSafeHtmlUrl(transformedSrc) ? transformedSrc : undefined;
+      transformedSrc != null && (noSanitize || isSafeImageUrl(transformedSrc))
+        ? transformedSrc
+        : undefined;
     return (
       <img
         {...attributes}

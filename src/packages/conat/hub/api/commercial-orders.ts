@@ -500,6 +500,17 @@ export interface CommercialStripeEventRetryRequest extends CommercialMutationReq
   event_id: string;
 }
 
+// Resolve one provider operation left indeterminate (which fences further
+// operations of its kind on the order) as failed, after the operator has
+// established that it wrote nothing. An exact replay of the original call
+// cannot do this: the billing authority returns the stored failure.
+export interface CommercialProviderOperationResolveRequest extends CommercialMutationRequest {
+  id: string;
+  operation_id: string;
+  resolution: "failed";
+  evidence: string;
+}
+
 export interface CommercialStripeEventRetryResult {
   event_id: string;
   status: "pending";
@@ -701,6 +712,9 @@ export interface CommercialOrdersApi {
   retryStripeEvent: (
     opts: CommercialStripeEventRetryRequest,
   ) => Promise<CommercialStripeEventRetryResult>;
+  resolveProviderOperation: (
+    opts: CommercialProviderOperationResolveRequest,
+  ) => Promise<CommercialOrder>;
   backfill: (
     opts: CommercialBackfillRequest,
   ) => Promise<CommercialBackfillResponse>;
@@ -753,5 +767,6 @@ export const commercialOrders = {
   endFulfillment: authFirstRequireAccount,
   diagnostics: authFirstRequireAccount,
   retryStripeEvent: authFirstRequireAccount,
+  resolveProviderOperation: authFirstRequireAccount,
   backfill: authFirstRequireAccount,
 };

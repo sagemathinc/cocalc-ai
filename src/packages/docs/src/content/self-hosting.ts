@@ -53,7 +53,11 @@ docker logs -f cocalc-star
 4. Open the printed link that starts with http://localhost:8170 and create
    the first admin account.
 5. Create a project and check that Jupyter, a terminal, and LaTeX work.
-6. Use the printed invite link to add collaborators.
+6. To add collaborators, share the signup URL that the same log prints after
+   "Invite another user with this signup URL". Like the admin link, it starts
+   with http://localhost:8170, so it opens only on this computer. To invite
+   people who use other computers, run Star on a server with a domain, as
+   described next.
 
 ## On a server with a domain
 

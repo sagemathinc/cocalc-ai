@@ -485,6 +485,51 @@ describe("ACP attention storage", () => {
     ).toEqual([stale.attention_id]);
   });
 
+  it("lists an async answer whose delivery failed, so a reload can retry it", () => {
+    const failed = createAttention({
+      source_kind: "codex_async_question",
+      source_id: "async-delivery-failed",
+    });
+    submitAcpAttentionResponse({
+      attention_id: failed.attention_id,
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      response_id: "saved-response",
+      answers: { choice: ["Yes"] },
+    });
+    resolveAcpAttention({
+      attention_id: failed.attention_id,
+      state: "stale",
+      reason: "delivery failed",
+    });
+    // An async question that went stale unanswered needs nothing here.
+    const unanswered = createAttention({
+      source_kind: "codex_async_question",
+      source_id: "async-unanswered",
+    });
+    resolveAcpAttention({
+      attention_id: unanswered.attention_id,
+      state: "stale",
+    });
+    expect(
+      listAcpAttention({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        state: "actionable",
+      }).map(({ attention_id, state, response }) => ({
+        attention_id,
+        state,
+        response,
+      })),
+    ).toEqual([
+      {
+        attention_id: failed.attention_id,
+        state: "stale",
+        response: { choice: ["Yes"] },
+      },
+    ]);
+  });
+
   it("marks every held synchronous responder stale after service restart", () => {
     const first = createAttention({ source_id: "sync-before-restart-1" });
     const second = createAttention({ source_id: "sync-before-restart-2" });
