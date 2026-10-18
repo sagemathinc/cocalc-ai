@@ -187,6 +187,21 @@ test("auth logout --all signs out every browser-cookie profile", async () => {
   assert.deepEqual(f.saved().profiles, {});
 });
 
+test("auth logout --all still removes every profile when a sign-out throws", async () => {
+  const f = logoutFixture(async (_api, cookie) => {
+    if (cookie.includes("prod")) throw new Error("unexpected failure");
+    return true;
+  });
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.deepEqual(f.capture.data.server_sessions, {
+    prod: "not confirmed",
+    staging: "revoked",
+    keyonly: "no browser session",
+  });
+  assert.match(f.capture.data.warning, /may still be valid/);
+  assert.deepEqual(f.saved().profiles, {});
+});
+
 test("external agent login creates only a separate scoped profile, despite ambient human credentials", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-external-login-"));
   const priorHome = process.env.HOME,

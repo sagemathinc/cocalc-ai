@@ -1291,10 +1291,16 @@ Examples:
   ): Promise<"revoked" | "not confirmed" | "no browser session" | "skipped"> {
     if (!profile?.cookie?.trim()) return "no browser session";
     if (localOnly) return "skipped";
-    const api = normalizeUrl(profile.api ?? defaultApiBaseUrl());
-    return (await revokeSession(api, profile.cookie.trim()))
-      ? "revoked"
-      : "not confirmed";
+    // Never let a failed attempt (e.g. an invalid stored API URL) stop the
+    // local profile from being removed: logout must stay a recovery path.
+    try {
+      const api = normalizeUrl(profile.api ?? defaultApiBaseUrl());
+      return (await revokeSession(api, profile.cookie.trim()))
+        ? "revoked"
+        : "not confirmed";
+    } catch {
+      return "not confirmed";
+    }
   }
 
   const NOT_CONFIRMED_WARNING =
