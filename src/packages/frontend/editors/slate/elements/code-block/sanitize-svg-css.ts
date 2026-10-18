@@ -32,8 +32,9 @@ and rebuilt from the parsed rules:
   positioning, which could cover the page.
 
 The same declaration policy applies to style attributes and to presentation
-attributes.  Values are judged in their parsed, canonical form, so CSS escapes
-and alternate spellings don't matter.
+attributes.  Values are judged in their parsed, canonical form, so alternate
+spellings don't matter; escapes, which the CSSOM keeps, are handled by the
+backslash rule above.
 */
 
 const RESOURCE_FUNCTION =
