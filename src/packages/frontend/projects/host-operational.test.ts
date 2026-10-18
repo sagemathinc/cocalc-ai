@@ -35,8 +35,17 @@ describe("projects host operational display state", () => {
     ).toBe(true);
   });
 
-  it("suppresses brief unconfirmed project-host disconnects", () => {
-    const now = new Date("2026-08-12T19:00:05.000Z").getTime();
+  it("suppresses unconfirmed project-host disconnects for 30 s", () => {
+    const now = new Date("2026-08-12T19:00:30.000Z").getTime();
+    // a routine host restart (15 s) shows nothing
+    expect(
+      hostUnavailableBannerDelay({
+        candidate: true,
+        recoveryActive: false,
+        unavailableSince: "2026-08-12T19:00:15.000Z",
+        now,
+      }),
+    ).toBe(15_000);
     expect(
       hostUnavailableBannerDelay({
         candidate: true,
