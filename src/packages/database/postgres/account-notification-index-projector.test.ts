@@ -875,13 +875,39 @@ describe("account_notification_index projector", () => {
     await drain();
     expect(await readState()).toEqual([{}]);
 
+    // The person saved the question before answering it.
+    await getPool().query(
+      `UPDATE account_notification_index SET read_state = '{"saved": true}'
+        WHERE account_id = $1 AND summary->>'attention_id' = $2`,
+      [LOCAL_ACCOUNT_ID, attentionId],
+    );
     await notice(
       "77777777-7777-4777-8777-777777777783",
       "answered",
       "2026-04-04T00:02:00.000Z",
     );
     await drain();
-    expect(await readState()).toEqual([{ read: true, archived: true }]);
+    expect(await readState()).toEqual([
+      { saved: true, read: true, archived: true },
+    ]);
+
+    // An older event applied late does not reopen the settled question.
+    await notice(
+      "77777777-7777-4777-8777-777777777784",
+      "pending",
+      "2026-04-04T00:01:30.000Z",
+    );
+    await drain();
+    expect(await readState()).toEqual([
+      { saved: true, read: true, archived: true },
+    ]);
+    const { rows } = await getPool().query(
+      `SELECT summary->>'attention_state' AS state
+         FROM account_notification_index
+        WHERE account_id = $1 AND summary->>'attention_id' = $2`,
+      [LOCAL_ACCOUNT_ID, attentionId],
+    );
+    expect(rows).toEqual([{ state: "answered" }]);
   });
 
   it("ignores events for accounts homed in another bay", async () => {
