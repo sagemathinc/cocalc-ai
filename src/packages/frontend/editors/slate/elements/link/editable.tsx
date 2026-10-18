@@ -8,7 +8,7 @@ import { register } from "../register";
 import { useProcessLinks, useReadOnly } from "../hooks";
 import { Tooltip } from "@cocalc/frontend/components";
 import { open_new_tab } from "@cocalc/frontend/misc";
-import { Link, LINK_STYLE } from "./index";
+import { isSafeSlateLinkUrl, Link, LINK_STYLE } from "./index";
 
 const linkify = require("linkify-it")();
 
@@ -18,6 +18,9 @@ register({
   Element: ({ attributes, children, element }) => {
     const node = element as Link;
     const { url, title } = node;
+    // As in the read-only link (index.tsx): only safe URLs are linked or
+    // opened; the document can say anything.
+    const safeUrl = url && isSafeSlateLinkUrl(url) ? url : undefined;
     const readOnly = useReadOnly();
     const doubleClick = !readOnly;
     const ref = useProcessLinks([url], { doubleClick });
@@ -32,12 +35,12 @@ register({
             }
           >
             <a
-              href={url}
+              href={safeUrl}
               title={title}
               onDoubleClick={
-                doubleClick && url
+                doubleClick && safeUrl
                   ? () => {
-                      open_new_tab(url);
+                      open_new_tab(safeUrl);
                     }
                   : undefined
               }
