@@ -64,6 +64,27 @@ describe("projects host operational display state", () => {
     ).toBe(0);
   });
 
+  it("shows a host-reported outage immediately, without the grace period", () => {
+    // host_info says off/starting, but there is no spot-recovery phase or
+    // maintenance record: still a confirmed outage, not a routed blip.
+    expect(
+      hostUnavailableBannerDelay({
+        candidate: true,
+        recoveryActive: false,
+        confirmedByHost: true,
+        unavailableSince: "2026-08-12T19:00:29.000Z",
+        now: new Date("2026-08-12T19:00:30.000Z").getTime(),
+      }),
+    ).toBe(0);
+    expect(
+      hostUnavailableBannerDelay({
+        candidate: false,
+        recoveryActive: false,
+        confirmedByHost: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it("shows confirmed recovery immediately and hides on reconnection", () => {
     expect(
       hostUnavailableBannerDelay({

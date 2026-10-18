@@ -79,18 +79,24 @@ function timestamp(value: unknown): number | undefined {
 export function hostUnavailableBannerDelay({
   candidate,
   recoveryActive,
+  confirmedByHost = false,
   unavailableSince,
   now = Date.now(),
   graceMs = HOST_UNAVAILABLE_BANNER_GRACE_MS,
 }: {
   candidate: boolean;
   recoveryActive: boolean;
+  // host_info itself reports the host unavailable (e.g. off or starting),
+  // as opposed to only a lost routed connection to a host reported running.
+  confirmedByHost?: boolean;
   unavailableSince?: string;
   now?: number;
   graceMs?: number;
 }): number | undefined {
   if (!candidate) return;
-  if (recoveryActive) return 0;
+  // The grace period is for unconfirmed disconnects only; a recovery or an
+  // outage the server reports is shown right away.
+  if (recoveryActive || confirmedByHost) return 0;
   const unavailableAt = timestamp(unavailableSince);
   const elapsed = unavailableAt == null ? 0 : Math.max(0, now - unavailableAt);
   return Math.max(0, graceMs - elapsed);
