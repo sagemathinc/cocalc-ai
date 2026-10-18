@@ -215,9 +215,10 @@ type ListProjectedNotificationsOptions = {
   state?: NotificationInboxState;
   // Only notifications created at or after this time.
   since?: Date | string;
-  // Keyset paging: rows after this one in list order (newest first). Pass
-  // the created_at and notification_id of the last row of the previous page.
-  before?: { created_at: Date | string | null; notification_id: string };
+  // Paging through every notification: rows ordered by notification_id
+  // (which never changes), after this id if given. created_at cannot be a
+  // paging key, since projection updates rewrite it between pages.
+  page?: { after_notification_id?: string };
 };
 
 function normalizeTime(raw: Date | string, label: string): Date {
@@ -228,7 +229,7 @@ function normalizeTime(raw: Date | string, label: string): Date {
 
 // The row filters shared by listing and summarizing.
 function notificationFilters(
-  opts: Omit<ListProjectedNotificationsOptions, "limit" | "before">,
+  opts: Omit<ListProjectedNotificationsOptions, "limit" | "page">,
 ): { where: string[]; params: any[] } {
   const account_id = normalizeAccountId(opts.account_id);
   const state = normalizeNotificationInboxState(opts.state);
@@ -275,23 +276,11 @@ async function listProjectedNotificationsForAccountWithDb(
 ): Promise<AccountNotificationIndexRow[]> {
   const limit = normalizeLimit(opts.limit);
   const { where, params } = notificationFilters(opts);
-  if (opts.before != null) {
-    // Rows strictly after the cursor in (created_at DESC NULLS LAST,
-    // notification_id ASC) order. updated_at is deliberately not part of the
-    // order: marking rows read while paging must not move them between pages.
+  if (opts.page?.after_notification_id != null) {
     params.push(
-      normalizeUuid(opts.before.notification_id, "cursor notification id"),
+      normalizeUuid(opts.page.after_notification_id, "page notification id"),
     );
-    const id = `$${params.length}::UUID`;
-    if (opts.before.created_at == null) {
-      where.push(`(created_at IS NULL AND notification_id > ${id})`);
-    } else {
-      params.push(normalizeTime(opts.before.created_at, "cursor time"));
-      const t = `$${params.length}::TIMESTAMPTZ`;
-      where.push(
-        `(created_at < ${t} OR (created_at = ${t} AND notification_id > ${id}) OR created_at IS NULL)`,
-      );
-    }
+    where.push(`notification_id > $${params.length}::UUID`);
   }
   params.push(limit);
   const { rows } = await db.query(
@@ -305,7 +294,11 @@ async function listProjectedNotificationsForAccountWithDb(
        updated_at
      FROM account_notification_index
      WHERE ${where.join(" AND ")}
-     ORDER BY created_at DESC NULLS LAST, notification_id ASC
+     ORDER BY ${
+       opts.page
+         ? "notification_id ASC"
+         : "created_at DESC NULLS LAST, updated_at DESC NULLS LAST, notification_id ASC"
+     }
      LIMIT $${params.length}`,
     params,
   );
@@ -328,7 +321,7 @@ const MAX_NOTIFICATION_SUMMARY_GROUPS = 200;
 export async function summarizeProjectedNotificationsForAccount(
   opts: Omit<
     ListProjectedNotificationsOptions,
-    "limit" | "before" | "notification_id"
+    "limit" | "page" | "notification_id"
   >,
 ): Promise<{ groups: AccountNotificationSummaryGroup[]; total: number }> {
   const { where, params } = notificationFilters(opts);

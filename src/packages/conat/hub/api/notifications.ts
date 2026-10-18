@@ -144,9 +144,10 @@ export interface ListNotificationsOptions {
   state?: NotificationInboxState;
   // Only notifications created at or after this time (ISO string or Date).
   since?: string | Date;
-  // The next page: the created_at and notification_id of the previous
-  // page's last row. Rows are newest first.
-  before?: { created_at: string | Date | null; notification_id: string };
+  // Paging through every notification: rows come in notification_id order
+  // (stable even while notifications change), after this id if given. Pass
+  // the previous page's last notification_id. Without page, newest first.
+  page?: { after_notification_id?: string };
 }
 
 export interface NotificationSummaryOptions {

@@ -56,26 +56,36 @@ export function parseSince(
 // The list API's page size limit (MAX_NOTIFICATION_INBOX_LIST_LIMIT).
 const MAX_PAGE = 300;
 
-/** Every row, following the list cursor page by page (newest first). */
+/** Every matching row, newest first. Pages follow notification_id, which
+ * never changes, so a notification updated meanwhile is neither skipped nor
+ * returned twice. */
 export async function listAllNotifications(
   list: (opts: any) => Promise<any[]>,
   opts: Record<string, any>,
   pageSize = MAX_PAGE,
 ): Promise<any[]> {
   const rows: any[] = [];
-  let before: { created_at: any; notification_id: string } | undefined;
+  let after: string | undefined;
   for (;;) {
-    const page = await list({ ...opts, limit: pageSize, before });
+    const page = await list({
+      ...opts,
+      limit: pageSize,
+      page: after ? { after_notification_id: after } : {},
+    });
     rows.push(...page);
     const last = page.at(-1);
-    if (page.length < pageSize || last == null) return rows;
-    if (before && last.notification_id === before.notification_id)
+    if (page.length < pageSize || last == null) break;
+    if (last.notification_id === after)
       throw new Error("notification paging did not advance");
-    before = {
-      created_at: last.created_at ?? null,
-      notification_id: last.notification_id,
-    };
+    after = last.notification_id;
   }
+  const time = (row: any) =>
+    row.created_at == null ? -Infinity : new Date(row.created_at).getTime();
+  return rows.sort(
+    (a, b) =>
+      time(b) - time(a) ||
+      `${a.notification_id}`.localeCompare(`${b.notification_id}`),
+  );
 }
 
 async function resolveBodyMarkdown(opts: {

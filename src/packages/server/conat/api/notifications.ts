@@ -819,7 +819,7 @@ export async function list(
     project_id: opts.project_id,
     state: opts.state,
     since: opts.since,
-    before: opts.before,
+    page: opts.page,
   });
 }
 
@@ -848,7 +848,7 @@ export async function listSnapshot(
     project_id: opts.project_id,
     state: opts.state,
     since: opts.since,
-    before: opts.before,
+    page: opts.page,
   });
 }
 

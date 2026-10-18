@@ -412,32 +412,30 @@ test("--since accepts ages and dates", async () => {
   assert.throws(() => parseSince("yesterday", now), /--since must be/);
 });
 
-test("notifications list --all follows the cursor to the end", async () => {
+test("notifications list --all pages by id and returns newest first", async () => {
   const { listAllNotifications } = await import("./notifications");
   const rows = Array.from({ length: 5 }, (_, i) => ({
     notification_id: `00000000-0000-4000-8000-00000000000${i}`,
-    created_at: `2026-10-1${8 - i}T00:00:00.000Z`,
+    created_at: `2026-10-1${i}T00:00:00.000Z`,
   }));
   const calls: any[] = [];
   const all = await listAllNotifications(
     async (opts) => {
       calls.push(opts);
-      const start = opts.before
-        ? rows.findIndex(
-            (r) => r.notification_id === opts.before.notification_id,
-          ) + 1
+      const after = opts.page.after_notification_id;
+      const start = after
+        ? rows.findIndex((r) => r.notification_id === after) + 1
         : 0;
       return rows.slice(start, start + opts.limit);
     },
     { state: "unread" },
     2,
   );
-  assert.deepEqual(all, rows);
+  assert.deepEqual(all, [...rows].reverse());
   assert.equal(calls.length, 3);
-  assert.equal(calls[0].before, undefined);
-  assert.deepEqual(calls[1].before, {
-    created_at: rows[1].created_at,
-    notification_id: rows[1].notification_id,
+  assert.deepEqual(calls[0].page, {});
+  assert.deepEqual(calls[1].page, {
+    after_notification_id: rows[1].notification_id,
   });
   assert.equal(calls[2].state, "unread");
 });

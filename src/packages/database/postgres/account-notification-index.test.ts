@@ -183,7 +183,7 @@ describe("account_notification_index rebuild", () => {
     );
   });
 
-  it("pages through every notification with a stable cursor, since a time", async () => {
+  it("pages through every notification by id, even while rows change", async () => {
     // Seven notices; two share a creation time, and one is read.
     const base = Date.parse("2026-10-01T00:00:00.000Z");
     const rows = [0, 1, 2, 3, 3, 4, 5].map((day, i) => ({
@@ -208,30 +208,45 @@ describe("account_notification_index rebuild", () => {
       );
     }
     const seen: string[] = [];
-    let before: any;
+    let after: string | undefined;
     for (let page = 0; page < 10; page++) {
       const result = await listProjectedNotificationsForAccount({
         account_id: ACCOUNT_ID,
         limit: 2,
-        before,
+        page: after ? { after_notification_id: after } : {},
       });
       seen.push(...result.map((r) => r.notification_id));
       if (result.length < 2) break;
-      const last = result.at(-1)!;
-      // Marking rows read while paging does not move them between pages.
-      await setProjectedNotificationReadState({
-        account_id: ACCOUNT_ID,
-        notification_ids: result.map((r) => r.notification_id),
-        read: true,
-      });
-      before = {
-        created_at: last.created_at,
-        notification_id: last.notification_id,
-      };
+      after = result.at(-1)!.notification_id;
+      if (page === 0) {
+        // Between pages the projector rewrites created_at (coalescing): a
+        // row not yet returned becomes the newest, and a returned one the
+        // oldest. Neither may be skipped or returned twice.
+        await getPool().query(
+          `UPDATE account_notification_index SET created_at = $2, updated_at = $2
+            WHERE account_id = $1 AND notification_id = $3`,
+          [ACCOUNT_ID, new Date(base + 30 * 86_400_000), rows[5].id],
+        );
+        await getPool().query(
+          `UPDATE account_notification_index SET created_at = $2
+            WHERE account_id = $1 AND notification_id = $3`,
+          [ACCOUNT_ID, new Date(base - 30 * 86_400_000), rows[0].id],
+        );
+        await setProjectedNotificationReadState({
+          account_id: ACCOUNT_ID,
+          notification_ids: result.map((r) => r.notification_id),
+          read: true,
+        });
+      }
     }
-    // Newest first; the two notices from day 3 in id order; nothing seen
-    // twice or skipped although rows were marked read between pages.
-    expect(seen).toEqual([6, 5, 3, 4, 2, 1, 0].map((i) => rows[i].id));
+    expect([...seen].sort()).toEqual(rows.map((r) => r.id).sort());
+    expect(seen).toEqual(rows.map((r) => r.id)); // id order
+    // Without page: newest first (rows[5] was moved to the newest).
+    const newest = await listProjectedNotificationsForAccount({
+      account_id: ACCOUNT_ID,
+      limit: 1,
+    });
+    expect(newest[0].notification_id).toBe(rows[5].id);
 
     const recent = await listProjectedNotificationsForAccount({
       account_id: ACCOUNT_ID,
