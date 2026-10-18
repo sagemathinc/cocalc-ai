@@ -638,6 +638,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
       `${softwareBaseUrl}/project-host/ph-latest/bundle-linux.tar.xz`,
     );
     expect(scripts.projectHostVersion).toBe("ph-latest");
+    expect(scripts.projectHostFallbackManifestUrl).toBe("");
   });
 
   it("keeps a desired artifact version the store no longer serves when the host already has it installed", async () => {
@@ -688,5 +689,14 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(scripts.projectHostBundleSha256).toBe("");
     expect(scripts.toolsVersion).toBe("missing-build");
     expect(scripts.toolsManifestUrl).toBe("");
+    // The persisted inventory can be stale (a fresh boot disk after a
+    // persistent stop or reprovision): bootstrap falls back to latest if the
+    // kept version directory is absent and can't be downloaded.
+    expect(scripts.projectHostFallbackManifestUrl).toBe(
+      `${softwareBaseUrl}/project-host/latest-linux.json`,
+    );
+    expect(scripts.toolsFallbackManifestUrl).toBe(
+      `${softwareBaseUrl}/tools/latest-linux-amd64.json`,
+    );
   });
 });
