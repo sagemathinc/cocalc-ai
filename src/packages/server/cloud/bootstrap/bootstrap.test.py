@@ -4070,6 +4070,7 @@ normalize_project_io_class_state
         self.assertEqual(port(["PORT=nope", "garbage line"]), 9102)
         self.assertEqual(port(["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0"]), 9102)
         self.assertEqual(port(["PORT=65500"]), 9102)
+        self.assertEqual(port(["PORT=127.0.0.1:9010"]), 9110)
 
     def _storage_wrapper_for(self, cfg) -> str:
         captured: dict[str, str] = {}
@@ -4154,7 +4155,7 @@ normalize_project_io_class_state
                         for name in (
                             "project_host_env_file_value",
                             "project_host_env_value",
-                            "valid_project_host_port",
+                            "project_host_port_number",
                             "project_conat_router_port",
                             "emit_project_metadata_rules",
                         )
@@ -4224,6 +4225,27 @@ normalize_project_io_class_state
         )
         self.assertEqual(
             self._conat_exemption(self._egress_rules(env="PORT=65500\n")), "9102"
+        )
+        # A key present but empty in the local file still overrides the managed
+        # value: project-host then falls back to its default PORT 9002.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\n", local_env="PORT=\n", env_lines=["PORT=9010"]
+                )
+            ),
+            "9102",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(local_env="PORT=\n", env_lines=["PORT=9010"])
+            ),
+            "9102",
+        )
+        # parsePort takes the text after the last ":".
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=127.0.0.1:9010\n")),
+            "9110",
         )
 
     def test_project_egress_rules_render_as_nft(self) -> None:

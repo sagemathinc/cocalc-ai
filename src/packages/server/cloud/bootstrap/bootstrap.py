@@ -2204,8 +2204,9 @@ def project_conat_router_port(env_lines: list[str]) -> int:
             env[parsed[0]] = parsed[1].strip().strip("\"'")
 
     def port(value: str | None) -> int | None:
+        # As project-host's parsePort: the text after the last ":".
         try:
-            number = int(str(value).strip())
+            number = int(str(value).strip().rsplit(":", 1)[-1].strip())
         except (TypeError, ValueError):
             return None
         return number if 1 <= number <= 65535 else None
@@ -8452,23 +8453,44 @@ project_host_env_value() {
     project_host_env_file_value "$PROJECT_HOST_ENV_FILE" "$1"
 }
 
-valid_project_host_port() {
-  [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$1))" -ge 1 ] && [ "$((10#$1))" -le 65535 ]
+# project-host's parsePort: the text after the last ":", trimmed, as a port
+# number; prints nothing when it is not one.
+project_host_port_number() {
+  local value="${1##*:}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ "$value" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$value))" -ge 1 ] && [ "$((10#$value))" -le 65535 ]; then
+    echo "$((10#$value))"
+  fi
 }
 
 # The port of this host's conat router, the one host-local TCP service besides
-# DNS that projects may connect to, derived as project-host derives it:
-# COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, else 9102.
+# DNS that projects may connect to, derived as project-host's ensureDefaults
+# derives it: COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, where an
+# empty or unparsable PORT means the default 9002. Presence matters: an empty
+# value in the local file still overrides the managed one. Only when neither
+# file sets either key does the bootstrap-derived value apply.
 project_conat_router_port() {
-  local explicit="" base=""
-  explicit="$(project_host_env_value COCALC_PROJECT_HOST_CONAT_ROUTER_PORT)" || explicit=""
-  base="$(project_host_env_value PORT)" || base=""
-  if [ -z "$explicit" ] && [ -z "$base" ]; then
+  local explicit="" base="" has_explicit=0 has_base=0
+  if explicit="$(project_host_env_value COCALC_PROJECT_HOST_CONAT_ROUTER_PORT)"; then
+    has_explicit=1
+  fi
+  if base="$(project_host_env_value PORT)"; then
+    has_base=1
+  fi
+  if [ "$has_explicit" -eq 0 ] && [ "$has_base" -eq 0 ]; then
     echo "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
-  elif valid_project_host_port "$explicit"; then
-    echo "$((10#$explicit))"
-  elif valid_project_host_port "$base" && valid_project_host_port "$((10#$base + 100))"; then
-    echo "$((10#$base + 100))"
+    return
+  fi
+  explicit="$(project_host_port_number "$explicit")"
+  if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ]; then
+    echo "$explicit"
+    return
+  fi
+  base="$(project_host_port_number "$base")"
+  [ -n "$base" ] || base=9002
+  if [ "$((base + 100))" -le 65535 ]; then
+    echo "$((base + 100))"
   else
     echo 9102
   fi
