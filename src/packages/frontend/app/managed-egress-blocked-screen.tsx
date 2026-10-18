@@ -7,6 +7,7 @@ import { Alert, Button, Card, List, Space, Typography } from "antd";
 import { useState } from "react";
 
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
+import { HelpEmailLink } from "@cocalc/frontend/customize";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { ManagedEgressBlockedInfo } from "@cocalc/frontend/purchases/managed-egress-blocked";
@@ -36,6 +37,11 @@ export function ManagedEgressBlockedScreen({
   blocked: ManagedEgressBlockedInfo;
 }): React.JSX.Element {
   const [purchaseOpen, setPurchaseOpen] = useState(false);
+  // A membership upgrade raises the shared network allowance, but not the
+  // account control traffic limit; only support can raise that one.
+  const upgradeHelps = blocked.category !== "control-plane-conat";
+  const resetsAt =
+    blocked.resets_at != null ? new Date(blocked.resets_at) : undefined;
 
   return (
     <div style={CONTAINER_STYLE}>
@@ -49,17 +55,38 @@ export function ManagedEgressBlockedScreen({
               {blocked.title}
             </Title>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              You are still signed in, but new browser sessions are temporarily
-              blocked until your managed network usage drops below the current
-              window limits.
+              You are still signed in. This block lifts by itself once usage in
+              the window drops below the limit
+              {resetsAt != null && Number.isFinite(resetsAt.getTime()) ? (
+                <>
+                  {" "}
+                  (expected around{" "}
+                  <Text strong>{resetsAt.toLocaleString()}</Text>)
+                </>
+              ) : null}
+              .
             </Paragraph>
           </div>
-          <Alert
-            type="warning"
-            showIcon
-            title="Upgrade is still available"
-            description="Use the upgrade flow below if you need more network capacity immediately. Purchase APIs continue to work even while interactive network access is blocked."
-          />
+          {upgradeHelps ? (
+            <Alert
+              type="warning"
+              showIcon
+              title="Upgrade is still available"
+              description="Use the upgrade flow below if you need more network capacity immediately. Purchase APIs continue to work even while interactive network access is blocked."
+            />
+          ) : (
+            <Alert
+              type="info"
+              showIcon
+              title="Need it sooner?"
+              description={
+                <>
+                  Contact support at <HelpEmailLink /> to have this limit raised
+                  for your account.
+                </>
+              }
+            />
+          )}
           {blocked.details.length > 0 ? (
             <List
               bordered
@@ -73,13 +100,15 @@ export function ManagedEgressBlockedScreen({
             />
           ) : null}
           <Space wrap>
-            <Button
-              type="primary"
-              icon={<Icon name="shopping-cart" />}
-              onClick={() => setPurchaseOpen(true)}
-            >
-              Upgrade membership
-            </Button>
+            {upgradeHelps ? (
+              <Button
+                type="primary"
+                icon={<Icon name="shopping-cart" />}
+                onClick={() => setPurchaseOpen(true)}
+              >
+                Upgrade membership
+              </Button>
+            ) : null}
             <Button
               icon={<Icon name="refresh" />}
               onClick={() => window.location.reload()}

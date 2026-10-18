@@ -5,16 +5,21 @@
 
 import type { ManagedProjectEgressCategory } from "@cocalc/server/membership/managed-egress";
 import {
+  getManagedEgressCategoryBlockedUntil,
   getManagedEgressCategoryUsageForAccount,
   getManagedEgressUsageForAccount,
   getProjectUsageAccountId,
 } from "@cocalc/server/membership/managed-egress";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
+import { getControlPlaneEgressLimitsFromEffective } from "@cocalc/server/membership/control-plane-egress-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { maybeNotifyManagedEgressLimit } from "@cocalc/server/notifications/managed-egress";
 import LRU from "lru-cache";
 
-export const DEFAULT_CONTROL_PLANE_EGRESS_5H_BYTES = 10_000_000_000;
-export const DEFAULT_CONTROL_PLANE_EGRESS_7D_BYTES = 100_000_000_000;
+export {
+  DEFAULT_CONTROL_PLANE_EGRESS_5H_BYTES,
+  DEFAULT_CONTROL_PLANE_EGRESS_7D_BYTES,
+} from "@cocalc/server/membership/control-plane-egress-limits";
 const POLICY_CACHE_TTL_MS = 30_000;
 
 const policyCache = new LRU<string, Promise<ManagedProjectEgressPolicy>>({
@@ -22,25 +27,18 @@ const policyCache = new LRU<string, Promise<ManagedProjectEgressPolicy>>({
   ttl: POLICY_CACHE_TTL_MS,
 });
 
-function positiveIntegerEnv(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
-function getControlPlaneEgressLimits(): {
+async function getControlPlaneEgressLimits(account_id: string): Promise<{
   egress_5h_bytes: number;
   egress_7d_bytes: number;
-} {
-  return {
-    egress_5h_bytes: positiveIntegerEnv(
-      "COCALC_CONTROL_PLANE_EGRESS_5H_BYTES",
-      DEFAULT_CONTROL_PLANE_EGRESS_5H_BYTES,
-    ),
-    egress_7d_bytes: positiveIntegerEnv(
-      "COCALC_CONTROL_PLANE_EGRESS_7D_BYTES",
-      DEFAULT_CONTROL_PLANE_EGRESS_7D_BYTES,
-    ),
-  };
+}> {
+  // A membership lookup failure must not block browser sessions: fall back
+  // to the site default.
+  const resolution = await resolveMembershipForAccount(account_id).catch(
+    () => undefined,
+  );
+  return getControlPlaneEgressLimitsFromEffective(
+    getEffectiveMembershipUsageLimits(resolution),
+  );
 }
 
 export interface ManagedProjectEgressPolicy {
@@ -48,12 +46,40 @@ export interface ManagedProjectEgressPolicy {
   category: ManagedProjectEgressCategory;
   allowed: boolean;
   blocked_by?: "5h" | "7d";
+  // When the blocking window is back under its limit (no new traffic), if known.
+  blocked_until?: Date;
   managed_egress_5h_bytes?: number;
   managed_egress_7d_bytes?: number;
   egress_5h_bytes?: number;
   egress_7d_bytes?: number;
   managed_egress_categories_5h_bytes?: Record<string, number>;
   managed_egress_categories_7d_bytes?: Record<string, number>;
+}
+
+// A notice at >= 90% of either window, or when blocked (deduplicated daily).
+function notifyIfNearLimit(policy: ManagedProjectEgressPolicy): void {
+  if (!policy.account_id) return;
+  const pool =
+    policy.category === "control-plane-conat" ? "control-plane" : "shared";
+  for (const window of ["5h", "7d"] as const) {
+    const used =
+      window === "5h"
+        ? policy.managed_egress_5h_bytes
+        : policy.managed_egress_7d_bytes;
+    const limit =
+      window === "5h" ? policy.egress_5h_bytes : policy.egress_7d_bytes;
+    if (used == null || limit == null) continue;
+    const blocked = policy.blocked_by === window;
+    maybeNotifyManagedEgressLimit({
+      account_id: policy.account_id,
+      pool,
+      window,
+      used,
+      limit,
+      blocked,
+      resets_at: blocked ? policy.blocked_until : undefined,
+    });
+  }
 }
 
 async function computeManagedProjectEgressPolicy({
@@ -64,7 +90,8 @@ async function computeManagedProjectEgressPolicy({
   category: ManagedProjectEgressCategory;
 }): Promise<ManagedProjectEgressPolicy> {
   if (category === "control-plane-conat") {
-    const { egress_5h_bytes, egress_7d_bytes } = getControlPlaneEgressLimits();
+    const { egress_5h_bytes, egress_7d_bytes } =
+      await getControlPlaneEgressLimits(account_id);
     const usage = await getManagedEgressCategoryUsageForAccount({
       account_id,
       category,
@@ -75,11 +102,21 @@ async function computeManagedProjectEgressPolicy({
         : usage.bytes_7d > egress_7d_bytes
           ? "7d"
           : undefined;
+    const blocked_until =
+      blocked_by == null
+        ? undefined
+        : await getManagedEgressCategoryBlockedUntil({
+            account_id,
+            category,
+            window: blocked_by,
+            limit: blocked_by === "5h" ? egress_5h_bytes : egress_7d_bytes,
+          }).catch(() => undefined);
     return {
       account_id,
       category,
       allowed: blocked_by == null,
       blocked_by,
+      blocked_until,
       managed_egress_5h_bytes: usage.bytes_5h,
       managed_egress_7d_bytes: usage.bytes_7d,
       egress_5h_bytes,
@@ -111,6 +148,13 @@ async function computeManagedProjectEgressPolicy({
     category,
     allowed: blocked_by == null,
     blocked_by,
+    // Membership windows are fixed: the block lifts when the window resets.
+    blocked_until:
+      blocked_by === "5h"
+        ? usage.managed_egress_5h_reset_at
+        : blocked_by === "7d"
+          ? usage.managed_egress_7d_reset_at
+          : undefined,
     managed_egress_5h_bytes: usage.managed_egress_5h_bytes,
     managed_egress_7d_bytes: usage.managed_egress_7d_bytes,
     egress_5h_bytes,
@@ -143,10 +187,15 @@ export async function getManagedProjectEgressPolicy(opts: {
   const value = computeManagedProjectEgressPolicy({
     account_id,
     category: opts.category,
-  }).catch((err) => {
-    if (policyCache.get(key) === value) policyCache.delete(key);
-    throw err;
-  });
+  })
+    .then((policy) => {
+      notifyIfNearLimit(policy);
+      return policy;
+    })
+    .catch((err) => {
+      if (policyCache.get(key) === value) policyCache.delete(key);
+      throw err;
+    });
   policyCache.set(key, value);
   return await value;
 }

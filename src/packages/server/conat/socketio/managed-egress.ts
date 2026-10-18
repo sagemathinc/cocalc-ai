@@ -6,6 +6,10 @@
 import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
 import type { ConatServer } from "@cocalc/conat/core/server";
+import {
+  diffEgressBySubject,
+  topEgressSubjects,
+} from "@cocalc/conat/core/egress-attribution";
 import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
@@ -14,7 +18,7 @@ import {
   type ManagedProjectEgressPolicy,
 } from "@cocalc/server/membership/managed-egress-policy";
 import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
-import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-message";
+import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
 import {
   clearHubManagedEgressBlockedAccount,
   clearHubManagedEgressBlockedAccounts,
@@ -33,7 +37,12 @@ type AccountEgressDelta = {
   bytes: number;
   socket_ids: string[];
   browser_ids: string[];
+  // bytes by normalized subject; "reply:<subject>" is the reply traffic of
+  // requests to <subject>
+  by_subject: Record<string, number>;
 };
+
+const TOP_SUBJECTS = 10;
 
 type RawSendDeltaSocket = {
   socket_id: string;
@@ -174,8 +183,18 @@ export function summarizeManagedConatEgressDeltas({
       bytes: 0,
       socket_ids: [],
       browser_ids: [],
+      by_subject: {},
     };
     entry.bytes += deltaBytes;
+    // Hosts without per-subject counters (older conat) report none here.
+    for (const [key, bytes] of Object.entries(
+      diffEgressBySubject(
+        stats.egress_by_subject,
+        previous[socket_id]?.egress_by_subject,
+      ),
+    )) {
+      entry.by_subject[key] = (entry.by_subject[key] ?? 0) + bytes;
+    }
     entry.socket_ids.push(socket_id);
     entry.browser_ids.push(browser_id);
     byAccount.set(account_id, entry);
@@ -207,11 +226,12 @@ function summarizeActiveSocketsByAccount(
 }
 
 function buildBlockedMessage(policy: ManagedProjectEgressPolicy): string {
-  return [
-    "Account control traffic safety limit reached.",
-    "New browser control-plane connections are temporarily blocked because this account generated an abnormal amount of control traffic.",
-    ...formatManagedEgressPolicyDetails(policy),
-  ].join("\n");
+  return formatManagedEgressBlockedMessage({
+    category: CATEGORY,
+    policy,
+    blocked:
+      "New browser sessions for this account are blocked, because its browser sessions used an unusual amount of control traffic. The command line (cocalc CLI) still works.",
+  });
 }
 
 export function startHubConatManagedEgressLoop({
@@ -262,6 +282,7 @@ export function startHubConatManagedEgressLoop({
             bytes: delta.bytes,
             socket_count: delta.socket_ids.length,
             browser_ids: delta.browser_ids,
+            top_subjects: topEgressSubjects(delta.by_subject, TOP_SUBJECTS),
           })),
           sockets: rawSendDeltaSockets,
         });
@@ -288,6 +309,7 @@ export function startHubConatManagedEgressLoop({
               metadata: {
                 browser_ids: delta.browser_ids,
                 socket_count: delta.socket_ids.length,
+                top_subjects: topEgressSubjects(delta.by_subject, TOP_SUBJECTS),
               },
             });
           } catch (err) {

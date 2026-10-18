@@ -3,18 +3,26 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { parseManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
+
 export interface ManagedEgressBlockedInfo {
   raw: string;
   title: string;
   details: string[];
+  category?: string;
+  window?: "5h" | "7d";
+  resets_at?: string;
 }
 
+// Older servers sent block messages without the code line; keep recognizing
+// those during a rolling upgrade.
 const MANAGED_EGRESS_BLOCK_PATTERNS = [
   "Current managed egress categories",
   "egress usage window resets",
   "traffic is temporarily blocked",
   "managed egress",
   "limit reached for this account",
+  "traffic safety limit reached",
 ];
 
 export function parseManagedEgressBlockedError(
@@ -23,6 +31,10 @@ export function parseManagedEgressBlockedError(
   if (!error) return;
   const raw = `${error}`.trim();
   if (!raw) return;
+  const parsed = parseManagedEgressBlockedMessage(raw);
+  if (parsed != null) {
+    return { raw, ...parsed };
+  }
   const lower = raw.toLowerCase();
   if (
     !MANAGED_EGRESS_BLOCK_PATTERNS.some((pattern) =>

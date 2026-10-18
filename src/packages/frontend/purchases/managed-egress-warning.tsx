@@ -20,6 +20,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { HelpEmailLink } from "@cocalc/frontend/customize";
 import type { PageStyle } from "@cocalc/frontend/app/top-nav-consts";
 import { TOP_BAR_ELEMENT_CLASS } from "@cocalc/frontend/app/top-nav-consts";
 import {
@@ -34,12 +35,19 @@ const { Text } = Typography;
 
 export const MANAGED_EGRESS_WARNING_THRESHOLD = 0.75;
 export const MANAGED_EGRESS_SEVERE_THRESHOLD = 0.9;
+// Browser control traffic is not something users manage day to day, so it
+// only warns once it is close to blocking new browser sessions.
+export const CONTROL_PLANE_EGRESS_WARNING_THRESHOLD = 0.9;
 const MANAGED_EGRESS_WARNING_POLL_MS = 60_000;
 
 type EgressWindow = "5h" | "7d";
+// "shared": the membership pool (downloads, apps, SSH, projects, ...);
+// "control-plane": browser control traffic, which blocks sign-in at 100%.
+export type ManagedEgressPool = "shared" | "control-plane";
 type ManagedEgressWarningSeverity = "warning" | "severe" | "blocked";
 
 export interface ManagedEgressWindowWarning {
+  pool: ManagedEgressPool;
   window: EgressWindow;
   used: number;
   limit: number;
@@ -88,18 +96,64 @@ function getManagedEgressUsed(
     : undefined;
 }
 
+function getControlPlaneEgress(
+  details: MembershipDetails | null | undefined,
+  window: EgressWindow,
+): { used?: number; limit?: number } {
+  const usage = details?.usage_status;
+  const used =
+    window === "5h"
+      ? usage?.managed_control_plane_egress_5h_bytes
+      : usage?.managed_control_plane_egress_7d_bytes;
+  const limit =
+    window === "5h"
+      ? usage?.managed_control_plane_egress_5h_limit_bytes
+      : usage?.managed_control_plane_egress_7d_limit_bytes;
+  return {
+    used:
+      typeof used === "number" && Number.isFinite(used) && used >= 0
+        ? used
+        : undefined,
+    limit:
+      typeof limit === "number" && Number.isFinite(limit) && limit > 0
+        ? limit
+        : undefined,
+  };
+}
+
 export function getManagedEgressWindowWarnings(
   details: MembershipDetails | null | undefined,
   threshold = MANAGED_EGRESS_WARNING_THRESHOLD,
 ): ManagedEgressWindowWarning[] {
   const warnings: ManagedEgressWindowWarning[] = [];
+  const candidates: {
+    pool: ManagedEgressPool;
+    window: EgressWindow;
+    used?: number;
+    limit?: number;
+    threshold: number;
+  }[] = [];
   for (const window of ["5h", "7d"] as const) {
-    const limit = getManagedEgressLimit(details, window);
-    const used = getManagedEgressUsed(details, window);
+    candidates.push({
+      pool: "shared",
+      window,
+      used: getManagedEgressUsed(details, window),
+      limit: getManagedEgressLimit(details, window),
+      threshold,
+    });
+    candidates.push({
+      pool: "control-plane",
+      window,
+      ...getControlPlaneEgress(details, window),
+      threshold: Math.max(threshold, CONTROL_PLANE_EGRESS_WARNING_THRESHOLD),
+    });
+  }
+  for (const { pool, window, used, limit, threshold } of candidates) {
     if (limit == null || used == null || limit <= 0) continue;
     const ratio = used / limit;
     if (!(ratio >= threshold)) continue;
     warnings.push({
+      pool,
       window,
       used,
       limit,
@@ -159,21 +213,22 @@ function getSummaryLabel(
   warning: ManagedEgressWindowWarning,
   isNarrow: boolean,
 ): string {
+  const name = warning.pool === "control-plane" ? "Browser traffic" : "Network";
   if (warning.over) {
-    return isNarrow ? "Blocked" : "Network blocked";
+    return isNarrow ? "Blocked" : `${name} blocked`;
   }
   if (isNarrow) {
     return `${warning.window} ${warning.percent}%`;
   }
-  return `Network ${warning.window} ${warning.percent}%`;
+  return `${name} ${warning.window} ${warning.percent}%`;
 }
 
 function getSummaryTooltip(warnings: ManagedEgressWindowWarning[]): string {
   if (warnings.length === 0) return "";
   const windows = warnings
     .map(
-      ({ window, used, limit, percent }) =>
-        `${window}: ${humanSize(used)} of ${humanSize(limit)} (${percent}%)`,
+      ({ pool, window, used, limit, percent }) =>
+        `${pool === "control-plane" ? "browser control traffic " : ""}${window}: ${humanSize(used)} of ${humanSize(limit)} (${percent}%)`,
     )
     .join(" • ");
   return `Managed network usage is close to its limit. ${windows}`;
@@ -247,10 +302,12 @@ export const ManagedEgressWarning: React.FC<{
     [details],
   );
   const primary = warnings[0];
+  // Dismissible until it blocks; a new severity, window or pool shows again.
   const primaryWarningKey =
-    primary?.severity === "warning"
-      ? `${primary.window}:${primary.severity}`
+    primary != null && primary.severity !== "blocked"
+      ? `${primary.pool}:${primary.window}:${primary.severity}`
       : undefined;
+  const controlPlane = primary?.pool === "control-plane";
   const dismissed =
     primaryWarningKey != null && dismissedWarningKey === primaryWarningKey;
   if (!account_id || !is_logged_in || primary == null || dismissed) {
@@ -317,7 +374,7 @@ export const ManagedEgressWarning: React.FC<{
         open={open}
         onCancel={() => setOpen(false)}
         footer={[
-          ...(primary.severity === "warning"
+          ...(primaryWarningKey != null
             ? [
                 <Button
                   key="dismiss"
@@ -339,35 +396,57 @@ export const ManagedEgressWarning: React.FC<{
           >
             Open membership details
           </Button>,
-          <Button
-            key="upgrade"
-            type="primary"
-            onClick={() => setPurchaseOpen(true)}
-          >
-            Upgrade membership
-          </Button>,
+          ...(controlPlane
+            ? []
+            : [
+                <Button
+                  key="upgrade"
+                  type="primary"
+                  onClick={() => setPurchaseOpen(true)}
+                >
+                  Upgrade membership
+                </Button>,
+              ]),
         ]}
         width={760}
       >
         <Space vertical size="middle" style={{ width: "100%" }}>
-          <Text>
-            Metered shared-host traffic includes downloads, app traffic,
-            interactive sessions, SSH, and outbound project network traffic.
-            When these limits are hit, transfers or projects may be blocked.
-          </Text>
+          {warnings.some((w) => w.pool === "shared") ? (
+            <Text>
+              Metered shared-host traffic includes downloads, app traffic,
+              interactive sessions, SSH, and outbound project network traffic.
+              When these limits are hit, transfers or projects may be blocked.
+            </Text>
+          ) : null}
+          {warnings.some((w) => w.pool === "control-plane") ? (
+            <Text>
+              Browser control traffic is the data your browser sessions exchange
+              with CoCalc itself (documents, chats, history and status). It has
+              its own safety limit: when it is reached, new browser sessions for
+              your account are blocked until usage falls back under the limit.
+              The command line (cocalc CLI) is not affected. If you need a
+              higher limit, <HelpEmailLink text="contact support" />.
+            </Text>
+          ) : null}
           {warnings.map((warning) => (
-            <div key={warning.window}>
+            <div key={`${warning.pool}:${warning.window}`}>
               <Space
                 align="center"
                 style={{ width: "100%", justifyContent: "space-between" }}
               >
-                <Text strong>{warning.window} window</Text>
+                <Text strong>
+                  {warning.pool === "control-plane"
+                    ? "Browser control traffic, "
+                    : ""}
+                  {warning.window} window
+                </Text>
                 <Text type={warning.over ? "danger" : undefined}>
                   {humanSize(warning.used)} of {humanSize(warning.limit)} (
                   {warning.percent}%)
                 </Text>
               </Space>
               {(() => {
+                if (warning.pool === "control-plane") return null;
                 const { resetAt, resetIn } = getManagedEgressResetInfo(
                   details,
                   warning.window,

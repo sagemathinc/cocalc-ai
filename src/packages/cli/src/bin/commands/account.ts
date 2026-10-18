@@ -64,6 +64,65 @@ function assertUnsafeRehome({
   }
 }
 
+const EGRESS_WARNING_RATIO = 0.9;
+
+// Plain-language warnings at >= 90% of any managed-egress window, so blocks
+// are never a surprise (the CLI is not subject to the control-plane limit,
+// so it is where a browser-blocked user can still see this).
+export function managedEgressWarnings({
+  usage,
+  usageLimits,
+}: {
+  usage?: MembershipDetails["usage_status"];
+  usageLimits: { egress_5h_bytes?: number; egress_7d_bytes?: number };
+}): string[] {
+  const out: string[] = [];
+  const check = (
+    name: string,
+    window: "5h" | "7d",
+    used: number | undefined,
+    limit: number | undefined,
+    effect: string,
+  ) => {
+    if (typeof used !== "number" || typeof limit !== "number" || !(limit > 0))
+      return;
+    const ratio = used / limit;
+    if (ratio < EGRESS_WARNING_RATIO) return;
+    const percent = Math.floor(100 * ratio);
+    const amounts = `${formatByteCount(used)} of ${formatByteCount(limit)} (${percent}%) in the ${window} window`;
+    out.push(
+      used > limit
+        ? `${name} limit reached: ${amounts}. ${effect} is blocked.`
+        : `${name} is at ${amounts}. At 100%, ${effect.toLowerCase()} is blocked.`,
+    );
+  };
+  for (const window of ["5h", "7d"] as const) {
+    check(
+      "Managed network traffic",
+      window,
+      window === "5h"
+        ? usage?.managed_egress_5h_bytes
+        : usage?.managed_egress_7d_bytes,
+      window === "5h"
+        ? usageLimits.egress_5h_bytes
+        : usageLimits.egress_7d_bytes,
+      "Shared-host traffic (downloads, apps, SSH, backups, project network)",
+    );
+    check(
+      "Browser control traffic",
+      window,
+      window === "5h"
+        ? usage?.managed_control_plane_egress_5h_bytes
+        : usage?.managed_control_plane_egress_7d_bytes,
+      window === "5h"
+        ? usage?.managed_control_plane_egress_5h_limit_bytes
+        : usage?.managed_control_plane_egress_7d_limit_bytes,
+      "Signing in from a browser (the CLI is not affected; contact support for a higher limit)",
+    );
+  }
+  return out;
+}
+
 function serializeMembershipDetails(
   details: MembershipDetails,
   account_id: string,
@@ -138,6 +197,21 @@ function serializeMembershipDetails(
     managed_egress_recent_events: (
       usage?.managed_egress_recent_events ?? []
     ).map((event) => serializeManagedEgressEvent(event, toIso)),
+    control_plane_egress_5h_used_bytes:
+      usage?.managed_control_plane_egress_5h_bytes ?? null,
+    control_plane_egress_7d_used_bytes:
+      usage?.managed_control_plane_egress_7d_bytes ?? null,
+    control_plane_egress_5h_limit_bytes:
+      usage?.managed_control_plane_egress_5h_limit_bytes ?? null,
+    control_plane_egress_7d_limit_bytes:
+      usage?.managed_control_plane_egress_7d_limit_bytes ?? null,
+    control_plane_egress_7d_used: formatByteCount(
+      usage?.managed_control_plane_egress_7d_bytes,
+    ),
+    control_plane_egress_7d_limit: formatByteCount(
+      usage?.managed_control_plane_egress_7d_limit_bytes,
+    ),
+    egress_warnings: managedEgressWarnings({ usage, usageLimits }),
     candidates: details.candidates.map((candidate) => ({
       class: candidate.class,
       source: candidate.source,

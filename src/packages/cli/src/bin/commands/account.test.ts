@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { Command } from "commander";
 
-import { registerAccountCommand } from "./account";
+import { managedEgressWarnings, registerAccountCommand } from "./account";
 
 test("manual API keys accept canonical scope files and list stored scopes without secrets", async () => {
   const directory = mkdtempSync(join(tmpdir(), "api-key-scope-"));
@@ -1037,4 +1037,35 @@ test("account repair-membership forwards write and clear-stale flags", async () 
     dry_run: false,
     clear_stale: true,
   });
+});
+
+test("account membership warns at 90% of each egress pool and names blocks", () => {
+  assert.deepEqual(
+    managedEgressWarnings({
+      usage: {
+        managed_egress_5h_bytes: 100,
+        managed_control_plane_egress_7d_bytes: 89_000_000_000,
+        managed_control_plane_egress_7d_limit_bytes: 100_000_000_000,
+      } as any,
+      usageLimits: { egress_5h_bytes: 1000 },
+    }),
+    [],
+  );
+  const warnings = managedEgressWarnings({
+    usage: {
+      managed_egress_5h_bytes: 950,
+      managed_control_plane_egress_7d_bytes: 108_000_000_000,
+      managed_control_plane_egress_7d_limit_bytes: 100_000_000_000,
+    } as any,
+    usageLimits: { egress_5h_bytes: 1000 },
+  });
+  assert.equal(warnings.length, 2);
+  assert.match(
+    warnings[0],
+    /^Managed network traffic is at .*\(95%\) in the 5h window/,
+  );
+  assert.match(
+    warnings[1],
+    /^Browser control traffic limit reached: .*\(108%\) in the 7d window\. Signing in from a browser .* contact support/,
+  );
 });
