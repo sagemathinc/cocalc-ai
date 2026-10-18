@@ -9,12 +9,48 @@ import type { CSSProperties, SyntheticEvent } from "react";
 const RESIZE_MESSAGE_TYPE = "cocalc-jupyter-iframe-height";
 const DEFAULT_HEIGHT = 320;
 const MIN_HEIGHT = 20;
+// Content can ask for any height (and the resize id is not a secret from
+// it), so heights are capped and resize messages are rate limited.
+const MAX_HEIGHT = 25000;
+const MIN_RESIZE_INTERVAL_MS = 50;
 const HEIGHT_SLACK = 8;
+
+/*
+What a frame's content may do.  Every caller must choose; there is no
+default.
+
+- passive: no scripts at all (sandbox="").
+- opaque-scripts: scripts in an opaque origin, nothing else.
+- opaque-legacy: scripts, forms and presentation in an opaque origin.  This is
+  what untrusted Jupyter output has always used; tighten it to
+  opaque-scripts once measured.
+- trusted-same-origin: no sandbox, so the content runs with this page's
+  origin.  Only for content the user explicitly trusts.
+
+No profile ever combines allow-scripts with allow-same-origin, which would let
+the content remove its own sandbox.
+*/
+export type IframeProfile =
+  | "passive"
+  | "opaque-scripts"
+  | "opaque-legacy"
+  | "trusted-same-origin";
+
+const SANDBOX: Record<IframeProfile, string | undefined> = {
+  passive: "",
+  "opaque-scripts": "allow-scripts",
+  "opaque-legacy": "allow-forms allow-scripts allow-presentation",
+  "trusted-same-origin": undefined,
+};
+
+export function iframeSandbox(profile: IframeProfile): string | undefined {
+  return SANDBOX[profile];
+}
 
 interface Props {
   src?: string;
   srcDoc?: string;
-  sandbox?: string;
+  profile: IframeProfile;
   style?: CSSProperties;
   title?: string;
   onError?: (event: SyntheticEvent<HTMLIFrameElement>) => void;
@@ -23,7 +59,7 @@ interface Props {
 export default function AutosizedIframe({
   src,
   srcDoc,
-  sandbox,
+  profile,
   style,
   title,
   onError,
@@ -31,6 +67,8 @@ export default function AutosizedIframe({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState<number>(DEFAULT_HEIGHT);
   const resizeId = `cocalc-jupyter-iframe-${useId()}`;
+  const sandbox = iframeSandbox(profile);
+  const lastResizeRef = useRef<number>(0);
   const sizedSrcDoc = useMemo(() => {
     return srcDoc == null ? undefined : injectResizeBridge(srcDoc, resizeId);
   }, [resizeId, srcDoc]);
@@ -46,6 +84,9 @@ export default function AutosizedIframe({
       ) {
         return;
       }
+      const now = Date.now();
+      if (now - lastResizeRef.current < MIN_RESIZE_INTERVAL_MS) return;
+      lastResizeRef.current = now;
       setHeight(normalizeHeight(data.height));
     };
     window.addEventListener("message", onMessage);
@@ -101,6 +142,9 @@ export default function AutosizedIframe({
       src={src}
       srcDoc={sizedSrcDoc}
       sandbox={sandbox}
+      referrerPolicy={
+        profile === "trusted-same-origin" ? undefined : "no-referrer"
+      }
       title={title}
       onError={onError}
       style={{
@@ -160,7 +204,10 @@ function resizeAccessibleChildIframes(doc: Document, depth: number): void {
 
 function normalizeHeight(height: number): number {
   if (!Number.isFinite(height)) return DEFAULT_HEIGHT;
-  return Math.max(MIN_HEIGHT, Math.ceil(height) + HEIGHT_SLACK);
+  return Math.min(
+    MAX_HEIGHT,
+    Math.max(MIN_HEIGHT, Math.ceil(height) + HEIGHT_SLACK),
+  );
 }
 
 function injectResizeBridge(srcDoc: string, resizeId: string): string {
