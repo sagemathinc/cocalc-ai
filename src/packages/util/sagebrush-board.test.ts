@@ -3,12 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  boardPostedName,
-  boardTextDigest,
-  sha256,
-  uuidV5,
-} from "./sagebrush-board";
+import { sha256 } from "@noble/hashes/sha2";
+import { boardPostedName, boardTextDigest, uuidV5 } from "./sagebrush-board";
 
 test("the posted name is the file's basename", () => {
   expect(boardPostedName("/home/user/a/q.board.json")).toBe("q.board.json");
@@ -24,37 +20,56 @@ test("the digest is the SHA-256 of the UTF-8 text", async () => {
   );
 });
 
-// Codex on #1134: on a plain-http site there is no crypto.subtle; sha256
-// must give exactly what it gives (and what the server computes).
-test("sha256 in plain JavaScript is Node's SHA-256", () => {
-  const { createHash, randomBytes } = require("crypto");
-  const node = (b: Uint8Array) =>
-    new Uint8Array(createHash("sha256").update(b).digest());
-  // every length across the padding boundaries, and some large ones
-  const lengths = [...Array(200).keys(), 1000, 4096, 65537, 1 << 20];
-  for (const n of lengths) {
-    const b = new Uint8Array(randomBytes(n));
-    expect(sha256(b)).toEqual(node(b));
-  }
-  // FIPS 180-2's "abc"
-  expect(
-    Buffer.from(sha256(new TextEncoder().encode("abc"))).toString("hex"),
-  ).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-});
-
-test("the digest without crypto.subtle is the same", async () => {
+// Codex on #1134: on a plain-http site there is no crypto.subtle, and the
+// digest is @noble/hashes' SHA-256; it must be exactly what the server
+// computes, since it binds the board text decide checks against.
+async function withoutSubtle<T>(f: () => Promise<T>): Promise<T> {
   const real = Object.getOwnPropertyDescriptor(globalThis, "crypto");
-  const texts = ["", "é", '{"format":"sagebrush-board"}', "x".repeat(100_000)];
-  const withSubtle = await Promise.all(texts.map(boardTextDigest));
   Object.defineProperty(globalThis, "crypto", {
     configurable: true,
     value: { getRandomValues: real?.value?.getRandomValues },
   });
   try {
-    expect(await Promise.all(texts.map(boardTextDigest))).toEqual(withSubtle);
+    return await f();
   } finally {
     if (real) Object.defineProperty(globalThis, "crypto", real);
   }
+}
+
+test("without crypto.subtle, the digest meets NIST's SHA-256 vectors", async () => {
+  // FIPS 180-4 examples (NIST CSRC): one block, two blocks, a million "a"
+  const vectors: [string, string][] = [
+    ["", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
+    ["abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"],
+    [
+      "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+      "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+    ],
+    [
+      "a".repeat(1_000_000),
+      "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+    ],
+  ];
+  const got = await withoutSubtle(() =>
+    Promise.all(vectors.map(([text]) => boardTextDigest(text))),
+  );
+  expect(got).toEqual(vectors.map(([, digest]) => digest));
+});
+
+test("without crypto.subtle, the digest is Node's SHA-256", async () => {
+  const { createHash, randomBytes } = require("crypto");
+  // every length across the padding boundaries, and some large ones
+  for (const n of [...Array(200).keys(), 1000, 4096, 65537, 1 << 20]) {
+    const b = new Uint8Array(randomBytes(n));
+    expect(sha256(b)).toEqual(
+      new Uint8Array(createHash("sha256").update(b).digest()),
+    );
+  }
+  const texts = ["", "é", '{"format":"sagebrush-board"}', "x".repeat(100_000)];
+  const withSubtle = await Promise.all(texts.map(boardTextDigest));
+  expect(
+    await withoutSubtle(() => Promise.all(texts.map(boardTextDigest))),
+  ).toEqual(withSubtle);
 });
 
 // The board-answers message ids as the crypto.subtle implementation made

@@ -2605,6 +2605,9 @@ importers:
       '@isaacs/ttlcache':
         specifier: ^1.4.1
         version: 1.4.1
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       async:
         specifier: ^1.5.2
         version: 1.5.2
