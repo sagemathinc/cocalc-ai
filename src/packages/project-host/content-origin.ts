@@ -210,7 +210,10 @@ function refuse(res: ServerResponse, status: number, message: string): void {
 }
 
 // Never let a response on the content origin set a cookie, whatever handler
-// writes it.
+// writes it.  The setHeader wrapper is the main guard: the handler always sets
+// its headers first, so Node merges headers later passed to writeHead through
+// setHeader.  The writeHead filter is a second layer for any path that writes
+// headers before setHeader was called.
 function dropSetCookie(res: ServerResponse): void {
   const setHeader = res.setHeader.bind(res);
   res.setHeader = ((name: string, value: any) => {
