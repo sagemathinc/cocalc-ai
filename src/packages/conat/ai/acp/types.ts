@@ -301,6 +301,9 @@ export type AcpAttentionRecord = {
   snoozed_until?: number;
   response_submitted_at?: number;
   resolution_reason?: string;
+  // The saved answer, only in a "list" reply to the account that wrote it
+  // (never in chat activity, which every viewer of the chat sees).
+  own_response?: { answers: Record<string, string[]>; declined?: boolean };
 };
 
 export type AcpAttentionRequest =
