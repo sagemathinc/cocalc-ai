@@ -401,3 +401,77 @@ test("notifications save and archive toggle the corresponding flags", async () =
     ],
   ]);
 });
+
+test("--since accepts ages and dates", async () => {
+  const { parseSince } = await import("./notifications");
+  const now = Date.parse("2026-10-18T12:00:00.000Z");
+  assert.equal(parseSince("12h", now), "2026-10-18T00:00:00.000Z");
+  assert.equal(parseSince("30d", now), "2026-09-18T12:00:00.000Z");
+  assert.equal(parseSince("2026-10-01", now), "2026-10-01T00:00:00.000Z");
+  assert.equal(parseSince(undefined, now), undefined);
+  assert.throws(() => parseSince("yesterday", now), /--since must be/);
+});
+
+test("notifications list --all follows the cursor to the end", async () => {
+  const { listAllNotifications } = await import("./notifications");
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    notification_id: `00000000-0000-4000-8000-00000000000${i}`,
+    created_at: `2026-10-1${8 - i}T00:00:00.000Z`,
+  }));
+  const calls: any[] = [];
+  const all = await listAllNotifications(
+    async (opts) => {
+      calls.push(opts);
+      const start = opts.before
+        ? rows.findIndex(
+            (r) => r.notification_id === opts.before.notification_id,
+          ) + 1
+        : 0;
+      return rows.slice(start, start + opts.limit);
+    },
+    { state: "unread" },
+    2,
+  );
+  assert.deepEqual(all, rows);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].before, undefined);
+  assert.deepEqual(calls[1].before, {
+    created_at: rows[1].created_at,
+    notification_id: rows[1].notification_id,
+  });
+  assert.equal(calls[2].state, "unread");
+});
+
+test("notifications summary forwards filters, with --since as a time", async () => {
+  let captured: any;
+  const program = new Command();
+  registerNotificationsCommand(program, {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        hub: {
+          notifications: {
+            summary: async (opts: any) => {
+              captured = opts;
+              return { total: 0, groups: [] };
+            },
+          },
+        },
+      }),
+  } as any);
+  await program.parseAsync([
+    "node",
+    "test",
+    "notifications",
+    "summary",
+    "--state",
+    "unread",
+    "--since",
+    "2026-10-01",
+  ]);
+  assert.deepEqual(captured, {
+    kind: undefined,
+    state: "unread",
+    project_id: undefined,
+    since: "2026-10-01T00:00:00.000Z",
+  });
+});

@@ -16,6 +16,7 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   // them or change notification preferences.
   "notifications.list": "notifications:manage",
   "notifications.counts": "notifications:manage",
+  "notifications.summary": "notifications:manage",
   "notifications.markRead": "notifications:manage",
   "notifications.save": "notifications:manage",
   "notifications.archive": "notifications:manage",

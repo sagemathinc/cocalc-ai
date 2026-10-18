@@ -59,6 +59,7 @@ describe("HTTP API key policy audit", () => {
     for (const name of [
       "notifications.list",
       "notifications.counts",
+      "notifications.summary",
       "notifications.markRead",
       "notifications.save",
       "notifications.archive",
@@ -71,7 +72,7 @@ describe("HTTP API key policy audit", () => {
       ).rejects.toThrow();
     }
     // Every use is checked against the agent's project right now.
-    expect(mockSoloCheck).toHaveBeenCalledTimes(5);
+    expect(mockSoloCheck).toHaveBeenCalledTimes(6);
     expect(mockSoloCheck).toHaveBeenCalledWith(manager);
     mockSoloCheck.mockRejectedValueOnce(
       Object.assign(new Error("shared"), { code: "api_key_shared_project" }),

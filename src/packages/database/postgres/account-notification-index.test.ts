@@ -15,6 +15,7 @@ import {
   setProjectedNotificationArchivedState,
   setProjectedNotificationReadState,
   setProjectedNotificationSavedState,
+  summarizeProjectedNotificationsForAccount,
 } from "./account-notification-index";
 
 const LOCAL_BAY_ID = "bay-local";
@@ -180,6 +181,87 @@ describe("account_notification_index rebuild", () => {
     ).rejects.toThrow(
       `account '${ACCOUNT_ID}' is not homed in bay '${LOCAL_BAY_ID}'`,
     );
+  });
+
+  it("pages through every notification with a stable cursor, since a time", async () => {
+    // Seven notices; two share a creation time, and one is read.
+    const base = Date.parse("2026-10-01T00:00:00.000Z");
+    const rows = [0, 1, 2, 3, 3, 4, 5].map((day, i) => ({
+      id: `aaaaaaaa-0000-4000-8000-00000000000${i}`,
+      created_at: new Date(base + day * 86_400_000),
+      title: i < 4 ? "Disk low" : "Build failed",
+      read: i === 6,
+    }));
+    for (const row of rows) {
+      await getPool().query(
+        `INSERT INTO account_notification_index
+           (account_id, notification_id, kind, project_id, summary, read_state,
+            created_at, updated_at)
+         VALUES ($1, $2, 'account_notice', NULL, $3::JSONB, $4::JSONB, $5, $5)`,
+        [
+          ACCOUNT_ID,
+          row.id,
+          JSON.stringify({ title: row.title, origin_label: "Admin" }),
+          JSON.stringify({ read: row.read }),
+          row.created_at,
+        ],
+      );
+    }
+    const seen: string[] = [];
+    let before: any;
+    for (let page = 0; page < 10; page++) {
+      const result = await listProjectedNotificationsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 2,
+        before,
+      });
+      seen.push(...result.map((r) => r.notification_id));
+      if (result.length < 2) break;
+      const last = result.at(-1)!;
+      // Marking rows read while paging does not move them between pages.
+      await setProjectedNotificationReadState({
+        account_id: ACCOUNT_ID,
+        notification_ids: result.map((r) => r.notification_id),
+        read: true,
+      });
+      before = {
+        created_at: last.created_at,
+        notification_id: last.notification_id,
+      };
+    }
+    // Newest first; the two notices from day 3 in id order; nothing seen
+    // twice or skipped although rows were marked read between pages.
+    expect(seen).toEqual([6, 5, 3, 4, 2, 1, 0].map((i) => rows[i].id));
+
+    const recent = await listProjectedNotificationsForAccount({
+      account_id: ACCOUNT_ID,
+      since: new Date(base + 4 * 86_400_000).toISOString(),
+    });
+    expect(recent.map((r) => r.notification_id).sort()).toEqual(
+      [rows[5].id, rows[6].id].sort(),
+    );
+
+    const summary = await summarizeProjectedNotificationsForAccount({
+      account_id: ACCOUNT_ID,
+    });
+    expect(summary.total).toBe(7);
+    expect(summary.groups).toEqual([
+      expect.objectContaining({
+        kind: "account_notice",
+        origin_label: "Admin",
+        title: "Disk low",
+        count: 4,
+      }),
+      expect.objectContaining({ title: "Build failed", count: 3 }),
+    ]);
+    const since = await summarizeProjectedNotificationsForAccount({
+      account_id: ACCOUNT_ID,
+      since: new Date(base + 4 * 86_400_000),
+    });
+    expect(since).toMatchObject({
+      total: 2,
+      groups: [{ title: "Build failed", count: 2 }],
+    });
   });
 
   it("supports inbox state filters, counts, and markRead updates", async () => {

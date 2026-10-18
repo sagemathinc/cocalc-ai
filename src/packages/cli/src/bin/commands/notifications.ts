@@ -24,6 +24,60 @@ function parseOptionalPositiveInteger(
   return value;
 }
 
+const DURATION_UNITS_MS: Record<string, number> = {
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+  w: 604_800_000,
+};
+
+/** --since: an age such as 90m, 12h, 30d or 2w, or an ISO date or time. */
+export function parseSince(
+  raw: string | undefined,
+  now = Date.now(),
+): string | undefined {
+  const value = `${raw ?? ""}`.trim();
+  if (!value) return undefined;
+  const age = /^([1-9][0-9]*)([mhdw])$/.exec(value);
+  if (age) {
+    return new Date(
+      now - Number(age[1]) * DURATION_UNITS_MS[age[2]],
+    ).toISOString();
+  }
+  const time = new Date(value);
+  if (!Number.isFinite(time.getTime())) {
+    throw new Error(
+      "--since must be an age like 12h, 30d or 2w, or an ISO date or time",
+    );
+  }
+  return time.toISOString();
+}
+
+// The list API's page size limit (MAX_NOTIFICATION_INBOX_LIST_LIMIT).
+const MAX_PAGE = 300;
+
+/** Every row, following the list cursor page by page (newest first). */
+export async function listAllNotifications(
+  list: (opts: any) => Promise<any[]>,
+  opts: Record<string, any>,
+  pageSize = MAX_PAGE,
+): Promise<any[]> {
+  const rows: any[] = [];
+  let before: { created_at: any; notification_id: string } | undefined;
+  for (;;) {
+    const page = await list({ ...opts, limit: pageSize, before });
+    rows.push(...page);
+    const last = page.at(-1);
+    if (page.length < pageSize || last == null) return rows;
+    if (before && last.notification_id === before.notification_id)
+      throw new Error("notification paging did not advance");
+    before = {
+      created_at: last.created_at ?? null,
+      notification_id: last.notification_id,
+    };
+  }
+}
+
 async function resolveBodyMarkdown(opts: {
   bodyMarkdown?: string;
   bodyFile?: string;
@@ -67,7 +121,24 @@ export function registerNotificationsCommand(
       "--notification-id <notification_id>",
       "filter by one notification id",
     )
-    .option("--limit <n>", "limit result rows")
+    .option("--limit <n>", "limit result rows (page size with --all)")
+    .option(
+      "--since <age-or-time>",
+      "only notifications since then: an age like 12h, 30d or 2w, or an ISO date",
+    )
+    .option(
+      "--all",
+      "return every matching notification, following pages to the end",
+      false,
+    )
+    .addHelpText(
+      "after",
+      `
+Newest first. Without --all at most --limit rows (default 100, at most 300)
+are returned. With --all, pages are followed to the end, so combine it with
+--since or --state to bound the result. To see an inbox's shape first, use
+"notifications summary".`,
+    )
     .action(
       async (
         opts: {
@@ -76,16 +147,64 @@ export function registerNotificationsCommand(
           projectId?: string;
           notificationId?: string;
           limit?: string;
+          since?: string;
+          all?: boolean;
         },
         command: Command,
       ) => {
         await withContext(command, "notifications list", async (ctx) => {
-          return await ctx.hub.notifications.list({
+          const since = parseSince(opts.since);
+          const query = {
             kind: opts.kind?.trim() || undefined,
             state: opts.state?.trim() || undefined,
             project_id: opts.projectId?.trim() || undefined,
             notification_id: opts.notificationId?.trim() || undefined,
-            limit: parseOptionalPositiveInteger(opts.limit, "--limit"),
+            ...(since ? { since } : {}),
+          };
+          const limit = parseOptionalPositiveInteger(opts.limit, "--limit");
+          if (opts.all) {
+            return await listAllNotifications(
+              (page) => ctx.hub.notifications.list(page),
+              query,
+              Math.min(limit ?? MAX_PAGE, MAX_PAGE),
+            );
+          }
+          return await ctx.hub.notifications.list({ ...query, limit });
+        });
+      },
+    );
+
+  notifications
+    .command("summary")
+    .description(
+      "counts of notifications grouped by kind, origin and title (largest first)",
+    )
+    .option("--kind <kind>", "filter by notification kind")
+    .option(
+      "--state <state>",
+      "filter by inbox state (all|unread|saved|archived)",
+    )
+    .option("--project-id <project_id>", "filter by project id")
+    .option(
+      "--since <age-or-time>",
+      "only notifications since then: an age like 12h, 30d or 2w, or an ISO date",
+    )
+    .action(
+      async (
+        opts: {
+          kind?: string;
+          state?: string;
+          projectId?: string;
+          since?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "notifications summary", async (ctx) => {
+          return await ctx.hub.notifications.summary({
+            kind: opts.kind?.trim() || undefined,
+            state: opts.state?.trim() || undefined,
+            project_id: opts.projectId?.trim() || undefined,
+            since: parseSince(opts.since),
           });
         });
       },
