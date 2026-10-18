@@ -153,6 +153,7 @@ const LIVE_RUN_COMPLETION_REPLAY_GRACE_MS = 60_000;
 // before it counts as gone, and how often to ask the kernel about such runs.
 const LIVE_RUN_ORPHAN_GRACE_MS = 3_000;
 const LIVE_RUN_ORPHAN_KERNEL_CHECK_MS = 3_000;
+const KERNEL_STATUS_TIMEOUT_MS = 10_000;
 const WATCH_RECREATE_WAIT = 3000;
 const JUPYTER_OPEN_INCOMPLETE_AFTER_MS = 45_000;
 
@@ -1286,7 +1287,10 @@ export class JupyterActions extends JupyterActions0 {
         snapshot?.path === this.liveRunPath &&
         typeof snapshot?.run_id === "string" &&
         !staleSnapshotKeys.has(
-          jupyterLiveRunKey({ path: this.liveRunPath, run_id: snapshot.run_id }),
+          jupyterLiveRunKey({
+            path: this.liveRunPath,
+            run_id: snapshot.run_id,
+          }),
         )
       ) {
         present.add(snapshot.run_id);
@@ -4125,9 +4129,23 @@ export class JupyterActions extends JupyterActions0 {
           return false;
         }
         try {
-          status = await client.getKernelStatus();
+          status = await client.getKernelStatus({
+            timeout: KERNEL_STATUS_TIMEOUT_MS,
+          });
           return true;
         } catch {
+          // After a project restart the old client's socket can still look
+          // ready while nothing serves it (until its keepalive notices, up to
+          // 75 s later).  Drop it, so the next attempt connects to the
+          // restarted project.
+          // Keep it while a prompt waits for input: the answer goes back over
+          // this client, and nothing reattaches a pending prompt to a new one.
+          if (
+            this.jupyterClient === client &&
+            this.store?.get("stdin") == null
+          ) {
+            this.closeJupyterClient("kernel_status_failed");
+          }
           return false;
         }
       },
