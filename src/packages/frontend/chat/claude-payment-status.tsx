@@ -56,6 +56,12 @@ export function setClaudeCredentials(rows: ExternalCredentialInfo[]): void {
   window.dispatchEvent(new Event(CLAUDE_CREDENTIALS_EVENT));
 }
 
+/** Called whenever the shared list changes (a reload, or an edit in settings). */
+export function onClaudeCredentialsChanged(listener: () => void): () => void {
+  window.addEventListener(CLAUDE_CREDENTIALS_EVENT, listener);
+  return () => window.removeEventListener(CLAUDE_CREDENTIALS_EVENT, listener);
+}
+
 export function clearClaudeCredentialsForTests(): void {
   claudeCredentials = undefined;
 }
