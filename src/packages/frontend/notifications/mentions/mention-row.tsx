@@ -105,8 +105,6 @@ export function MentionRow(props: Props) {
   }
 
   async function clickRow(): Promise<void> {
-    // Leave the drawer (if open) so it doesn't cover the mention it opens.
-    setNotificationsOpen(false);
     // Regarding chat -- if no fragment, assume chat.
     // If fragment given, then it can explicitly specify chat, e.g.,
     //    file.txt#chat=true,id=092ab039
@@ -117,6 +115,9 @@ export function MentionRow(props: Props) {
         chat: !!fragmentId?.chat,
         fragmentId,
       });
+      // Leave the drawer (if open) so it doesn't cover the mention it opened;
+      // if opening fails, it stays for a retry.
+      setNotificationsOpen(false);
       markReadState("read");
     } catch (err) {
       logger.warn("Unable to open mention target", err);

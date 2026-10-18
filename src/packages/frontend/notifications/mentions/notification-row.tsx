@@ -192,13 +192,16 @@ export function NotificationRow(props: Props) {
 
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
-    // Following a notification from the drawer leaves the drawer: it would
-    // otherwise cover the target it opened.
-    setNotificationsOpen(false);
+    // Following a notification leaves the drawer, which would otherwise cover
+    // the target it opened; if opening fails, the drawer stays for a retry.
+    const opened = () => {
+      setNotificationsOpen(false);
+      markReadState("read");
+    };
     try {
       if (conversation) {
         await openConversation(conversation);
-        markReadState("read");
+        opened();
         return;
       }
       const { openAgentNotification } =
@@ -210,7 +213,7 @@ export function NotificationRow(props: Props) {
           thread_id ?? fragmentId?.thread,
         )
       ) {
-        markReadState("read");
+        opened();
         return;
       }
       await ensureProjectReduxRuntime();
@@ -219,7 +222,7 @@ export function NotificationRow(props: Props) {
         chat: !!fragmentId?.chat,
         fragmentId,
       });
-      markReadState("read");
+      opened();
     } catch (err) {
       logger.warn("Unable to open notification target", err);
     }

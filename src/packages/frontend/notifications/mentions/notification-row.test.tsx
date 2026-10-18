@@ -569,8 +569,25 @@ describe("NotificationRow", () => {
         />,
       );
       fireEvent.click(screen.getByText("Build finished"));
-      expect(mockSetNotificationsOpen).toHaveBeenCalledWith(false);
+      await waitFor(() =>
+        expect(mockSetNotificationsOpen).toHaveBeenCalledWith(false),
+      );
+      expect(open_file).toHaveBeenCalled();
+    });
+
+    it("keeps the drawer open when the target fails to open", async () => {
+      open_file.mockRejectedValueOnce(new Error("project unavailable"));
+      render(
+        <NotificationRow
+          id="notice-1"
+          user_map={{}}
+          mention={notice({ project_id: "project-1", path: "work/a.md" })}
+        />,
+      );
+      fireEvent.click(screen.getByText("Build finished"));
       await waitFor(() => expect(open_file).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockSetNotificationsOpen).not.toHaveBeenCalled();
     });
 
     it("closes the drawer when an action link is followed", () => {
