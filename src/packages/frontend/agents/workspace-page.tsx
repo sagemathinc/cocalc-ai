@@ -113,6 +113,11 @@ import {
   saveShellPlaceholder,
 } from "@cocalc/frontend/app/shell-placeholder";
 import { set_window_title } from "@cocalc/frontend/browser";
+import {
+  agentWindowTitle,
+  agentsWindowTitle,
+  setAgentsWindowTitle,
+} from "./window-title";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import {
@@ -4009,8 +4014,20 @@ export function MyAgentsWorkspacePage({
         : undefined,
       { isProtected: isRunningWorkspace },
     );
+  const selectedHeaderTitle = selected
+    ? agentAppearances.get(selected.endpoint.agent_id)?.name
+    : undefined;
   useEffect(() => {
     if (!active || contentOpen) return;
+    const agentTitle =
+      selected && !overviewOpen && !libraryOpen && !creating
+        ? agentWindowTitle({
+            name: selected.name,
+            thread_title: selected.thread_title,
+            headerTitle: selectedHeaderTitle,
+          })
+        : undefined;
+    setAgentsWindowTitle(agentTitle);
     set_window_title(
       overviewOpen
         ? "Agents"
@@ -4018,17 +4035,17 @@ export function MyAgentsWorkspacePage({
           ? "Artifacts"
           : creating
             ? "New Agent"
-            : selected
-              ? selected.thread_title?.trim() || `@${selected.name}`
-              : "Agents",
+            : agentsWindowTitle(),
     );
   }, [
     active,
     contentOpen,
+    overviewOpen,
     libraryOpen,
     creating,
     selected?.name,
     selected?.thread_title,
+    selectedHeaderTitle,
   ]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined

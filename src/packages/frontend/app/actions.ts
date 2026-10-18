@@ -11,6 +11,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { set_window_title } from "@cocalc/frontend/browser";
+import { agentsWindowTitle } from "@cocalc/frontend/agents/window-title";
 import {
   set_url,
   update_params,
@@ -285,7 +286,9 @@ export class PageActions extends Actions<PageState> {
               : undefined,
           );
         }
-        set_window_title(page.get("library_open") ? "Artifacts" : "Agents");
+        set_window_title(
+          page.get("library_open") ? "Artifacts" : agentsWindowTitle(),
+        );
         return;
       }
       case "projects":
