@@ -736,12 +736,66 @@ test("membership site-license update replaces normalized domains", async () => {
   assert.deepEqual(capturedArgs, {
     account_id: "admin-1",
     site_license_id: "license-1",
+    owner_account_id: undefined,
     allowed_domains: ["example.edu", "students.example.edu"],
     name: undefined,
     organization_name: undefined,
     starts_at: undefined,
     expires_at: undefined,
   });
+});
+
+test("membership site-license update --owner transfers ownership to a resolved account", async () => {
+  let capturedArgs: any;
+  const resolved: string[] = [];
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        accountId: "admin-1",
+        hub: {
+          purchases: {
+            updateSiteLicense: async (opts) => {
+              capturedArgs = opts;
+              return {
+                site_license: {
+                  id: opts.site_license_id,
+                  owner_account_id: opts.owner_account_id,
+                },
+                pools: [],
+                managers: [],
+                pending_requests: [],
+              };
+            },
+          },
+        },
+      }),
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async (_ctx, identifier) => {
+      resolved.push(identifier);
+      return { account_id: "new-owner-1" };
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "update",
+    "license-1",
+    "--owner",
+    "sysadmin@example.edu",
+  ]);
+
+  assert.deepEqual(resolved, ["sysadmin@example.edu"]);
+  assert.equal(capturedArgs.owner_account_id, "new-owner-1");
+  assert.equal(capturedArgs.site_license_id, "license-1");
+  assert.equal(capturedArgs.allowed_domains, undefined);
+  assert.equal(capturedArgs.name, undefined);
 });
 
 test("membership site-license pool-update parses approval policy", async () => {

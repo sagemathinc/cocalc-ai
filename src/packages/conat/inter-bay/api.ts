@@ -1833,6 +1833,8 @@ export interface AccountLocalUpdateSiteLicenseRequest {
   overage_policy?: string | null;
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
+  // Admin only: transfer ownership of the license and its pools.
+  owner_account_id?: string;
 }
 
 export interface AccountLocalAddSiteLicensePoolRequest {
