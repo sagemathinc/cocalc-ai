@@ -1085,10 +1085,26 @@ async function enqueueRunningStaleHostRepairs(
 const RUNNING_STALE_ALERT_SUBJECT =
   "Running project hosts remain unresponsive after remediation";
 
+// The condition is "unresponsive after remediation": hosts that remediation
+// may still fix (suppressed from escalation) do not keep it active.
+async function reportRunningStaleCondition(
+  escalatedRows: RunningStaleHostRow[],
+): Promise<void> {
+  if (!escalatedRows.length) {
+    await conditionCleared(RUNNING_STALE_ALERT_SUBJECT);
+    return;
+  }
+  await conditionAlert({
+    subject: RUNNING_STALE_ALERT_SUBJECT,
+    body: formatRunningStaleHostAlertBody(byHostId(escalatedRows)),
+    reminderMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
+  });
+}
+
 export async function runRunningStaleHostAlertCheck(): Promise<number> {
   const rows = await getRunningStaleHosts();
   if (!rows.length) {
-    await conditionCleared(RUNNING_STALE_ALERT_SUBJECT);
+    await reportRunningStaleCondition([]);
     return 0;
   }
   const repairCount = await enqueueRunningStaleHostRepairs(rows);
@@ -1102,13 +1118,7 @@ export async function runRunningStaleHostAlertCheck(): Promise<number> {
         activeTransitions.get(row.id),
       ),
   );
-  if (escalatedRows.length) {
-    await conditionAlert({
-      subject: RUNNING_STALE_ALERT_SUBJECT,
-      body: formatRunningStaleHostAlertBody(byHostId(escalatedRows)),
-      reminderMinutes: HOST_CONDITION_ALERT_REMINDER_MINUTES,
-    });
-  }
+  await reportRunningStaleCondition(escalatedRows);
   if (repairCount) {
     logger.warn("enqueued stale-running host reconcile repairs", {
       count: repairCount,
@@ -2192,6 +2202,7 @@ export async function annotateHostAvailabilityEvent({
 
 export const _test = {
   getRunningStaleHosts,
+  reportRunningStaleCondition,
   conatPersistAlertRow,
   formatConatPersistAlertBody,
   formatHostPressureAlertBody,
