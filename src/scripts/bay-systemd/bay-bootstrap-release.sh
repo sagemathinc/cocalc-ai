@@ -705,6 +705,12 @@ if (
 ) {
   builds.push(previous);
 }
+// The hub monitor and `software smoke static` cap the unique union of the
+// builds, so check the same here, before activation, not just each build.
+const unionSize = new Set(builds.flatMap((build) => build.assets)).size;
+if (unionSize > MAX_ASSETS) {
+  throw new Error(`frontend asset history exceeds ${MAX_ASSETS} files`);
+}
 const history = {
   schema: 1,
   generated_at: new Date().toISOString(),

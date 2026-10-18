@@ -199,6 +199,30 @@ const onDisk = fs.readdirSync(root).filter((name) => name.startsWith("retained-"
 if (onDisk !== 10067) throw new Error(`carried ${onDisk} retained chunks forward, expected 10067`);
 NODE
 
+# Each build under the cap but their union over it fails before activation,
+# as the hub monitor and software smoke would reject that history.
+node - "${ASSET_TARGET}/runtime/control-plane/static" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[2];
+const assets = Array.from({ length: 1934 }, (_, i) => `fresh-${i}-0123456789abcdef.js`);
+for (const asset of assets) fs.writeFileSync(path.join(root, asset), "fixture");
+fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
+NODE
+if prepare_frontend_asset_history >"${TMP_ROOT}/union-assets.log" 2>&1; then
+  echo "an asset union over the cap unexpectedly passed" >&2
+  exit 1
+fi
+grep -q 'frontend asset history exceeds 12000 files' "${TMP_ROOT}/union-assets.log"
+node - "${ASSET_TARGET}/runtime/control-plane/static" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[2];
+const assets = Array.from({ length: 1933 }, (_, i) => `fresh-${i}-0123456789abcdef.js`);
+fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
+NODE
+prepare_frontend_asset_history >/dev/null
+
 # A genuinely oversized unique inventory must still fail before activation.
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json" <<'NODE'
 const fs = require("node:fs");
