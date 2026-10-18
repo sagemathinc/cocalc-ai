@@ -40,6 +40,20 @@ describe("download_file", () => {
     expect(document.querySelector("iframe")).toBeNull();
   });
 
+  it("downloads through a frame that can download but never run its content", async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => null },
+    })) as typeof fetch;
+
+    await download_file("/download/page.html?download");
+    const iframe = document.querySelector("iframe");
+    expect(iframe?.getAttribute("src")).toBe("/download/page.html?download");
+    expect(iframe?.getAttribute("sandbox")).toBe("allow-downloads");
+  });
+
   it("falls back to the HTTP status when no detailed message is available", async () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
