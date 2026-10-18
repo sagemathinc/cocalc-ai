@@ -440,6 +440,30 @@ test("notifications list --all pages by id and returns newest first", async () =
   assert.equal(calls[2].state, "unread");
 });
 
+test("notifications list --all orders ties like the list does", async () => {
+  const { listAllNotifications } = await import("./notifications");
+  const t = "2026-10-18T00:00:00.000Z";
+  const rows = [
+    {
+      notification_id: "a",
+      created_at: t,
+      updated_at: "2026-10-18T01:00:00.000Z",
+    },
+    {
+      notification_id: "b",
+      created_at: t,
+      updated_at: "2026-10-18T02:00:00.000Z",
+    },
+    { notification_id: "c", created_at: null, updated_at: null },
+    { notification_id: "d", created_at: t, updated_at: null },
+  ];
+  const all = await listAllNotifications(async () => rows, {}, 300);
+  assert.deepEqual(
+    all.map((r) => r.notification_id),
+    ["b", "a", "d", "c"],
+  );
+});
+
 test("notifications summary forwards filters, with --since as a time", async () => {
   let captured: any;
   const program = new Command();

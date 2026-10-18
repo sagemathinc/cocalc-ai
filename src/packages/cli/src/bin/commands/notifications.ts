@@ -79,11 +79,16 @@ export async function listAllNotifications(
       throw new Error("notification paging did not advance");
     after = last.notification_id;
   }
-  const time = (row: any) =>
-    row.created_at == null ? -Infinity : new Date(row.created_at).getTime();
+  // The list's own order: created_at, then updated_at (newest first, missing
+  // last), then notification_id.
+  const time = (value: any) =>
+    value == null ? -Infinity : new Date(value).getTime();
+  const newer = (a: number, b: number) =>
+    a === b ? 0 : a === -Infinity ? 1 : b === -Infinity ? -1 : b - a;
   return rows.sort(
     (a, b) =>
-      time(b) - time(a) ||
+      newer(time(a.created_at), time(b.created_at)) ||
+      newer(time(a.updated_at), time(b.updated_at)) ||
       `${a.notification_id}`.localeCompare(`${b.notification_id}`),
   );
 }
