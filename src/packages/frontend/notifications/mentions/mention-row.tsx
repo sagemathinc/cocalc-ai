@@ -13,6 +13,7 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { setNotificationsOpen } from "../drawer-state";
 import { NotificationFilter, MentionInfo } from "./types";
 import { BOOKMARK_ICON_NAME } from "./util";
 
@@ -114,6 +115,9 @@ export function MentionRow(props: Props) {
         chat: !!fragmentId?.chat,
         fragmentId,
       });
+      // Leave the drawer (if open) so it doesn't cover the mention it opened;
+      // if opening fails, it stays for a retry.
+      setNotificationsOpen(false);
       markReadState("read");
     } catch (err) {
       logger.warn("Unable to open mention target", err);
