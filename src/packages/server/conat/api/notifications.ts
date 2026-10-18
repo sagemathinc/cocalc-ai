@@ -847,6 +847,8 @@ export async function listSnapshot(
     kind: opts.kind,
     project_id: opts.project_id,
     state: opts.state,
+    since: opts.since,
+    before: opts.before,
   });
 }
 
