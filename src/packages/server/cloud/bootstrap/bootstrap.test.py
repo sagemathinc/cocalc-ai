@@ -2801,10 +2801,16 @@ class BootstrapBundleFallbackManifestTest(unittest.TestCase):
             }
             with mock.patch.object(
                 bootstrap, "download_file", side_effect=self.download(tarball)
-            ), mock.patch.object(
+            ) as download, mock.patch.object(
                 bootstrap, "fetch_json", return_value=manifest
             ), mock.patch.object(bootstrap, "prune_bundle_versions"):
                 resolved = bootstrap.extract_bundle_unlocked(cfg, bundle)
+            # Without a checksum the kept version is never downloaded: only
+            # the verified latest bundle is.
+            self.assertEqual(
+                [call.args[1] for call in download.call_args_list],
+                [manifest["url"]],
+            )
             self.assertEqual(resolved.version, "latest-v")
             self.assertEqual((root / "current").resolve(), root / "latest-v")
             self.assertTrue((root / "latest-v" / "marker").exists())

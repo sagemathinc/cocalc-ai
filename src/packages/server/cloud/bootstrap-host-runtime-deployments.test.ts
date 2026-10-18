@@ -659,6 +659,13 @@ describe("bootstrap-host promoted artifact defaults", () => {
         target: "tools",
         desired_version: "missing-build",
       },
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-bundle",
+        desired_version: "missing-build",
+      },
     ]);
 
     const { buildBootstrapScripts } = await loadBootstrapHost();
@@ -673,8 +680,13 @@ describe("bootstrap-host promoted artifact defaults", () => {
             installed_versions: ["missing-build", "older-build"],
           },
           {
-            // Installed but not current: the version directory still exists.
             artifact: "tools",
+            current_version: "missing-build",
+            installed_versions: ["missing-build"],
+          },
+          {
+            // Installed but not current: the version directory still exists.
+            artifact: "project-bundle",
             current_version: "older-build",
             installed_versions: ["older-build", "missing-build"],
           },
@@ -687,16 +699,20 @@ describe("bootstrap-host promoted artifact defaults", () => {
       `${softwareBaseUrl}/project-host/missing-build/bundle-linux.tar.xz`,
     );
     expect(scripts.projectHostBundleSha256).toBe("");
-    expect(scripts.toolsVersion).toBe("missing-build");
-    expect(scripts.toolsManifestUrl).toBe("");
+    expect(scripts.projectBundleVersion).toBe("missing-build");
     // The persisted inventory can be stale (a fresh boot disk after a
     // persistent stop or reprovision): bootstrap falls back to latest if the
-    // kept version directory is absent and can't be downloaded.
+    // kept version directory is absent.
     expect(scripts.projectHostFallbackManifestUrl).toBe(
       `${softwareBaseUrl}/project-host/latest-linux.json`,
     );
-    expect(scripts.toolsFallbackManifestUrl).toBe(
-      `${softwareBaseUrl}/tools/latest-linux-amd64.json`,
+    expect(scripts.projectBundleFallbackManifestUrl).toBe(
+      `${softwareBaseUrl}/project/latest-linux.json`,
     );
+    // Tools are never kept without a checksum: the privileged rustic/bees
+    // install verifies the archive, so they use the latest manifest.
+    expect(scripts.toolsVersion).toBe("tools-latest");
+    expect(scripts.toolsSha256).toBe("c".repeat(64));
+    expect(scripts.toolsFallbackManifestUrl).toBe("");
   });
 });

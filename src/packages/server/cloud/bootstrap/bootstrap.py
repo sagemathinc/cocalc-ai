@@ -11798,6 +11798,10 @@ def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleS
         )
     else:
         try:
+            if bundle.fallback_manifest_url and not bundle.sha256:
+                # A kept version the store no longer serves: there is no
+                # checksum to verify a download against, so don't try one.
+                raise RuntimeError("no checksum for a kept version that is not installed")
             download_file(cfg, bundle.url, bundle.remote)
             verify_sha256(cfg, bundle.remote, bundle.sha256)
         except Exception as err:

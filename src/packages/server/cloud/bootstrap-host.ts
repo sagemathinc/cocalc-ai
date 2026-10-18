@@ -1145,7 +1145,9 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions.tools,
       observedVersion: observedArtifactVersions.tools,
     }),
-    installedVersions: installedArtifactVersions.tools,
+    // Not for tools: bootstrap installs root-run binaries (rustic, bees) from
+    // the tools archive and requires its checksum, which an unserved version
+    // doesn't have. Tools keep the latest-manifest fallback.
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
