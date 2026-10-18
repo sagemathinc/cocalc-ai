@@ -35,6 +35,53 @@ test("rocket safely formats missing child-process output", () => {
   assert.equal(__test__.trimCommandOutput("first\nsecond\n"), "first\nsecond");
 });
 
+test("rocket redacts cookie headers, pairs and values", () => {
+  const auth = "remember_me=sha512$0123456789abcdef$1000$session-secret-value";
+  const affinity = "cocalc_bay_frontdoor_worker=1.affinity-secret-value";
+  const value = "sha512$0123456789abcdef$1000$session-secret-value";
+  const text = `--cookie ${auth}; ${affinity} | value ${value} | ${affinity}`;
+  const redacted = __test__.redactSecrets(text, [
+    `${auth}; ${affinity}`,
+    auth,
+    affinity,
+  ]);
+  assert.doesNotMatch(redacted, /session-secret-value|affinity-secret-value/);
+  assert.match(redacted, /--cookie <redacted>/);
+  // A short value is not treated as a secret everywhere it appears.
+  assert.equal(__test__.redactSecrets("worker 1 ok", ["w=1"]), "worker 1 ok");
+});
+
+test("rocket host route probe never reports the auth cookie", async () => {
+  // A CLI that echoes its arguments and fails, the way a timed-out or failing
+  // probe does: Node then reports "Command failed: <command line>".
+  const dir = mkdtempSync(join(tmpdir(), "rocket-probe-"));
+  const cliPath = join(dir, "fake-cli.js");
+  writeFileSync(
+    cliPath,
+    "process.stderr.write(process.argv.slice(2).join(' ')); process.exit(1);\n",
+  );
+  const authCookie =
+    "remember_me=sha512$0123456789abcdef$1000$session-secret-value";
+  const affinityCookie = "cocalc_bay_frontdoor_worker=1.affinity-secret-value";
+  const probe = await __test__.runHostRouteProbe({
+    cliPath,
+    api: "https://example.invalid",
+    authCookie,
+    affinityCookie,
+    workerId: 1,
+    host: { host_id: "00000000-0000-4000-8000-000000000000", name: "h" },
+    rpcTimeout: "5s",
+    requestTimeoutMs: 10_000,
+  });
+  assert.equal(probe.ok, false);
+  assert.match(probe.error ?? "", /Command failed/);
+  assert.match(probe.error ?? "", /<redacted>/);
+  assert.doesNotMatch(
+    probe.error ?? "",
+    /session-secret-value|affinity-secret-value|remember_me=/,
+  );
+});
+
 function createProgram({
   runs,
   gitStatus = "",
