@@ -14,7 +14,7 @@ import {
   theme,
 } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -50,10 +50,13 @@ export function looksLikeClaudeCode(value: string): boolean {
 function Step({
   number,
   title,
+  titleId,
   children,
 }: {
   number: number;
   title: string;
+  // Lets a field in the step use the visible title as its label.
+  titleId?: string;
   children: ReactNode;
 }) {
   const { token } = theme.useToken();
@@ -78,7 +81,9 @@ function Step({
         {number}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <Typography.Text strong>{title}</Typography.Text>
+        <Typography.Text strong id={titleId}>
+          {title}
+        </Typography.Text>
         <div style={{ marginTop: 8 }}>{children}</div>
       </div>
     </div>
@@ -132,6 +137,7 @@ export function ClaudeSubscriptionConnect({
   // Named while connecting, so the picker never shows a generic label; a
   // reconnect keeps the subscription's existing name.
   const [name, setName] = useState("");
+  const nameLabelId = useId();
   const nameRef = useRef(name);
   nameRef.current = name;
   const reconnecting = useRef(false);
@@ -278,11 +284,15 @@ export function ClaudeSubscriptionConnect({
                 // Connected either way; it can be renamed in settings.
               }
             }
+            // Canceled or closed while the name was being saved.
+            if (!active || started !== attempt.current) return;
             await connected(next.credentialId);
             if (active && started === attempt.current) {
-              // Done: close the sign-in rather than leave it on screen.
+              // Done: close the sign-in rather than leave it on screen. The
+              // name belonged to this subscription; the next one starts blank.
               setOpen(false);
               setLogin(undefined);
+              setName("");
               setJustConnected(true);
             }
             return;
@@ -356,9 +366,13 @@ export function ClaudeSubscriptionConnect({
         ) : (
           <>
             {!reconnecting.current && (
-              <Step number={1} title="Name this subscription">
+              <Step
+                number={1}
+                title="Name this subscription"
+                titleId={nameLabelId}
+              >
                 <Input
-                  aria-label="Subscription name"
+                  aria-labelledby={nameLabelId}
                   placeholder="e.g. Max 20x (work)"
                   maxLength={60}
                   value={name}

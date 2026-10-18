@@ -99,8 +99,9 @@ test.each([false, true])(
         ...(reconnect ? { credential_id: "credential-1" } : {}),
       });
       // A new subscription is named while connecting; a reconnect keeps its name.
+      // Labelled by the visible step title.
       const nameField = screen.queryByRole("textbox", {
-        name: "Subscription name",
+        name: "Name this subscription",
       });
       if (reconnect) {
         expect(nameField).toBeNull();
@@ -169,6 +170,17 @@ test.each([false, true])(
       expect(screen.getByRole("status")).toHaveTextContent(
         "Claude subscription connected.",
       );
+      if (!reconnect) {
+        // Connecting another subscription starts with a blank name.
+        await act(async () =>
+          user.click(
+            screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+          ),
+        );
+        expect(
+          screen.getByRole("textbox", { name: "Name this subscription" }),
+        ).toHaveValue("");
+      }
     } finally {
       rename.mockRestore();
       start.mockRestore();
@@ -506,5 +518,82 @@ test("a sign-in request waits until enabled, then starts once", async () => {
     expect(start).toHaveBeenCalledTimes(1);
   } finally {
     start.mockRestore();
+  }
+});
+
+test("canceling while the name is saved does not report the connection", async () => {
+  jest.useFakeTimers();
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "login-2",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const status = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStatus",
+    )
+    .mockResolvedValue({
+      id: "login-2",
+      state: "completed",
+      credentialId: "credential-2",
+    } as any);
+  const cancelLogin = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginCancel",
+    )
+    .mockResolvedValue(undefined as any);
+  let finishRename!: () => void;
+  const rename = jest
+    .spyOn(
+      webapp_client.conat_client.hub.system,
+      "updateClaudeSubscriptionLabel",
+    )
+    .mockImplementation(
+      () =>
+        new Promise<any>((resolve) => {
+          finishRename = () => resolve({ updated: true });
+        }),
+    );
+  const onConnected = jest.fn();
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        projectId="project-a"
+        onConnected={onConnected}
+      />,
+    );
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    await act(async () =>
+      user.click(
+        screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Name this subscription" }),
+      "Work",
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(rename).toHaveBeenCalled());
+    await act(async () =>
+      user.click(screen.getByRole("button", { name: "Cancel" })),
+    );
+    await act(async () => finishRename());
+    expect(onConnected).not.toHaveBeenCalled();
+  } finally {
+    rename.mockRestore();
+    cancelLogin.mockRestore();
+    start.mockRestore();
+    status.mockRestore();
+    jest.useRealTimers();
   }
 });
