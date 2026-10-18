@@ -1344,16 +1344,22 @@ Examples:
 
           // Signing out waits on the network, and another CLI process may save
           // the config meanwhile. Re-read it afterwards and remove only the
-          // profiles processed here, unchanged: a profile added or signed in
-          // again in between keeps its new session and stays.
+          // profiles processed here with the same credentials: a profile added
+          // or signed in again in between keeps its new session and stays,
+          // while metadata edits (ssh network, identity) do not stop logout.
+          const credentials = (profile: any) =>
+            JSON.stringify(
+              ["api", "cookie", "api_key", "bearer", "hub_password"].map(
+                (field) => profile?.[field] ?? null,
+              ),
+            );
           const removeProcessed = (processed: Record<string, any>) => {
             const latest = loadAuthConfig(configPath);
             const removed: string[] = [];
             for (const [name, profile] of Object.entries(processed)) {
               if (
                 latest.profiles[name] &&
-                JSON.stringify(latest.profiles[name]) ===
-                  JSON.stringify(profile)
+                credentials(latest.profiles[name]) === credentials(profile)
               ) {
                 delete latest.profiles[name];
                 removed.push(name);

@@ -238,6 +238,23 @@ test("auth logout keeps a profile that was signed in again while it waited", asy
   assert.equal(f.saved().profiles.prod.cookie, "remember_me=new-secret");
 });
 
+test("auth logout still removes a profile whose metadata changed while it waited", async () => {
+  let config: any;
+  const f = logoutFixture(async () => {
+    // Another CLI process edits only metadata, e.g. `auth ssh-network`.
+    config.profiles.prod = {
+      ...config.profiles.prod,
+      host_ssh_network: "public",
+    };
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.equal(f.capture.data.removed, "prod");
+  assert.equal(f.capture.data.kept_changed_profiles, undefined);
+  assert.equal(f.saved().profiles.prod, undefined);
+});
+
 test("a profile's sign-out request is scoped to the profile's own site", async () => {
   const calls: any[] = [];
   const relayFetch = (async (...args: any[]) => {
