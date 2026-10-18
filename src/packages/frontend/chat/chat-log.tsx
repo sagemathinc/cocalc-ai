@@ -2187,13 +2187,22 @@ export function MessageList({
     });
   });
 
+  // A jump to an attention card is an event: apply each one once. It used to
+  // re-run whenever the row count changed, so every new message scrolled a
+  // reader back to the card for as long as the request existed.
+  const appliedAttentionJumpRef = useRef<string | undefined>(undefined);
+  const rowCountRef = useRef(rowKeys.length);
+  rowCountRef.current = rowKeys.length;
   useEffect(() => {
     if (!activityJumpAttentionId || !attentionJumpExists) {
       return;
     }
+    const jump = `${activityJumpAttentionId}:${activityJumpToken ?? 0}`;
+    if (appliedAttentionJumpRef.current === jump) return;
+    appliedAttentionJumpRef.current = jump;
     if (useVirtuoso) {
       listVirtuosoRef.current?.scrollToIndex({
-        index: rowKeys.length,
+        index: rowCountRef.current,
         align: "center",
         behavior: INSTANT_SCROLL_BEHAVIOR,
       });
@@ -2229,7 +2238,6 @@ export function MessageList({
     attentionJumpExists,
     activityJumpToken,
     listVirtuosoRef,
-    rowKeys.length,
     useVirtuoso,
   ]);
 
