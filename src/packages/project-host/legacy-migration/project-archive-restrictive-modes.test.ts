@@ -10,9 +10,11 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -162,6 +164,9 @@ describe("legacy project restore with restrictive archive modes", () => {
       download: { url } as any,
     });
     expectRestored(join(home, prepared.snapshot_path));
+    // The temporary extraction tree must be removable after prepare.
+    const tmpRoot = join(tmp, "data", "tmp", "legacy-project-restore");
+    expect(existsSync(tmpRoot) ? readdirSync(tmpRoot) : []).toEqual([]);
     await handlers.applyLegacyProjectArchiveRemediation({
       project_id: "00000000-0000-4000-8000-000000000026",
       safety_snapshot_name: "before-test-apply",

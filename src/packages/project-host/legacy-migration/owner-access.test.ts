@@ -148,13 +148,22 @@ describe("grantOwnerAccessToExtractedTree", () => {
     chmodSync(outside, 0o000);
     symlinkSync(outside, join(root, "work", "link"));
     chmodSync(join(root, ".snapshots", "locked"), 0o000);
+    // Exclusions are anchored at the root: a nested .snapshots and a
+    // .snapshots-prefixed sibling are ordinary project files.
+    mkdirSync(join(root, "work", ".snapshots", "locked"), { recursive: true });
+    mkdirSync(join(root, ".snapshots-old", "locked"), { recursive: true });
+    chmodSync(join(root, "work", ".snapshots", "locked"), 0o000);
+    chmodSync(join(root, ".snapshots-old", "locked"), 0o000);
 
     const result = await grantOwnerAccessToExtractedTree({
       root,
       exclude: [".snapshots"],
     });
 
-    expect(result.adjusted_count).toBe(0);
+    expect(result.adjusted_paths.sort()).toEqual([
+      ".snapshots-old/locked",
+      "work/.snapshots/locked",
+    ]);
     expect(mode(outside)).toBe(0);
     expect(mode(join(root, ".snapshots", "locked"))).toBe(0);
   });
