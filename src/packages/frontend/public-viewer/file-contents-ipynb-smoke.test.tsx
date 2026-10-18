@@ -78,8 +78,7 @@ test("renders ordinary notebook html output inline", async () => {
           {
             output_type: "display_data",
             data: {
-              "text/html":
-                "<div><h2>Notebook HTML</h2><p>Click me</p></div>",
+              "text/html": "<div><h2>Notebook HTML</h2><p>Click me</p></div>",
             },
             metadata: {},
           },
@@ -107,7 +106,6 @@ test("renders ordinary notebook html output inline", async () => {
   expect(await screen.findByText("Click me")).toBeTruthy();
   expect(screen.queryByTitle("Jupyter HTML output")).toBeNull();
 });
-
 
 // HTML that sanitizing would change (here a <button> and a data attribute) is
 // framed in the opaque sandbox instead (output-messages/html-output.tsx).

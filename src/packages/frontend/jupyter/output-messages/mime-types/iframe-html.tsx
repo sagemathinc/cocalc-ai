@@ -1,6 +1,8 @@
 /*
-HTML output in the nbviewer: as in the notebook (see ../html-output.tsx), so,
-e.g., plotly plots, which are NOT embedded in an iframe, still just work.
+HTML output in the nbviewer takes the same path as in the notebook
+(../html-output.tsx): HTML that sanitizing leaves unchanged renders inline,
+sanitized; anything else, e.g. plotly plots with their scripts, renders in an
+opaque sandboxed frame.
 */
 
 import register from "./register";
