@@ -459,6 +459,7 @@ load_config() {
   HUB_HOST_IP="${HUB_HOST_IP:-}"
   HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SOFTWARE_BASE_URL_FORCE:-}"
   HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL="${HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL-https://software.cocalc.ai/software}"
+  HUB_TOOLS_SOFTWARE_BASE_URL="${HUB_TOOLS_SOFTWARE_BASE_URL:-}"
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
   HUB_SELF_HOST_PAIR_URL="${HUB_SELF_HOST_PAIR_URL:-}"
   COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE="${COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE:-public}"
@@ -860,6 +861,11 @@ start_cluster_bay() {
       export COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL="$HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL"
     else
       unset COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL
+    fi
+    if [ -n "$HUB_TOOLS_SOFTWARE_BASE_URL" ]; then
+      export COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL="$HUB_TOOLS_SOFTWARE_BASE_URL"
+    else
+      unset COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL
     fi
     if [ -n "$self_host_pair_url" ]; then
       export COCALC_SELF_HOST_PAIR_URL="$self_host_pair_url"
@@ -1275,6 +1281,11 @@ start_daemon() {
       else
         unset COCALC_PROJECT_HOST_CONTAINER_RUNTIME_SOFTWARE_BASE_URL
       fi
+      if [ -n "$HUB_TOOLS_SOFTWARE_BASE_URL" ]; then
+        export COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL="$HUB_TOOLS_SOFTWARE_BASE_URL"
+      else
+        unset COCALC_PROJECT_HOST_TOOLS_SOFTWARE_BASE_URL
+      fi
       export COCALC_CONAT_MAX_CONNECTIONS_PER_USER
       export COCALC_CONAT_MAX_CONNECTIONS_PER_HUB_USER
       export COCALC_CONAT_MAX_CONNECTIONS
@@ -1388,12 +1399,17 @@ build_daemon() {
   (
     cd "$SRC_DIR"
     pnpm build
-    # The three bundles only read what `pnpm build` produced and write to
-    # their own output directories, so they are built in parallel.
+    # The bundles only read what `pnpm build` produced and write to their own
+    # output directories, so they are built in parallel. Tools served from
+    # HUB_TOOLS_SOFTWARE_BASE_URL are not built here.
+    local tools=()
+    if [ -z "$HUB_TOOLS_SOFTWARE_BASE_URL" ]; then
+      tools=(-- "tools" pnpm --dir "$SRC_DIR/packages/project" build:tools)
+    fi
     run_parallel_logged \
       "project-host bundle" pnpm --dir "$SRC_DIR/packages/project-host" build:bundle -- \
-      "project bundle" pnpm --dir "$SRC_DIR/packages/project" build:bundle -- \
-      "tools" pnpm --dir "$SRC_DIR/packages/project" build:tools
+      "project bundle" pnpm --dir "$SRC_DIR/packages/project" build:bundle \
+      "${tools[@]}"
   )
 }
 
@@ -1610,6 +1626,7 @@ HUB_START_TIMEOUT=$HUB_START_TIMEOUT
 HUB_HOST_IP=$HUB_HOST_IP
 HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL=$HUB_CONTAINER_RUNTIME_SOFTWARE_BASE_URL
+HUB_TOOLS_SOFTWARE_BASE_URL=$HUB_TOOLS_SOFTWARE_BASE_URL
 HUB_NODE_BIN=$HUB_NODE_BIN
 HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
 HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
