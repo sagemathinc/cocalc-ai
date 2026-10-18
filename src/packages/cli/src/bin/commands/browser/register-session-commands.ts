@@ -205,7 +205,7 @@ export async function browserSessionSiteOrigin(ctx: {
   return new URL(ctx.apiBaseUrl).origin;
 }
 
-async function resolveProjectHostBrowserSessionCookies({
+export async function resolveProjectHostBrowserSessionCookies({
   ctx,
   deps,
   project_id,
@@ -238,13 +238,14 @@ async function resolveProjectHostBrowserSessionCookies({
   if (!token) {
     throw new Error("project-host auth token issuance returned no token");
   }
+  const origin = await browserSessionSiteOrigin(ctx);
   const response = await fetchWithProjectApiRelay(
     new URL(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, address).toString(),
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        Origin: await browserSessionSiteOrigin(ctx),
+        Origin: origin,
       },
     },
     { apiBaseUrl: ctx.apiBaseUrl, host_id, project_id },
@@ -253,7 +254,7 @@ async function resolveProjectHostBrowserSessionCookies({
   );
   if (!response.ok) {
     throw new Error(
-      `project-host browser session bootstrap failed: status=${response.status} body=${await response.text().catch(() => "")}`,
+      `project-host browser session bootstrap failed: status=${response.status} origin=${origin} body=${await response.text().catch(() => "")}`,
     );
   }
   const secure = new URL(address).protocol === "https:";
