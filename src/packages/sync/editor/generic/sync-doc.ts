@@ -217,6 +217,125 @@ function syncDebug(event: string, data: () => Record<string, unknown>): void {
 }
 logger.debug("init");
 
+// What snapshotCandidateFromHistory needs from a patchflow history entry.
+type SnapshotHistoryEntry = {
+  time: PatchId;
+  isSnapshot?: boolean;
+  size?: number;
+};
+
+// Where to make the next snapshot, if anywhere: about every `interval`
+// patches after the last snapshot (or once the patches since it exceed
+// maxSize), never at the newest patch.
+export function snapshotCandidateFromHistory({
+  history,
+  interval: interval0,
+  maxSize,
+  isCut,
+}: {
+  history: SnapshotHistoryEntry[];
+  interval: number;
+  maxSize: number;
+  isCut?: (time: PatchId) => boolean;
+}): PatchId | undefined {
+  if (history.length === 0) return;
+  const interval = Math.max(1, Math.floor(interval0) || 1);
+  const snapshots = history.filter((p) => p.isSnapshot);
+  const lastSnapshotTime =
+    snapshots.length > 0 ? snapshots[snapshots.length - 1].time : undefined;
+  const window = history.filter((p) =>
+    lastSnapshotTime != null
+      ? comparePatchId(p.time, lastSnapshotTime) >= 0
+      : true,
+  );
+  if (window.length === 0) return;
+  // Prefer a patch that every other loaded patch is an ancestor or a
+  // descendant of (a clean cut), near the chosen one: a client that loads
+  // from a snapshot there needs no older history. Patches concurrent with
+  // the snapshotted patch but appended before it are in neither the snapshot
+  // nor the patches after it (see loadHistoryIfNeeded). If there is no clean
+  // cut (constant concurrent editing), snapshot anyway once the window is
+  // large, rather than never.
+  const nearestCut = (idx: number): PatchId | undefined => {
+    if (isCut == null) return window[idx].time;
+    // Each check walks the loaded history, so only look nearby.
+    for (let d = 0; d < Math.min(window.length, 200); d++) {
+      for (const i of [idx - d, idx + d]) {
+        if (i >= 1 && i < window.length - 1 && isCut(window[i].time)) {
+          return window[i].time;
+        }
+      }
+    }
+    return window.length >= 4 * interval ? window[idx].time : undefined;
+  };
+  // Rule 1: interval count.  Far behind (snapshots stalled, or none for a
+  // long time), snapshot one interval before the newest patch in one step,
+  // so the next client to open the document loads about one interval, not
+  // the whole backlog.
+  if (window.length >= 2 * interval) {
+    const idx =
+      window.length >= 4 * interval
+        ? window.length - interval - 1
+        : Math.min(interval, window.length - 1);
+    return nearestCut(idx);
+  }
+  // Rule 2: size threshold
+  let totalSize = 0;
+  for (const p of window) {
+    if (!p.isSnapshot) {
+      totalSize += p.size ?? 0;
+    }
+  }
+  if (totalSize > maxSize) {
+    let running = 0;
+    for (let i = 0; i < window.length; i++) {
+      running += window[i].size ?? 0;
+      if (running > maxSize) {
+        return nearestCut(i) ?? window[i].time;
+      }
+    }
+  }
+  return;
+}
+
+// Max later patches snapshotTimeAvoidingMismatch checks.
+const SNAPSHOT_MISMATCH_SCAN = 200;
+
+// snapshot() refuses a patch whose value differs from the hash its author
+// recorded, and every client picks the same candidate, so one such patch used
+// to stop snapshots for good (history then grows without bound, and every
+// open loads all of it).  Use the nearest later patch whose value is not known
+// to differ instead, preferring a clean cut.  Leaves the newest patch alone.
+export function snapshotTimeAvoidingMismatch(
+  session: any,
+  candidate: PatchId,
+  maxScan: number = SNAPSHOT_MISMATCH_SCAN,
+): PatchId | undefined {
+  if (
+    typeof session?.verifyValue !== "function" ||
+    session.verifyValue(candidate) !== "mismatch"
+  ) {
+    return candidate;
+  }
+  const later = (
+    session.history({ includeSnapshots: false }) as SnapshotHistoryEntry[]
+  )
+    .filter((p) => comparePatchId(p.time, candidate) > 0)
+    .slice(0, -1);
+  let firstUsable: PatchId | undefined;
+  for (let i = 0; i < Math.min(later.length, maxScan); i++) {
+    const time = later[i].time;
+    if (session.verifyValue(time) === "mismatch") {
+      continue;
+    }
+    if (typeof session.isCut !== "function" || session.isCut(time)) {
+      return time;
+    }
+    firstUsable ??= time;
+  }
+  return firstUsable;
+}
+
 // Where to load more history from: the stream position of the patch of the
 // previous snapshot. Given where the loaded history starts (firstLoadedSeq),
 // step back to the nearest snapshot before it: the latest prev_seq below it.
@@ -2516,7 +2635,17 @@ export class SyncDoc extends EventEmitter {
       dbg("not making a snapshot: more history is needed for exact values");
       return;
     }
-    const time = this.patchflowSnapshotCandidate(interval, max_size);
+    const candidate = this.patchflowSnapshotCandidate(interval, max_size);
+    const time =
+      candidate == null
+        ? undefined
+        : snapshotTimeAvoidingMismatch(this.patchflowSession, candidate);
+    if (candidate != null && time !== candidate) {
+      dbg("candidate value differs from its hash; using a later patch", {
+        candidate,
+        time,
+      });
+    }
     if (time != null) {
       dbg("yes, try to make a snapshot at time", time);
       try {
@@ -3645,63 +3774,16 @@ export class SyncDoc extends EventEmitter {
     max_size: number,
   ): PatchId | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
-    const history = this.patchflowSession.history({ includeSnapshots: true });
-    if (history.length === 0) return;
-    const snapshots = history.filter((p) => p.isSnapshot);
-    const lastSnapshotTime =
-      snapshots.length > 0 ? snapshots[snapshots.length - 1].time : undefined;
-    const window = history.filter((p) =>
-      lastSnapshotTime != null
-        ? comparePatchId(p.time, lastSnapshotTime) >= 0
-        : true,
-    );
-    if (window.length === 0) return;
-    // Prefer a patch that every other loaded patch is an ancestor or a
-    // descendant of (a clean cut), near the chosen one: a client that loads
-    // from a snapshot there needs no older history. Patches concurrent with
-    // the snapshotted patch but appended before it are in neither the snapshot
-    // nor the patches after it (see loadHistoryIfNeeded). If there is no clean
-    // cut (constant concurrent editing), snapshot anyway once the window is
-    // large, rather than never.
-    const nearestCut = (idx: number): PatchId | undefined => {
-      const session = this.patchflowSession as any;
-      if (typeof session?.isCut !== "function") return window[idx].time;
-      // Each check walks the loaded history, so only look nearby.
-      for (let d = 0; d < Math.min(window.length, 200); d++) {
-        for (const i of [idx - d, idx + d]) {
-          if (
-            i >= 1 &&
-            i < window.length - 1 &&
-            session.isCut(window[i].time)
-          ) {
-            return window[i].time;
-          }
-        }
-      }
-      return window.length >= 4 * interval ? window[idx].time : undefined;
-    };
-    // Rule 1: interval count
-    if (window.length >= 2 * interval) {
-      const idx = Math.min(interval, window.length - 1);
-      return nearestCut(idx);
-    }
-    // Rule 2: size threshold
-    let totalSize = 0;
-    for (const p of window) {
-      if (!p.isSnapshot) {
-        totalSize += p.size ?? 0;
-      }
-    }
-    if (totalSize > max_size) {
-      let running = 0;
-      for (let i = 0; i < window.length; i++) {
-        running += window[i].size ?? 0;
-        if (running > max_size) {
-          return nearestCut(i) ?? window[i].time;
-        }
-      }
-    }
-    return;
+    const session = this.patchflowSession as any;
+    return snapshotCandidateFromHistory({
+      history: this.patchflowSession.history({ includeSnapshots: true }),
+      interval,
+      maxSize: max_size,
+      isCut:
+        typeof session?.isCut === "function"
+          ? (time: PatchId) => session.isCut(time)
+          : undefined,
+    });
   };
 
   private reconcileBackendFsState = reuseInFlight(async (): Promise<void> => {
