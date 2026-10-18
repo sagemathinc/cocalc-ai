@@ -152,6 +152,30 @@ export function mkdirBeneathHome(
   new SandboxRoot(home).mkdir(path, true, mode);
 }
 
+// Removes `path` only when it is an empty directory. This uses the anchored
+// unlinkat(AT_REMOVEDIR) operation directly, so it does not need read access to
+// the directory itself. That matters for empty container mount targets owned
+// by a subordinate uid. A symlink is never followed and is reported as not a
+// directory.
+export function rmdirBeneathHomeIfEmpty(home: string, path: string): boolean {
+  try {
+    new SandboxRoot(home).rmdir(path);
+    return true;
+  } catch (err) {
+    const code = errorCode(err);
+    if (
+      code === "ENOENT" ||
+      code === "ELOOP" ||
+      code === "ENOTDIR" ||
+      code === "ENOTEMPTY" ||
+      code === "EEXIST"
+    ) {
+      return false;
+    }
+    throw err;
+  }
+}
+
 // Removes `path` under `home` recursively, if present. A symlink at `path` is
 // removed itself, links inside the tree are not followed, and a symlinked
 // parent directory throws.

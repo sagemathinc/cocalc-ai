@@ -3,6 +3,7 @@ import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import {
   mkdirBeneathHome,
   rmBeneathHome,
+  rmdirBeneathHomeIfEmpty,
   writeFileBeneathHome,
 } from "@cocalc/backend/files/beneath-home";
 import getLogger from "@cocalc/backend/logger";
@@ -159,6 +160,11 @@ export async function ensureConfFilesExists(HOME: string): Promise<void> {
 export async function setupDataPath(HOME: string): Promise<void> {
   const data = relative(HOME, dataPath(HOME));
   logger.debug(`setup "${data}"...`);
+  // The container creates this empty mount target as a subordinate uid with
+  // mode 0700. Remove it without opening it before recursively clearing the
+  // host-owned cache tree. This matches fs.rm's behavior for an empty,
+  // unreadable directory while keeping every operation anchored beneath HOME.
+  rmdirBeneathHomeIfEmpty(HOME, join(data, "secrets"));
   await rmBeneathHome(HOME, data);
   mkdirBeneathHome(HOME, data, 0o755);
 }

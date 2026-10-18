@@ -14,6 +14,7 @@ import {
   mkdirBeneathHome,
   readFileBeneathHome,
   rmBeneathHome,
+  rmdirBeneathHomeIfEmpty,
   writeFileBeneathHome,
 } from "./beneath-home";
 
@@ -93,6 +94,23 @@ describe("beneath-home file access", () => {
     await rmBeneathHome(home, "a/missing/deep");
     await symlink(outside, join(home, "p"));
     await expect(rmBeneathHome(home, "p/secret")).rejects.toThrow(/ELOOP/);
+    expect(await readFile(join(outside, "secret"), "utf8")).toBe(
+      "host secret\n",
+    );
+  });
+
+  it("removes an empty unreadable directory without opening it", async () => {
+    await mkdir(join(home, "a"));
+    await mkdir(join(home, "a", "unreadable"), { mode: 0o000 });
+    expect(rmdirBeneathHomeIfEmpty(home, "a/unreadable")).toBe(true);
+    expect(existsBeneathHome(home, "a/unreadable")).toBe(false);
+  });
+
+  it("does not follow a symlink while probing for an empty directory", async () => {
+    await mkdir(join(home, "a"));
+    await symlink(outside, join(home, "a", "link"));
+    expect(rmdirBeneathHomeIfEmpty(home, "a/link")).toBe(false);
+    await rmBeneathHome(home, "a");
     expect(await readFile(join(outside, "secret"), "utf8")).toBe(
       "host secret\n",
     );
