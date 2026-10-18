@@ -35,6 +35,7 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
+import { useProjectContentUrl } from "@cocalc/frontend/project/use-project-content-url";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { use_font_size_scaling } from "../frame-tree/hooks";
@@ -81,6 +82,11 @@ function should_memoize(prev, next) {
   ]);
 }
 
+// The content origin is a separate site, so the page keeps its own origin
+// (storage, relative loads) but can't navigate the app's tab.
+export const CONTENT_FRAME_SANDBOX =
+  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+
 const STYLE: CSS = {
   overflowY: "auto",
   width: "100%",
@@ -108,7 +114,16 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   // is only needed for rmd mode where an aux file loaded from server.
   const [init, setInit] = useState<boolean>(mode == "rmd");
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
-  const [trust, setTrust0] = useState<boolean>(isTrusted(props));
+  // On sites with a content origin the saved file is shown there, with its
+  // scripts and relative images, and the Trusted switch goes away.
+  const content = useProjectContentUrl({
+    project_id,
+    path,
+    enabled: mode != "rmd",
+  });
+  const isolated = content.status == "ready";
+  const [trust0, setTrust0] = useState<boolean>(isTrusted(props));
+  const trust = trust0 && content.status == "unavailable";
   const trustedSrc = useProjectHostAuthedUrl({
     project_id,
     url: trust ? `${raw_url(project_id, path)}?param=${reload}` : undefined,
@@ -261,6 +276,27 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   }
 
   function render_iframe() {
+    if (content.status == "loading") {
+      return (
+        <div style={{ margin: "15px auto" }}>
+          <Spin />
+        </div>
+      );
+    }
+    if (content.status == "ready") {
+      return (
+        <iframe
+          ref={iframe}
+          src={`${content.url}?param=${reload}`}
+          title={`Rendered preview of ${path}`}
+          width={"100%"}
+          height={"100%"}
+          style={{ border: 0, ...style }}
+          onLoad={iframe_loaded}
+          sandbox={CONTENT_FRAME_SANDBOX}
+        />
+      );
+    }
     if (trust) {
       if (!trustedSrc) {
         return (
@@ -351,7 +387,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   // the cocalc-editor-div is needed for a safari hack only
   return (
     <div style={STYLE} className={"cocalc-editor-div smc-vfill"} ref={rootEl}>
-      {
+      {!isolated && (
         <div>
           <Tooltip
             title={
@@ -367,7 +403,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
             />
           </Tooltip>
         </div>
-      }
+      )}
       {render_iframe()}
     </div>
   );
