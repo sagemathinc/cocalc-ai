@@ -254,7 +254,8 @@ jobs:
         run: |
           CHROMIUM_PATH="$(command -v chromium || command -v chromium-browser || command -v google-chrome)"
           export CHROMIUM_PATH
-          pnpm -C src/packages/frontend test:browser-security
+          echo "CHROMIUM_PATH=$CHROMIUM_PATH"; ls -la "$CHROMIUM_PATH"; readlink -f "$CHROMIUM_PATH"; "$CHROMIUM_PATH" --version || true; df -h /dev/shm || true
+          DEBUG=pw:browser* pnpm -C src/packages/frontend test:browser-security
 
       - name: Test ${{ matrix.lane }} packages
         env:

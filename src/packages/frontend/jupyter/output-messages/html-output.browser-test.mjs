@@ -90,7 +90,7 @@ try {
     headless: true,
     executablePath:
       process.env.CHROMIUM_PATH ?? "/usr/local/bin/chromium-browser",
-    args: ["--no-sandbox"],
+    args: ["--no-sandbox", "--enable-logging=stderr", "--v=0"],
   });
   const page = await browser.newPage();
   const errors = [];
