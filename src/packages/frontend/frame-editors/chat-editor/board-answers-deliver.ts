@@ -28,6 +28,7 @@
 
 import { BoardAnswersRefusal } from "./board-answers-channel";
 import type { Submission } from "./board-answers-check";
+import { uuidV5 as uuidV5Of } from "@cocalc/util/sagebrush-board";
 
 /** The parts of the chat actions delivery uses. */
 export interface BoardAnswersChat {
@@ -64,37 +65,18 @@ function admitted(state: string | undefined): boolean {
 // A fixed namespace for these ids (RFC 9562 version 5).
 const NAMESPACE = "6f3a1c62-91d4-4f57-9a0e-b0a2d1c45e17";
 
-function uuidBytes(uuid: string): Uint8Array {
-  const hex = uuid.replace(/-/g, "");
-  const out = new Uint8Array(16);
-  for (let i = 0; i < 16; i++)
-    out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
-  return out;
-}
-
-/** UUID version 5 of `name` in `namespace` (SHA-1, RFC 9562). */
-export async function uuidV5(
-  name: string,
-  namespace = NAMESPACE,
-): Promise<string> {
-  const ns = uuidBytes(namespace);
-  const nameBytes = new TextEncoder().encode(name);
-  const data = new Uint8Array(ns.length + nameBytes.length);
-  data.set(ns);
-  data.set(nameBytes, ns.length);
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-1", data));
-  const b = hash.slice(0, 16);
-  b[6] = (b[6] & 0x0f) | 0x50;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+/** UUID version 5 of `name` in `namespace` (SHA-1, RFC 9562), computed
+ * without crypto.subtle, which a plain-http site lacks (cocalc-star on a
+ * LAN; Codex on #1134): the same ids as before, byte for byte. */
+export function uuidV5(name: string, namespace = NAMESPACE): string {
+  return uuidV5Of(name, namespace);
 }
 
 /** The chat message id of a submission in a thread. */
 export function boardAnswersMessageId(
   threadId: string,
   submissionId: string,
-): Promise<string> {
+): string {
   return uuidV5(`board-answers\n${threadId}\n${submissionId}`);
 }
 
@@ -183,10 +165,7 @@ export async function deliverBoardAnswers(opts: {
   file?: string;
   stale: boolean;
 }): Promise<void> {
-  const messageId = await boardAnswersMessageId(
-    opts.threadId,
-    opts.submission.id,
-  );
+  const messageId = boardAnswersMessageId(opts.threadId, opts.submission.id);
   const running = inFlight.get(messageId);
   if (running) return await running;
   const delivery = deliverOnce(opts, messageId);

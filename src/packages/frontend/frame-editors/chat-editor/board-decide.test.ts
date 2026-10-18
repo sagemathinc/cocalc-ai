@@ -279,8 +279,10 @@ describe("boardDecider", () => {
   });
 });
 
-test("without crypto.subtle, refused in CoCalc's words, without a call", async () => {
-  const call = jest.fn();
+// Codex on #1134: a plain-http site (cocalc-star on a LAN) has no
+// crypto.subtle; deciding works there, with the same digest.
+test("without crypto.subtle, decided with the same digest", async () => {
+  const call = jest.fn(async (o: any) => ({ id: o.message.id, option: null }));
   const real = Object.getOwnPropertyDescriptor(globalThis.crypto, "subtle");
   Object.defineProperty(globalThis.crypto, "subtle", {
     configurable: true,
@@ -294,10 +296,11 @@ test("without crypto.subtle, refused in CoCalc's words, without a call", async (
       text: "{}",
       call,
     });
-    await expect(decide(decideMessage())).rejects.toBeInstanceOf(
-      BoardAnswersRefusal,
+    await expect(decide(decideMessage())).resolves.toBeNull();
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call.mock.calls[0][0].sha256).toBe(
+      require("crypto").createHash("sha256").update("{}").digest("hex"),
     );
-    expect(call).not.toHaveBeenCalled();
   } finally {
     if (real) Object.defineProperty(globalThis.crypto, "subtle", real);
     else delete (globalThis.crypto as any).subtle;

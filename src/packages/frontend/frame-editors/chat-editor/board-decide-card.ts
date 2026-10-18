@@ -60,8 +60,8 @@ export function boardDecider({
   text: string;
   call?: BoardDecideCall;
 }): DecideOnBoard {
-  // Its SHA-256, once, when first asked (crypto.subtle needs a secure
-  // context; without one, deciding is refused and the board still shows).
+  // Its SHA-256, once, when first asked: with crypto.subtle, or in plain
+  // JavaScript on a plain-http site (cocalc-star on a LAN), the same bytes.
   let digest: Promise<string> | undefined;
   return async (message) => {
     const id = (message as { id?: unknown })?.id;
@@ -70,9 +70,7 @@ export function boardDecider({
       sha256 = await (digest ??= boardTextDigest(text));
     } catch {
       digest = undefined;
-      throw new BoardAnswersRefusal(
-        "This browser can't check answers here. Try again over https.",
-      );
+      throw new BoardAnswersRefusal("This answer can't be checked here.");
     }
     let result: { id: string; option: string | null };
     try {

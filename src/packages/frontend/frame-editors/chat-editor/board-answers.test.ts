@@ -270,6 +270,34 @@ describe("delivery", () => {
     ).toBe("2ed6657d-e927-568b-95e1-2665a8aea6a2");
   });
 
+  // Codex on #1134: a plain-http site (cocalc-star on a LAN) has no
+  // crypto.subtle; Submit works there, with the same message ids.
+  test("delivers without crypto.subtle, with the same message id", async () => {
+    const real = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: { getRandomValues: real?.value?.getRandomValues },
+    });
+    try {
+      const { chat, messages } = fakeChat();
+      await deliverBoardAnswers({
+        chat,
+        threadId: "thread-1",
+        submission,
+        stale: false,
+      });
+      // as the crypto.subtle implementation made it (a08e62f20e)
+      expect(boardAnswersMessageId("thread-1", ID)).toBe(
+        "3eea1915-d1a7-5ec5-b306-834b3f6fbe3c",
+      );
+      expect([...messages.keys()]).toEqual([
+        "3eea1915-d1a7-5ec5-b306-834b3f6fbe3c",
+      ]);
+    } finally {
+      if (real) Object.defineProperty(globalThis, "crypto", real);
+    }
+  });
+
   test("one message per submission: sending again finds it", async () => {
     const { chat, messages } = fakeChat();
     await deliverBoardAnswers({
