@@ -94,6 +94,10 @@ import {
 import { recordProjectMaintenanceStatus } from "@cocalc/server/projects/maintenance-status";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import {
+  issueProjectContentUrlLocal,
+  type ProjectContentUrl,
+} from "./project-content-url";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
   recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog,
@@ -2682,6 +2686,30 @@ export async function issueProjectHostAuthToken({
     project_id,
     public_directory_share_id,
     ttl_seconds,
+    browser_session_exp_s,
+  });
+}
+
+export async function issueProjectContentUrl({
+  account_id,
+  session_hash,
+  project_id,
+  path,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  project_id: string;
+  path: string;
+}): Promise<ProjectContentUrl> {
+  const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
+  return await issueProjectContentUrlLocal({
+    account_id: owner,
+    project_id,
+    path,
     browser_session_exp_s,
   });
 }

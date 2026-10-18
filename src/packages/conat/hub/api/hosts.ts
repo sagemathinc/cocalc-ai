@@ -1912,6 +1912,7 @@ export const hosts = {
   recordManagedRootfsReleaseReplica: authFirstRequireHost,
   listManagedRootfsReleaseLifecycle: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccountWithBoundSession,
+  issueProjectContentUrl: authFirstRequireAccountWithBoundSession,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -2490,6 +2491,16 @@ export interface Hosts {
     token: string;
     expires_at: number;
   }>;
+  // A short-lived link to a project file on the project's content origin,
+  // or why there is none (then the caller falls back).
+  issueProjectContentUrl: (opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+  }) => Promise<
+    | { url: string; expires_at: number }
+    | { unavailable: "off" | "no-host" | "host-not-ready" | "other-bay" }
+  >;
   issueProjectHostAgentAuthToken: (opts: {
     host_id?: string;
     account_id: string;
