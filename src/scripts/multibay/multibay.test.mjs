@@ -902,14 +902,17 @@ describe("course manager access across bays", () => {
   // student project on the seed. The call runs on the course's bay, which
   // reads the managers there and vouches for them to the seed (as itself:
   // the seed accepts that only from the course's owning bay).
-  const forwardedCalls = async () =>
+  let studentProject;
+  const forwardedCalls = async (name = "projects.ensureCourseManagerAccess") =>
     await runInBay(
       cluster,
       ATTACHED,
       `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0; // nothing forwarded to this bay yet
        const { rows } = await getPool().query(
-         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.ensureCourseManagerAccess' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
-         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$3 AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}, ${JSON.stringify(name)}]);
        return rows[0].n;`,
     );
 
@@ -920,7 +923,7 @@ describe("course manager access across bays", () => {
       name: "course-student",
     });
     student.client = await client(student);
-    const studentProject = await createProject(student.client, "student");
+    studentProject = await createProject(student.client, "student");
     // Link it to bob's course, as the course tooling does.
     await runInBay(
       cluster,
@@ -949,6 +952,22 @@ describe("course manager access across bays", () => {
        return rows[0]?.grp ?? null;`,
     );
     assert.equal(group, "collaborator");
+  });
+
+  it("sends an assignment patch from the course project's bay", async () => {
+    assert.ok(studentProject, "needs the student project");
+    const name = "projects.sendCourseAssignmentPatch";
+    const before = await forwardedCalls(name);
+    const result = await alice.client.call(name, {
+      course_project_id: bob.project,
+      assignment_id: "multibay-patch",
+      src_base_path: "hw",
+      dest_base_path: "hw",
+      relative_paths: ["notes.md"],
+      dests: [{ student_id: "student-1", student_project_id: studentProject }],
+    });
+    assert.ok(result?.op_id, JSON.stringify(result));
+    assert.equal(await forwardedCalls(name), before + 1);
   });
 });
 

@@ -3,9 +3,22 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-const resolveProjectBay = jest.fn();
+// Each bay's own answer for the course project, as its directory gives it.
+const rows = new Map<string, string | null>();
+const directory = jest.fn((bay_id: string) => ({
+  resolveProjectBay: async () => {
+    const owner = rows.get(bay_id);
+    return owner ? { bay_id: owner, epoch: 0 } : null;
+  },
+}));
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  getInterBayBridge: () => ({ directory }),
+}));
+// This bay's own row must not be consulted at all.
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
-  resolveProjectBay: (...args) => resolveProjectBay(...args),
+  resolveProjectBay: () => {
+    throw new Error("the receiving bay's own row is no evidence");
+  },
 }));
 
 import { getHubApiRoute } from "@cocalc/conat/hub/api/routes";
@@ -14,14 +27,15 @@ import { assertSentByCourseBay } from "./course-access";
 const COURSE = "11111111-1111-4111-8111-111111111111";
 
 beforeEach(() => {
-  resolveProjectBay.mockReset();
-  resolveProjectBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+  rows.clear();
+  directory.mockClear();
 });
 
-it("routes course manager access and invite repair to the course project's bay", () => {
+it("routes course manager access, invite repair and assignment patches to the course project's bay", () => {
   for (const name of [
     "projects.ensureCourseManagerAccess",
     "projects.repairAcceptedCourseStudentInviteAccounts",
+    "projects.sendCourseAssignmentPatch",
   ]) {
     const route = getHubApiRoute(name);
     expect(route?.owner).toBe("project");
@@ -31,34 +45,45 @@ it("routes course manager access and invite repair to the course project's bay",
   }
 });
 
-it("accepts course access from the course project's owning bay", async () => {
+it("accepts course access from the bay that says it owns the course", async () => {
+  rows.set("bay-1", "bay-1");
   await expect(
     assertSentByCourseBay({
       source_bay_id: "bay-1",
       course_project_id: COURSE,
     }),
   ).resolves.toBeUndefined();
-  expect(resolveProjectBay).toHaveBeenCalledWith(COURSE);
+  expect(directory).toHaveBeenCalledWith("bay-1", expect.anything());
 });
 
-it("refuses course access from any other bay, or an unnamed one", async () => {
+it("refuses a former owner after the course moved on twice (A -> B -> C)", async () => {
+  // A (the receiver) still says B; B and C both say C.
+  rows.set("bay-a", "bay-b");
+  rows.set("bay-b", "bay-c");
+  rows.set("bay-c", "bay-c");
   await expect(
     assertSentByCourseBay({
-      source_bay_id: "bay-2",
+      source_bay_id: "bay-b",
       course_project_id: COURSE,
     }),
   ).rejects.toMatchObject({ code: 403 });
   await expect(
-    assertSentByCourseBay({ course_project_id: COURSE }),
-  ).rejects.toMatchObject({ code: 403 });
+    assertSentByCourseBay({
+      source_bay_id: "bay-c",
+      course_project_id: COURSE,
+    }),
+  ).resolves.toBeUndefined();
 });
 
-it("refuses course access for an unknown course project", async () => {
-  resolveProjectBay.mockResolvedValue(null);
+it("refuses an unnamed bay, or one that knows no owner", async () => {
+  await expect(
+    assertSentByCourseBay({ course_project_id: COURSE }),
+  ).rejects.toMatchObject({ code: 403 });
+  expect(directory).not.toHaveBeenCalled();
   await expect(
     assertSentByCourseBay({
       source_bay_id: "bay-1",
       course_project_id: COURSE,
     }),
-  ).rejects.toThrow("must come from its owning bay (unknown)");
+  ).rejects.toThrow("names no owner");
 });

@@ -146,6 +146,8 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // bay; that bay grants them access to student projects on other bays.
   "projects.ensureCourseManagerAccess": courseProjectFromOpts,
   "projects.repairAcceptedCourseStudentInviteAccounts": courseProjectFromOpts,
+  // Sending an assignment patch grants the course's managers access first.
+  "projects.sendCourseAssignmentPatch": courseProjectFromOpts,
   // A document's edit history (TimeTravel) lives with its project.
   "sync.history": projectFromOpts,
   "sync.purgeHistory": projectFromOpts,
