@@ -17,6 +17,11 @@ Maybe.  Perhaps we'll have two modes.
 
 import { mountArg } from "@cocalc/backend/podman";
 import {
+  existsBeneathHome,
+  readFileBeneathHome,
+  writeFileBeneathHome,
+} from "@cocalc/backend/files/beneath-home";
+import {
   DEFAULT_PROJECT_TOOLS,
   PROJECT_BUNDLE_MOUNT_POINT,
   PROJECT_BUNDLES_MOUNT_POINT,
@@ -52,7 +57,7 @@ import { constants as fsConstants } from "node:fs";
 import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
-import { basename, dirname, join, relative, isAbsolute } from "node:path";
+import { basename, join, relative, isAbsolute } from "node:path";
 import { mount as mountRootFs, unmountAll as unmountAllRootFs } from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
@@ -300,33 +305,6 @@ export async function cleanupStaleProjectSecretsHostPaths(): Promise<void> {
       recursive: true,
       force: true,
     });
-  }
-}
-
-async function writeManagedRuntimeFile({
-  path,
-  content,
-  mode = 0o600,
-}: {
-  path: string;
-  content: string;
-  mode?: number;
-}): Promise<void> {
-  const dir = dirname(path);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  await chmod(dir, 0o700).catch(() => {});
-  const tmpPath = join(
-    dir,
-    `.tmp-${basename(path)}-${process.pid}-${Date.now()}`,
-  );
-  try {
-    await writeFile(tmpPath, content, { mode });
-    await chmod(tmpPath, mode).catch(() => {});
-    await rename(tmpPath, path);
-    await chmod(path, mode).catch(() => {});
-  } catch (err) {
-    await rm(tmpPath, { force: true }).catch(() => {});
-    throw err;
   }
 }
 
@@ -697,7 +675,10 @@ async function maybeRestoreFromBackup({
   }
 }
 
-async function writeSshAuthorizedKeys({
+// Every path is relative to the project home and goes through beneath-home,
+// so a symlink the project user planted (say ~/.ssh/.cocalc pointing at the
+// host service account's ~/.ssh) fails the write instead of redirecting it.
+export async function writeSshAuthorizedKeys({
   home,
   sshProxyPublicKey,
   authorizedKeys,
@@ -706,27 +687,24 @@ async function writeSshAuthorizedKeys({
   sshProxyPublicKey?: string;
   authorizedKeys?: string;
 }) {
-  const write = async (path: string, content: string) => {
-    await writeManagedRuntimeFile({ path, content });
-  };
-
   const proxyKeys = formatKeys(sshProxyPublicKey);
   if (proxyKeys) {
-    const proxyAuthPath = join(home, SSHD_CONFIG, "authorized_keys");
-    await write(proxyAuthPath, proxyKeys);
-    await syncSshProxyKeyForDropbear({
-      path: join(home, ".ssh", "authorized_keys"),
+    writeFileBeneathHome(home, join(SSHD_CONFIG, "authorized_keys"), proxyKeys);
+    syncSshProxyKeyForDropbear({
+      home,
+      path: join(".ssh", "authorized_keys"),
       key: proxyKeys,
     });
   }
 
+  // Managed keys are written so sshpiperd can quickly assemble the full
+  // allowed list (account/project keys plus ~/.ssh/authorized_keys) when
+  // routing ssh to the project. An empty list empties an existing file, so a
+  // removed last key does not survive there.
   const masterKeys = formatKeys(authorizedKeys);
-  if (masterKeys) {
-    const managedAuthPath = join(home, INTERNAL_SSH_CONFIG, "authorized_keys");
-    // Managed keys are written so sshpiperd can quickly assemble the full
-    // allowed list (account/project keys plus ~/.ssh/authorized_keys) when
-    // routing ssh to the project.
-    await write(managedAuthPath, masterKeys);
+  const managedAuthPath = join(INTERNAL_SSH_CONFIG, "authorized_keys");
+  if (masterKeys || existsBeneathHome(home, managedAuthPath)) {
+    writeFileBeneathHome(home, managedAuthPath, masterKeys ?? "");
   }
 }
 
@@ -736,23 +714,18 @@ function normalizeAuthorizedKeyLine(line: string): string {
   return line.trim().replace(/\s+/g, " ");
 }
 
-async function syncSshProxyKeyForDropbear({
+function syncSshProxyKeyForDropbear({
+  home,
   path,
   key,
 }: {
+  home: string;
   path: string;
   key: string;
 }) {
   const desired = normalizeAuthorizedKeyLine(key);
   if (!desired) return;
-  let text = "";
-  try {
-    text = await readFile(path, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw err;
-    }
-  }
+  const text = readFileBeneathHome(home, path) ?? "";
 
   const lines = text.length > 0 ? text.split(/\r?\n/) : [];
   const next: string[] = [];
@@ -783,7 +756,7 @@ async function syncSshProxyKeyForDropbear({
   if (!output.endsWith("\n")) {
     output += "\n";
   }
-  await writeManagedRuntimeFile({ path, content: output });
+  writeFileBeneathHome(home, path, output);
 }
 
 function projectContainerName(project_id) {
