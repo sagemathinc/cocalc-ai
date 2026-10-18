@@ -122,20 +122,25 @@ describe("saved-output export without a matching live kernel", () => {
 
   it("passes the same rendered outputs to the PDF print window", async () => {
     const { actions } = setup([]);
+    // An untrusted notebook is written through the passive-document
+    // boundary, so use a real document for the popup.
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument!;
+    // jsdom never loads images; the print step waits for them.
+    Object.defineProperty(doc, "images", { value: [] });
     const popup: any = {
-      document: {
-        open: jest.fn(),
-        write: jest.fn(),
-        close: jest.fn(),
-        images: [],
-      },
+      document: doc,
       print: jest.fn(),
       close: jest.fn(),
     };
     jest.spyOn(window, "open").mockReturnValue(popup);
     await actions.nbconvertToHtml("cocalc-pdf");
-    checkHTML(popup.document.write.mock.calls[0][0]);
-    await popup.onload();
+    expect(doc.head.firstElementChild?.getAttribute("http-equiv")).toBe(
+      "Content-Security-Policy",
+    );
+    checkHTML(doc.documentElement.outerHTML);
+    await popup.onload?.();
     expect(popup.print).toHaveBeenCalledTimes(1);
   });
 
