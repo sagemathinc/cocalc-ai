@@ -10,6 +10,12 @@ jest.mock("./project-membership-revocation", () => ({
   assertApiKeyProjectMembership: jest.fn(async () => undefined),
 }));
 
+const mockSoloCheck = jest.fn(async (_principal: unknown) => undefined);
+jest.mock("@cocalc/server/agents/cocalc-connector-scope", () => ({
+  assertSoloProjectCapabilityInContext: (principal: unknown) =>
+    mockSoloCheck(principal),
+}));
+
 jest.mock("./api-key-audit", () => ({
   __esModule: true,
   recordApiKeyAuditEventSoon: jest.fn(),
@@ -38,10 +44,60 @@ describe("HTTP API key policy audit", () => {
   });
   beforeEach(() => {
     mockRecordApiKeyAuditEventSoon.mockClear();
+    mockSoloCheck.mockClear();
     jest
       .mocked(assertApiKeyProjectMembership)
       .mockReset()
       .mockResolvedValue(undefined);
+  });
+
+  it("lets notifications:manage read and manage notifications, and no more", async () => {
+    const manager = {
+      ...principal,
+      capabilities: ["notifications:manage" as const],
+    };
+    for (const name of [
+      "notifications.list",
+      "notifications.counts",
+      "notifications.markRead",
+      "notifications.save",
+      "notifications.archive",
+    ]) {
+      await expect(
+        assertHttpHubApiKeyAllowed({ principal: manager, name, args: [{}] }),
+      ).resolves.toBeUndefined();
+      await expect(
+        assertHttpHubApiKeyAllowed({ principal, name, args: [{}] }),
+      ).rejects.toThrow();
+    }
+    // Every use is checked against the agent's project right now.
+    expect(mockSoloCheck).toHaveBeenCalledTimes(5);
+    expect(mockSoloCheck).toHaveBeenCalledWith(manager);
+    mockSoloCheck.mockRejectedValueOnce(
+      Object.assign(new Error("shared"), { code: "api_key_shared_project" }),
+    );
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: manager,
+        name: "notifications.list",
+        args: [{}],
+      }),
+    ).rejects.toThrow("shared");
+    expect(mockRecordApiKeyAuditEventSoon).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "api_key_denied",
+        value: expect.objectContaining({ code: "api_key_shared_project" }),
+      }),
+    );
+    // Creating notices or marking everything read is not part of it.
+    for (const name of [
+      "notifications.createAccountNotice",
+      "notifications.markAllRead",
+    ]) {
+      await expect(
+        assertHttpHubApiKeyAllowed({ principal: manager, name, args: [{}] }),
+      ).rejects.toThrow("API keys are not allowed");
+    }
   });
 
   it("audits unreviewed hub RPC denials", async () => {
