@@ -15,8 +15,8 @@ files, notebooks, terminals, and installed software, where people and AI agents
 work on the same files. Codex is built in, and Claude Code is available as an
 experimental preview on sites that enable it.
 
-CoCalc.ai is the hosted service. For a local or single-VM installation, or a
-customer-operated private deployment, see [Products](/products).
+CoCalc.ai is the hosted service. To run CoCalc on a computer or server you
+control, see [Where to run CoCalc](/products).
 
 The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 [Migrating from cocalc.com](/docs/account/migrating-from-cocalc-com).

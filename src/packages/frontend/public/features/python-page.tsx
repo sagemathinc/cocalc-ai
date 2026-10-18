@@ -7,6 +7,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { CodeBlock } from "@cocalc/frontend/public/common";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_PLUS_FEATURE_LINES } from "@cocalc/util/public-feature-pages";
 import { COLORS } from "@cocalc/util/theme";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
 import {
@@ -14,6 +15,7 @@ import {
   featureAppPath as appPath,
   featureSignUpPath,
   LinkButton,
+  PlusSentence,
 } from "./page-components";
 import { FeatureInfo, FeatureInfoHeading } from "./feature-info";
 import { ContextList, FeatureFinalBand } from "./feature-visuals";
@@ -52,8 +54,7 @@ export default function PythonFeaturePage({
                 Hosted CoCalc projects run Linux with the software supplied by
                 their selected image. Choose a Python image for scientific
                 packages, notebooks, scripts, and terminals in your browser.
-                Local CoCalc Plus uses your computer's operating system and
-                installed software.
+                <PlusSentence>{PUBLIC_PLUS_FEATURE_LINES.python}</PlusSentence>
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -150,8 +151,7 @@ uv pip install --python .venv/bin/python polars scikit-image tqdm
               custom Jupyter kernel
             </a>{" "}
             when a notebook should use it; installing packages does not select
-            the notebook's interpreter. Native Windows Plus needs commands and
-            paths for Windows.
+            the notebook's interpreter.
           </Paragraph>
           <Paragraph>
             System package commands depend on the image and your permissions. On
@@ -164,8 +164,10 @@ uv pip install --python .venv/bin/python polars scikit-image tqdm
             system packages belong to the runtime filesystem. Temporary paths
             have different retention. Record the image and dependency versions,
             and check the configured HOME and RootFS backup coverage before
-            relying on a restore, move, or image change. Local Plus uses local
-            storage and your computer's backup arrangements.
+            relying on a restore, move, or image change.
+            <PlusSentence>
+              {PUBLIC_PLUS_FEATURE_LINES.pythonStorage}
+            </PlusSentence>
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/software-environment")}>

@@ -12,8 +12,11 @@ import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
 } from "@cocalc/util/public-site-metadata";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import { renderPublicFooterPrerender } from "./public-prerender";
 import { renderPublicShell, servePublicShell } from "./public-shell";
+
+afterEach(() => jest.restoreAllMocks());
 
 // Public site fixtures model Launchpad explicitly; an unset product defaults
 // to Plus, whose smaller docs catalog intentionally excludes these pages.
@@ -194,7 +197,7 @@ describe("public shell rendering", () => {
 
   it.each([
     ["/", "home", "Build and use software with AI."],
-    ["/products", "products", "Ways to Run CoCalc"],
+    ["/products", "products", "<h1>Where to run CoCalc</h1>"],
     ["/pricing", "pricing", "Hosted memberships"],
   ])(
     "renders crawler-visible landing content for %s",
@@ -555,6 +558,37 @@ describe("public shell rendering", () => {
     const canonical = await renderPublicShell(request("/news/test-post-42"));
     expect(canonical.redirectTo).toBeUndefined();
     expect(canonical.status).toBe(200);
+  });
+
+  it("serves the shown Star page and renders a hidden product's static-shell target as the products page", async () => {
+    const star = await renderPublicShell(request("/products/cocalc-star"));
+    expect(star.redirectTo).toBeUndefined();
+    expect(star.status).toBe(200);
+    expect(star.html).toContain("<h1>CoCalc Star</h1>");
+
+    // The content router redirects a hidden product's page; for a static-shell
+    // target the public app redirects, and the shell renders the page it
+    // redirects to.
+    const target = await renderPublicShell(
+      request("/static/public.html", { target: "/products/cocalc-rocket" }),
+    );
+    expect(target.redirectTo).toBeUndefined();
+    expect(target.status).toBe(200);
+    expect(target.html).toContain(
+      'href="https://cocalc.ai/products" rel="canonical"',
+    );
+    expect(target.html).not.toContain("<h1>CoCalc Rocket</h1>");
+  });
+
+  it("serves a hidden product's page again once its switch is on", async () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "rocket", true);
+    const { html, redirectTo, status } = await renderPublicShell(
+      request("/products/cocalc-rocket"),
+    );
+    expect(redirectTo).toBeUndefined();
+    expect(status).toBe(200);
+    expect(html).toContain("<title>CoCalc Rocket | CoCalc</title>");
+    expect(html).toContain("<h1>CoCalc Rocket</h1>");
   });
 
   it("canonicalizes news history views to the current post without redirecting", async () => {

@@ -11,6 +11,11 @@ import {
 import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
   PUBLIC_FEATURE_NAV_ITEMS,
   publicFeatureHref,
   type PublicFeaturePage,
@@ -40,8 +45,8 @@ import {
 } from "@cocalc/util/public-about-content";
 import { getPublicCompareSections } from "@cocalc/util/public-compare-content";
 import {
+  getPublicGuideGroups,
   PUBLIC_FEATURED_GUIDES,
-  PUBLIC_GUIDE_GROUPS,
 } from "@cocalc/util/public-guides";
 import {
   getPublicHomeHighlights,
@@ -64,13 +69,13 @@ import {
 } from "@cocalc/util/public-footer-links";
 import {
   BILLING_INTERVAL_LABELS,
+  getPublicPricingCustomerOperated,
   hasPriceForBillingInterval,
   membershipPriceDisplay,
   membershipStoreDescription,
   membershipStoreHighlights,
   membershipTiersIncludeAi,
   membershipTrialLabel,
-  PUBLIC_PRICING_CUSTOMER_OPERATED,
   PUBLIC_PRICING_INCLUDED_AI_ALERT,
   PUBLIC_PRICING_NO_TIERS,
   PUBLIC_PRICING_ORGANIZATION_LICENSING,
@@ -82,6 +87,29 @@ import {
   publicStoreMembershipTiers,
   type PublicPricingTier,
 } from "@cocalc/util/public-pricing";
+import {
+  getShownPublicProductByView,
+  type PublicProduct,
+} from "@cocalc/util/public-product-availability";
+import {
+  getPublicPlusPricingIntro,
+  getPublicProductPageCopy,
+  getPublicWhereToRunActions,
+  getPublicWhereToRunComparison,
+  getPublicWhereToRunHeadline,
+  getPublicWhereToRunIntro,
+  getPublicWhereToRunPaths,
+  publicProductTextParts,
+  PUBLIC_PRODUCT_SHARED_NOTE,
+  PUBLIC_PRODUCTS_PAGE_LINK,
+  PUBLIC_WHERE_TO_RUN_COMPARISON_LINKS,
+  PUBLIC_WHERE_TO_RUN_CONTACT,
+  PUBLIC_WHERE_TO_RUN_PATHS_TITLE,
+  PUBLIC_WHERE_TO_RUN_TITLE,
+  PUBLIC_WHERE_TO_RUN_WORKFLOW,
+  type PublicProductBlock,
+  type PublicProductLink,
+} from "@cocalc/util/public-products-content";
 import {
   getPublicRouteMetadata,
   type PublicMetadataRoute,
@@ -103,13 +131,6 @@ const ARTICLE_STYLE = [
   "max-width:1100px",
   "padding:48px 24px",
 ].join(";");
-
-const PRODUCT_ROUTES = [
-  { href: "cocalc-plus", view: "products-cocalc-plus" },
-  { href: "cocalc-star", view: "products-cocalc-star" },
-  { href: "cocalc-launchpad", view: "products-cocalc-launchpad" },
-  { href: "cocalc-rocket", view: "products-cocalc-rocket" },
-] as const;
 
 function htmlEscape(value: string): string {
   return value
@@ -173,45 +194,184 @@ function renderHome(
 </main>`;
 }
 
+// A product page link: a path relative to the site's base path, a fragment on
+// the same page, or an absolute URL.
+function productLinks(
+  basePath: string,
+  links: readonly PublicProductLink[],
+): string {
+  return links
+    .map(({ href, label }) => {
+      const resolved =
+        href.startsWith("#") || /^https?:\/\//.test(href)
+          ? href
+          : publicPath(basePath, href);
+      return `<a href="${htmlEscape(resolved)}">${htmlEscape(label)}</a>`;
+    })
+    .join(" ");
+}
+
+function paragraphs(texts: readonly string[]): string {
+  return texts.map((text) => `<p>${htmlEscape(text)}</p>`).join("");
+}
+
+// One block of a product page card, as its React page renders it: a
+// paragraph with its code and links, a caveat, or a command.
+function productBlock(basePath: string, block: PublicProductBlock): string {
+  if (typeof block === "string" || "text" in block) {
+    return `<p>${publicProductTextParts(block)
+      .map((part) =>
+        "code" in part
+          ? `<code>${htmlEscape(part.code)}</code>`
+          : "link" in part
+            ? productLinks(basePath, [part.link])
+            : htmlEscape(part.text),
+      )
+      .join("")}</p>`;
+  }
+  if ("note" in block) return `<p>${htmlEscape(block.note)}</p>`;
+  return `<pre><code>${htmlEscape(block.code)}</code></pre>`;
+}
+
+// A product page, from the words its React page renders, in its order: the
+// lead, the shared note, the positioning cards and the page's cards.
+function renderProductPage(
+  product: PublicProduct,
+  description: string,
+  basePath: string,
+): string {
+  const copy = getPublicProductPageCopy(product.id);
+  const points = copy.points
+    .map(
+      ({ body, title }) =>
+        `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
+    )
+    .join("");
+  const sections = copy.sections
+    .map(
+      ({ blocks, key, links = [], title }) =>
+        `<section${
+          key === "install" ? ` id="install-${htmlEscape(product.slug)}"` : ""
+        }><h2>${htmlEscape(title)}</h2>${blocks
+          .map((block) => productBlock(basePath, block))
+          .join("")}${
+          links.length > 0 ? `<p>${productLinks(basePath, links)}</p>` : ""
+        }</section>`,
+    )
+    .join("\n");
+  const notes =
+    copy.notes.length > 0
+      ? `<section><h2>${htmlEscape(copy.notesTitle)}</h2><ul>${copy.notes
+          .map((note) => `<li>${htmlEscape(note)}</li>`)
+          .join("")}</ul></section>`
+      : "";
+  const links =
+    copy.links.length > 0 ? `<p>${productLinks(basePath, copy.links)}</p>` : "";
+  // The header prints the route's description unless the lead already says
+  // it, as a feature page prints each lead line once.
+  const descriptionLine = copy.lead.paragraphs.some((paragraph) =>
+    paragraph.includes(description),
+  )
+    ? ""
+    : `\n  <p>${htmlEscape(description)}</p>`;
+  return `<main data-cocalc-public-prerender="products" style="${ARTICLE_STYLE}">
+<header>
+  <p>${htmlEscape(PUBLIC_WHERE_TO_RUN_TITLE)}</p>
+  <h1>${htmlEscape(product.name)}</h1>${descriptionLine}
+</header>
+<section>
+  <h2>${htmlEscape(copy.lead.title)}</h2>
+  ${paragraphs(copy.lead.paragraphs)}
+  <p>${productLinks(basePath, copy.lead.actions)}</p>
+</section>
+<p><strong>${htmlEscape(PUBLIC_PRODUCT_SHARED_NOTE.title)}</strong> ${htmlEscape(
+    PUBLIC_PRODUCT_SHARED_NOTE.body,
+  )}</p>
+<ul>${points}</ul>
+${sections}
+${notes}
+${links}
+</main>`;
+}
+
 function renderProducts(
   route: PublicMetadataRoute,
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
   const current = getPublicRouteMetadata(route, config, { basePath });
-  const isIndex = route.route?.view === "products";
-  const productList = isIndex
-    ? `<section><h2>Choose who operates it and where it runs</h2><ul><li><h3>${publicLink(
-        basePath,
-        "pricing",
-        "CoCalc.ai",
-      )} — Start here</h3><p>Managed hosted projects for individuals and teams that do not want to operate infrastructure.</p></li>${PRODUCT_ROUTES.map(
-        ({ href, view }) => {
-          const metadata = getPublicRouteMetadata(
-            { section: "products", route: { view } },
-            config,
-            { basePath },
-          );
-          const title = metadata.title.split(" | ")[0];
-          return `<li><h3>${publicLink(
-            basePath,
-            href ? `products/${href}` : "products",
-            title,
-          )}</h3><p>${htmlEscape(metadata.description)}</p></li>`;
-        },
-      ).join("")}</ul></section>`
-    : "";
+  // A hidden product's page redirects to the products page, so it renders
+  // that page.
+  const product = getShownPublicProductByView(route.route?.view);
+  if (product != null) {
+    return renderProductPage(product, current.description, basePath);
+  }
+  const paths = getPublicWhereToRunPaths()
+    .map(
+      ({ detail, href, title }) =>
+        `<li><h3>${productLinks(basePath, [{ href, label: title }])}</h3><p>${htmlEscape(
+          detail,
+        )}</p></li>`,
+    )
+    .join("");
+  const comparison = getPublicWhereToRunComparison();
+  const table =
+    comparison == null
+      ? ""
+      : `<section>
+  <h2>${htmlEscape(comparison.title)}</h2>
+  <table>
+  <caption>${htmlEscape(comparison.caption)}</caption>
+  <thead><tr><td></td><th scope="col">CoCalc.ai</th><th scope="col">CoCalc Star</th></tr></thead>
+  <tbody>${comparison.rows
+    .map(
+      ({ cocalcAi, label, star }) =>
+        `<tr><th scope="row">${htmlEscape(label)}</th><td>${htmlEscape(
+          cocalcAi,
+        )}</td><td>${htmlEscape(star)}</td></tr>`,
+    )
+    .join("")}</tbody>
+  </table>
+  <p>${productLinks(basePath, PUBLIC_WHERE_TO_RUN_COMPARISON_LINKS)}</p>
+</section>`;
+  // As on the React page, without the compute card where the Research
+  // Compute page is not shown.
+  const workflow = PUBLIC_WHERE_TO_RUN_WORKFLOW.cards
+    .filter(
+      ({ href }) =>
+        href !== "features/research-compute" ||
+        getPublicFeaturePage("research-compute", config) != null,
+    )
+    .map(
+      ({ body, href, label, title }) =>
+        `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p><p>${publicLink(
+          basePath,
+          href,
+          label,
+        )}</p></li>`,
+    )
+    .join("");
   return `<main data-cocalc-public-prerender="products" style="${ARTICLE_STYLE}">
 <header>
-  <p>CoCalc product paths</p>
   <h1>${htmlEscape(current.title.split(" | ")[0])}</h1>
-  <p>${htmlEscape(current.description)}</p>
+  <h2>${htmlEscape(getPublicWhereToRunHeadline())}</h2>
+  <p>${htmlEscape(getPublicWhereToRunIntro())}</p>
+  <p>${productLinks(basePath, getPublicWhereToRunActions())}</p>
 </header>
-${productList}
 <section>
-  <h2>One persistent project model</h2>
-  <p>Every path uses the same core unit: a persistent Linux project that keeps files, tools, and services together. Collaboration, history, recovery, and agent features vary by product and deployment.</p>
-  <p>${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "features/compare", "Compare CoCalc fit")} ${publicLink(basePath, "support", "Review support and sales")}</p>
+  <h2>${htmlEscape(PUBLIC_WHERE_TO_RUN_PATHS_TITLE)}</h2>
+  <ul>${paths}</ul>
+</section>
+${table}
+<section>
+  <h2>${htmlEscape(PUBLIC_WHERE_TO_RUN_WORKFLOW.title)}</h2>
+  <p>${htmlEscape(PUBLIC_WHERE_TO_RUN_WORKFLOW.body)}</p>
+  <ul>${workflow}</ul>
+</section>
+<section>
+  <h2>${htmlEscape(PUBLIC_WHERE_TO_RUN_CONTACT.title)}</h2>
+  <p>${htmlEscape(PUBLIC_WHERE_TO_RUN_CONTACT.body)}</p>
+  <p>${productLinks(basePath, PUBLIC_WHERE_TO_RUN_CONTACT.links)}</p>
 </section>
 </main>`;
 }
@@ -273,7 +433,7 @@ function renderPricing(
       ? undefined
       : publicStoreMembershipTiers(pricingTiers);
   const introduction = isPlusProduct
-    ? "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration, a shared VM, or a customer-operated private deployment."
+    ? getPublicPlusPricingIntro()
     : "The membership options on this page apply to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page.";
   const aiAlert =
     tiers != null && membershipTiersIncludeAi(tiers)
@@ -300,12 +460,15 @@ function renderPricing(
 </section>`;
   const compareProducts = publicLink(
     basePath,
-    "products",
-    "Compare customer-operated options",
+    PUBLIC_PRODUCTS_PAGE_LINK.href,
+    PUBLIC_PRODUCTS_PAGE_LINK.label,
   );
   const options = isPlusProduct
     ? [
-        renderPricingOption(PUBLIC_PRICING_CUSTOMER_OPERATED, compareProducts),
+        renderPricingOption(
+          getPublicPricingCustomerOperated(),
+          compareProducts,
+        ),
         renderPricingOption(PUBLIC_PRICING_PRODUCT_QUOTES),
       ]
     : [
@@ -326,14 +489,17 @@ function renderPricing(
               ),
             ]
           : []),
-        renderPricingOption(PUBLIC_PRICING_CUSTOMER_OPERATED, compareProducts),
+        renderPricingOption(
+          getPublicPricingCustomerOperated(),
+          compareProducts,
+        ),
       ];
   return `<main data-cocalc-public-prerender="pricing" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc.ai pricing and licensing</p>
   <h1>Find the right fit</h1>
   <p>${htmlEscape(introduction)}</p>${aiAlert}
-  <p>${hostedAction} ${publicLink(basePath, "products", "Compare operating models")}</p>
+  <p>${hostedAction} ${publicLink(basePath, PUBLIC_PRODUCTS_PAGE_LINK.href, PUBLIC_PRODUCTS_PAGE_LINK.label)}</p>
 </header>
 ${hostedSection}
 <section>
@@ -426,6 +592,19 @@ function renderFeatureNavigation(
   return `<nav aria-label="Related CoCalc features"><h2>Explore CoCalc features</h2><ul>${links}</ul></nav>`;
 }
 
+// The CLI and API page's install section, as its React page renders it, with
+// CoCalc.ai's install command on every site.
+function renderCliInstall(): string {
+  return `<section><h2>${htmlEscape(PUBLIC_CLI_INSTALL_TITLE)}</h2><p>${htmlEscape(
+    PUBLIC_CLI_INSTALL_STEP,
+  )}</p><pre><code>${htmlEscape(
+    PUBLIC_CLI_INSTALL_COMMAND,
+  )}</code></pre><p>${htmlEscape(PUBLIC_CLI_INSTALL_WINDOWS)}</p>${PUBLIC_CLI_COMPUTER_COMMANDS.map(
+    ({ code, text }) =>
+      `<p><code>${htmlEscape(code)}</code> ${htmlEscape(text)}</p>`,
+  ).join("")}</section>`;
+}
+
 function renderFeatureDetail(
   page: PublicFeaturePage,
   basePath: string,
@@ -433,9 +612,10 @@ function renderFeatureDetail(
 ): string {
   // The Compare page's fit lists depend on the site. The AI page's hero shows
   // its headline for this site and its intro, and its sections are the page's
-  // agent cards, as on the React page.
+  // agent cards, as on the React page. The CLI and API page's install section
+  // follows its lead.
   const isAiPage = page.slug === "ai";
-  const sections = (
+  const sections = `${page.slug === "api" ? renderCliInstall() : ""}${(
     (page.slug === "compare"
       ? getPublicCompareSections(config)
       : isAiPage
@@ -443,14 +623,23 @@ function renderFeatureDetail(
         : page.sections) ?? []
   )
     .map((section) => renderSection(section, basePath, config))
-    .join("");
+    .join("")}`;
   const title = page.metadataTitle ?? page.title;
   const highlights = (page.highlights ?? [])
     .map((item) => `<li>${htmlEscape(item)}</li>`)
     .join("");
-  const lead = isAiPage
+  const leadLines = isAiPage
     ? [getPublicAiHeadline(config), PUBLIC_AI_INTRO]
     : [page.tagline, page.metadataSummary ?? page.summary, page.summary];
+  // A line that another lead line repeats or contains, such as a summary's
+  // first sentence, is printed once.
+  const lead = leadLines.filter(
+    (line, index) =>
+      !leadLines.some(
+        (other, otherIndex) =>
+          other.includes(line) && (other !== line || otherIndex < index),
+      ),
+  );
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc feature</p>
@@ -539,8 +728,9 @@ function renderGuides(
         )}</h2><p>${htmlEscape(body)}</p></li>`,
     )
     .join("");
-  const groups = PUBLIC_GUIDE_GROUPS.map(
-    ({ guides, intro, title }) => `<section>
+  const groups = getPublicGuideGroups()
+    .map(
+      ({ guides, intro, title }) => `<section>
   <h2>${htmlEscape(title)}</h2>
   <p>${htmlEscape(intro)}</p>
   <ul>${guides
@@ -555,7 +745,8 @@ function renderGuides(
     )
     .join("")}</ul>
 </section>`,
-  ).join("");
+    )
+    .join("");
   return `<main data-cocalc-public-prerender="guides" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc workflow guides</p>

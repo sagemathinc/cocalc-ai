@@ -1,10 +1,12 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { getDocsEntry } from "@cocalc/docs";
 import {
   getPublicFeaturePage,
   getPublicFeatureIndexPages,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_TITLE,
 } from "@cocalc/util/public-feature-pages";
 import PublicFeaturesApp from "../app";
 
@@ -107,5 +109,33 @@ it.each(["/prefix", "/docs"])(
     expect(
       container.querySelector(`a[href="${basePath}/docs/hosts/project-hosts"]`),
     ).toBeNull();
+  },
+);
+
+// The crawler fallback prints the same command under a base path
+// (hub/servers/app/public-prerender.test.ts).
+it.each(["/prefix", "/docs"])(
+  "shows CoCalc.ai's installer on the CLI and API page on deployment %s",
+  (basePath) => {
+    jest.replaceProperty(
+      jest.requireMock("@cocalc/frontend/customize/app-base-path"),
+      "appBasePath",
+      basePath,
+    );
+    render(
+      <PublicFeaturesApp
+        config={{
+          cocalc_product: "launchpad",
+          dns: "cocalc.example.edu",
+          site_name: "CoCalc",
+        }}
+        initialRoute={{ view: "detail", slug: "api" }}
+      />,
+    );
+    const command = within(
+      screen.getByRole("region", { name: PUBLIC_CLI_INSTALL_TITLE }),
+    ).getByLabelText("Install command").textContent;
+    expect(command).toContain(PUBLIC_CLI_INSTALL_COMMAND);
+    expect(command).not.toContain(`${basePath}/cli/install.sh`);
   },
 );

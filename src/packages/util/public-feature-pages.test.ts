@@ -1,11 +1,22 @@
+import { cocalcCliInstallCommand } from "./consts/ui";
 import {
+  PUBLIC_CLI_COMPUTER_COMMANDS,
+  PUBLIC_CLI_IN_PROJECTS,
+  PUBLIC_CLI_INSTALL_COMMAND,
+  PUBLIC_CLI_INSTALL_STEP,
+  PUBLIC_CLI_INSTALL_TITLE,
+  PUBLIC_CLI_INSTALL_WINDOWS,
   PUBLIC_FEATURE_NAV_ITEMS,
   PUBLIC_FEATURE_PAGES,
+  PUBLIC_PLUS_FEATURE_LINES,
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   publicFeatureHref,
 } from "./public-feature-pages";
+import { PUBLIC_PRODUCT_AVAILABILITY } from "./public-product-availability";
 import { getDocsEntry } from "@cocalc/docs";
+
+afterEach(() => jest.restoreAllMocks());
 
 function expectNonEmptyString(value: string, label: string) {
   if (value.trim().length === 0) {
@@ -196,8 +207,11 @@ describe("research compute product availability", () => {
       for (const page of PUBLIC_FEATURE_PAGES.filter(
         (page) => !hidden.includes(page.slug),
       )) {
+        // The same page; on a site that does not describe CoCalc Plus, it
+        // leaves out its sentences about Plus (see "CoCalc Plus on feature
+        // pages" below).
         for (const slug of [page.slug, ...(page.aliases ?? [])]) {
-          expect(getPublicFeaturePage(slug, config)).toBe(page);
+          expect(getPublicFeaturePage(slug, config)?.slug).toBe(page.slug);
         }
       }
     },
@@ -246,5 +260,168 @@ describe("research compute product availability", () => {
         ),
       }).toEqual(catalog);
     }
+  });
+});
+
+describe("CLI and API page", () => {
+  const page = getPublicFeaturePage("api")!;
+
+  it("describes the CLI inside projects and on your own computer", () => {
+    expect(page.title).toBe("CLI and API");
+    expect(page.navLabel).toBe("CLI and API");
+    expect(page.summary).toBe(
+      "Inside every CoCalc.ai project, agents use the CoCalc CLI to work with notebooks, terminals, the shared browser and other agents. On your own computer, install the CLI to move files, run notebooks and start a Codex turn in a project.",
+    );
+    expect(page.metadataSummary).toBe(PUBLIC_CLI_IN_PROJECTS);
+    // Search results cut descriptions at about 160 characters.
+    expect(page.metadataSummary!.length).toBeLessThanOrEqual(160);
+    expect(
+      page.sections?.find(({ title }) => title === "Terms")?.paragraphs,
+    ).toEqual([
+      "Your use of CoCalc.ai through the CLI is covered by the CoCalc.ai Terms of Service, including their API Terms.",
+    ]);
+    // No vendor name in the page title or its first heading.
+    expect(`${page.title} ${page.tagline}`).not.toMatch(
+      /Codex|Claude|OpenAI|ChatGPT/,
+    );
+  });
+
+  it("says how to install the CLI on your own computer, after those sentences", () => {
+    expect(PUBLIC_CLI_INSTALL_TITLE).toBe(
+      "Install the CLI on your own computer",
+    );
+    expect(PUBLIC_CLI_INSTALL_STEP).toBe(
+      "On Linux (x64 or ARM64, with glibc) or macOS (Apple silicon or Intel), run this in a terminal:",
+    );
+    expect(PUBLIC_CLI_INSTALL_WINDOWS).toBe(
+      "On Windows, install it inside WSL2.",
+    );
+    expect(PUBLIC_CLI_COMPUTER_COMMANDS).toEqual([
+      {
+        code: "cocalc project browser connect",
+        text: "opens a Chrome browser on your computer that agents in a project can drive. Anything in the project then fully controls that browser, including opening files on your computer and addresses on your local network, so connect only projects you trust.",
+      },
+      {
+        code: "cocalc project build <path>",
+        text: "builds a saved LaTeX, Knitr, R Markdown or Quarto document in a project.",
+      },
+    ]);
+  });
+
+  // Agents run `cocalc agent` and `cocalc sensor` inside projects; neither is
+  // a command for your own computer, and neither is any computer command.
+  it("names no project-only or computer command as one for your own computer", () => {
+    expect(
+      JSON.stringify([
+        page,
+        PUBLIC_CLI_INSTALL_STEP,
+        PUBLIC_CLI_INSTALL_WINDOWS,
+        PUBLIC_CLI_COMPUTER_COMMANDS,
+      ]),
+    ).not.toMatch(/cocalc (agent|sensor)\b|cocalc computer/);
+  });
+
+  // On every site: the page describes the CLI that CoCalc.ai serves, and a
+  // site that serves no CLI releases answers its own /cli/install.sh with an
+  // older standalone installer.
+  it("installs the CLI from CoCalc.ai", () => {
+    expect(PUBLIC_CLI_INSTALL_COMMAND).toBe(
+      "curl -fsSL https://cocalc.ai/cli/install.sh | sh",
+    );
+    expect(PUBLIC_CLI_INSTALL_COMMAND).toBe(
+      cocalcCliInstallCommand("https://cocalc.ai"),
+    );
+  });
+});
+
+describe("CoCalc Plus on feature pages", () => {
+  // The sentence each page's record holds about CoCalc Plus.
+  const PLUS_TEXT = {
+    "jupyter-notebook": PUBLIC_PLUS_FEATURE_LINES.jupyter,
+    "latex-editor": "or install the tools for local CoCalc Plus",
+    octave: PUBLIC_PLUS_FEATURE_LINES.octave,
+    python: PUBLIC_PLUS_FEATURE_LINES.python,
+    sage: PUBLIC_PLUS_FEATURE_LINES.sage,
+  } as const;
+
+  function pageText(slug: string, config?: { cocalc_product?: string }) {
+    return JSON.stringify(getPublicFeaturePage(slug, config) ?? null);
+  }
+
+  const SITES = [
+    ["cocalc.ai", { cocalc_product: "launchpad", dns: "cocalc.ai" }],
+    ["a Launchpad site", { cocalc_product: "launchpad" }],
+    ["a Rocket site", { cocalc_product: "rocket" }],
+    ["no site configuration", undefined],
+  ] as const;
+
+  it.each(SITES)(
+    "names CoCalc Plus only in its own sentences, and no hidden product, on %s",
+    (_site, config) => {
+      for (const { slug } of PUBLIC_FEATURE_PAGES) {
+        const text = pageText(slug, config);
+        expect(text).not.toMatch(/\b(Launchpad|Rocket)\b/);
+        expect(
+          Object.values(PLUS_TEXT).reduce(
+            (rest, line) => rest.split(line).join(""),
+            text,
+          ),
+        ).not.toMatch(/\bPlus\b/);
+      }
+      for (const [slug, text] of Object.entries(PLUS_TEXT)) {
+        expect(pageText(slug, config)).toContain(text);
+      }
+    },
+  );
+
+  it.each(SITES)(
+    "names no hidden product on any feature page on %s once Plus is hidden",
+    (_site, config) => {
+      jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+      for (const { slug } of PUBLIC_FEATURE_PAGES) {
+        expect(pageText(slug, config)).not.toMatch(
+          /\b(Plus|Launchpad|Rocket)\b/,
+        );
+      }
+      expect(
+        getPublicFeaturePage("latex-editor", config)?.sections?.[0]
+          .bullets?.[0],
+      ).toBe("Use a hosted image with the required TeX tools");
+    },
+  );
+
+  it.each([
+    ["while Plus is shown", { cocalc_product: "launchpad", dns: "cocalc.ai" }],
+    ["on a CoCalc Plus install", { cocalc_product: "plus" }],
+  ])("describes CoCalc Plus %s", (_state, config) => {
+    for (const [slug, text] of Object.entries(PLUS_TEXT)) {
+      expect(pageText(slug, config)).toContain(text);
+    }
+    expect(
+      getPublicFeaturePage("python", config)?.sections?.[0].paragraphs?.[0],
+    ).toBe(
+      "Hosted CoCalc projects run the software supplied by their selected Linux image. Choose a Python image for scientific work. Local CoCalc Plus uses your computer's operating system and installed software.",
+    );
+    expect(
+      getPublicFeaturePage("sage", config)?.sections?.[0].paragraphs?.[0],
+    ).toBe(
+      "Choose a hosted Sage image with its Sage Jupyter kernel, command-line REPL and .sage support. CoCalc Plus uses the software installed on your computer. Check the image, Sage version and additional packages before reproducing a calculation.",
+    );
+  });
+
+  it("keeps the rest of each sentence when it leaves out CoCalc Plus", () => {
+    jest.replaceProperty(PUBLIC_PRODUCT_AVAILABILITY, "plus", false);
+    const config = { cocalc_product: "launchpad", dns: "cocalc.ai" };
+    expect(
+      getPublicFeaturePage("sage", config)?.sections?.[0].paragraphs?.[0],
+    ).toBe(
+      "Choose a hosted Sage image with its Sage Jupyter kernel, command-line REPL and .sage support. Check the image, Sage version and additional packages before reproducing a calculation.",
+    );
+    expect(
+      getPublicFeaturePage("jupyter-notebook", config)?.sections?.[0]
+        .paragraphs?.[1],
+    ).toBe(
+      "Choose an image, custom kernel, or registered remote kernel with the required language and packages. Collaborators share the selected notebook kernel session.",
+    );
   });
 });
