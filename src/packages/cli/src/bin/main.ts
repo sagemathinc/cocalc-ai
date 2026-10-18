@@ -1895,6 +1895,7 @@ async function hubCallByName<T>(
       "projects.listProjectSummaries",
       "notifications.list",
       "notifications.counts",
+      "notifications.summary",
       "notifications.markRead",
       "notifications.save",
       "notifications.archive",

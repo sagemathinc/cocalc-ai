@@ -401,3 +401,99 @@ test("notifications save and archive toggle the corresponding flags", async () =
     ],
   ]);
 });
+
+test("--since accepts ages and dates", async () => {
+  const { parseSince } = await import("./notifications");
+  const now = Date.parse("2026-10-18T12:00:00.000Z");
+  assert.equal(parseSince("12h", now), "2026-10-18T00:00:00.000Z");
+  assert.equal(parseSince("30d", now), "2026-09-18T12:00:00.000Z");
+  assert.equal(parseSince("2026-10-01", now), "2026-10-01T00:00:00.000Z");
+  assert.equal(parseSince(undefined, now), undefined);
+  assert.throws(() => parseSince("yesterday", now), /--since must be/);
+});
+
+test("notifications list --all pages by id and returns newest first", async () => {
+  const { listAllNotifications } = await import("./notifications");
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    notification_id: `00000000-0000-4000-8000-00000000000${i}`,
+    created_at: `2026-10-1${i}T00:00:00.000Z`,
+  }));
+  const calls: any[] = [];
+  const all = await listAllNotifications(
+    async (opts) => {
+      calls.push(opts);
+      const after = opts.page.after_notification_id;
+      const start = after
+        ? rows.findIndex((r) => r.notification_id === after) + 1
+        : 0;
+      return rows.slice(start, start + opts.limit);
+    },
+    { state: "unread" },
+    2,
+  );
+  assert.deepEqual(all, [...rows].reverse());
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].page, {});
+  assert.deepEqual(calls[1].page, {
+    after_notification_id: rows[1].notification_id,
+  });
+  assert.equal(calls[2].state, "unread");
+});
+
+test("notifications list --all orders ties like the list does", async () => {
+  const { listAllNotifications } = await import("./notifications");
+  const t = "2026-10-18T00:00:00.000Z";
+  const rows = [
+    {
+      notification_id: "a",
+      created_at: t,
+      updated_at: "2026-10-18T01:00:00.000Z",
+    },
+    {
+      notification_id: "b",
+      created_at: t,
+      updated_at: "2026-10-18T02:00:00.000Z",
+    },
+    { notification_id: "c", created_at: null, updated_at: null },
+    { notification_id: "d", created_at: t, updated_at: null },
+  ];
+  const all = await listAllNotifications(async () => rows, {}, 300);
+  assert.deepEqual(
+    all.map((r) => r.notification_id),
+    ["b", "a", "d", "c"],
+  );
+});
+
+test("notifications summary forwards filters, with --since as a time", async () => {
+  let captured: any;
+  const program = new Command();
+  registerNotificationsCommand(program, {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        hub: {
+          notifications: {
+            summary: async (opts: any) => {
+              captured = opts;
+              return { total: 0, groups: [] };
+            },
+          },
+        },
+      }),
+  } as any);
+  await program.parseAsync([
+    "node",
+    "test",
+    "notifications",
+    "summary",
+    "--state",
+    "unread",
+    "--since",
+    "2026-10-01",
+  ]);
+  assert.deepEqual(captured, {
+    kind: undefined,
+    state: "unread",
+    project_id: undefined,
+    since: "2026-10-01T00:00:00.000Z",
+  });
+});
