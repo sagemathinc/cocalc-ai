@@ -3,7 +3,9 @@ import { COMPUTE_STATES } from "@cocalc/util/compute-states";
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const DEFAULT_RECOVERY_ESTIMATE_MS = 3 * 60 * 1000;
 const STALE_OUTAGE_START_MS = 30 * 60 * 1000;
-export const HOST_UNAVAILABLE_BANNER_GRACE_MS = 5_000;
+// Routine project-host restarts and rollouts reconnect within ~15 s; only
+// unconfirmed disconnects longer than this show the reconnect banner.
+export const HOST_UNAVAILABLE_BANNER_GRACE_MS = 30_000;
 
 type HostInfoLike = {
   get?: (key: string) => any;
