@@ -4057,6 +4057,91 @@ normalize_project_io_class_state
             self.assertEqual((state / pid(4003)).read_text(), "premium\n")
             self.assertEqual(len(list(state.iterdir())), 3000 + 1 + 2)
 
+    def test_project_conat_router_port_follows_project_host(self) -> None:
+        port = bootstrap.project_conat_router_port
+        self.assertEqual(port([]), 9102)
+        self.assertEqual(port(["PORT=9010"]), 9110)
+        self.assertEqual(port(['PORT="9010"']), 9110)
+        self.assertEqual(
+            port(["PORT=9010", "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9555"]),
+            9555,
+        )
+        # Malformed or out-of-range values fall back like project-host does.
+        self.assertEqual(port(["PORT=nope", "garbage line"]), 9102)
+        self.assertEqual(port(["COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=0"]), 9102)
+        self.assertEqual(port(["PORT=65500"]), 9102)
+
+    def _storage_wrapper_for(self, cfg) -> str:
+        captured: dict[str, str] = {}
+        original_text_write_atomic = bootstrap.text_write_atomic
+        original_chmod = bootstrap.os.chmod
+        original_chown = bootstrap.os.chown
+
+        def capture_write(path, data, **_kwargs):
+            captured[str(path)] = data
+            return len(data)
+
+        try:
+            bootstrap.text_write_atomic = capture_write
+            bootstrap.os.chmod = lambda *_args, **_kwargs: None
+            bootstrap.os.chown = lambda *_args, **_kwargs: None
+            bootstrap.install_privileged_wrappers(cfg)
+        finally:
+            bootstrap.text_write_atomic = original_text_write_atomic
+            bootstrap.os.chmod = original_chmod
+            bootstrap.os.chown = original_chown
+        return captured["/usr/local/sbin/cocalc-runtime-storage"]
+
+    def test_storage_wrapper_templates_the_conat_router_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9010"])
+            script = self._storage_wrapper_for(cfg)
+        self.assertIn('PROJECT_CONAT_ROUTER_PORT="9110"', script)
+
+    def test_project_egress_rules_render_as_nft(self) -> None:
+        # Run the real shell function and check the exact nft rules it emits.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = self._storage_wrapper_for(make_cfg(tmpdir))
+        variables = "\n".join(
+            line
+            for line in script.splitlines()
+            if line.startswith(
+                (
+                    "PROJECT_METADATA_",
+                    "PROJECT_CONAT_ROUTER_PORT=",
+                    "PROJECT_HOST_LOCAL_ALLOWED_PORTS=",
+                    "PROJECT_PRIVATE_IPV",
+                    "PROJECT_NETWORK_TABLE=",
+                    "PROJECT_NETWORK_CHAIN=",
+                )
+            )
+        )
+        emit = "emit_project_metadata_rules() {" + script.split(
+            "emit_project_metadata_rules() {", 1
+        )[1].split("\n}\n", 1)[0] + "\n}\n"
+        program = "\n".join(
+            [
+                variables,
+                'project_network_pool_cgroup_path() { echo "cocalc-project-pool"; }',
+                emit,
+                "emit_project_metadata_rules",
+            ]
+        )
+        rules = subprocess.run(
+            ["bash", "-c", program], check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        prefix = 'add rule inet cocalc_project_network output socket cgroupv2 level 1 "cocalc-project-pool"'
+        self.assertEqual(
+            rules[2:],
+            [
+                f"{prefix} ct state new fib daddr type local meta l4proto {{ tcp, udp }} th dport != {{ 53, 9102 }} counter drop comment \"cocalc-project-network-egress-local\"",
+                f"{prefix} ct state new ip daddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv4\"",
+                f"{prefix} ct state new ip6 daddr fc00::/7 meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv6\"",
+            ],
+        )
+        self.assertTrue(rules[0].endswith('comment "cocalc-project-network-metadata-ipv4"'))
+        self.assertTrue(rules[1].endswith('comment "cocalc-project-network-metadata-ipv6"'))
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:
@@ -4606,6 +4691,17 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"', script
             )
+            self.assertIn('PROJECT_CONAT_ROUTER_PORT="9102"', script)
+            self.assertNotIn("__PROJECT_CONAT_ROUTER_PORT__", script)
+            self.assertIn(
+                'PROJECT_HOST_LOCAL_ALLOWED_PORTS="{ 53, ${PROJECT_CONAT_ROUTER_PORT} }"',
+                script,
+            )
+            self.assertIn(
+                'PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"',
+                script,
+            )
+            self.assertIn('PROJECT_PRIVATE_IPV6="fc00::/7"', script)
             self.assertIn("socket cgroupv2 level", script)
             self.assertIn("apply_pasta_resource_limits", script)
             self.assertIn("ensure_project_network_rule", script)
@@ -4655,11 +4751,34 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'path="$(project_network_pool_cgroup_path)"', emit_metadata_body
             )
+            # The shared egress block: new connections only, drop-only, and
+            # after the metadata rules in the shared pool rules.
+            self.assertIn(
+                'marker="cocalc-project-network-egress"', emit_metadata_body
+            )
+            for comment in ("local", "private-ipv4", "private-ipv6"):
+                self.assertIn(f'comment "%s-{comment}"', emit_metadata_body)
+            self.assertEqual(emit_metadata_body.count("ct state new"), 3)
+            self.assertNotIn("counter accept", emit_metadata_body)
+            self.assertIn(
+                "ct state new fib daddr type local meta l4proto { tcp, udp } th dport != %s counter drop",
+                emit_metadata_body,
+            )
+            self.assertEqual(emit_metadata_body.count("th dport != 53"), 2)
             verify_network_body = script.split(
                 "verify_project_network_limits() {", 1
             )[1].split("\n}\n\nrender_project_network_rules()", 1)[0]
             self.assertIn("metadata_ipv4_count", verify_network_body)
             self.assertIn("metadata_ipv6_count", verify_network_body)
+            for name in ("local", "private-ipv4", "private-ipv6"):
+                self.assertIn(
+                    f'comment "cocalc-project-network-egress-{name}"',
+                    verify_network_body,
+                )
+            self.assertIn(
+                "project egress block rules are missing or duplicated",
+                verify_network_body,
+            )
             ensure_network_body = script.split(
                 "ensure_project_network_rule() {", 1
             )[1].split("\n}\n\nemit_project_metadata_rules()", 1)[0]

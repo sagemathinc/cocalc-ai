@@ -2174,6 +2174,37 @@ def parse_env_assignment_line(line: str) -> tuple[str, str] | None:
     return key, value
 
 
+DEFAULT_PROJECT_HOST_PORT = 9002
+
+
+def project_conat_router_port(env_lines: list[str]) -> int:
+    """The port of this host's conat router, the one host-local service
+    besides DNS that projects may connect to. Derived as project-host derives
+    it (project-host/daemon.ts): COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else
+    PORT + 100, with PORT defaulting to 9002."""
+    env: dict[str, str] = {}
+    for line in env_lines:
+        try:
+            parsed = parse_env_assignment_line(line)
+        except RuntimeError:
+            continue
+        if parsed is not None:
+            env[parsed[0]] = parsed[1].strip().strip("\"'")
+
+    def port(value: str | None) -> int | None:
+        try:
+            number = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return number if 1 <= number <= 65535 else None
+
+    explicit = port(env.get("COCALC_PROJECT_HOST_CONAT_ROUTER_PORT"))
+    if explicit is not None:
+        return explicit
+    derived = port(str((port(env.get("PORT")) or DEFAULT_PROJECT_HOST_PORT) + 100))
+    return derived if derived is not None else DEFAULT_PROJECT_HOST_PORT + 100
+
+
 def read_env_assignments(path: str | Path) -> dict[str, str]:
     env: dict[str, str] = {}
     p = Path(path)
@@ -6721,6 +6752,16 @@ PROJECT_UDP_NEW_BURST="400"
 PROJECT_METADATA_IPV4="169.254.169.254"
 PROJECT_METADATA_IPV6="fd20:ce::254"
 PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"
+# Projects must not open connections to the host itself or into the private
+# network: through pasta, a project's connection to its gateway address
+# arrives at the host's own services (sshd, the project-host API, ...), and a
+# connection to a VPC address leaves as the host. The only host-local services
+# a project needs are the host resolver (pasta forwards the project's DNS to
+# it) and this host's conat router. DNS to a private resolver stays allowed.
+PROJECT_CONAT_ROUTER_PORT="__PROJECT_CONAT_ROUTER_PORT__"
+PROJECT_HOST_LOCAL_ALLOWED_PORTS="{ 53, ${PROJECT_CONAT_ROUTER_PORT} }"
+PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"
+PROJECT_PRIVATE_IPV6="fc00::/7"
 PROJECT_NETWORK_NFT="/usr/sbin/nft"
 PROJECT_NETWORK_TABLE="cocalc_project_network"
 PROJECT_NETWORK_CHAIN="output"
@@ -8365,6 +8406,22 @@ emit_project_metadata_rules() {
   printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ip6 daddr %s tcp dport %s counter drop comment "%s-ipv6"\\n' \
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
     "$PROJECT_METADATA_IPV6" "$PROJECT_METADATA_TCP_PORTS" "$marker"
+  # Shared egress block for every project policy. These are drop-only rules:
+  # the pool rules run before the per-project rules, so an accept here would
+  # bypass the disabled policy's DNS reject, and these drops also cover the
+  # disabled policy's broad local accept. Only new connections are dropped;
+  # replies on the inbound pasta forwards (SSH into the project, the host
+  # proxy) go to host-local client ports and must keep flowing.
+  marker="cocalc-project-network-egress"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto { tcp, udp } th dport != %s counter drop comment "%s-local"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_HOST_LOCAL_ALLOWED_PORTS" "$marker"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new ip daddr %s meta l4proto { tcp, udp } th dport != 53 counter drop comment "%s-private-ipv4"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_PRIVATE_IPV4" "$marker"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new ip6 daddr %s meta l4proto { tcp, udp } th dport != 53 counter drop comment "%s-private-ipv6"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_PRIVATE_IPV6" "$marker"
 }
 
 emit_project_network_rules() {
@@ -8407,7 +8464,7 @@ project_cgroup_has_processes() {
 }
 
 verify_project_network_limits() {
-  local project_id="$1" unenforceable marker rules metadata_ipv4_count metadata_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
+  local project_id="$1" unenforceable marker rules metadata_ipv4_count metadata_ipv6_count egress_local_count egress_private_ipv4_count egress_private_ipv6_count startup_established_count startup_deny_count tcp_count udp_count disabled_dns_count disabled_local_count disabled_established_count disabled_reject_count policy pid found=0 limits
   is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
   require_project_network_tools
   marker="$(project_network_rule_marker "$project_id")"
@@ -8422,6 +8479,9 @@ verify_project_network_limits() {
   fi
   metadata_ipv4_count="$(grep -Fc 'comment "cocalc-project-network-metadata-ipv4"' <<< "$rules" || true)"
   metadata_ipv6_count="$(grep -Fc 'comment "cocalc-project-network-metadata-ipv6"' <<< "$rules" || true)"
+  egress_local_count="$(grep -Fc 'comment "cocalc-project-network-egress-local"' <<< "$rules" || true)"
+  egress_private_ipv4_count="$(grep -Fc 'comment "cocalc-project-network-egress-private-ipv4"' <<< "$rules" || true)"
+  egress_private_ipv6_count="$(grep -Fc 'comment "cocalc-project-network-egress-private-ipv6"' <<< "$rules" || true)"
   startup_established_count="$(grep -Fc 'comment "cocalc-project-network-startup-established"' <<< "$rules" || true)"
   startup_deny_count="$(grep -Fc 'comment "cocalc-project-network-startup-deny"' <<< "$rules" || true)"
   tcp_count="$(grep -Fc "comment \\\"${marker}-tcp\\\"" <<< "$rules" || true)"
@@ -8436,6 +8496,10 @@ verify_project_network_limits() {
   if [ "$unenforceable" -eq 0 ]; then
     if [ "$metadata_ipv4_count" -ne 1 ] || [ "$metadata_ipv6_count" -ne 1 ] || [ "$startup_established_count" -ne 1 ] || [ "$startup_deny_count" -ne 1 ]; then
       echo "project shared network rules are missing or duplicated: metadata_ipv4=${metadata_ipv4_count} metadata_ipv6=${metadata_ipv6_count} startup_established=${startup_established_count} startup_deny=${startup_deny_count}" >&2
+      return 1
+    fi
+    if [ "$egress_local_count" -ne 1 ] || [ "$egress_private_ipv4_count" -ne 1 ] || [ "$egress_private_ipv6_count" -ne 1 ]; then
+      echo "project egress block rules are missing or duplicated: local=${egress_local_count} private_ipv4=${egress_private_ipv4_count} private_ipv6=${egress_private_ipv6_count}" >&2
       return 1
     fi
     if [ "$policy" = "disabled" ]; then
@@ -11008,6 +11072,12 @@ esac
     storage_wrapper = storage_wrapper.replace(
         "__MIN_PROJECT_POOL_MEMORY_MB__",
         str(MIN_PROJECT_POOL_MEMORY_MB),
+    )
+    # Standalone hosts (PrivilegedWrapperConfig) have no env lines and run
+    # project-host on its default ports.
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_CONAT_ROUTER_PORT__",
+        str(project_conat_router_port(getattr(cfg, "env_lines", None) or [])),
     )
     storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
         "__ALLOW_LOOPBACK_RUSTIC_REST__",
