@@ -4096,45 +4096,144 @@ normalize_project_io_class_state
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9010"])
             script = self._storage_wrapper_for(cfg)
-        self.assertIn('PROJECT_CONAT_ROUTER_PORT="9110"', script)
+            env_file = Path(cfg.env_file)
+        self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9110"', script)
+        self.assertIn(f'PROJECT_HOST_ENV_FILE="{env_file}"', script)
+        self.assertIn(
+            f'PROJECT_HOST_LOCAL_ENV_FILE="{bootstrap.project_host_local_env_path(env_file)}"',
+            script,
+        )
 
-    def test_project_egress_rules_render_as_nft(self) -> None:
-        # Run the real shell function and check the exact nft rules it emits.
+    def _egress_rules(
+        self,
+        env: str | None = None,
+        local_env: str | None = None,
+        env_lines: list[str] | None = None,
+    ) -> list[str]:
+        """Run the wrapper's real shell functions and return the nft rules
+        emit_project_metadata_rules prints, with the daemon's env files
+        (absent when None) in a temporary directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            script = self._storage_wrapper_for(make_cfg(tmpdir))
-        variables = "\n".join(
-            line
-            for line in script.splitlines()
-            if line.startswith(
-                (
-                    "PROJECT_METADATA_",
-                    "PROJECT_CONAT_ROUTER_PORT=",
-                    "PROJECT_HOST_LOCAL_ALLOWED_PORTS=",
-                    "PROJECT_PRIVATE_IPV",
-                    "PROJECT_NETWORK_TABLE=",
-                    "PROJECT_NETWORK_CHAIN=",
+            cfg = make_cfg(tmpdir)
+            if env_lines is not None:
+                cfg = replace(cfg, env_lines=env_lines)
+            script = self._storage_wrapper_for(cfg)
+            env_file = Path(tmpdir) / "project-host.env"
+            local_env_file = Path(tmpdir) / "project-host.local.env"
+            if env is not None:
+                env_file.write_text(env)
+            if local_env is not None:
+                local_env_file.write_text(local_env)
+            variables = "\n".join(
+                line
+                for line in script.splitlines()
+                if line.startswith(
+                    (
+                        "PROJECT_METADATA_",
+                        "PROJECT_CONAT_ROUTER_PORT_DEFAULT=",
+                        "PROJECT_PRIVATE_IPV",
+                        "PROJECT_NETWORK_TABLE=",
+                        "PROJECT_NETWORK_CHAIN=",
+                    )
                 )
             )
+
+            def function(name: str) -> str:
+                return f"{name}() {{" + script.split(f"\n{name}() {{", 1)[1].split(
+                    "\n}\n", 1
+                )[0] + "\n}\n"
+
+            program = "\n".join(
+                [
+                    variables,
+                    f'PROJECT_HOST_ENV_FILE="{env_file}"',
+                    f'PROJECT_HOST_LOCAL_ENV_FILE="{local_env_file}"',
+                    'project_network_pool_cgroup_path() { echo "cocalc-project-pool"; }',
+                    *(
+                        function(name)
+                        for name in (
+                            "project_host_env_file_value",
+                            "project_host_env_value",
+                            "valid_project_host_port",
+                            "project_conat_router_port",
+                            "emit_project_metadata_rules",
+                        )
+                    ),
+                    "emit_project_metadata_rules",
+                ]
+            )
+            return subprocess.run(
+                ["bash", "-c", program], check=True, capture_output=True, text=True
+            ).stdout.splitlines()
+
+    def _conat_exemption(self, rules: list[str]) -> str:
+        local_tcp = [rule for rule in rules if "egress-local-tcp" in rule]
+        self.assertEqual(len(local_tcp), 1)
+        return local_tcp[0].split("tcp dport != { 53, ", 1)[1].split(" }", 1)[0]
+
+    def test_project_egress_conat_port_follows_the_daemon_env_files(self) -> None:
+        # No env files: the bootstrap-derived default.
+        self.assertEqual(self._conat_exemption(self._egress_rules()), "9102")
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env_lines=["PORT=9010"])), "9110"
         )
-        emit = "emit_project_metadata_rules() {" + script.split(
-            "emit_project_metadata_rules() {", 1
-        )[1].split("\n}\n", 1)[0] + "\n}\n"
-        program = "\n".join(
-            [
-                variables,
-                'project_network_pool_cgroup_path() { echo "cocalc-project-pool"; }',
-                emit,
-                "emit_project_metadata_rules",
-            ]
+        # The managed file, then the local override file, as resolveEnv merges them.
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=9010\n")), "9110"
         )
-        rules = subprocess.run(
-            ["bash", "-c", program], check=True, capture_output=True, text=True
-        ).stdout.splitlines()
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(env="PORT=9010\n", local_env="PORT=9020\n")
+            ),
+            "9120",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\nCOCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9500\n",
+                    local_env='# override\n  COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9555"\n',
+                )
+            ),
+            "9555",
+        )
+        # An explicit router port in the managed file beats a local PORT.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9500\n",
+                    local_env="PORT=9020\n",
+                )
+            ),
+            "9500",
+        )
+        # The files win over the bootstrap-derived value; invalid values fall back.
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(env="PORT=9030\n", env_lines=["PORT=9010"])
+            ),
+            "9130",
+        )
+        self.assertEqual(
+            self._conat_exemption(
+                self._egress_rules(
+                    env="PORT=9010\n",
+                    local_env="COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=nope\n",
+                )
+            ),
+            "9110",
+        )
+        self.assertEqual(
+            self._conat_exemption(self._egress_rules(env="PORT=65500\n")), "9102"
+        )
+
+    def test_project_egress_rules_render_as_nft(self) -> None:
+        rules = self._egress_rules()
         prefix = 'add rule inet cocalc_project_network output socket cgroupv2 level 1 "cocalc-project-pool"'
         self.assertEqual(
             rules[2:],
             [
-                f"{prefix} ct state new fib daddr type local meta l4proto {{ tcp, udp }} th dport != {{ 53, 9102 }} counter drop comment \"cocalc-project-network-egress-local\"",
+                f"{prefix} ct state new fib daddr type local meta l4proto tcp tcp dport != {{ 53, 9102 }} counter drop comment \"cocalc-project-network-egress-local-tcp\"",
+                f"{prefix} ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment \"cocalc-project-network-egress-local-udp\"",
                 f"{prefix} ct state new ip daddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv4\"",
                 f"{prefix} ct state new ip6 daddr fc00::/7 meta l4proto {{ tcp, udp }} th dport != 53 counter drop comment \"cocalc-project-network-egress-private-ipv6\"",
             ],
@@ -4691,12 +4790,10 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"', script
             )
-            self.assertIn('PROJECT_CONAT_ROUTER_PORT="9102"', script)
+            self.assertIn('PROJECT_CONAT_ROUTER_PORT_DEFAULT="9102"', script)
             self.assertNotIn("__PROJECT_CONAT_ROUTER_PORT__", script)
-            self.assertIn(
-                'PROJECT_HOST_LOCAL_ALLOWED_PORTS="{ 53, ${PROJECT_CONAT_ROUTER_PORT} }"',
-                script,
-            )
+            self.assertNotIn("__PROJECT_HOST_ENV_FILE__", script)
+            self.assertNotIn("__PROJECT_HOST_LOCAL_ENV_FILE__", script)
             self.assertIn(
                 'PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"',
                 script,
@@ -4756,12 +4853,18 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'marker="cocalc-project-network-egress"', emit_metadata_body
             )
-            for comment in ("local", "private-ipv4", "private-ipv6"):
+            for comment in ("local-tcp", "local-udp", "private-ipv4", "private-ipv6"):
                 self.assertIn(f'comment "%s-{comment}"', emit_metadata_body)
-            self.assertEqual(emit_metadata_body.count("ct state new"), 3)
+            self.assertEqual(emit_metadata_body.count("ct state new"), 4)
             self.assertNotIn("counter accept", emit_metadata_body)
+            # The conat port is exempt for TCP only; UDP keeps only DNS.
             self.assertIn(
-                "ct state new fib daddr type local meta l4proto { tcp, udp } th dport != %s counter drop",
+                "ct state new fib daddr type local meta l4proto tcp tcp dport != { 53, %s } counter drop",
+                emit_metadata_body,
+            )
+            self.assertIn('"$(project_conat_router_port)"', emit_metadata_body)
+            self.assertIn(
+                "ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop",
                 emit_metadata_body,
             )
             self.assertEqual(emit_metadata_body.count("th dport != 53"), 2)
@@ -4770,7 +4873,7 @@ reserve_project_startup_io_capacity
             )[1].split("\n}\n\nrender_project_network_rules()", 1)[0]
             self.assertIn("metadata_ipv4_count", verify_network_body)
             self.assertIn("metadata_ipv6_count", verify_network_body)
-            for name in ("local", "private-ipv4", "private-ipv6"):
+            for name in ("local-tcp", "local-udp", "private-ipv4", "private-ipv6"):
                 self.assertIn(
                     f'comment "cocalc-project-network-egress-{name}"',
                     verify_network_body,
