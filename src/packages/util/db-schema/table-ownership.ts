@@ -745,6 +745,8 @@ export const TABLE_OWNERSHIP = {
       "rootfs_rustic_repos",
       "server_settings",
       "site_license_audit_log",
+      "site_license_domain_locks",
+      "site_license_domains",
       "site_license_external_claim_consumptions",
       "site_license_external_claim_keys",
       "site_license_external_claim_pools",
@@ -1046,8 +1048,6 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "cluster_bay_registry",
       "project_app_public_subdomains",
       "project_collab_invite_directory",
-      "site_license_domain_locks",
-      "site_license_domains",
     ],
     {
       ownership: "seed-global",

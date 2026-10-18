@@ -16,10 +16,7 @@ import { checkAccountName } from "@cocalc/util/db-schema/name-rules";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
 import { getMembershipPackage, assignMembershipPackageSeat } from "./packages";
-import {
-  ensureSiteLicenseSchema,
-  recordSiteLicenseAuditEvent,
-} from "./site-licenses";
+import { recordSiteLicenseAuditEvent } from "./site-licenses";
 
 export const SITE_LICENSE_EXTERNAL_CLAIM_AUDIENCE =
   "cocalc.ai.site-license-claim";
@@ -580,7 +577,6 @@ export async function createSiteLicenseExternalClaimPool(
   },
   client?: PoolClient,
 ): Promise<SiteLicenseExternalClaimPool> {
-  await ensureSiteLicenseSchema(client);
   const pool = getQueryClient(client);
   const normalizedId = normalizeUUID(id, "id");
   const normalizedSiteLicenseId = normalizeUUID(
@@ -710,7 +706,6 @@ export async function addSiteLicenseExternalClaimKey(
   },
   client?: PoolClient,
 ): Promise<SiteLicenseExternalClaimKey> {
-  await ensureSiteLicenseSchema(client);
   const normalizedPoolId = normalizeUUID(pool_id, "pool_id");
   const normalizedKid = normalizeString(kid, "kid");
   const normalizedAlg = normalizeAlg(alg);
@@ -776,7 +771,6 @@ export async function listSiteLicenseExternalClaimPools({
   pool_id?: string;
   limit?: number;
 } = {}): Promise<SiteLicenseExternalClaimPool[]> {
-  await ensureSiteLicenseSchema();
   const where: string[] = [];
   const args: unknown[] = [];
   if (site_license_id != null && `${site_license_id}`.trim()) {
@@ -810,7 +804,6 @@ export async function disableSiteLicenseExternalClaimPool({
   pool_id: string;
   disabled_at?: Date | string | null;
 }): Promise<SiteLicenseExternalClaimPool> {
-  await ensureSiteLicenseSchema();
   const { rows } = await getPool().query<RawExternalClaimPool>(
     `UPDATE site_license_external_claim_pools
         SET disabled_at=$2, updated=NOW()
@@ -833,7 +826,6 @@ export async function listSiteLicenseExternalClaimKeys({
   kid?: string;
   limit?: number;
 }): Promise<SiteLicenseExternalClaimKey[]> {
-  await ensureSiteLicenseSchema();
   const where: string[] = [];
   const args: unknown[] = [];
   if (pool_id != null && `${pool_id}`.trim()) {
@@ -865,7 +857,6 @@ export async function revokeSiteLicenseExternalClaimKey({
   kid: string;
   revoked_at?: Date | string | null;
 }): Promise<SiteLicenseExternalClaimKey> {
-  await ensureSiteLicenseSchema();
   const { rows } = await getPool().query<RawExternalClaimKey>(
     `UPDATE site_license_external_claim_keys
         SET revoked_at=$3, updated=NOW()
@@ -896,7 +887,6 @@ export async function listSiteLicenseExternalClaimConsumptions({
   status?: SiteLicenseExternalClaimConsumptionStatus;
   limit?: number;
 } = {}): Promise<SiteLicenseExternalClaimConsumption[]> {
-  await ensureSiteLicenseSchema();
   const where: string[] = [];
   const args: unknown[] = [];
   if (pool_id != null && `${pool_id}`.trim()) {
@@ -943,7 +933,6 @@ async function loadActiveClaimKey({
   kid: string;
   alg: "EdDSA" | "ES256";
 }): Promise<SiteLicenseExternalClaimKey> {
-  await ensureSiteLicenseSchema();
   const { rows } = await getPool().query<RawExternalClaimKey>(
     `SELECT *
        FROM site_license_external_claim_keys
@@ -969,7 +958,6 @@ async function loadActiveClaimKey({
 async function loadClaimPool(
   pool_id: string,
 ): Promise<SiteLicenseExternalClaimPool> {
-  await ensureSiteLicenseSchema();
   const { rows } = await getPool().query<RawExternalClaimPool>(
     `SELECT *
        FROM site_license_external_claim_pools
@@ -1281,7 +1269,6 @@ async function seedConsumeVerifiedClaim(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await ensureSiteLicenseSchema(client);
     const now = new Date();
     const pool = await loadClaimPoolForUpdate({
       pool_id: normalizeUUID(claim.pool_id, "pool_id"),
@@ -1386,7 +1373,6 @@ async function markConsumptionSideEffectFailed({
   consumption: SiteLicenseExternalClaimConsumption;
   err: unknown;
 }): Promise<void> {
-  await ensureSiteLicenseSchema();
   await getPool().query(
     `UPDATE site_license_external_claim_consumptions
         SET status='failed-retryable',
@@ -1525,7 +1511,6 @@ export async function runSiteLicenseExternalClaimRepairPass({
 }: {
   limit?: number;
 } = {}): Promise<SiteLicenseExternalClaimRepairResult> {
-  await ensureSiteLicenseSchema();
   const { rows } = await getPool().query<RawExternalClaimConsumption>(
     `SELECT *
        FROM site_license_external_claim_consumptions

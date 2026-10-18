@@ -29,6 +29,10 @@ import {
   ensureCommercialQuoteLifecycleSchema,
 } from "./commercial-quote-lifecycle";
 import {
+  ensureSiteLicenseSchemaData,
+  siteLicenseSchemaDataNeedsSync,
+} from "./site-licenses";
+import {
   getColumnInvariantActions,
   syncTableSchemaColumnInvariants,
 } from "./column-invariants";
@@ -502,6 +506,14 @@ export async function syncSchema(
     if (dbSchema.commercial_quotes != null) {
       await ensureCommercialQuoteLifecycleSchema(db);
     }
+    if (
+      dbSchema.site_licenses != null &&
+      dbSchema.site_license_managers != null &&
+      dbSchema.site_license_domain_locks != null &&
+      dbSchema.site_license_external_claim_keys != null
+    ) {
+      await ensureSiteLicenseSchemaData(db);
+    }
     if (dbSchema.compute_vm_project_access != null) {
       await backfillComputeVmProjectAccess(db);
     }
@@ -636,6 +648,16 @@ export async function schemaNeedsSync(
       (await commercialQuoteLifecycleSchemaNeedsSync(db))
     ) {
       dbg("detected stale commercial quote lifecycle guard");
+      return true;
+    }
+    if (
+      dbSchema.site_licenses != null &&
+      dbSchema.site_license_managers != null &&
+      dbSchema.site_license_domain_locks != null &&
+      dbSchema.site_license_external_claim_keys != null &&
+      (await siteLicenseSchemaDataNeedsSync(db))
+    ) {
+      dbg("detected pending site-license data fixes");
       return true;
     }
     dbg("schema matches");
