@@ -127,6 +127,10 @@ if [[ ! -f "${ASSET_TARGET}/runtime/control-plane/static/previous-0123456789abcd
   echo "previous frontend asset was not retained" >&2
   exit 1
 fi
+if [[ -e "${ASSET_TARGET}/runtime/control-plane/static/historic-aaaaaaaaaaaaaaaa.js" ]]; then
+  echo "a chunk outside the previous build's declared inventory was carried forward" >&2
+  exit 1
+fi
 if [[ -e "${ASSET_TARGET}/runtime/control-plane/static/._historic-bbbbbbbbbbbbbbbb.js" ]]; then
   echo "AppleDouble frontend metadata was retained" >&2
   exit 1
@@ -141,30 +145,70 @@ if (!history.builds[0].assets.includes("current-fedcba9876543210.js")) {
 if (!history.builds[1].assets.includes("previous-0123456789abcdef.js")) {
   throw new Error("previous frontend assets missing from history");
 }
-if (!history.builds[1].assets.includes("historic-aaaaaaaaaaaaaaaa.js")) {
-  throw new Error("historic retained frontend assets missing from history");
+if (history.builds[1].assets.includes("historic-aaaaaaaaaaaaaaaa.js")) {
+  throw new Error("an older build's chunk was listed with the previous build");
 }
 if (history.builds.some(({ assets }) => assets.some((asset) => asset.startsWith("._")))) {
   throw new Error("AppleDouble frontend metadata included in history");
 }
 NODE
 
-# A previous manifest overlaps the on-disk scan; count each retained file once.
+# A legacy previous build without a declared asset list falls back to the
+# hashed files on disk: they are all carried forward and listed.
+printf '%s\n' '{"schema":1,"fingerprint":"legacy","build_timestamp":1}' > \
+  "${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >/dev/null
+if [[ ! -f "${ASSET_TARGET}/runtime/control-plane/static/historic-aaaaaaaaaaaaaaaa.js" ]]; then
+  echo "legacy previous build's on-disk chunk was not retained" >&2
+  exit 1
+fi
+node - "${ASSET_TARGET}/runtime/control-plane/static/frontend-build-history.json" <<'NODE'
+const fs = require("node:fs");
+const history = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const previous = history.builds[1].assets;
+if (
+  !previous.includes("historic-aaaaaaaaaaaaaaaa.js") ||
+  !previous.includes("previous-0123456789abcdef.js")
+) {
+  throw new Error("legacy previous build was not inventoried from disk");
+}
+NODE
+rm -f "${ASSET_TARGET}/runtime/control-plane/static/historic-aaaaaaaaaaaaaaaa.js"
+
+# Regression (prod 10-18): chunks carried forward from older builds had piled
+# up in the previous release's directory (10067 hashed files) while its
+# declared inventory was 1115.  Only that inventory is retained and listed,
+# so the deploy passes and the next release no longer inherits the backlog.
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const root = process.argv[2];
-const assets = Array.from({ length: 6000 }, (_, i) => `chunk-${i}-0123456789abcdef.js`);
-for (const asset of assets) fs.writeFileSync(path.join(root, asset), "fixture");
-fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
+for (let i = 0; i < 10067; i++) {
+  fs.writeFileSync(path.join(root, `old-${i}-0123456789abcdef.js`), "fixture");
+}
+const assets = Array.from({ length: 1115 }, (_, i) => `old-${i}-0123456789abcdef.js`);
+fs.writeFileSync(
+  path.join(root, "frontend-build.json"),
+  JSON.stringify({ schema: 1, fingerprint: "previous", build_timestamp: 1, assets }),
+);
 NODE
 preserve_previous_static_assets
 prepare_frontend_asset_history >/dev/null
-node - "${ASSET_TARGET}/runtime/control-plane/static/frontend-build-history.json" <<'NODE'
+node - "${ASSET_TARGET}/runtime/control-plane/static" <<'NODE'
 const fs = require("node:fs");
-const history = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-if (history.builds[1].assets.length !== 6002) {
-  throw new Error("overlapping manifest/scan assets were not deduplicated");
+const path = require("node:path");
+const root = process.argv[2];
+const history = JSON.parse(
+  fs.readFileSync(path.join(root, "frontend-build-history.json"), "utf8"),
+);
+const listed = history.builds[1].assets.length;
+if (listed !== 1115) {
+  throw new Error(`previous build lists ${listed} assets, expected its declared 1115`);
+}
+const carried = fs.readdirSync(root).filter((name) => name.startsWith("old-")).length;
+if (carried !== 1115) {
+  throw new Error(`carried ${carried} chunks forward, expected the declared 1115`);
 }
 NODE
 
