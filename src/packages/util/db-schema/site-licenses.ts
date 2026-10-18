@@ -48,7 +48,8 @@ Table({
           crm_organization_id: null,
           name: null,
           organization_name: null,
-          bay_id: null,
+          // bay_id is set by provisioning (the seed bay) and is not
+          // writable through user queries.
           owner_account_id: null,
           allowed_domains: null,
           custom_terms_url: null,
@@ -82,6 +83,7 @@ Table({
     },
     bay_id: {
       type: "string",
+      not_null: true,
       desc: "Seed control-plane bay that owns this site license.",
     },
     owner_account_id: {
@@ -950,14 +952,14 @@ Table({
       type: "timestamp",
       pg_type: "TIMESTAMPTZ",
       not_null: true,
-      pg_default: "NOW()",
+      pg_default: "now()",
       desc: "Creation time.",
     },
     updated: {
       type: "timestamp",
       pg_type: "TIMESTAMPTZ",
       not_null: true,
-      pg_default: "NOW()",
+      pg_default: "now()",
       desc: "Last updated time.",
     },
   },

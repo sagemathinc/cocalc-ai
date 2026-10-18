@@ -10,6 +10,8 @@ import {
   ensureSiteLicenseSchemaData,
   siteLicenseSchemaDataNeedsSync,
 } from "./site-licenses";
+import { schemaNeedsSync } from "./sync";
+import { SCHEMA } from "@cocalc/util/schema";
 
 beforeAll(async () => {
   await initEphemeralDatabase({});
@@ -29,11 +31,30 @@ describe("site-license schema data fixes at startup", () => {
     expect(
       (
         await pool.query(
+          "SELECT is_nullable FROM information_schema.columns WHERE table_name='site_licenses' AND column_name='bay_id'",
+        )
+      ).rows,
+    ).toEqual([{ is_nullable: "NO" }]);
+    expect(
+      (
+        await pool.query(
           "SELECT name FROM site_license_domain_locks WHERE id=1",
         )
       ).rows,
     ).toEqual([{ name: "site-license-domain-write-lock" }]);
     expect(await siteLicenseSchemaDataNeedsSync(pool)).toBe(false);
+  });
+
+  it("leaves nothing for the next startup sync to change", async () => {
+    // e.g., a declared default that PostgreSQL deparses differently would
+    // make every startup see a dirty schema.
+    const siteLicenseTables = Object.fromEntries(
+      Object.entries(SCHEMA).filter(([name]) =>
+        name.startsWith("site_license"),
+      ),
+    );
+    expect(Object.keys(siteLicenseTables)).toHaveLength(9);
+    expect(await schemaNeedsSync(siteLicenseTables)).toBe(false);
   });
 
   it("moves legacy owner manager rows to owner_account_id, idempotently", async () => {

@@ -234,6 +234,24 @@ async function withLocalSiteLicenseTransaction<T>(
   }
 }
 
+// Site-license transactions used to begin with schema DDL that took an ACCESS
+// EXCLUSIVE lock on site_licenses until commit. That serialized them with each
+// other, which several flows rely on (manager changes, archiving a pool while
+// a seat is assigned, ...), and it also blocked every plain reader. This
+// transaction-scoped advisory lock keeps exactly the serialization without
+// blocking readers. Outside a transaction (no client) there is nothing to
+// serialize, as before.
+const SITE_LICENSE_TRANSACTION_LOCK_KEY = "7151100011";
+
+export async function serializeSiteLicenseTransaction(
+  client?: PoolClient,
+): Promise<void> {
+  if (client == null) return;
+  await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [
+    SITE_LICENSE_TRANSACTION_LOCK_KEY,
+  ]);
+}
+
 function normalizeMetadata(
   metadata?: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
@@ -943,6 +961,7 @@ async function listSiteLicenseAuditEvents({
   limit?: number;
   client?: PoolClient;
 }): Promise<SiteLicenseAuditEvent[]> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<RawSiteLicenseAuditEvent>(
     `SELECT *
      FROM site_license_audit_log
@@ -1448,6 +1467,7 @@ async function getSiteLicense(
   site_license_id: string,
   client?: PoolClient,
 ): Promise<SiteLicenseRecord> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<RawSiteLicenseRecord>(
     `SELECT *
      FROM site_licenses
@@ -1484,6 +1504,7 @@ async function listSiteLicenseManagers(
   site_license_id: string,
   client?: PoolClient,
 ): Promise<SiteLicenseManager[]> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<RawSiteLicenseManager>(
     `SELECT *
      FROM site_license_managers
@@ -1634,6 +1655,7 @@ async function assertSiteLicenseManager({
   write?: boolean;
   client?: PoolClient;
 }): Promise<void> {
+  await serializeSiteLicenseTransaction(client);
   if (await isAdmin(account_id, client)) {
     return;
   }
@@ -1686,6 +1708,7 @@ async function listSiteLicensePoolRequests({
   states?: SiteLicensePoolRequestState[];
   client?: PoolClient;
 }): Promise<SiteLicensePoolRequest[]> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(
     client,
   ).query<RawSiteLicensePoolRequest>(
@@ -1705,6 +1728,7 @@ async function getRequestById(
   request_id: string,
   client?: PoolClient,
 ): Promise<SiteLicensePoolRequest> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(
     client,
   ).query<RawSiteLicensePoolRequest>(
@@ -1727,6 +1751,7 @@ async function countPendingRequestsByPackage({
   site_license_id: string;
   client?: PoolClient;
 }): Promise<Map<string, number>> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<{
     package_id: string;
     count: number;
@@ -2314,6 +2339,7 @@ export async function listSiteLicenseIdsWithAffiliationReverification({
   limit?: number;
   client?: PoolClient;
 } = {}): Promise<string[]> {
+  await serializeSiteLicenseTransaction(client);
   const { rows } = await getQueryClient(client).query<{ id: string }>(
     `SELECT s.id
        FROM site_licenses s
@@ -2378,6 +2404,7 @@ export async function listSiteLicenseOverviews({
   client?: PoolClient;
 }): Promise<SiteLicenseOverview[]> {
   const normalizedAccountId = normalizeAccountId(account_id);
+  await serializeSiteLicenseTransaction(client);
   const queryClient = getQueryClient(client);
   const rows = admin
     ? await (async () => {
@@ -2684,6 +2711,7 @@ export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
   const accountId = normalizeAccountId(account_id);
   await beginMembershipRecipientDeletion(accountId);
   const cleanupWithClient = async (dbClient: PoolClient) => {
+    await serializeSiteLicenseTransaction(dbClient);
     const { rows: assignmentRows } = await dbClient.query<{
       package_id: string;
     }>(
@@ -2992,6 +3020,7 @@ async function provisionSiteLicense(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await serializeSiteLicenseTransaction(client);
     await assertSiteLicensePoolMembershipClassesAvailable(
       normalizedPools,
       client,
@@ -3249,6 +3278,12 @@ export async function archiveSiteLicensePool({
       client,
     );
     await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    // Seat assignment locks this package row too, so no seat can be assigned
+    // between the check below and the archive.
+    await client.query(
+      "SELECT id FROM membership_packages WHERE id=$1 FOR UPDATE",
+      [packageId],
+    );
     const assignments = await listMembershipPackageAssignments({
       package_id: packageId,
       include_revoked: true,
@@ -3646,6 +3681,8 @@ export async function setSiteLicenseManager({
   await assertSiteLicenseAdmin({ account_id: actorAccountId });
   await assertTargetAccountExists(targetAccountId);
   return await withLocalSiteLicenseTransaction(async (client) => {
+    // Serializes the check-then-insert below with other manager changes.
+    await lockSiteLicenseRow(siteLicenseId, client);
     const { rows } = await client.query<RawSiteLicenseManager>(
       `SELECT *
          FROM site_license_managers
@@ -3710,6 +3747,7 @@ export async function removeSiteLicenseManager({
   );
   await assertSiteLicenseAdmin({ account_id: actorAccountId });
   return await withLocalSiteLicenseTransaction(async (client) => {
+    await lockSiteLicenseRow(siteLicenseId, client);
     const { rows } = await client.query<RawSiteLicenseManager>(
       `SELECT *
          FROM site_license_managers

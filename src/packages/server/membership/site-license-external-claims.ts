@@ -16,7 +16,10 @@ import { checkAccountName } from "@cocalc/util/db-schema/name-rules";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
 import { getMembershipPackage, assignMembershipPackageSeat } from "./packages";
-import { recordSiteLicenseAuditEvent } from "./site-licenses";
+import {
+  serializeSiteLicenseTransaction,
+  recordSiteLicenseAuditEvent,
+} from "./site-licenses";
 
 export const SITE_LICENSE_EXTERNAL_CLAIM_AUDIENCE =
   "cocalc.ai.site-license-claim";
@@ -577,6 +580,7 @@ export async function createSiteLicenseExternalClaimPool(
   },
   client?: PoolClient,
 ): Promise<SiteLicenseExternalClaimPool> {
+  await serializeSiteLicenseTransaction(client);
   const pool = getQueryClient(client);
   const normalizedId = normalizeUUID(id, "id");
   const normalizedSiteLicenseId = normalizeUUID(
@@ -706,6 +710,7 @@ export async function addSiteLicenseExternalClaimKey(
   },
   client?: PoolClient,
 ): Promise<SiteLicenseExternalClaimKey> {
+  await serializeSiteLicenseTransaction(client);
   const normalizedPoolId = normalizeUUID(pool_id, "pool_id");
   const normalizedKid = normalizeString(kid, "kid");
   const normalizedAlg = normalizeAlg(alg);
@@ -1269,6 +1274,7 @@ async function seedConsumeVerifiedClaim(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await serializeSiteLicenseTransaction(client);
     const now = new Date();
     const pool = await loadClaimPoolForUpdate({
       pool_id: normalizeUUID(claim.pool_id, "pool_id"),
