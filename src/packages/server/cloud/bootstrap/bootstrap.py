@@ -2613,6 +2613,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "root": cfg.project_host_bundle.root,
             "dir": cfg.project_host_bundle.dir,
             "current": cfg.project_host_bundle.current,
+            "fallback_manifest_url": cfg.project_host_bundle.fallback_manifest_url,
         },
         "project_bundle": {
             "url": cfg.project_bundle.url,
@@ -2622,6 +2623,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "root": cfg.project_bundle.root,
             "dir": cfg.project_bundle.dir,
             "current": cfg.project_bundle.current,
+            "fallback_manifest_url": cfg.project_bundle.fallback_manifest_url,
         },
         "tools_bundle": {
             "url": cfg.tools_bundle.url,
@@ -2632,6 +2634,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "dir": cfg.tools_bundle.dir,
             "current": cfg.tools_bundle.current,
             "manifest_url": cfg.tools_bundle.manifest_url,
+            "fallback_manifest_url": cfg.tools_bundle.fallback_manifest_url,
         },
         "cloudflared": {
             "enabled": cfg.cloudflared.enabled,
@@ -2655,6 +2658,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "dir": cfg.container_runtime_bundle.dir,
             "current": cfg.container_runtime_bundle.current,
             "manifest_url": cfg.container_runtime_bundle.manifest_url,
+            "fallback_manifest_url": cfg.container_runtime_bundle.fallback_manifest_url,
         }
     return state
 

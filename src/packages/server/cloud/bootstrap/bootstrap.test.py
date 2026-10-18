@@ -2827,6 +2827,40 @@ class BootstrapBundleFallbackManifestTest(unittest.TestCase):
             self.assertEqual(resolved.version, "kept")
             self.assertEqual((root / "current").resolve(), root / "kept")
 
+    def test_fallback_manifest_survives_desired_state_rewrite(self) -> None:
+        # record_operation_start rewrites bootstrap-desired-state.json before
+        # extraction, and `bootstrap.py --only ...` reloads it later: the
+        # fallback must round-trip or the guard against an unverified
+        # download disappears on retries and subset refreshes.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            fallback = "https://example.invalid/software/project-host/latest-linux.json"
+            cfg = replace(
+                cfg,
+                project_host_bundle=replace(
+                    cfg.project_host_bundle, fallback_manifest_url=fallback
+                ),
+                project_bundle=replace(
+                    cfg.project_bundle,
+                    fallback_manifest_url="https://example.invalid/software/project/latest-linux.json",
+                ),
+            )
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir()
+            (state_dir / "bootstrap-host-facts.json").write_text(
+                json.dumps(bootstrap.build_host_facts(cfg))
+            )
+            (state_dir / "bootstrap-desired-state.json").write_text(
+                json.dumps(bootstrap.build_desired_state(cfg))
+            )
+            reloaded = bootstrap.load_config(str(state_dir))
+            self.assertEqual(reloaded.project_host_bundle.fallback_manifest_url, fallback)
+            self.assertEqual(
+                reloaded.project_bundle.fallback_manifest_url,
+                "https://example.invalid/software/project/latest-linux.json",
+            )
+            self.assertIsNone(reloaded.tools_bundle.fallback_manifest_url)
+
     def test_raises_without_a_fallback_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg, bundle, _root, tarball = self.make_fixture(tmpdir, fallback=False)
