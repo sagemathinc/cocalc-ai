@@ -217,9 +217,6 @@ function syncDebug(event: string, data: () => Record<string, unknown>): void {
 }
 logger.debug("init");
 
-// Where to load older history from: the stream position of the snapshot
-// before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
-// stream if the oldest loaded snapshot is the first one or none is loaded.
 // What snapshotCandidateFromHistory needs from a patchflow history entry.
 type SnapshotHistoryEntry = {
   time: PatchId;
@@ -339,14 +336,40 @@ export function snapshotTimeAvoidingMismatch(
   return firstUsable;
 }
 
+// Where to load more history from: the stream position of the patch of the
+// previous snapshot. Given where the loaded history starts (firstLoadedSeq),
+// step back to the nearest snapshot before it: the latest prev_seq below it.
+// The loaded range also holds the records of older snapshots (a snapshot is
+// written about one interval after its patch), and taking the oldest one's
+// prev_seq jumped back two snapshots at a time, or over the whole history
+// after a long gap between snapshots.
 export function prevSeqForMoreHistoryFromHistory(
   history: {
     time: PatchId;
     isSnapshot?: boolean;
     seqInfo?: { prevSeq?: number; prev_seq?: number };
   }[],
+  firstLoadedSeq?: number,
 ): number | undefined {
   if (history.length == 0) return undefined;
+  // SyncDoc passes its seq_info (snake case) through to patchflow.
+  const prevSeqOf = (p: (typeof history)[number]) =>
+    p.seqInfo?.prevSeq ?? p.seqInfo?.prev_seq;
+  if (firstLoadedSeq != null) {
+    let best: number | undefined;
+    for (const p of history) {
+      if (!p.isSnapshot) continue;
+      const prevSeq = prevSeqOf(p);
+      if (
+        prevSeq != null &&
+        prevSeq < firstLoadedSeq &&
+        (best == null || prevSeq > best)
+      ) {
+        best = prevSeq;
+      }
+    }
+    return best ?? 0;
+  }
   let oldest: { prevSeq?: number } | undefined;
   let oldestTimeMs: number | undefined;
   for (const p of history) {
@@ -354,8 +377,7 @@ export function prevSeqForMoreHistoryFromHistory(
     const timeMs = decodePatchId(p.time).timeMs;
     if (oldestTimeMs == null || timeMs < oldestTimeMs) {
       oldestTimeMs = timeMs;
-      // SyncDoc passes its seq_info (snake case) through to patchflow.
-      oldest = { prevSeq: p.seqInfo?.prevSeq ?? p.seqInfo?.prev_seq };
+      oldest = { prevSeq: prevSeqOf(p) };
     }
   }
   return oldest?.prevSeq ?? 0;
@@ -3739,7 +3761,12 @@ export class SyncDoc extends EventEmitter {
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
     const history = this.patchflowSession.history({ includeSnapshots: true });
-    return prevSeqForMoreHistoryFromHistory(history);
+    let firstLoadedSeq: number | undefined;
+    try {
+      const seq = this.dstream()?.seq?.(0);
+      firstLoadedSeq = typeof seq === "number" ? seq : undefined;
+    } catch {}
+    return prevSeqForMoreHistoryFromHistory(history, firstLoadedSeq);
   };
 
   private patchflowSnapshotCandidate = (
