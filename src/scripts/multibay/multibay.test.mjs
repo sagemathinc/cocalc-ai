@@ -967,6 +967,81 @@ describe("course reconfiguration across bays", () => {
   });
 });
 
+describe("course manager access across bays", () => {
+  // bob's project, on the attached bay, is the course; alice, a collaborator
+  // homed on the seed, asks for the course's managers to be added to a
+  // student project on the seed. The call runs on the course's bay, which
+  // reads the managers there and vouches for them to the seed (as itself:
+  // the seed accepts that only from the course's owning bay).
+  let studentProject;
+  const forwardedCalls = async (name = "projects.ensureCourseManagerAccess") =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0; // nothing forwarded to this bay yet
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$3 AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}, ${JSON.stringify(name)}]);
+       return rows[0].n;`,
+    );
+
+  it("adds the course's managers to a student project on the other bay", async () => {
+    assert.ok(alice.project && bob.project, "needs both projects");
+    const student = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "course-student",
+    });
+    student.client = await client(student);
+    studentProject = await createProject(student.client, "student");
+    // Link it to bob's course, as the course tooling does.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE projects SET course=$2::jsonb WHERE project_id=$1",
+         [${JSON.stringify(studentProject)}, JSON.stringify({ project_id: ${JSON.stringify(bob.project)}, type: "student" })]);`,
+    );
+    const before = await forwardedCalls();
+    const [result] = await alice.client.call(
+      "projects.ensureCourseManagerAccess",
+      { course_project_id: bob.project, project_ids: [studentProject] },
+    );
+    assert.equal(result.project_id, studentProject);
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.ok(result.added_account_ids.includes(bob.account_id));
+    assert.equal(await forwardedCalls(), before + 1);
+    const group = await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT users -> $2::text ->> 'group' AS grp FROM projects WHERE project_id=$1",
+         [${JSON.stringify(studentProject)}, ${JSON.stringify(bob.account_id)}]);
+       return rows[0]?.grp ?? null;`,
+    );
+    assert.equal(group, "collaborator");
+  });
+
+  it("sends an assignment patch from the course project's bay", async () => {
+    assert.ok(studentProject, "needs the student project");
+    const name = "projects.sendCourseAssignmentPatch";
+    const before = await forwardedCalls(name);
+    const result = await alice.client.call(name, {
+      course_project_id: bob.project,
+      assignment_id: "multibay-patch",
+      src_base_path: "hw",
+      dest_base_path: "hw",
+      relative_paths: ["notes.md"],
+      dests: [{ student_id: "student-1", student_project_id: studentProject }],
+    });
+    assert.ok(result?.op_id, JSON.stringify(result));
+    assert.equal(await forwardedCalls(name), before + 1);
+  });
+});
+
 describe("course collections across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, schedules a collection of a student project. The
