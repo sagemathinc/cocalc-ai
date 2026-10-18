@@ -2796,6 +2796,31 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.filesystemPromise = undefined;
   };
 
+  // The project's host restarted at the same address (a new host session):
+  // refresh the per-project connections, but keep the open editors.  Their
+  // documents and terminals reconnect in place through the reconnect
+  // coordinator, and an editor whose runtime did close is rebuilt on its own
+  // (see Editor in project/page/content.tsx).  Tearing down every open file
+  // here, as resetProjectHostRuntime does, remounted every editor, and the new
+  // session is often learned only a minute after the restart, long after the
+  // editors had already recovered.
+  reconnectProjectHostRuntime = () => {
+    this.clearFilesystemClient();
+    disconnect_from_project(this.project_id);
+    this.projectStatusSub?.close();
+    delete this.projectStatusSub;
+    const hasProjectLogLoaded = this.get_store()?.get("project_log") != null;
+    void (async () => {
+      await this.resetProjectLogStream();
+      if (hasProjectLogLoaded) {
+        await this.load_project_log("newer");
+      }
+    })();
+    if (this.initialized) {
+      this.initProjectStatus();
+    }
+  };
+
   resetProjectHostRuntime = () => {
     this.clearFilesystemClient();
     disconnect_from_project(this.project_id);

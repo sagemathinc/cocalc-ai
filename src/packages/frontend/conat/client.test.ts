@@ -4127,6 +4127,7 @@ describe("ConatClient routed project-host reconnect", () => {
       },
     );
     const resetProjectHostRuntime = jest.fn();
+    const reconnectProjectHostRuntime = jest.fn();
 
     jest.resetModules();
 
@@ -4147,7 +4148,10 @@ describe("ConatClient routed project-host reconnect", () => {
         getActions: jest.fn(() => ({
           ensure_host_info: ensureHostInfo,
         })),
-        getProjectActions: jest.fn(() => ({ resetProjectHostRuntime })),
+        getProjectActions: jest.fn(() => ({
+          resetProjectHostRuntime,
+          reconnectProjectHostRuntime,
+        })),
       },
     }));
 
@@ -4236,6 +4240,10 @@ describe("ConatClient routed project-host reconnect", () => {
     const reconnectSpy = jest
       .spyOn(client, "reconnect")
       .mockImplementation(() => undefined);
+    const resourceReconnects = jest.spyOn(
+      client.reconnectCoordinator,
+      "requestResourceReconnects",
+    );
 
     client.getOrCreateRoutedHubClient({
       host_id: "host-1",
@@ -4256,7 +4264,20 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(close1).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-2");
-    expect(resetProjectHostRuntime).toHaveBeenCalledWith();
+    // A restart at the same address reconnects the open editors in place
+    // rather than rebuilding them.
+    expect(reconnectProjectHostRuntime).toHaveBeenCalledWith();
+    expect(resetProjectHostRuntime).not.toHaveBeenCalled();
+    // Only the restarted host's projects, and not forced: a forced pass would
+    // rebuild healthy editors' changefeeds while the user types.
+    const sessionPass = resourceReconnects.mock.calls
+      .map(([request]: any) => request)
+      .find((request) => request?.reason === "project_host_session_changed");
+    expect(sessionPass).toBeDefined();
+    expect(sessionPass.force).toBeFalsy();
+    expect([...sessionPass.projectIds]).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+    ]);
     jest.advanceTimersByTime(50);
     expect(reconnectSpy).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].client).toBe(routedClient1);

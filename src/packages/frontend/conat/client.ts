@@ -1848,9 +1848,26 @@ export class ConatClient extends EventEmitter {
         affectedProjectIds.add(project_id);
       }
     }
+    // Same host, same address, new session: the host restarted.  Reconnect in
+    // place instead of rebuilding every open editor; a move to another host
+    // or address still resets (projects/actions.ts).
     for (const project_id of affectedProjectIds) {
-      redux.getProjectActions?.(project_id)?.resetProjectHostRuntime?.();
+      const actions = redux.getProjectActions?.(project_id) as any;
+      if (actions?.reconnectProjectHostRuntime != null) {
+        actions.reconnectProjectHostRuntime();
+      } else {
+        actions?.resetProjectHostRuntime?.();
+      }
     }
+    // Not forced: the session is often learned long after the restart, when
+    // the editors have already reconnected, and a forced pass would rebuild
+    // their healthy changefeeds while the user types.
+    this.reconnectCoordinator.requestResourceReconnects({
+      includeBackground: true,
+      projectIds: affectedProjectIds,
+      reason: "project_host_session_changed",
+      resetBackoff: true,
+    });
   };
 
   private pickTrackedProjectForHost = (
