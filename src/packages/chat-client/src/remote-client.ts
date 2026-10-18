@@ -6,10 +6,7 @@
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isValidUUID } from "@cocalc/util/misc";
-import {
-  deviceAgentUserLocale,
-  type AgentUserLocale,
-} from "@cocalc/util/ai/agent-user-locale";
+import type { AgentUserLocale } from "@cocalc/util/ai/agent-user-locale";
 import type {
   ChatSnapshot,
   HeadlessChatClient,
@@ -105,7 +102,11 @@ export class RemoteHeadlessChatClient implements HeadlessChatClient {
 
   private userLocale(): AgentUserLocale | undefined {
     try {
-      return (this.options.userLocale ?? deviceAgentUserLocale)();
+      if (this.options.userLocale) return this.options.userLocale();
+      // This device's time zone. Kept inline (no locale module) for the
+      // Essential frontend's bundle; the project normalizes what it gets.
+      const time_zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return time_zone ? { time_zone } : undefined;
     } catch {
       return undefined;
     }

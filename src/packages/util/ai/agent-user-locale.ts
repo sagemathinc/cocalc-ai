@@ -70,17 +70,6 @@ export function normalizeAgentUserLocale(
   return Object.keys(locale).length > 0 ? locale : undefined;
 }
 
-/** This device's time zone, for clients without the web app's location data. */
-export function deviceAgentUserLocale(): AgentUserLocale | undefined {
-  try {
-    return normalizeAgentUserLocale({
-      time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    });
-  } catch {
-    return undefined;
-  }
-}
-
 /** One line for the agent's turn context, or undefined without a time zone. */
 export function formatAgentUserTimeContext(
   locale: AgentUserLocale | undefined,
