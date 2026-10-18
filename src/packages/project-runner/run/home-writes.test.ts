@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -56,6 +57,32 @@ describe("project start writes into the home", () => {
     await writeSecretToken(home, "s3cret");
     expect(await readFile(secretTokenPath(home), "utf8")).toBe("s3cret");
     expect((await stat(secretTokenPath(home))).mode & 0o777).toBe(0o600);
+  });
+
+  it("recreates a data dir containing an empty unreadable secrets mount target", async () => {
+    const secrets = join(dataPath(home), "secrets");
+    await mkdir(dataPath(home), { recursive: true });
+    await mkdir(secrets, { mode: 0o000 });
+    await setupDataPath(home);
+    expect(await readdir(dataPath(home))).toEqual([]);
+  });
+
+  it("never follows a symlink planted at the secrets mount target", async () => {
+    await mkdir(dataPath(home), { recursive: true });
+    await symlink(outside, join(dataPath(home), "secrets"));
+    await setupDataPath(home);
+    expect(await readdir(dataPath(home))).toEqual([]);
+    await outsideUnchanged();
+  });
+
+  it("still fails closed for a non-empty unreadable secrets directory", async () => {
+    if (process.getuid?.() === 0) return;
+    const secrets = join(dataPath(home), "secrets");
+    await mkdir(secrets, { recursive: true });
+    await writeFile(join(secrets, "file"), "x");
+    await chmod(secrets, 0o000);
+    await expect(setupDataPath(home)).rejects.toThrow(/EACCES/);
+    await chmod(secrets, 0o700);
   });
 
   it("removes a symlinked data dir itself, not what it points to", async () => {
