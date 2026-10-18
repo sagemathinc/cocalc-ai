@@ -311,9 +311,18 @@ try {
       '<div style="height:700px">tall</div><script>window.PLOTLYENV = {};</script>',
     ),
   );
+  // Load it from a URL, not with setContent: a sandboxed frame navigating
+  // inside an about:blank page (no site) hits a fatal CHECK in Chromium 155
+  // (SiteInstanceImpl::GetCompatibleSandboxedSiteInstance, has_site_), which
+  // kills the whole browser.  The exported document's CDN links are aborted.
+  const exportUrl = "http://export.test/";
   const doc = await browser.newPage();
-  await doc.route(/^https?:\/\//, (route) => route.abort());
-  await doc.setContent(exported, { waitUntil: "domcontentloaded" });
+  await doc.route("**/*", (route) =>
+    route.request().url() === exportUrl
+      ? route.fulfill({ contentType: "text/html", body: exported })
+      : route.abort(),
+  );
+  await doc.goto(exportUrl, { waitUntil: "domcontentloaded" });
   await doc.waitForFunction(
     () => {
       const h = document
