@@ -66,6 +66,8 @@ export interface DStreamOptions {
   // only load historic messages starting at the given seq number.
   start_seq?: number;
   start_checkpoint?: string;
+  // see CoreStreamOptions.start_instance
+  start_instance?: string | null;
   desc?: JSONValue;
 
   client?: Client;
@@ -147,6 +149,7 @@ export class DStream<T = any> extends EventEmitter {
     this.stream.on("metadata-change", this.handleMetadataChange);
     this.stream.on("checkpoints-change", this.handleCheckpointsChange);
     this.stream.on("history-gap", this.handleHistoryGap);
+    this.stream.on("instance-reset", this.handleInstanceReset);
     this.stream.on("recovery-state", this.handleRecoveryState);
     this.stream.on("disconnected", this.handleDisconnected);
     this.stream.on("recovering", this.handleRecovering);
@@ -191,6 +194,14 @@ export class DStream<T = any> extends EventEmitter {
 
   private handleHistoryGap = (info: HistoryGapEvent) => {
     this.emit("history-gap", info);
+  };
+
+  // The ephemeral stream's server lost it and numbers messages from 1 again
+  // (see CoreStream.resetForNewPersistInstance); emitted before any of the new
+  // messages.  Unsaved local messages stay and are written to the new one.
+  private handleInstanceReset = (instance?: string | null) => {
+    this.saved = {};
+    this.emit("instance-reset", instance);
   };
 
   private handleRecoveryState = (state: RecoveryState) => {
@@ -640,6 +651,10 @@ export class DStream<T = any> extends EventEmitter {
   get start_seq(): number | undefined {
     return this.stream?.start_seq;
   }
+
+  // see CoreStream.getPersistInstance
+  getPersistInstance = (): string | null | undefined =>
+    this.stream?.getPersistInstance();
 
   // get or set config
   config = async (
