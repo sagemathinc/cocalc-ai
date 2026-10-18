@@ -2,10 +2,10 @@
 A snapshot is written about one interval after the patch it covers, so the
 range a client loads from the latest snapshot onward also contains the
 previous snapshot's record, without that snapshot's patch or its children.
-That record used to look like a second head without an exact merged value, so
-every open loaded more history: back to the previous snapshot's own start,
-which after a long gap between snapshots is everything (a prod agent chat
-loaded 29,496 versions instead of 557).
+That record looks like a second head without an exact merged value, so the
+client loads more history, which used to go back to the previous snapshot's
+own start: after a long gap between snapshots, everything (a prod agent chat
+loaded 29,496 versions). It must step back only to the previous snapshot.
 */
 
 import {
@@ -46,7 +46,7 @@ describe("opening a document whose previous snapshot's record follows the latest
     }
   });
 
-  it("loads from the latest snapshot and nothing older", async () => {
+  it("loads back to the previous snapshot, not the whole history", async () => {
     const s1 = await open();
     const lines: string[] = [];
     const edit = async (line: string) => {
@@ -76,12 +76,13 @@ describe("opening a document whose previous snapshot's record follows the latest
     expect(s3.to_str()).toBe(expected);
     const session3 = (s3 as any).patchflowSession;
     expect(session3.needsMoreHistory()).toBe(false);
-    // Only the latest snapshot and what follows it: no older history.
+    // One step back, to the older snapshot's patch, and no further.
     expect(s3.hasFullHistory()).toBe(false);
-    const history = session3.history({ includeSnapshots: true });
-    expect(history.filter((p) => p.isSnapshot).map((p) => p.time)).toEqual([
-      newer,
-    ]);
-    expect(history.length).toBe(2);
+    const loaded = new Set(
+      session3.history({ includeSnapshots: true }).map((p) => p.time),
+    );
+    expect(loaded.has(older)).toBe(true);
+    expect(loaded.has(versions[0])).toBe(false);
+    expect(loaded.has(versions[1])).toBe(false);
   }, 60_000);
 });

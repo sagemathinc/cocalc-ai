@@ -220,60 +220,40 @@ logger.debug("init");
 // Where to load older history from: the stream position of the snapshot
 // before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
 // stream if the oldest loaded snapshot is the first one or none is loaded.
-// A document is loaded from its latest snapshot's seq onward. A snapshot is
-// written about one interval after the patch it covers, so that range also
-// contains the previous snapshot's record: older than the start, with neither
-// its parents nor its children loaded. It then looks like a second head with
-// no exact merged value, so the document loads more history, a whole snapshot
-// interval (or, after a long gap between snapshots, all of it). Drop such
-// records; a snapshot older than the newest loaded one is not needed, and one
-// that a loaded patch builds on is kept.
-export function withoutOrphanedOlderSnapshots<
-  T extends {
-    time: PatchId;
-    parents?: PatchId[];
-    isSnapshot?: boolean;
-    snapshot?: string;
-  },
->(patches: T[]): T[] {
-  let newest: PatchId | undefined;
-  for (const p of patches) {
-    if (
-      p.isSnapshot &&
-      p.snapshot != null &&
-      (newest == null || comparePatchId(p.time, newest) > 0)
-    ) {
-      newest = p.time;
-    }
-  }
-  if (newest == null) {
-    return patches;
-  }
-  const parents = new Set<PatchId>();
-  for (const p of patches) {
-    for (const parent of p.parents ?? []) {
-      parents.add(parent);
-    }
-  }
-  return patches.filter(
-    (p) =>
-      !(
-        p.isSnapshot &&
-        p.snapshot != null &&
-        comparePatchId(p.time, newest!) < 0 &&
-        !parents.has(p.time)
-      ),
-  );
-}
-
+// Where to load more history from: the stream position of the patch of the
+// previous snapshot. Given where the loaded history starts (firstLoadedSeq),
+// step back to the nearest snapshot before it: the latest prev_seq below it.
+// The loaded range also holds the records of older snapshots (a snapshot is
+// written about one interval after its patch), and taking the oldest one's
+// prev_seq jumped back two snapshots at a time, or over the whole history
+// after a long gap between snapshots.
 export function prevSeqForMoreHistoryFromHistory(
   history: {
     time: PatchId;
     isSnapshot?: boolean;
     seqInfo?: { prevSeq?: number; prev_seq?: number };
   }[],
+  firstLoadedSeq?: number,
 ): number | undefined {
   if (history.length == 0) return undefined;
+  // SyncDoc passes its seq_info (snake case) through to patchflow.
+  const prevSeqOf = (p: (typeof history)[number]) =>
+    p.seqInfo?.prevSeq ?? p.seqInfo?.prev_seq;
+  if (firstLoadedSeq != null) {
+    let best: number | undefined;
+    for (const p of history) {
+      if (!p.isSnapshot) continue;
+      const prevSeq = prevSeqOf(p);
+      if (
+        prevSeq != null &&
+        prevSeq < firstLoadedSeq &&
+        (best == null || prevSeq > best)
+      ) {
+        best = prevSeq;
+      }
+    }
+    return best ?? 0;
+  }
   let oldest: { prevSeq?: number } | undefined;
   let oldestTimeMs: number | undefined;
   for (const p of history) {
@@ -281,8 +261,7 @@ export function prevSeqForMoreHistoryFromHistory(
     const timeMs = decodePatchId(p.time).timeMs;
     if (oldestTimeMs == null || timeMs < oldestTimeMs) {
       oldestTimeMs = timeMs;
-      // SyncDoc passes its seq_info (snake case) through to patchflow.
-      oldest = { prevSeq: p.seqInfo?.prevSeq ?? p.seqInfo?.prev_seq };
+      oldest = { prevSeq: prevSeqOf(p) };
     }
   }
   return oldest?.prevSeq ?? 0;
@@ -2861,9 +2840,7 @@ export class SyncDoc extends EventEmitter {
     return {
       loadInitial: async () => {
         const raw = this.get_patches();
-        const patches = withoutOrphanedOlderSnapshots(
-          raw.map((p) => this.toPatchflowEnvelope(p)),
-        );
+        const patches = raw.map((p) => this.toPatchflowEnvelope(p));
         return { patches, hasMore: !this.patchesHaveFullHistory(raw) };
       },
       append: (env: PatchEnvelope) => {
@@ -3658,7 +3635,12 @@ export class SyncDoc extends EventEmitter {
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
     const history = this.patchflowSession.history({ includeSnapshots: true });
-    return prevSeqForMoreHistoryFromHistory(history);
+    let firstLoadedSeq: number | undefined;
+    try {
+      const seq = this.dstream()?.seq?.(0);
+      firstLoadedSeq = typeof seq === "number" ? seq : undefined;
+    } catch {}
+    return prevSeqForMoreHistoryFromHistory(history, firstLoadedSeq);
   };
 
   private patchflowSnapshotCandidate = (
