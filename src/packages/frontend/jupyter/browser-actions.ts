@@ -1302,17 +1302,15 @@ export class JupyterActions extends JupyterActions0 {
   private abandonOrphanedLiveRuns = async (
     present: Set<string>,
   ): Promise<void> => {
-    const waiting = new Set<string>([
-      ...this.liveRunContexts.keys(),
-      ...this.liveRunCompletionReplayCells.keys(),
-    ]);
+    const waiting = this.liveRunsAwaitingEnd();
     for (const runId of Array.from(this.liveRunMissingSince.keys())) {
       if (!waiting.has(runId) || present.has(runId)) {
         this.liveRunMissingSince.delete(runId);
       }
     }
     const now = Date.now();
-    const orphans: string[] = [];
+    // run id -> when it was first seen missing
+    const orphans = new globalThis.Map<string, number>();
     for (const runId of waiting) {
       if (present.has(runId)) {
         continue;
@@ -1321,11 +1319,11 @@ export class JupyterActions extends JupyterActions0 {
       if (since == null) {
         this.liveRunMissingSince.set(runId, now);
       } else if (now - since >= LIVE_RUN_ORPHAN_GRACE_MS) {
-        orphans.push(runId);
+        orphans.set(runId, since);
       }
     }
     if (
-      orphans.length === 0 ||
+      orphans.size === 0 ||
       now - this.liveRunOrphanKernelCheckAt < LIVE_RUN_ORPHAN_KERNEL_CHECK_MS
     ) {
       return;
@@ -1340,11 +1338,37 @@ export class JupyterActions extends JupyterActions0 {
     if (backendState === "running" && kernelState !== "idle") {
       return;
     }
-    for (const runId of orphans) {
-      if (present.has(runId)) {
+    // Replay polls are not serialized: while this one waited, a snapshot may
+    // have shown up (and a newer poll noticed it).  Only abandon a run that is
+    // still waiting, still missing from the store, and still missing since
+    // the same time.
+    let current: Record<string, JupyterLiveRunSnapshot>;
+    try {
+      current = (await this.getLiveRunStore()).getAll();
+    } catch (err) {
+      if (this.forgetClosedLiveRunStore(err)) {
+        return;
+      }
+      throw err;
+    }
+    if (this.isClosed()) {
+      return;
+    }
+    const stillWaiting = this.liveRunsAwaitingEnd();
+    const abandonedCells = new Set<string>();
+    for (const [runId, since] of orphans) {
+      const key = jupyterLiveRunKey({ path: this.liveRunPath, run_id: runId });
+      if (
+        current[key] != null ||
+        !stillWaiting.has(runId) ||
+        this.liveRunMissingSince.get(runId) !== since
+      ) {
         continue;
       }
-      const cellIds = this.liveRunCompletionReplayCells.get(runId) ?? [];
+      const cellIds = [
+        ...(this.liveRunCompletionReplayCells.get(runId) ?? []),
+        ...(this.liveRunContexts.get(runId)?.cellIds ?? []),
+      ];
       this.runDebug("liveRun.orphan.abandon", {
         runId,
         cells: cellIds.length,
@@ -1356,10 +1380,31 @@ export class JupyterActions extends JupyterActions0 {
       });
       for (const id of cellIds) {
         this.clearRunCellOverlay(id);
+        abandonedCells.add(id);
       }
       this.rememberCompletedLiveRunId(runId);
     }
+    if (abandonedCells.size === 0) {
+      return;
+    }
+    // The run's output handlers also wrote its busy state into the cells
+    // themselves, and the shared runtime state may still say so too.
+    if (!this.hasLocalRunInProgress()) {
+      this.clearStaleActiveRuntimeCellState();
+    }
+    for (const id of abandonedCells) {
+      const state = this.store?.getIn(["cells", id, "state"]);
+      if (state === "start" || state === "run" || state === "busy") {
+        this.set_local_runtime_cell_state(id, { state: "done" });
+      }
+    }
   };
+
+  private liveRunsAwaitingEnd = (): Set<string> =>
+    new Set<string>([
+      ...this.liveRunContexts.keys(),
+      ...this.liveRunCompletionReplayCells.keys(),
+    ]);
 
   private ensureLiveRunSubscription = async (): Promise<void> => {
     if (this.liveRunSub != null || this.isClosed()) {

@@ -44,6 +44,11 @@ function makeActions({
       c1: Map({ state: "busy", start: 1 }),
       c2: Map({ state: "busy", start: 1 }),
     }),
+    // the run's output handlers also wrote its state into the cells
+    cells: Map({
+      c1: Map({ id: "c1", state: "busy", start: 1 }),
+      c2: Map({ id: "c2", state: "busy", start: 1 }),
+    }),
   });
   const actions: any = new JupyterActions("jupyter-test", {
     getStore: jest.fn(() => undefined),
@@ -64,10 +69,18 @@ function makeActions({
     delete: jest.fn(),
   };
   actions.refreshKernelStatus = jest.fn(async () => {});
+  actions.clearStaleActiveRuntimeCellState = jest.fn();
+  actions.set_local_runtime_cell_state = (id: string, patch: any) => {
+    state = state.setIn(
+      ["cells", id],
+      state.getIn(["cells", id]).merge(Map(patch)),
+    );
+  };
   actions.get_runtime_setting = (key: string) =>
     key === "backend_state" ? backendState : kernelState;
   const overlays = () => state.get("runCellOverlays");
-  return { actions, overlays };
+  const cellState = (id: string) => state.getIn(["cells", id, "state"]);
+  return { actions, overlays, cellState };
 }
 
 describe("runs whose live-run snapshot is gone", () => {
@@ -81,7 +94,7 @@ describe("runs whose live-run snapshot is gone", () => {
   });
 
   it("stop showing as running once the kernel is not running anything", async () => {
-    const { actions, overlays } = makeActions();
+    const { actions, overlays, cellState } = makeActions();
     // a local run that lost its connection
     actions.requireLiveRunCompletionReplay("run-1", ["c1"]);
     // a run started in another tab
@@ -101,6 +114,36 @@ describe("runs whose live-run snapshot is gone", () => {
     expect(overlays().has("c1")).toBe(false);
     expect(overlays().has("c2")).toBe(false);
     expect(actions.liveRunContexts.has("run-2")).toBe(false);
+    expect(cellState("c1")).toBe("done");
+    expect(cellState("c2")).toBe("done");
+    expect(actions.clearStaleActiveRuntimeCellState).toHaveBeenCalled();
+  });
+
+  it("keep a run whose snapshot shows up while the kernel check is pending", async () => {
+    const snapshots: Record<string, any> = {};
+    const { actions, overlays, cellState } = makeActions({ snapshots });
+    actions.requireLiveRunCompletionReplay("run-1", ["c1"]);
+    await actions.replaySharedLiveRuns();
+    now += 3_000;
+    let finishRefresh!: () => void;
+    actions.refreshKernelStatus = jest.fn(
+      () => new Promise<void>((resolve) => (finishRefresh = resolve)),
+    );
+    const older = actions.replaySharedLiveRuns();
+    await Promise.resolve();
+    expect(actions.refreshKernelStatus).toHaveBeenCalled();
+    // the run's snapshot shows up meanwhile
+    snapshots["notebook.ipynb\nrun-1"] = {
+      path: "notebook.ipynb",
+      run_id: "run-1",
+      batches: [],
+      updated_at_ms: now,
+    };
+    finishRefresh();
+    await older;
+    expect(overlays().has("c1")).toBe(true);
+    expect(cellState("c1")).toBe("busy");
+    expect(actions.hasCompletedLiveRunId("run-1")).toBe(false);
   });
 
   it("keep showing as running while the kernel is busy", async () => {
