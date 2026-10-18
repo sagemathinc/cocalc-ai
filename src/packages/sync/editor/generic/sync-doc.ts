@@ -220,6 +220,52 @@ logger.debug("init");
 // Where to load older history from: the stream position of the snapshot
 // before the oldest loaded one (see conatSnapshotSeqInfo), or the start of the
 // stream if the oldest loaded snapshot is the first one or none is loaded.
+// A document is loaded from its latest snapshot's seq onward. A snapshot is
+// written about one interval after the patch it covers, so that range also
+// contains the previous snapshot's record: older than the start, with neither
+// its parents nor its children loaded. It then looks like a second head with
+// no exact merged value, so the document loads more history, a whole snapshot
+// interval (or, after a long gap between snapshots, all of it). Drop such
+// records; a snapshot older than the newest loaded one is not needed, and one
+// that a loaded patch builds on is kept.
+export function withoutOrphanedOlderSnapshots<
+  T extends {
+    time: PatchId;
+    parents?: PatchId[];
+    isSnapshot?: boolean;
+    snapshot?: string;
+  },
+>(patches: T[]): T[] {
+  let newest: PatchId | undefined;
+  for (const p of patches) {
+    if (
+      p.isSnapshot &&
+      p.snapshot != null &&
+      (newest == null || comparePatchId(p.time, newest) > 0)
+    ) {
+      newest = p.time;
+    }
+  }
+  if (newest == null) {
+    return patches;
+  }
+  const parents = new Set<PatchId>();
+  for (const p of patches) {
+    for (const parent of p.parents ?? []) {
+      parents.add(parent);
+    }
+  }
+  return patches.filter(
+    (p) =>
+      !(
+        p.isSnapshot &&
+        p.snapshot != null &&
+        comparePatchId(p.time, newest!) < 0 &&
+        !parents.has(p.time)
+      ),
+  );
+}
+
 export function prevSeqForMoreHistoryFromHistory(
   history: {
     time: PatchId;
@@ -2815,7 +2861,9 @@ export class SyncDoc extends EventEmitter {
     return {
       loadInitial: async () => {
         const raw = this.get_patches();
-        const patches = raw.map((p) => this.toPatchflowEnvelope(p));
+        const patches = withoutOrphanedOlderSnapshots(
+          raw.map((p) => this.toPatchflowEnvelope(p)),
+        );
         return { patches, hasMore: !this.patchesHaveFullHistory(raw) };
       },
       append: (env: PatchEnvelope) => {
