@@ -6,10 +6,6 @@ import {
 } from "@cocalc/server/cloud/derived-domains";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 import {
-  hostContentWildcardHostname,
-  normalizeContentDomain,
-} from "@cocalc/util/project-content-origin";
-import {
   computeDeploymentNamespace,
   computeVmDnsLabelIsOwned,
 } from "@cocalc/server/compute/resource-names";
@@ -311,12 +307,15 @@ async function getClient(): Promise<{
   return { token, dns, settings };
 }
 
-async function getZoneClientForHostname(hostname: string): Promise<{
+async function getZoneClientForHostname(
+  hostname: string,
+  tokenOverride?: string,
+): Promise<{
   token: string;
   zoneId: string;
   zoneHostname: string;
 }> {
-  const { token } = await getClient();
+  const token = tokenOverride ?? (await getClient()).token;
   const { zoneId, zoneHostname } = await getZoneForHostname(
     token,
     zoneLookupHostname(hostname),
@@ -340,85 +339,11 @@ export async function ensureHostDns(opts: {
   const { settings } = await getClient();
   const name = deriveProjectHostHostname(opts.host_id, settings);
   if (!name) throw new Error("cloudflare DNS not configured");
-  const dns = await ensureProxiedAddressDns({
+  return await ensureProxiedAddressDns({
     name,
     ipAddress: opts.ipAddress,
     record_id: opts.record_id,
   });
-  // The host's content origins follow its address.  Best effort: a missing
-  // content record only makes content links on this host fail, while a
-  // failed host record must still fail provisioning.
-  try {
-    await ensureHostContentDns({
-      host_id: opts.host_id,
-      ipAddress: opts.ipAddress,
-    });
-  } catch (err) {
-    logger.warn("unable to ensure project content DNS for host", {
-      host_id: opts.host_id,
-      err: `${err}`,
-    });
-  }
-  return dns;
-}
-
-async function getProjectContentDomain(): Promise<string | undefined> {
-  const { project_content_dns } = await getServerSettings();
-  return normalizeContentDomain(project_content_dns);
-}
-
-// The wildcard record *.h-<host>.<content domain> for a host's per-project
-// content origins (trust-free step 6), pointing at the host like its own
-// record.  Nothing to do when no content domain is configured.
-export async function ensureHostContentDns(opts: {
-  host_id: string;
-  ipAddress: string;
-}): Promise<{ name: string; record_id: string } | undefined> {
-  const domain = await getProjectContentDomain();
-  if (!domain) return undefined;
-  if (!opts.host_id) throw new Error("host_id required for content DNS");
-  return await ensureProxiedAddressDns({
-    name: hostContentWildcardHostname({ host_id: opts.host_id, domain }),
-    ipAddress: opts.ipAddress,
-  });
-}
-
-// Removes every record for the host's content wildcard, and fails unless
-// none is left: it must stop resolving before the host's address can be
-// released, or a reused address would serve those origins.
-export async function deleteHostContentDns(opts: {
-  host_id: string;
-}): Promise<void> {
-  const domain = await getProjectContentDomain();
-  if (!domain) return;
-  if (!opts.host_id) throw new Error("host_id required for content DNS");
-  const hostname = hostContentWildcardHostname({
-    host_id: opts.host_id,
-    domain,
-  });
-  try {
-    await deleteHostnameDns({ hostname });
-  } catch (err) {
-    // No zone for the content domain in this account means no record of
-    // ours can exist there.  Any other failure (permissions, API errors)
-    // must stop the caller before it releases the address.
-    if (`${(err as Error)?.message ?? err}`.includes("cloudflare zone not found")) {
-      logger.warn("no Cloudflare zone for the project content domain", {
-        host_id: opts.host_id,
-        domain,
-      });
-      return;
-    }
-    throw err;
-  }
-}
-
-const PROJECT_HOST_HOSTNAME_ID =
-  /^host-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])/;
-
-// The host id in a project-host hostname (host-<id><suffix>), if it is one.
-export function projectHostIdFromHostname(name: unknown): string | undefined {
-  return PROJECT_HOST_HOSTNAME_ID.exec(`${name ?? ""}`.trim().toLowerCase())?.[1];
 }
 
 export async function inspectHostDns(opts: {
@@ -503,14 +428,14 @@ export async function listManagedVmDnsRecords(): Promise<ManagedVmDnsRecord[]> {
 }
 
 async function ensureAddressDns(
-  opts: { name: string; ipAddress: string; record_id?: string },
+  opts: { name: string; ipAddress: string; record_id?: string; token?: string },
   proxied: boolean,
 ): Promise<{ name: string; record_id: string }> {
   const name = `${opts.name ?? ""}`.trim().toLowerCase();
   if (!name) throw new Error("hostname required for DNS");
   if (!opts.ipAddress) throw new Error("ipAddress required for DNS");
 
-  const { token } = await getClient();
+  const token = opts.token ?? (await getClient()).token;
   const zoneId = await getZoneIdForHostname(token, zoneLookupHostname(name));
 
   const updateRecord = async (record_id: string) => {
@@ -821,12 +746,6 @@ export async function deleteHostDns(opts: {
   record_id?: string;
   name?: string;
 }) {
-  // A project host's content origins go first, whatever happens to its own
-  // record: the caller may release the address next.
-  const host_id = projectHostIdFromHostname(opts.name);
-  if (host_id) {
-    await deleteHostContentDns({ host_id });
-  }
   if (!opts.record_id) return;
   const { token, dns } = await getClient();
   const zoneId = await getZoneIdForHostname(token, opts.name ?? dns);
@@ -855,10 +774,14 @@ const ROUTE_RECORD_TYPES = new Set(["A", "AAAA", "CNAME"]);
 export async function deleteHostnameDns(opts: {
   hostname: string;
   record_id?: string;
+  token?: string;
 }): Promise<void> {
   const hostname = `${opts.hostname ?? ""}`.trim().toLowerCase();
   if (!hostname) throw new Error("hostname required to delete DNS");
-  const { token, zoneId } = await getZoneClientForHostname(hostname);
+  const { token, zoneId } = await getZoneClientForHostname(
+    hostname,
+    opts.token,
+  );
   const remove = async (record_id: string) => {
     try {
       await cloudflareRequest(
@@ -1098,4 +1021,48 @@ export async function deleteAppSubdomainDns(opts: {
     if (isNotFoundError(err)) return;
     throw err;
   }
+}
+
+// Content-origin DNS (trust-free step 6) lives in host-content-dns.ts; these
+// are the zone primitives it needs, with its own API token.
+export async function ensureProxiedAddressDnsWithToken(opts: {
+  name: string;
+  ipAddress: string;
+  token: string;
+}): Promise<{ name: string; record_id: string }> {
+  return await ensureAddressDns(opts, true);
+}
+
+export async function listRouteRecordsUnder(opts: {
+  domain: string;
+  token: string;
+}): Promise<{ id: string; name: string; type: string; content: string }[]> {
+  const domain = `${opts.domain ?? ""}`.trim().toLowerCase();
+  const { zoneId } = await getZoneClientForHostname(domain, opts.token);
+  const out: { id: string; name: string; type: string; content: string }[] = [];
+  const perPage = 1000;
+  for (let page = 1; ; page += 1) {
+    const qs = new URLSearchParams({
+      "name.endswith": `.${domain}`,
+      page: `${page}`,
+      per_page: `${perPage}`,
+    });
+    const batch = await cloudflareRequest<DnsRecord[]>(
+      opts.token,
+      "GET",
+      `zones/${zoneId}/dns_records?${qs.toString()}`,
+    );
+    for (const record of batch ?? []) {
+      const type = `${record.type ?? ""}`.trim().toUpperCase();
+      if (!record.id || !ROUTE_RECORD_TYPES.has(type)) continue;
+      out.push({
+        id: record.id,
+        name: `${record.name ?? ""}`.trim().toLowerCase(),
+        type,
+        content: `${record.content ?? ""}`.trim(),
+      });
+    }
+    if ((batch ?? []).length < perPage) break;
+  }
+  return out;
 }

@@ -118,6 +118,7 @@ import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/proje
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
+import { releaseHostContentDns } from "@cocalc/server/cloud/host-content-dns";
 import {
   enqueueCloudVmWork,
   listCloudVmLog,
@@ -1242,6 +1243,7 @@ async function markHostDeprovisioned(row: any, action: string) {
     deleteCloudflareTunnel,
     hasDns,
     deleteHostDns,
+    releaseHostContentDns,
     logWarn: (message, payload) => logger.warn(message, payload),
     updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
       await pool().query(

@@ -25,6 +25,7 @@ import {
   getCloudflareZoneSslMode,
 } from "./dns";
 import { enqueueHostDnsReconciliation } from "./host-dns-reconciliation";
+import { syncHostContentDns } from "./host-content-dns";
 import { getProviderContext } from "./provider-context";
 import { reconcileCloudHostBootstrapOverSsh } from "@cocalc/server/conat/api/hosts-bootstrap-reconcile";
 import {
@@ -295,6 +296,10 @@ export async function reconcileDirectCloudflareRouteForHost(row: {
       row.metadata?.cloudflare_tunnel?.record_id,
   });
   await setMetadataField(row.id, "dns", dns);
+  await syncHostContentDns({
+    id: row.id,
+    metadata: { ...(row.metadata ?? {}), dns },
+  });
   const publicIngress = await ensureDirectCloudflareIngressForHost(row);
   return {
     public_ip: runtime.public_ip,
@@ -415,6 +420,10 @@ async function prepareDirectRoute({
       row.metadata?.cloudflare_tunnel?.record_id,
   });
   await setMetadataField(row.id, "dns", dns);
+  await syncHostContentDns({
+    id: row.id,
+    metadata: { ...(row.metadata ?? {}), dns },
+  });
   await probeCloudflareRoute({
     hostname: stableHostname,
     origin,

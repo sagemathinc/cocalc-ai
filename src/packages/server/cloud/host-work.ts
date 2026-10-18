@@ -12,6 +12,10 @@ import {
 import { clearProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { deleteHostDns, ensureHostDns, hasDns } from "./dns";
 import {
+  releaseHostContentDns,
+  syncHostContentDns,
+} from "./host-content-dns";
+import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
   ensureCloudflareTunnelForHost,
@@ -1185,6 +1189,7 @@ async function ensureDnsForHost(row: any) {
           row.internal_url ??
           `https://${dns.name}`,
       });
+      await syncHostContentDns(row);
     } catch (err) {
       logger.warn(
         "direct project-host DNS update failed; durable retry queued",
@@ -1288,6 +1293,7 @@ async function ensureDnsForHost(row: any) {
       public_url: nextUrls.public_url,
       internal_url: nextUrls.internal_url,
     });
+    await syncHostContentDns(row);
   } catch (err) {
     logger.warn("dns update failed", { host_id: row.id, err });
   }
@@ -1621,6 +1627,8 @@ async function handleProvision(row: any) {
           instance_id: runtime.instance_id,
           mismatch,
         });
+        // Content origins stop resolving before the address can be released.
+        await releaseHostContentDns(row);
         await entry.provider.deleteHost(runtime, creds, {
           preserveDataDisk: true,
         });
@@ -1728,6 +1736,8 @@ async function handleStart(row: any) {
           instance_id: runtime.instance_id,
           zone: runtime.zone,
         });
+        // Content origins stop resolving before the address can be released.
+        await releaseHostContentDns(row);
         await entry.provider.deleteHost(runtime, creds, {
           preserveDataDisk: true,
         });
@@ -1982,6 +1992,8 @@ async function handleStart(row: any) {
             "standard fallback recreate is not safe for Nebius host without a preserved data disk",
           );
         }
+        // Content origins stop resolving before the address can be released.
+        await releaseHostContentDns(row);
         await entry.provider.deleteHost(runtime, creds, {
           preserveDataDisk: true,
         });
@@ -2458,6 +2470,8 @@ async function handleStart(row: any) {
               "spot return recreate is not safe for Nebius host without a preserved data disk",
             );
           }
+          // Content origins stop resolving before the address can be released.
+          await releaseHostContentDns(row);
           await entry.provider.deleteHost(runtime, creds, {
             preserveDataDisk: true,
           });
@@ -2497,6 +2511,8 @@ async function handleStart(row: any) {
             `spot return is not supported for provider '${providerId}'`,
           );
         }
+        // Stopping can release the address: content origins go first.
+        await releaseHostContentDns(row);
         await entry.provider.stopHost(runtimeForStart, creds);
         if (providerId === "gcp" || providerId === "hyperstack") {
           await waitForProviderStatus({
@@ -2597,6 +2613,8 @@ async function handleStart(row: any) {
             instance_id: runtimeForStart?.instance_id,
             mismatch,
           });
+          // Content origins stop resolving before the address can be released.
+          await releaseHostContentDns(row);
           await entry.provider.deleteHost(runtimeForStart, creds, {
             preserveDataDisk: true,
           });
@@ -2887,6 +2905,10 @@ async function handleStop(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
+  // Content origins stop resolving before anything here can release the
+  // host's address (stopping can release an ephemeral IP).  On failure the
+  // stop fails and is retried, with the host and its address kept.
+  await releaseHostContentDns(row);
   // Do not revoke bootstrap/master-conat tokens on stop: a stopped VM may
   // restart from the same persistent disk and must still authenticate.
   // Token revocation is handled on deprovision/delete.
@@ -3089,6 +3111,10 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     region: row.region,
   });
   const provider = entry.provider;
+  // A restart can change the host's address (a hard restart, or a stop and
+  // start), so its content origins stop resolving first; the runtime refresh
+  // after the restart restores them.
+  await releaseHostContentDns(row);
   let runtimeForRestart = runtime;
   try {
     const { baseUrl } = await resolveLaunchpadBootstrapUrl({
@@ -3174,6 +3200,9 @@ async function handleDelete(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
+  // Content origins stop resolving before the VM and its address go; on
+  // failure the delete fails and is retried.
+  await releaseHostContentDns(row);
   await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
   await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
   await removeHostSshKnownHostAlias({

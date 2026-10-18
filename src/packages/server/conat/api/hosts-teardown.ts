@@ -52,6 +52,7 @@ export async function markHostDeprovisionedInternal({
   deleteCloudflareTunnel,
   hasDns,
   deleteHostDns,
+  releaseHostContentDns,
   logWarn,
   updateHostDeprovisionedRecord,
   markHostProjectsUnprovisioned,
@@ -74,6 +75,9 @@ export async function markHostDeprovisionedInternal({
   }) => Promise<void>;
   hasDns: () => Promise<boolean>;
   deleteHostDns: (opts: { record_id: any; name?: string }) => Promise<void>;
+  // Removes the host's content-origin DNS (trust-free step 6); throws unless
+  // it is gone.
+  releaseHostContentDns?: (row: any) => Promise<void>;
   logWarn: (message: string, payload: Record<string, any>) => void;
   updateHostDeprovisionedRecord: (opts: {
     row: any;
@@ -109,6 +113,20 @@ export async function markHostDeprovisionedInternal({
     host_id: row.id,
     reason: action,
   });
+  // Content-origin DNS is removed whatever the route mode, and its record is
+  // kept in the metadata unless removal succeeded, so it can be retried (the
+  // sweeper also finds it: the host is no longer running at that address).
+  if (releaseHostContentDns) {
+    try {
+      await releaseHostContentDns(row);
+      delete nextMetadata.content_dns;
+    } catch (err) {
+      logWarn("force deprovision content DNS cleanup failed", {
+        err: `${err}`,
+        host_id: row.id,
+      });
+    }
+  }
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({

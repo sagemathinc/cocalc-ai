@@ -51,7 +51,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { normalizeContentDomain } from "@cocalc/util/project-content-origin";
+import { resolveProjectContentDomain } from "./host-content-dns";
 import { loadEffectiveProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
@@ -1360,9 +1360,7 @@ export async function buildBootstrapScripts(
   envLines.push(`COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe`);
   // Per-project content origin (trust-free step 6).  Written to the env file
   // that both the host and its router daemon load, so it survives respawns.
-  const projectContentDomain = normalizeContentDomain(
-    serverSettings.project_content_dns,
-  );
+  const projectContentDomain = resolveProjectContentDomain(serverSettings);
   if (projectContentDomain) {
     envLines.push(`COCALC_PROJECT_CONTENT_DOMAIN=${projectContentDomain}`);
   }

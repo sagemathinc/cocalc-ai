@@ -499,7 +499,7 @@ export const site_settings_conf: SiteSettings = {
   },
   project_content_dns: {
     name: "Project Content Domain",
-    desc: "Separate registrable domain for per-project content origins, e.g. `cocalcusercontent.com`. Project files such as HTML are then served at `<project>.h-<host>.<domain>`, isolated from the app and from other projects, so their relative images, CSS and scripts work without any trust switch. Requires a Cloudflare zone for this domain (Advanced Certificate Manager for the per-host wildcard certificates, SSL mode Full, caching bypassed); each project host gets one wildcard DNS record. Leave empty to disable. Hosts pick up a change at their next environment reconcile.",
+    desc: "Separate registrable domain for per-project content origins, e.g. `cocalcusercontent.com`. Project files such as HTML are then served at `<project>.h-<host>.<domain>`, isolated from the app and from other projects, so their relative images, CSS and scripts work without any trust switch. Requires a Cloudflare zone for this domain (Advanced Certificate Manager for the per-host wildcard certificates, SSL mode Full, caching bypassed); each project host gets one wildcard DNS record. It must be a separate registrable domain: a domain equal to or under the site's own is refused (the site's cookies would reach content pages). Leave empty to disable. Hosts pick up a change at their next environment reconcile. Only hosts with direct ingress (proxied A records) get content origins; hosts on Cloudflare tunnels do not.",
     default: "",
     to_val: to_trimmed_str,
     tags: ["Cloudflare", "Security"],
