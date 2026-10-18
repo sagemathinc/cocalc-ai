@@ -18,6 +18,6 @@ describe("KaTeX", () => {
     );
 
     expect(container.textContent).toContain("\\definitelyUnknownCommand{<&}");
-    expect(container.querySelector("div[style='color:red']")).not.toBeNull();
+    expect(container.querySelector("div[style*='color: red']")).not.toBeNull();
   });
 });

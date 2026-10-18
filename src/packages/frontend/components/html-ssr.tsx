@@ -78,11 +78,13 @@ export default function HTML({
         // Do NOT convert Text to math inside a pre/code tree environment.
         return;
       }
+      // The parser already decoded entities in text, so data is the text as
+      // displayed.  Decoding it again would turn &amp;lt; into a tag.
       const { data } = domNode;
       if (MathComponent != null) {
-        return <MathComponent data={decodeHTML(data)} />;
+        return <MathComponent data={data} />;
       }
-      return <DefaultMath data={decodeHTML(data)} />;
+      return <DefaultMath data={data} />;
     }
 
     try {
