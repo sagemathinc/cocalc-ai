@@ -141,7 +141,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           name: process.argv.includes("--claude-adapter")
             ? "@agentclientprotocol/claude-agent-acp"
             : "cocalc-fixture",
-          version: process.argv.includes("--claude-adapter") ? "0.85.1" : "1",
+          version: process.argv.includes("--claude-adapter") ? "0.93.0" : "1",
         },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),

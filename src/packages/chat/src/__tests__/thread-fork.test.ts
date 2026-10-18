@@ -19,7 +19,7 @@ const CLAUDE = {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.85.1",
+    revision: "0.93.0",
     cwd: "/home/user/work",
     executionPolicy: "full-access",
     credentialMode: "project-managed",
