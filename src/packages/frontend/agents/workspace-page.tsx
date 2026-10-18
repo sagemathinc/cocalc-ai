@@ -113,11 +113,7 @@ import {
   saveShellPlaceholder,
 } from "@cocalc/frontend/app/shell-placeholder";
 import { set_window_title } from "@cocalc/frontend/browser";
-import {
-  agentWindowTitle,
-  agentsWindowTitle,
-  setAgentsWindowTitle,
-} from "./window-title";
+import { agentWindowTitle, setAgentsWindowTitle } from "./window-title";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import {
