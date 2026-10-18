@@ -246,6 +246,36 @@ describe("Codex attention summaries", () => {
     hook.unmount();
   });
 
+  it("drops a retried async answer's stale card once its retry succeeded", async () => {
+    // Loaded after a reload: an async answer saved but not delivered.
+    let current: AcpAttentionRecord = {
+      ...record("thread-1", "stale"),
+      response_submitted_at: 2,
+      updated_at: 2,
+    };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        records:
+          request.state === "all" || current.state === "stale" ? [current] : [],
+      }));
+    const hook = renderHook(() =>
+      useCodexAttentionSummary({
+        active: true,
+        account_id: "account-1",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    await waitFor(() => expect(hook.result.current.records).toEqual([current]));
+    // The retry delivered it: it leaves the actionable list as answered.
+    current = { ...current, state: "answered", updated_at: 3 };
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(hook.result.current.records).toEqual([current]));
+    hook.unmount();
+  });
+
   it("does not let submitted history displace open requests or another account's data", async () => {
     const pending = record("open", "pending");
     const submitted = {
