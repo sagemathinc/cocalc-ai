@@ -113,6 +113,7 @@ import {
   saveShellPlaceholder,
 } from "@cocalc/frontend/app/shell-placeholder";
 import { set_window_title } from "@cocalc/frontend/browser";
+import { agentWindowTitle, setAgentsWindowTitle } from "./window-title";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import {
@@ -4009,26 +4010,37 @@ export function MyAgentsWorkspacePage({
         : undefined,
       { isProtected: isRunningWorkspace },
     );
+  const selectedHeaderTitle = selected
+    ? agentAppearances.get(selected.endpoint.agent_id)?.name
+    : undefined;
   useEffect(() => {
     if (!active || contentOpen) return;
-    set_window_title(
-      overviewOpen
-        ? "Agents"
-        : libraryOpen
-          ? "Artifacts"
-          : creating
-            ? "New Agent"
-            : selected
-              ? selected.thread_title?.trim() || `@${selected.name}`
-              : "Agents",
-    );
+    const title = overviewOpen
+      ? "Agents"
+      : libraryOpen
+        ? "Artifacts"
+        : creating
+          ? "New Agent"
+          : selected
+            ? agentWindowTitle({
+                name: selected.name,
+                thread_title: selected.thread_title,
+                headerTitle: selectedHeaderTitle,
+              })
+            : "Agents";
+    // Remembered whole, so switching back to the Agents tab (which may
+    // finish after this effect) restores exactly this title.
+    setAgentsWindowTitle(title);
+    set_window_title(title);
   }, [
     active,
     contentOpen,
+    overviewOpen,
     libraryOpen,
     creating,
     selected?.name,
     selected?.thread_title,
+    selectedHeaderTitle,
   ]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
