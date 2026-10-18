@@ -24,6 +24,7 @@ const targets = jest.fn();
 const liveRun = jest.fn();
 const accountHome = jest.fn();
 const directory = jest.fn();
+const issuable = jest.fn(async ({ scope }: any) => scope);
 const audit = jest.fn();
 const trust = jest.fn();
 const encrypt = jest.fn();
@@ -67,6 +68,9 @@ jest.mock("@cocalc/database/settings/secret-settings", () => ({
 jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
   assertAccountProjectHostTokenProjectAccess: (...args: any[]) =>
     sourceHost(...args),
+}));
+jest.mock("./cocalc-connector-scope", () => ({
+  issuableConnectorScope: (...args: any[]) => issuable(...args),
 }));
 jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
   assertAccountTrustedForProductAccess: (...args: any[]) => trust(...args),
@@ -131,6 +135,7 @@ let lockedConfig: any;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  issuable.mockImplementation(async ({ scope }: any) => scope);
   allocateSequence.mockResolvedValue("9007199254740993");
   savedTurn = undefined;
   savedKey = undefined;
@@ -374,6 +379,31 @@ test("idempotent retry cannot attach an existing key to another turn", async () 
       turn_ref: { ...request.turn_ref, message_id: "message-b" },
     }),
   ).rejects.toThrow("managed CoCalc connector turn is no longer valid");
+});
+
+test("the directory gets the scope actually issued, on issue and renewal", async () => {
+  // Whatever issuableConnectorScope decides (it drops "notifications:manage"
+  // for a shared project) is what other bays must see, not the configured
+  // scope.
+  const narrowed = {
+    ...scope,
+    account: ["notifications:manage", "project:list"],
+  };
+  issuable.mockResolvedValue(narrowed);
+  const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  expect(directory).toHaveBeenLastCalledWith(
+    expect.objectContaining({ scope: narrowed }),
+  );
+  directory.mockClear();
+  await renewManagedCocalcConnectorTurn({
+    ...request,
+    turn_id: issued!.turn_id,
+  });
+  expect(directory).toHaveBeenCalledWith(
+    expect.objectContaining({ scope: narrowed }),
+  );
 });
 
 test("renewal extends the existing key without exposing a new secret", async () => {

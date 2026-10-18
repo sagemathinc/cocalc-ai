@@ -277,7 +277,8 @@ export async function beginManagedCocalcConnectorTurn({
   const expiresAt = new Date(Date.now() + MANAGED_KEY_TTL_MS);
   const client = await getPool().connect();
   let result:
-    { turn: ManagedTurnRow; key: KeyRow; created: boolean } | undefined;
+    | { turn: ManagedTurnRow; key: KeyRow; created: boolean }
+    | undefined;
   try {
     await client.query("BEGIN");
     await assertAccountNotRehoming({
@@ -447,7 +448,9 @@ export async function beginManagedCocalcConnectorTurn({
     hash: result.key.hash,
     capabilities: [],
     allowed_project_ids: [],
-    scope,
+    // What the key was actually issued, which may be narrower than the
+    // configured scope; other bays compare against the home row.
+    scope: issued,
     scope_revision: result.key.scope_revision,
     expire: result.key.expire,
   });
@@ -628,7 +631,9 @@ export async function renewManagedCocalcConnectorTurn({
     hash: key.hash,
     capabilities: [],
     allowed_project_ids: [],
-    scope,
+    // What the key was actually issued, which may be narrower than the
+    // configured scope; other bays compare against the home row.
+    scope: issued,
     scope_revision: key.scope_revision,
     expire: expiresAt,
   });
