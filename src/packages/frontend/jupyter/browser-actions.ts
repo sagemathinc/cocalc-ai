@@ -1287,7 +1287,10 @@ export class JupyterActions extends JupyterActions0 {
         snapshot?.path === this.liveRunPath &&
         typeof snapshot?.run_id === "string" &&
         !staleSnapshotKeys.has(
-          jupyterLiveRunKey({ path: this.liveRunPath, run_id: snapshot.run_id }),
+          jupyterLiveRunKey({
+            path: this.liveRunPath,
+            run_id: snapshot.run_id,
+          }),
         )
       ) {
         present.add(snapshot.run_id);
@@ -4135,7 +4138,12 @@ export class JupyterActions extends JupyterActions0 {
           // ready while nothing serves it (until its keepalive notices, up to
           // 75 s later).  Drop it, so the next attempt connects to the
           // restarted project.
-          if (this.jupyterClient === client) {
+          // Keep it while a prompt waits for input: the answer goes back over
+          // this client, and nothing reattaches a pending prompt to a new one.
+          if (
+            this.jupyterClient === client &&
+            this.store?.get("stdin") == null
+          ) {
             this.closeJupyterClient("kernel_status_failed");
           }
           return false;
