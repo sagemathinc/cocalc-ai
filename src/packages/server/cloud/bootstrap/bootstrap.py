@@ -14653,6 +14653,11 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
                 cfg, "running", "Restarting project-host services"
             )
             start_project_host(cfg)
+        # The egress block exempts the conat router port from the daemon's
+        # env files, which write_env may have changed after the containment
+        # pass above. A changed key also restarts the stack (the fingerprint
+        # covers both files), so rebuild the rules for the env it now runs with.
+        reconcile_project_network_limits(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")
@@ -14703,6 +14708,9 @@ def run_reconcile_environment(cfg: BootstrapConfig) -> int:
         image_size_gb = compute_image_size(cfg)
         write_env(cfg, image_size_gb)
         write_bootstrap_state_files(cfg)
+        # No network reconcile here: the running daemon keeps its conat port
+        # until it restarts, and its reconciler rebuilds the egress rules from
+        # the env files it loaded on its first pass after starting.
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(
             cfg, "done", "Managed project-host environment reconciled"

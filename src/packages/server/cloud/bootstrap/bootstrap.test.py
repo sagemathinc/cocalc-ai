@@ -7284,6 +7284,7 @@ class BootstrapModesTest(unittest.TestCase):
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
+            "reconcile_project_network_limits "
             "record_operation_start record_operation_success "
             "record_operation_failure report_bootstrap_status log_line"
         ).split()
@@ -7334,6 +7335,74 @@ class BootstrapModesTest(unittest.TestCase):
                 )
                 self.assertEqual(start.called, expected)
                 self.assertEqual(fingerprint.call_count, len(fingerprints))
+
+    def test_reconcile_rebuilds_egress_rules_for_the_env_the_stack_runs_with(
+        self,
+    ) -> None:
+        # write_env runs after the containment pass. When it changes the conat
+        # router port, the final network reconcile must see the new env file.
+        steps = (
+            "ensure_runtime_user ensure_bootstrap_paths "
+            "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_kernel_module_hardening configure_kernel_key_limits "
+            "configure_inotify_limits configure_journald_limits "
+            "configure_rsyslog_limits install_btrfs_helper "
+            "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
+            "ensure_btrfs_data reconcile_bees_runtime_policy "
+            "reconcile_project_io_policy reconcile_host_service_cgroup "
+            "ensure_subuids ensure_runtime_user_manager configure_podman "
+            "verify_runtime_user_contract configure_runtime_shell_env "
+            "setup_master_conat_token install_privileged_tool_binaries "
+            "install_node configure_node_bind_service_capability write_wrapper "
+            "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
+            "configure_cloudflared_with_options "
+            "configure_critical_service_oom_protection configure_autostart "
+            "record_operation_start record_operation_success "
+            "record_operation_failure report_bootstrap_status log_line"
+        ).split()
+        with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+            cfg = replace(make_cfg(tmpdir), env_lines=["PORT=9020"])
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text("PORT=9010\n")
+            events: list[str] = []
+            for name in steps:
+                stack.enter_context(
+                    mock.patch.object(bootstrap, name, lambda *a, **k: None)
+                )
+            stack.enter_context(
+                mock.patch.object(bootstrap, "compute_image_size", return_value=10)
+            )
+            stack.enter_context(
+                mock.patch.object(bootstrap, "extract_bundle", return_value=None)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "write_env",
+                    lambda *_a, **_k: env_path.write_text("PORT=9020\n"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "start_project_host",
+                    lambda *_a, **_k: events.append("start"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    bootstrap,
+                    "reconcile_project_network_limits",
+                    lambda *_a, **_k: events.append(
+                        "network " + env_path.read_text().strip()
+                    ),
+                )
+            )
+            self.assertEqual(bootstrap.run_reconcile(cfg), 0)
+        self.assertEqual(
+            events, ["network PORT=9010", "start", "network PORT=9020"]
+        )
 
     def test_restart_fingerprint_tracks_what_the_running_stack_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
