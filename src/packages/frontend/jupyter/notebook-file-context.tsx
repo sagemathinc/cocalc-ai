@@ -13,10 +13,11 @@ subset of inline styles and presentational markup
 (components/sanitize-presentation.ts).  This fails closed: a renderer added
 later is sanitized too.
 
-Exceptions:
-- Until HTML output gets its own path (trust-free notebooks step 2a, which
-  should then remove LegacyHtmlOutputContext): text/html output keeps exactly
-  what it had before, through LegacyHtmlOutputContext.
+text/html output has its own path (output-messages/html-output.tsx, trust-free
+step 2a): faithful HTML renders inline under this context, and anything that
+sanitizing would change renders in an opaque frame, whatever the trust.
+
+Exception:
 - ipywidgets render in their own React root with their own context
   (widgets/manager.ts, sanitized only when untrusted), until widgets get their own path
   (step 4).
@@ -30,10 +31,10 @@ import {
 } from "@cocalc/frontend/lib/file-context";
 
 export function NotebookFileContext({
-  trust,
   value,
   children,
 }: {
+  // Accepted for callers; nothing here depends on trust any more.
   trust?: boolean;
   value?: Partial<IFileContext>;
   children: ReactNode;
@@ -46,30 +47,6 @@ export function NotebookFileContext({
         ...value,
         noSanitize: false,
         allowSafeStyles: true,
-        legacyHtmlOutputNoSanitize: !!trust,
-      }}
-    >
-      {children}
-    </FileContext.Provider>
-  );
-}
-
-// For the text/html output handlers: inside a notebook, the context HTML
-// output had before NotebookFileContext (sanitized unless trusted, no safe
-// styles); elsewhere (e.g., the public viewer), the context unchanged.
-export function LegacyHtmlOutputContext({ children }: { children: ReactNode }) {
-  const fileContext = useFileContext();
-  const legacy = fileContext.legacyHtmlOutputNoSanitize;
-  if (legacy == null) {
-    return <>{children}</>;
-  }
-  return (
-    <FileContext.Provider
-      value={{
-        ...fileContext,
-        noSanitize: legacy,
-        allowSafeStyles: false,
-        legacyHtmlOutputNoSanitize: undefined,
       }}
     >
       {children}

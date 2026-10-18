@@ -122,44 +122,45 @@ describe.each([true, false])("trusted: %s", (trust) => {
   );
 });
 
-describe("text/html output keeps its old context (until #19)", () => {
+// text/html output has its own path (output-messages/html-output.tsx, trust-free
+// step 2a): the same for trusted and untrusted notebooks and outside a
+// notebook.  HTML that sanitizing would change never renders in the app page;
+// it is framed in the opaque-legacy sandbox.  Faithful HTML renders inline.
+describe("text/html output (html-output.tsx)", () => {
   const RICH = '<div class="widget-x" id="w1" style="color: blue">rich</div>';
+  const OPAQUE_LEGACY = "allow-forms allow-scripts allow-presentation";
 
-  it("trusted: as before, not sanitized", () => {
-    const div = innermost(
-      output({ "text/html": RICH }, true).container,
-      "div",
-      "rich",
-    );
-    expect(div.getAttribute("class")).toBe("widget-x");
-    expect(div.getAttribute("id")).toBe("w1");
-  });
+  function expectFramed(container: HTMLElement) {
+    expect(container.querySelector("div.widget-x, #w1")).toBeNull();
+    const frames = container.querySelectorAll("iframe");
+    expect(frames).toHaveLength(1);
+    expect(frames[0].getAttribute("sandbox")).toBe(OPAQUE_LEGACY);
+  }
 
-  it("untrusted: as before, sanitized without safe styles", () => {
-    const div = innermost(
-      output({ "text/html": RICH }, false).container,
-      "div",
-      "rich",
-    );
-    expect(div.getAttributeNames()).toEqual([]);
-  });
-
-  // init-frontend's handler, which output-messages/iframe.tsx also renders
-  // for small trusted blob HTML
   it.each([true, false])(
-    "the init-frontend handler too (trusted: %s)",
+    "styled HTML is framed, never inline (trusted: %s)",
     (trust) => {
-      const { container } = inNotebook(trust, <Html value={RICH} />);
-      const div = innermost(container, "div", "rich");
-      if (trust) {
-        expect(div.getAttribute("class")).toBe("widget-x");
-      } else {
-        expect(div.getAttributeNames()).toEqual([]);
-      }
+      expectFramed(output({ "text/html": RICH }, trust).container);
     },
   );
 
-  it("outside a notebook (e.g., the public viewer): context unchanged", () => {
+  it.each([true, false])(
+    "the init-frontend handler too (trusted: %s)",
+    (trust) => {
+      expectFramed(inNotebook(trust, <Html value={RICH} />).container);
+    },
+  );
+
+  it.each([true, false])(
+    "faithful HTML renders inline (trusted: %s)",
+    (trust) => {
+      const { container } = output({ "text/html": "<b>plain</b>" }, trust);
+      expect(container.querySelectorAll("iframe")).toHaveLength(0);
+      expect(innermost(container, "b", "plain")).toBeTruthy();
+    },
+  );
+
+  it("outside a notebook (e.g., the public viewer), even with noSanitize", () => {
     const { container } = render(
       <FileContext.Provider value={{ noSanitize: true }}>
         <CellOutputMessages
@@ -169,9 +170,7 @@ describe("text/html output keeps its old context (until #19)", () => {
         />
       </FileContext.Provider>,
     );
-    expect(innermost(container, "div", "rich").getAttribute("class")).toBe(
-      "widget-x",
-    );
+    expectFramed(container);
   });
 });
 

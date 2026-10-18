@@ -118,7 +118,7 @@
     "srcDoc": 1
   },
   "src/packages/frontend/jupyter/notebook-file-context.tsx": {
-    "noSanitize": 2
+    "noSanitize": 1
   },
   "src/packages/frontend/jupyter/output-messages/active-output-group.tsx": {
     "innerHTML assignment": 1,

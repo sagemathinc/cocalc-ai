@@ -5,7 +5,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import PublicViewerIpynbRenderer from "./renderers/ipynb";
 import { buildViewerFileContext } from "./viewer-file-context";
 
@@ -79,7 +79,10 @@ describe("public notebooks render as untrusted", () => {
     (window as any).__xss = undefined;
   });
 
-  it("sanitizes inline HTML output", async () => {
+  // HTML output that sanitizing would change is never rendered in the page,
+  // whatever the viewer's noSanitize: it is framed in the opaque-legacy
+  // sandbox (output-messages/html-output.tsx).
+  it("frames hostile HTML output in the opaque sandbox, never inline", async () => {
     const root = renderPublic(
       notebook([
         html(
@@ -90,10 +93,26 @@ describe("public notebooks render as untrusted", () => {
         ),
       ]),
     );
-    expect(await screen.findByText("visible")).toBeTruthy();
+    const frame = await waitFor(() => {
+      const f = root.querySelector("iframe");
+      expect(f).toBeTruthy();
+      return f!;
+    });
+    expect(frame.getAttribute("sandbox")).toBe(
+      "allow-forms allow-scripts allow-presentation",
+    );
+    expect(frame.getAttribute("srcdoc")).toContain("visible");
+    // Nothing of it in the app page itself.
     expect(root.querySelector("script, style, svg, animate")).toBeNull();
-    expect(root.innerHTML).not.toMatch(/onerror|position:\s*fixed|__xss/);
+    expect(root.querySelector("[onerror], [style*='fixed'], #i")).toBeNull();
+    expect(screen.queryByText("visible")).toBeNull();
     expect((window as any).__xss).toBeUndefined();
+  });
+
+  it("renders faithful HTML output inline", async () => {
+    const root = renderPublic(notebook([html("<div><b>plain</b> text</div>")]));
+    expect(await screen.findByText("plain")).toBeTruthy();
+    expect(root.querySelector("iframe")).toBeNull();
   });
 
   it("keeps the viewer's URL and link handling", async () => {

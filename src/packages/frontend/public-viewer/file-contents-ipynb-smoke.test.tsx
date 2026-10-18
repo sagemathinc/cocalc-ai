@@ -79,7 +79,7 @@ test("renders ordinary notebook html output inline", async () => {
             output_type: "display_data",
             data: {
               "text/html":
-                "<div data-testid='public-html-output'><h2>Notebook HTML</h2><button>Click me</button></div>",
+                "<div><h2>Notebook HTML</h2><p>Click me</p></div>",
             },
             metadata: {},
           },
@@ -106,6 +106,48 @@ test("renders ordinary notebook html output inline", async () => {
   expect(await screen.findByText("Notebook HTML")).toBeTruthy();
   expect(await screen.findByText("Click me")).toBeTruthy();
   expect(screen.queryByTitle("Jupyter HTML output")).toBeNull();
+});
+
+
+// HTML that sanitizing would change (here a <button> and a data attribute) is
+// framed in the opaque sandbox instead (output-messages/html-output.tsx).
+test("frames notebook html output that sanitizing would change", async () => {
+  const content = JSON.stringify({
+    cells: [
+      {
+        cell_type: "code",
+        execution_count: 1,
+        metadata: {},
+        source: ["display_html()"],
+        outputs: [
+          {
+            output_type: "display_data",
+            data: {
+              "text/html":
+                "<div data-testid='public-html-output'><h2>Notebook HTML</h2><button>Click me</button></div>",
+            },
+            metadata: {},
+          },
+        ],
+      },
+    ],
+    metadata: { kernelspec: { display_name: "Python 3", name: "python3" } },
+    nbformat: 4,
+    nbformat_minor: 5,
+  });
+
+  render(
+    <PublicViewerIpynbRenderer
+      content={content}
+      fileContext={{ noSanitize: false }}
+    />,
+  );
+
+  const frame = await screen.findByTitle("Jupyter HTML output");
+  expect(frame.getAttribute("sandbox")).toBe(
+    "allow-forms allow-scripts allow-presentation",
+  );
+  expect(screen.queryByText("Click me")).toBeNull();
 });
 
 test("renders full-document notebook html output inside an iframe", async () => {

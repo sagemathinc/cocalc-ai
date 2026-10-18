@@ -65,10 +65,6 @@ export interface IFileContext {
   // see components/sanitize-presentation.ts.
   allowSafeStyles?: boolean;
 
-  // Set only by a notebook (jupyter/notebook-file-context.tsx): the noSanitize
-  // its text/html output keeps until HTML output is always sanitized or framed.
-  legacyHtmlOutputNoSanitize?: boolean;
-
   // If true, when rendering append a random query param after the source of any image
   // to force it to reload.  This is, e.g., useful for R markdown, where each time it
   // updates, the images may change, by their names don't, so we have to break the browser cache.

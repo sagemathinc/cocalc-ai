@@ -27,41 +27,48 @@ function frame(container: HTMLElement): HTMLIFrameElement {
   return frames[0];
 }
 
+// Blob-stored HTML renders like any other HTML output (html-output.tsx): trust
+// plays no part, sanitized-faithful HTML renders inline and sanitized, and
+// anything else is raw only inside the opaque-legacy sandbox.
 describe("blob-stored HTML output (iframe.tsx)", () => {
-  it("a blob URL: opaque-legacy untrusted, unsandboxed only when trusted", () => {
-    blobValue = "blob:https://cocalc.example/x";
-    expect(
-      frame(render(<IFrame sha1="a" trust={false} />).container).getAttribute(
-        "sandbox",
-      ),
-    ).toBe(OPAQUE_LEGACY);
-    expect(
-      frame(render(<IFrame sha1="a" trust />).container).hasAttribute(
-        "sandbox",
-      ),
-    ).toBe(false);
-  });
-
-  // use-blob's cache is keyed by sha1 only: HTML cached as a string by a
-  // trusted render reaches an untrusted render as a string too.  That frame
-  // must be sandboxed (it used to have no sandbox at all).
-  it.each(["<b>cached by a trusted render</b>", ISOLATED])(
-    "a string rendered untrusted is sandboxed: %s",
-    (html) => {
-      blobValue = html;
-      const f = frame(render(<IFrame sha1="b" trust={false} />).container);
+  it.each([false, true])(
+    "isolated HTML is framed in the opaque-legacy sandbox (trust=%s)",
+    (trust) => {
+      blobValue = ISOLATED;
+      const f = frame(render(<IFrame sha1="a" trust={trust} />).container);
       expect(f.getAttribute("sandbox")).toBe(OPAQUE_LEGACY);
-      expect(f.getAttribute("srcdoc")).toContain(html);
+      expect(f.getAttribute("srcdoc")).toContain("PLOTLYENV");
     },
   );
 
-  it("isolated HTML rendered trusted keeps the trusted profile", () => {
-    blobValue = ISOLATED;
-    expect(
-      frame(render(<IFrame sha1="c" trust />).container).hasAttribute(
-        "sandbox",
-      ),
-    ).toBe(false);
+  it.each([false, true])(
+    "plain HTML renders inline and sanitized, never framed (trust=%s)",
+    (trust) => {
+      blobValue = "<b>cached</b>";
+      const { container } = render(<IFrame sha1="b" trust={trust} />);
+      expect(container.querySelectorAll("iframe")).toHaveLength(0);
+      expect(container.querySelector("b")?.textContent).toBe("cached");
+    },
+  );
+
+  it.each([false, true])(
+    "an event handler is never inline: that HTML is framed (trust=%s)",
+    (trust) => {
+      blobValue = '<b onclick="parent.__xss=1">cached</b>';
+      const { container } = render(<IFrame sha1="d" trust={trust} />);
+      expect(container.querySelector("b[onclick]")).toBeNull();
+      expect(frame(container).getAttribute("sandbox")).toBe(OPAQUE_LEGACY);
+    },
+  );
+
+  it("never renders an unsandboxed frame, even for a trusted notebook", () => {
+    for (const html of [ISOLATED, '<div style="color:red">x</div>']) {
+      blobValue = html;
+      const { container } = render(<IFrame sha1="c" trust />);
+      for (const f of Array.from(container.querySelectorAll("iframe"))) {
+        expect(f.getAttribute("sandbox")).toBe(OPAQUE_LEGACY);
+      }
+    }
   });
 });
 
