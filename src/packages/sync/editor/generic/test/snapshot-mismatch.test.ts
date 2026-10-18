@@ -11,7 +11,10 @@ all loaded on every open.
 */
 
 import { legacyPatchId } from "patchflow";
-import { snapshotTimeAvoidingMismatch } from "../sync-doc";
+import {
+  snapshotCandidateFromHistory,
+  snapshotTimeAvoidingMismatch,
+} from "../sync-doc";
 
 function session({
   times,
@@ -70,5 +73,70 @@ describe("snapshotTimeAvoidingMismatch", () => {
     const s = session({ times, mismatch: new Set(times.slice(3, 7)) });
     expect(snapshotTimeAvoidingMismatch(s, t(3), 2)).toBeUndefined();
     expect(snapshotTimeAvoidingMismatch(s, t(3), 5)).toBe(t(7));
+  });
+});
+
+describe("snapshotCandidateFromHistory", () => {
+  const history = (n: number, snapshotAt?: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      time: t(i),
+      isSnapshot: i === snapshotAt,
+    }));
+  const index = (time: string | undefined) =>
+    time == null ? undefined : times20.indexOf(time);
+  const times20 = Array.from({ length: 2000 }, (_, i) => t(i));
+
+  it("snapshots one interval after the last snapshot normally", () => {
+    const time = snapshotCandidateFromHistory({
+      history: history(25, 0),
+      interval: 10,
+      maxSize: 1e12,
+    });
+    expect(index(time)).toBe(10);
+  });
+
+  it("far behind, snapshots one full interval before the newest patch", () => {
+    const time = snapshotCandidateFromHistory({
+      history: history(1000, 0),
+      interval: 10,
+      maxSize: 1e12,
+    });
+    // ten patches after it, as after any snapshot
+    expect(index(time)).toBe(1000 - 10 - 1);
+  });
+
+  it("never picks the newest patch, even with interval 1 and no clean cut", () => {
+    for (const n of [4, 5, 50]) {
+      const time = snapshotCandidateFromHistory({
+        history: history(n, 0),
+        interval: 1,
+        maxSize: 1e12,
+        isCut: () => false,
+      });
+      expect(time).toBeDefined();
+      expect(index(time)).toBeLessThan(n - 1);
+    }
+  });
+
+  it("treats an invalid interval as 1", () => {
+    for (const interval of [0, -5, NaN]) {
+      const time = snapshotCandidateFromHistory({
+        history: history(10, 0),
+        interval,
+        maxSize: 1e12,
+        isCut: () => false,
+      });
+      expect(index(time)).toBe(10 - 1 - 1);
+    }
+  });
+
+  it("prefers a nearby clean cut", () => {
+    const time = snapshotCandidateFromHistory({
+      history: history(1000, 0),
+      interval: 10,
+      maxSize: 1e12,
+      isCut: (time) => time === t(985),
+    });
+    expect(index(time)).toBe(985);
   });
 });
