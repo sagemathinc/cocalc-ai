@@ -31,6 +31,10 @@ it("remembers the open agent's title for returning to the Agents tab", () => {
   expect(agentsWindowTitle()).toBe("Agents");
   setAgentsWindowTitle("cocalc: agents");
   expect(agentsWindowTitle()).toBe("cocalc: agents");
-  setAgentsWindowTitle(undefined); // the overview, or no agent open
+  // Any page title is kept whole: a tab switch that completes after the
+  // page set "New Agent" restores "New Agent", not "Agents".
+  setAgentsWindowTitle("New Agent");
+  expect(agentsWindowTitle()).toBe("New Agent");
+  setAgentsWindowTitle(undefined);
   expect(agentsWindowTitle()).toBe("Agents");
 });

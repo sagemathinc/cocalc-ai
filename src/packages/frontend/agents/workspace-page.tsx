@@ -4019,24 +4019,23 @@ export function MyAgentsWorkspacePage({
     : undefined;
   useEffect(() => {
     if (!active || contentOpen) return;
-    const agentTitle =
-      selected && !overviewOpen && !libraryOpen && !creating
-        ? agentWindowTitle({
-            name: selected.name,
-            thread_title: selected.thread_title,
-            headerTitle: selectedHeaderTitle,
-          })
-        : undefined;
-    setAgentsWindowTitle(agentTitle);
-    set_window_title(
-      overviewOpen
-        ? "Agents"
-        : libraryOpen
-          ? "Artifacts"
-          : creating
-            ? "New Agent"
-            : agentsWindowTitle(),
-    );
+    const title = overviewOpen
+      ? "Agents"
+      : libraryOpen
+        ? "Artifacts"
+        : creating
+          ? "New Agent"
+          : selected
+            ? agentWindowTitle({
+                name: selected.name,
+                thread_title: selected.thread_title,
+                headerTitle: selectedHeaderTitle,
+              })
+            : "Agents";
+    // Remembered whole, so switching back to the Agents tab (which may
+    // finish after this effect) restores exactly this title.
+    setAgentsWindowTitle(title);
+    set_window_title(title);
   }, [
     active,
     contentOpen,

@@ -286,6 +286,8 @@ export class PageActions extends Actions<PageState> {
               : undefined,
           );
         }
+        // The agents page remembers its whole title (agent, New Agent, ...);
+        // this may finish after the page set it, so it must not override it.
         set_window_title(
           page.get("library_open") ? "Artifacts" : agentsWindowTitle(),
         );
