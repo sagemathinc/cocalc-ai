@@ -55,6 +55,9 @@ export interface ReconnectCoordinatorOptions {
 }
 
 export interface ReconnectResourceOptions {
+  // The project this resource belongs to, so a reconnect can be limited to
+  // the projects whose host restarted.
+  project_id?: string;
   canReconnect?: () => boolean;
   isConnected?: () => boolean;
   probeOnForeground?: () => boolean;
@@ -235,10 +238,23 @@ export class ReconnectCoordinator extends EventEmitter {
 
   requestResourceReconnects = ({
     includeBackground = false,
+    projectIds,
     ...request
-  }: ReconnectResourceRequest & { includeBackground?: boolean } = {}) => {
+  }: ReconnectResourceRequest & {
+    includeBackground?: boolean;
+    // only resources of these projects (resources without a project are
+    // skipped)
+    projectIds?: ReadonlySet<string>;
+  } = {}) => {
     for (const resource of this.resources.values()) {
       if (resource.options.canReconnect?.() === false) {
+        continue;
+      }
+      if (
+        projectIds != null &&
+        (resource.options.project_id == null ||
+          !projectIds.has(resource.options.project_id))
+      ) {
         continue;
       }
       if (
