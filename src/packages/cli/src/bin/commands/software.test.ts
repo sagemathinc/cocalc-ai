@@ -4541,7 +4541,7 @@ for (const overlap of [true, false]) {
       await run;
       assert.equal(heads, 10001);
     } else {
-      await assert.rejects(run, /frontend asset history exceeds 12000 files/);
+      await assert.rejects(run, /frontend asset history exceeds 11000 files/);
     }
   });
 }

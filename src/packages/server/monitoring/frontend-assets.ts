@@ -15,8 +15,8 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_HISTORY_ATTEMPTS = 3;
 const DEFAULT_HISTORY_RETRY_DELAY_MS = 1_000;
 // Matches bay-bootstrap-release.sh: releases keep every inherited chunk, so
-// this bounds the retained history (prod: 10067 files, then about 11175).
-const MAX_ASSETS = 12_000;
+// this bounds the retained history (prod had 10067 hashed files on 10-18).
+const MAX_ASSETS = 11_000;
 const CONCURRENCY = 20;
 
 type AssetHistory = {
