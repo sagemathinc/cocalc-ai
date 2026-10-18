@@ -23,7 +23,8 @@ test("names each connected account and asks for care", () => {
 
 test("Cloudflare scopes always include the base scopes, once", () => {
   const scopes = cloudflareScopes(["workers", "workers"]);
-  expect(scopes).toContain("account:read");
+  expect(scopes).toContain("account-settings.read");
+  expect(scopes).toContain("user-details.read");
   expect(new Set(scopes).size).toBe(scopes.length);
 });
 
@@ -41,8 +42,16 @@ test("provider descriptions lose control and bidi characters, and are short", ()
   ).toContain("GitHub (@o/CLI connectors)");
 });
 
+test("Cloudflare scopes use OAuth client scope IDs, not wrangler's names", () => {
+  // An OAuth client rejects any scope it was not registered with, so the
+  // whole sign-in fails with invalid_scope (e.g. for "account:read").
+  for (const scope of cloudflareScopes(["workers", "r2", "dns"])) {
+    expect(scope).toMatch(/^[a-z0-9-]+\.(read|write|edit)$/);
+  }
+});
+
 test("Workers alone never grants DNS changes", () => {
-  expect(cloudflareScopes(["workers"])).not.toContain("dns_records:edit");
+  expect(cloudflareScopes(["workers"])).not.toContain("dns.write");
 });
 
 test("a connector is enabled only with both its client id and secret", () => {
