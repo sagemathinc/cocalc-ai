@@ -62,10 +62,10 @@ test("counts shared retained assets once while preserving the unique limit", () 
       schema: 1,
       builds: [{ assets }, { assets: assets.map((asset) => `other-${asset}`) }],
     }),
-  ).toThrow("frontend asset history exceeds 11000 files");
+  ).toThrow("frontend asset history exceeds 12000 files");
 });
 
-test("frontend asset history cap is 11000 unique files (prod had 10067)", () => {
+test("frontend asset history cap is 12000 unique files (prod: 10067, then 11175)", () => {
   const chunk = (i: number) => `chunk-${i}-0123456789abcdef.js`;
   const prod = Array.from({ length: 10067 }, (_, i) => chunk(i));
   expect(
@@ -74,17 +74,25 @@ test("frontend asset history cap is 11000 unique files (prod had 10067)", () => 
       builds: [{ assets: prod.slice(0, 1115) }, { assets: prod }],
     }).assets,
   ).toHaveLength(10067);
-  const atCap = Array.from({ length: 11000 }, (_, i) => chunk(i));
+  // h5 as measured on prod: a mostly rehashed build over the retained set.
+  const h5 = Array.from({ length: 11175 }, (_, i) => chunk(i));
+  expect(
+    parseFrontendAssetHistory({
+      schema: 1,
+      builds: [{ assets: h5.slice(10067) }, { assets: h5.slice(0, 10067) }],
+    }).assets,
+  ).toHaveLength(11175);
+  const atCap = Array.from({ length: 12000 }, (_, i) => chunk(i));
   expect(
     parseFrontendAssetHistory({ schema: 1, builds: [{ assets: atCap }] })
       .assets,
-  ).toHaveLength(11000);
+  ).toHaveLength(12000);
   expect(() =>
     parseFrontendAssetHistory({
       schema: 1,
-      builds: [{ assets: atCap }, { assets: [chunk(11000)] }],
+      builds: [{ assets: atCap }, { assets: [chunk(12000)] }],
     }),
-  ).toThrow("frontend asset history exceeds 11000 files");
+  ).toThrow("frontend asset history exceeds 12000 files");
 });
 
 test("retries and reports unavailable retained assets", async () => {

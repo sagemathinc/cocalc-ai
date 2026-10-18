@@ -621,9 +621,10 @@ const path = require("node:path");
 
 const [targetRoot, previousRoot] = process.argv.slice(2);
 // Every release keeps all chunks it inherited, so this bounds the retained
-// history, not one build: prod had 10067 hashed files on 10-18. Raised from
-// 10000 to 11000 until a retention policy replaces preserve-all.
-const MAX_ASSETS = 11_000;
+// history, not one build: prod had 10067 hashed files on 10-18 and about 11175
+// after the h5 static deploy. Raised from 10000 to 12000 until a retention
+// policy replaces preserve-all.
+const MAX_ASSETS = 12_000;
 const HASHED_ASSET = /(?:^|[-.])[0-9a-f]{16,}(?=[-.]|$)/i;
 
 function safeAsset(value) {

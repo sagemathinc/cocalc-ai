@@ -170,7 +170,7 @@ NODE
 
 # Regression (prod 10-18): the previous release holds every chunk carried
 # forward (10067 hashed files) but declares only its own 1115. The whole
-# retained set is listed and the deploy passes under the 11000 cap.
+# retained set is listed and the deploy passes under the 12000 cap.
 rm -f "${ASSET_PREVIOUS}"/runtime/control-plane/static/chunk-* \
   "${ASSET_PREVIOUS}"/runtime/control-plane/static/historic-* \
   "${ASSET_PREVIOUS}"/runtime/control-plane/static/previous-*
@@ -202,14 +202,14 @@ NODE
 # A genuinely oversized unique inventory must still fail before activation.
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json" <<'NODE'
 const fs = require("node:fs");
-const assets = Array.from({ length: 11001 }, (_, i) => `chunk-${i}-0123456789abcdef.js`);
+const assets = Array.from({ length: 12001 }, (_, i) => `chunk-${i}-0123456789abcdef.js`);
 fs.writeFileSync(process.argv[2], JSON.stringify({ assets }));
 NODE
 if prepare_frontend_asset_history >"${TMP_ROOT}/oversized-assets.log" 2>&1; then
   echo "oversized unique frontend inventory unexpectedly passed" >&2
   exit 1
 fi
-grep -q 'frontend asset manifest exceeds 11000 files' "${TMP_ROOT}/oversized-assets.log"
+grep -q 'frontend asset manifest exceeds 12000 files' "${TMP_ROOT}/oversized-assets.log"
 
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
 TARGET_RELEASE="$VALIDATION_RELEASE"

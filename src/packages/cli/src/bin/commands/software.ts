@@ -1730,8 +1730,8 @@ function frontendAssetsFromHistory(value: unknown): string[] {
       }
       assets.add(asset);
       // Matches the deploy guard and the hub monitor (bay-bootstrap-release.sh).
-      if (assets.size > 11_000) {
-        throw new Error("frontend asset history exceeds 11000 files");
+      if (assets.size > 12_000) {
+        throw new Error("frontend asset history exceeds 12000 files");
       }
     }
   }
