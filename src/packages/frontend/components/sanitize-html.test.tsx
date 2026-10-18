@@ -7,6 +7,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import HTML from "./html-ssr";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
+import {
+  isAllowedHtmlTag,
+  sanitizeHtmlAttributes,
+  shouldDropHtmlTagContents,
+} from "./sanitize-html";
 
 function renderHtml(value: string): string {
   return renderToStaticMarkup(
@@ -119,5 +124,43 @@ describe("safety floor (applies even when noSanitize is set)", () => {
     expect(html).toContain("Visible body");
     expect(html).not.toContain("Hidden title");
     expect(html).not.toMatch(/<\/?(?:html|head|body|title)\b/i);
+  });
+});
+
+describe("central policy: template and checkboxes", () => {
+  it("drops template with its contents", () => {
+    expect(shouldDropHtmlTagContents("template")).toBe(true);
+    expect(shouldDropHtmlTagContents("TEMPLATE")).toBe(true);
+  });
+
+  it("allows only checkbox inputs, always disabled", () => {
+    expect(isAllowedHtmlTag("input", { type: "checkbox" })).toBe(true);
+    expect(isAllowedHtmlTag("input", { type: "text" })).toBe(false);
+    expect(isAllowedHtmlTag("input")).toBe(false);
+    expect(
+      sanitizeHtmlAttributes("input", {
+        type: "checkbox",
+        checked: "",
+        name: "x",
+        style: "position:fixed",
+        onclick: "z",
+      }),
+    ).toEqual({ type: "checkbox", disabled: "", checked: "" });
+    expect(
+      sanitizeHtmlAttributes("input", { type: "image", src: "x" }),
+    ).toEqual({});
+  });
+});
+
+describe("HTML (sanitized) with template content", () => {
+  it("never renders template children", () => {
+    const html = renderToStaticMarkup(
+      <HTML
+        value={`<template><iframe srcdoc="<script>parent.__xss=1</script>"></iframe><img src=x onerror="parent.__xss=2"></template>ok`}
+      />,
+    );
+    expect(html).not.toContain("iframe");
+    expect(html).not.toContain("img");
+    expect(html).toContain("ok");
   });
 });
