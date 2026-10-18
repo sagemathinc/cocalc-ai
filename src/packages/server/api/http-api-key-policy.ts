@@ -6,6 +6,7 @@ import {
 } from "./api-key-scope";
 import { recordApiKeyAuditEventSoon } from "./api-key-audit";
 import { assertApiKeyProjectMembership } from "./project-membership-revocation";
+import { SOLO_PROJECT_ACCOUNT_CAPABILITIES } from "./solo-project-capabilities";
 
 const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "system.getNames": "account:read",
@@ -80,6 +81,11 @@ export async function assertHttpHubApiKeyAllowed({
   if (capability) {
     try {
       requireApiKeyCapability(principal, capability);
+      if (SOLO_PROJECT_ACCOUNT_CAPABILITIES.has(capability)) {
+        const { assertSoloProjectCapabilityInContext } =
+          await import("@cocalc/server/agents/cocalc-connector-scope");
+        await assertSoloProjectCapabilityInContext(principal);
+      }
     } catch (err) {
       auditHttpApiKeyDenial({
         principal,

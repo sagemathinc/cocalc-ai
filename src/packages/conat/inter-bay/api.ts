@@ -4431,6 +4431,7 @@ export interface InterBayAccountLocalApi
     scope_revision: number;
     issuance_sequence: string;
     expire_ms?: number;
+    connector_source_project_id?: string | null;
   } | null>;
   getApiKeyIssuanceWatermark: (opts: { account_id: string }) => Promise<string>;
   requestApiKeyAction: (opts: {
