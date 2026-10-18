@@ -85,18 +85,30 @@ export function readFileBeneathHome(
 }
 
 // Atomically writes `content` to `path` under `home` (tmp file + rename),
-// creating missing parent directories with `dirMode`.
+// creating missing parent directories with `dirMode` (and setting it on the
+// parent unless `chmodDir` is false). With `noReplace`, an existing entry is
+// kept and false is returned.
 export function writeFileBeneathHome(
   home: string,
   path: string,
   content: string,
-  { mode = 0o600, dirMode = 0o700 }: { mode?: number; dirMode?: number } = {},
-): void {
+  {
+    mode = 0o600,
+    dirMode = 0o700,
+    noReplace = false,
+    chmodDir = true,
+  }: {
+    mode?: number;
+    dirMode?: number;
+    noReplace?: boolean;
+    chmodDir?: boolean;
+  } = {},
+): boolean {
   const root = new SandboxRoot(home);
   const dir = dirname(path);
   if (dir !== ".") {
     root.mkdir(dir, true, dirMode);
-    root.chmod(dir, dirMode);
+    if (chmodDir) root.chmod(dir, dirMode);
   }
   const tmpPath = join(dir, `.tmp-${randomUUID()}`);
   try {
@@ -111,11 +123,47 @@ export function writeFileBeneathHome(
       closeSync(fd);
     }
     root.chmod(tmpPath, mode);
-    root.rename(tmpPath, path);
+    if (noReplace) {
+      try {
+        root.renameNoReplace(tmpPath, path);
+      } catch (err) {
+        if (errorCode(err) !== "EEXIST") throw err;
+        root.unlink(tmpPath);
+        return false;
+      }
+    } else {
+      root.rename(tmpPath, path);
+    }
+    return true;
   } catch (err) {
     try {
       root.unlink(tmpPath);
     } catch {}
     throw err;
   }
+}
+
+// Creates directory `path` (and missing parents) under `home`.
+export function mkdirBeneathHome(
+  home: string,
+  path: string,
+  mode = 0o700,
+): void {
+  new SandboxRoot(home).mkdir(path, true, mode);
+}
+
+// Removes `path` under `home` recursively, if present. A symlink at `path` is
+// removed itself, links inside the tree are not followed, and a symlinked
+// parent directory throws.
+export async function rmBeneathHome(home: string, path: string): Promise<void> {
+  try {
+    await new SandboxRoot(home).rm(path, true, true);
+  } catch (err) {
+    if (errorCode(err) !== "ENOENT") throw err;
+  }
+}
+
+// Whether `err` is a refusal to follow a symlink.
+export function isSymlinkRefusal(err: unknown): boolean {
+  return errorCode(err) === "ELOOP";
 }

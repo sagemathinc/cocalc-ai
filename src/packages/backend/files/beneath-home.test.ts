@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   existsBeneathHome,
+  mkdirBeneathHome,
   readFileBeneathHome,
+  rmBeneathHome,
   writeFileBeneathHome,
 } from "./beneath-home";
 
@@ -71,6 +73,29 @@ describe("beneath-home file access", () => {
   it("refuses paths that leave the home", () => {
     expect(() => writeFileBeneathHome(home, "../escape", "x")).toThrow();
     expect(() => writeFileBeneathHome(home, join(outside, "x"), "x")).toThrow();
+  });
+
+  it("keeps an existing entry with noReplace", () => {
+    expect(writeFileBeneathHome(home, "f", "first", { noReplace: true })).toBe(
+      true,
+    );
+    expect(writeFileBeneathHome(home, "f", "second", { noReplace: true })).toBe(
+      false,
+    );
+    expect(readFileBeneathHome(home, "f")).toBe("first");
+  });
+
+  it("removes trees without following symlinks, and refuses symlinked parents", async () => {
+    mkdirBeneathHome(home, "a/b");
+    await symlink(outside, join(home, "a/b/link"));
+    await rmBeneathHome(home, "a");
+    expect(existsBeneathHome(home, "a")).toBe(false);
+    await rmBeneathHome(home, "a/missing/deep");
+    await symlink(outside, join(home, "p"));
+    await expect(rmBeneathHome(home, "p/secret")).rejects.toThrow(/ELOOP/);
+    expect(await readFile(join(outside, "secret"), "utf8")).toBe(
+      "host secret\n",
+    );
   });
 
   it("bounds reads", () => {
