@@ -264,6 +264,56 @@ test("auth logout still removes a profile whose metadata changed while it waited
   assert.equal(f.saved().profiles.prod, undefined);
 });
 
+test("auth logout removes a profile renamed while it waited on the server", async () => {
+  let config: any;
+  const f = logoutFixture(async () => {
+    // Another CLI process runs `auth rename prod work` meanwhile.
+    config.profiles.work = config.profiles.prod;
+    delete config.profiles.prod;
+    config.current_profile = "work";
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout"]);
+  assert.equal(f.capture.data.removed, "work");
+  assert.equal(f.saved().profiles.work, undefined);
+  assert.equal(f.saved().profiles.prod, undefined);
+  assert.ok(f.saved().profiles.staging);
+});
+
+test("auth logout --all removes a profile renamed while it waited", async () => {
+  let config: any;
+  const f = logoutFixture(async (_api, cookie) => {
+    if (cookie.includes("prod")) {
+      config.profiles.work = config.profiles.prod;
+      delete config.profiles.prod;
+    }
+    return true;
+  });
+  config = f.config;
+  await f.program.parseAsync(["node", "test", "auth", "logout", "--all"]);
+  assert.deepEqual(f.saved().profiles, {});
+  assert.equal(f.capture.data.remaining_profiles, 0);
+});
+
+test("auth logout survives malformed profile fields", async () => {
+  for (const profile of [
+    { api: "https://cocalc.ai", cookie: 42 },
+    { api: { url: "https://cocalc.ai" }, cookie: "remember_me=x-secret" },
+    { api: 7, cookie: ["remember_me=y"] },
+  ]) {
+    let config: any;
+    const f = logoutFixture(async () => true);
+    config = f.config;
+    config.profiles.prod = profile;
+    await f.program.parseAsync(["node", "test", "auth", "logout"]);
+    assert.deepEqual(f.calls, []);
+    assert.equal(f.capture.data.server_session, "not confirmed");
+    assert.equal(f.capture.data.removed, "prod");
+    assert.equal(f.saved().profiles.prod, undefined);
+  }
+});
+
 test("a profile's sign-out request is scoped to the profile's own site", async () => {
   const calls: any[] = [];
   const relayFetch = (async (...args: any[]) => {

@@ -1298,21 +1298,25 @@ Examples:
   // never the account's other sessions. Profiles without a cookie (API keys,
   // bearer tokens) have no session to end here.
   async function revokeProfileSession(
-    profile: { api?: string; cookie?: string } | undefined,
+    profile: { api?: unknown; cookie?: unknown } | undefined,
     localOnly: boolean,
   ): Promise<"revoked" | "not confirmed" | "no browser session" | "skipped"> {
-    if (!profile?.cookie?.trim()) return "no browser session";
+    // The config file is not validated, so a field can hold any JSON value.
+    const cookie = profile?.cookie;
+    if (cookie == null || cookie === "") return "no browser session";
+    if (typeof cookie !== "string") return "not confirmed";
+    if (!cookie.trim()) return "no browser session";
     if (localOnly) return "skipped";
     // Only the site that issued the cookie can revoke it. A legacy profile
     // without a stored API gets no request: sending the cookie to whatever
     // the default API is now would leak it and could falsely confirm, since
     // sign-out succeeds when no session matches.
-    if (!profile.api?.trim()) return "not confirmed";
+    const api = profile?.api;
+    if (typeof api !== "string" || !api.trim()) return "not confirmed";
     // Never let a failed attempt (e.g. an invalid stored API URL) stop the
     // local profile from being removed: logout must stay a recovery path.
     try {
-      const api = normalizeUrl(profile.api);
-      return (await revokeSession(api, profile.cookie.trim()))
+      return (await revokeSession(normalizeUrl(api), cookie.trim()))
         ? "revoked"
         : "not confirmed";
     } catch {
@@ -1358,16 +1362,35 @@ Examples:
                 (field) => profile?.[field] ?? null,
               ),
             );
+          const hasCredential = (profile: any) =>
+            ["cookie", "api_key", "bearer", "hub_password"].some(
+              (field) => profile?.[field] != null && profile[field] !== "",
+            );
           const removeProcessed = (processed: Record<string, any>) => {
             const latest = loadAuthConfig(configPath);
             const removed: string[] = [];
             for (const [name, profile] of Object.entries(processed)) {
+              const fingerprint = credentials(profile);
               if (
                 latest.profiles[name] &&
-                credentials(latest.profiles[name]) === credentials(profile)
+                credentials(latest.profiles[name]) === fingerprint
               ) {
                 delete latest.profiles[name];
                 removed.push(name);
+                continue;
+              }
+              // Renamed meanwhile (`auth rename`): the processed credentials
+              // now live under one other name. Remove it only if that match
+              // is unique, so an unrelated profile is never taken.
+              if (latest.profiles[name] || !hasCredential(profile)) continue;
+              const renamed = Object.keys(latest.profiles).filter(
+                (other) =>
+                  !(other in processed) &&
+                  credentials(latest.profiles[other]) === fingerprint,
+              );
+              if (renamed.length === 1) {
+                delete latest.profiles[renamed[0]];
+                removed.push(renamed[0]);
               }
             }
             if (
@@ -1420,7 +1443,7 @@ Examples:
           );
           const { latest: updated, removed } = removeProcessed(processed);
           return {
-            removed: removed.includes(target) ? target : null,
+            removed: removed[0] ?? null,
             ...(removed.includes(target) || !updated.profiles[target]
               ? {}
               : { kept_changed_profiles: [target] }),
