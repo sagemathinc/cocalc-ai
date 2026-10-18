@@ -11160,6 +11160,29 @@ function publicAttentionRecord(
   return publicRecord;
 }
 
+// The account's own saved answer, so a reloaded card can show (and the person
+// can copy or resend) what they wrote. Only for "list", which is scoped to the
+// authenticated account; other public records reach every chat viewer.
+export function ownAttentionRecord(
+  record: NonNullable<ReturnType<typeof getAcpAttention>>,
+  account_id: string,
+) {
+  const publicRecord = publicAttentionRecord(record);
+  if (
+    record.account_id !== account_id ||
+    record.response_submitted_at == null ||
+    (record.response == null && !record.response_declined)
+  )
+    return publicRecord;
+  return {
+    ...publicRecord,
+    own_response: {
+      answers: record.response_declined ? {} : (record.response ?? {}),
+      ...(record.response_declined ? { declined: true } : {}),
+    },
+  };
+}
+
 function formatAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
 ): string {
@@ -11693,7 +11716,7 @@ async function handleAcpAttentionRequest(
           path: request.path,
           thread_id: request.thread_id,
           state: request.state,
-        }).map(publicAttentionRecord),
+        }).map((record) => ownAttentionRecord(record, request.account_id)),
       };
     }
     case "register_action": {

@@ -418,7 +418,16 @@ function RuntimeCodexAttentionCard({
   const pending = record.state === "pending";
   const lateQuestion =
     record.state === "stale" && record.source_kind === "codex_sync_question";
-  const submitted = draft.submitted;
+  // This browser's just-submitted draft, else the answer saved with the
+  // question (listed only for its author), so it survives a reload.
+  const submitted =
+    draft.submitted ??
+    (record.own_response
+      ? {
+          answers: record.own_response.answers,
+          declined: record.own_response.declined === true,
+        }
+      : undefined);
   const hasResponse = record.response_submitted_at != null || submitted != null;
   const answerable = (pending || lateQuestion) && !hasResponse;
   const pendingFreshAuth =
