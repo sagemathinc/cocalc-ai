@@ -5,6 +5,7 @@
 
 const resolveProjectBay = jest.fn();
 const resolveProjectBays = jest.fn();
+const resolveHostBay = jest.fn();
 const forward = jest.fn();
 const createInterBayHubApiClient = jest.fn(() => ({ call: forward }));
 const isAccountBannedCached = jest.fn(() => false);
@@ -22,6 +23,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay,
   resolveProjectBays,
+  resolveHostBay,
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fabric: true }),
@@ -725,5 +727,30 @@ describe("a call on several projects", () => {
       },
       { project_id: P[1], action: "removed_self" },
     ]);
+  });
+
+  it("routes a host method to the host's owning bay", async () => {
+    const HOST = "55555555-5555-4555-8555-555555555555";
+    const call = {
+      name: "hosts.getHostLog",
+      args: [{ id: HOST, limit: 5 }],
+      account_id: ACCOUNT,
+      auth_session_hash: "session",
+    };
+    resolveHostBay.mockResolvedValue({ bay_id: "bay-1", epoch: 0 });
+    forward.mockResolvedValue({ ok: true, result: [] });
+    expect(await executeHubApiCall(call)).toEqual([]);
+    expect(resolveHostBay).toHaveBeenCalledWith(HOST);
+    expect(forward.mock.calls[0][0]).toMatchObject({
+      ...call,
+      source_bay_id: "bay-0",
+    });
+    // Owned here: runs here.
+    forward.mockClear();
+    resolveHostBay.mockResolvedValue({ bay_id: "bay-0", epoch: 0 });
+    local.mockResolvedValue([]);
+    await executeHubApiCall(call);
+    expect(forward).not.toHaveBeenCalled();
+    expect(local).toHaveBeenCalledWith(call);
   });
 });

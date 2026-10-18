@@ -29,6 +29,7 @@ import {
 import { isAccountBannedCached } from "@cocalc/server/accounts/security-state";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  resolveHostBay,
   resolveProjectBay,
   resolveProjectBays,
 } from "@cocalc/server/inter-bay/directory";
@@ -87,6 +88,10 @@ async function ownerBay(
     case "project":
       return typeof key === "string"
         ? (await resolveProjectBay(key))?.bay_id
+        : undefined;
+    case "host":
+      return typeof key === "string"
+        ? (await resolveHostBay(key))?.bay_id
         : undefined;
     case "collab-invite":
       return typeof key === "object"

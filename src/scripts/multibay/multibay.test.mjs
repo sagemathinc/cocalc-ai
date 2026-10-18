@@ -919,6 +919,45 @@ describe("bulk project stop across bays", () => {
   });
 });
 
+describe("host reads across bays", () => {
+  // A host on the attached bay, owned by alice (homed on the seed): reading
+  // its log runs on the host's bay, which records the forwarded call.
+  const host_id = randomUUID();
+  const forwardedReads = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0; // nothing forwarded to this bay yet
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.getHostLog' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  it("reads a host's log on the host's bay", async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_hosts (id, name, status, metadata, created, updated, bay_id) VALUES ($1, 'routed-host', 'off', $2, NOW(), NOW(), $3)",
+         [${JSON.stringify(host_id)}, ${JSON.stringify({ owner: alice.account_id })}, ${JSON.stringify(ATTACHED)}]);
+       await getPool().query(
+         "INSERT INTO cloud_vm_log (id, vm_id, ts, action, status) VALUES ($1, $2, NOW(), 'create', 'success')",
+         [${JSON.stringify(randomUUID())}, ${JSON.stringify(host_id)}]);`,
+    );
+    const before = await forwardedReads();
+    const log = await alice.client.call("hosts.getHostLog", { id: host_id });
+    assert.deepEqual(
+      log.map(({ vm_id, action, status }) => ({ vm_id, action, status })),
+      [{ vm_id: host_id, action: "create", status: "success" }],
+    );
+    assert.equal(await forwardedReads(), before + 1);
+  });
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course

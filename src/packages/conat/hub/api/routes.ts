@@ -24,6 +24,12 @@ export type HubApiRoute =
       key: (args: any[]) => unknown;
     }
   | {
+      // A project host; its owning bay is in the host directory.
+      owner: "host";
+      /** Extract the host id from the call's arguments. */
+      key: (args: any[]) => unknown;
+    }
+  | {
       // An email collaborator invite, found in the invite directory by id or
       // by its link token. Its owning bay is the project's.
       owner: "collab-invite";
@@ -69,6 +75,11 @@ const courseProjectFromOpts: HubApiRoute = {
   key: (args) => args?.[0]?.course_project_id,
 };
 
+const hostFromOpts: HubApiRoute = {
+  owner: "host",
+  key: (args) => args?.[0]?.id,
+};
+
 const collabInviteFromOpts: HubApiRoute = {
   owner: "collab-invite",
   key: (args) => ({
@@ -102,6 +113,17 @@ const leftOrDeletedProjects: HubApiRoute = {
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  // Host reads run on the host's owning bay.
+  "hosts.getHostLog": hostFromOpts,
+  "hosts.getHostAvailability": hostFromOpts,
+  "hosts.getHostRuntimeLog": hostFromOpts,
+  "hosts.getHostMetricsHistory": hostFromOpts,
+  "hosts.listHostRootfsImages": hostFromOpts,
+  "hosts.getHostExamState": hostFromOpts,
+  "hosts.listHostSshAuthorizedKeys": hostFromOpts,
+  "hosts.listHostAccess": hostFromOpts,
+  "hosts.listHostRuntimeDeployments": hostFromOpts,
+  "hosts.getHostManagedComponentStatus": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
@@ -206,7 +228,7 @@ export function hubApiRouteKey(
   // A call on several projects is split by bay instead (splitProjectIds).
   if (route.owner === "projects") return;
   const key = route.key(args);
-  if (route.owner === "project") {
+  if (route.owner === "project" || route.owner === "host") {
     return typeof key === "string" && isValidUUID(key) ? key : undefined;
   }
   const { invite_id, token } = (key ?? {}) as Record<string, unknown>;
