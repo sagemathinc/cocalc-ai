@@ -71,11 +71,37 @@ export function projectContentHostname({
   return `${projectContentLabel(project_id)}.${hostContentLabel(host_id)}.${domain}`;
 }
 
+// The content domain configured for this process, if any.
+export function getProjectContentDomain(): string | undefined {
+  return normalizeContentDomain(process.env.COCALC_PROJECT_CONTENT_DOMAIN);
+}
+
 // Whether the request is for the content domain at all (any project, any
 // host).  Such requests are never handled by the host's other routes.
 export function isContentHostname(hostHeader: unknown, domain: string): boolean {
   const host = normalizeHostname(hostHeader);
   return host === domain || host.endsWith(`.${domain}`);
+}
+
+const CONTENT_HOSTNAME_SHAPE =
+  /^[0-9a-f]{32}\.h-[0-9a-f]{32}(?:\.[a-z0-9-]+)+$/;
+
+// Whether a hostname has the shape of a content hostname, under any domain.
+// This needs no configuration, so every process (including a respawned
+// router daemon, or a host whose content domain is unset) treats such
+// requests as content and never as its own: they fail closed instead.
+export function looksLikeContentHostname(hostHeader: unknown): boolean {
+  return CONTENT_HOSTNAME_SHAPE.test(normalizeHostname(hostHeader));
+}
+
+export function isContentRequestHost(
+  hostHeader: unknown,
+  domain: string | undefined,
+): boolean {
+  return (
+    looksLikeContentHostname(hostHeader) ||
+    (domain != null && isContentHostname(hostHeader, domain))
+  );
 }
 
 function uuidFromLabel(label: string): string | undefined {
@@ -121,7 +147,13 @@ export function parseContentPath(
     } catch {
       return undefined;
     }
-    if (decoded === "." || decoded === ".." || decoded.includes("\0")) {
+    // The download handler decodes the whole path, so an encoded slash or
+    // backslash would turn one segment into several.
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      /[\0/\\]/.test(decoded)
+    ) {
       return undefined;
     }
   }
@@ -186,17 +218,35 @@ function dropSetCookie(res: ServerResponse): void {
     return setHeader(name, value);
   }) as typeof res.setHeader;
   const writeHead = res.writeHead.bind(res);
+  const isSetCookie = (name: unknown) =>
+    `${name}`.toLowerCase() === "set-cookie";
   res.writeHead = ((...args: any[]) => {
-    for (const arg of args) {
-      if (arg != null && typeof arg === "object" && !Array.isArray(arg)) {
+    args = args.map((arg) => {
+      if (Array.isArray(arg)) {
+        // the flat [name, value, name, value, ...] form
+        const kept: any[] = [];
+        for (let i = 0; i + 1 < arg.length; i += 2) {
+          if (!isSetCookie(arg[i])) kept.push(arg[i], arg[i + 1]);
+        }
+        return kept;
+      }
+      if (arg != null && typeof arg === "object") {
         for (const key of Object.keys(arg)) {
-          if (key.toLowerCase() === "set-cookie") delete arg[key];
+          if (isSetCookie(key)) delete arg[key];
         }
       }
-    }
+      return arg;
+    });
     if (res.hasHeader("set-cookie")) res.removeHeader("set-cookie");
     return writeHead(...(args as [any]));
   }) as typeof res.writeHead;
+}
+
+function setRequestUrl(req: IncomingMessage, url: string): void {
+  req.url = url;
+  if ("originalUrl" in req) {
+    (req as IncomingMessage & { originalUrl?: string }).originalUrl = url;
+  }
 }
 
 export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
@@ -206,12 +256,14 @@ export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
     res: ServerResponse,
     next: (err?: unknown) => void,
   ): Promise<void> => {
-    if (!isContentHostname(req.headers.host, domain)) {
+    if (!isContentRequestHost(req.headers.host, domain)) {
       return next();
     }
-    // From here on this request is answered here and never passed on.
+    // From here on this request is answered here and never passed on.  The
+    // capability is in the URL, so nothing after this point may see it
+    // (Express keeps a copy in originalUrl).
     const originalUrl = req.url;
-    req.url = "/";
+    setRequestUrl(req, "/");
     delete req.headers.cookie;
     delete req.headers.authorization;
     dropSetCookie(res);
@@ -256,7 +308,7 @@ export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
     if (!opts.hasReadAccess({ account_id, project_id })) {
       return refuse(res, 403, "invalid or expired link");
     }
-    req.url = `/${project_id}/files/${parsed.filePath}`;
+    setRequestUrl(req, `/${project_id}/files/${parsed.filePath}`);
     try {
       await opts.serveFile({ req, res, project_id, account_id });
     } catch (err) {
@@ -274,13 +326,13 @@ export function createContentOriginHandler(opts: ContentOriginHandlerOptions) {
 // listener sees them (the host attaches several, matched by path).
 export function installContentHostnameUpgradeGuard(
   server: Server,
-  domain: string,
+  domain: string | undefined,
 ): void {
   const emit = server.emit;
   server.emit = function (this: Server, event: string | symbol, ...args: any[]) {
     if (event === "upgrade") {
       const [req, socket] = args as [IncomingMessage, { destroy: () => void }];
-      if (isContentHostname(req?.headers?.host, domain)) {
+      if (isContentRequestHost(req?.headers?.host, domain)) {
         socket?.destroy?.();
         return true;
       }

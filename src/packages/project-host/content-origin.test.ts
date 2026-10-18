@@ -204,6 +204,110 @@ describe("content origin request handling", () => {
     expect(served).toEqual([]);
   });
 
+  it("claims content-shaped hostnames under any domain, and fails closed", async () => {
+    const shaped = projectContentHostname({
+      project_id: projectA,
+      host_id: hostId,
+      domain: "other.example.net",
+    });
+    expect((await get(shaped, `/_c/${cap()}/files/page.html`)).status).toBe(404);
+    expect((await get(shaped, "/healthz")).status).toBe(404);
+    expect(passedOn).toEqual([]);
+    expect(served).toEqual([]);
+  });
+
+  it("refuses encoded slashes and backslashes inside a segment", async () => {
+    const c = cap();
+    expect((await get(hostA, `/_c/${c}/files/a/..%2Fb.html`)).status).toBe(404);
+    expect((await get(hostA, `/_c/${c}/files/a%5C..%5Cb.html`)).status).toBe(404);
+    expect(served).toEqual([]);
+  });
+
+  it("drops Set-Cookie passed to writeHead in any form", async () => {
+    for (const headers of [
+      ["Set-Cookie", "a=1", "Content-Type", "text/plain"],
+      { "Set-Cookie": "a=1", "Content-Type": "text/plain" },
+    ]) {
+      const handler = createContentOriginHandler({
+        domain,
+        host_id: hostId,
+        getPublicKey: () => publicKeyPem,
+        frameAncestors: () => [],
+        hasReadAccess: () => true,
+        currentEpoch: () => 0,
+        serveFile: async ({ res }) => {
+          res.writeHead(200, headers as any);
+          res.end("ok");
+        },
+      });
+      const s = createServer((req, res) => void handler(req, res, () => res.end()));
+      await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+      const r = await new Promise<{ status: number; cookie: unknown; type: unknown }>(
+        (resolve, reject) => {
+          request(
+            {
+              host: "127.0.0.1",
+              port: (s.address() as AddressInfo).port,
+              path: `/_c/${cap()}/files/a.txt`,
+              headers: { host: hostA },
+            },
+            (res) => {
+              res.resume();
+              res.on("end", () =>
+                resolve({
+                  status: res.statusCode ?? 0,
+                  cookie: res.headers["set-cookie"],
+                  type: res.headers["content-type"],
+                }),
+              );
+            },
+          )
+            .on("error", reject)
+            .end();
+        },
+      );
+      await new Promise<void>((resolve) => s.close(() => resolve()));
+      expect(r).toEqual({ status: 200, cookie: undefined, type: "text/plain" });
+    }
+  });
+
+  it("removes the capability from req.url and req.originalUrl at once", async () => {
+    const c = cap();
+    const seen: string[] = [];
+    const handler = createContentOriginHandler({
+      domain,
+      host_id: hostId,
+      getPublicKey: () => publicKeyPem,
+      frameAncestors: () => [],
+      hasReadAccess: () => true,
+      currentEpoch: () => 1, // stale: refused before serving
+      serveFile: async () => {},
+    });
+    const req: any = {
+      headers: { host: hostA },
+      method: "GET",
+      url: `/_c/${c}/files/a.html`,
+      originalUrl: `/_c/${c}/files/a.html`,
+    };
+    const res: any = {
+      statusCode: 200,
+      headers: {} as Record<string, unknown>,
+      setHeader(name: string, value: unknown) {
+        this.headers[name.toLowerCase()] = value;
+      },
+      hasHeader: () => false,
+      removeHeader: () => {},
+      writeHead() {},
+      end() {
+        seen.push(`${req.url} ${req.originalUrl}`);
+      },
+    };
+    await handler(req, res, () => {});
+    expect(res.statusCode).toBe(403);
+    expect(seen).toEqual(["/ /"]);
+    expect(JSON.stringify(req)).not.toContain(c);
+  });
+
   it("parses only /_c/<capability>/files/<path>", () => {
     expect(parseContentPath("/_c/a.b.c/files/x/y.html?q#h")).toEqual({
       capability: "a.b.c",

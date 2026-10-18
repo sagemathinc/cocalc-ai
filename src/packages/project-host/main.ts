@@ -227,11 +227,11 @@ import {
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import {
   createContentOriginHandler,
+  getProjectContentDomain,
   installContentHostnameUpgradeGuard,
-  isContentHostname,
+  isContentRequestHost,
 } from "./content-origin";
 import {
-  getProjectContentDomain,
   hasProjectContentReadAccess,
   projectContentEpoch,
 } from "./content-origin-access";
@@ -415,19 +415,19 @@ export async function main(
         next: NextFunction,
       ) => Promise<void>)
     | undefined;
-  if (contentDomain) {
-    app.use((req, res, next) => {
-      if (!isContentHostname(req.headers.host, contentDomain)) {
-        return next();
-      }
-      if (!handleContentRequest) {
-        res.statusCode = 503;
-        res.end();
-        return;
-      }
-      void handleContentRequest(req, res, next).catch(() => res.destroy());
-    });
-  }
+  // Content-shaped hostnames are claimed even when no content domain is
+  // configured, so they fail closed rather than reach the host's routes.
+  app.use((req, res, next) => {
+    if (!isContentRequestHost(req.headers.host, contentDomain)) {
+      return next();
+    }
+    if (!handleContentRequest) {
+      res.statusCode = contentDomain ? 503 : 404;
+      res.end();
+      return;
+    }
+    void handleContentRequest(req, res, next).catch(() => res.destroy());
+  });
   let handlePrivateAppHttpRequest:
     | ((
         req: IncomingMessage,
@@ -445,9 +445,7 @@ export async function main(
   });
   app.use(express.json());
   const { httpServer } = await startHttpListener(app, port, host, tls);
-  if (contentDomain) {
-    installContentHostnameUpgradeGuard(httpServer, contentDomain);
-  }
+  installContentHostnameUpgradeGuard(httpServer, contentDomain);
   app.get("/healthz", (_req, res) =>
     res.json({
       ok: true,

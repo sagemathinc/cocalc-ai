@@ -8,12 +8,6 @@
 
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
-import { normalizeContentDomain } from "./content-origin";
-
-export function getProjectContentDomain(): string | undefined {
-  return normalizeContentDomain(process.env.COCALC_PROJECT_CONTENT_DOMAIN);
-}
-
 // Owners and collaborators read the whole project.  Viewers have restricted
 // read policies, so they get no content access until capabilities carry the
 // project-wide read floor.
