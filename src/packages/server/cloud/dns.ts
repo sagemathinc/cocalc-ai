@@ -6,6 +6,10 @@ import {
 } from "@cocalc/server/cloud/derived-domains";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 import {
+  hostContentWildcardHostname,
+  normalizeContentDomain,
+} from "@cocalc/util/project-content-origin";
+import {
   computeDeploymentNamespace,
   computeVmDnsLabelIsOwned,
 } from "@cocalc/server/compute/resource-names";
@@ -313,8 +317,16 @@ async function getZoneClientForHostname(hostname: string): Promise<{
   zoneHostname: string;
 }> {
   const { token } = await getClient();
-  const { zoneId, zoneHostname } = await getZoneForHostname(token, hostname);
+  const { zoneId, zoneHostname } = await getZoneForHostname(
+    token,
+    zoneLookupHostname(hostname),
+  );
   return { token, zoneId, zoneHostname };
+}
+
+// A wildcard record's zone is found from the name without its "*." label.
+function zoneLookupHostname(hostname: string): string {
+  return `${hostname ?? ""}`.trim().replace(/^\*\./, "");
 }
 
 export async function ensureHostDns(opts: {
@@ -328,11 +340,85 @@ export async function ensureHostDns(opts: {
   const { settings } = await getClient();
   const name = deriveProjectHostHostname(opts.host_id, settings);
   if (!name) throw new Error("cloudflare DNS not configured");
-  return await ensureProxiedAddressDns({
+  const dns = await ensureProxiedAddressDns({
     name,
     ipAddress: opts.ipAddress,
     record_id: opts.record_id,
   });
+  // The host's content origins follow its address.  Best effort: a missing
+  // content record only makes content links on this host fail, while a
+  // failed host record must still fail provisioning.
+  try {
+    await ensureHostContentDns({
+      host_id: opts.host_id,
+      ipAddress: opts.ipAddress,
+    });
+  } catch (err) {
+    logger.warn("unable to ensure project content DNS for host", {
+      host_id: opts.host_id,
+      err: `${err}`,
+    });
+  }
+  return dns;
+}
+
+async function getProjectContentDomain(): Promise<string | undefined> {
+  const { project_content_dns } = await getServerSettings();
+  return normalizeContentDomain(project_content_dns);
+}
+
+// The wildcard record *.h-<host>.<content domain> for a host's per-project
+// content origins (trust-free step 6), pointing at the host like its own
+// record.  Nothing to do when no content domain is configured.
+export async function ensureHostContentDns(opts: {
+  host_id: string;
+  ipAddress: string;
+}): Promise<{ name: string; record_id: string } | undefined> {
+  const domain = await getProjectContentDomain();
+  if (!domain) return undefined;
+  if (!opts.host_id) throw new Error("host_id required for content DNS");
+  return await ensureProxiedAddressDns({
+    name: hostContentWildcardHostname({ host_id: opts.host_id, domain }),
+    ipAddress: opts.ipAddress,
+  });
+}
+
+// Removes every record for the host's content wildcard, and fails unless
+// none is left: it must stop resolving before the host's address can be
+// released, or a reused address would serve those origins.
+export async function deleteHostContentDns(opts: {
+  host_id: string;
+}): Promise<void> {
+  const domain = await getProjectContentDomain();
+  if (!domain) return;
+  if (!opts.host_id) throw new Error("host_id required for content DNS");
+  const hostname = hostContentWildcardHostname({
+    host_id: opts.host_id,
+    domain,
+  });
+  try {
+    await deleteHostnameDns({ hostname });
+  } catch (err) {
+    // No zone for the content domain in this account means no record of
+    // ours can exist there.  Any other failure (permissions, API errors)
+    // must stop the caller before it releases the address.
+    if (`${(err as Error)?.message ?? err}`.includes("cloudflare zone not found")) {
+      logger.warn("no Cloudflare zone for the project content domain", {
+        host_id: opts.host_id,
+        domain,
+      });
+      return;
+    }
+    throw err;
+  }
+}
+
+const PROJECT_HOST_HOSTNAME_ID =
+  /^host-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])/;
+
+// The host id in a project-host hostname (host-<id><suffix>), if it is one.
+export function projectHostIdFromHostname(name: unknown): string | undefined {
+  return PROJECT_HOST_HOSTNAME_ID.exec(`${name ?? ""}`.trim().toLowerCase())?.[1];
 }
 
 export async function inspectHostDns(opts: {
@@ -425,7 +511,7 @@ async function ensureAddressDns(
   if (!opts.ipAddress) throw new Error("ipAddress required for DNS");
 
   const { token } = await getClient();
-  const zoneId = await getZoneIdForHostname(token, name);
+  const zoneId = await getZoneIdForHostname(token, zoneLookupHostname(name));
 
   const updateRecord = async (record_id: string) => {
     const newData = {
@@ -735,6 +821,12 @@ export async function deleteHostDns(opts: {
   record_id?: string;
   name?: string;
 }) {
+  // A project host's content origins go first, whatever happens to its own
+  // record: the caller may release the address next.
+  const host_id = projectHostIdFromHostname(opts.name);
+  if (host_id) {
+    await deleteHostContentDns({ host_id });
+  }
   if (!opts.record_id) return;
   const { token, dns } = await getClient();
   const zoneId = await getZoneIdForHostname(token, opts.name ?? dns);

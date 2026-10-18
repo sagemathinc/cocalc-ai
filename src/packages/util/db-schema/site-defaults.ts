@@ -105,6 +105,7 @@ export type SiteSettingsKeys =
   | "i18n"
   | "dns"
   | "public_viewer_dns"
+  | "project_content_dns"
   | "datastore"
   | "versions"
   | "version_min_browser"
@@ -495,6 +496,16 @@ export const site_settings_conf: SiteSettings = {
     group: "Networking",
     subgroup: "Domain",
     order: 11,
+  },
+  project_content_dns: {
+    name: "Project Content Domain",
+    desc: "Separate registrable domain for per-project content origins, e.g. `cocalcusercontent.com`. Project files such as HTML are then served at `<project>.h-<host>.<domain>`, isolated from the app and from other projects, so their relative images, CSS and scripts work without any trust switch. Requires a Cloudflare zone for this domain (Advanced Certificate Manager for the per-host wildcard certificates, SSL mode Full, caching bypassed); each project host gets one wildcard DNS record. Leave empty to disable. Hosts pick up a change at their next environment reconcile.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Cloudflare", "Security"],
+    group: "Networking",
+    subgroup: "Domain",
+    order: 12,
   },
   cloudflare_mode: {
     name: "Cloudflare Integration Mode",
