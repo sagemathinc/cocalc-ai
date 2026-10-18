@@ -80,6 +80,12 @@ const hostFromOpts: HubApiRoute = {
   key: (args) => args?.[0]?.id,
 };
 
+// Global deployment listings ignore the id and read the bay's own rows.
+const hostDeploymentScope: HubApiRoute = {
+  owner: "host",
+  key: (args) => (args?.[0]?.scope_type === "host" ? args?.[0]?.id : undefined),
+};
+
 const collabInviteFromOpts: HubApiRoute = {
   owner: "collab-invite",
   key: (args) => ({
@@ -122,7 +128,7 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.getHostExamState": hostFromOpts,
   "hosts.listHostSshAuthorizedKeys": hostFromOpts,
   "hosts.listHostAccess": hostFromOpts,
-  "hosts.listHostRuntimeDeployments": hostFromOpts,
+  "hosts.listHostRuntimeDeployments": hostDeploymentScope,
   "hosts.getHostManagedComponentStatus": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
