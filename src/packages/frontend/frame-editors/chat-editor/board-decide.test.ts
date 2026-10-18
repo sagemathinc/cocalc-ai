@@ -239,6 +239,34 @@ describe("boardDecider", () => {
     await expect(other).rejects.not.toThrow("internal secret");
   });
 
+  // Codex on #1134: every deliberate refusal the hub's boardDecide makes
+  // has its own words; a used-up allowance (403, the reader's or the
+  // site's) says so and doesn't invite a retry.
+  test("each deliberate refusal has its own words", async () => {
+    const said = async (code: number) => {
+      try {
+        await boardDecider({
+          project_id: "p",
+          path: "q.board.json",
+          revision: null,
+          text: "{}",
+          call: async () => {
+            throw Object.assign(new Error("x"), { code });
+          },
+        })(decideMessage());
+      } catch (err) {
+        return (err as Error).message;
+      }
+      throw new Error("not refused");
+    };
+    const generic = await said(502);
+    for (const code of [400, 401, 403, 404, 409, 413, 429, 503]) {
+      expect(await said(code)).not.toBe(generic);
+    }
+    expect(await said(403)).toMatch(/allowance .*used up/);
+    expect(await said(403)).not.toMatch(/try/i);
+  });
+
   test("an answer for another request is not used", async () => {
     const decide = boardDecider({
       project_id: "p",

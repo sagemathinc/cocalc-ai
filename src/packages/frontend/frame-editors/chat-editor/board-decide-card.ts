@@ -16,12 +16,20 @@ import {
   type DecideOnBoard,
 } from "./board-answers-channel";
 
+// Every deliberate refusal of system.boardDecide has its own words; only an
+// unexpected failure (502 from the model, or none) invites a retry.
 const REFUSALS: Record<number, string> = {
   400: "This answer can't be checked.",
   401: "Sign in to check answers.",
+  // The reader's AI allowance, or the site's, is used up for now: trying
+  // again won't help until it renews.
+  403: "The AI allowance for checking answers is used up for now, so this answer can't be checked.",
+  404: "Your account can't check answers right now.",
   409: "The board changed: reload it.",
   413: "This board is too large to check answers on.",
-  429: "Too many answers checked on this board. Try later.",
+  // One already being checked on this board, or too many in the last
+  // minute or hour.
+  429: "Too many answers are being checked. Try later.",
   503: "Checking answers isn't available right now. Try later.",
 };
 
