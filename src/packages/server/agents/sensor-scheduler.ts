@@ -829,12 +829,13 @@ async function finishRun(
 /**
  * Watchers that fired more than a day ago (their wakes have long run), and
  * paused watchers more than a day past their give-up time: they can never
- * run again, and only clutter the agent's Sensors list.
+ * run again, and only clutter the agent's Sensors list. Never one with a
+ * pending proposal: that replacement still awaits the person's review.
  */
 export async function removeDoneWatchers(): Promise<void> {
   await agentStore().query(
     `DELETE FROM agent_sensors WHERE spec->>'kind'='watch'
-       AND lease_id IS NULL
+       AND lease_id IS NULL AND pending_spec IS NULL
        AND ((next_run_at IS NULL AND last_run_at < now() - interval '1 day')
          OR (status='paused'
            AND (spec->>'expires_at')::timestamptz < now() - interval '1 day'))`,

@@ -399,37 +399,38 @@ test("a watcher shows what it waits for, and is done once it fired", () => {
   expect(within(card).queryByRole("button", { name: "Run now" })).toBeNull();
 });
 
-test("current sensors come first; finished and given-up ones are behind a toggle", () => {
+test("current sensors come first; finished ones are behind a toggle", () => {
   const watch = (
     title: string,
-    expires_at: string,
     status: AgentSensor["status"],
+    pending = false,
   ) =>
     sensor({
       sensor_id: title,
       status,
-      pending_spec: null,
+      pending_spec: pending ? spec : null,
       spec: {
         kind: "watch",
         title,
         watch: { type: "ci", repo: "a/b", pr: 7 },
         schedule: { kind: "interval", minutes: 2, timezone: "UTC" },
         max_wakes_per_day: 1,
-        expires_at,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
       },
     });
-  const future = new Date(Date.now() + 3_600_000).toISOString();
-  const past = new Date(Date.now() - 3_600_000).toISOString();
   render(
     <AgentSensorsModal
       agent={agent}
       open
       onClose={() => {}}
       sensors={[
-        watch("Watching CI", future, "active"),
-        watch("Paused but can resume", future, "paused"),
-        watch("Paused and gave up", past, "paused"),
-        watch("Fired", past, "done"),
+        watch("Watching CI", "active"),
+        // A fired watcher the agent proposed to replace: awaits review.
+        watch("Fired, with a proposed revision", "done", true),
+        // Watchers cannot be resumed, so a paused one is finished even
+        // before it would have given up.
+        watch("Paused", "paused"),
+        watch("Fired", "done"),
       ]}
       error=""
       refresh={() => {}}
@@ -441,13 +442,10 @@ test("current sensors come first; finished and given-up ones are behind a toggle
       .map((region) => region.getAttribute("aria-label"));
   expect(shown()).toEqual([
     "Sensor Watching CI",
-    "Sensor Paused but can resume",
+    expect.stringMatching(/^Sensor /),
   ]);
+  expect(shown()).toHaveLength(2);
   fireEvent.click(screen.getByRole("button", { name: /Show 2 finished/ }));
-  expect(shown()).toEqual([
-    "Sensor Watching CI",
-    "Sensor Paused but can resume",
-    "Sensor Paused and gave up",
-    "Sensor Fired",
-  ]);
+  expect(shown()).toHaveLength(4);
+  expect(shown().slice(2)).toEqual(["Sensor Paused", "Sensor Fired"]);
 });

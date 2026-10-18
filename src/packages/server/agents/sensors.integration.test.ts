@@ -295,16 +295,30 @@ describeDb("agent sensors", () => {
     const gaveUp = await watch();
     const recent = await watch();
     const active = await watch();
+    const revised = await watch();
     await pausedAt(gaveUp.sensor_id, 2 * 86_400_000);
     // Gave up only an hour ago: still listed for a day.
     await pausedAt(recent.sensor_id, 3_600_000);
+    // Gave up long ago, but a replacement awaits review: kept.
+    await pausedAt(revised.sensor_id, 2 * 86_400_000);
+    await getPool().query(
+      "UPDATE agent_sensors SET pending_spec=spec WHERE sensor_id=$1",
+      [revised.sensor_id],
+    );
     await removeDoneWatchers();
     const { rows } = await getPool().query(
       "SELECT sensor_id FROM agent_sensors WHERE sensor_id = ANY($1)",
-      [[gaveUp.sensor_id, recent.sensor_id, active.sensor_id]],
+      [
+        [
+          gaveUp.sensor_id,
+          recent.sensor_id,
+          active.sensor_id,
+          revised.sensor_id,
+        ],
+      ],
     );
     expect(rows.map(({ sensor_id }) => sensor_id).sort()).toEqual(
-      [recent.sensor_id, active.sensor_id].sort(),
+      [recent.sensor_id, active.sensor_id, revised.sensor_id].sort(),
     );
   });
 

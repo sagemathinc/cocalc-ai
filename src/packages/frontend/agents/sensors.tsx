@@ -694,19 +694,16 @@ function SchedulePromptForm({
 }
 
 /**
- * A sensor that will never run again: a watcher that fired or gave up, one
- * paused past its give-up time, or a rejected proposal. They are removed
- * after a day; until then they stay out of the way.
+ * A sensor that will never run again: a watcher that fired, gave up or was
+ * paused (watchers cannot be resumed), or a rejected proposal. A sensor with
+ * a pending proposal is never finished: that awaits the person's review.
+ * Finished ones are removed after a day; until then they stay out of the way.
  */
-export function sensorFinished(sensor: AgentSensor, now = Date.now()): boolean {
+export function sensorFinished(sensor: AgentSensor): boolean {
+  if (sensor.pending_spec != null) return false;
   if (sensor.status === "done" || sensor.status === "rejected") return true;
-  const spec = sensor.spec as { kind?: string; expires_at?: string } | null;
-  return (
-    sensor.status === "paused" &&
-    spec?.kind === "watch" &&
-    spec.expires_at != null &&
-    Date.parse(spec.expires_at) <= now
-  );
+  const spec = sensor.spec as { kind?: string } | null;
+  return sensor.status === "paused" && spec?.kind === "watch";
 }
 
 export function AgentSensorsModal({
