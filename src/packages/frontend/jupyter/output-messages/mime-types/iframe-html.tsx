@@ -31,7 +31,7 @@ export const IframeHtml = ({ value }) => {
     <AutosizedIframe
       src={src}
       srcDoc={srcDoc}
-      sandbox="allow-forms allow-scripts allow-presentation"
+      profile="opaque-legacy"
       title="Jupyter HTML output"
     />
   );
