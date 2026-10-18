@@ -696,6 +696,7 @@ export async function replay({
       effective_start_seq: !sentReplayInfo ? effective_start_seq : undefined,
       oldest_retained_seq: !sentReplayInfo ? oldest_retained_seq : undefined,
       newest_retained_seq: !sentReplayInfo ? newest_retained_seq : undefined,
+      instance: !sentReplayInfo ? stream.instance : undefined,
     };
     // Only these fixed envelope fields are enumerated. Mirror JSON's omission
     // of undefined values, then validate before the unconfirmed publication so
