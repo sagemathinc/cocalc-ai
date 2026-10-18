@@ -5,6 +5,7 @@
 
 // cSpell:ignore blankcolumn
 
+import { selectThreadByUser } from "./select-thread-by-user";
 import {
   Badge,
   Button,
@@ -2754,7 +2755,7 @@ export default function Message({
           onClick={(event) => {
             event.stopPropagation();
             if (navigation.threadKey) {
-              actions?.setSelectedThread?.(navigation.threadKey);
+              selectThreadByUser(actions, navigation.threadKey);
             }
             if (navigation.fragment) {
               // Defer so thread selection doesn't immediately clear the fragment.

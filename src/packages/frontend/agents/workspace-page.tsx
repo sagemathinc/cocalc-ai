@@ -279,7 +279,6 @@ import {
   type AgentHeaderAppearance,
 } from "./workspace-header-theme";
 import {
-  AgentSelectionReporter,
   agentWorkspaceKey,
   findWorkspaceAgentForThread,
   selectedChatThreadFromLocalViewState,
@@ -2521,16 +2520,12 @@ function AgentProjectContext({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const initialThreadRef = useRef(agent.thread_id);
-  // The route owns the selection; this filters what the chat reports back.
-  const selectionReporterRef = useRef(new AgentSelectionReporter());
   const wasActiveRef = useRef(active);
   const useEditor = useEditorRedux<{ activity: any; local_view_state: any }>({
     project_id: agent.endpoint.project_id,
     path: agent.path,
   });
   const localViewState = useEditor("local_view_state");
-  const localViewStateRef = useRef(localViewState);
-  localViewStateRef.current = localViewState;
   const activity = useEditor("activity");
   const onAgentActivityRef = useRef(onAgentActivity);
   const onThreadAppearanceRef = useRef(onThreadAppearance);
@@ -2702,10 +2697,6 @@ function AgentProjectContext({
       agent.path,
     );
     const openFragment = () => {
-      selectionReporterRef.current.requested(
-        agent.thread_id,
-        localViewStateRef.current,
-      );
       const fragment = Fragment.get();
       const chat = agentMessageFragment(fragment, agent.thread_id);
       if (typeof editorActions?.gotoFragment === "function") {
@@ -2727,14 +2718,18 @@ function AgentProjectContext({
 
   useEffect(() => {
     if (!active || !ready) return;
-    // Only the person picking another thread in the chat is reported (and so
-    // may change the route); echoes and frame focus changes are not.
-    const thread = selectionReporterRef.current.viewStateChanged(
-      localViewState,
-      agent.thread_id,
+    // The route alone selects the agent. The embedded chat is passive: it
+    // reports only a thread the person chooses in it (thread list, a link,
+    // find or search), never a selection made by code, so its view state can
+    // never send the route back and forth between agents.
+    const editorActions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
     );
-    if (thread) onSelectedThread(thread);
-  }, [active, agent.thread_id, localViewState, onSelectedThread, ready]);
+    if (typeof editorActions?.setEmbeddedThreadSelectHandler !== "function")
+      return;
+    return editorActions.setEmbeddedThreadSelectHandler(onSelectedThread);
+  }, [active, agent.endpoint.project_id, agent.path, onSelectedThread, ready]);
 
   useEffect(() => {
     if (!ready) return;

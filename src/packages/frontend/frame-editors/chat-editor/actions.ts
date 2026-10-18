@@ -126,9 +126,31 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   private chatFastOpenApplied = false;
   private messageCacheRecoveryWarned = false;
   private embeddedCloseHandler?: () => void;
+  private embeddedThreadSelectHandler?: (threadKey: string) => void;
+  // Bumped by each navigation; a superseded gotoFragment stops re-applying
+  // its thread, so it can never undo a later choice.
+  private navigationGeneration = 0;
 
   setEmbeddedCloseHandler(handler?: () => void): void {
     this.embeddedCloseHandler = handler;
+  }
+
+  /** An embedder (the agents workspace) is told only of threads the person
+   * chooses in the chat, never of selections made by code. */
+  setEmbeddedThreadSelectHandler(
+    handler: (threadKey: string) => void,
+  ): () => void {
+    this.embeddedThreadSelectHandler = handler;
+    // Unregistering never removes a handler another view registered since.
+    return () => {
+      if (this.embeddedThreadSelectHandler === handler)
+        this.embeddedThreadSelectHandler = undefined;
+    };
+  }
+
+  userSelectedThread(threadKey: string): void {
+    this.navigationGeneration = (this.navigationGeneration ?? 0) + 1;
+    this.embeddedThreadSelectHandler?.(threadKey);
   }
 
   private ensureRenderableChatActions(): boolean {
@@ -501,10 +523,12 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     if (!chat && !thread) {
       return;
     }
+    const generation = (this.navigationGeneration =
+      (this.navigationGeneration ?? 0) + 1);
     const frameId = await this.waitUntilFrameReady({
       type: FRAME_TYPE,
     });
-    if (!frameId) {
+    if (!frameId || generation !== this.navigationGeneration) {
       return;
     }
     // Publish the target for message-driven thread selection without rewriting
@@ -512,6 +536,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     if (chat) this.set_frame_data({ id: frameId, fragmentId: chat });
     let attentionOpened = false;
     for (const d of [1, 10, 50, 500, 1000]) {
+      if (generation !== this.navigationGeneration) return;
       const actions = this.getChatActions(frameId);
       if (thread) {
         actions?.setSelectedThread?.(selectedThread!);
