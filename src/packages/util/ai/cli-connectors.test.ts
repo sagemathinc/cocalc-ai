@@ -46,7 +46,7 @@ test("Cloudflare scopes use OAuth client scope IDs, not wrangler's names", () =>
   // An OAuth client rejects any scope it was not registered with, so the
   // whole sign-in fails with invalid_scope (e.g. for "account:read").
   for (const scope of cloudflareScopes(["workers", "r2", "dns"])) {
-    expect(scope).toMatch(/^[a-z0-9-]+\.(read|write|edit)$/);
+    expect(scope).toMatch(/^[a-z0-9-]+\.(read|write|edit|admin)$/);
   }
 });
 

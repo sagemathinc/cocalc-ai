@@ -79,10 +79,12 @@ export const CLOUDFLARE_SCOPE_PRESETS = {
   workers: {
     label: "Workers & sites",
     // No DNS: custom domains need the DNS preset too, chosen explicitly.
+    // Workers Admin, not Workers Editor: deploying a new Worker needs it.
     scopes: [
-      "workers-scripts.edit",
+      "workers-scripts.admin",
       "workers-kv-storage.write",
       "workers-routes.write",
+      "page.write",
     ],
   },
   r2: {

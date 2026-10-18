@@ -2189,9 +2189,10 @@ Administrator, Administrator or OAuth Client Write role), and set:
   Mark **Account Settings Read** (\`account-settings.read\`) and **User
   Details Read** (\`user-details.read\`) required. Add these as optional, so
   users can choose:
-  - Workers & sites: **Workers Editor** (\`workers-scripts.edit\`), **Workers
-    KV Storage Write** (\`workers-kv-storage.write\`), **Workers Routes
-    Write** (\`workers-routes.write\`);
+  - Workers & sites: **Workers Admin** (\`workers-scripts.admin\`; Workers
+    Editor cannot create a new Worker), **Workers KV Storage Write**
+    (\`workers-kv-storage.write\`), **Workers Routes Write**
+    (\`workers-routes.write\`), **Pages Write** (\`page.write\`);
   - R2 storage: **Workers R2 Storage Read/Write** (\`workers-r2.read\`,
     \`workers-r2.write\`), **Workers R2 Storage Bucket Item Read/Write**
     (\`workers-r2-bucket-item.read\`, \`workers-r2-bucket-item.write\`);
