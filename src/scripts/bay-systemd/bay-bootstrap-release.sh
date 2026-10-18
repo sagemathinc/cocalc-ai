@@ -591,62 +591,9 @@ preserve_previous_static_assets() {
   # Rspack chunks are hash-named and lazy-loaded by already-open clients.  When a
   # release flips /static to new HTML and entrypoints, keep old chunk filenames
   # available until the retained release ages out instead of stranding clients
-  # that navigate after the deploy.  Only the previous build's own chunks are
-  # carried: copying every hashed file would carry each older build forward
-  # forever, and the asset history would outgrow its 10000-file cap.
-  local retain
-  retain="$(as_bay mktemp "${TARGET_RELEASE}.static-retain.XXXXXX")"
-  frontend_static_files_to_retain "$previous_static" | as_bay tee "$retain" >/dev/null
-  run as_bay rsync -a --ignore-existing --files-from="$retain" \
+  # that navigate after the deploy.
+  run as_bay rsync -a --ignore-existing --exclude='._*' \
     "${previous_static}/" "${target_static}/"
-  as_bay rm -f "$retain"
-}
-
-# Prints, one per line, the files of a static directory that the next release
-# keeps: the build's content-addressed assets as declared by
-# frontend-build.json (for a legacy build without a declared asset list, every
-# hashed file on disk), plus every file that is not content-addressed
-# (entrypoints and other fixed names, which the new build overrides).
-frontend_static_files_to_retain() {
-  local static_dir="$1" node_bin
-  node_bin="$(find_node)"
-  as_bay "$node_bin" - "$static_dir" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-
-const [root] = process.argv.slice(2);
-const HASHED_ASSET = /(?:^|[-.])[0-9a-f]{16,}(?=[-.]|$)/i;
-
-function walk(directory, files = []) {
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (entry.name.startsWith("._")) continue;
-    const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) walk(absolute, files);
-    else if (entry.isFile()) files.push(path.relative(root, absolute).replaceAll("\\", "/"));
-  }
-  return files;
-}
-
-const onDisk = fs.existsSync(root) ? walk(root) : [];
-const isHashed = (file) => HASHED_ASSET.test(path.posix.basename(file));
-let declared = [];
-const manifest = path.join(root, "frontend-build.json");
-if (fs.existsSync(manifest)) {
-  const assets = JSON.parse(fs.readFileSync(manifest, "utf8")).assets;
-  if (Array.isArray(assets)) declared = assets.map((asset) => `${asset ?? ""}`);
-}
-const inventory = declared.length ? declared : onDisk.filter(isHashed);
-const files = [
-  ...new Set([...inventory, ...onDisk.filter((file) => !isHashed(file))]),
-];
-for (const file of files) {
-  const normalized = file.replaceAll("\\", "/");
-  if (!normalized || normalized.startsWith("/") || normalized.split("/").includes("..")) {
-    throw new Error(`unsafe frontend asset path: ${file}`);
-  }
-  process.stdout.write(`${normalized}\n`);
-}
-NODE
 }
 
 prepare_frontend_asset_history() {
@@ -715,11 +662,9 @@ function scanAssets(root, directory = root) {
 function normalizeBuild(manifest, root, allowScan) {
   if (!manifest) return;
   const manifestAssets = Array.isArray(manifest.assets) ? manifest.assets : [];
-  // A declared inventory is the build's complete asset list.  Scanning the
-  // directory as well would count chunks carried forward from older builds.
-  // Only a legacy manifest without one falls back to the files on disk.
-  const rawAssets =
-    allowScan && !manifestAssets.length ? scanAssets(root) : manifestAssets;
+  const rawAssets = allowScan
+    ? [...manifestAssets, ...scanAssets(root)]
+    : manifestAssets;
   if (!rawAssets?.length) {
     throw new Error(`frontend manifest in ${root} has no asset inventory`);
   }
