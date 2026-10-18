@@ -22,6 +22,7 @@ import {
   PASSIVE_DOCUMENT_CSP,
   escapeHtmlText,
 } from "@cocalc/frontend/misc/print-document";
+import { STATIC_RESIZE_LISTENER } from "@cocalc/frontend/jupyter/output-messages/autosized-iframe";
 
 // Markdown images carry max-height:100% (from the static slate image element).
 // When Chrome moves such an image to the next printed page, it resolves that
@@ -97,6 +98,7 @@ export function exportToHTMLParts({
     {
       value: {
         noSanitize: true,
+        staticExport: true,
         is_visible: true,
         disableMarkdownCodebar: true,
         disableExtraButtons: true,
@@ -115,7 +117,8 @@ export function exportToHTMLParts({
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/${codemirror}/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${katex}/dist/katex.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@${antd}/dist/antd.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-<style>${PRINT_CSS}</style>`,
+<style>${PRINT_CSS}</style>
+${STATIC_RESIZE_LISTENER}`,
     body,
   };
 }

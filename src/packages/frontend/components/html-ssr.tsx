@@ -95,6 +95,19 @@ export default function HTML({
       // span/div wrapper. This applies in trusted mode too: noSanitize may
       // retain styling, but it cannot change the host document structure.
       if (isDocumentMetadataHtmlTag(name)) {
+        if (name.toLowerCase() === "head") {
+          // Nothing in a head renders, except inline math (Sage and others
+          // emit it there), which is typeset below as anywhere else.
+          const math = (children ?? []).filter(
+            (c) =>
+              c instanceof Element &&
+              c.name.toLowerCase() === "script" &&
+              (c.attribs?.type ?? "").toLowerCase().startsWith("math/tex"),
+          );
+          return (
+            <React.Fragment>{domToReact(math as any, options)}</React.Fragment>
+          );
+        }
         return React.createElement(React.Fragment);
       }
       if (isDocumentContainerHtmlTag(name)) {

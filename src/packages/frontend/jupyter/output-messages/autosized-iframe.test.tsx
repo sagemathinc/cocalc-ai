@@ -53,7 +53,7 @@ describe("AutosizedIframe profiles", () => {
     );
   });
 
-  it("caps and rate limits resize requests", () => {
+  it("caps and rate limits resize requests, keeping the latest", () => {
     jest.useFakeTimers();
     try {
       const iframe = frame("opaque-scripts");
@@ -70,8 +70,19 @@ describe("AutosizedIframe profiles", () => {
       jest.advanceTimersByTime(1000);
       post(1e9);
       expect(iframe.style.height).toBe("25000px");
-      post(100); // too soon after the last one: ignored
+      // Too soon after the last one: deferred to the end of the interval,
+      // and only the latest applies.
+      post(100);
+      post(200);
       expect(iframe.style.height).toBe("25000px");
+      act(() => {
+        jest.advanceTimersByTime(49);
+      });
+      expect(iframe.style.height).toBe("25000px");
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(iframe.style.height).toBe("208px");
       jest.advanceTimersByTime(100);
       post(100);
       expect(iframe.style.height).toBe("108px");
