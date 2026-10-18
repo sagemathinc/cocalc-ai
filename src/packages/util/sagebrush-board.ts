@@ -7,6 +7,13 @@
 // way by the card and by the server that checks a board's decide request
 // against it (web/board-host-protocol.md).
 
+/** Whether a file is a Sagebrush board: its name ends in ".board.json", in
+ * any case. The one rule for the card (which shows it live, with answers
+ * and deciding) and the server (which decides on it). */
+export function isBoardPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".board.json");
+}
+
 /** The board's name in the card's `board` message: the file's basename. */
 export function boardPostedName(path: string): string {
   return path.split("/").pop() ?? path;

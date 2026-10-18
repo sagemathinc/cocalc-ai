@@ -29,7 +29,7 @@ jest.mock("./board-decide-request", () => ({
   },
 }));
 
-import { boardTextDigest } from "@cocalc/util/sagebrush-board";
+import { boardTextDigest, isBoardPath } from "@cocalc/util/sagebrush-board";
 import {
   BOARD_FILE_LIMIT,
   CALLS_PER_BOARD_PER_HOUR,
@@ -221,6 +221,32 @@ test("ambiguous spellings of a path are refused", () => {
     "/",
   ]) {
     expect(isPlainBoardPath(p)).toBe(false);
+  }
+});
+
+// Codex on #1134: the card shows Lesson.Board.JSON live, with deciding, so
+// the server must decide on it too: one rule, util's isBoardPath.
+test("a board whose name is in any case is decided, as the card shows it", async () => {
+  const { d, calls, reads } = deps();
+  const out = await boardDecideForBoard(
+    opts({
+      path: "work/Lesson.Board.JSON",
+      message: message({ name: "Lesson.Board.JSON" }),
+    }),
+    d,
+  );
+  expect(out).toMatchObject({ option: "yes" });
+  expect(reads).toEqual(["/home/user/work/Lesson.Board.JSON"]);
+  expect(calls).toHaveLength(1);
+  for (const p of [
+    "Lesson.Board.JSON",
+    "q.BOARD.json",
+    "q.board.json",
+    "q.json",
+    "q.board.json.txt",
+    "board.json",
+  ]) {
+    expect(isPlainBoardPath(p)).toBe(isBoardPath(p));
   }
 });
 

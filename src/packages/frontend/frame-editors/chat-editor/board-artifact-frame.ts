@@ -15,9 +15,8 @@ export const BOARD_PREVIEW_LIMIT = 16 * 1024 * 1024;
 export const BOARD_FRAME_SANDBOX =
   "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads";
 
-export function isBoardPath(path: string): boolean {
-  return path.toLowerCase().endsWith(".board.json");
-}
+// The same rule as the server's for deciding on a board.
+export { isBoardPath } from "@cocalc/util/sagebrush-board";
 
 /** The frame page on the configured Sagebrush origin, or undefined if the
  * setting is blank or not https (http only for localhost). */

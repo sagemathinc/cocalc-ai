@@ -28,7 +28,11 @@
 
 import { decideRequest } from "./board-decide-request";
 import type { DecideResult } from "./board-decide";
-import { boardPostedName, boardTextDigest } from "@cocalc/util/sagebrush-board";
+import {
+  boardPostedName,
+  boardTextDigest,
+  isBoardPath,
+} from "@cocalc/util/sagebrush-board";
 
 /** The most a board file may be to be read (as the card's preview). */
 export const BOARD_FILE_LIMIT = 16 * 1024 * 1024;
@@ -60,7 +64,8 @@ function codedError(message: string, code: number): Error {
  * filesystem resolves it, so links to one file share a bucket too. */
 export function isPlainBoardPath(path: unknown): path is string {
   if (typeof path !== "string" || path.length > PATH_LIMIT) return false;
-  if (!path.endsWith(".board.json") || path.includes("\0")) return false;
+  // The card's rule, any case: a board it shows live can be decided on.
+  if (!isBoardPath(path) || path.includes("\0")) return false;
   const parts = (path.startsWith("/") ? path.slice(1) : path).split("/");
   return parts.every((p) => p !== "" && p !== "." && p !== "..");
 }
