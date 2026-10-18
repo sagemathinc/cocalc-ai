@@ -9,6 +9,8 @@ import {
   openRouterDecideProvider,
   parseDecisionsResponse,
 } from "./board-decide-openrouter";
+import { sanitizeDecideResult } from "./board-decide";
+import { chooseDecidedOption } from "./board-decide-bound";
 
 const question = {
   prompt: "What does it mean for a group action to be transitive?",
@@ -160,4 +162,45 @@ test("the cost bound: the request's bytes at the capped price, with a margin", (
   );
   // A typical call (143 tokens: 6 micro-dollars) is well inside it.
   expect(provider.maxCostMicrousd(question, ANSWER)).toBeGreaterThan(6);
+});
+
+// Codex on #1134: options are named by the board, so any name, including
+// the ones an object's prototype has, must reach the model and come back.
+test("options named like Object.prototype's keys reach the model and come back", async () => {
+  const names = ["__proto__", "constructor", "toString", "hasOwnProperty"];
+  const tricky = {
+    prompt: "Which one?",
+    options: names.map((name) => ({ name, about: `means ${name}` })),
+  };
+  const calls: any[] = [];
+  const provider = openRouterDecideProvider({
+    apiKey: async () => "sk-test-not-a-real-key",
+    fetchImpl: (async (_url: string, init: any) => {
+      calls.push(init);
+      // the provider's reply as text, parsed as fetch's json() would
+      const probabilities = `{${names
+        .map((n, i) => `${JSON.stringify(n)}: ${i === 0 ? 0.7 : 0.1}`)
+        .join(", ")}}`;
+      const text = `{"answers": {"reader_answer": {"type": "choice", "choice": "__proto__", "probabilities": ${probabilities}, "confidence": 0.9}}}`;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => JSON.parse(text),
+      } as any;
+    }) as any,
+  });
+  const result = await provider.decide(tricky, "the first");
+  // the serialized request names every option, in order, with its words
+  const criteria = JSON.parse(calls[0].body).questions.reader_answer.criteria;
+  expect(Object.keys(criteria)).toEqual(names);
+  for (const name of names) {
+    expect(Object.getOwnPropertyDescriptor(criteria, name)?.value).toBe(
+      `means ${name}`,
+    );
+  }
+  // and the reply's probabilities for each come back, the best chosen
+  const clean = sanitizeDecideResult(tricky, result);
+  expect(clean.options.map((o) => o.name).sort()).toEqual([...names].sort());
+  expect(clean.options[0]).toEqual({ name: "__proto__", p: 0.7 });
+  expect(chooseDecidedOption(clean, names)).toBe("__proto__");
 });

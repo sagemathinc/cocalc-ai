@@ -90,7 +90,11 @@ export function decisionsRequest(
   answer: string,
   usdPerMillionInputTokens: number,
 ) {
-  const criteria: Record<string, string> = {};
+  // Keyed by the board's own option names, so with no prototype: on a
+  // plain {}, an option named "__proto__" would hit the prototype setter
+  // and never reach the model (Codex on #1134). JSON.stringify sends its
+  // own keys, "__proto__" too.
+  const criteria: Record<string, string> = Object.create(null);
   for (const { name, about } of question.options) {
     criteria[name] = about ?? name;
   }
