@@ -1,7 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { encodeRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import {
-  capacityWaitMs,
   createAgentRpcService,
   type AgentRpcExecutionAdapter,
 } from "../agent-rpc-service";
@@ -445,7 +444,6 @@ test("attachment preparations share capacity with ordinary text messages", async
       ...e,
       attempt_id: randomUUID(),
       snapshot_manifest: undefined,
-      deadline: Date.now() + 10_000,
     }),
   ).toMatchObject({ outcome: "rejected", code: "host_overloaded" });
   await service.cancelAttachments({
@@ -798,8 +796,6 @@ test("host admission is shared across service facades and rejects before chat or
   const pending = a.submit(first.e);
   await started;
   try {
-    // Too little of the deadline is left to wait for a slot.
-    second.e.deadline = Date.now() + 10_000;
     const rejected = await b.submit(second.e);
     expect(rejected).toMatchObject({
       outcome: "rejected",
@@ -817,42 +813,6 @@ test("host admission is shared across service facades and rejects before chat or
   expect(
     (await b.submit({ ...second.e, attempt_id: randomUUID() })).outcome,
   ).toBe("accepted");
-});
-
-test("a full recipient waits briefly for a slot instead of rejecting", async () => {
-  const capacity = new AgentRpcCapacity(1, 1);
-  const first = fixture(),
-    second = fixture();
-  let finish!: () => void, entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  first.deps.ensureRunning = () =>
-    new Promise<void>((resolve) => {
-      finish = resolve;
-      entered();
-    });
-  const a = createAgentRpcService(first.deps, new AgentRpcAttempts(), capacity);
-  const b = createAgentRpcService(
-    second.deps,
-    new AgentRpcAttempts(),
-    capacity,
-  );
-  const pending = a.submit(first.e);
-  await started;
-  const waiting = b.submit(second.e);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(second.deps.ensureRunning).not.toHaveBeenCalled();
-  finish();
-  expect((await pending).outcome).toBe("accepted");
-  expect((await waiting).outcome).toBe("accepted");
-});
-
-test("capacity wait leaves the delivery its share of the deadline", () => {
-  expect(capacityWaitMs(130_000, 100_000)).toBe(5_000);
-  expect(capacityWaitMs(122_000, 100_000)).toBe(2_000);
-  expect(capacityWaitMs(110_000, 100_000)).toBe(0);
-  expect(capacityWaitMs(NaN, 100_000)).toBe(0);
 });
 
 test("same-project references are validated after startup and supplied with the prompt", async () => {

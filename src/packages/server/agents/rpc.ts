@@ -80,7 +80,7 @@ function networkMemberLabel(member: AgentNetworkMember): string {
     ? `@${member.name}`
     : member.thread_title?.trim() || `Agent ${member.member_id.slice(0, 8)}`;
 }
-import { AgentRpcCapacityError, admitWithin } from "./admission-capacity";
+import { AgentRpcCapacityError } from "./admission-capacity";
 import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
@@ -347,10 +347,6 @@ async function observeActivity(
   });
 }
 
-// Full admission waits briefly for a permit; the rest of the 30s envelope
-// deadline is left for the delivery itself.
-const ADMISSION_WAIT_MS = 3_000;
-
 async function submitAgentRpcOperation(
   opts: Parameters<AgentRpcControlApi["submit"]>[0],
   phase: "send" | "prepare" | "cancel" = "send",
@@ -467,21 +463,15 @@ async function submitAgentRpcOperation(
       );
     }
     permitId = envelope.permit_id;
-    await admitWithin(
-      ADMISSION_WAIT_MS,
-      {
-        token_id: envelope.permit_id,
-        kind: "permit",
-        binding_hash: hashAgentRpcAdmissionBinding(
-          agentRpcEnvelopeKey(envelope),
-        ),
-        host_id: host.host_id,
-        project_id: envelope.target.project_id,
-        account_id: envelope.account_id,
-        expires_at: new Date(envelope.deadline),
-      },
-      createAgentRpcAdmissionState,
-    );
+    await createAgentRpcAdmissionState({
+      token_id: envelope.permit_id,
+      kind: "permit",
+      binding_hash: hashAgentRpcAdmissionBinding(agentRpcEnvelopeKey(envelope)),
+      host_id: host.host_id,
+      project_id: envelope.target.project_id,
+      account_id: envelope.account_id,
+      expires_at: new Date(envelope.deadline),
+    });
     if (phase === "prepare") {
       const ready = await host.api.prepareAgentRpcAttachments(envelope);
       validateAgentRpcPreparation(ready, opts.request);

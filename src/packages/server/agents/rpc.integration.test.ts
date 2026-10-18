@@ -261,16 +261,7 @@ describe("full admission capacity", () => {
       },
     });
 
-  test("a busy recipient is waited for briefly, then delivered", async () => {
-    createAdmission.mockRejectedValueOnce(
-      new AgentRpcCapacityError("recipient", "permit", 32, 32),
-    );
-    await expect(send()).resolves.toMatchObject({ outcome: "accepted" });
-    expect(createAdmission).toHaveBeenCalledTimes(2);
-    expect(submitAgentRpc).toHaveBeenCalledTimes(1);
-  });
-
-  test("a recipient that stays busy is rejected with the reason", async () => {
+  test("a busy recipient is rejected at once, with the reason", async () => {
     createAdmission.mockRejectedValue(
       new AgentRpcCapacityError("recipient", "permit", 32, 32),
     );
@@ -284,7 +275,8 @@ describe("full admission capacity", () => {
       "the recipient is busy (32 of 32 messages to the recipient's project are being delivered right now); retry in a few seconds",
     );
     expect(submitAgentRpc).not.toHaveBeenCalled();
-  }, 10_000);
+    expect(createAdmission).toHaveBeenCalledTimes(1);
+  });
 
   test("a sender over its own limit is told so", async () => {
     createAdmission.mockRejectedValue(
@@ -294,7 +286,7 @@ describe("full admission capacity", () => {
     expect(outcome.outcome).toBe("rejected");
     expect(outcome.code).toBeUndefined();
     expect(outcome.reason).toContain("you have too many messages in flight");
-  }, 10_000);
+  });
 });
 
 test("a queued message carries the hub's capability to report its failed turn", async () => {

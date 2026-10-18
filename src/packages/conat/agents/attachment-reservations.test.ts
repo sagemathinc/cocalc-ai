@@ -11,7 +11,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup() {
+function setup(capacity = new AgentRpcCapacity(1, 1)) {
   const envelope: AgentRpcEnvelope = {
     version: 3,
     source: { project_id: randomUUID(), agent_id: randomUUID() },
@@ -42,7 +42,6 @@ function setup() {
   const request = { envelope, files: [metadata] };
   const authorize = jest.fn(async () => {});
   const start = jest.fn(async () => {});
-  const capacity = new AgentRpcCapacity(1, 1);
   const reservations = new AgentAttachmentReservations(
     capacity,
     authorize,
@@ -133,6 +132,20 @@ describe("attachment preparation admission", () => {
     });
     expect(s.start).toHaveBeenCalledTimes(2);
     expect(s.adapter.stage).not.toHaveBeenCalled();
+    await s.reservations.cancel(ticket.reservation_id, s.request);
+  });
+
+  test("preparations use the tighter attachment limits", async () => {
+    const s = setup(new AgentRpcCapacity(10, 10, 2, 1));
+    const ticket = await s.reservations.prepare(s.request);
+    await expect(s.reservations.prepare(s.request)).rejects.toMatchObject({
+      code: "project_overloaded",
+      full: { active: 1, limit: 1, attachments: true },
+    });
+    // A text-only send to the same project still has room.
+    expect("code" in s.capacity.acquire(s.envelope.target.project_id)).toBe(
+      false,
+    );
     await s.reservations.cancel(ticket.reservation_id, s.request);
   });
 

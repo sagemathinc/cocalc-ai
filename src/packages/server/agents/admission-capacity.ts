@@ -42,26 +42,3 @@ export class AgentRpcCapacityError extends Error {
     return `${who} (${this.active} of ${this.limit} ${what} ${whose} are being delivered right now); retry in a few seconds`;
   }
 }
-
-const ADMISSION_RETRY_MS = 250;
-
-/** Retries a full admission until waitMs has passed; other errors fail at once. */
-export async function admitWithin<S>(
-  waitMs: number,
-  state: S,
-  create: (state: S) => Promise<void>,
-): Promise<void> {
-  const until = Date.now() + waitMs;
-  for (;;) {
-    try {
-      return await create(state);
-    } catch (error) {
-      if (
-        !(error instanceof AgentRpcCapacityError) ||
-        Date.now() + ADMISSION_RETRY_MS > until
-      )
-        throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, ADMISSION_RETRY_MS));
-  }
-}

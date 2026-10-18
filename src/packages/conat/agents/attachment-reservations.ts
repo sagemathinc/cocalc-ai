@@ -227,7 +227,9 @@ export class AgentAttachmentReservations {
     )
       throw new AttachmentAdmissionError("attachment_preparation_expired");
     await this.authorize(request.envelope);
-    const lease = this.capacity.acquire(request.envelope.target.project_id);
+    const lease = this.capacity.acquire(request.envelope.target.project_id, {
+      attachments: true,
+    });
     if ("code" in lease) throw new AttachmentAdmissionError(lease.code, lease);
     const id = randomUUID();
     const expires = Math.min(request.envelope.deadline, Date.now() + 30_000);

@@ -29,11 +29,11 @@ const MAX_ACTIVE_BY_KIND: Record<AgentRpcAdmissionKind, number> = {
 };
 const MAX_ACTIVE_BY_ACCOUNT: Record<AgentRpcAdmissionKind, number> = {
   permit: 64,
-  preparation: 8,
+  preparation: 4,
 };
 const MAX_ACTIVE_BY_PROJECT: Record<AgentRpcAdmissionKind, number> = {
   permit: 32,
-  preparation: 4,
+  preparation: 2,
 };
 
 export const hashAgentRpcAdmissionBinding = (value: string): string =>

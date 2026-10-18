@@ -219,10 +219,7 @@ export function createAgentRpcService(
         onNewAttempt?.();
         const lease = staged
           ? { track: <T>(work: Promise<T>) => work, release: () => {} }
-          : await capacity.acquireWithin(
-              e.target.project_id,
-              capacityWaitMs(e.deadline),
-            );
+          : capacity.acquire(e.target.project_id);
         if ("code" in lease)
           return rpcOutcome(e, "rejected", {
             code: lease.code,
@@ -601,21 +598,6 @@ export function createAgentRpcService(
     },
     close: () => reservations.close(),
   };
-}
-
-// A full recipient waits briefly for a slot, but only while enough of the
-// submission deadline remains for the delivery itself.
-const CAPACITY_WAIT_MAX_MS = 5_000;
-const CAPACITY_DELIVERY_RESERVE_MS = 20_000;
-export function capacityWaitMs(deadline: number, now = Date.now()): number {
-  if (!Number.isFinite(deadline)) return 0;
-  return Math.max(
-    0,
-    Math.min(
-      CAPACITY_WAIT_MAX_MS,
-      deadline - now - CAPACITY_DELIVERY_RESERVE_MS,
-    ),
-  );
 }
 
 // Process-local evidence shared by host RPC invocations; never persisted in V1.
