@@ -39,8 +39,44 @@ const MAX_ACTIVE_BY_PROJECT: Record<AgentRpcAdmissionKind, number> = {
 export const hashAgentRpcAdmissionBinding = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
 
+type PreparationBinding = Pick<
+  AgentRpcAdmissionState,
+  "token_id" | "binding_hash" | "host_id" | "project_id" | "account_id"
+>;
+
+const PREPARATION_MATCH = `kind='preparation' AND token_id=$1 AND binding_hash=$2
+  AND host_id=$3 AND project_id=$4 AND account_id=$5 AND expires_at>now()`;
+
+const preparationArgs = (p: PreparationBinding) => [
+  p.token_id,
+  p.binding_hash,
+  p.host_id,
+  p.project_id,
+  p.account_id,
+];
+
+/** A live preparation matching this binding, without claiming it. */
+export async function findAgentRpcPreparation(
+  binding: PreparationBinding,
+): Promise<AgentRpcAdmissionState | undefined> {
+  return (
+    await agentStore().query<AgentRpcAdmissionState>(
+      `SELECT token_id,kind,binding_hash,host_id,project_id,account_id,expires_at
+       FROM agent_rpc_admission_state WHERE ${PREPARATION_MATCH}`,
+      preparationArgs(binding),
+    )
+  ).rows[0];
+}
+
+/**
+ * coveredBy: the send's own live preparation. That preparation already holds
+ * capacity under the tighter preparation limits, so the permit for its send
+ * is not counted again; otherwise a full permit limit would turn away a send
+ * whose reservation then lingers until it expires.
+ */
 export async function createAgentRpcAdmissionState(
   state: AgentRpcAdmissionState,
+  { coveredBy }: { coveredBy?: PreparationBinding } = {},
 ): Promise<void> {
   const expiresAt = state.expires_at.getTime();
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
@@ -53,6 +89,15 @@ export async function createAgentRpcAdmissionState(
     await db.query(
       "DELETE FROM agent_rpc_admission_state WHERE expires_at<=now()",
     );
+    const covered =
+      state.kind === "permit" &&
+      coveredBy != null &&
+      (
+        await db.query(
+          `SELECT 1 FROM agent_rpc_admission_state WHERE ${PREPARATION_MATCH}`,
+          preparationArgs(coveredBy),
+        )
+      ).rows.length > 0;
     const counts = (
       await db.query<{
         total: string;
@@ -80,9 +125,15 @@ export async function createAgentRpcAdmissionState(
           limit,
         );
     };
-    full("bay", counts?.total, MAX_ACTIVE_BY_KIND[state.kind]);
-    full("sender", counts?.account_total, MAX_ACTIVE_BY_ACCOUNT[state.kind]);
-    full("recipient", counts?.project_total, MAX_ACTIVE_BY_PROJECT[state.kind]);
+    if (!covered) {
+      full("bay", counts?.total, MAX_ACTIVE_BY_KIND[state.kind]);
+      full("sender", counts?.account_total, MAX_ACTIVE_BY_ACCOUNT[state.kind]);
+      full(
+        "recipient",
+        counts?.project_total,
+        MAX_ACTIVE_BY_PROJECT[state.kind],
+      );
+    }
     await db.query(
       `INSERT INTO agent_rpc_admission_state
        (token_id,kind,binding_hash,host_id,project_id,account_id,expires_at)

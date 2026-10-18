@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const sourceProject = randomUUID();
 const targetProject = randomUUID();
@@ -33,7 +33,13 @@ const identities = new Map([
 const checkNetwork = jest.fn();
 const assertHost = jest.fn(async () => {});
 const submitAgentRpc = jest.fn();
-const createAdmission = jest.fn(async (_state: unknown) => {});
+const createAdmission = jest.fn(async (_state: unknown, _opts?: unknown) => {});
+const claimPreparation = jest.fn(
+  async (_state: unknown): Promise<any> => undefined,
+);
+const findPreparation = jest.fn(
+  async (_binding: unknown): Promise<any> => undefined,
+);
 const remoteSubmit = jest.fn();
 let remoteTarget = false;
 const query = jest.fn(async () => ({
@@ -90,9 +96,11 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   createHostControlClient: () => ({ submitAgentRpc }),
 }));
 jest.mock("./admission-state", () => ({
-  createAgentRpcAdmissionState: (state: unknown) => createAdmission(state),
+  createAgentRpcAdmissionState: (state: unknown, opts?: unknown) =>
+    createAdmission(state, opts),
   deleteAgentRpcAdmissionState: async () => {},
-  claimAgentRpcAdmissionState: async () => undefined,
+  claimAgentRpcAdmissionState: (state: unknown) => claimPreparation(state),
+  findAgentRpcPreparation: (binding: unknown) => findPreparation(binding),
   getAgentRpcAdmissionState: async () => undefined,
   hashAgentRpcAdmissionBinding: () => "binding",
 }));
@@ -160,6 +168,8 @@ beforeEach(() => {
   assertHost.mockClear();
   query.mockClear();
   createAdmission.mockReset().mockResolvedValue(undefined);
+  claimPreparation.mockReset().mockResolvedValue(undefined);
+  findPreparation.mockReset().mockResolvedValue(undefined);
   submitAgentRpc.mockReset().mockImplementation(async (envelope) => ({
     version: 3,
     target: envelope.target,
@@ -276,6 +286,71 @@ describe("full admission capacity", () => {
     );
     expect(submitAgentRpc).not.toHaveBeenCalled();
     expect(createAdmission).toHaveBeenCalledTimes(1);
+  });
+
+  test("a refused permit leaves an attachment reservation unclaimed", async () => {
+    const data = Buffer.from([1, 2, 3]);
+    const file = {
+      name: "notes.bin",
+      size: data.length,
+      sha256: createHash("sha256").update(data).digest("hex"),
+    };
+    const reservation = randomUUID();
+    const expires_at = new Date(Date.now() + 20_000);
+    findPreparation.mockResolvedValue({ token_id: reservation, expires_at });
+    claimPreparation.mockResolvedValue({ token_id: reservation, expires_at });
+    createAdmission.mockRejectedValue(
+      new AgentRpcCapacityError("recipient", "permit", 32, 32),
+    );
+    const outcome = await agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "with a file",
+        snapshot_manifest: [file],
+        attachment_reservation: reservation,
+      },
+      snapshot_payload: [{ ...file, data }],
+    } as any);
+    expect(outcome).toMatchObject({ outcome: "rejected" });
+    // The permit was offered the send's own preparation as cover ...
+    expect(createAdmission.mock.calls[0][1]).toMatchObject({
+      coveredBy: expect.objectContaining({ token_id: reservation }),
+    });
+    // ... and the one-shot preparation was not consumed.
+    expect(claimPreparation).not.toHaveBeenCalled();
+    expect(submitAgentRpc).not.toHaveBeenCalled();
+
+    // Admitted: only then is the preparation claimed, and the send goes.
+    createAdmission.mockReset().mockResolvedValue(undefined);
+    await agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "with a file",
+        snapshot_manifest: [file],
+        attachment_reservation: reservation,
+      },
+      snapshot_payload: [{ ...file, data }],
+    } as any);
+    expect(claimPreparation).toHaveBeenCalledTimes(1);
+    expect(createAdmission.mock.invocationCallOrder[0]).toBeLessThan(
+      claimPreparation.mock.invocationCallOrder[0],
+    );
   });
 
   test("a sender over its own limit is told so", async () => {

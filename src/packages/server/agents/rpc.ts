@@ -85,6 +85,7 @@ import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
   deleteAgentRpcAdmissionState,
+  findAgentRpcPreparation,
   getAgentRpcAdmissionState,
   hashAgentRpcAdmissionBinding,
 } from "./admission-state";
@@ -441,37 +442,59 @@ async function submitAgentRpcOperation(
         });
       }
     }
-    if (phase !== "prepare" && envelope.snapshot_manifest) {
-      const prepared = await claimAgentRpcAdmissionState({
-        token_id: envelope.attachment_reservation!,
-        kind: "preparation",
-        binding_hash: hashAgentRpcAdmissionBinding(preparationKey(envelope)),
-        host_id: host.host_id,
-        project_id: envelope.target.project_id,
-        account_id: envelope.account_id,
+    // A send with attachments consumes its one-shot preparation only after
+    // its permit is admitted, so a refused permit leaves the reservation for
+    // a retry or cancel instead of burning it.
+    const preparation =
+      phase !== "prepare" && envelope.snapshot_manifest
+        ? {
+            token_id: envelope.attachment_reservation!,
+            binding_hash: hashAgentRpcAdmissionBinding(
+              preparationKey(envelope),
+            ),
+            host_id: host.host_id,
+            project_id: envelope.target.project_id,
+            account_id: envelope.account_id,
+          }
+        : undefined;
+    const unavailable = () =>
+      rpcOutcome(opts.request, "rejected", {
+        code: "attachment_preparation_unavailable",
+        reason:
+          "Attachment preparation expired, changed, or was already used; no message was submitted",
+        chat_effect: "none",
       });
-      if (!prepared)
-        return rpcOutcome(opts.request, "rejected", {
-          code: "attachment_preparation_unavailable",
-          reason:
-            "Attachment preparation expired, changed, or was already used; no message was submitted",
-          chat_effect: "none",
-        });
+    if (preparation) {
+      const prepared = await findAgentRpcPreparation(preparation);
+      if (!prepared) return unavailable();
       envelope.deadline = Math.min(
         envelope.deadline,
         prepared.expires_at.getTime(),
       );
     }
     permitId = envelope.permit_id;
-    await createAgentRpcAdmissionState({
-      token_id: envelope.permit_id,
-      kind: "permit",
-      binding_hash: hashAgentRpcAdmissionBinding(agentRpcEnvelopeKey(envelope)),
-      host_id: host.host_id,
-      project_id: envelope.target.project_id,
-      account_id: envelope.account_id,
-      expires_at: new Date(envelope.deadline),
-    });
+    await createAgentRpcAdmissionState(
+      {
+        token_id: envelope.permit_id,
+        kind: "permit",
+        binding_hash: hashAgentRpcAdmissionBinding(
+          agentRpcEnvelopeKey(envelope),
+        ),
+        host_id: host.host_id,
+        project_id: envelope.target.project_id,
+        account_id: envelope.account_id,
+        expires_at: new Date(envelope.deadline),
+      },
+      { coveredBy: preparation },
+    );
+    if (
+      preparation &&
+      !(await claimAgentRpcAdmissionState({
+        ...preparation,
+        kind: "preparation",
+      }))
+    )
+      return unavailable();
     if (phase === "prepare") {
       const ready = await host.api.prepareAgentRpcAttachments(envelope);
       validateAgentRpcPreparation(ready, opts.request);
