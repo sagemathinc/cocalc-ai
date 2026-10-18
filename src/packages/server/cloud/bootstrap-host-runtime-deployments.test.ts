@@ -639,4 +639,54 @@ describe("bootstrap-host promoted artifact defaults", () => {
     );
     expect(scripts.projectHostVersion).toBe("ph-latest");
   });
+
+  it("keeps a desired artifact version the store no longer serves when the host already has it installed", async () => {
+    // e.g. a build installed directly on the host: a reboot must not silently
+    // move the host to "latest" and back.
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+      {
+        scope_type: "host",
+        scope_id: "host-123",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "missing-build",
+      },
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "tools",
+        desired_version: "missing-build",
+      },
+    ]);
+
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      ...baseRow(),
+      metadata: {
+        ...baseRow().metadata,
+        software_inventory: [
+          {
+            artifact: "project-host",
+            current_version: "missing-build",
+            installed_versions: ["missing-build", "older-build"],
+          },
+          {
+            // Installed but not current: the version directory still exists.
+            artifact: "tools",
+            current_version: "older-build",
+            installed_versions: ["older-build", "missing-build"],
+          },
+        ],
+      },
+    } as any);
+
+    expect(scripts.projectHostVersion).toBe("missing-build");
+    expect(scripts.projectHostBundleUrl).toBe(
+      `${softwareBaseUrl}/project-host/missing-build/bundle-linux.tar.xz`,
+    );
+    expect(scripts.projectHostBundleSha256).toBe("");
+    expect(scripts.toolsVersion).toBe("missing-build");
+    expect(scripts.toolsManifestUrl).toBe("");
+  });
 });

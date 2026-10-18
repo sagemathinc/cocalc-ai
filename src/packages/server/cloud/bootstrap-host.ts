@@ -769,6 +769,31 @@ function observedBootstrapArtifactVersions(
   return versions;
 }
 
+function installedBootstrapArtifactVersions(
+  row: ProjectHostRow,
+): Partial<
+  Record<Exclude<BootstrapManagedArtifact, "bootstrap-environment">, string[]>
+> {
+  const versions: Partial<
+    Record<Exclude<BootstrapManagedArtifact, "bootstrap-environment">, string[]>
+  > = {};
+  for (const artifact of observedRuntimeArtifactsFromMetadata(row as any)) {
+    if (
+      artifact.artifact !== "project-host" &&
+      artifact.artifact !== "container-runtime" &&
+      artifact.artifact !== "project-bundle" &&
+      artifact.artifact !== "tools"
+    ) {
+      continue;
+    }
+    const installed = new Set(artifact.installed_versions ?? []);
+    const current = `${artifact.current_version ?? ""}`.trim();
+    if (current) installed.add(current);
+    versions[artifact.artifact] = [...installed].filter(Boolean);
+  }
+  return versions;
+}
+
 function chooseBootstrapArtifactVersion({
   host_id,
   artifact,
@@ -841,12 +866,15 @@ async function resolveBootstrapArtifactBundle({
   softwareBaseUrl,
   artifact,
   desiredVersion,
+  installedVersions,
   targetOs,
   targetArch,
 }: {
   softwareBaseUrl: string;
   artifact: Exclude<BootstrapManagedArtifact, "bootstrap-environment">;
   desiredVersion?: string;
+  // Version directories the host last reported as installed.
+  installedVersions?: string[];
   targetOs: SoftwareOs;
   targetArch: SoftwareArch;
 }): Promise<{
@@ -872,6 +900,21 @@ async function resolveBootstrapArtifactBundle({
         sha256,
         version,
       };
+    }
+    if (installedVersions?.includes(version)) {
+      // The host already has the desired version (e.g. a build that was
+      // installed directly or since pruned from the store). Bootstrap reuses
+      // an existing version directory without downloading, so keep it rather
+      // than silently moving the host to whatever "latest" is on reboot.
+      logger.warn(
+        "bootstrap host: desired artifact bundle is unavailable but already installed; keeping it",
+        {
+          artifact,
+          desired_version: version,
+          software_base_url: softwareBaseUrl,
+        },
+      );
+      return { manifestUrl: "", url, version };
     }
     logger.warn(
       "bootstrap host: desired artifact bundle is unavailable; falling back to latest manifest",
@@ -1020,6 +1063,7 @@ export async function buildBootstrapScripts(
     row.id,
   );
   const observedArtifactVersions = observedBootstrapArtifactVersions(row);
+  const installedArtifactVersions = installedBootstrapArtifactVersions(row);
   const gcpProjectId =
     normalizeGcpProjectId(
       runtime?.metadata?.gcp_project_id ?? runtime?.metadata?.project_id,
@@ -1036,6 +1080,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions["project-host"],
       observedVersion: observedArtifactVersions["project-host"],
     }),
+    installedVersions: installedArtifactVersions["project-host"],
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1053,6 +1098,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions["container-runtime"],
       observedVersion: observedArtifactVersions["container-runtime"],
     }),
+    installedVersions: installedArtifactVersions["container-runtime"],
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1069,6 +1115,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions["project-bundle"],
       observedVersion: observedArtifactVersions["project-bundle"],
     }),
+    installedVersions: installedArtifactVersions["project-bundle"],
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1086,6 +1133,7 @@ export async function buildBootstrapScripts(
       desiredVersion: desiredArtifactVersions.tools,
       observedVersion: observedArtifactVersions.tools,
     }),
+    installedVersions: installedArtifactVersions.tools,
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
