@@ -3,6 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+  parseSrcset,
+  serializeSrcset,
+  type UrlTransform,
+} from "@cocalc/frontend/lib/url-transform";
+
 const ALLOWED_TAGS = new Set([
   "address",
   "article",
@@ -275,12 +283,8 @@ export function isSafeHtmlUrl(value: string): boolean {
 }
 
 function sanitizeSrcset(value: string): string | undefined {
-  const candidates = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => isSafeHtmlUrl(part.split(/\s+/)[0] ?? ""));
-  return candidates.length > 0 ? candidates.join(", ") : undefined;
+  const candidates = parseSrcset(value).filter(({ url }) => isSafeHtmlUrl(url));
+  return candidates.length > 0 ? serializeSrcset(candidates) : undefined;
 }
 
 function isAllowedIframeSrc(value: string): boolean {
@@ -295,7 +299,7 @@ function isAllowedIframeSrc(value: string): boolean {
 export function sanitizeHtmlAttributes(
   name: string,
   attribs: Record<string, string> | undefined,
-  urlTransform?: (url: string, tag?: string) => string | undefined,
+  urlTransform?: UrlTransform,
 ): Record<string, string> {
   const tag = name.toLowerCase();
   if (tag === "input") {
@@ -325,9 +329,15 @@ export function sanitizeHtmlAttributes(
       continue;
     }
     const transformed =
-      URL_ATTRIBUTES.has(attr) && urlTransform != null
-        ? (urlTransform(rawValue, tag) ?? rawValue)
-        : rawValue;
+      attr === "srcset"
+        ? applyUrlTransformToSrcset(urlTransform, rawValue, tag)
+        : URL_ATTRIBUTES.has(attr)
+          ? applyUrlTransform(urlTransform, rawValue, tag)
+          : rawValue;
+    if (transformed == null) {
+      // rejected by urlTransform
+      continue;
+    }
     if (attr === "srcset") {
       const clean = sanitizeSrcset(transformed);
       if (clean != null) {

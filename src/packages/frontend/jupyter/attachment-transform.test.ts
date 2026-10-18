@@ -6,6 +6,7 @@
 import { fromJS } from "immutable";
 
 import { attachmentTransform } from "./attachment-transform";
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 
 describe("attachmentTransform", () => {
   const cell = fromJS({
@@ -30,8 +31,12 @@ describe("attachmentTransform", () => {
   });
 
   it("returns empty string for unknown attachment encodings", () => {
-    expect(attachmentTransform(cell, "attachment:weird.bin")).toBe("");
-    expect(attachmentTransform(cell, "attachment:missing.png")).toBe("");
+    expect(attachmentTransform(cell, "attachment:weird.bin")).toBe(
+      URL_REJECTED,
+    );
+    expect(attachmentTransform(cell, "attachment:missing.png")).toBe(
+      URL_REJECTED,
+    );
   });
 
   it("leaves non-attachment URLs alone", () => {

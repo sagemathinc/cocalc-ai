@@ -25,6 +25,11 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
 import {
+  URL_REJECTED,
+  applyUrlTransform,
+  applyUrlTransformToSrcset,
+} from "@cocalc/frontend/lib/url-transform";
+import {
   enforceHtmlSafetyFloor,
   isAllowedHtmlTag,
   isDocumentContainerHtmlTag,
@@ -34,7 +39,7 @@ import {
   shouldDropHtmlTagContents,
 } from "./sanitize-html";
 
-const URL_ATTRIBS = ["src", "href", "data"];
+const URL_ATTRIBS = ["src", "srcset", "href", "data"];
 const MATH_SKIP_TAGS = new Set<string>(MathJaxConfig.tex2jax.skipTags);
 
 export default function HTML({
@@ -168,21 +173,38 @@ export default function HTML({
       if (noSanitize && urlTransform != null && attribs != null) {
         // since we did not sanitize the HTML (which also does urlTransform),
         // we have to do the urlTransform here instead.
+        // Rejection is decided with the element's tag (so, e.g., a transform
+        // that rejects all images works here too).  A URL that is not
+        // rejected is transformed without a tag, as it always has been here.
+        const transform = (url: string) =>
+          applyUrlTransform(urlTransform, url, name) == null
+            ? URL_REJECTED
+            : urlTransform(url);
+        let transformed: Record<string, string> | undefined = undefined;
         for (const attrib of URL_ATTRIBS) {
-          if (attribs[attrib] != null) {
-            const x = urlTransform(attribs[attrib]);
-            if (x != null) {
-              const props = attributesToProps(attribs);
-              props[attrib] = x;
-              return React.createElement(
-                name,
-                props,
-                children && children?.length > 0
-                  ? domToReact(children as any, options)
-                  : undefined,
-              );
-            }
+          const value = attribs[attrib];
+          if (value == null) continue;
+          const x =
+            attrib === "srcset"
+              ? applyUrlTransformToSrcset(transform, value)
+              : applyUrlTransform(transform, value);
+          if (x === value) continue;
+          transformed ??= { ...attribs };
+          if (x == null) {
+            // rejected by urlTransform
+            delete transformed[attrib];
+          } else {
+            transformed[attrib] = x;
           }
+        }
+        if (transformed != null) {
+          return React.createElement(
+            name,
+            attributesToProps(transformed),
+            children && children?.length > 0
+              ? domToReact(children as any, options)
+              : undefined,
+          );
         }
       }
     } catch (err) {

@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useRef, useState } from "react";
+import { URL_REJECTED } from "@cocalc/frontend/lib/url-transform";
 import type React from "react";
 import type { IconName } from "@cocalc/frontend/components";
 
@@ -509,7 +510,7 @@ function SavedFileArtifact({
             disableMarkdownCodebar: true,
             urlTransform: (url, tag) =>
               tag?.toLowerCase() === "img"
-                ? ""
+                ? URL_REJECTED
                 : context.urlTransform?.(url, tag),
           }}
         >
@@ -539,7 +540,7 @@ function SavedFileArtifact({
                 disableMarkdownCodebar: true,
                 urlTransform: (url, tag) =>
                   tag?.toLowerCase() === "img"
-                    ? ""
+                    ? URL_REJECTED
                     : context.urlTransform?.(url, tag),
               }}
             />
