@@ -189,13 +189,20 @@ describe("agent delivery reports across bays", () => {
   // The seed forwards a report about a message to the bay that owns the
   // sender's project, over the real fabric; only that bay may write it, and
   // only with the capability a hub of this cluster minted for the message.
-  async function deliverFromSeed({ project_id, forged = false }) {
+  async function deliverFromSeed({
+    project_id,
+    forged = false,
+    agent_id = randomUUID(),
+    kind = "error",
+    tool_ran,
+  }) {
     const report = {
       version: 1,
       report_id: randomUUID(),
       attempt_id: randomUUID(),
       turn_started_at: Date.now() - 60_000,
-      kind: "error",
+      kind,
+      ...(tool_ran === undefined ? {} : { tool_ran }),
     };
     return await runInBay(
       cluster,
@@ -208,7 +215,7 @@ describe("agent delivery reports across bays", () => {
        const project_id = ${JSON.stringify(project_id)};
        report.authorization = {
          version: 3,
-         source: { project_id, agent_id: ${JSON.stringify(randomUUID())} },
+         source: { project_id, agent_id: ${JSON.stringify(agent_id)} },
          source_run_id: ${JSON.stringify(randomUUID())},
          target: { project_id: ${JSON.stringify(alice.project)}, agent_id: ${JSON.stringify(randomUUID())} },
          target_path: "/home/user/b.chat",
@@ -261,6 +268,110 @@ describe("agent delivery reports across bays", () => {
       await deliverFromSeed({ project_id: bob.project }),
       /agent not found/,
     );
+  });
+
+  describe("held or downgraded for what the sender's host can render", () => {
+    // The sender's agent and host live on the attached bay; the seed
+    // forwards. Holding is decided there, from the host's own heartbeat
+    // metadata (its advertised report version, for the build it runs).
+    const agent_id = randomUUID();
+    const hosts = {
+      old: { software: { project_host: "build-1" } },
+      "rolled back": {
+        software: { project_host: "build-1" },
+        agent_rpc_report: { version: 2, project_host: "build-2" },
+      },
+      current: {
+        software: { project_host: "build-2" },
+        agent_rpc_report: { version: 2, project_host: "build-2" },
+      },
+    };
+    const hostIds = Object.fromEntries(
+      Object.keys(hosts).map((name) => [name, randomUUID()]),
+    );
+    let project_id;
+
+    before(async () => {
+      project_id = await createProject(bob.client, "bob-report-sender");
+      assert.equal(await owningBay(project_id), ATTACHED);
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const pool = getPool();
+         await pool.query(
+           "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES ($1,$2,$3,$4,$5,$6)",
+           [${JSON.stringify(agent_id)}, ${JSON.stringify(project_id)}, "/home/user/a.chat", "thread-a", "sender", ${JSON.stringify(bob.account_id)}],
+         );
+         const hosts = ${JSON.stringify(hosts)};
+         const ids = ${JSON.stringify(hostIds)};
+         for (const [name, metadata] of Object.entries(hosts))
+           await pool.query(
+             "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, $2, 'off', $3, $4, NOW(), NOW())",
+             [ids[name], "report host " + name, ${JSON.stringify(ATTACHED)}, metadata],
+           );`,
+      );
+    });
+
+    async function onHost(name) {
+      await runInBay(
+        cluster,
+        ATTACHED,
+        `await require("@cocalc/database/pool").default().query(
+           "UPDATE projects SET host_id=$1 WHERE project_id=$2",
+           [${JSON.stringify(hostIds[name])}, ${JSON.stringify(project_id)}],
+         );`,
+      );
+    }
+    const held = /must be upgraded before it can receive this report/;
+    // Past the version check, the report goes to the host, which does not
+    // run here: it failed at the host, not at the version check.
+    const forwarded = (result) =>
+      assert.ok(
+        result !== "delivered" &&
+          !held.test(result) &&
+          !/agent not found|does not match|stale agent RPC route/.test(result),
+        result,
+      );
+
+    for (const name of ["old", "rolled back"]) {
+      it(`holds a report that ran tools for a${name === "old" ? "n" : ""} ${name} host`, async () => {
+        await onHost(name);
+        for (const report of [
+          { kind: "canceled", tool_ran: true },
+          { kind: "error", tool_ran: true },
+          { kind: "error" },
+        ])
+          assert.match(
+            await deliverFromSeed({ project_id, agent_id, ...report }),
+            held,
+          );
+      });
+
+      it(`downgrades one that ran nothing for a${name === "old" ? "n" : ""} ${name} host`, async () => {
+        await onHost(name);
+        forwarded(
+          await deliverFromSeed({
+            project_id,
+            agent_id,
+            kind: "canceled",
+            tool_ran: false,
+          }),
+        );
+      });
+    }
+
+    it("forwards every report to a current host", async () => {
+      await onHost("current");
+      forwarded(
+        await deliverFromSeed({
+          project_id,
+          agent_id,
+          kind: "canceled",
+          tool_ran: true,
+        }),
+      );
+    });
   });
 });
 

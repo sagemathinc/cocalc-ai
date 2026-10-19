@@ -20,6 +20,7 @@ import {
   drainAgentRpcReports,
   noteAgentMessageTurnFailed,
 } from "./agent-rpc-report";
+import { toolUseTracker } from "./tool-use";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -8055,37 +8056,6 @@ type AcpExecutionResult = {
   outcome: TurnOutcome;
 };
 
-/** Events that mean the agent acted (ran a command, wrote a file, ...). */
-function isToolEvent(payload?: AcpStreamPayload | null): boolean {
-  if (payload?.type !== "event") return false;
-  const event = payload.event;
-  switch (event.type) {
-    case "terminal":
-    case "file":
-    case "diff":
-    case "image":
-    case "subagent":
-    case "peerMessage":
-      return true;
-    case "harness": {
-      // A tool call counts once it runs, not while it waits for permission
-      // (which may be refused or canceled). "failed" ran too: it may have
-      // changed something before it failed, and an agent need not report
-      // in_progress first.
-      const data = event.data as { sessionUpdate?: unknown; status?: unknown };
-      return (
-        (data?.sessionUpdate === "tool_call" ||
-          data?.sessionUpdate === "tool_call_update") &&
-        (data.status === "in_progress" ||
-          data.status === "completed" ||
-          data.status === "failed")
-      );
-    }
-    default:
-      return false;
-  }
-}
-
 function paymentSourceFromAuthSource({
   authSource,
   accountId,
@@ -8298,11 +8268,11 @@ async function executeAcpRequest({
     let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
     let recoveryDetail: string | undefined;
     // What the turn did and how it failed, for its outcome.
-    let toolRan = false;
+    const toolUse = toolUseTracker();
     let streamedFailure: TurnFailure | undefined;
     let streamedCode: string | undefined;
     const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
-      if (isToolEvent(payload)) toolRan = true;
+      toolUse.observe(payload);
       if (payload?.type === "error") {
         streamedFailure ??= payload.failure;
         streamedCode ??= payload.code;
@@ -8498,7 +8468,7 @@ async function executeAcpRequest({
         failure: streamedFailure,
         code: recoveryCode ?? streamedCode,
         error: terminalError,
-        toolRan,
+        toolRan: toolUse.ran,
       }),
     };
   } finally {
@@ -10217,7 +10187,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // Record progress now so the host watchdog cannot mistake that gap for a
     // stall.
     noteDetachedWorkerExecutionSettled(job.op_id);
-    setAcpJobState({
+    // A fence (project stop) or cancel may have ended the job while the turn
+    // unwound: then it, not this worker, resumes or reports the turn.
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: result.terminalState,
       error: result.terminalState === "error" ? result.error : undefined,
@@ -10230,6 +10203,13 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     let resumed: AcpJobRow | undefined;
     let recoveryPending = false;
+    if (!ended) {
+      logger.info("queued acp job was ended by another path while it ran", {
+        op_id: job.op_id,
+        state: getAcpJobByOpId(job.op_id)?.state,
+      });
+      return;
+    }
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
         resumed = await enqueueFailureRecoveryContinuation({
@@ -10276,14 +10256,15 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       request,
       error: message,
     });
-    setAcpJobState({
+    const ended = setAcpJobState({
+      onlyIfRunning: true,
       op_id: job.op_id,
       state: "error",
       error: message,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       outcome,
     });
-    reportFailedAgentMessageTurn(job, request, message, outcome);
+    if (ended) reportFailedAgentMessageTurn(job, request, message, outcome);
   }
 }
 
@@ -12493,16 +12474,9 @@ async function handleAcpControlRequestNow(
     if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
     }
-    await persistQueuedUserMessageProjection({
-      client: conatClient,
-      project_id,
-      path,
-      thread_id,
-      user_message_id,
-      queued: false,
-    });
     // An agent that sent it is told it will not run, if this canceled it
-    // (not an earlier cancel, or a fence that reports on its own).
+    // (not an earlier cancel, or a fence that reports on its own). First:
+    // the chat update below can fail, and a retried cancel changes nothing.
     if (canceledNow) {
       // A message a restart held may have run already.
       const canceled: TurnOutcome =
@@ -12517,6 +12491,14 @@ async function handleAcpControlRequestNow(
         canceled,
       );
     }
+    await persistQueuedUserMessageProjection({
+      client: conatClient,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      queued: false,
+    });
     return { ok: true, state: "canceled" };
   }
   if (
