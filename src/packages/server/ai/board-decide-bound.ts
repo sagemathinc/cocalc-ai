@@ -6,9 +6,13 @@
 // Board decide bound to a posted board (daybreak2's HARD-E33-1): the caller
 // names a board file, says which board its card posted on the channel (the
 // card's revision and the SHA-256 of the text it posted), and passes the
-// frame's `decide` message. The server reads the board itself and refuses
-// unless it is exactly the posted text: a stale message is never checked
-// against a newer board. Sagebrush's decideRequest then takes the question
+// frame's `decide` message. The server that has the project's files reads
+// the board (backend/sagebrush-board: a project host, or the owning bay in
+// the workspace runtime; this call runs on the project's owning bay,
+// conat/hub/api/routes.ts) and refuses unless it is exactly the posted text:
+// a stale message is never checked against a newer board. The board never
+// comes here (AGENTS.md: control plane and data plane; Codex on #1134).
+// Sagebrush's decideRequest, there, takes the question
 // and its options from that text, and compares the message's name and
 // revision with the card's. Only the reader's words come from the message.
 // The prompt sent is that question, those options and those words; no other
@@ -17,37 +21,37 @@
 // The card's revision only labels the posted board: what is classified is
 // the file the server read, matching the digest (daybreak2, cad7a07be2).
 //
-// Per (account, board), keyed by the board's resolved path: one call in
-// flight, taken before the file is read (HARD-CAD-2), and at most
-// CALLS_PER_BOARD_PER_HOUR an hour; and in total, for every account and
-// board, MAX_IN_FLIGHT_TOTAL in flight and MAX_CALLS_PER_MINUTE_TOTAL a
-// minute, both before the file is read (the spec's "per user and board, and
-// bounds the total rate it serves"). These are per hub process; the hard
+// Per (account, board): one call in flight per path as asked, taken before
+// the file is read (HARD-CAD-2), and at most CALLS_PER_BOARD_PER_HOUR an
+// hour per path as the filesystem resolves it; and in total, for every
+// account and board, MAX_IN_FLIGHT_TOTAL in flight and
+// MAX_CALLS_PER_MINUTE_TOTAL a minute, both before the file is read (the
+// spec's "per user and board, and bounds the total rate it serves"). The
+// file's server bounds its reads per project and in total. These are per
+// process; the hard
 // bounds, shared by every replica and atomic, are in the funding's
 // reservation (board-decide-funding.ts): the account's per-minute limit,
 // its AI allowance, and the site pool.
 
-import { decideRequest } from "./board-decide-request";
 import type { DecideResult } from "./board-decide";
 import {
-  boardPostedName,
-  boardTextDigest,
-  isBoardPath,
+  isBoardDecideBinding,
+  isPlainBoardPath,
 } from "@cocalc/util/sagebrush-board";
+import type {
+  BoardDecidePrepareOptions,
+  BoardDecidePrepared,
+} from "@cocalc/conat/project/board-decide";
 
-/** The most a board file may be to be read (as the card's preview). */
-export const BOARD_FILE_LIMIT = 16 * 1024 * 1024;
+export { isPlainBoardPath };
 export const CALLS_PER_BOARD_PER_HOUR = 60;
 /** The total this hub process serves, for every account and board: at most
- * this many in flight (each holds at most one board read in memory) and
- * this many started a minute. */
+ * this many in flight and this many started a minute. (A board is never
+ * read here: the file's server reads it, backend/sagebrush-board.) */
 export const MAX_IN_FLIGHT_TOTAL = 16;
 export const MAX_CALLS_PER_MINUTE_TOTAL = 600;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * 60_000;
-const PATH_LIMIT = 4096;
-const REVISION_LIMIT = 200;
-const SHA256 = /^[0-9a-f]{64}$/;
 
 /** When the model's best option counts as the reader's meaning; below
  * either, the answer is "none fits" (null), and the board falls back. */
@@ -58,17 +62,6 @@ function codedError(message: string, code: number): Error {
   const err = new Error(message);
   (err as any).code = code;
   return err;
-}
-
-/** A board path spelled one way only: no empty, "." or ".." components and
- * no trailing slash (HARD-CAD-1). The limiter then uses the path as the
- * filesystem resolves it, so links to one file share a bucket too. */
-export function isPlainBoardPath(path: unknown): path is string {
-  if (typeof path !== "string" || path.length > PATH_LIMIT) return false;
-  // The card's rule, any case: a board it shows live can be decided on.
-  if (!isBoardPath(path) || path.includes("\0")) return false;
-  const parts = (path.startsWith("/") ? path.slice(1) : path).split("/");
-  return parts.every((p) => p !== "" && p !== "." && p !== "..");
 }
 
 export function chooseDecidedOption(
@@ -124,9 +117,13 @@ export function resetBoardDecideBoundStateForTests(): void {
 
 export interface BoardDecideDeps {
   assertCollab(opts: { account_id: string; project_id: string }): Promise<void>;
-  realpath(project_id: string, path: string): Promise<string>;
-  stat(project_id: string, path: string): Promise<{ size: number }>;
-  readFile(project_id: string, path: string): Promise<string>;
+  /** The board side, on the server that has the project's files
+   * (conat/project/board-decide.ts): it reads and checks the board, and
+   * only the bounded request comes back. Nothing here reads a file. */
+  prepare(
+    project_id: string,
+    opts: BoardDecidePrepareOptions,
+  ): Promise<BoardDecidePrepared>;
   /** The home-bay call (board-decide-service.ts). */
   decide(opts: {
     account_id: string;
@@ -161,18 +158,15 @@ export async function boardDecideForBoard(
   if (
     typeof project_id !== "string" ||
     !isPlainBoardPath(path) ||
-    !(
-      revision === null ||
-      (typeof revision === "string" && revision.length <= REVISION_LIMIT)
-    ) ||
-    typeof sha256 !== "string" ||
-    !SHA256.test(sha256)
+    !isBoardDecideBinding(revision, sha256)
   ) {
     throw codedError("Invalid request.", 400);
   }
   await deps.assertCollab({ account_id, project_id });
-  const resolved = await deps.realpath(project_id, path);
-  const key = `${account_id}\n${project_id}\n${resolved}`;
+  // One in flight per board path as asked, taken before the file's server
+  // is asked to read it (HARD-CAD-2); that server bounds its own reads per
+  // project and in total (backend/sagebrush-board/service.ts).
+  const key = `${account_id}\n${project_id}\n${path}`;
   if (inFlight.has(key)) {
     throw codedError("An answer on this board is already being checked.", 429);
   }
@@ -190,36 +184,28 @@ export async function boardDecideForBoard(
   if (started.length > MAX_CALLS_PER_MINUTE_TOTAL) started.shift();
   inFlight.add(key);
   try {
-    const { size } = await deps.stat(project_id, resolved);
-    if (!(size >= 0) || size > BOARD_FILE_LIMIT) {
-      throw codedError("This board is too large to check answers on.", 413);
-    }
-    const text = await deps.readFile(project_id, resolved);
-    if (new TextEncoder().encode(text).byteLength > BOARD_FILE_LIMIT) {
-      throw codedError("This board is too large to check answers on.", 413);
-    }
-    if ((await boardTextDigest(text)) !== sha256) {
-      throw codedError("The board changed: reload it.", 409);
-    }
-    const deciding = await decideRequest(
-      { text, name: boardPostedName(path), revision },
+    // The file's server reads the board, refuses one too large (413) or
+    // not exactly the text the card posted (409), and takes the question
+    // and its options from it: never from the message, never from here.
+    const { resolved_path, request } = await deps.prepare(project_id, {
+      path,
+      revision,
+      sha256,
       message,
-    );
-    if (!deciding.ok) {
-      throw codedError(deciding.message.slice(0, 500), 400);
-    }
-    const { request } = deciding;
+    });
+    // Per board as the filesystem resolves it: links to one file share it.
+    const boardKey = `${account_id}\n${project_id}\n${resolved_path}`;
     const now = deps.now?.() ?? Date.now();
-    const calls = recentCalls(key, now);
+    const calls = recentCalls(boardKey, now);
     if (calls.length >= CALLS_PER_BOARD_PER_HOUR) {
-      rememberCalls(key, calls);
+      rememberCalls(boardKey, calls);
       throw codedError(
         "Too many answers checked on this board. Try later.",
         429,
       );
     }
     calls.push(now);
-    rememberCalls(key, calls);
+    rememberCalls(boardKey, calls);
     const result = await deps.decide({
       account_id,
       request_id: request.id,

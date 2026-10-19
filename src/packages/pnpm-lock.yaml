@@ -386,6 +386,9 @@ importers:
       '@isaacs/ttlcache':
         specifier: ^1.4.1
         version: 1.4.1
+      '@sagemathinc/sagebrush-board':
+        specifier: 0.2.0
+        version: 0.2.0
       awaiting:
         specifier: ^3.0.0
         version: 3.0.0
@@ -2190,9 +2193,6 @@ importers:
       '@node-saml/passport-saml':
         specifier: ^5.1.0
         version: 5.1.0
-      '@sagemathinc/sagebrush-board':
-        specifier: 0.2.0
-        version: 0.2.0
       '@sendgrid/client':
         specifier: ^8.1.4
         version: 8.1.6

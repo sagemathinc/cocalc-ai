@@ -1,6 +1,6 @@
 import { boardDecideLocal } from "@cocalc/server/ai/board-decide-service";
 import { boardDecideForBoard } from "@cocalc/server/ai/board-decide-bound";
-import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
+import { prepareBoardDecide } from "@cocalc/conat/project/board-decide";
 import { assertCollab } from "./util";
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
@@ -7152,9 +7152,12 @@ export async function synthesizeChatSpeech(
     : await synthesizeChatSpeechLocal(opts);
 }
 
-/** A Sagebrush board's decide call, bound to the posted board: read here
- * as a collaborator of its project, classified on the account's home bay,
- * where its AI allowance lives. */
+/** A Sagebrush board's decide call, bound to the posted board. It runs on
+ * the project's owning bay (conat/hub/api/routes.ts), as a collaborator of
+ * the project. The board is read and checked by the server that has the
+ * project's files (its host, or this bay in the workspace runtime), which
+ * sends back only the bounded request. That request is classified on the
+ * account's home bay, where its AI allowance lives. */
 export async function boardDecide(opts: {
   account_id?: string;
   project_id: string;
@@ -7163,15 +7166,14 @@ export async function boardDecide(opts: {
   sha256: string;
   message: unknown;
 }) {
-  const fs = async (project_id: string) =>
-    fsClient({ client: await conat(), subject: fsSubject({ project_id }) });
   return await boardDecideForBoard(opts, {
     assertCollab,
-    realpath: async (project_id, path) =>
-      await (await fs(project_id)).realpath(path),
-    stat: async (project_id, path) => await (await fs(project_id)).stat(path),
-    readFile: async (project_id, path) =>
-      String(await (await fs(project_id)).readFile(path, "utf8")),
+    prepare: async (project_id, prepareOpts) =>
+      await prepareBoardDecide({
+        client: await conat(),
+        project_id,
+        ...prepareOpts,
+      }),
     decide: async (decideOpts) => {
       const client = await getChatSpeechHomeClient(decideOpts.account_id);
       return client

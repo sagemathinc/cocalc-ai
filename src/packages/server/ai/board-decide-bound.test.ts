@@ -7,7 +7,7 @@
 // posted text, the reader's words from the message's note, and a message
 // whose name or revision isn't the posted board's is refused, as the real
 // one does.
-jest.mock("./board-decide-request", () => ({
+jest.mock("@cocalc/backend/sagebrush-board/decide-request", () => ({
   decideRequest: (posted: any, m: any) => {
     if (m?.name !== posted.name || m?.revision !== posted.revision) {
       return { ok: false, id: m?.id, message: "not this board" };
@@ -32,6 +32,10 @@ jest.mock("./board-decide-request", () => ({
 import { boardTextDigest, isBoardPath } from "@cocalc/util/sagebrush-board";
 import {
   BOARD_FILE_LIMIT,
+  prepareBoardDecideFromFiles,
+  type BoardFiles,
+} from "@cocalc/backend/sagebrush-board/prepare";
+import {
   CALLS_PER_BOARD_PER_HOUR,
   MAX_CALLS_PER_MINUTE_TOTAL,
   MAX_IN_FLIGHT_TOTAL,
@@ -67,25 +71,39 @@ function message(over: Record<string, unknown> = {}) {
   };
 }
 
-function deps(over: Partial<BoardDecideDeps> = {}) {
+// The hub's deps have no file access at all: the board side is `prepare`,
+// here the file server's own code (backend/sagebrush-board/prepare.ts) over
+// these files, as the project host or the owning bay runs it.
+function deps({
+  files: filesOver = {},
+  ...over
+}: Partial<BoardDecideDeps> & { files?: Partial<BoardFiles> } = {}) {
   const calls: any[] = [];
   const reads: string[] = [];
-  const d: BoardDecideDeps = {
-    assertCollab: async () => {},
-    realpath: async (_p, path) =>
+  const prepared: any[] = [];
+  const files: BoardFiles = {
+    realpath: async (path) =>
       `/home/user/${path.replace(/^\/home\/user\//, "")}`,
-    stat: async (_p, path) => {
+    stat: async (path) => {
       reads.push(path);
       return { size: BOARD.length };
     },
     readFile: async () => BOARD,
+    ...filesOver,
+  };
+  const d: BoardDecideDeps = {
+    assertCollab: async () => {},
+    prepare: async (project_id, o) => {
+      prepared.push({ project_id, ...o });
+      return await prepareBoardDecideFromFiles(files, o);
+    },
     decide: async (opts) => {
       calls.push(opts);
       return { options: [{ name: "yes", p: 0.9 }], confidence: 0.8 };
     },
     ...over,
   };
-  return { d, calls, reads };
+  return { d, calls, reads, prepared };
 }
 
 beforeAll(async () => {
@@ -131,9 +149,53 @@ test("the question and options come from the board file, not the message", async
   ]);
 });
 
+// Codex on #1134 (AGENTS.md: control plane and data plane): the hub sends
+// the file's server only what the card sent, and gets back only the bounded
+// request; it never reads the board.
+test("the hub asks the file's server, with only the card's binding", async () => {
+  const { d, prepared, calls } = deps();
+  const m = message();
+  await boardDecideForBoard(opts({ message: m }), d);
+  expect(Object.keys(d).sort()).toEqual(["assertCollab", "decide", "prepare"]);
+  expect(prepared).toEqual([
+    {
+      project_id: PROJECT,
+      path: PATH,
+      revision: "r1",
+      sha256: SHA,
+      message: m,
+    },
+  ]);
+  expect(calls).toHaveLength(1);
+});
+
+test("the question comes from what the file's server read, never the message", async () => {
+  const { d, calls } = deps({
+    prepare: async () => ({
+      resolved_path: "/home/user/work/q.board.json",
+      request: {
+        id: "33333333-3333-4333-8333-333333333333",
+        prompt: "from the board",
+        options: [{ name: "a" }, { name: "b" }],
+        answer: "the reader's words",
+      },
+    }),
+  });
+  await boardDecideForBoard(
+    opts({ message: message({ prompt: "x", options: [{ name: "poem" }] }) }),
+    d,
+  );
+  expect(calls[0].question).toEqual({
+    prompt: "from the board",
+    options: [{ name: "a" }, { name: "b" }],
+  });
+});
+
 test("the file must be exactly the board the card posted", async () => {
   const { d, calls } = deps({
-    readFile: async () => BOARD.replace("Is 7 prime?", "Is 8 prime?"),
+    files: {
+      readFile: async () => BOARD.replace("Is 7 prime?", "Is 8 prime?"),
+    },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
     code: 409,
@@ -169,9 +231,11 @@ test("non-collaborators are refused before the file is resolved or read", async 
     assertCollab: async () => {
       throw Error("not a collaborator");
     },
-    realpath: async (_p, path) => {
-      touched = true;
-      return path;
+    files: {
+      realpath: async (path) => {
+        touched = true;
+        return path;
+      },
     },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toThrow(
@@ -253,10 +317,12 @@ test("a board whose name is in any case is decided, as the card shows it", async
 test("a board over the size limit is not read", async () => {
   let read = false;
   const { d, calls } = deps({
-    stat: async () => ({ size: BOARD_FILE_LIMIT + 1 }),
-    readFile: async () => {
-      read = true;
-      return BOARD;
+    files: {
+      stat: async () => ({ size: BOARD_FILE_LIMIT + 1 }),
+      readFile: async () => {
+        read = true;
+        return BOARD;
+      },
     },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
@@ -268,7 +334,7 @@ test("a board over the size limit is not read", async () => {
 
 test("a board that grew past the limit after stat is refused", async () => {
   const { d, calls } = deps({
-    readFile: async () => "x".repeat(BOARD_FILE_LIMIT + 1),
+    files: { readFile: async () => "x".repeat(BOARD_FILE_LIMIT + 1) },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
     code: 413,
@@ -279,18 +345,20 @@ test("a board that grew past the limit after stat is refused", async () => {
 test("one call in flight per board, taken before the file is read", async () => {
   const release: (() => void)[] = [];
   const { d, reads } = deps({
-    readFile: async () => {
-      await new Promise<void>((r) => release.push(r));
-      return BOARD;
+    files: {
+      readFile: async () => {
+        await new Promise<void>((r) => release.push(r));
+        return BOARD;
+      },
     },
   });
   const first = boardDecideForBoard(opts(), d);
   await new Promise((r) => setImmediate(r));
   expect(reads).toHaveLength(1);
-  // the same file, spelled as the filesystem resolves it
-  await expect(
-    boardDecideForBoard(opts({ path: "/home/user/work/q.board.json" }), d),
-  ).rejects.toMatchObject({ code: 429 });
+  // the same board again, before its file's server is asked
+  await expect(boardDecideForBoard(opts(), d)).rejects.toMatchObject({
+    code: 429,
+  });
   expect(reads).toHaveLength(1);
   // another board is not held up
   const other = boardDecideForBoard(
@@ -307,23 +375,40 @@ test("one call in flight per board, taken before the file is read", async () => 
   await expect(other).resolves.toMatchObject({ option: "yes" });
 });
 
-test("a link to the board shares its bucket", async () => {
-  const release: (() => void)[] = [];
-  const { d, reads } = deps({
-    realpath: async () => "/home/user/work/q.board.json",
-    readFile: async () => {
-      await new Promise<void>((r) => release.push(r));
-      return BOARD;
-    },
+// In flight, another spelling of one file is the file server's to bound
+// (backend/sagebrush-board/service.ts: per project and in total); its
+// hourly calls are counted with the board's, by the path as resolved.
+test("a link to the board shares its hourly bucket", async () => {
+  let now = 0;
+  const { d, calls } = deps({
+    now: () => now,
+    files: { realpath: async () => "/home/user/work/q.board.json" },
   });
-  const first = boardDecideForBoard(opts(), d);
-  await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < CALLS_PER_BOARD_PER_HOUR; i++) {
+    now += 100;
+    await boardDecideForBoard(
+      opts(
+        i % 2
+          ? {
+              path: "link.board.json",
+              message: message({ name: "link.board.json" }),
+            }
+          : {},
+      ),
+      d,
+    );
+  }
+  now += 100;
   await expect(
-    boardDecideForBoard(opts({ path: "link.board.json" }), d),
+    boardDecideForBoard(
+      opts({
+        path: "link.board.json",
+        message: message({ name: "link.board.json" }),
+      }),
+      d,
+    ),
   ).rejects.toMatchObject({ code: 429 });
-  expect(reads).toHaveLength(1);
-  release.forEach((f) => f());
-  await first;
+  expect(calls).toHaveLength(CALLS_PER_BOARD_PER_HOUR);
 });
 
 test("an hourly cap per board, across spellings", async () => {
@@ -358,9 +443,11 @@ test("refused requests don't use up the hourly cap", async () => {
 test("a failure frees the board", async () => {
   let fail = true;
   const { d } = deps({
-    readFile: async () => {
-      if (fail) throw Error("read failed");
-      return BOARD;
+    files: {
+      readFile: async () => {
+        if (fail) throw Error("read failed");
+        return BOARD;
+      },
     },
   });
   await expect(boardDecideForBoard(opts(), d)).rejects.toThrow("read failed");
@@ -418,9 +505,11 @@ test("a total in-flight cap, before any read", async () => {
   const release: (() => void)[] = [];
   let block = true;
   const { d, reads } = deps({
-    readFile: async () => {
-      if (block) await new Promise<void>((r) => release.push(r));
-      return BOARD;
+    files: {
+      readFile: async () => {
+        if (block) await new Promise<void>((r) => release.push(r));
+        return BOARD;
+      },
     },
   });
   const board = (i: number) =>

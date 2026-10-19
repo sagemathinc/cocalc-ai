@@ -4,7 +4,8 @@
  */
 
 // The release pair: board decide with the released Sagebrush check
-// (@sagemathinc/sagebrush-board/submission, pinned exactly), not a stand-in.
+// (@sagemathinc/sagebrush-board/submission, pinned exactly by
+// @cocalc/backend, where the file's server runs it), not a stand-in.
 // The package is ES modules only, so these need Jest's
 // --experimental-vm-modules, as `pnpm test` (test:pglite) runs it; without
 // it, the check can't load and refuses every request, so these fail.
@@ -20,7 +21,8 @@ import {
 import {
   decideRequest,
   setSubmissionLoaderForTests,
-} from "./board-decide-request";
+} from "@cocalc/backend/sagebrush-board/decide-request";
+import { prepareBoardDecideFromFiles } from "@cocalc/backend/sagebrush-board/prepare";
 
 const PINNED = "0.2.0";
 const ACCOUNT = "11111111-1111-4111-8111-111111111111";
@@ -72,15 +74,13 @@ function message(over: Record<string, unknown> = {}) {
 afterEach(() => setSubmissionLoaderForTests(undefined));
 
 test("the package is pinned exactly, and that version is installed", () => {
-  const ours = JSON.parse(
-    readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-  );
+  const backend = join(__dirname, "..", "..", "backend");
+  const ours = JSON.parse(readFileSync(join(backend, "package.json"), "utf8"));
   expect(ours.dependencies["@sagemathinc/sagebrush-board"]).toBe(PINNED);
   const installed = JSON.parse(
     readFileSync(
       join(
-        __dirname,
-        "..",
+        backend,
         "node_modules",
         "@sagemathinc",
         "sagebrush-board",
@@ -147,9 +147,16 @@ describe("end to end through the bound call", () => {
     const calls: any[] = [];
     const d: BoardDecideDeps = {
       assertCollab: async () => {},
-      realpath: async (_p, path) => `/home/user/${path}`,
-      stat: async () => ({ size: BOARD.length }),
-      readFile: async () => BOARD,
+      // the file's server, with the released check
+      prepare: async (_project_id, o) =>
+        await prepareBoardDecideFromFiles(
+          {
+            realpath: async (path) => `/home/user/${path}`,
+            stat: async () => ({ size: BOARD.length }),
+            readFile: async () => BOARD,
+          },
+          o,
+        ),
       decide: async (opts) => {
         calls.push(opts);
         return {

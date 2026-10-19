@@ -392,6 +392,31 @@ for dest_root in "$OUT/bundle" "$OUT/main"; do
   fi
 done
 
+# Sagebrush's board check (@sagemathinc/sagebrush-board/submission) is ES
+# modules only and loaded at run time with import() by
+# backend/sagebrush-board/decide-request.ts, which ncc can't follow. It is a
+# single self-contained file with no dependencies, so it goes next to the
+# bundles, where that import() resolves. Copied from the workspace install
+# only (never fetched): exactly the version backend/package.json pins.
+echo "- Copy Sagebrush's board check (@sagemathinc/sagebrush-board)"
+SB_PKG="@sagemathinc/sagebrush-board"
+SB_SRC="packages/backend/node_modules/$SB_PKG"
+SB_PIN=$(node -e 'console.log(require("./packages/backend/package.json").dependencies[process.argv[1]] ?? "")' "$SB_PKG")
+SB_HAVE=$(node -e 'try { console.log(require(require("node:path").resolve(process.argv[1], "package.json")).version) } catch { console.log("") }' "$SB_SRC")
+if [ -z "$SB_PIN" ] || [ "$SB_HAVE" != "$SB_PIN" ]; then
+  echo "ERROR: $SB_PKG ${SB_HAVE:-missing} in $SB_SRC; backend pins '${SB_PIN}'" >&2
+  exit 1
+fi
+for dest_root in "$OUT/bundle" "$OUT/main"; do
+  rm -rf "$dest_root/node_modules/$SB_PKG"
+  mkdir -p "$dest_root/node_modules/$SB_PKG"
+  cp -rL "$SB_SRC"/. "$dest_root/node_modules/$SB_PKG"/
+  if [ ! -f "$dest_root/node_modules/$SB_PKG/dist/submission.js" ]; then
+    echo "ERROR: $SB_PKG/dist/submission.js missing in $dest_root" >&2
+    exit 1
+  fi
+done
+
 echo "- Copy project-runner templates"
 for dest_root in "$OUT/bundle" "$OUT/main"; do
   mkdir -p "$dest_root/templates"

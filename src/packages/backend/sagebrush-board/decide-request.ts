@@ -7,12 +7,16 @@
 // "Deciding"): the question's prompt and options come from the posted board,
 // never from the message; only the reader's words do. It is
 // @sagemathinc/sagebrush-board/submission, pinned exactly (package.json) to
-// the release whose frame the card shows.
+// the release whose frame the card shows. It runs where the project's files
+// are served (prepare.ts), never on the hub that received the call.
 //
 // That package is ES modules only, and this one is compiled to CommonJS, where
 // `import()` would become `require()`, which its exports don't allow. So it is
-// loaded with the runtime's own import(), once. If it can't be loaded, every
-// request is refused: nothing is decided unchecked.
+// loaded with the runtime's own import(), once, resolved from this file. In
+// the project host's single-file bundle that is the bundle's own
+// node_modules, where build-bundle.sh copies the package (ncc can't follow
+// this import). If it can't be loaded, every request is refused: nothing is
+// decided unchecked.
 
 import getLogger from "@cocalc/backend/logger";
 import type {
@@ -23,7 +27,7 @@ import type {
 
 export type { DecideRequest, Deciding, Posted };
 
-const log = getLogger("server:ai:board-decide-request");
+const log = getLogger("backend:sagebrush-board:decide-request");
 
 type Submission = typeof import("@sagemathinc/sagebrush-board/submission");
 

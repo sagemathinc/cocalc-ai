@@ -17,6 +17,37 @@ export function isBoardPath(path: string): boolean {
   return path.toLowerCase().endsWith(".board.json");
 }
 
+const BOARD_PATH_LIMIT = 4096;
+const BOARD_REVISION_LIMIT = 200;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** A board path spelled one way only: a board's name, no NUL, no empty,
+ * "." or ".." components and no trailing slash (HARD-CAD-1), so a limiter
+ * keyed by it, or by where the filesystem resolves it, has one bucket per
+ * spelling. Checked by the hub and again by whoever serves the file. */
+export function isPlainBoardPath(path: unknown): path is string {
+  if (typeof path !== "string" || path.length > BOARD_PATH_LIMIT) return false;
+  // The card's rule, any case: a board it shows live can be decided on.
+  if (!isBoardPath(path) || path.includes("\0")) return false;
+  const parts = (path.startsWith("/") ? path.slice(1) : path).split("/");
+  return parts.every((p) => p !== "" && p !== "." && p !== "..");
+}
+
+/** A board decide call's revision (the card's label) and SHA-256 (of the
+ * text it posted), as the hub and the file's server both require them. */
+export function isBoardDecideBinding(
+  revision: unknown,
+  sha256: unknown,
+): boolean {
+  return (
+    (revision === null ||
+      (typeof revision === "string" &&
+        revision.length <= BOARD_REVISION_LIMIT)) &&
+    typeof sha256 === "string" &&
+    SHA256_HEX.test(sha256)
+  );
+}
+
 /** The board's name in the card's `board` message: the file's basename. */
 export function boardPostedName(path: string): string {
   return path.split("/").pop() ?? path;
