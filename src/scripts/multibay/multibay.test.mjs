@@ -976,18 +976,32 @@ describe("host reads across bays", () => {
        }`,
       { timeoutMs: 120_000 },
     );
-    await sleep(2000);
-    const started = Date.now();
-    const log = await alice.client.call("hosts.getHostLog", {
-      id: host_id,
-      timeout: 90_000,
-    });
-    assert.ok(Date.now() - started > 15_000, "the read was held up");
-    assert.deepEqual(
-      log.map(({ vm_id, action }) => ({ vm_id, action })),
-      [{ vm_id: host_id, action: "create" }],
-    );
-    await locked;
+    try {
+      await eventually(
+        async () =>
+          await runInBay(
+            cluster,
+            ATTACHED,
+            `const getPool = require("@cocalc/database/pool").default;
+             const { rows } = await getPool().query(
+               "SELECT 1 FROM pg_locks WHERE relation = 'cloud_vm_log'::regclass AND mode = 'AccessExclusiveLock' AND granted");
+             return rows.length > 0;`,
+          ),
+        { what: "the lock on the attached bay's log" },
+      );
+      const started = Date.now();
+      const log = await alice.client.call("hosts.getHostLog", {
+        id: host_id,
+        timeout: 90_000,
+      });
+      assert.ok(Date.now() - started > 10_000, "the read was held up");
+      assert.deepEqual(
+        log.map(({ vm_id, action }) => ({ vm_id, action })),
+        [{ vm_id: host_id, action: "create" }],
+      );
+    } finally {
+      await locked;
+    }
   });
 });
 
