@@ -9,6 +9,9 @@ import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
 import { uuid } from "@cocalc/util/misc";
+import { syncFiles } from "@cocalc/conat/persist/context";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 
 beforeAll(before);
 afterAll(after);
@@ -86,9 +89,25 @@ test("a reader can't make a board stream ephemeral", async () => {
   writer.publish({ edit: 1 });
   await writer.save();
   await waitFor(() => sneaky.length === 1);
+  // Durable: the board's database is on disk (a RAM stream would leave no
+  // file), whatever the first opener asked for.
+  const files = await listFiles(syncFiles.local!);
+  expect(
+    files.some((f) => f.includes(project_id) && f.endsWith(".sage-board.db")),
+  ).toBe(true);
   sneaky.close();
   writer.close();
 });
+
+async function listFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await listFiles(p)));
+    else out.push(p);
+  }
+  return out;
+}
 
 test("the write service refuses streams that aren't boards", async () => {
   const project_id = uuid();
