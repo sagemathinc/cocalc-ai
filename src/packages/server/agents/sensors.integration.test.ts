@@ -1305,6 +1305,40 @@ describeDb("agent sensors", () => {
     });
   });
 
+  test("a give-up wake whose delivery is ambiguous leaves the watcher done, not paused", async () => {
+    const ci = (await agentSensorRequest(run, agent, {
+      action: "sensor",
+      op: "watch",
+      watch: { type: "ci", repo: "sagemathinc/cocalc-ai", pr: 1203 },
+    })) as any;
+    host.runAgentSensor.mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stdout: "",
+      stderr: "unknown flag: --json\n",
+    });
+    for (let i = 0; i < 4; i++) {
+      await makeDue(ci.sensor.sensor_id);
+      await runDue();
+    }
+    host.deliverAgentSensorWake.mockRejectedValueOnce(new Error("timeout"));
+    await makeDue(ci.sensor.sensor_id);
+    await runDue();
+    expect(host.deliverAgentSensorWake).toHaveBeenCalledTimes(1);
+    // The turn may be queued, so it is not tried again, and nobody is asked
+    // to resume it.
+    expect(paused).toHaveLength(0);
+    const { rows } = await getPool().query(
+      "SELECT status, pause_reason, next_run_at FROM agent_sensors WHERE sensor_id=$1",
+      [ci.sensor.sensor_id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: "active",
+      pause_reason: null,
+      next_run_at: null,
+    });
+  });
+
   test("a watcher paused by a person gives back its place", async () => {
     limits.sensor_max_active_watchers = 1;
     const first = (await fileWatch()).sensor;

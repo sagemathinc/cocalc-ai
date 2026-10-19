@@ -630,12 +630,12 @@ export async function runClaimedSensor(row: ClaimedSensor): Promise<void> {
     // Nothing was sent: a watcher giving up must try again.
     if (failedOut && !deliveryStarted) finished = false;
   } finally {
-    // A give-up wake that was not sent (not_sent, over the wake limit, an
-    // error before sending) is neither a check failure, which would pause the
-    // watcher, nor a success, which would reset the count: the next failed
-    // check tries to give up again.
-    const keepFailures = failedOut && !finished;
-    if (keepFailures) failed = false;
+    // Delivering a give-up wake is never a check failure, which would pause
+    // the watcher, nor a success, which would reset the count. If it was not
+    // sent (not_sent, over the wake limit, an error before sending), the
+    // watcher stays scheduled and the next failed check gives up again; if
+    // its delivery was ambiguous, the watcher is done, like any other.
+    const keepFailures = failedOut;
     await finishRun(row, {
       run_id,
       started,
