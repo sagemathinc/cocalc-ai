@@ -10,10 +10,11 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import ts from "typescript";
 
 const ROOT = join(__dirname, "..");
 const SKIP = new Set(["node_modules", "dist", "dist-ts"]);
-const CALL = /\bvoid\s+(publishLroEvent|publishLroSummary)\(/g;
+const PUBLISHERS = new Set(["publishLroEvent", "publishLroSummary"]);
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -28,24 +29,36 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// Returns the index just past the parenthesis that closes the one at `open`.
-function closingParen(text: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    if (text[i] === ")" && --depth === 0) return i + 1;
-  }
-  return text.length;
+// `publish(...).catch(handler)`: the call is the object of a `.catch` that is
+// itself called.
+function isCaught(call: ts.CallExpression): boolean {
+  const access = call.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    access.expression === call &&
+    access.name.text === "catch" &&
+    ts.isCallExpression(access.parent) &&
+    access.parent.expression === access
+  );
 }
 
+// Lines of `void publishLro...(...)` calls whose rejection nothing handles.
 function uncaughtPublishes(text: string): number[] {
+  const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   const lines: number[] = [];
-  for (const match of text.matchAll(CALL)) {
-    const end = closingParen(text, match.index! + match[0].length - 1);
-    if (!/^\s*\.catch\(/.test(text.slice(end))) {
-      lines.push(text.slice(0, match.index).split("\n").length);
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      PUBLISHERS.has(node.expression.text) &&
+      ts.isVoidExpression(node.parent) &&
+      !isCaught(node)
+    ) {
+      lines.push(file.getLineAndCharacterOfPosition(node.getStart()).line + 1);
     }
-  }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
   return lines;
 }
 
@@ -56,6 +69,19 @@ describe("fire-and-forget LRO publishes", () => {
         "void publishLroEvent({ a: f(1) });\nvoid publishLroSummary({}).catch(() => {});\n",
       ),
     ).toEqual([1]);
+  });
+
+  it("is not fooled by parentheses in strings or comments", () => {
+    expect(
+      uncaughtPublishes(
+        [
+          'void publishLroEvent({ message: ")" }).catch(() => {});',
+          'void publishLroEvent({ message: ").catch(" });',
+          "void publishLroEvent({ a: 1 /* ).catch( */ });",
+          "// void publishLroEvent({});",
+        ].join("\n"),
+      ),
+    ).toEqual([2, 3]);
   });
 
   it("always handle rejection", () => {
