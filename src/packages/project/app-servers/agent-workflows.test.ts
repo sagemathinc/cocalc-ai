@@ -585,12 +585,31 @@ describe("app server agent workflows", () => {
       wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 5 },
     });
 
+    // It fails as soon as the process exits, not at the timeout.
     await expect(
-      ensureRunning(id, { timeout: 1200, interval: 100 }),
-    ).rejects.toThrow(/timed out waiting for app/);
+      ensureRunning(id, { timeout: 30_000, interval: 100 }),
+    ).rejects.toThrow(/failed to start: .* exited with code 2: boot-fail/);
 
     const logs = await appLogs(id);
     expect(logs.state).toBe("stopped");
     expect(logs.stderr).toContain("boot-fail");
+  });
+
+  test("a missing command fails at once and says so", async () => {
+    const id = appId("missing-command");
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      title: "Missing Command Test",
+      command: { exec: "cocalc-no-such-command", args: [] },
+      network: { listen_host: "127.0.0.1", protocol: "http" },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 5 },
+    });
+
+    await expect(
+      ensureRunning(id, { timeout: 30_000, interval: 100 }),
+    ).rejects.toThrow(/command not found: cocalc-no-such-command/);
   });
 });

@@ -48,6 +48,7 @@ import {
 import { parseLsofListenOutput, parseSsOutput } from "./listen-parsers";
 import { listAppTemplates as listAppTemplatesFromCatalog } from "./template-catalog";
 import { resolveProxyListenPort } from "../servers/proxy/config";
+import { appStartFailure, resolveAppCommand } from "./cocalc-cli";
 export { listAppTemplatesFromCatalog as listAppTemplates };
 
 const logger = getLogger("app-servers:control");
@@ -867,8 +868,10 @@ export async function startApp(
   });
   const localUrl = getProxyUrl(port);
   const appBaseUrl = localUrl;
-  const cmd = spec.command.exec;
-  const args = spec.command.args ?? [];
+  const { exec: cmd, args } = resolveAppCommand({
+    exec: spec.command.exec,
+    args: spec.command.args ?? [],
+  });
   logger.debug("start app", {
     id: spec.id,
     cmd,
@@ -1046,6 +1049,10 @@ export async function waitForAppState(
       if (s.state === "running" && s.ready === true) {
         return true;
       }
+      // Nothing restarts a service that already failed: stop waiting.
+      if (s.state === "stopped" && (s.spawnError != null || s.exit != null)) {
+        return false;
+      }
     } else if (s.state === "stopped") {
       return true;
     }
@@ -1081,8 +1088,18 @@ export async function ensureRunning(
   const ok = await waitForAppState(id, "running", opts);
   const status = await statusApp(id);
   if (!ok) {
+    const failure =
+      spec.kind === "service" && status.state === "stopped"
+        ? appStartFailure({
+            exec: spec.command.exec,
+            spawnError: status.spawnError,
+            exit: status.exit,
+          })
+        : undefined;
     throw new Error(
-      `timed out waiting for app '${id}' to become ready` +
+      (failure
+        ? `app '${id}' failed to start: ${failure}`
+        : `timed out waiting for app '${id}' to become ready`) +
         (status.stderr && status.stderr.length > 0
           ? `: ${status.stderr.toString().trim()}`
           : ""),
