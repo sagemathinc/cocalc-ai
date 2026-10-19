@@ -3791,7 +3791,14 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             def kept(content: str) -> bool:
                 pause_pid_file.write_text(content, encoding="utf-8")
                 subprocess.run(
-                    ["bash", "-c", check_script, "bash", str(pause_pid_file)],
+                    [
+                        "bash",
+                        "-c",
+                        check_script,
+                        "bash",
+                        str(pause_pid_file),
+                        str(runtime_dir),
+                    ],
                     check=True,
                 )
                 return pause_pid_file.exists()
@@ -3816,22 +3823,46 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertFalse(kept("12abc34"))
 
             # Another user namespace alone is not enough (e.g. a rootless
-            # container process after PID reuse); a pause process is marked.
-            other = started(["unshare", "--user", "sleep", "30"])
-            try:
-                self.assertFalse(kept(str(other.pid)))
-            finally:
-                other.kill()
-                other.wait()
-            pause = started(
-                ["unshare", "--user", "env", "_PODMAN_PAUSE=1", "sleep", "30"]
+            # container process after PID reuse), nor is the pause process of
+            # the user's other runtime dir; this runtime's pause is marked.
+            pause_env = ["_PODMAN_PAUSE=1", f"XDG_RUNTIME_DIR={runtime_dir}"]
+            other_env = ["_PODMAN_PAUSE=1", "XDG_RUNTIME_DIR=/run/user/elsewhere"]
+            for argv, expected in (
+                (["unshare", "--user", "sleep", "30"], False),
+                (["unshare", "--user", "env", *other_env, "sleep", "30"], False),
+                (["unshare", "--user", "env", *pause_env, "sleep", "30"], True),
+            ):
+                proc = started(argv)
+                try:
+                    with self.subTest(argv=argv):
+                        self.assertEqual(kept(f"{proc.pid}\n"), expected)
+                finally:
+                    proc.kill()
+                    proc.wait()
+
+            # Podman publishes pause.pid as soon as the pause process is in
+            # its new user namespace, before it sets its environment.
+            own_userns = os.readlink("/proc/self/ns/user")
+            late = subprocess.Popen(
+                [
+                    "unshare",
+                    "--user",
+                    "sh",
+                    "-c",
+                    "sleep 0.3; exec env " + " ".join(pause_env) + " sleep 30",
+                ],
+                stderr=subprocess.DEVNULL,
             )
             try:
-                self.assertTrue(kept(str(pause.pid)))
-                self.assertTrue(kept(f"{pause.pid}\n"))
+                deadline = time.monotonic() + 5
+                while os.readlink(f"/proc/{late.pid}/ns/user") == own_userns:
+                    if late.poll() is not None or time.monotonic() > deadline:
+                        self.skipTest("unprivileged user namespaces are unavailable")
+                    time.sleep(0.01)
+                self.assertTrue(kept(str(late.pid)))
             finally:
-                pause.kill()
-                pause.wait()
+                late.kill()
+                late.wait()
 
     def test_storage_wrapper_project_network_policy_is_off_without_socket_cgroup_match(
         self,
