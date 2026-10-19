@@ -213,3 +213,92 @@ describe("end to end through the bound call", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+// astra, CORR-E3B-1: with the released check, a board may make a request
+// larger than the model is sent (its question has no length limit of its
+// own); the file's server refuses it with a coded error, so nothing of it
+// leaves. Each bound, just over and exactly at it.
+describe("the released check's request is bounded where the board is read", () => {
+  const board = (ask: Record<string, unknown>) =>
+    JSON.stringify({
+      format: "sagebrush-board",
+      version: 1,
+      title: "Primes",
+      layout: "column",
+      nodes: [
+        {
+          id: "q",
+          kind: "ask",
+          input: "text",
+          title: "Is 7 prime?",
+          text: "Say why.",
+          decide: OPTIONS,
+          ...ask,
+        },
+      ],
+    });
+  async function prepared(text: string, note = "only 1 and 7 divide it") {
+    return await prepareBoardDecideFromFiles(
+      {
+        realpath: async (path) => `/home/user/${path}`,
+        readBoard: async () => text,
+      },
+      {
+        path: PATH,
+        revision: "r1",
+        sha256: await boardTextDigest(text),
+        message: message({ note }),
+      },
+    );
+  }
+  // the prompt is the title, a blank line, and the text
+  const promptOf = (n: number) => ({ title: "T", text: "x".repeat(n - 3) });
+
+  test("a 2 MiB question: 400 at the source, nothing returned", async () => {
+    await expect(
+      prepared(board({ text: "X".repeat(2 * 1024 * 1024) })),
+    ).rejects.toMatchObject({ code: 400 });
+  });
+
+  test("the prompt: 4,001 characters refused, 4,000 sent", async () => {
+    await expect(prepared(board(promptOf(4_001)))).rejects.toMatchObject({
+      code: 400,
+    });
+    const out = await prepared(board(promptOf(4_000)));
+    expect(out.request.prompt).toHaveLength(4_000);
+  });
+
+  test("the answer: 2,001 characters refused, 2,000 sent", async () => {
+    await expect(prepared(board({}), "a".repeat(2_001))).rejects.toMatchObject({
+      code: 400,
+    });
+    const out = await prepared(board({}), "a".repeat(2_000));
+    expect(out.request.answer).toHaveLength(2_000);
+  });
+
+  test("an option's name and about, and how many there are", async () => {
+    // a name that says what it means, of exactly n characters
+    const nameOf = (n: number) =>
+      "says-seven-has-no-divisors-but-one-and-itself-"
+        .repeat(4)
+        .slice(0, n - 1) + "s";
+    const named = (name: string, about = "") => [
+      { name, ...(about ? { about } : {}) },
+      OPTIONS[1],
+    ];
+    for (const decide of [
+      named(nameOf(81)),
+      named(OPTIONS[0].name, "x".repeat(2_001)),
+      Array.from({ length: 33 }, (_, i) => ({ name: `option-number-${i}` })),
+    ]) {
+      await expect(prepared(board({ decide }))).rejects.toMatchObject({
+        code: 400,
+      });
+    }
+    const out = await prepared(
+      board({ decide: named(nameOf(80), "x".repeat(2_000)) }),
+    );
+    expect(out.request.options[0].name).toHaveLength(80);
+    expect(out.request.options[0].about).toHaveLength(2_000);
+  });
+});
