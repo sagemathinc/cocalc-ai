@@ -334,6 +334,10 @@ export function server({
             subject: socket.subject,
             storage,
           });
+          if (boardAccess.storage != null) {
+            // Never the client's options for a board stream.
+            storage = boardAccess.storage as StorageOptions;
+          }
         } catch (err) {
           policyRefused = true;
           error = `${err}`;

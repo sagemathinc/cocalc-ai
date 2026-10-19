@@ -30,6 +30,10 @@ import {
 } from "@cocalc/util/board/names";
 import { BoardManager, type BoardFile } from "./manager";
 import { fsServer } from "@cocalc/conat/files/fs";
+import { dstream } from "@cocalc/conat/sync/dstream";
+import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
+import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
+import { boardSyncdbPath } from "@cocalc/util/board/names";
 import {
   type ReplaceHooks,
   boardHandlers,
@@ -1091,3 +1095,45 @@ test.each([
   },
   120_000,
 );
+
+test("an invalid snapshot checkpoint is repaired through the board write service", async () => {
+  const t = await setup(canonical(BOARD));
+  await until(() => itemText(t.browser, "a") === "hello world");
+  setText(t.browser, "b", "before the bad checkpoint");
+  await until(async () =>
+    (await t.read()).includes("before the bad checkpoint"),
+  );
+  await t.cleanup();
+  // Point the latest-snapshot checkpoint at a patch that is no snapshot.
+  const ds = await dstream({
+    client: connect(),
+    project_id: t.project_id,
+    name: patchesStreamName({ path: boardSyncdbPath(t.path) }),
+    service: BOARD_WRITE_SERVICE,
+    persistUser: {},
+    noInventory: true,
+  });
+  const n = ds.length;
+  expect(n).toBeGreaterThan(1);
+  await ds.setCheckpoint({
+    name: "latest_snapshot",
+    seq: ds.seq(n - 1)!,
+    data: { patchId: "not-a-snapshot" },
+  });
+  ds.close();
+  // The manager's syncdb opens anyway: the fallback full load and its
+  // checkpoint repair go through the write service too.
+  const syncdb = await openBoardSyncdb({
+    writer: true,
+    client: connect(),
+    project_id: t.project_id,
+    path: t.path,
+    service: fileserver.service,
+    timeoutMs: 20_000,
+  });
+  try {
+    expect(itemText(syncdb, "b")).toBe("before the bad checkpoint");
+  } finally {
+    await syncdb.close();
+  }
+});

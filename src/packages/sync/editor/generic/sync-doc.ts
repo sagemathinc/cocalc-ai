@@ -1779,6 +1779,9 @@ export class SyncDoc extends EventEmitter {
             noAutosave: this.noAutosave,
             initPhaseReporter:
               this.makeConatInitPhaseReporter("patches_corestream"),
+            // The same routing as the first open: a board's checkpoint repair
+            // writes through the board write service.
+            ...(this.opts.patchesPersist ?? {}),
           });
           let repaired = false;
           let n = synctable.dstream.length - 1;

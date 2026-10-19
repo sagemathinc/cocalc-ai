@@ -78,14 +78,24 @@ describe("who may do what with a board stream", () => {
       `${SERVICE}.account-${project_id}`,
       `${SERVICE}.hub`,
     ]) {
-      const s: any = { ...storage(), ephemeral: true };
+      const s: any = {
+        ...storage(),
+        ephemeral: true,
+        sync: true,
+        compression: { algorithm: 99, threshold: 0 },
+        noCache: true,
+      };
       const access = boardStreamAccess({
         service: SERVICE,
         subject,
         storage: s,
       });
-      expect(access).toEqual({ board: true, readOnly: true });
-      expect(s.ephemeral).toBe(false);
+      // The server's own options: the path, nothing the client chose.
+      expect(access).toEqual({
+        board: true,
+        readOnly: true,
+        storage: { path: storage().path },
+      });
       for (const cmd of [
         "get",
         "getAll",
@@ -128,7 +138,11 @@ describe("who may do what with a board stream", () => {
       subject: `${BOARD_WRITE_SERVICE}.hub`,
       storage: storage(),
     });
-    expect(access).toEqual({ board: true, readOnly: false });
+    expect(access).toEqual({
+      board: true,
+      readOnly: false,
+      storage: { path: storage().path },
+    });
     expect(() =>
       assertBoardCommandAllowed(access, { cmd: "set" }),
     ).not.toThrow();

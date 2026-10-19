@@ -9,6 +9,8 @@ import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { boardSyncdbPath } from "@cocalc/util/board/names";
 import { uuid } from "@cocalc/util/misc";
+import { stream as persistStream } from "@cocalc/conat/persist/client";
+import { storagePath } from "@cocalc/conat/sync/core-stream";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -108,6 +110,32 @@ async function listFiles(dir: string): Promise<string[]> {
   }
   return out;
 }
+
+test("a first reader can't choose how the host's writes are stored", async () => {
+  const project_id = uuid();
+  const path = "/home/user/options.board.json";
+  // A reader opens the board stream first, with options no host would use.
+  const raw = persistStream({
+    client: connect(),
+    user: { project_id },
+    storage: {
+      path: storagePath({ project_id, name: name(path) }),
+      compression: { algorithm: 99, threshold: 0 },
+      sync: true,
+      surprise: "field",
+    } as any,
+  });
+  await raw.getAll();
+  // The host's writes go through, stored with the server's own options.
+  const writer = await writerStream(project_id, path);
+  writer.publish({ edit: "x".repeat(10_000) });
+  await writer.save();
+  const check = await readerStream(project_id, path);
+  expect(check.getAll()).toEqual([{ edit: "x".repeat(10_000) }]);
+  raw.close();
+  writer.close();
+  check.close();
+});
 
 test("the write service refuses streams that aren't boards", async () => {
   const project_id = uuid();

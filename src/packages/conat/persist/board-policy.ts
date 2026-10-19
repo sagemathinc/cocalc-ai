@@ -106,11 +106,16 @@ export interface BoardStreamAccess {
   board: boolean;
   // Only reads are allowed on this socket.
   readOnly: boolean;
+  // For a board stream: the storage options it is opened with, built here
+  // from its path alone (durable, server defaults for everything else). The
+  // client's options are never used for a board stream, so no client (the
+  // first opener in particular) chooses how the host's writes are stored.
+  storage?: { path: string };
 }
 
-// Decide, when a persist socket names its stream, what it may do. Throws for
-// a socket that must not open the stream at all. Also forces durable storage
-// for board streams: a client must not turn a board into an in-memory stream.
+// Decide, when a persist socket names its stream, what it may do, and for a
+// board stream with what storage options. Throws for a socket that must not
+// open the stream at all.
 export function boardStreamAccess({
   service,
   subject,
@@ -138,8 +143,11 @@ export function boardStreamAccess({
   if (!cls.canonical) {
     throw new BoardStreamPolicyError("not a canonical board stream path", 400);
   }
-  if (storage != null) storage.ephemeral = false;
-  return { board: true, readOnly: !writeService };
+  return {
+    board: true,
+    readOnly: !writeService,
+    storage: { path: storage!.path as string },
+  };
 }
 
 // Refuse a command a read-only board socket may not send.
