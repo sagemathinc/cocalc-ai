@@ -1,6 +1,7 @@
 import { boardDecideLocal } from "@cocalc/server/ai/board-decide-service";
 import { boardDecideForBoard } from "@cocalc/server/ai/board-decide-bound";
 import { prepareBoardDecide } from "@cocalc/conat/project/board-decide";
+import { boardDecideClient } from "@cocalc/server/ai/board-decide-route";
 import { assertCollab } from "./util";
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
@@ -7231,7 +7232,8 @@ export async function boardDecide(opts: {
     assertCollab,
     prepare: async (project_id, prepareOpts) =>
       await prepareBoardDecide({
-        client: await conat(),
+        // routed to the project's host, or this bay in the workspace runtime
+        client: await boardDecideClient(project_id),
         project_id,
         ...prepareOpts,
       }),
