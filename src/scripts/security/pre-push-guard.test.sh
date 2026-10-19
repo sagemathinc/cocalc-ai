@@ -288,6 +288,21 @@ check 0 "annotated tag of a public commit" "$T/pub.git" refs/tags/ann-public "$(
 git tag -a -m "tag of a blob" ann-blob "$(git hash-object -w --stdin <<<TOP-SECRET)"
 check 1 "annotated tag of a blob" "$T/pub.git" refs/tags/ann-blob "$(git rev-parse ann-blob)" refs/tags/ann-blob
 
+# A remote with two URLs, the first private (git fetch uses it) and the second
+# public: the remote is private, so its tracking refs count even after the
+# secret was force-pushed away in the private repo before any guard run.
+git init -q --bare "$T/privX.git"
+git init -q "$T/mixed" && cd "$T/mixed" || exit 1
+git fetch -q "$T/pub.git" main && git reset -q --hard FETCH_HEAD && MB=$(git rev-parse HEAD)
+MS=$(commit "secret behind a two-URL remote") && git push -q "$T/privX.git" "$MS:refs/heads/main"
+git reset -q --hard "$MB"
+git remote add mixed "$T/privX.git" && git config --add remote.mixed.url "$T/pub.git"
+git config cocalc.privateUrl "$T/privX.git"
+git fetch -q mixed
+git push -q -f "$T/privX.git" "$MB:refs/heads/main"
+git branch -q neutral "$MS"
+check 1 "two-URL remote (first private): its tracking ref is private" "$T/pub.git" refs/heads/neutral "$MS" refs/heads/fix/innocent
+
 # A remote whose name contains "/": its security/* tracking refs are private.
 git init -q "$T/slash" && cd "$T/slash" || exit 1
 git fetch -q "$T/pub.git" main && git reset -q --hard FETCH_HEAD

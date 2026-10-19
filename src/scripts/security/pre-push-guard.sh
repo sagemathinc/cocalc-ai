@@ -368,14 +368,19 @@ private_remote_refs=()
 mapfile -t remote_names <"$tmp/remotes"
 for name in "${remote_names[@]}"; do
   [ -z "$name" ] && continue
-  # A configured remote may have no URL (exit status 1): that is fine.
-  url=$(git config --get "remote.$name.url")
-  rc=$?
-  [ $rc = 0 ] || [ $rc = 1 ] || fail_closed "could not read the URL of remote $name"
-  if [ -n "$url" ] && is_private_url "$url"; then
-    private_remote_refs+=("--remotes=$name")
-    add_source "$url"
-  fi
+  # A remote may have several URLs (git fetch uses the first) or none (exit
+  # status 1): it is private if ANY of its URLs is private (conservative).
+  rc=0
+  git config --get-all "remote.$name.url" >"$tmp/remote-urls" || rc=$?
+  [ $rc = 0 ] || [ $rc = 1 ] || fail_closed "could not read the URLs of remote $name"
+  remote_is_private=0
+  while IFS= read -r url; do
+    if [ -n "$url" ] && is_private_url "$url"; then
+      remote_is_private=1
+      add_source "$url"
+    fi
+  done <"$tmp/remote-urls"
+  [ $remote_is_private = 1 ] && private_remote_refs+=("--remotes=$name")
 done
 while read -r extra; do
   [ -n "$extra" ] && add_source "$extra"
