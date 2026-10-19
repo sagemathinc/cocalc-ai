@@ -32,12 +32,17 @@ export const BOARD_STRING_COLS = [
 export const BOARD_EDITABLE_LIMIT = 8 * 1024 * 1024;
 // Nor is a board with more records than this (the same protocol).
 export const BOARD_RECORD_LIMIT = 100_000;
-// What a project host edits for now: patchflow 0.13 applies a patch of n
-// new records in O(n^2), and one commit of a board this size takes about
-// 170 ms (measured Oct 19 2026; 1,500 records take 300 ms). A board with
-// more records opens read-only. Raise to BOARD_RECORD_LIMIT once a
-// patchflow with linear patch application is pinned.
+// What a project host edits for now, so that one commit of a board's
+// syncdb stays under about 250 ms (measured Oct 19 2026: 1,000 records
+// 170 ms, 1,500 records 300 ms, and steeply more beyond). A board over the soft limits opens read-only;
+// a live document past the hard ones is closed and reopened from its file.
+// Raise toward BOARD_RECORD_LIMIT once large commits are fast.
 export const BOARD_HOST_RECORD_LIMIT = 1_000;
+export const BOARD_HOST_HARD_RECORD_LIMIT = 1_500;
+// Bytes, likewise: a host keeps at most BOARD_HOST_HARD_BYTE_LIMIT per open
+// board, which is what it reserves for each.
+export const BOARD_HOST_BYTE_LIMIT = 4 * 1024 * 1024;
+export const BOARD_HOST_HARD_BYTE_LIMIT = 5 * 1024 * 1024;
 
 export function isBoardJsonPath(path: string): boolean {
   return `${path ?? ""}`.toLowerCase().endsWith(BOARD_JSON_EXTENSION);

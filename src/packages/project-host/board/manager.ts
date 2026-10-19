@@ -45,7 +45,9 @@ board on the project host, is the only thing that writes the file:
 */
 
 import {
-  BOARD_EDITABLE_LIMIT,
+  BOARD_HOST_BYTE_LIMIT,
+  BOARD_HOST_HARD_BYTE_LIMIT,
+  BOARD_HOST_HARD_RECORD_LIMIT,
   BOARD_HOST_RECORD_LIMIT,
 } from "@cocalc/util/board/names";
 
@@ -120,8 +122,9 @@ export interface BoardManagerOptions {
   // document that shrinks back under them saves again.
   maxBytes?: number;
   maxRecords?: number;
-  // A document over these (default twice the above) is more than a host
-  // keeps for a board: the manager retires, its host closes it, and the
+  // A document over these (by default the host's hard limits, or 1.25 and
+  // 1.5 times the above when those are given) is more than a host keeps
+  // for a board: the manager retires, its host closes it, and the
   // board reopens from its file.
   hardMaxBytes?: number;
   hardMaxRecords?: number;
@@ -133,8 +136,7 @@ export interface BoardManagerOptions {
 const MAX_SAVE_ATTEMPTS = 3;
 
 type Parsed =
-  | { ok: true; doc: any; records: any[] }
-  | { ok: false; status: BoardStatus };
+  { ok: true; doc: any; records: any[] } | { ok: false; status: BoardStatus };
 
 export class BoardManager {
   private readonly lib: BoardLib;
@@ -181,10 +183,18 @@ export class BoardManager {
     this.recordsToString = opts.recordsToString;
     this.saveDelayMs = opts.saveDelayMs ?? 1000;
     this.loadIntervalMs = opts.loadIntervalMs ?? 250;
-    this.maxBytes = opts.maxBytes ?? BOARD_EDITABLE_LIMIT;
+    this.maxBytes = opts.maxBytes ?? BOARD_HOST_BYTE_LIMIT;
     this.maxRecords = opts.maxRecords ?? BOARD_HOST_RECORD_LIMIT;
-    this.hardMaxBytes = opts.hardMaxBytes ?? 2 * this.maxBytes;
-    this.hardMaxRecords = opts.hardMaxRecords ?? 2 * this.maxRecords;
+    this.hardMaxBytes =
+      opts.hardMaxBytes ??
+      (opts.maxBytes == null
+        ? BOARD_HOST_HARD_BYTE_LIMIT
+        : Math.ceil(1.25 * this.maxBytes));
+    this.hardMaxRecords =
+      opts.hardMaxRecords ??
+      (opts.maxRecords == null
+        ? BOARD_HOST_HARD_RECORD_LIMIT
+        : Math.ceil(1.5 * this.maxRecords));
     this.log = opts.log ?? (() => {});
   }
 
@@ -293,9 +303,18 @@ export class BoardManager {
     (this.loadTimer as any).unref?.();
   };
 
+  // Every change: the record count (cheap) against the hard limit at once,
+  // and a save (with every other check) within saveDelayMs. The save timer
+  // is not pushed back by later changes, so a stream of changes cannot
+  // postpone the checks.
   private onDocumentChange = (): void => {
-    if (this.stopping || this.closed) return;
-    this.clearSaveTimer();
+    if (this.stopping || this.closed || this.retired) return;
+    const count = this.syncdb.get_doc()?.count?.();
+    if (typeof count === "number" && count > this.hardMaxRecords) {
+      this.retire(this.tooManyRecords(count));
+      return;
+    }
+    if (this.saveTimer != null) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = undefined;
       this.queueSave().catch((err) =>

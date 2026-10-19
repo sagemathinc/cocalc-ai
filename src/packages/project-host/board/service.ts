@@ -17,7 +17,7 @@ compute is stopped. registry.ts keeps one manager per board, through its
 close.
 */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { BoardOpenResult, Filesystem } from "@cocalc/conat/files/fs";
@@ -26,6 +26,8 @@ import { getLogger } from "@cocalc/backend/logger";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
 import {
   BOARD_EDITABLE_LIMIT,
+  BOARD_HOST_BYTE_LIMIT,
+  BOARD_HOST_HARD_BYTE_LIMIT,
   BOARD_PRIMARY_KEYS,
   BOARD_STRING_COLS,
   boardSyncdbPath,
@@ -51,6 +53,8 @@ export const BOARD_LEASE_MS = 90_000;
 export const BOARD_LEASE_RENEW_MS = 30_000;
 const MAX_OPEN_BOARDS = 200;
 const MAX_OPEN_BOARDS_PER_PROJECT = 20;
+// With BOARD_HOST_HARD_BYTE_LIMIT reserved per board: about 100 boards.
+const MAX_OPEN_BOARD_BYTES = 512 * 1024 * 1024;
 // A syncdb or a first load slower than this fails the start.
 const START_STEP_TIMEOUT_MS = 45_000;
 
@@ -158,11 +162,23 @@ export interface ReplaceHooks {
   afterPlace?: () => Promise<void>;
 }
 
-function sidePath(path: string, id: string, kind: "tmp" | "aside"): string {
+// Side files of a save, beside the board (hidden): the new text before it
+// is placed (tmp), and the version it replaced (aside), whose name carries
+// the hash of what it held when set aside.
+function sidePath(
+  path: string,
+  id: string,
+  kind: "tmp" | "aside",
+  hash?: string,
+): string {
   return posix.join(
     posix.dirname(path),
-    `.${posix.basename(path)}.${id}.sage-board-${kind}`,
+    `.${posix.basename(path)}.${id}${hash ? `.${hash}` : ""}.sage-board-${kind}`,
   );
+}
+
+function shortHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
 function conflictPath(path: string): string {
@@ -179,6 +195,14 @@ async function keepVersion(fs: BoardFilesystem, p: string, path: string) {
   } catch (err) {
     if (!isExists(err)) throw err;
   }
+  await keepAsConflictCopy(fs, p, path);
+}
+
+async function keepAsConflictCopy(
+  fs: BoardFilesystem,
+  p: string,
+  path: string,
+) {
   const copy = conflictPath(path);
   await fs.move(p, copy, { overwrite: false });
   logger.warn("board: kept another writer's version as a conflict copy", {
@@ -187,9 +211,11 @@ async function keepVersion(fs: BoardFilesystem, p: string, path: string) {
   });
 }
 
+// Asides of saves running now in this process: never swept.
+const activeAsides = new Set<string>();
+
 /*
-Replace the board's file with text, only if it is exactly expected, so that
-no other writer's version is ever written over or deleted:
+Replace the board's file with text, only if it is exactly expected:
 
 1. text goes to a temp file beside the board;
 2. the board is renamed aside (atomic: whatever is there at that instant,
@@ -198,18 +224,21 @@ no other writer's version is ever written over or deleted:
 3. the aside file must be exactly expected, or it goes back (and the save
    is a conflict);
 4. the temp file is renamed to the board's name only if nothing is there
-   (the sandbox's renameNoReplace, an atomic RENAME_NOREPLACE): a file
-   someone created since step 2 wins, and the save is a conflict;
-5. the aside file is checked again, for a writer that held it open and
-   wrote after step 3; if it changed, it is kept as a conflict copy rather
-   than deleted. Otherwise it is deleted.
+   (renameNoReplace): a file someone created since step 2 wins, and the
+   save is a conflict;
+5. the aside file stays, as the previous version, until the next save of
+   the board sweeps it (sweepSideFiles): deleted if it still holds what was
+   set aside (its name has the hash), else kept as a conflict copy. So a
+   writer that held the old file open and wrote to it after step 3 is not
+   lost; it is surfaced at the next save.
 
-Every version some other writer produced therefore ends up at the board's
-name, in the aside file put back, or in a conflict copy. Between steps 2 and
-4 (two in-process syscalls) the board's name is briefly absent: a reader
-then sees no file, and a delete in that instant fails (ENOENT) rather than
-being undone silently. Without openat2, the sandbox's no-replace move is a
-check then a rename, and step 4 has a small window again.
+What remains: between steps 2 and 4 (two in-process syscalls) the board's
+name is absent; a reader then sees no file, and a delete in that instant
+fails (ENOENT) rather than being undone. Step 4 is atomic only with openat2
+(the sandbox's renameNoReplace, Linux in safe mode, which project hosts
+use); with openat2 off or unavailable (unsafe mode, non-Linux, or
+disableOpenAt2), the sandbox's no-replace move is a check then a rename,
+and a file created in that window is written over.
 */
 export async function replaceBoardFile({
   fs,
@@ -224,11 +253,13 @@ export async function replaceBoardFile({
   expected: string;
   hooks?: ReplaceHooks;
 }): Promise<"ok" | "conflict"> {
+  await sweepSideFiles(fs, path);
   const id = randomUUID();
   const tmp = sidePath(path, id, "tmp");
-  const aside = sidePath(path, id, "aside");
+  const aside = sidePath(path, id, "aside", shortHash(expected));
   let holdingAside = false;
   let placed = false;
+  activeAsides.add(aside);
   await fs.writeFile(tmp, text);
   try {
     try {
@@ -256,33 +287,35 @@ export async function replaceBoardFile({
     }
     placed = true;
     await hooks?.afterPlace?.();
-    if (!(await holdsExactly(fs, aside, expected))) {
-      holdingAside = false;
-      await keepVersion(fs, aside, path);
-    }
     return "ok";
   } finally {
+    activeAsides.delete(aside);
     if (!placed) await fs.unlink(tmp).catch(() => {});
-    if (holdingAside) {
-      if (placed) {
-        // Exactly expected, the version this save replaces.
-        await fs.unlink(aside).catch(() => {});
-      } else {
-        await keepVersion(fs, aside, path).catch((err) =>
-          logger.warn("board: could not put a version back", {
-            path,
-            aside,
-            err: `${err}`,
-          }),
-        );
-      }
+    if (holdingAside && !placed) {
+      await keepVersion(fs, aside, path).catch((err) =>
+        logger.warn("board: could not put a version back", {
+          path,
+          aside,
+          err: `${err}`,
+        }),
+      );
     }
   }
 }
 
-// A board left aside by a host that stopped between steps 2 and 4 of
-// replaceBoardFile goes back to its name, if that is free.
-async function recoverAside(fs: BoardFilesystem, path: string) {
+/*
+The side files of earlier saves of the board (none running now):
+
+- An aside whose tmp is still there, with the board's name free: the host
+  stopped between steps 2 and 4 of a save. The aside goes back.
+- Any other aside: the version a save replaced. Deleted if it holds what
+  its name's hash says, else (someone wrote to it after) a conflict copy.
+- A tmp without its aside: an unplaced save's text, deleted.
+
+A board deleted on purpose is never brought back: only an interrupted
+save (its tmp still there) restores an aside.
+*/
+async function sweepSideFiles(fs: BoardFilesystem, path: string) {
   const dir = posix.dirname(path);
   const prefix = `.${posix.basename(path)}.`;
   let names: string[];
@@ -291,13 +324,53 @@ async function recoverAside(fs: BoardFilesystem, path: string) {
   } catch {
     return;
   }
-  const asides = names.filter(
-    (name) =>
-      name.startsWith(prefix) &&
-      /^[0-9a-f-]{36}\.sage-board-aside$/.test(name.slice(prefix.length)),
-  );
-  for (const name of asides) {
-    await keepVersion(fs, posix.join(dir, name), path).catch(() => {});
+  const tmps = new Set<string>();
+  const asides: { name: string; id: string; hash: string }[] = [];
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const rest = name.slice(prefix.length);
+    let m = /^([0-9a-f-]{36})\.sage-board-tmp$/.exec(rest);
+    if (m) {
+      tmps.add(m[1]);
+      continue;
+    }
+    m = /^([0-9a-f-]{36})\.([0-9a-f]{16})\.sage-board-aside$/.exec(rest);
+    if (m) asides.push({ name, id: m[1], hash: m[2] });
+  }
+  const asideIds = new Set(asides.map((a) => a.id));
+  for (const { name, id, hash } of asides) {
+    const p = posix.join(dir, name);
+    if (activeAsides.has(p)) continue;
+    try {
+      if (tmps.has(id)) {
+        // An interrupted save: put the board back if its name is free.
+        await keepVersion(fs, p, path);
+        await fs.unlink(sidePath(path, id, "tmp")).catch(() => {});
+        continue;
+      }
+      let text: string | undefined;
+      try {
+        text = await readBoundedText(fs, p, BOARD_EDITABLE_LIMIT);
+      } catch (err: any) {
+        if (err?.code !== "EFBIG") throw err;
+      }
+      if (text !== undefined && shortHash(text) === hash) {
+        await fs.unlink(p);
+      } else {
+        await keepAsConflictCopy(fs, p, path);
+      }
+    } catch (err) {
+      logger.warn("board: could not sweep a side file", {
+        path,
+        name,
+        err: `${err}`,
+      });
+    }
+  }
+  for (const id of tmps) {
+    if (!asideIds.has(id)) {
+      await fs.unlink(sidePath(path, id, "tmp")).catch(() => {});
+    }
   }
 }
 
@@ -314,7 +387,7 @@ export function fileOf(
           stats = await fs.lstat(path);
         } catch (err) {
           if (!isMissing(err)) throw err;
-          await recoverAside(fs, path);
+          await sweepSideFiles(fs, path);
           stats = await fs.lstat(path);
         }
         return {
@@ -509,6 +582,7 @@ const registry = new BoardRegistry({
   leaseMs: BOARD_LEASE_MS,
   maxOpen: MAX_OPEN_BOARDS,
   maxPerGroup: MAX_OPEN_BOARDS_PER_PROJECT,
+  maxTotalBytes: MAX_OPEN_BOARD_BYTES,
   log: (message, extra) => logger.debug(message, extra),
 });
 
@@ -536,19 +610,20 @@ async function managerFor(opts: BoardRequest): Promise<ManagerFor> {
     if (info === undefined) {
       return { path, status: { ...boardPaths(path), state: "missing" } };
     }
-    if (info.size > BOARD_EDITABLE_LIMIT) {
+    if (info.size > BOARD_HOST_BYTE_LIMIT) {
       return {
         path,
         status: {
           ...boardPaths(path),
           state: "too-large",
           bytes: info.size,
-          message: `the board is ${info.size} bytes, over the ${BOARD_EDITABLE_LIMIT} a board can be edited at`,
+          message: `the board is ${info.size} bytes, over the ${BOARD_HOST_BYTE_LIMIT} a board can be edited at`,
         },
       };
     }
-    // Its size is charged from now, through start and close.
-    reserve = info.size;
+    // A board may grow to the host's hard limit before its manager closes
+    // it: that much is charged from now, through start and close.
+    reserve = Math.max(info.size, BOARD_HOST_HARD_BYTE_LIMIT);
   }
   const manager = await registry.open(
     key,

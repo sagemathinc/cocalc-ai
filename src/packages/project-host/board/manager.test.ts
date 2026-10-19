@@ -3,6 +3,7 @@
  * with Sagebrush's own board library.
  */
 
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ import { uuid } from "@cocalc/util/misc";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
 import {
+  BOARD_EDITABLE_LIMIT,
   BOARD_HOST_RECORD_LIMIT,
   BOARD_PRIMARY_KEYS,
   BOARD_RECORD_LIMIT,
@@ -627,7 +629,10 @@ describe("limits", () => {
   });
 
   test("a document grown over the limit is not saved until it shrinks", async () => {
-    const { t } = await opened({ maxBytes: bytes + 20 });
+    const { t } = await opened({
+      maxBytes: bytes + 20,
+      hardMaxBytes: bytes + 500,
+    });
     try {
       await until(() => itemText(t.browser, "a") === "hello world");
       setText(t.browser, "b", "x".repeat(100));
@@ -731,13 +736,18 @@ describe("no version from another writer is lost, at any step of a save", () => 
       expect(doc.nodes.find((n) => n.id === "a").x).toBe(4242);
       expect(t.manager.getStatus().state).toBe("ok");
       const names: string[] = await t.fs.readdir(".");
-      expect(names.filter((n) => n.includes(".sage-board-"))).toEqual([]);
+      // At most the previous version of the last save stays (until the
+      // next save sweeps it), and no temp file.
+      expect(names.filter((n) => n.endsWith(".sage-board-tmp"))).toEqual([]);
+      expect(
+        names.filter((n) => n.endsWith(".sage-board-aside")).length,
+      ).toBeLessThanOrEqual(1);
     } finally {
       await t.cleanup();
     }
   });
 
-  test("a write into the old file after the check is kept as a conflict copy", async () => {
+  test("a write into the old file after the save is kept as a conflict copy", async () => {
     let hook: (() => Promise<void>) | undefined;
     const t = await setup(canonical(BOARD), {
       hooks: {
@@ -751,33 +761,74 @@ describe("no version from another writer is lost, at any step of a save", () => 
     try {
       await until(() => itemText(t.browser, "a") === "hello world");
       const late = withNode("a", { x: 9 });
+      let aside = "";
       hook = async () => {
-        // A writer that had the old file open writes into it.
-        await t.fs.writeFile(await asideOf(t.fs, t.path), late);
+        aside = await asideOf(t.fs, t.path);
       };
       setText(t.browser, "b", "local");
-      await until(() => hook === undefined);
+      await until(() => hook === undefined && aside !== "");
+      await t.manager.settled();
+      // A writer that had the old file open writes into it, even after
+      // the save finished.
+      await t.fs.writeFile(aside, late);
+      // The next save surfaces it.
+      setText(t.browser, "b", "local again");
+      await until(async () => (await t.read()).includes('"local again"'));
       await t.manager.settled();
       const names: string[] = await t.fs.readdir(".");
       const copies = names.filter((n) => n.startsWith(`${t.path}.conflict-`));
       expect(copies.length).toBe(1);
       expect(`${await t.fs.readFile(copies[0], "utf8")}`).toBe(late);
-      expect(await t.read()).toContain('"local"');
+      expect(names).not.toContain(aside);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  const hash = (text: string) =>
+    createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+  test("a save interrupted while the board was aside is put back", async () => {
+    const t = await setup(canonical(BOARD));
+    try {
+      await t.manager.close();
+      const id = uuid();
+      const text = canonical(BOARD);
+      // As a host that stopped between steps 2 and 4 leaves it.
+      await t.fs.writeFile(`.${t.path}.${id}.sage-board-tmp`, "new text");
+      await t.fs.rename(
+        t.path,
+        `.${t.path}.${id}.${hash(text)}.sage-board-aside`,
+      );
+      const info = await fileOf(t.local, `/home/user/${t.path}`).info();
+      expect(info?.size).toBe(Buffer.byteLength(text));
+      expect(await t.read()).toBe(text);
+      const names: string[] = await t.fs.readdir(".");
       expect(names.filter((n) => n.includes(".sage-board-"))).toEqual([]);
     } finally {
       await t.cleanup();
     }
   });
 
-  test("a version found aside after a crash goes back to the board's name", async () => {
+  test("a board deleted on purpose is not brought back by an old aside", async () => {
     const t = await setup(canonical(BOARD));
     try {
       await t.manager.close();
-      const aside = `.${t.path}.${uuid()}.sage-board-aside`;
-      await t.fs.rename(t.path, aside);
-      const info = await fileOf(t.local, `/home/user/${t.path}`).info();
-      expect(info?.size).toBe(Buffer.byteLength(canonical(BOARD)));
-      expect(await t.read()).toBe(canonical(BOARD));
+      const old = withNode("a", { x: 1 });
+      // A save that finished (its tmp placed) left its aside behind.
+      await t.fs.writeFile(
+        `.${t.path}.${uuid()}.${hash(old)}.sage-board-aside`,
+        old,
+      );
+      await t.fs.unlink(t.path);
+      expect(await fileOf(t.local, `/home/user/${t.path}`).info()).toBe(
+        undefined,
+      );
+      await expect(t.fs.readFile(t.path, "utf8")).rejects.toMatchObject(
+        missing,
+      );
+      const names: string[] = await t.fs.readdir(".");
+      expect(names.filter((n) => n.includes(".sage-board-"))).toEqual([]);
     } finally {
       await t.cleanup();
     }
@@ -884,8 +935,9 @@ describe("the record limit is checked before writing", () => {
       },
       recordsToString,
       saveDelayMs: 60_000,
-      // The protocol's limit, not the host's lower default.
+      // The protocol's limits, not the host's lower defaults.
       maxRecords: BOARD_RECORD_LIMIT,
+      maxBytes: BOARD_EDITABLE_LIMIT,
     });
     try {
       await manager.start();

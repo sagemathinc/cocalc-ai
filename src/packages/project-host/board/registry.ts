@@ -53,9 +53,12 @@ export interface BoardRegistryOptions {
   // At most this many entries per group (a key's part before its first
   // ":", the project), so one project cannot take every slot.
   maxPerGroup?: number;
-  // The open boards' bytes (each its reservation or its current size,
-  // whichever is larger) never exceed this: a board that would take the
-  // total over it does not start.
+  // A board that would take the open boards' charged bytes over this does
+  // not start. Each is charged its reservation (the service reserves the
+  // most a host keeps for one board), or its current size if larger. A
+  // board's growth past its reservation is bounded by its manager, which
+  // closes it past the hard limit; until that check (within a save delay)
+  // the total can exceed this by that growth.
   maxTotalBytes?: number;
   startTimeoutMs?: number;
   closeTimeoutMs?: number;
