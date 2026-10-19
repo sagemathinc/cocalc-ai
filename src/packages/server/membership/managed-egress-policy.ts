@@ -31,13 +31,12 @@ async function getControlPlaneEgressLimits(account_id: string): Promise<{
   egress_5h_bytes: number;
   egress_7d_bytes: number;
 }> {
-  // A membership lookup failure must not block browser sessions: fall back
-  // to the site default.
-  const resolution = await resolveMembershipForAccount(account_id).catch(
-    () => undefined,
-  );
+  // A membership lookup failure throws: the caller keeps its previous
+  // decision, rather than the site default silently replacing an override.
   return getControlPlaneEgressLimitsFromEffective(
-    getEffectiveMembershipUsageLimits(resolution),
+    getEffectiveMembershipUsageLimits(
+      await resolveMembershipForAccount(account_id),
+    ),
   );
 }
 
@@ -45,8 +44,12 @@ export interface ManagedProjectEgressPolicy {
   account_id?: string;
   category: ManagedProjectEgressCategory;
   allowed: boolean;
+  // The exceeded window that recovers last (the one the block waits on).
   blocked_by?: "5h" | "7d";
-  // When the blocking window is back under its limit (no new traffic), if known.
+  // Every exceeded window.
+  blocked_windows?: ("5h" | "7d")[];
+  // When every exceeded window is back under its limit (no new traffic), if
+  // known.
   blocked_until?: Date;
   managed_egress_5h_bytes?: number;
   managed_egress_7d_bytes?: number;
@@ -69,7 +72,8 @@ function notifyIfNearLimit(policy: ManagedProjectEgressPolicy): void {
     const limit =
       window === "5h" ? policy.egress_5h_bytes : policy.egress_7d_bytes;
     if (used == null || limit == null) continue;
-    const blocked = policy.blocked_by === window;
+    const blocked =
+      policy.blocked_windows?.includes(window) ?? policy.blocked_by === window;
     maybeNotifyManagedEgressLimit({
       account_id: policy.account_id,
       pool,
@@ -77,9 +81,45 @@ function notifyIfNearLimit(policy: ManagedProjectEgressPolicy): void {
       used,
       limit,
       blocked,
-      resets_at: blocked ? policy.blocked_until : undefined,
+      // the block lifts at blocked_until, which is this window's recovery
+      // only if it is the window that recovers last
+      resets_at:
+        blocked && policy.blocked_by === window
+          ? policy.blocked_until
+          : undefined,
     });
   }
+}
+
+// The block lifts only when every exceeded window has recovered, so report
+// the latest recovery; unknown if any exceeded window's recovery is unknown.
+export function latestBlockRecovery(
+  exceeded: { window: "5h" | "7d"; until?: Date | string }[],
+): Pick<
+  ManagedProjectEgressPolicy,
+  "blocked_by" | "blocked_windows" | "blocked_until"
+> {
+  if (exceeded.length === 0) return {};
+  const blocked_windows = exceeded.map(({ window }) => window);
+  const dated = exceeded.map(({ window, until }) => ({
+    window,
+    until: until == null ? undefined : new Date(until),
+  }));
+  if (dated.some(({ until }) => !Number.isFinite(until?.getTime()))) {
+    // the longest exceeded window is the best description of the wait
+    return {
+      blocked_by: blocked_windows.includes("7d") ? "7d" : "5h",
+      blocked_windows,
+    };
+  }
+  const last = dated.reduce((a, b) =>
+    b.until!.getTime() > a.until!.getTime() ? b : a,
+  );
+  return {
+    blocked_by: last.window,
+    blocked_windows,
+    blocked_until: last.until,
+  };
 }
 
 async function computeManagedProjectEgressPolicy({
@@ -96,27 +136,28 @@ async function computeManagedProjectEgressPolicy({
       account_id,
       category,
     });
-    const blocked_by =
-      usage.bytes_5h > egress_5h_bytes
-        ? "5h"
-        : usage.bytes_7d > egress_7d_bytes
-          ? "7d"
-          : undefined;
-    const blocked_until =
-      blocked_by == null
-        ? undefined
-        : await getManagedEgressCategoryBlockedUntil({
-            account_id,
-            category,
-            window: blocked_by,
-            limit: blocked_by === "5h" ? egress_5h_bytes : egress_7d_bytes,
-          }).catch(() => undefined);
+    const exceeded: { window: "5h" | "7d"; until?: Date | string }[] = [];
+    for (const [window, used, limit] of [
+      ["5h", usage.bytes_5h, egress_5h_bytes],
+      ["7d", usage.bytes_7d, egress_7d_bytes],
+    ] as const) {
+      if (!(used > limit)) continue;
+      exceeded.push({
+        window,
+        until: await getManagedEgressCategoryBlockedUntil({
+          account_id,
+          category,
+          window,
+          limit,
+        }).catch(() => undefined),
+      });
+    }
+    const block = latestBlockRecovery(exceeded);
     return {
       account_id,
       category,
-      allowed: blocked_by == null,
-      blocked_by,
-      blocked_until,
+      allowed: block.blocked_by == null,
+      ...block,
       managed_egress_5h_bytes: usage.bytes_5h,
       managed_egress_7d_bytes: usage.bytes_7d,
       egress_5h_bytes,
@@ -138,23 +179,20 @@ async function computeManagedProjectEgressPolicy({
     limit5h: egress_5h_bytes,
     limit7d: egress_7d_bytes,
   });
-  const blocked_by = usage.over_managed_egress_5h
-    ? "5h"
-    : usage.over_managed_egress_7d
-      ? "7d"
-      : undefined;
+  // Membership windows are fixed: each exceeded window recovers at its reset.
+  const block = latestBlockRecovery([
+    ...(usage.over_managed_egress_5h
+      ? [{ window: "5h" as const, until: usage.managed_egress_5h_reset_at }]
+      : []),
+    ...(usage.over_managed_egress_7d
+      ? [{ window: "7d" as const, until: usage.managed_egress_7d_reset_at }]
+      : []),
+  ]);
   return {
     account_id,
     category,
-    allowed: blocked_by == null,
-    blocked_by,
-    // Membership windows are fixed: the block lifts when the window resets.
-    blocked_until:
-      blocked_by === "5h"
-        ? usage.managed_egress_5h_reset_at
-        : blocked_by === "7d"
-          ? usage.managed_egress_7d_reset_at
-          : undefined,
+    allowed: block.blocked_by == null,
+    ...block,
     managed_egress_5h_bytes: usage.managed_egress_5h_bytes,
     managed_egress_7d_bytes: usage.managed_egress_7d_bytes,
     egress_5h_bytes,

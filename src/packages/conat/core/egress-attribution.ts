@@ -52,44 +52,59 @@ export function addEgressBytes(
 }
 
 // Remembers which subject each pending reply inbox belongs to.  Bounded in
-// size and age; a miss just means the reply is attributed to its inbox.
+// entries, bytes and age: reply subjects longer than MAX_REPLY_SUBJECT_LENGTH
+// are not remembered, only the request's (already bounded) normalized label
+// is stored, and expired entries are pruned oldest-first on every insert.  A
+// miss just means the reply is attributed to its inbox.
+export const MAX_REPLY_SUBJECT_LENGTH = 256;
+
 export class ReplySubjectAttribution {
-  private readonly bySubject = new Map<
-    string,
-    { subject: string; at: number }
-  >();
+  // insertion order is time order: remember() re-inserts
+  private readonly labels = new Map<string, { label: string; at: number }>();
 
   constructor(
     private readonly maxEntries = 20_000,
     private readonly ttlMs = 10 * 60_000,
   ) {}
 
-  remember(replySubject: string, requestSubject: string, now = Date.now()) {
-    if (!replySubject) return;
-    this.bySubject.delete(replySubject);
-    this.bySubject.set(replySubject, { subject: requestSubject, at: now });
-    while (this.bySubject.size > this.maxEntries) {
-      const oldest = this.bySubject.keys().next().value;
-      if (oldest === undefined) break;
-      this.bySubject.delete(oldest);
+  get size(): number {
+    return this.labels.size;
+  }
+
+  private prune(now: number) {
+    for (const [key, { at }] of this.labels) {
+      if (now - at <= this.ttlMs && this.labels.size <= this.maxEntries) break;
+      this.labels.delete(key);
     }
   }
 
-  lookup(replySubject: string, now = Date.now()): string | undefined {
-    const entry = this.bySubject.get(replySubject);
-    if (entry == null) return;
-    if (now - entry.at > this.ttlMs) {
-      this.bySubject.delete(replySubject);
+  remember(replySubject: string, requestSubject: string, now = Date.now()) {
+    if (!replySubject || replySubject.length > MAX_REPLY_SUBJECT_LENGTH) {
       return;
     }
-    return entry.subject;
+    this.labels.delete(replySubject);
+    this.labels.set(replySubject, {
+      label: normalizeSubjectForAttribution(requestSubject),
+      at: now,
+    });
+    this.prune(now);
+  }
+
+  lookup(replySubject: string, now = Date.now()): string | undefined {
+    const entry = this.labels.get(replySubject);
+    if (entry == null) return;
+    if (now - entry.at > this.ttlMs) {
+      this.labels.delete(replySubject);
+      return;
+    }
+    return entry.label;
   }
 
   label(subject: string, now = Date.now()): string {
     const request = this.lookup(subject, now);
     return request == null
       ? normalizeSubjectForAttribution(subject)
-      : `reply:${normalizeSubjectForAttribution(request)}`;
+      : `reply:${request}`;
   }
 }
 

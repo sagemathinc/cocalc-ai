@@ -4,7 +4,10 @@
  */
 
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
-import { parseManagedEgressBlockedError } from "./managed-egress-blocked";
+import {
+  managedEgressBlockUpgradeHelps,
+  parseManagedEgressBlockedError,
+} from "./managed-egress-blocked";
 
 describe("parseManagedEgressBlockedError", () => {
   it("parses managed egress blocking errors", () => {
@@ -63,5 +66,18 @@ Current managed egress categories (5 hours): Interactive session traffic: 57 MB.
         "failed to sign in - Error: Account control traffic safety limit reached.\nNew browser control-plane connections are temporarily blocked because this account generated an abnormal amount of control traffic.\n7-day usage: 100 GB / 100 GB.",
       )?.title,
     ).toBe("Account control traffic safety limit reached.");
+  });
+
+  it("offers contact support, not a membership upgrade, for control-plane blocks in either format", () => {
+    const old = parseManagedEgressBlockedError(
+      "failed to sign in - Error: Account control traffic safety limit reached.\nNew browser control-plane connections are temporarily blocked because this account generated an abnormal amount of control traffic.",
+    )!;
+    expect(old.category).toBe("control-plane-conat");
+    expect(managedEgressBlockUpgradeHelps(old)).toBe(false);
+    const shared = parseManagedEgressBlockedError(
+      "Project outbound network traffic limit reached for this account.\nCode: managed-egress-blocked category=raw-network window=5h",
+    )!;
+    expect(shared.category).toBe("raw-network");
+    expect(managedEgressBlockUpgradeHelps(shared)).toBe(true);
   });
 });

@@ -1067,6 +1067,9 @@ export const STAR_GENEROUS_USAGE_LIMITS = [
 // billing); and anti-spam limits on the admin's own outgoing email.
 export const STAR_RETAINED_USAGE_LIMITS = [
   "shared_compute_priority",
+  // site-safety limits on browser control traffic: unset keeps the site default
+  "control_plane_egress_5h_bytes",
+  "control_plane_egress_7d_bytes",
   "egress_policy",
   "dedicated_host_egress_policy",
   "credit_spend_limit_5h_usd",

@@ -50,5 +50,20 @@ export function parseManagedEgressBlockedError(
     .filter(Boolean);
   if (lines.length === 0) return;
   const [title, ...details] = lines;
-  return { raw, title, details };
+  // The old control-plane message ("Account control traffic safety limit
+  // reached.") had no category; a membership upgrade does not raise it.
+  const category =
+    lower.includes("account control traffic") ||
+    lower.includes("control-plane connections")
+      ? "control-plane-conat"
+      : undefined;
+  return { raw, title, details, ...(category ? { category } : {}) };
+}
+
+// Whether upgrading the membership raises the limit that blocked: not for
+// the independent control-plane safety limit (contact support instead).
+export function managedEgressBlockUpgradeHelps(
+  info: Pick<ManagedEgressBlockedInfo, "category">,
+): boolean {
+  return info.category !== "control-plane-conat";
 }

@@ -10,7 +10,10 @@ import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchas
 import { HelpEmailLink } from "@cocalc/frontend/customize";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
-import type { ManagedEgressBlockedInfo } from "@cocalc/frontend/purchases/managed-egress-blocked";
+import {
+  managedEgressBlockUpgradeHelps,
+  type ManagedEgressBlockedInfo,
+} from "@cocalc/frontend/purchases/managed-egress-blocked";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
@@ -39,7 +42,7 @@ export function ManagedEgressBlockedScreen({
   const [purchaseOpen, setPurchaseOpen] = useState(false);
   // A membership upgrade raises the shared network allowance, but not the
   // account control traffic limit; only support can raise that one.
-  const upgradeHelps = blocked.category !== "control-plane-conat";
+  const upgradeHelps = managedEgressBlockUpgradeHelps(blocked);
   const resetsAt =
     blocked.resets_at != null ? new Date(blocked.resets_at) : undefined;
 

@@ -7,6 +7,7 @@ import {
   addEgressBytes,
   diffEgressBySubject,
   MAX_EGRESS_SUBJECT_KEYS,
+  MAX_REPLY_SUBJECT_LENGTH,
   normalizeSubjectForAttribution,
   OTHER_KEY,
   ReplySubjectAttribution,
@@ -53,6 +54,20 @@ describe("egress attribution", () => {
     replies.remember("r3", "s3", 0);
     expect(replies.lookup("r1", 0)).toBeUndefined();
     expect(replies.lookup("r3", 0)).toBe("s3");
+  });
+
+  it("prunes expired entries on insert without any lookup, and bounds bytes", () => {
+    const replies = new ReplySubjectAttribution(100, 1000);
+    for (let i = 0; i < 50; i++) replies.remember(`r${i}`, "s", 0);
+    expect(replies.size).toBe(50);
+    replies.remember("fresh", "s", 5000);
+    expect(replies.size).toBe(1);
+    // over-long reply subjects are not remembered at all
+    replies.remember("x".repeat(MAX_REPLY_SUBJECT_LENGTH + 1), "s", 5000);
+    expect(replies.size).toBe(1);
+    // only the bounded normalized label of the request is stored
+    replies.remember("r", `a.${"y".repeat(10_000)}.b.c.d.e.f.g`, 5000);
+    expect(replies.lookup("r", 5000)!.length).toBeLessThan(300);
   });
 
   it("diffs counters and ranks the top subjects", () => {

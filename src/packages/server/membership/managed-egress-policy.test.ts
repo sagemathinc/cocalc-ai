@@ -293,11 +293,12 @@ describe("getManagedProjectEgressPolicy", () => {
     );
   });
 
-  it("falls back to the site control-plane default if membership lookup fails", async () => {
+  it("fails, rather than silently applying the site default, if membership lookup fails", async () => {
+    // e.g. 108 GB used under a 200 GB override: the 100 GB default would block
     resolveMembershipForAccountMock.mockRejectedValue(new Error("db down"));
     getManagedEgressCategoryUsageForAccountMock.mockResolvedValue({
       bytes_5h: 0,
-      bytes_7d: 0,
+      bytes_7d: 108_000_000_000,
     });
     const { getManagedProjectEgressPolicy } =
       await import("./managed-egress-policy");
@@ -306,11 +307,73 @@ describe("getManagedProjectEgressPolicy", () => {
         account_id: "account-5",
         category: "control-plane-conat",
       }),
-    ).resolves.toMatchObject({
-      allowed: true,
-      egress_5h_bytes: 10_000_000_000,
-      egress_7d_bytes: 100_000_000_000,
+    ).rejects.toThrow("db down");
+    // not cached: the next check retries
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: { control_plane_egress_7d_bytes: 200_000_000_000 },
     });
+    await expect(
+      getManagedProjectEgressPolicy({
+        account_id: "account-5",
+        category: "control-plane-conat",
+      }),
+    ).resolves.toMatchObject({ allowed: true });
+  });
+
+  it("waits for the latest recovery when both control-plane windows are exceeded", async () => {
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "free",
+      source: "default",
+      entitlements: {},
+      effective_limits: {},
+    });
+    getManagedEgressCategoryUsageForAccountMock.mockResolvedValue({
+      bytes_5h: 11_000_000_000,
+      bytes_7d: 108_000_000_000,
+    });
+    const at5h = new Date("2026-10-19T01:00:00.000Z");
+    const at7d = new Date("2026-10-21T09:00:00.000Z");
+    getManagedEgressCategoryBlockedUntilMock.mockImplementation(
+      async ({ window }) => (window === "5h" ? at5h : at7d),
+    );
+    const { getManagedProjectEgressPolicy } =
+      await import("./managed-egress-policy");
+    await expect(
+      getManagedProjectEgressPolicy({
+        account_id: "account-7",
+        category: "control-plane-conat",
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      blocked_by: "7d",
+      blocked_windows: ["5h", "7d"],
+      blocked_until: at7d,
+    });
+    for (const window of ["5h", "7d"]) {
+      expect(maybeNotifyManagedEgressLimitMock).toHaveBeenCalledWith(
+        expect.objectContaining({ window, blocked: true }),
+      );
+    }
+  });
+
+  it("reports no recovery time if any exceeded window's recovery is unknown", async () => {
+    const { latestBlockRecovery } = await import("./managed-egress-policy");
+    expect(
+      latestBlockRecovery([
+        { window: "5h", until: new Date("2026-10-19T01:00:00.000Z") },
+        { window: "7d" },
+      ]),
+    ).toEqual({ blocked_by: "7d", blocked_windows: ["5h", "7d"] });
+    expect(latestBlockRecovery([])).toEqual({});
+    expect(
+      latestBlockRecovery([
+        { window: "5h", until: "2026-10-22T00:00:00.000Z" },
+        { window: "7d", until: "2026-10-21T00:00:00.000Z" },
+      ]),
+    ).toMatchObject({ blocked_by: "5h" });
   });
 
   it("uses the fixed membership window reset as blocked_until and notifies the shared pool", async () => {
@@ -386,5 +449,37 @@ describe("getManagedProjectEgressPolicy", () => {
     );
     expect(resolveMembershipForAccountMock).toHaveBeenCalledTimes(1);
     expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the later fixed reset when both shared windows are exceeded", async () => {
+    const reset5h = new Date("2026-10-19T02:00:00.000Z");
+    const reset7d = new Date("2026-10-23T00:00:00.000Z");
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: { egress_5h_bytes: 1000, egress_7d_bytes: 2000 },
+    });
+    getManagedEgressUsageForAccountMock.mockResolvedValue({
+      managed_egress_5h_bytes: 1100,
+      managed_egress_7d_bytes: 2100,
+      managed_egress_5h_reset_at: reset5h,
+      managed_egress_7d_reset_at: reset7d,
+      over_managed_egress_5h: true,
+      over_managed_egress_7d: true,
+    });
+    const { getManagedProjectEgressPolicy } =
+      await import("./managed-egress-policy");
+    await expect(
+      getManagedProjectEgressPolicy({
+        account_id: "account-8",
+        category: "file-download",
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      blocked_by: "7d",
+      blocked_windows: ["5h", "7d"],
+      blocked_until: reset7d,
+    });
   });
 });

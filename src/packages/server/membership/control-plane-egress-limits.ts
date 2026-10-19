@@ -18,8 +18,10 @@ function positiveIntegerEnv(name: string, fallback: number): number {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-function positive(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+// Entitlement overrides accept any nonnegative integer; 0 is a real limit
+// (no browser control traffic), not "unset".
+function nonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
     : undefined;
 }
@@ -32,13 +34,13 @@ export function getControlPlaneEgressLimitsFromEffective(
 ): { egress_5h_bytes: number; egress_7d_bytes: number } {
   return {
     egress_5h_bytes:
-      positive(limits?.control_plane_egress_5h_bytes) ??
+      nonNegative(limits?.control_plane_egress_5h_bytes) ??
       positiveIntegerEnv(
         "COCALC_CONTROL_PLANE_EGRESS_5H_BYTES",
         DEFAULT_CONTROL_PLANE_EGRESS_5H_BYTES,
       ),
     egress_7d_bytes:
-      positive(limits?.control_plane_egress_7d_bytes) ??
+      nonNegative(limits?.control_plane_egress_7d_bytes) ??
       positiveIntegerEnv(
         "COCALC_CONTROL_PLANE_EGRESS_7D_BYTES",
         DEFAULT_CONTROL_PLANE_EGRESS_7D_BYTES,
