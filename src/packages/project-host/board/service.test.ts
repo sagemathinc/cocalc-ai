@@ -4,7 +4,7 @@ import {
   BOARD_PRIMARY_KEYS,
   BOARD_STRING_COLS,
 } from "@cocalc/util/board/names";
-import { canonicalBoardPath, recordsToString } from "./service";
+import { boardHandlers, canonicalBoardPath, recordsToString } from "./service";
 
 test("board paths are absolute and must be boards", () => {
   expect(canonicalBoardPath("plan.board.json")).toBe(
@@ -38,4 +38,21 @@ test("records survive the syncdb's string, in either order", () => {
   expect(recordsToString([...records].reverse())).toBe(text);
   const back = from_str(text, BOARD_PRIMARY_KEYS, BOARD_STRING_COLS);
   expect(lib.canonical(lib.fromRecords(back as any))).toBe(lib.canonical(doc));
+});
+
+test("board editing is off unless the host enables it", () => {
+  const opts = { client: {} as any, projectIdOf: (s: string) => s };
+  expect(boardHandlers({ ...opts, env: {} })).toBeUndefined();
+  expect(
+    boardHandlers({
+      ...opts,
+      env: { COCALC_PROJECT_HOST_BOARD_EDITING: "true" },
+    }),
+  ).toBeUndefined();
+  const handlers = boardHandlers({
+    ...opts,
+    env: { COCALC_PROJECT_HOST_BOARD_EDITING: "1" },
+  });
+  expect(typeof handlers?.open).toBe("function");
+  expect(typeof handlers?.save).toBe("function");
 });

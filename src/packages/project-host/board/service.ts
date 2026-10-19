@@ -20,7 +20,11 @@ close.
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import type { BoardOpenResult, Filesystem } from "@cocalc/conat/files/fs";
+import type {
+  BoardOpenResult,
+  Filesystem,
+  FilesystemBoardHandlers,
+} from "@cocalc/conat/files/fs";
 import { immerdb, type ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { getLogger } from "@cocalc/backend/logger";
 import { from_str as immerFromStr } from "@cocalc/sync/editor/immer-db/doc";
@@ -663,4 +667,30 @@ export function openBoardCount(): number {
 }
 export function sweepBoards(now?: number): void {
   registry.sweep(now);
+}
+
+// The file service's board handlers, or none (board calls then fail with
+// ENOSYS, and no manager is ever created) unless the host enables board
+// editing with COCALC_PROJECT_HOST_BOARD_EDITING=1.
+//
+// Invariant: no host enables this before the persist server enforces its
+// own bounds on board streams. Until then a board's limits are checked only
+// after a change has been applied to its syncdb, and its history is
+// replayed on open before any check (see the PR's "known gap").
+export function boardHandlers({
+  client,
+  projectIdOf,
+  env = process.env,
+}: {
+  client: ConatClient;
+  projectIdOf: (subject: string) => string;
+  env?: NodeJS.ProcessEnv;
+}): FilesystemBoardHandlers | undefined {
+  if (env.COCALC_PROJECT_HOST_BOARD_EDITING !== "1") return undefined;
+  return {
+    open: async ({ subject, path, fs }) =>
+      await openBoard({ client, project_id: projectIdOf(subject), path, fs }),
+    save: async ({ subject, path, fs }) =>
+      await saveBoard({ client, project_id: projectIdOf(subject), path, fs }),
+  };
 }

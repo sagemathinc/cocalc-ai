@@ -225,7 +225,7 @@ import {
 } from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { importJupyterIpynb, saveJupyterIpynb } from "./jupyter-ipynb";
-import { openBoard, saveBoard } from "./board/service";
+import { boardHandlers } from "./board/service";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
 import { createSharedWorkLimit } from "./shared-work-limit";
@@ -5257,32 +5257,11 @@ export async function initFsServer({
           fs,
         }),
     },
-    // Board editing is off unless the host enables it: until the persist
-    // server bounds a board's live history itself, the host's limits are
-    // checked only after a change is applied (see board/manager.ts).
-    board: boardEditingEnabled()
-      ? {
-          open: async ({ subject, path, fs }) =>
-            await openBoard({
-              client,
-              project_id: projectIdFromSubject(subject),
-              path,
-              fs,
-            }),
-          save: async ({ subject, path, fs }) =>
-            await saveBoard({
-              client,
-              project_id: projectIdFromSubject(subject),
-              path,
-              fs,
-            }),
-        }
-      : undefined,
+    board: boardHandlers({
+      client,
+      projectIdOf: projectIdFromSubject,
+    }),
   });
-}
-
-function boardEditingEnabled(): boolean {
-  return process.env.COCALC_PROJECT_HOST_BOARD_EDITING === "1";
 }
 
 const fileDownloadReadServers = new Map<string, Promise<void>>();

@@ -136,7 +136,8 @@ export interface BoardManagerOptions {
 const MAX_SAVE_ATTEMPTS = 3;
 
 type Parsed =
-  { ok: true; doc: any; records: any[] } | { ok: false; status: BoardStatus };
+  | { ok: true; doc: any; records: any[] }
+  | { ok: false; status: BoardStatus };
 
 export class BoardManager {
   private readonly lib: BoardLib;
