@@ -41,9 +41,12 @@ done <"$tmp/worktrees"
 # includeIf.onbranch:security/**), since a later checkout could activate it.
 # A target that is missing or unreadable now could be created later: refuse.
 rc=0
-git config --show-origin --get-regexp '^include(if\..*)?\.path$' >"$tmp/includes" || rc=$?
+git config -z --show-origin --get-regexp '^include(if\..*)?\.path$' >"$tmp/includes" || rc=$?
 [ $rc = 0 ] || [ $rc = 1 ] || cannot_verify "listing include paths failed"
-while read -r origin key value; do
+# NUL-separated entries: "<origin>\0<key>\n<value>\0" (paths may contain spaces).
+while IFS= read -r -d '' origin && IFS= read -r -d '' entry; do
+  key=${entry%%$'\n'*}
+  value=${entry#*$'\n'}
   file=${value/#\~/$HOME}
   case $file in /*) ;; *) file="$(dirname "${origin#file:}")/$file" ;; esac
   [ -f "$file" ] && [ -r "$file" ] || cannot_verify "$key -> $file is missing or unreadable"

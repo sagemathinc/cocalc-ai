@@ -443,6 +443,13 @@ inst 0 "installs again once nothing sets core.hooksPath"
 git config 'includeIf.onbranch:security/**.path' "$T/not-there-yet.gitconfig"
 inst 1 "refuses an include target that does not exist (yet)"
 git config --unset 'includeIf.onbranch:security/**.path'
+# A global config whose path contains a space, with an ordinary includeIf.
+mkdir -p "$T/g dir"
+printf '[user]\n\tname = t\n' >"$T/g dir/plain.gitconfig"
+printf '[includeIf "onbranch:feature/**"]\n\tpath = plain.gitconfig\n' >"$T/g dir/global config"
+GIT_CONFIG_GLOBAL="$T/g dir/global config" bash "$here/install-hooks.sh" >"$T/out" 2>&1 &&
+  { pass=$((pass + 1)); echo "ok    installs with a config path containing spaces"; } ||
+  { fail=$((fail + 1)); echo "FAIL  config path with spaces"; sed 's/^/      /' "$T/out" | head -3; }
 mkdir -p "$T/wtbin"
 printf '#!/bin/sh\n[ "$1" = worktree ] && [ "$2" = list ] && exit 73\nexec %s "$@"\n' "$REALGIT" >"$T/wtbin/git"
 chmod +x "$T/wtbin/git"
