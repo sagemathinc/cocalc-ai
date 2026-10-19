@@ -196,6 +196,53 @@ git push -q -f "$T/Private.git" "$(git rev-parse HEAD):refs/heads/security/t2-sa
 check 1 "after the private branch was force-pushed away" "$T/pub.git" refs/heads/neutral6 "$FORCED" refs/heads/fix/innocent
 [ -n "$(git for-each-ref "refs/cocalc-guard/seen/$FORCED")" ] && { pass=$((pass + 1)); echo "ok    tip shared by two private branches is archived"; } || { fail=$((fail + 1)); echo "FAIL  shared tip not archived"; }
 
+# Deletion-only pushes need no analysis, even when private sources are down;
+# a mixed push is still analyzed.
+git init -q "$T/del" && cd "$T/del" && git commit -q --allow-empty -m d
+git config cocalc.privateUrl "$T/missing-private.git"
+check 0 "deletion-only push while private sources are down" "$T/pub.git" "(delete)" "$Z" refs/heads/security/accidental COCALC_PRIVATE_URL=$T/missing.git
+printf '(delete) %s refs/heads/security/accidental %s\nrefs/heads/x %s refs/heads/fix/ok %s\n' "$Z" "$Z" "$(git rev-parse HEAD)" "$Z" |
+  COCALC_PRIVATE_URL=$T/missing.git bash "$H" origin "$T/pub.git" >/dev/null 2>&1 &&
+  { fail=$((fail + 1)); echo "FAIL  mixed deletion + push was not analyzed"; } || { pass=$((pass + 1)); echo "ok    mixed deletion + push is still analyzed (fails closed)"; }
+
+# A remote with no URL: its private-named tracking branches are private.
+git init -q "$T/nourl" && cd "$T/nourl" || exit 1
+git fetch -q "$T/pub.git" main && git reset -q --hard FETCH_HEAD
+NOURL_SECRET=$(commit "secret on a URL-less remote's tracking branch")
+git reset -q --hard HEAD~1
+git branch -q neutral "$NOURL_SECRET"
+git config remote.nourl.fetch '+refs/heads/*:refs/remotes/nourl/*'
+git update-ref refs/remotes/nourl/security/topic "$NOURL_SECRET"
+check 1 "URL-less remote's security/* tracking ref (private repo down)" "$T/pub.git" refs/heads/neutral "$NOURL_SECRET" refs/heads/fix/innocent COCALC_PRIVATE_URL=$T/missing.git
+check 1 "URL-less remote's security/* tracking ref (private repo up)" "$T/pub.git" refs/heads/neutral "$NOURL_SECRET" refs/heads/fix/innocent
+
+# Rewritten private work: cherry-pick, rebase onto a newer base, squash.
+git init -q --bare "$T/pub2.git" && git init -q --bare "$T/priv2.git"
+git init -q "$T/rw" && cd "$T/rw" || exit 1
+E2="COCALC_PUBLIC_URL=$T/pub2.git"
+P2="COCALC_PRIVATE_URL=$T/priv2.git"
+echo base >a && echo base >b && git add a b && git commit -q -m base && BASE2=$(git rev-parse HEAD)
+git push -q "$T/pub2.git" HEAD:refs/heads/main && git push -q "$T/priv2.git" HEAD:refs/heads/main
+echo fix >>a && git commit -q -am "private fix" && PFIX=$(git rev-parse HEAD)
+echo more >>a && git commit -q -am "private fix, part 2" && PFIX2=$(git rev-parse HEAD)
+git push -q "$T/priv2.git" HEAD:refs/heads/security/topic
+git reset -q --hard "$BASE2"
+git cherry-pick -n "$PFIX" && git commit -q -m "innocent-looking rewrite" && RW=$(git rev-parse HEAD)
+check 1 "cherry-picked private commit (same tree)" "$T/pub2.git" refs/heads/main "$RW" refs/heads/main "$E2" "$P2"
+git reset -q --hard "$BASE2"
+git merge -q --squash "$PFIX2" >/dev/null && git commit -q -m "squashed" && SQ=$(git rev-parse HEAD)
+check 1 "squashed private commits (same final tree)" "$T/pub2.git" refs/heads/main "$SQ" refs/heads/main "$E2" "$P2"
+git reset -q --hard "$BASE2"
+echo public-change >>b && git commit -q -am "public moves on" && git push -q "$T/pub2.git" HEAD:refs/heads/main
+git cherry-pick -n "$PFIX" && git commit -q -m "rebased rewrite" && RB=$(git rev-parse HEAD)
+check 1 "private commit rebased onto a newer public main (same patch-id)" "$T/pub2.git" refs/heads/main "$RB" refs/heads/main "$E2" "$P2"
+git reset -q --hard HEAD~1
+echo unrelated >c && git add c && git commit -q -m "unrelated work" && UN=$(git rev-parse HEAD)
+check 0 "unrelated new commit is allowed" "$T/pub2.git" refs/heads/main "$UN" refs/heads/main "$E2" "$P2"
+# Once the change is public under another commit id, rewrites of it are fine.
+git push -q "$T/pub2.git" "$RW:refs/heads/disclosed"
+check 0 "rewrite of private work already disclosed under another commit id" "$T/pub2.git" refs/heads/main "$RB" refs/heads/main "$E2" "$P2"
+
 # install-hooks.sh
 inst() { # <expect> <desc>
   local rc

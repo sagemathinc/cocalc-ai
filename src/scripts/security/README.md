@@ -46,13 +46,15 @@ The guard allows any push to a known private repo. These are:
 Other `cocalc-ai-*` repos are not trusted; `cocalc-ai-doc`, for example, is public. For every other destination (the public repo, forks, other hosts, local paths) the guard refuses:
 
 - a source or destination branch named `security/*`, `ghsa*` or `release/*security*`;
-- a commit that is on a private branch but on no branch of the public repo. Private branches are those of the private repo, of other private remotes, and local branches with private names.
+- a commit that is on a private branch but on no branch of the public repo. Private branches are those of the private repo, of other private remotes, and local or remote-tracking branches with private names (even for a remote without a URL);
+- a commit with the same tree or the same patch-id (`git patch-id --stable`) as such a private commit. This catches rewritten private work: cherry-picks, amends, rebases and squashes. Content already public under another commit id doesn't count. A partial cherry-pick (some hunks only) or a hand-retyped change is not detected.
+
+Pushes that only delete branches are always allowed, with no analysis.
 
 On every such push it fetches all of these branch lists fresh, in parallel: the private repo's, every private remote's, every `cocalc.privateUrl` repo's, and the public repo's. That takes 2–4 seconds. The guard never touches your `FETCH_HEAD`.
 
 - If any of those fetches fails and the clone has private work, the guard refuses the push (fail closed). Private work means a private remote, a `cocalc.privateUrl`, a private-named branch, or refs cached by an earlier run.
 - When a private repo is deleted, for example a published advisory fork, run `private-fix.sh retire-remote <name>`. It keeps that remote's commits under `refs/cocalc-guard/retired/` as permanently private, then removes the remote.
-- Deleting a remote branch is always allowed, including an accidentally pushed `security/*` branch.
 
 `COCALC_DISCLOSE=1`, set by `disclose.sh`, allows the deliberate disclosure push. Keep the `private` remote's push URL disabled; the scripts push to its explicit URL.
 

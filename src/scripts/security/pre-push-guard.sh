@@ -11,8 +11,11 @@
 #   - the pushed source or destination branch is a private branch name
 #     (security/*, ghsa*, release/*security*), or
 #   - it would push a private commit: one on a branch of the private repo, of
-#     another private remote or cocalc.privateUrl repo, or of a local
-#     private-named branch, that is not on any branch of the public repo.
+#     another private remote or cocalc.privateUrl repo, or a local or tracking
+#     branch with a private name, that is not on any branch of the public repo,
+#   - or a commit with the same tree or patch-id as such a private commit
+#     (rewritten private work: cherry-pick, amend, rebase, squash).
+# Pushes that only delete branches are always allowed.
 # All of those branch lists are fetched fresh on every such push; commits of
 # retired private remotes (private-fix.sh retire-remote) count as private too.
 # If any fetch fails for a clone that has (or has seen) private work, the push
@@ -65,6 +68,49 @@ refuse() {
   status=1
 }
 
+# Patch-ids of the given commits (stdin, one per line) as "<oid> <patch-id>",
+# "-" for commits without a patch (merges, empty).  Cached by commit id in the
+# common git dir, since a commit's patch-id never changes.
+patch_ids() {
+  local cache want missing
+  cache=$(git rev-parse --path-format=absolute --git-common-dir)/cocalc-guard-patch-ids
+  touch "$cache"
+  want=$(sort -u)
+  [ -n "$want" ] || return 0
+  missing=$(comm -23 <(echo "$want") <(awk '{ print $1 }' "$cache" | sort -u))
+  if [ -n "$missing" ]; then
+    git log --no-walk -p --no-merges --format='commit %H' --stdin <<<"$missing" | git patch-id --stable |
+      awk '{ print $2, $1 }' >"$tmp/new-patch-ids"
+    {
+      cat "$tmp/new-patch-ids"
+      comm -23 <(echo "$missing") <(awk '{ print $1 }' "$tmp/new-patch-ids" | sort -u) | awk '{ print $1, "-" }'
+    } >>"$cache"
+  fi
+  awk 'NR == FNR { w[$1] = 1; next } ($1 in w) { print }' <(echo "$want") "$cache" | sort -u -k1,1
+}
+
+# Trees and patch-ids of the private commits ($private), computed once per run,
+# minus those of public commits since the oldest private commit (content that
+# was already disclosed under other commit ids, e.g. by a squash or rebase).
+# Private commits that change nothing relative to their first parent (merges,
+# empty commits) contribute no tree.
+load_private_signatures() {
+  [ -e "$tmp/private-trees" ] && return
+  local oldest
+  git log --no-walk --format='%H %T %P %ct' --stdin <<<"$private" >"$tmp/private-commits"
+  awk '{ print $3 }' "$tmp/private-commits" | grep -E '^[0-9a-f]{40}$' | sort -u |
+    git log --no-walk --format='%H %T' --stdin >"$tmp/parent-trees" 2>/dev/null
+  awk 'NR == FNR { pt[$1] = $2; next } !($3 in pt) || pt[$3] != $2 { print $2 }' \
+    "$tmp/parent-trees" "$tmp/private-commits" | sort -u >"$tmp/private-trees-all"
+  oldest=$(awk '{ print $NF }' "$tmp/private-commits" | sort -n | head -1)
+  git rev-list --glob="$GUARD_REFS/public/*" --since=$((oldest - 86400)) >"$tmp/public-window"
+  git log --no-walk --format='%T' --stdin <"$tmp/public-window" | sort -u >"$tmp/public-trees"
+  comm -23 "$tmp/private-trees-all" "$tmp/public-trees" >"$tmp/private-trees"
+  patch_ids <"$tmp/public-window" | awk '$2 != "-" { print $2 }' | sort -u >"$tmp/public-patch-ids"
+  patch_ids <<<"$private" | awk '$2 != "-" { print $2 }' | sort -u |
+    comm -23 - "$tmp/public-patch-ids" >"$tmp/private-patch-ids"
+}
+
 remote_url=${2:-}
 if is_private_url "$remote_url"; then
   exit 0
@@ -78,6 +124,12 @@ status=0
 updates=$(cat)
 
 zero=0000000000000000000000000000000000000000
+
+# Deletions publish nothing; a push that only deletes branches (e.g. removing
+# an accidentally pushed private branch) is allowed without any analysis.
+if ! awk -v z="$zero" 'NF && $2 != z { found = 1 } END { exit !found }' <<<"$updates"; then
+  exit 0
+fi
 
 # Branch names first: no network needed.  Deletions publish nothing, and
 # deleting an accidentally pushed private branch must work.
@@ -122,10 +174,16 @@ local_private_branches=()
 while read -r ref; do
   is_private_branch "${ref#refs/heads/}" && local_private_branches+=("$ref")
 done < <(git for-each-ref --format='%(refname)' refs/heads)
+# Private-named tracking branches of ANY remote (refs/remotes/<remote>/security/*
+# etc.) are private too, even if the remote has no URL or an unrecognized one.
+while read -r ref; do
+  rest=${ref#refs/remotes/}
+  is_private_branch "${rest#*/}" && local_private_branches+=("$ref")
+done < <(git for-each-ref --format='%(refname)' refs/remotes)
 
 # A clone has private work if it has a private remote, a cocalc.privateUrl,
-# a private-named local branch, retired private refs, or private branch lists
-# cached by an earlier run of this guard.
+# a private-named local or tracking branch, retired private refs, or private
+# branch lists cached by an earlier run of this guard.
 has_private_work=0
 if [ ${#private_remote_refs[@]} -gt 0 ] || [ ${#local_private_branches[@]} -gt 0 ] ||
   [ -n "$(git config --get-all cocalc.privateUrl 2>/dev/null)" ] ||
@@ -187,6 +245,22 @@ if [ $has_private_work = 1 ] && [ $status = 0 ]; then
         if [ -n "$leaked" ]; then
           refuse "refusing to push $local_ref -> $remote_ref to $remote_url: it contains $(echo "$leaked" | wc -l) undisclosed private commit(s), e.g.:"
           echo "$leaked" | head -5 | while read -r c; do echo "  $(git log -1 --format='%h %s' "$c")" >&2; done
+          continue
+        fi
+        # Rewritten private work (cherry-pick, amend, rebase, squash) has new
+        # commit ids: also refuse commits with the same tree or the same
+        # patch-id (git patch-id --stable) as a private commit.
+        [ -n "$private" ] || continue
+        load_private_signatures
+        rewritten=$(
+          git log --no-walk --format='%T %H' --stdin <<<"$pushed" | awk 'NR == FNR { t[$1] = 1; next } ($1 in t) { print $2 }' "$tmp/private-trees" -
+          git log --no-walk -p --no-merges --format='commit %H' --stdin <<<"$pushed" | git patch-id --stable |
+            awk 'NR == FNR { p[$1] = 1; next } ($1 in p) { print $2 }' "$tmp/private-patch-ids" -
+        )
+        if [ -n "$rewritten" ]; then
+          rewritten=$(echo "$rewritten" | sort -u)
+          refuse "refusing to push $local_ref -> $remote_ref to $remote_url: $(echo "$rewritten" | wc -l) commit(s) have the same content (tree or patch) as undisclosed private commits, e.g.:"
+          echo "$rewritten" | head -5 | while read -r c; do echo "  $(git log -1 --format='%h %s' "$c")" >&2; done
         fi
       done <<<"$updates"
     fi
