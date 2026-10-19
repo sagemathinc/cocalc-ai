@@ -187,10 +187,14 @@ export interface BoardOpenResult {
   // The file, as the host names it, and its syncdb's path.
   path: string;
   syncdbPath: string;
-  state: "ok" | "invalid" | "missing";
-  // Why the file is not a board (state "invalid").
+  // "missing": there is no file, or it was deleted or moved while open, and
+  // the host never writes it again. "too-large": the file or the document
+  // is over the editable limits, so the host neither loads nor saves it.
+  state: "ok" | "invalid" | "missing" | "too-large";
+  // Why the state is not "ok".
   message?: string;
-  // The file's size when last read or written (state "ok").
+  // The file's size when last read or written (state "ok"), or its size
+  // (state "too-large").
   bytes?: number;
 }
 

@@ -18,17 +18,30 @@ board on the project host, is the only thing that writes the file:
 - After the document changes it saves, debounced, and on demand: the file
   gets canonical(fromRecords(records)), only if that differs from what is
   on disk, so an open board nobody edits never rewrites its file.
+- Every write is a compare-and-swap: the storage replaces the file only if
+  it still has exactly the text this manager last read or wrote (by
+  SHA-256), atomically (temp file and rename), and never creates it. So a
+  change made by anyone else, valid or not, is never written over, and a
+  manager that lost the board (a later owner wrote, or the file was
+  deleted) cannot write it.
 - It follows the file. A change made by someone else (an agent, git, an
-  editor) is merged into the syncdb by records, as a three-way merge from
-  the file's previous state, so a person typing in the same note at the
-  same moment keeps their typing. Its own writes are recognized by their
-  content and ignored.
-- A file that is not a board (unparsable, or not a board) is never written
-  over and never loaded: the syncdb is left as it was, and the status says
-  so until the file is a board again.
+  editor), including a restore of an earlier version, is merged into the
+  syncdb by records, as a three-way merge from the file's previous state,
+  so a person typing in the same note at the same moment keeps their
+  typing. A change is anything that is not the text this manager last read
+  or wrote. Watch events are coalesced: at most one load runs and one waits,
+  at most one per loadIntervalMs.
+- A file that is not a board (unparsable, or not a board) or is over the
+  limits is never loaded and never written over: the syncdb is left as it
+  was, and the status says so until the file changes.
+- A file that disappears after it was loaded (deleted or moved) retires the
+  manager: it never writes again, and the status says so.
 */
 
-import { createHash } from "node:crypto";
+import {
+  BOARD_EDITABLE_LIMIT,
+  BOARD_RECORD_LIMIT,
+} from "@cocalc/util/board/names";
 
 export interface BoardLib {
   toRecords(doc: any): any[];
@@ -53,18 +66,31 @@ export interface BoardSyncdb {
 }
 
 export interface BoardFile {
+  // The file's size and kind (not following a symbolic link), or
+  // undefined if it does not exist.
+  info(): Promise<BoardFileInfo | undefined>;
   // The file's text, or undefined if it does not exist.
   read(): Promise<string | undefined>;
-  write(text: string): Promise<void>;
+  // Replace the file's text, only if it is exactly expected now; never
+  // create it. "conflict" if it is not (it changed, or is gone).
+  replace(text: string, expected: string): Promise<"ok" | "conflict">;
   // Call onChange (any number of times) when the file may have changed.
   // Returns a function that stops watching.
   watch(onChange: () => void): () => void;
 }
 
+export interface BoardFileInfo {
+  size: number;
+  // Hard links to the file (1 for an ordinary file).
+  links: number;
+  symlink: boolean;
+}
+
 export type BoardStatus =
   | { state: "ok"; bytes: number }
   | { state: "invalid"; message: string }
-  | { state: "missing" };
+  | { state: "missing"; message?: string }
+  | { state: "too-large"; message: string; bytes?: number };
 
 export interface BoardManagerOptions {
   lib: BoardLib;
@@ -73,16 +99,19 @@ export interface BoardManagerOptions {
   // The string a list of records has in the syncdb's format.
   recordsToString: (records: any[]) => string;
   saveDelayMs?: number;
+  // At most one load from the file per this many ms.
+  loadIntervalMs?: number;
+  maxBytes?: number;
+  maxRecords?: number;
   log?: (message: string, extra?: object) => void;
 }
 
-function sha256(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
+// A write that loses its compare-and-swap reloads and tries again, at most
+// this many times; then it waits for the next change.
+const MAX_SAVE_ATTEMPTS = 3;
 
 type Parsed =
-  | { ok: true; doc: any; records: any[] }
-  | { ok: false; message: string };
+  { ok: true; doc: any; records: any[] } | { ok: false; status: BoardStatus };
 
 export class BoardManager {
   private readonly lib: BoardLib;
@@ -90,21 +119,34 @@ export class BoardManager {
   private readonly file: BoardFile;
   private readonly recordsToString: (records: any[]) => string;
   private readonly saveDelayMs: number;
+  private readonly loadIntervalMs: number;
+  private readonly maxBytes: number;
+  private readonly maxRecords: number;
   private readonly log: (message: string, extra?: object) => void;
 
   private status: BoardStatus = { state: "missing" };
-  // The file's text as last read or written by this manager.
+  // The file's text as last read or written by this manager: the only
+  // text a write may replace.
   private diskText: string | undefined = undefined;
-  // The syncdb-format string of the records that text has: the base of a
-  // three-way merge when the file changes.
+  // The syncdb-format string of the records the file last had as a board:
+  // the base of a three-way merge when the file changes.
   private diskRecords: string | undefined = undefined;
-  // Hashes of what this manager wrote, so their watch events are ignored.
-  private written = new Set<string>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  private loadTimer: ReturnType<typeof setTimeout> | undefined;
+  // A load is waiting (in loadTimer or the queue) and has not started.
+  private loadWaiting = false;
+  private lastLoadStart = 0;
+  // A save is waiting in the queue and has not started.
+  private pendingSave: Promise<void> | undefined;
   private unwatch: (() => void) | undefined;
   // One load or save at a time, in order.
   private queue: Promise<unknown> = Promise.resolve();
+  // Closing: no new work but the final save.
+  private stopping = false;
+  // Closed or revoked: no work at all.
   private closed = false;
+  // The file was deleted or moved: never written again.
+  private retired = false;
 
   constructor(opts: BoardManagerOptions) {
     this.lib = opts.lib;
@@ -112,6 +154,9 @@ export class BoardManager {
     this.file = opts.file;
     this.recordsToString = opts.recordsToString;
     this.saveDelayMs = opts.saveDelayMs ?? 1000;
+    this.loadIntervalMs = opts.loadIntervalMs ?? 250;
+    this.maxBytes = opts.maxBytes ?? BOARD_EDITABLE_LIMIT;
+    this.maxRecords = opts.maxRecords ?? BOARD_RECORD_LIMIT;
     this.log = opts.log ?? (() => {});
   }
 
@@ -119,33 +164,65 @@ export class BoardManager {
     return this.status;
   }
 
-  async start(): Promise<void> {
-    await this.run(() => this.loadFromDisk());
-    this.syncdb.on("change", this.onDocumentChange);
-    this.unwatch = this.file.watch(() => {
-      void this.run(() => this.loadFromDisk()).catch((err) =>
-        this.log("board: reading the changed file failed", { err: `${err}` }),
-      );
-    });
+  // The file was deleted or moved while the board was open: this manager
+  // never writes again, and the board needs a new one.
+  isRetired(): boolean {
+    return this.retired;
   }
 
-  // Save now, if the document differs from the file.
-  async save(): Promise<void> {
+  async start(): Promise<void> {
+    await this.run(() => this.loadFromDisk());
+    if (this.stopping || this.closed) return;
+    this.syncdb.on("change", this.onDocumentChange);
+    this.unwatch = this.file.watch(this.requestLoad);
+  }
+
+  // Save now, if the document differs from the file. Calls made while a
+  // save waits share it.
+  save(): Promise<void> {
     this.clearSaveTimer();
-    await this.run(() => this.saveToDisk());
+    return this.queueSave();
   }
 
   // A final save, then stop following the document and the file.
   async close(): Promise<void> {
-    if (this.closed) return;
-    this.clearSaveTimer();
-    this.syncdb.removeListener("change", this.onDocumentChange);
-    this.unwatch?.();
+    if (this.stopping || this.closed) return await this.settled();
+    this.stopWork();
     try {
       await this.run(() => this.saveToDisk());
     } finally {
       this.closed = true;
     }
+  }
+
+  // Stop at once: no step that has not started runs, and none writes
+  // after this (a write already in the storage completes or fails by its
+  // compare-and-swap). For a close that does not finish in time.
+  revoke(): void {
+    this.stopWork();
+    this.closed = true;
+  }
+
+  // Resolves when no step runs or waits.
+  async settled(): Promise<void> {
+    let queue: Promise<unknown>;
+    do {
+      queue = this.queue;
+      await queue;
+    } while (queue !== this.queue);
+  }
+
+  private stopWork(): void {
+    this.stopping = true;
+    this.clearSaveTimer();
+    if (this.loadTimer != null) {
+      clearTimeout(this.loadTimer);
+      this.loadTimer = undefined;
+    }
+    this.loadWaiting = false;
+    this.syncdb.removeListener("change", this.onDocumentChange);
+    this.unwatch?.();
+    this.unwatch = undefined;
   }
 
   private run<T>(step: () => Promise<T>): Promise<T> {
@@ -154,12 +231,46 @@ export class BoardManager {
     return next;
   }
 
+  private queueSave(): Promise<void> {
+    if (this.pendingSave == null) {
+      const pending = this.run(async () => {
+        if (this.pendingSave === pending) this.pendingSave = undefined;
+        await this.saveToDisk();
+      });
+      this.pendingSave = pending;
+    }
+    return this.pendingSave;
+  }
+
+  // The file may have changed: load it, coalesced and rate limited. A load
+  // reads the file when it starts, so one waiting load covers every event
+  // before it starts.
+  private requestLoad = (): void => {
+    if (this.loadWaiting || this.stopping || this.closed) return;
+    this.loadWaiting = true;
+    const delay = Math.max(
+      0,
+      this.lastLoadStart + this.loadIntervalMs - Date.now(),
+    );
+    this.loadTimer = setTimeout(() => {
+      this.loadTimer = undefined;
+      void this.run(async () => {
+        this.loadWaiting = false;
+        this.lastLoadStart = Date.now();
+        await this.loadFromDisk();
+      }).catch((err) =>
+        this.log("board: reading the changed file failed", { err: `${err}` }),
+      );
+    }, delay);
+    (this.loadTimer as any).unref?.();
+  };
+
   private onDocumentChange = (): void => {
-    if (this.closed) return;
+    if (this.stopping || this.closed) return;
     this.clearSaveTimer();
     this.saveTimer = setTimeout(() => {
       this.saveTimer = undefined;
-      void this.run(() => this.saveToDisk()).catch((err) =>
+      this.queueSave().catch((err) =>
         this.log("board: saving failed", { err: `${err}` }),
       );
     }, this.saveDelayMs);
@@ -173,17 +284,87 @@ export class BoardManager {
     }
   }
 
+  private tooLarge(bytes: number): BoardStatus {
+    return {
+      state: "too-large",
+      bytes,
+      message: `the board is ${bytes} bytes, over the ${this.maxBytes} a board can be edited at`,
+    };
+  }
+
   private parse(text: string): Parsed {
     let raw: unknown;
     try {
       raw = JSON.parse(text);
     } catch (err) {
-      return { ok: false, message: `not JSON: ${err}`.slice(0, 500) };
+      const message = `not JSON: ${err}`.slice(0, 500);
+      return { ok: false, status: { state: "invalid", message } };
     }
     const error = this.lib.formatError(raw);
-    if (error) return { ok: false, message: `${error}`.slice(0, 500) };
+    if (error) {
+      const message = `${error}`.slice(0, 500);
+      return { ok: false, status: { state: "invalid", message } };
+    }
     const doc = this.lib.cleanDoc(raw);
-    return { ok: true, doc, records: this.lib.toRecords(doc) };
+    const records = this.lib.toRecords(doc);
+    if (records.length > this.maxRecords) {
+      return {
+        ok: false,
+        status: {
+          state: "too-large",
+          message: `the board has ${records.length} records, over the ${this.maxRecords} a board can be edited with`,
+        },
+      };
+    }
+    return { ok: true, doc, records };
+  }
+
+  // Read the file, never allocating more than the limit allows for one
+  // that is known to be larger. undefined: the status says why not.
+  private async readBounded(): Promise<string | undefined> {
+    const info = await this.file.info();
+    if (info !== undefined && (info.symlink || info.links > 1)) {
+      // Another name for the file would be another board with its own
+      // writer: a board is one ordinary file.
+      this.diskText = undefined;
+      this.status = {
+        state: "invalid",
+        message: info.symlink
+          ? "the board's file was replaced by a symbolic link"
+          : "the board's file has other hard links",
+      };
+      return;
+    }
+    if (info !== undefined && info.size > this.maxBytes) {
+      this.diskText = undefined;
+      this.status = this.tooLarge(info.size);
+      return;
+    }
+    const text = info === undefined ? undefined : await this.file.read();
+    if (text === undefined) {
+      this.fileGone();
+      return;
+    }
+    const bytes = Buffer.byteLength(text);
+    if (bytes > this.maxBytes) {
+      // It grew between the size and the read.
+      this.diskText = undefined;
+      this.status = this.tooLarge(bytes);
+      return;
+    }
+    return text;
+  }
+
+  // No file. One this manager had loaded was deleted or moved: retire.
+  private fileGone(): void {
+    this.diskText = undefined;
+    if (this.diskRecords !== undefined && !this.retired) {
+      this.retired = true;
+      this.log("board: the file was deleted or moved; no longer saving it");
+    }
+    this.status = this.retired
+      ? { state: "missing", message: "the board was deleted or moved" }
+      : { state: "missing" };
   }
 
   private documentText(): string {
@@ -193,25 +374,17 @@ export class BoardManager {
   // Bring the syncdb to the file's state, merging what changed in the file
   // since this manager last saw it with what changed in the document.
   private async loadFromDisk(): Promise<void> {
-    if (this.closed) return;
-    const text = await this.file.read();
-    if (text === undefined) {
-      this.status = { state: "missing" };
-      return;
-    }
+    if (this.closed || this.retired) return;
+    const text = await this.readBounded();
+    if (this.closed || text === undefined) return;
     if (text === this.diskText) return;
-    if (this.written.has(sha256(text))) {
-      // This manager wrote it: the document already has it.
-      this.diskText = text;
-      return;
-    }
     const parsed = this.parse(text);
     if (!parsed.ok) {
-      // What is on disk now, so that the file becoming a board again, even
-      // the same one as before, is read; the records stay the merge base.
-      this.diskText = text;
-      this.status = { state: "invalid", message: parsed.message };
-      this.log("board: the file is not a board", { message: parsed.message });
+      // Nothing is written until the file changes; the records stay the
+      // merge base.
+      this.diskText = undefined;
+      this.status = parsed.status;
+      this.log("board: the file is not loaded", parsed.status);
       return;
     }
     const value = this.recordsToString(parsed.records);
@@ -237,30 +410,41 @@ export class BoardManager {
   }
 
   private async saveToDisk(): Promise<void> {
-    if (this.closed || this.status.state === "invalid") return;
-    if (this.diskRecords === undefined) return; // nothing was ever loaded
-    // A change to the file not yet seen is merged first, never overwritten.
-    const onDisk = await this.file.read();
-    if (onDisk !== undefined && onDisk !== this.diskText) {
+    for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
+      if (this.closed || this.retired) return;
+      // Nothing loaded, or the file is not one this manager may replace (not
+      // a board, too large, gone).
+      if (this.diskText === undefined) return;
+      const text = this.documentText();
+      const bytes = Buffer.byteLength(text);
+      if (bytes > this.maxBytes) {
+        this.status = this.tooLarge(bytes);
+        return;
+      }
+      if (text === this.diskText) {
+        this.status = { state: "ok", bytes };
+        return;
+      }
+      if ((await this.file.replace(text, this.diskText)) === "ok") {
+        this.diskText = text;
+        this.diskRecords = this.recordsToString(this.parseRecords(text));
+        this.status = { state: "ok", bytes };
+        return;
+      }
+      // The file is not what this manager last saw: never write over it.
+      // Merge it (or learn it is not a board, or gone), then try again.
+      this.log("board: the file changed under a save; merging it first");
       await this.loadFromDisk();
-      if (this.status.state !== "ok") return;
     }
-    const text = this.documentText();
-    if (text === this.diskText) return;
-    this.written.add(sha256(text));
-    if (this.written.size > 16) {
-      this.written.delete(this.written.values().next().value as string);
-    }
-    await this.file.write(text);
-    this.diskText = text;
-    this.diskRecords = this.recordsToString(this.parseRecords(text));
-    this.status = { state: "ok", bytes: Buffer.byteLength(text) };
   }
 
   private parseRecords(text: string): any[] {
     const parsed = this.parse(text);
-    if (!parsed.ok)
-      throw Error(`saved board is not a board: ${parsed.message}`);
+    if (!parsed.ok) {
+      throw Error(
+        `saved board is not loadable: ${JSON.stringify(parsed.status)}`,
+      );
+    }
     return parsed.records;
   }
 }

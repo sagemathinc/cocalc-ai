@@ -30,6 +30,8 @@ export const BOARD_STRING_COLS = [
 // A board larger than this is not edited in a card (Sagebrush's
 // board-host protocol): it is shown read-only.
 export const BOARD_EDITABLE_LIMIT = 8 * 1024 * 1024;
+// Nor is a board with more records than this (the same protocol).
+export const BOARD_RECORD_LIMIT = 100_000;
 
 export function isBoardJsonPath(path: string): boolean {
   return `${path ?? ""}`.toLowerCase().endsWith(BOARD_JSON_EXTENSION);
