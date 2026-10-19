@@ -19,10 +19,12 @@ import { akv } from "@cocalc/conat/sync/akv";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE } from "@cocalc/chat";
 import {
+  agentRpcInspectSummary,
   agentSendExitCode,
   agentSendSummary,
   sendAgentMessage,
 } from "../../core/agent-send";
+import type { AgentRpcOutcome } from "@cocalc/conat/agents/rpc";
 
 const MAX_MESSAGE_BYTES = 32768;
 
@@ -310,13 +312,15 @@ export function registerAgentCommands(
         agent_network_id: opts.agentNetwork,
         target: { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
-      emitSuccess(
-        { globals },
-        `${prefix} rpc inspect`,
+      const outcome = (
         opts.externalAgent
           ? await sendExternalAgentMessage(opts.externalAgent, request)
-          : await sendIdentityMessage(request, globals.api),
-      );
+          : await sendIdentityMessage(request, globals.api)
+      ) as AgentRpcOutcome;
+      emitSuccess({ globals }, `${prefix} rpc inspect`, {
+        ...outcome,
+        summary: agentRpcInspectSummary(outcome),
+      });
     });
   agent
     .command("whoami")
