@@ -12,7 +12,7 @@ import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { createNotificationEventGraphInTransaction } from "@cocalc/database/postgres/notifications-core";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
+import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import { humanSize } from "@cocalc/util/misc";
 import LRU from "lru-cache";
 
@@ -101,7 +101,7 @@ export function managedEgressNoticeSummary(input: ManagedEgressNoticeInput) {
 }
 
 // Returns true if a notice was created.  At most one notice per pool, window
-// and level (near/blocked) per account per day.
+// and level (near/blocked) per account per day from each evaluating bay.
 export async function notifyManagedEgressLimit(
   input: ManagedEgressNoticeInput,
 ): Promise<boolean> {
@@ -109,6 +109,13 @@ export async function notifyManagedEgressLimit(
   const { account_id } = input;
   const level = input.blocked ? "blocked" : "near";
   const key = `managed-egress:${input.pool}:${input.window}:${level}:${account_id}`;
+  const bay = getConfiguredBayId();
+  // The bay evaluating the policy is often not the account's home (shared
+  // pool checks run on the bay that owns the project's host).  Address the
+  // notice to the home bay: the notification outbox delivers it there.
+  const [account] = await getClusterAccountsByIds([account_id]);
+  if (account == null) return false;
+  const target_home_bay_id = `${account.home_bay_id ?? ""}`.trim() || bay;
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -120,17 +127,8 @@ export async function notifyManagedEgressLimit(
       await client.query("COMMIT");
       return false;
     }
-    const bay = getConfiguredBayId();
-    // Notices are created by the account's home bay.
-    const { rows: accounts } = await client.query(
-      `SELECT 1 FROM accounts WHERE account_id=$1 AND deleted IS NOT TRUE
-       AND COALESCE(NULLIF(home_bay_id,''),$3)=$2 FOR SHARE`,
-      [account_id, bay, DEFAULT_BAY_ID],
-    );
-    if (accounts.length === 0) {
-      await client.query("COMMIT");
-      return false;
-    }
+    // Deduplicated per evaluating bay: notices sent from here are recorded
+    // here, whichever bay they are delivered to.
     const { rows: existing } = await client.query(
       `SELECT 1 FROM notification_targets WHERE target_account_id=$1 AND dedupe_key=$2
        AND created_at > NOW() - make_interval(hours => $3) LIMIT 1`,
@@ -151,7 +149,7 @@ export async function notifyManagedEgressLimit(
         targets: [
           {
             target_account_id: account_id,
-            target_home_bay_id: bay,
+            target_home_bay_id,
             dedupe_key: key,
             summary_json: summary,
           },

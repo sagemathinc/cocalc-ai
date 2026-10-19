@@ -10,6 +10,11 @@ jest.mock("@cocalc/database/pool", () => ({
   default: () => ({ connect: (...args: any[]) => connectMock(...args) }),
 }));
 
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  getClusterAccountsByIds: async (ids: string[]) =>
+    ids.map((account_id) => ({ account_id, home_bay_id: "bay-0" })),
+}));
+
 import {
   __test__,
   managedEgressNoticeDue,
@@ -76,6 +81,8 @@ describe("managed egress notices", () => {
     connectMock.mockRejectedValue(new Error("no db in this test"));
     maybeNotifyManagedEgressLimit({ ...input, used: 950 });
     maybeNotifyManagedEgressLimit({ ...input, used: 960 });
+    // the home-bay lookup is awaited before connecting
+    await new Promise((resolve) => setImmediate(resolve));
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
