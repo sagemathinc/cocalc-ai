@@ -1,6 +1,13 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
+import {
+  parseTurnOutcome,
+  turnFailureOf,
+  turnOutcomeOf,
+  type TurnFailure,
+  type TurnOutcome,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import path from "node:path";
 import { hubApi } from "../api";
 import { installLiteCodexSpawner } from "../codex-runtime";
@@ -4135,9 +4142,12 @@ export class ChatStreamWriter {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
-        if (!(
-          this.syncdbError != null && isProjectAcpStorageError(this.syncdbError)
-        )) {
+        if (
+          !(
+            this.syncdbError != null &&
+            isProjectAcpStorageError(this.syncdbError)
+          )
+        ) {
           await this.syncdb!.save();
         }
       } catch (err) {
@@ -7318,7 +7328,8 @@ function initializeAcpRuntime(client: ConatClient): void {
 
 let acpSessionPublisherConfigured = false;
 let acpSessionPublisherOverride:
-  ((row: AcpSessionRow) => void | Promise<void>) | undefined;
+  | ((row: AcpSessionRow) => void | Promise<void>)
+  | undefined;
 
 export function setAcpSessionPublisherOverride(
   publisher: ((row: AcpSessionRow) => void | Promise<void>) | undefined,
@@ -7385,7 +7396,8 @@ export async function runDetachedAcpQueueWorker(
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
   let workerControlService:
-    Awaited<ReturnType<typeof initAcpDaemonControlService>> | undefined;
+    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
+    | undefined;
   let workerFatalError: unknown;
   let workerHeartbeatFailureCount = 0;
   const markWorkerFatalError = ({
@@ -8037,7 +8049,30 @@ type AcpExecutionResult = {
   error?: string;
   recoveryCode?: CodexAcpRecoveryErrorCode;
   recoveryDetail?: string;
+  outcome: TurnOutcome;
 };
+
+/** Events that mean the agent acted (ran a command, wrote a file, ...). */
+function isToolEvent(payload?: AcpStreamPayload | null): boolean {
+  if (payload?.type !== "event") return false;
+  const event = payload.event;
+  switch (event.type) {
+    case "terminal":
+    case "file":
+    case "diff":
+    case "image":
+    case "subagent":
+    case "peerMessage":
+      return true;
+    case "harness": {
+      if (event.kind === "permission") return true;
+      const update = `${(event.data as { sessionUpdate?: unknown })?.sessionUpdate ?? ""}`;
+      return update === "tool_call" || update === "tool_call_update";
+    }
+    default:
+      return false;
+  }
+}
 
 function paymentSourceFromAuthSource({
   authSource,
@@ -8250,7 +8285,16 @@ async function executeAcpRequest({
 
     let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
     let recoveryDetail: string | undefined;
+    // What the turn did and how it failed, for its outcome.
+    let toolRan = false;
+    let streamedFailure: TurnFailure | undefined;
+    let streamedCode: string | undefined;
     const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+      if (isToolEvent(payload)) toolRan = true;
+      if (payload?.type === "error") {
+        streamedFailure ??= payload.failure;
+        streamedCode ??= payload.code;
+      }
       if (harness) return;
       if (payload?.type !== "error") return;
       const directive = failureRecoveryDirective(payload.code, payload.error);
@@ -8371,10 +8415,12 @@ async function executeAcpRequest({
               recoveryDetail = killed.detail;
             }
           }
+          const failure = turnFailureOf(err);
           try {
             await wrappedStream({
               type: "error",
               error: terminalFallbackError,
+              ...(failure ? { failure } : {}),
             });
           } catch (streamErr) {
             logger.warn("evaluate: failed to stream error", streamErr);
@@ -8435,6 +8481,13 @@ async function executeAcpRequest({
       error: terminalError,
       recoveryCode,
       recoveryDetail,
+      outcome: turnOutcomeOf({
+        terminalState,
+        failure: streamedFailure,
+        code: recoveryCode ?? streamedCode,
+        error: terminalError,
+        toolRan,
+      }),
     };
   } finally {
     await cleanup();
@@ -10129,6 +10182,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
         result.terminalState === "error" ? result.recoveryCode : undefined,
       recovery_detail:
         result.terminalState === "error" ? result.recoveryDetail : undefined,
+      outcome: result.outcome,
     });
     let resumed: AcpJobRow | undefined;
     let recoveryPending = false;
@@ -10154,7 +10208,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     // A turn that is (or may still be) retried is not over; the others are
     // reported to the agent whose message started them.
     if (result.terminalState === "error" && !resumed && !recoveryPending)
-      reportFailedAgentMessageTurn(job, refreshedRequest, result.error);
+      reportFailedAgentMessageTurn(
+        job,
+        refreshedRequest,
+        result.error,
+        result.outcome,
+      );
   } catch (err) {
     noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `This agent turn could not run: ${(err as Error)?.message ?? err}`;
@@ -10181,6 +10240,7 @@ function reportFailedAgentMessageTurn(
   job: AcpJobRow,
   request: AcpRequest,
   error?: string,
+  outcome: TurnOutcome | undefined = parseTurnOutcome(job.outcome_json),
 ): void {
   // A recovery continuation carries the same message: the turn began when
   // the first of them started, and a reply from any of them counts.
@@ -10196,6 +10256,7 @@ function reportFailedAgentMessageTurn(
     op_id: job.op_id,
     request,
     error: `${error ?? ""}`.trim() || "The turn ended with an error.",
+    failure: outcome?.state === "failed" ? outcome.failure : undefined,
     turn_started_at: started,
   });
   if (report)
@@ -10568,7 +10629,8 @@ async function trySteerCandidateIds({
   // Harness agents (Claude) take pasted images as content blocks, exactly as
   // for a new turn; prepared once, only if a harness agent is asked.
   let harnessRequest:
-    Promise<Awaited<ReturnType<typeof materializeBlobs>>> | undefined;
+    | Promise<Awaited<ReturnType<typeof materializeBlobs>>>
+    | undefined;
   try {
     for (const id of ids) {
       // Cached writer/lease aliases can outlive an ACP reset. Only the current
@@ -12524,7 +12586,8 @@ async function handleAcpControlRequestNow(
     }
     const currentRequest = decodeAcpJobRequest(current);
     let fundingRecovery:
-      Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"] | undefined;
+      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
+      | undefined;
     if (request.action === "resend_with_payment") {
       const payment = request.payment_recovery!;
       if (

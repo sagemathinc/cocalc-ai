@@ -323,6 +323,44 @@ describe("acp job queue ordering", () => {
     expect(latestAcpJobUpdateForWorker("another-worker")).toBeUndefined();
   });
 
+  it("keeps how a turn ended with its job", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-outcome",
+        assistantMessageId: "assistant-outcome",
+        assistantDate: "2026-10-18T21:00:00.000Z",
+      }) as any,
+    );
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-outcome",
+    });
+    const outcome = {
+      version: 1,
+      state: "failed",
+      failure: { kind: "limit", scope: "credential", resets_at: 123 },
+      tool_ran: false,
+      classified_by: "signal",
+    } as const;
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      error: "Claude could not run this request.",
+      worker_id: "worker-outcome",
+      outcome,
+    });
+    expect(
+      JSON.parse(getAcpJobByOpId(queued.op_id)?.outcome_json ?? "null"),
+    ).toEqual(outcome);
+    // A later state change without one keeps it.
+    setAcpJobState({ op_id: queued.op_id, state: "error" });
+    expect(
+      JSON.parse(getAcpJobByOpId(queued.op_id)?.outcome_json ?? "null"),
+    ).toEqual(outcome);
+  });
+
   it("terminally fences queued and running work for one stopped project", () => {
     const queued = enqueueAcpJob(
       makeRequest({

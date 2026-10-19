@@ -1,3 +1,4 @@
+import type { TurnOutcome } from "@cocalc/conat/ai/acp/turn-outcome";
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
 import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
 import {
@@ -76,6 +77,8 @@ export interface AcpJobRow {
   recovery_count?: number | null;
   recovery_code?: string | null;
   recovery_detail?: string | null;
+  /** How the turn ended (conat/ai/acp/turn-outcome.ts), as JSON. */
+  outcome_json?: string | null;
   request_json: string;
   error?: string | null;
   created_at: number;
@@ -122,6 +125,7 @@ function init(): void {
       recovery_count INTEGER,
       recovery_code TEXT,
       recovery_detail TEXT,
+      outcome_json TEXT,
       request_json TEXT NOT NULL,
       error TEXT,
       created_at INTEGER NOT NULL,
@@ -168,6 +172,9 @@ function init(): void {
   }
   if (!hasColumn("recovery_detail")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_detail TEXT`);
+  }
+  if (!hasColumn("outcome_json")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN outcome_json TEXT`);
   }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_recovery_parent_idx ON ${TABLE}(recovery_parent_op_id, state, created_at)`,
@@ -1016,6 +1023,7 @@ export function setAcpJobState({
   worker_id,
   recovery_code,
   recovery_detail,
+  outcome,
 }: {
   op_id: string;
   state: Exclude<AcpJobState, "queued" | "running">;
@@ -1023,7 +1031,9 @@ export function setAcpJobState({
   worker_id?: string;
   recovery_code?: string;
   recovery_detail?: string;
+  outcome?: TurnOutcome;
 }): void {
+  const outcome_json = outcome ? JSON.stringify(outcome) : null;
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
@@ -1034,6 +1044,7 @@ export function setAcpJobState({
             error = COALESCE(?, error),
             recovery_code = COALESCE(?, recovery_code),
             recovery_detail = COALESCE(?, recovery_detail),
+            outcome_json = COALESCE(?, outcome_json),
             updated_at = ?,
             finished_at = ?
         WHERE op_id = ?
@@ -1044,6 +1055,7 @@ export function setAcpJobState({
       error ?? null,
       recovery_code ?? null,
       recovery_detail ?? null,
+      outcome_json,
       now,
       now,
       op_id,
@@ -1058,6 +1070,7 @@ export function setAcpJobState({
           error = COALESCE(?, error),
           recovery_code = COALESCE(?, recovery_code),
           recovery_detail = COALESCE(?, recovery_detail),
+          outcome_json = COALESCE(?, outcome_json),
           updated_at = ?,
           finished_at = ?
       WHERE op_id = ?`,
@@ -1066,6 +1079,7 @@ export function setAcpJobState({
     error ?? null,
     recovery_code ?? null,
     recovery_detail ?? null,
+    outcome_json,
     now,
     now,
     op_id,

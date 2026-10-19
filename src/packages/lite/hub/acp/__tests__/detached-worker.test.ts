@@ -52,6 +52,10 @@ import {
 import { setAcpAdmissionLimitsProvider } from "../admission";
 import { listPendingAcpSteers } from "../../sqlite/acp-steers";
 import { listDueAgentRpcReports } from "../../sqlite/agent-rpc-reports";
+import {
+  parseTurnOutcome,
+  withTurnFailure,
+} from "@cocalc/conat/ai/acp/turn-outcome";
 import { hubApi } from "../../api";
 import {
   setHarnessLauncher,
@@ -326,6 +330,127 @@ it.each(["network membership revoked", "authorization service unavailable"])(
       setHarnessLauncher();
       if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
       else process.env.COCALC_ACP_HARNESSES = original;
+    }
+  },
+);
+
+it.each([
+  [
+    "the agent's own signal",
+    () =>
+      withTurnFailure(new Error("Claude could not run this request."), {
+        kind: "limit",
+        scope: "credential",
+        resets_at: 1_800_000_000_000,
+      }),
+    {
+      state: "failed",
+      failure: {
+        kind: "limit",
+        scope: "credential",
+        resets_at: 1_800_000_000_000,
+      },
+      tool_ran: true,
+      classified_by: "signal",
+    },
+  ],
+  [
+    "only the error text",
+    () => new Error("You've hit your weekly limit"),
+    {
+      state: "failed",
+      failure: { kind: "limit", scope: "credential" },
+      tool_ran: true,
+      classified_by: "text",
+    },
+  ],
+  ["a completed turn", undefined, { state: "completed" }],
+] as const)(
+  "records how a queued turn ended, from %s",
+  async (_name, failWith, expected) => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const request = prepareHarnessRequest({
+      ...makeRequest(),
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    const job = enqueueAcpJob(request);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(
+      makeSyncdb([
+        {
+          event: "chat-thread-config",
+          thread_id: request.chat!.thread_id,
+          agent_kind: "acp",
+          agent_runtime: request.runtime,
+        },
+      ]) as any,
+    );
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      await stream({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "update",
+          data: { sessionUpdate: "tool_call", toolCallId: "t1" },
+        },
+      });
+      if (failWith) throw failWith();
+      await stream({ type: "summary", finalResponse: "done" });
+    });
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      const outcome = parseTurnOutcome(
+        getAcpJobByOpId(job.op_id)?.outcome_json,
+      );
+      expect(outcome).toMatchObject({ version: 1, ...expected });
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
     }
   },
 );

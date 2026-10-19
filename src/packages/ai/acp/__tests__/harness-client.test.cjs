@@ -1057,6 +1057,41 @@ test("failed first sign-in never publishes an unresumable native session ID", as
   assert.equal(reconnected.events.at(-1).type, "summary");
 });
 
+test("a Claude limit rejection is the failure of the turn it ended", async (t) => {
+  const { turnFailureOf } = require("@cocalc/conat/ai/acp/turn-outcome");
+  for (const [prompt, limited] of [
+    ["limit-rejected", true],
+    ["limit-warning", false],
+  ]) {
+    const { agent, request } = adapter(
+      t,
+      ["--claude-adapter", "--subscription-status"],
+      undefined,
+      false,
+      undefined,
+      true,
+    );
+    const before = Date.now();
+    const error = await agent.evaluate({ ...request, prompt }).then(
+      () => assert.fail("the turn should fail"),
+      (error) => error,
+    );
+    const failure = turnFailureOf(error);
+    if (!limited) {
+      // A warning is not a rejection: the error stays unclassified here.
+      assert.equal(failure, undefined);
+      continue;
+    }
+    assert.equal(failure.kind, "limit");
+    assert.equal(failure.scope, "credential");
+    assert.equal(failure.credential_id, "11111111-1111-4111-8111-111111111111");
+    assert.equal(failure.window, "seven_day");
+    assert.ok(
+      failure.resets_at > before && failure.resets_at <= before + 3_700_000,
+    );
+  }
+});
+
 const textChunk = (text, messageId) => ({
   sessionUpdate: "agent_message_chunk",
   content: { type: "text", text },
