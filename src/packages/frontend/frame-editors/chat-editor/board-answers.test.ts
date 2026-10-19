@@ -18,6 +18,8 @@ import {
   boardAnswersMessageId,
   deliverBoardAnswers,
   MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR,
+  MAX_RECENT_THREADS,
+  boardAnswersRecentThreadsForTests,
   resetBoardAnswersDeliveryForTests,
   formatBoardAnswers,
   uuidV5,
@@ -635,5 +637,36 @@ describe("an hourly cap per thread, across channels", () => {
         stale: false,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  test("one-shot threads leave the page's counts bounded", async () => {
+    jest.useFakeTimers({
+      now: 0,
+      doNotFake: ["setTimeout", "setImmediate", "queueMicrotask", "nextTick"],
+    });
+    const c = chat();
+    const threads = MAX_RECENT_THREADS + 200;
+    for (let i = 0; i < threads; i++) {
+      jest.setSystemTime(i);
+      await deliverBoardAnswers({
+        chat: c,
+        threadId: `t${i}`,
+        submission: sub(i),
+        stale: false,
+      });
+      expect(boardAnswersRecentThreadsForTests()).toBeLessThanOrEqual(
+        MAX_RECENT_THREADS,
+      );
+    }
+    expect(boardAnswersRecentThreadsForTests()).toBe(MAX_RECENT_THREADS);
+    // Once their hour has passed, the next send leaves only its own thread.
+    jest.setSystemTime(threads + 60 * 60_000);
+    await deliverBoardAnswers({
+      chat: c,
+      threadId: "later",
+      submission: sub(threads),
+      stale: false,
+    });
+    expect(boardAnswersRecentThreadsForTests()).toBe(1);
   });
 });

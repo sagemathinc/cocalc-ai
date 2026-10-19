@@ -7,6 +7,9 @@ import {
   boardDecide,
   DECIDE_LIMITS,
   resetBoardDecideStateForTests,
+  boardDecideStateSizesForTests,
+  MAX_RATE_KEYS,
+  MAX_REQUEST_ID_KEYS,
   sanitizeDecideResult,
   type DecideFunding,
   type DecideProvider,
@@ -298,4 +301,39 @@ test("a cost above the reservation is committed in full, never clamped", async (
   const reserved = Number(events[0].split(" ")[1]);
   expect(reserved).toBeLessThan(10_000_000);
   expect(events[1]).toBe("commit 10000000");
+});
+
+test("one-shot accounts leave this process's counts bounded", async () => {
+  const provider = fakeProvider();
+  const { funding } = fakeFunding();
+  const accounts = MAX_RATE_KEYS + 500;
+  for (let i = 0; i < accounts; i++) {
+    await boardDecide({
+      accountId: `22222222-2222-4222-8222-${`${i}`.padStart(12, "0")}`,
+      requestId: rid(),
+      question,
+      answer: "x",
+      provider,
+      funding,
+      now: 1_000 + i,
+    });
+  }
+  const sizes = boardDecideStateSizesForTests();
+  expect(sizes.recentCalls).toBeLessThanOrEqual(MAX_RATE_KEYS);
+  expect(sizes.usedRequestIds).toBeLessThanOrEqual(MAX_REQUEST_ID_KEYS);
+  // Past their windows (ten minutes for request ids), the next call leaves
+  // only its own entries.
+  await boardDecide({
+    accountId: ACCOUNT,
+    requestId: rid(),
+    question,
+    answer: "x",
+    provider,
+    funding,
+    now: 1_000 + accounts + 10 * 60_000,
+  });
+  expect(boardDecideStateSizesForTests()).toEqual({
+    recentCalls: 1,
+    usedRequestIds: 1,
+  });
 });

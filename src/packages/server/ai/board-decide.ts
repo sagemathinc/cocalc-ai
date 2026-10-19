@@ -18,6 +18,7 @@
 //   `decide` is unavailable, and nothing is called.
 
 import { BOARD_DECIDE_REQUEST_LIMITS } from "@cocalc/util/sagebrush-board";
+import { RecentTimes } from "@cocalc/util/recent-times";
 
 /** Limits on one call (the request's sizes are util's, shared with the
  * server that reads the board). */
@@ -88,8 +89,19 @@ function codedError(message: string, code: number): Error {
   return err;
 }
 
-const recentCalls = new Map<string, number[]>();
-const usedRequestIds = new Map<string, number>();
+// This process's counts, kept only for their windows and for at most so
+// many keys (RecentTimes), however many accounts ever call. Forgetting one
+// can only loosen them, never the funding's limits.
+export const MAX_RATE_KEYS = 10_000;
+export const MAX_REQUEST_ID_KEYS = 100_000;
+const recentCalls = new RecentTimes({
+  windowMs: RATE_WINDOW_MS,
+  maxKeys: MAX_RATE_KEYS,
+});
+const usedRequestIds = new RecentTimes({
+  windowMs: 10 * RATE_WINDOW_MS,
+  maxKeys: MAX_REQUEST_ID_KEYS,
+});
 
 /** For tests. */
 export function resetBoardDecideStateForTests(): void {
@@ -97,18 +109,25 @@ export function resetBoardDecideStateForTests(): void {
   usedRequestIds.clear();
 }
 
+/** For tests: how many keys this process keeps. */
+export function boardDecideStateSizesForTests(): {
+  recentCalls: number;
+  usedRequestIds: number;
+} {
+  return { recentCalls: recentCalls.size, usedRequestIds: usedRequestIds.size };
+}
+
 // This process's count: a cheap guard before the funding's reservation,
 // which enforces callsPerAccountPerMinute atomically for every replica
-// (board-decide-funding.ts).
+// (board-decide-funding.ts). It keeps a flood from one account off the
+// database: the reservation takes the site pool's row lock and writes a
+// hold before it counts the account's calls.
 function checkRate(accountId: string, now: number): void {
-  const recent = (recentCalls.get(accountId) ?? []).filter(
-    (t) => now - t < RATE_WINDOW_MS,
-  );
-  if (recent.length >= DECIDE_LIMITS.callsPerAccountPerMinute) {
+  if (
+    !recentCalls.take(accountId, now, DECIDE_LIMITS.callsPerAccountPerMinute)
+  ) {
     throw codedError("Too many answers checked. Try again in a minute.", 429);
   }
-  recent.push(now);
-  recentCalls.set(accountId, recent);
 }
 
 function claimRequestId(
@@ -116,14 +135,9 @@ function claimRequestId(
   requestId: string,
   now: number,
 ): void {
-  for (const [key, at] of usedRequestIds) {
-    if (now - at > 10 * RATE_WINDOW_MS) usedRequestIds.delete(key);
-  }
-  const key = `${accountId}\n${requestId}`;
-  if (usedRequestIds.has(key)) {
+  if (!usedRequestIds.take(`${accountId}\n${requestId}`, now, 1)) {
     throw codedError("This request was already made.", 409);
   }
-  usedRequestIds.set(key, now);
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -26,6 +26,7 @@
 // happened to the first (lite/hub/sqlite/acp-board-submissions.ts; astra2,
 // CORR-D1-1).
 
+import { RecentTimes } from "@cocalc/util/recent-times";
 import { BoardAnswersRefusal } from "./board-answers-channel";
 import type { Submission } from "./board-answers-check";
 import { uuidV5 as uuidV5Of } from "@cocalc/util/sagebrush-board";
@@ -143,13 +144,22 @@ export function formatBoardAnswers({
  * (lite/hub/sqlite/acp-board-submissions.ts). */
 export const MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR = 30;
 const HOUR_MS = 60 * 60_000;
-// Times of new submissions by thread (at most the cap each, so bounded by
-// the threads this page has delivered to).
-const recentByThread = new Map<string, number[]>();
+// Times of new submissions by thread: at most the cap each, kept only for
+// the hour and for at most so many threads (RecentTimes).
+export const MAX_RECENT_THREADS = 1000;
+const recentByThread = new RecentTimes({
+  windowMs: HOUR_MS,
+  maxKeys: MAX_RECENT_THREADS,
+});
 
 /** For tests. */
 export function resetBoardAnswersDeliveryForTests(): void {
   recentByThread.clear();
+}
+
+/** For tests: how many threads this page keeps times for. */
+export function boardAnswersRecentThreadsForTests(): number {
+  return recentByThread.size;
 }
 
 // Deliveries in flight in this page, by message id. A submission id comes
@@ -201,10 +211,10 @@ async function deliverOnce(
   const existing = chat.getMessageById(messageId) != null;
   if (!existing) {
     const now = Date.now();
-    const recent = (recentByThread.get(threadId) ?? []).filter(
-      (t) => now - t < HOUR_MS,
-    );
-    if (recent.length >= MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR) {
+    if (
+      recentByThread.count(threadId, now) >=
+      MAX_NEW_SUBMISSIONS_PER_THREAD_PER_HOUR
+    ) {
       throw new BoardAnswersRefusal(
         "Not sent: too many answers sent to this conversation in the last hour. Try later.",
       );
@@ -237,8 +247,7 @@ async function deliverOnce(
     // Counted once the message is written (sendChat is synchronous, so
     // nothing interleaves between the check and this), not for a write
     // that failed (astra's note on a4bcdca33b).
-    recent.push(now);
-    recentByThread.set(threadId, recent);
+    recentByThread.add(threadId, now);
   }
   if (!chat.syncdb) {
     throw new BoardAnswersRefusal(
