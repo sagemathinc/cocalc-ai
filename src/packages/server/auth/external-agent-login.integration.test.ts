@@ -6,6 +6,7 @@ import {
   startExternalAgentLoginChallenge,
   claimExternalAgentLoginChallenge,
   getCliAuthChallengeStatus,
+  getCliAuthApprovalInfo,
   approveCliLoginChallenge,
   redeemCliLoginChallenge,
 } from "./cli-auth";
@@ -40,6 +41,7 @@ describeDb(
     beforeAll(async () => {
       await syncSchema({
         account_cli_auth_challenges: SCHEMA.account_cli_auth_challenges,
+        accounts: SCHEMA.accounts,
       });
     });
     beforeEach(async () => {
@@ -160,6 +162,45 @@ describeDb(
         request.challenge_id,
         secret_hash,
       );
+    });
+
+    test("the approval page learns an enrollment was approved from the installation", async () => {
+      const request = await start();
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ kind: "external-agent", state: "pending" });
+      await claimExternalAgentLoginChallenge(request.challenge_id, account);
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "pending" });
+      // The challenge row itself stays pending after approval.
+      mockEnrollmentStatus.mockResolvedValue({
+        installation: {
+          installation_id: request.challenge_id,
+          account_id: account,
+          agent_id: randomUUID(),
+          state: "active",
+        },
+        api_url: "https://home.test",
+      });
+      const { rows } = await getPool().query(
+        "SELECT status FROM account_cli_auth_challenges WHERE id=$1",
+        [request.challenge_id],
+      );
+      expect(rows[0].status).toBe("pending");
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "approved", expires_at: expect.any(Date) });
+      expect(mockEnrollmentStatus).toHaveBeenLastCalledWith(
+        account,
+        request.challenge_id,
+        secret_hash,
+      );
+      // If the home bay can't be asked, the page still opens (as pending).
+      mockEnrollmentStatus.mockRejectedValue(new Error("home bay unreachable"));
+      expect(
+        await getCliAuthApprovalInfo({ challenge_id: request.challenge_id }),
+      ).toMatchObject({ state: "pending" });
     });
 
     test("external starts share the existing IP login rate limit", async () => {

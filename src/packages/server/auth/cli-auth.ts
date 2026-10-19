@@ -6,6 +6,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import basePath from "@cocalc/backend/base-path";
+import getLogger from "@cocalc/backend/logger";
 import { conatPassword } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
@@ -36,6 +37,8 @@ import {
 import { isValidUUID } from "@cocalc/util/misc";
 import { validateExternalAgentLabel } from "@cocalc/conat/agents/external";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
+
+const logger = getLogger("server:auth:cli-auth");
 
 const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
 // An external agent's enrollment link waits for a person to open it, sign in
@@ -1017,6 +1020,28 @@ export async function getCliAuthApprovalInfo({
   const isPendingLogin =
     row.kind !== "elevate" && row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
   const label = isPendingLogin ? {} : await getAccountLabel(row.account_id);
+  // An external enrollment's row stays pending; whether it was approved
+  // lives in the account's installation (as getCliAuthChallengeStatus reads
+  // it), so the approval page can say so instead of offering the form again.
+  let state: CliAuthChallengeStatus = row.status;
+  if (row.kind === "external-agent" && !isPendingLogin && state === "pending") {
+    try {
+      const { installation } = await (
+        await import("@cocalc/server/agents/external")
+      ).externalEnrollmentStatus(
+        row.account_id,
+        row.id,
+        `${row.metadata?.secret_hash ?? ""}`,
+      );
+      if (installation) state = "approved";
+    } catch (err) {
+      // The approval itself still checks; the page just can't tell early.
+      logger.warn("external enrollment status for approval info failed", {
+        challenge_id: row.id,
+        err: `${err}`,
+      });
+    }
+  }
   return {
     challenge_id: row.id,
     kind: row.kind,
@@ -1030,7 +1055,7 @@ export async function getCliAuthApprovalInfo({
     requested_duration: row.requested_duration ?? null,
     elevated_login: row.metadata?.elevated_login === true,
     auth_client: cleanAuthClientKind(row.metadata?.auth_client),
-    state: row.status,
+    state,
     expires_at: new Date(row.expire),
     ...(row.kind === "external-agent"
       ? {
