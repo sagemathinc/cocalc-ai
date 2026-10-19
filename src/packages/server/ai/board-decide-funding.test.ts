@@ -182,7 +182,25 @@ describe("a COMMIT that fails", () => {
     expect(released()).toHaveLength(1);
   });
 
-  test("and didn't commit: released once", async () => {
+  // astra (CORR-781-1): on a broken connection a COMMIT can still be
+  // applied after the read-back saw no row (modelled: the row appears
+  // after the read). Absent is then unknown: the hold is kept.
+  test("absent, but the ROLLBACK failed: unknown, so the hold is kept", async () => {
+    const c = client(/^COMMIT/, true);
+    mockConnect.mockResolvedValueOnce(c);
+    let landed = false;
+    mockPoolQuery.mockImplementationOnce(async () => {
+      setTimeout(() => (landed = true), 0); // the delayed COMMIT lands
+      return { rows: [] };
+    });
+    await expect(funding.reserve(request)).rejects.toThrow("failed");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(landed).toBe(true);
+    expect(mockFinishGlobal).not.toHaveBeenCalled();
+    expect(c.release).toHaveBeenCalledWith(true);
+  });
+
+  test("absent after an acknowledged ROLLBACK: didn't commit, released once", async () => {
     mockConnect.mockResolvedValueOnce(client(/^COMMIT/));
     mockPoolQuery.mockResolvedValueOnce({ rows: [] });
     await expect(funding.reserve(request)).rejects.toThrow("failed");

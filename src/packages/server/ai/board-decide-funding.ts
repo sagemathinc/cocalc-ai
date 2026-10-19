@@ -107,8 +107,10 @@ export function siteFundedDecideFunding({
       // lost). Then the hold's row is read back on another connection:
       // - there: the reservation stands; the hold is kept and returned, as
       //   for a clean COMMIT, and the caller settles both;
-      // - not there: it didn't commit; the hold is released, once;
-      // - unreadable: unknown; the hold is kept and the call fails without
+      // - not there, and the ROLLBACK was acknowledged: it didn't commit;
+      //   the hold is released, once;
+      // - not there on a broken connection (its COMMIT may still land), or
+      //   unreadable: unknown; the hold is kept and the call fails without
       //   the provider. Both holds then go lazily: the global one is
       //   expired by a later reservation in the site pool once its 5
       //   minutes pass, and the account's row, if it committed, is released
@@ -345,7 +347,11 @@ export function siteFundedDecideFunding({
             });
             return reservation();
           }
-          if (row === "unknown") {
+          // Absent is only "didn't commit" when the ROLLBACK was
+          // acknowledged. On a broken connection a COMMIT may still be
+          // applied after the read (astra, CORR-781-1), so absent is
+          // unknown too.
+          if (row === "unknown" || (row === "absent" && broken)) {
             // Whether it committed is unknown: the global hold is kept (it
             // expires), never released while the account's row may hold.
             logger.error("board decide COMMIT outcome unknown; hold kept", {
