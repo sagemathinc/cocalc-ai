@@ -6770,22 +6770,32 @@ deny() {
 # libpod/tmp/pause.pid. This runtime directory is on persistent storage, so
 # after a reboot or a new container the PID can belong to an unrelated process
 # of the runtime user; Podman then exits with "cannot set user namespace"
-# instead of starting a new pause process. Keep pause.pid only while it names
-# a live process of that user in a user namespace other than this helper's.
+# instead of starting a new pause process. Keep pause.pid only while it names a
+# live Podman pause process (same user, another user namespace, _PODMAN_PAUSE=1
+# in its environment). This runs as the runtime user, so neither the checks nor
+# the unlink have more authority than the owner of the runtime tree.
+STALE_PODMAN_PAUSE_PID_CHECK='
+pause_pid_file="$1"
+[ -f "$pause_pid_file" ] || exit 0
+pid="$(head -c 32 -- "$pause_pid_file" 2>/dev/null)"
+case "$pid" in
+  ""|*[!0-9]*) pid="" ;;
+esac
+if [ -n "$pid" ] &&
+   [ "$(stat -c %u "/proc/$pid" 2>/dev/null)" = "$(id -u)" ] &&
+   [ -n "$(readlink "/proc/$pid/ns/user" 2>/dev/null)" ] &&
+   [ "$(readlink "/proc/$pid/ns/user" 2>/dev/null)" != "$(readlink /proc/self/ns/user)" ] &&
+   tr "\\0" "\\n" <"/proc/$pid/environ" 2>/dev/null | grep -qx "_PODMAN_PAUSE=1"; then
+  exit 0
+fi
+rm -f -- "$pause_pid_file"
+'
+
 drop_stale_podman_pause_pid() {
-  local runtime_dir="$1" runtime_uid="$2" pause_pid_file pause_pid
-  pause_pid_file="${runtime_dir}/libpod/tmp/pause.pid"
-  if [ -L "$pause_pid_file" ] || [ ! -f "$pause_pid_file" ]; then
-    return 0
-  fi
-  pause_pid="$(head -c 32 "$pause_pid_file" | tr -dc '0-9')"
-  if [ -n "$pause_pid" ] && \
-     [ "$(stat -c '%u' "/proc/${pause_pid}" 2>/dev/null)" = "$runtime_uid" ] && \
-     [ -n "$(readlink "/proc/${pause_pid}/ns/user" 2>/dev/null)" ] && \
-     [ "$(readlink "/proc/${pause_pid}/ns/user" 2>/dev/null)" != "$(readlink /proc/self/ns/user)" ]; then
-    return 0
-  fi
-  rm -f -- "$pause_pid_file"
+  local runtime_dir="$1" podman_user="$2"
+  /usr/bin/sudo -u "$podman_user" -H /usr/bin/env -i PATH=/usr/bin:/bin \\
+    /bin/bash -c "$STALE_PODMAN_PAUSE_PID_CHECK" bash \\
+    "${runtime_dir}/libpod/tmp/pause.pid" || true
 }
 
 run_rootfs_podman_as_user() {
@@ -6798,7 +6808,7 @@ run_rootfs_podman_as_user() {
   fi
   runtime_uid="$(id -u -- "$podman_user")"
   runtime_dir="/mnt/cocalc/data/tmp/cocalc-podman-runtime-${runtime_uid}"
-  drop_stale_podman_pause_pid "$runtime_dir" "$runtime_uid"
+  drop_stale_podman_pause_pid "$runtime_dir" "$podman_user"
   runtime_env=(
     "XDG_RUNTIME_DIR=${runtime_dir}"
     "COCALC_PODMAN_RUNTIME_DIR=${runtime_dir}"

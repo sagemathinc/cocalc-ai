@@ -3774,55 +3774,61 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
 
             script = captured["/usr/local/sbin/cocalc-runtime-storage"]
             self.assertIn(
-                'drop_stale_podman_pause_pid "$runtime_dir" "$runtime_uid"',
+                'drop_stale_podman_pause_pid "$runtime_dir" "$podman_user"',
                 script.split("\nrun_rootfs_podman_as_user() {", 1)[1],
             )
-            name = "drop_stale_podman_pause_pid"
-            function = (
-                f"{name}() {{"
-                + script.split(f"\n{name}() {{", 1)[1].split("\n}\n", 1)[0]
-                + "\n}\n"
-            )
+            # The check and the unlink run as the runtime user, not root.
+            dropper = script.split("\ndrop_stale_podman_pause_pid() {", 1)[1]
+            dropper = dropper.split("\n}\n", 1)[0]
+            self.assertIn('/usr/bin/sudo -u "$podman_user"', dropper)
+            check_script = script.split("\nSTALE_PODMAN_PAUSE_PID_CHECK='", 1)[1]
+            check_script = check_script.split("\n'\n", 1)[0]
+            self.assertNotIn("'", check_script)
             runtime_dir = Path(tmpdir) / "runtime"
             pause_pid_file = runtime_dir / "libpod" / "tmp" / "pause.pid"
             pause_pid_file.parent.mkdir(parents=True)
 
-            def check(content: str) -> bool:
+            def kept(content: str) -> bool:
                 pause_pid_file.write_text(content, encoding="utf-8")
                 subprocess.run(
-                    [
-                        "bash",
-                        "-c",
-                        function + f'{name} "$1" "$2"',
-                        "bash",
-                        str(runtime_dir),
-                        str(os.getuid()),
-                    ],
+                    ["bash", "-c", check_script, "bash", str(pause_pid_file)],
                     check=True,
                 )
                 return pause_pid_file.exists()
 
-            # An unrelated live process of this user in the initial user
-            # namespace (the reused-PID case), a gone PID and garbage.
+            def started(argv: list[str]) -> subprocess.Popen:
+                proc = subprocess.Popen(argv, stderr=subprocess.DEVNULL)
+                time.sleep(0.2)
+                if proc.poll() is not None:
+                    self.skipTest("unprivileged user namespaces are unavailable")
+                return proc
+
+            # An unrelated live process of this user in this user namespace
+            # (the reused-PID case), a gone PID and malformed contents.
             unrelated = subprocess.Popen(["sleep", "30"])
             try:
-                self.assertFalse(check(f"{unrelated.pid}\n"))
+                self.assertFalse(kept(f"{unrelated.pid}\n"))
             finally:
                 unrelated.kill()
                 unrelated.wait()
-            self.assertFalse(check(f"{unrelated.pid}\n"))
-            self.assertFalse(check("not-a-pid"))
+            self.assertFalse(kept(f"{unrelated.pid}\n"))
+            self.assertFalse(kept("not-a-pid"))
+            self.assertFalse(kept("12abc34"))
 
-            # A live process in its own user namespace is a real pause process.
-            pause = subprocess.Popen(
-                ["unshare", "--user", "sleep", "30"],
-                stderr=subprocess.DEVNULL,
+            # Another user namespace alone is not enough (e.g. a rootless
+            # container process after PID reuse); a pause process is marked.
+            other = started(["unshare", "--user", "sleep", "30"])
+            try:
+                self.assertFalse(kept(str(other.pid)))
+            finally:
+                other.kill()
+                other.wait()
+            pause = started(
+                ["unshare", "--user", "env", "_PODMAN_PAUSE=1", "sleep", "30"]
             )
             try:
-                time.sleep(0.2)
-                if pause.poll() is not None:
-                    self.skipTest("unprivileged user namespaces are unavailable")
-                self.assertTrue(check(f"{pause.pid}\n"))
+                self.assertTrue(kept(str(pause.pid)))
+                self.assertTrue(kept(f"{pause.pid}\n"))
             finally:
                 pause.kill()
                 pause.wait()
