@@ -33,6 +33,10 @@ describe("getSagebrushLimits", () => {
           sagebrush_storage_bytes: 100,
           sagebrush_max_file_bytes: 10,
           sagebrush_private_links: true,
+          sagebrush_sync_enabled: true,
+          sagebrush_sync_version_bytes: 7,
+          sagebrush_sync_read_bytes_per_day: 300,
+          sagebrush_sync_retention_days: 30,
         },
       }),
     );
@@ -41,6 +45,12 @@ describe("getSagebrushLimits", () => {
       storage_bytes: 100,
       max_file_bytes: 10,
       private_links: true,
+      sync: {
+        enabled: true,
+        version_bytes: 7,
+        read_bytes_per_day: 300,
+        retention_days: 30,
+      },
     });
     expect(mockGetOAuthAccountState).toHaveBeenCalledWith(ACCOUNT, {
       include_membership: true,
@@ -56,7 +66,33 @@ describe("getSagebrushLimits", () => {
       storage_bytes: 1_000_000_000,
       max_file_bytes: 100_000_000,
       private_links: false,
+      sync: {
+        enabled: false,
+        version_bytes: 100_000_000,
+        read_bytes_per_day: 2_000_000_000,
+        retention_days: 90,
+      },
     });
+  });
+
+  it("always answers the sync block, off for a tier that turns sync off", async () => {
+    mockGetOAuthAccountState.mockResolvedValue(
+      live({
+        class: "basic",
+        effective_limits: {
+          sagebrush_storage_bytes: 5,
+          sagebrush_sync_enabled: false,
+        },
+      }),
+    );
+    const limits = await getSagebrushLimits(ACCOUNT);
+    expect(limits?.sync.enabled).toBe(false);
+    expect(Object.keys(limits?.sync ?? {}).sort()).toEqual([
+      "enabled",
+      "read_bytes_per_day",
+      "retention_days",
+      "version_bytes",
+    ]);
   });
 
   it("has no limits for an account its home bay reports missing", async () => {

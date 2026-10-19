@@ -230,6 +230,18 @@ export function normalizeMembershipEffectiveLimits(
     sagebrush_private_links: normalizeBoolean(
       usageLimits?.sagebrush_private_links,
     ),
+    sagebrush_sync_enabled: normalizeBoolean(
+      usageLimits?.sagebrush_sync_enabled,
+    ),
+    sagebrush_sync_version_bytes: normalizeNonNegativeInteger(
+      usageLimits?.sagebrush_sync_version_bytes,
+    ),
+    sagebrush_sync_read_bytes_per_day: normalizeNonNegativeInteger(
+      usageLimits?.sagebrush_sync_read_bytes_per_day,
+    ),
+    sagebrush_sync_retention_days: normalizeNonNegativeInteger(
+      usageLimits?.sagebrush_sync_retention_days,
+    ),
   };
 }
 
