@@ -18,9 +18,11 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   advisory. Private development testing does not disqualify it. Merely
   discovering a pre-existing issue during PR review does not qualify.
 - For findings affecting existing, deployed, or user-accessible code, or when
-  scope is uncertain, report privately. Use a draft GitHub repository security
-  advisory and its temporary private fork for non-public fixes; do not push
-  details or fixes to the public repository before coordinated deployment.
+  scope is uncertain, report privately. Develop non-public fixes in the
+  private repository `sagemathinc/cocalc-ai-private` as described in
+  [`src/scripts/security/README.md`](src/scripts/security/README.md); do not
+  push details or fixes to the public repository before coordinated
+  deployment.
 - Never include real credentials, personal data, or other users' data in a
   public report or PR. If a security issue is discovered during unrelated
   work, stop and classify its scope before disclosing details.
