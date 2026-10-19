@@ -47,8 +47,19 @@ function renderFrame(
   mode?: "rmd",
   path = "/home/user/a.html",
   actions = { set_error: jest.fn(), set_active_id: jest.fn() },
+  reload = 7,
 ) {
-  return render(
+  return render(frameElement(project_id, mode, path, actions, reload));
+}
+
+function frameElement(
+  project_id: string,
+  mode?: "rmd",
+  path = "/home/user/a.html",
+  actions = { set_error: jest.fn(), set_active_id: jest.fn() },
+  reload = 7,
+) {
+  return (
     <IFrameHTML
       id="f1"
       actions={actions}
@@ -56,13 +67,13 @@ function renderFrame(
       is_fullscreen={false}
       project_id={project_id}
       path={path}
-      reload={7}
+      reload={reload}
       font_size={14}
       tab_is_visible
       mode={mode}
       derived_file_types={undefined as any}
       value="<p>hi</p>"
-    />,
+    />
   );
 }
 
@@ -146,6 +157,70 @@ describe("IFrameHTML on a site with a content origin", () => {
     });
     expect(issueMock).toHaveBeenCalledTimes(2);
     expect(frame().getAttribute("src")).toBe(`${second}?param=7`);
+  });
+
+  it("keeps showing a still-valid link when a refresh fails", async () => {
+    jest.useFakeTimers();
+    issueMock
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 120_000 })
+      .mockRejectedValue(new Error("network"));
+    renderFrame(freshProject());
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(61_000); // refresh fails
+    });
+    expect(issueMock).toHaveBeenCalledTimes(2);
+    const frame = screen.getByTitle("Rendered preview of /home/user/a.html");
+    expect(frame.getAttribute("src")).toBe(`${CONTENT_URL}?param=7`);
+    expect(frame.getAttribute("srcdoc")).toBeNull();
+  });
+
+  it("shows a re-issued link at the next save, or shortly before the old one expires, not at once", async () => {
+    jest.useFakeTimers();
+    const second = CONTENT_URL.replace("/cap/", "/cap2/");
+    const third = CONTENT_URL.replace("/cap/", "/cap3/");
+    const hour = 3600_000;
+    issueMock
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 3 * hour })
+      .mockResolvedValueOnce({ url: second, expires_at: Date.now() + 27 * hour })
+      .mockResolvedValue({ url: third, expires_at: Date.now() + 99 * hour });
+    const project_id = freshProject();
+    const view = renderFrame(project_id);
+    const src = () =>
+      screen.getByTitle("Rendered preview of /home/user/a.html").getAttribute("src");
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(src()).toBe(`${CONTENT_URL}?param=7`);
+    // Re-issued at 2 h (an hour before expiry), but the page isn't reloaded.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2 * hour + 1000);
+    });
+    expect(issueMock).toHaveBeenCalledTimes(2);
+    expect(src()).toBe(`${CONTENT_URL}?param=7`);
+    // A save reloads the frame anyway, so it picks up the new link.
+    await act(async () => {
+      view.rerender(frameElement(project_id, undefined, "/home/user/a.html", undefined, 8));
+    });
+    expect(src()).toBe(`${second}?param=8`);
+
+    // Without a save, the switch happens 5 minutes before expiry.
+    issueMock.mockReset();
+    issueMock
+      .mockResolvedValueOnce({ url: CONTENT_URL, expires_at: Date.now() + 3 * hour })
+      .mockResolvedValue({ url: second, expires_at: Date.now() + 27 * hour });
+    view.unmount();
+    renderFrame(freshProject());
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2 * hour + 1000);
+    });
+    expect(src()).toBe(`${CONTENT_URL}?param=7`);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(hour - 5 * 60_000);
+    });
+    expect(src()).toBe(`${second}?param=7`);
   });
 
   it("makes the frame active when focus moves into it", async () => {

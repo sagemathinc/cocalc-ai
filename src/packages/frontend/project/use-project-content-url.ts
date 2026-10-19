@@ -20,7 +20,7 @@ export type ProjectContentUrlState =
   // The site has a content origin but this account (e.g. a viewer) gets no
   // links: only the safe preview, never Trusted mode on the host origin.
   | { status: "no-access" }
-  | { status: "ready"; url: string };
+  | { status: "ready"; url: string; expires_at: number };
 
 // Don't ask again for a while once a project's content origin is off.
 const UNAVAILABLE_RETRY_MS = 5 * 60 * 1000;
@@ -104,7 +104,7 @@ export function useProjectContentUrl({
         setState((prev) =>
           prev.status === "ready" && prev.url === result.url
             ? prev
-            : { status: "ready", url: result.url },
+            : { status: "ready", url: result.url, expires_at: result.expires_at },
         );
         timer = setTimeout(
           () => setGeneration((n) => n + 1),
@@ -113,7 +113,12 @@ export function useProjectContentUrl({
       } catch {
         // For example a viewer, an old hub, or a network error.
         if (canceled) return;
-        setState({ status: "error" });
+        // A failed refresh keeps a link that is still valid.
+        setState((prev) =>
+          prev.status === "ready" && prev.expires_at > Date.now()
+            ? prev
+            : { status: "error" },
+        );
         failures.current += 1;
         timer = setTimeout(
           () => setGeneration((n) => n + 1),

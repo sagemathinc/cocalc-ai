@@ -84,6 +84,10 @@ function should_memoize(prev, next) {
 
 // The content origin is a separate site, so the page keeps its own origin
 // (storage, relative loads) but can't navigate the app's tab.
+// A re-issued link is shown at the next save, or this long before the shown
+// link expires, so reading a page doesn't reload it unprompted.
+export const CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS = 5 * 60 * 1000;
+
 export const CONTENT_FRAME_SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 
@@ -123,6 +127,41 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
     enabled: mode != "rmd" && /\.html?$/i.test(path),
   });
   const isolated = content.status == "ready";
+  const [shown, setShown] = useState<
+    { url: string; expires_at: number; reload?: number } | undefined
+  >(undefined);
+  useEffect(() => {
+    if (content.status != "ready") {
+      setShown(undefined);
+      return;
+    }
+    const latest = {
+      url: content.url,
+      expires_at: content.expires_at,
+      reload,
+    };
+    setShown((prev) =>
+      prev == null ||
+      prev.reload !== reload ||
+      prev.expires_at - Date.now() < CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS
+        ? latest
+        : prev,
+    );
+    if (shown == null || shown.url == content.url) return;
+    const timer = setTimeout(
+      () => setShown(latest),
+      Math.max(
+        0,
+        shown.expires_at - CONTENT_LINK_SWAP_BEFORE_EXPIRY_MS - Date.now(),
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [content, reload, shown?.url]);
+  const shownContent =
+    shown ??
+    (content.status == "ready"
+      ? { url: content.url, expires_at: content.expires_at, reload }
+      : undefined);
   // Trusted mode (the host origin) only where there is no content origin.
   const showTrustSwitch = content.status == "unavailable";
   const [trust0, setTrust0] = useState<boolean>(isTrusted(props));
@@ -305,7 +344,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
       return (
         <iframe
           ref={iframe}
-          src={`${content.url}?param=${reload}`}
+          src={`${shownContent!.url}?param=${reload}`}
           title={`Rendered preview of ${path}`}
           width={"100%"}
           height={"100%"}
