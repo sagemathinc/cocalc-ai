@@ -32,7 +32,11 @@ import {
   finishSiteFundedSpeechGlobal,
   reserveSiteFundedSpeechGlobal,
 } from "./site-funded-speech-reservations";
-import { DECIDE_LIMITS, type DecideFunding } from "./board-decide";
+import {
+  DECIDE_LIMITS,
+  type DecideFunding,
+  type DecideReservation,
+} from "./board-decide";
 
 const RESERVATION_TAG = "board-decide-reservation";
 const COMMITTED_TAG = "board-decide";
@@ -99,8 +103,106 @@ export function siteFundedDecideFunding({
       // query, COMMIT) is in this one try: any throw releases the hold,
       // exactly once, and the rollback cannot prevent that (Codex on
       // #1134). Once returned, the caller commits or releases it.
+      // One exception: a COMMIT that throws may have committed (its reply
+      // lost). Then the hold's row is read back on another connection:
+      // - there: the reservation stands; the hold is kept and returned, as
+      //   for a clean COMMIT, and the caller settles both;
+      // - not there: it didn't commit; the hold is released, once;
+      // - unreadable: unknown; the hold is kept and the call fails without
+      //   the provider. Both holds then go lazily: the global one is
+      //   expired by a later reservation in the site pool once its 5
+      //   minutes pass, and the account's row, if it committed, is released
+      //   at no cost (still counted for the hour) by this account's next
+      //   reservation that commits after those 5 minutes.
+      // The reservation this call returns, once its hold is in place.
+      const reservation = (): DecideReservation => ({
+        async commit(costMicrousd: number) {
+          if (!Number.isSafeInteger(costMicrousd) || costMicrousd <= 0) {
+            throw new Error("decide cost must be a positive safe integer");
+          }
+          // A cost above the hold is never discarded: the account's row
+          // records all of it, the site pool gets the excess as a hold of
+          // its own, and it is logged as an error to alert admins. The
+          // reservation is a real bound (max_price), so this should not
+          // happen.
+          const excess = Math.max(0, costMicrousd - microusd);
+          await finishSiteFundedSpeechGlobal({
+            requestId,
+            status: "committed",
+            costMicrousd: Math.min(costMicrousd, microusd),
+          });
+          if (excess > 0) {
+            logger.error("board decide cost exceeded its reservation", {
+              accountId,
+              requestId,
+              reservedMicrousd: microusd,
+              costMicrousd,
+            });
+            const excessId = uuid();
+            try {
+              await reserveSiteFundedSpeechGlobal({
+                accountId,
+                requestId: excessId,
+                reservedMicrousd: excess,
+              });
+              await finishSiteFundedSpeechGlobal({
+                requestId: excessId,
+                status: "committed",
+                costMicrousd: excess,
+              });
+            } catch (err) {
+              logger.error(
+                "board decide excess not recorded in the site pool",
+                {
+                  accountId,
+                  requestId,
+                  excessMicrousd: excess,
+                  err: `${err}`,
+                },
+              );
+            }
+          }
+          const { rows } = await getPool().query(
+            `UPDATE ai_usage_log SET input=$3, tag=$4, cost_microusd=$5
+             WHERE account_id=$1 AND funded_event_id=$2 AND tag=$6
+             RETURNING funded_event_id`,
+            [
+              accountId,
+              requestId,
+              "[board-decide]",
+              COMMITTED_TAG,
+              costMicrousd,
+              RESERVATION_TAG,
+            ],
+          );
+          if (rows.length !== 1)
+            throw new Error("decide reservation was not found");
+        },
+        async release() {
+          const results = await Promise.allSettled([
+            finishSiteFundedSpeechGlobal({ requestId, status: "released" }),
+            getPool().query(
+              `UPDATE ai_usage_log
+                  SET input=$4, tag=$5, cost_microusd=0
+               WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
+              [
+                accountId,
+                requestId,
+                RESERVATION_TAG,
+                "[board-decide-released]",
+                RELEASED_TAG,
+              ],
+            ),
+          ]);
+          const failure = results.find(
+            (r): r is PromiseRejectedResult => r.status === "rejected",
+          );
+          if (failure) throw failure.reason;
+        },
+      });
       let client: PoolClient | undefined;
       let broken = false;
+      let committing = false;
       try {
         const db = await getPool().connect();
         client = db;
@@ -218,6 +320,7 @@ export function siteFundedDecideFunding({
             board.path,
           ],
         );
+        committing = true;
         await db.query("COMMIT");
       } catch (err) {
         if (client != null) {
@@ -225,6 +328,33 @@ export function siteFundedDecideFunding({
           await client.query("ROLLBACK").catch(() => {
             broken = true;
           });
+          // Given back before anything else here takes a connection (the
+          // read-back, the release): on a full pool they would otherwise
+          // wait for the one this request holds.
+          const done = client;
+          client = undefined;
+          done.release(broken ? true : undefined);
+        }
+        if (committing) {
+          const row = await holdRow(accountId, requestId);
+          if (row === "present") {
+            logger.warn("board decide COMMIT reply lost; the hold committed", {
+              accountId,
+              requestId,
+              err: `${err}`,
+            });
+            return reservation();
+          }
+          if (row === "unknown") {
+            // Whether it committed is unknown: the global hold is kept (it
+            // expires), never released while the account's row may hold.
+            logger.error("board decide COMMIT outcome unknown; hold kept", {
+              accountId,
+              requestId,
+              err: `${err}`,
+            });
+            throw err;
+          }
         }
         await finishSiteFundedSpeechGlobal({
           requestId,
@@ -241,91 +371,25 @@ export function siteFundedDecideFunding({
       } finally {
         client?.release(broken ? true : undefined);
       }
-      return {
-        async commit(costMicrousd: number) {
-          if (!Number.isSafeInteger(costMicrousd) || costMicrousd <= 0) {
-            throw new Error("decide cost must be a positive safe integer");
-          }
-          // A cost above the hold is never discarded: the account's row
-          // records all of it, the site pool gets the excess as a hold of
-          // its own, and it is logged as an error to alert admins. The
-          // reservation is a real bound (max_price), so this should not
-          // happen.
-          const excess = Math.max(0, costMicrousd - microusd);
-          await finishSiteFundedSpeechGlobal({
-            requestId,
-            status: "committed",
-            costMicrousd: Math.min(costMicrousd, microusd),
-          });
-          if (excess > 0) {
-            logger.error("board decide cost exceeded its reservation", {
-              accountId,
-              requestId,
-              reservedMicrousd: microusd,
-              costMicrousd,
-            });
-            const excessId = uuid();
-            try {
-              await reserveSiteFundedSpeechGlobal({
-                accountId,
-                requestId: excessId,
-                reservedMicrousd: excess,
-              });
-              await finishSiteFundedSpeechGlobal({
-                requestId: excessId,
-                status: "committed",
-                costMicrousd: excess,
-              });
-            } catch (err) {
-              logger.error(
-                "board decide excess not recorded in the site pool",
-                {
-                  accountId,
-                  requestId,
-                  excessMicrousd: excess,
-                  err: `${err}`,
-                },
-              );
-            }
-          }
-          const { rows } = await getPool().query(
-            `UPDATE ai_usage_log SET input=$3, tag=$4, cost_microusd=$5
-             WHERE account_id=$1 AND funded_event_id=$2 AND tag=$6
-             RETURNING funded_event_id`,
-            [
-              accountId,
-              requestId,
-              "[board-decide]",
-              COMMITTED_TAG,
-              costMicrousd,
-              RESERVATION_TAG,
-            ],
-          );
-          if (rows.length !== 1)
-            throw new Error("decide reservation was not found");
-        },
-        async release() {
-          const results = await Promise.allSettled([
-            finishSiteFundedSpeechGlobal({ requestId, status: "released" }),
-            getPool().query(
-              `UPDATE ai_usage_log
-                  SET input=$4, tag=$5, cost_microusd=0
-               WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
-              [
-                accountId,
-                requestId,
-                RESERVATION_TAG,
-                "[board-decide-released]",
-                RELEASED_TAG,
-              ],
-            ),
-          ]);
-          const failure = results.find(
-            (r): r is PromiseRejectedResult => r.status === "rejected",
-          );
-          if (failure) throw failure.reason;
-        },
-      };
+      return reservation();
     },
   };
+}
+
+// Whether a reservation's hold row is in ai_usage_log, after a COMMIT
+// whose reply was lost: "unknown" when it can't be read.
+async function holdRow(
+  accountId: string,
+  requestId: string,
+): Promise<"present" | "absent" | "unknown"> {
+  try {
+    const { rows } = await getPool().query(
+      `SELECT 1 FROM ai_usage_log
+       WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
+      [accountId, requestId, RESERVATION_TAG],
+    );
+    return rows.length === 1 ? "present" : "absent";
+  } catch {
+    return "unknown";
+  }
 }

@@ -161,3 +161,100 @@ test("a reservation returned holds the global hold for its commit or release", a
   await r.release();
   expect(released()).toHaveLength(1);
 });
+
+// A COMMIT whose reply was lost may have committed: the hold's row is read
+// back, and decides.
+describe("a COMMIT that fails", () => {
+  test("but did commit: the reservation stands, its hold kept", async () => {
+    const c = client(/^COMMIT/, true); // the connection dropped
+    mockConnect.mockResolvedValueOnce(c);
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ "?column?": 1 }] });
+    const r = await funding.reserve(request);
+    expect(mockFinishGlobal).not.toHaveBeenCalled();
+    expect(mockPoolQuery.mock.calls[0][1]).toEqual([
+      request.accountId,
+      request.requestId,
+      "board-decide-reservation",
+    ]);
+    expect(c.release).toHaveBeenCalledWith(true); // discarded
+    // The caller then settles it once, as after a clean COMMIT.
+    await r.release();
+    expect(released()).toHaveLength(1);
+  });
+
+  test("and didn't commit: released once", async () => {
+    mockConnect.mockResolvedValueOnce(client(/^COMMIT/));
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(funding.reserve(request)).rejects.toThrow("failed");
+    expect(released()).toHaveLength(1);
+  });
+
+  test("and the row can't be read: unknown, so the hold is kept and the call fails", async () => {
+    const c = client(/^COMMIT/, true);
+    mockConnect.mockResolvedValueOnce(c);
+    mockPoolQuery.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(funding.reserve(request)).rejects.toThrow("failed");
+    expect(mockFinishGlobal).not.toHaveBeenCalled();
+    expect(c.release).toHaveBeenCalledWith(true);
+  });
+
+  test("an earlier step's failure never reads the row back", async () => {
+    mockConnect.mockResolvedValueOnce(client(/^INSERT INTO ai_usage_log/));
+    await expect(funding.reserve(request)).rejects.toThrow("failed");
+    expect(mockPoolQuery).not.toHaveBeenCalled();
+    expect(released()).toHaveLength(1);
+  });
+});
+
+// astra (CORR-39D-1): with one connection slot, the read-back and the
+// release must not wait for the connection this request still holds: it
+// is given back first.
+describe("a pool with one slot", () => {
+  function oneSlot(c: ReturnType<typeof client>) {
+    let held = true;
+    const order: string[] = [];
+    const freed = new Promise<void>((resolve) => {
+      c.release.mockImplementation(() => {
+        held = false;
+        order.push("client released");
+        resolve();
+      });
+    });
+    // The pool's own query waits for the slot, as pg's does; it gives up
+    // after a moment, which a circular wait would hit.
+    mockPoolQuery.mockImplementation(async () => {
+      if (held) {
+        await Promise.race([
+          freed,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("no free connection")), 500),
+          ),
+        ]);
+      }
+      order.push("pool query");
+      return { rows: [{ "?column?": 1 }] };
+    });
+    mockFinishGlobal.mockImplementation(async () => {
+      order.push(held ? "global release (slot held)" : "global release");
+    });
+    return order;
+  }
+
+  test("a lost COMMIT's read-back gets the slot and the reservation stands", async () => {
+    const c = client(/^COMMIT/, true);
+    mockConnect.mockResolvedValueOnce(c);
+    const order = oneSlot(c);
+    await funding.reserve(request);
+    expect(order).toEqual(["client released", "pool query"]);
+    expect(c.release).toHaveBeenCalledTimes(1);
+  });
+
+  test("an earlier failure gives the connection back before the release", async () => {
+    const c = client(/^BEGIN/);
+    mockConnect.mockResolvedValueOnce(c);
+    const order = oneSlot(c);
+    await expect(funding.reserve(request)).rejects.toThrow("failed");
+    expect(order).toEqual(["client released", "global release"]);
+    expect(c.release).toHaveBeenCalledTimes(1);
+  });
+});

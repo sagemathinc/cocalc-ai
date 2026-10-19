@@ -393,4 +393,139 @@ describe("site-funded board decide", () => {
     ).rejects.toMatchObject({ code: 409 });
     expect(decide).toHaveBeenCalledTimes(1);
   });
+
+  // A COMMIT that throws may have committed (its reply lost). The hold's
+  // row is read back: there, the reservation stands; not there, the hold
+  // is released; unreadable, the hold is kept and both go lazily.
+  describe("a COMMIT that throws", () => {
+    const pool: any = getPool();
+    // The funding's own COMMIT (the one after its hold row's INSERT; the
+    // global reservation commits on another connection first): applied
+    // then throws, or throws unapplied. Once.
+    function nextCommit(applied: boolean) {
+      const realConnect = pool.connect.bind(pool);
+      let fired = false;
+      jest.spyOn(pool, "connect").mockImplementation(async () => {
+        const c = await realConnect();
+        const query = c.query.bind(c);
+        let inserted = false;
+        c.query = async (text: any, ...rest: any[]) => {
+          if (typeof text === "string") {
+            if (/^\s*INSERT INTO ai_usage_log/.test(text)) inserted = true;
+            if (inserted && !fired && /^\s*COMMIT/.test(text)) {
+              fired = true;
+              if (applied) await query(text, ...rest);
+              throw new Error("COMMIT reply lost");
+            }
+          }
+          return await query(text, ...rest);
+        };
+        return c;
+      });
+    }
+    afterEach(() => jest.restoreAllMocks());
+
+    it("applied, and read back: the reservation stands and settles once", async () => {
+      const requestId = uuid();
+      nextCommit(true);
+      const r = await funding.reserve({
+        board: BOARD_KEY,
+        accountId,
+        requestId,
+        microusd: 2,
+      });
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "active", committed: 0 },
+      ]);
+      await r.commit(1);
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "committed", committed: 1 },
+      ]);
+      expect(await rows(requestId)).toEqual([{ tag: "board-decide", cost: 1 }]);
+    });
+
+    it("not applied: the hold is released once and nothing is written", async () => {
+      const requestId = uuid();
+      nextCommit(false);
+      await expect(
+        funding.reserve({
+          board: BOARD_KEY,
+          accountId,
+          requestId,
+          microusd: 2,
+        }),
+      ).rejects.toThrow("COMMIT reply lost");
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "released", committed: 0 },
+      ]);
+      expect(await rows(requestId)).toEqual([]);
+    });
+
+    it("applied, but unreadable: both holds kept, then cleaned up lazily", async () => {
+      const requestId = uuid();
+      nextCommit(true);
+      const realQuery = pool.query.bind(pool);
+      jest
+        .spyOn(pool, "query")
+        .mockImplementation(async (text: any, ...rest: any[]) => {
+          if (
+            typeof text === "string" &&
+            /SELECT 1 FROM ai_usage_log/.test(text)
+          )
+            throw new Error("database unavailable");
+          return await realQuery(text, ...rest);
+        });
+      await expect(
+        funding.reserve({
+          board: BOARD_KEY,
+          accountId,
+          requestId,
+          microusd: 2,
+        }),
+      ).rejects.toThrow("COMMIT reply lost");
+      jest.restoreAllMocks();
+      // Kept, not released: the outcome was unknown.
+      expect(await globalHolds(requestId)).toEqual([
+        { status: "active", committed: 0 },
+      ]);
+      expect(await rows(requestId)).toEqual([
+        { tag: "board-decide-reservation", cost: 2 },
+      ]);
+      // Past their 5 minutes, nothing has changed by itself (no background
+      // job): a later reservation in the site pool expires the global hold,
+      // and this account's next reservation that commits releases its row.
+      await getPool().query(
+        `UPDATE ai_usage_log SET time = time - INTERVAL '6 minutes'
+         WHERE account_id=$1 AND funded_event_id=$2`,
+        [accountId, requestId],
+      );
+      await getPool().query(
+        `UPDATE site_ai_speech_reservations
+         SET expires_at = NOW() - INTERVAL '1 second' WHERE request_id=$1`,
+        [requestId],
+      );
+      expect(await rows(requestId)).toEqual([
+        { tag: "board-decide-reservation", cost: 2 },
+      ]);
+      const next = await funding.reserve({
+        board: BOARD_KEY,
+        accountId,
+        requestId: uuid(),
+        microusd: 1,
+      });
+      expect((await globalHolds(requestId))[0].status).toBe("expired");
+      expect(await rows(requestId)).toEqual([
+        { tag: "board-decide-released", cost: 0 },
+      ]);
+      // still counted for the board's hour
+      const { rows: hour } = await getPool().query(
+        `SELECT COUNT(*) AS n FROM ai_usage_log
+         WHERE account_id=$1 AND funded_event_id=$2 AND project_id=$3
+           AND path=$4 AND time > NOW() - INTERVAL '1 hour'`,
+        [accountId, requestId, BOARD_KEY.projectId, BOARD_KEY.path],
+      );
+      expect(Number(hour[0].n)).toBe(1);
+      await next.release();
+    });
+  });
 });
