@@ -4,7 +4,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Client } from "pg";
 
 import getPool from "@cocalc/database/pool";
 import { after, before } from "@cocalc/server/test";
@@ -35,6 +34,11 @@ import {
 } from "./session-expiry";
 
 const DAY = 24 * 3600_000;
+
+// The test database is shared with other tests' rows: cover all of them in
+// one pass.
+const maintain = () =>
+  runSessionMaintenance({ batch: 1_000_000, account_batch: 1_000_000 });
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -159,7 +163,7 @@ it("maintenance starts old sessions' idle clock without signing anyone out", asy
     "UPDATE remember_me SET last_used = NULL, max_expire = NULL, expire = NOW() + INTERVAL '170 days' WHERE hash = $1::CHAR(127)",
     [hash],
   );
-  await runSessionMaintenance();
+  await maintain();
   const r = await row(hash);
   near(r.last_used, Date.now());
   near(r.max_expire, Date.now() + 60 * DAY);
@@ -172,7 +176,7 @@ it("maintenance applies a changed idle timeout and deletes ended sessions", asyn
   const ended = await session();
   await setRow(ended.hash, { expire: "-1 minute" });
   settings.session_idle_timeout_days = 7;
-  await runSessionMaintenance();
+  await maintain();
   near((await row(kept.hash)).expire, Date.now() + 7 * DAY);
   near((await authSession(kept.hash)).expire, Date.now() + 7 * DAY);
   expect(await row(ended.hash)).toBeUndefined();
@@ -252,7 +256,7 @@ it("session use and maintenance leave a rehoming account's sessions alone", asyn
   expect(await row(used.hash)).toEqual(before);
   expect(await authSession(used.hash)).toEqual(beforeAuth);
 
-  await runSessionMaintenance();
+  await maintain();
   expect((await row(legacy.hash)).last_used).toBeNull();
 
   // Once the rehome is over, both proceed.
@@ -262,7 +266,7 @@ it("session use and maintenance leave a rehoming account's sessions alone", asyn
   await touchSession({ hash: used.hash, account_id: used.account_id });
   near((await row(used.hash)).expire, Date.now() + 14 * DAY);
   near((await authSession(used.hash)).expire, Date.now() + 14 * DAY);
-  await runSessionMaintenance();
+  await maintain();
   near((await row(legacy.hash)).last_used, Date.now());
 });
 
@@ -273,10 +277,7 @@ it("session use racing a rehome start waits for it, then is refused", async () =
   // records the running rehome in one transaction. A use that comes in
   // meanwhile waits for the fence, then sees the rehome and changes nothing.
   await startRehome(account_id).then(finishRehome); // creates the table
-  const database = (await getPool().query("SELECT current_database() AS d"))
-    .rows[0].d;
-  const rehome = new Client({ database });
-  await rehome.connect();
+  const rehome = await getPool().connect();
   try {
     await rehome.query("BEGIN");
     await rehome.query(
@@ -293,7 +294,7 @@ it("session use racing a rehome start waits for it, then is refused", async () =
     await rehome.query("COMMIT");
     await touched;
   } finally {
-    await rehome.end();
+    rehome.release();
   }
   near((await row(hash)).expire, Date.now() + DAY);
 });
