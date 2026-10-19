@@ -336,17 +336,21 @@ describe("ensureThereIsACell", () => {
 
   it("records durably when the generated cell is cleared back to empty after having content", () => {
     const actions = createActions({ cells: [{ ...ALPHA, input: "x = 1" }] });
-    actions._set = jest.fn();
-    actions.set_trust_notebook = jest.fn();
+    // Use the real _set, so the write must reach syncdb and be committed.
+    const order: string[] = [];
+    actions.syncdb.set = jest.fn((obj) => order.push(`set:${obj.type}`));
+    actions.syncdb.commit = jest.fn(() => order.push("commit"));
+    actions._syncdb_change = jest.fn();
     actions.noteNotebookContent();
     actions.setCells([ALPHA]);
     storeCells(actions, [ALPHA]);
     actions.ensureThereIsACell();
 
-    expect(actions._set).toHaveBeenCalledWith(
-      { type: "settings", has_had_content: true },
-      false,
-    );
+    expect(actions.syncdb.set).toHaveBeenCalledWith({
+      type: "settings",
+      has_had_content: true,
+    });
+    expect(order).toEqual(["set:settings", "commit"]);
   });
 
   it("does not rewrite the flag once it is set", () => {

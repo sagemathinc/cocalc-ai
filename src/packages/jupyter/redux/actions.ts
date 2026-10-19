@@ -2930,7 +2930,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         this.syncdb.get_one({ type: "settings" })?.get("has_had_content") !==
           true
       ) {
-        this._set({ type: "settings", has_had_content: true }, false);
+        // A standalone write: commit it so it is durable and shared now,
+        // not only when some later edit happens to commit the draft.
+        this._set({ type: "settings", has_had_content: true }, true);
       }
     } catch {
       // not ready
