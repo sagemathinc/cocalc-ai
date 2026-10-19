@@ -34,12 +34,6 @@ describe("remember me methods", () => {
     );
   }
 
-  async function delete_remember_me_wrapper(opts: {
-    hash: string;
-  }): Promise<void> {
-    await callback_opts(database.delete_remember_me.bind(database))(opts);
-  }
-
   beforeAll(async () => {
     await initEphemeralDatabase({});
   }, 15000);
@@ -85,60 +79,96 @@ describe("remember me methods", () => {
   });
 
   describe("invalidate_all_remember_me", () => {
-    it("deletes all entries for an account", async () => {
-      const pool = getPool();
-      const accountId = uuid();
-      const otherAccountId = uuid();
-      const expire = new Date(Date.now() + 60 * 1000);
+    async function account(): Promise<string> {
+      const account_id = uuid();
+      await getPool().query(
+        "INSERT INTO accounts (account_id, email_address) VALUES ($1, $2)",
+        [account_id, `${account_id}@example.test`],
+      );
+      return account_id;
+    }
 
-      await pool.query(
+    async function signIn(account_id: string): Promise<string> {
+      const hash = makeHash(127);
+      const expire = new Date(Date.now() + 60 * 1000);
+      await getPool().query(
         "INSERT INTO remember_me (hash, value, account_id, expire) VALUES ($1, $2, $3, $4)",
-        [makeHash(32), { test: 1 }, accountId, expire],
+        [hash, { test: 1 }, account_id, expire],
       );
-      await pool.query(
-        "INSERT INTO remember_me (hash, value, account_id, expire) VALUES ($1, $2, $3, $4)",
-        [makeHash(32), { test: 2 }, accountId, expire],
+      await getPool().query(
+        `INSERT INTO account_auth_sessions
+           (session_hash, account_id, created, updated, authenticated_at, expire)
+         VALUES ($1, $2, NOW(), NOW(), NOW(), $3)`,
+        [hash, account_id, expire],
       );
-      await pool.query(
-        "INSERT INTO remember_me (hash, value, account_id, expire) VALUES ($1, $2, $3, $4)",
-        [makeHash(32), { test: 3 }, otherAccountId, expire],
+      return hash;
+    }
+
+    async function state(hash: string) {
+      const cookie = await getPool().query(
+        "SELECT 1 FROM remember_me WHERE hash = $1",
+        [hash],
       );
+      const auth = await getPool().query(
+        "SELECT revoked_at FROM account_auth_sessions WHERE session_hash = $1",
+        [hash],
+      );
+      return {
+        cookie: cookie.rows.length > 0,
+        revoked: auth.rows[0]?.revoked_at != null,
+      };
+    }
+
+    it("signs the account out everywhere: deletes its cookies and revokes its auth sessions", async () => {
+      const accountId = await account();
+      const otherAccountId = await account();
+      const a = await signIn(accountId);
+      const b = await signIn(accountId);
+      const other = await signIn(otherAccountId);
 
       await invalidate_all_remember_me_wrapper({ account_id: accountId });
 
-      const { rows: remaining } = await pool.query(
-        "SELECT COUNT(*) FROM remember_me WHERE account_id = $1",
+      expect(await state(a)).toEqual({ cookie: false, revoked: true });
+      expect(await state(b)).toEqual({ cookie: false, revoked: true });
+      expect(await state(other)).toEqual({ cookie: true, revoked: false });
+    });
+
+    it("changes nothing while the account is being rehomed", async () => {
+      // The rehome copies both rows to the new bay: a cookie deleted here
+      // after the copy read it would work again there.
+      const accountId = await account();
+      const hash = await signIn(accountId);
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS account_rehome_operations (
+          op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          account_id UUID NOT NULL,
+          source_bay_id TEXT NOT NULL,
+          dest_bay_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'running',
+          stage TEXT NOT NULL DEFAULT 'requested',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+      await getPool().query(
+        `INSERT INTO account_rehome_operations (account_id, source_bay_id, dest_bay_id)
+         VALUES ($1, 'bay-0', 'bay-1')`,
         [accountId],
       );
-      expect(parseInt(remaining[0].count)).toBe(0);
-
-      const { rows: otherRemaining } = await pool.query(
-        "SELECT COUNT(*) FROM remember_me WHERE account_id = $1",
-        [otherAccountId],
+      // The callback API reports the error as a message string.
+      const refused = await invalidate_all_remember_me_wrapper({
+        account_id: accountId,
+      }).then(
+        () => "signed out",
+        (err) => `${err}`,
       );
-      expect(parseInt(otherRemaining[0].count)).toBe(1);
-    });
-  });
+      expect(refused).toMatch(/rehome/);
+      expect(await state(hash)).toEqual({ cookie: true, revoked: false });
 
-  describe("delete_remember_me", () => {
-    it("deletes entry by hash", async () => {
-      const pool = getPool();
-      const accountId = uuid();
-      const expire = new Date(Date.now() + 60 * 1000);
-      const hash = makeHash(127);
-
-      await pool.query(
-        "INSERT INTO remember_me (hash, value, account_id, expire) VALUES ($1, $2, $3, $4)",
-        [hash, { test: "delete" }, accountId, expire],
+      await getPool().query(
+        "UPDATE account_rehome_operations SET status = 'succeeded' WHERE account_id = $1",
+        [accountId],
       );
-
-      await delete_remember_me_wrapper({ hash: `${hash}extra` });
-
-      const { rows } = await pool.query(
-        "SELECT COUNT(*) FROM remember_me WHERE hash = $1",
-        [hash],
-      );
-      expect(parseInt(rows[0].count)).toBe(0);
+      await invalidate_all_remember_me_wrapper({ account_id: accountId });
+      expect(await state(hash)).toEqual({ cookie: false, revoked: true });
     });
   });
 });

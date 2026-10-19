@@ -1,6 +1,5 @@
 import { v4 } from "uuid";
 import passwordHash from "@cocalc/backend/auth/password-hash";
-import getPool from "@cocalc/database/pool";
 import {
   getSessionLimits,
   newSessionExpiry,
@@ -74,33 +73,6 @@ export async function createRememberMeCookie(
   });
 
   return { value, ttl_s, hash, expire };
-}
-
-// delete the remember me database entry for the given hash
-export async function deleteRememberMe(hash: string): Promise<void> {
-  const pool = getPool();
-  await pool.query("DELETE FROM remember_me WHERE hash=$1::CHAR(127)", [
-    hash.slice(0, 127),
-  ]);
-}
-
-// delete all remember me cookies for the account
-export async function deleteAllRememberMe(account_id: string): Promise<void> {
-  const pool = getPool();
-  await pool.query("DELETE FROM remember_me WHERE account_id=$1::UUID", [
-    account_id,
-  ]);
-}
-
-export async function deleteOtherRememberMe(
-  account_id: string,
-  keepHash: string,
-): Promise<void> {
-  const pool = getPool();
-  await pool.query(
-    "DELETE FROM remember_me WHERE account_id=$1::UUID AND hash <> $2::CHAR(127)",
-    [account_id, keepHash.slice(0, 127)],
-  );
 }
 
 export function getRememberMeHash(req: Request): string | undefined {
